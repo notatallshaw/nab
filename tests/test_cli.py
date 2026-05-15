@@ -687,6 +687,42 @@ class TestLockCommandUniversal:
         # No partial output written.
         assert not out.exists()
 
+    def test_partial_template_collision_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A template missing ``{platform_id}`` on a multi-platform matrix exits 1."""
+        matrix = Matrix(python="==3.11", platforms=("linux_x86_64", "windows_amd64"))
+        tuples_results = []
+        for platform_id in ("linux_x86_64", "windows_amd64"):
+            env = {**_LINUX_311_ENV, "python_version": "3.11"}
+            tup = MatrixTuple(
+                python_version="3.11",
+                platform_id=platform_id,
+                environment=env,
+                platform_spec=PlatformSpec(platform_id),
+            )
+            tuples_results.append(
+                TupleResult(
+                    tuple_=tup,
+                    success=True,
+                    pins={"foo": V("1.0")},
+                    error=None,
+                    lock_input=LockInput(pins={"foo": _foo_index_pin()}),
+                )
+            )
+        result = UniversalResult(matrix=matrix, tuple_results=tuples_results)
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "constraints-{python_version}.txt"
+        with (
+            patch("nab.cli.resolve_universal_pyproject", return_value=result),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "both map to" in err
+        assert "{platform_id}" in err
+        assert not (tmp_path / "constraints-3.11.txt").exists()
+
     def test_template_with_one_tuple_writes_one_file(self, tmp_path: Path) -> None:
         """A template with a single-tuple matrix still works."""
         pyproject = _universal_pyproject(tmp_path)

@@ -23,7 +23,7 @@ Each pinned package carries:
 * its name and version,
 * one of three pin shapes: an `IndexPin` (PyPI or another simple
   index), a `LocalPin` (a directory on disk), or a `VcsPin` (a
-  git/hg/etc. URL with a commit pin),
+  git URL with a commit pin),
 * every artefact downloaded for that pin (`sdist` and `wheels`),
   each with its filename, URL, `sha256`, and optional size.
 

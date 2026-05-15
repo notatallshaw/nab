@@ -495,8 +495,16 @@ def _resolve_one_tuple(  # noqa: PLR0913
         lock_input = build_lock_input_from_provider(
             provider, pins, indexes=coordinator.indexes
         )
-    except MissingHashError:
-        lock_input = None
+    except MissingHashError as exc:
+        return TupleResult(
+            tuple_=t,
+            success=False,
+            pins=pins,
+            error=f"MissingHashError: {exc}"[:_ERROR_MESSAGE_LIMIT],
+            wall_time=elapsed,
+            rounds=resolver.stats.rounds,
+            decisions=resolver.stats.decisions,
+        )
     return TupleResult(
         tuple_=t,
         success=True,

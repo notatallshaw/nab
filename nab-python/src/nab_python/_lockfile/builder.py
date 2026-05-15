@@ -81,6 +81,10 @@ class LockInputProvider(Protocol):
         """Return the configured VcsSource for ``canonical_name`` or None."""
         ...
 
+    def vcs_pin_for(self, canonical_name: str, /) -> str | None:
+        """Return the resolved 40-char SHA captured during materialisation."""
+        ...
+
     def dist_files_for(
         self, canonical_name: str, version: Version, /
     ) -> list[WheelFile | SdistFile]:
@@ -176,7 +180,12 @@ def build_lock_input_from_provider(
             continue
         vcs_source = provider.vcs_source_for(canonical)
         if vcs_source is not None:
-            lock_pins[canonical] = _vcs_pin_from_source(canonical, version, vcs_source)
+            lock_pins[canonical] = _vcs_pin_from_source(
+                canonical,
+                version,
+                vcs_source,
+                resolved_sha=provider.vcs_pin_for(canonical),
+            )
             continue
         lock_pins[canonical] = _index_pin_from_listing(
             provider, canonical, version, indexes
@@ -314,23 +323,32 @@ def _common_requires_python(files: Iterable[WheelFile | SdistFile]) -> str | Non
     return None
 
 
-def _vcs_pin_from_source(canonical: str, version: Version, source: VcsSource) -> VcsPin:
+def _vcs_pin_from_source(
+    canonical: str,
+    version: Version,
+    source: VcsSource,
+    *,
+    resolved_sha: str | None,
+) -> VcsPin:
     """Build a :class:`VcsPin` from a :class:`VcsSource`.
 
-    The commit id is the ``@<ref>`` portion of the source URL when
-    present, parsed via :class:`nab_index.vcs.VcsRequest`.  Unparseable
-    URLs fall through to an empty commit id; the source URL itself is
-    recorded verbatim.
+    Prefer ``resolved_sha`` (the post-clone SHA recorded on the
+    provider) over the URL's ``@<ref>``: annotated tags and floating
+    refs only resolve to a commit after the clone runs.  Fall back to
+    the URL ref when the source was never materialised.
     """
     from nab_index.vcs import VcsCloneError, VcsRequest
 
     from ..lockfile import VcsPin
 
-    try:
-        parsed = VcsRequest.parse(source.url)
-        commit_id = parsed.ref
-    except VcsCloneError:
-        commit_id = ""
+    if resolved_sha is not None:
+        commit_id = resolved_sha
+    else:
+        try:
+            parsed = VcsRequest.parse(source.url)
+            commit_id = parsed.ref
+        except VcsCloneError:
+            commit_id = ""
     return VcsPin(
         name=canonical,
         version=str(version),

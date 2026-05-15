@@ -425,6 +425,7 @@ class Provider:
         self.vcs_config = vcs_config or VcsConfig()
         self.local_sources = _sources.index_local_sources(self, local_sources or [])
         self.vcs_cache_dir = vcs_cache_dir
+        self.vcs_pins: dict[str, str] = {}
         self.vcs_sources = _sources.index_vcs_sources(self, vcs_sources or [])
 
         # default_environment() returns a TypedDict whose ``.items()`` view
@@ -1222,6 +1223,14 @@ class Provider:
     def vcs_source_for(self, canonical_name: str) -> VcsSource | None:
         """Return the VCS source registered under ``canonical_name`` or None."""
         return self.vcs_sources.get(canonicalize_name(canonical_name))
+
+    def vcs_pin_for(self, canonical_name: str) -> str | None:
+        """Return the post-clone commit SHA for ``canonical_name``, or None.
+
+        Written by :func:`~nab_python._provider.sources.materialize_vcs_source`
+        after the shallow clone resolves the ref to a 40-char SHA.
+        """
+        return self.vcs_pins.get(canonicalize_name(canonical_name))
 
     def dist_files_for(self, canonical_name: str, version: Version) -> list[DistFile]:
         """Return every distribution file the resolver saw at ``version``.

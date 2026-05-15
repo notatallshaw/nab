@@ -307,16 +307,14 @@ def _read_tar_sdist_files(data: bytes) -> tuple[str | None, str | None]:
 
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
         for member in tar:
-            if pkg_info is None and (
-                member.name.endswith("/PKG-INFO") or member.name == "PKG-INFO"
-            ):
+            depth, basename = _sdist_member_top_level(member.name)
+            if depth > 1:
+                continue
+            if pkg_info is None and basename == "PKG-INFO":
                 extracted = tar.extractfile(member)
                 if extracted is not None:
                     pkg_info = extracted.read().decode("utf-8")
-            elif pyproject_toml is None and (
-                member.name.endswith("/pyproject.toml")
-                or member.name == "pyproject.toml"
-            ):
+            elif pyproject_toml is None and basename == "pyproject.toml":
                 extracted = tar.extractfile(member)
                 if extracted is not None:
                     pyproject_toml = extracted.read().decode("utf-8")
@@ -325,6 +323,21 @@ def _read_tar_sdist_files(data: bytes) -> tuple[str | None, str | None]:
                 break
 
     return (pkg_info, pyproject_toml)
+
+
+def _sdist_member_top_level(name: str) -> tuple[int, str]:
+    """Return ``(depth, basename)`` for a tar member relative to the sdist root.
+
+    Strips a single leading ``./``.  Depth 0 means the file sits at the
+    archive root (rare); depth 1 means it sits directly under the
+    conventional ``<name>-<version>/`` top-level directory.  Anything
+    deeper is reported as-is so callers can ignore it.
+    """
+    stripped = name.removeprefix("./")
+    if not stripped or stripped.startswith("/"):
+        return (-1, "")
+    parts = stripped.split("/")
+    return (len(parts) - 1, parts[-1])
 
 
 def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
@@ -343,12 +356,17 @@ def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
     root: Path | None = None
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
         for member in tar:
-            member_name = member.name.lstrip("./")
+            raw_name = member.name
+            if not raw_name or raw_name.startswith(("/", "./.")) or "\\" in raw_name:
+                msg = f"unsafe sdist member: {raw_name!r}"
+                raise ValueError(msg)
+            member_name = raw_name.removeprefix("./")
             if not member_name or member_name.startswith("/"):
-                continue
+                msg = f"unsafe sdist member: {raw_name!r}"
+                raise ValueError(msg)
             parts = Path(member_name).parts
-            if any(p == ".." for p in parts):
-                msg = f"unsafe sdist member: {member.name!r}"
+            if any(p in ("..", "") for p in parts):
+                msg = f"unsafe sdist member: {raw_name!r}"
                 raise ValueError(msg)
             tar.extract(member, target_dir, filter="data")
             if root is None and member.isdir() and len(parts) == 1:

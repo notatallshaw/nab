@@ -42,15 +42,21 @@ class TestSplitVcsScheme:
         assert scheme == "git+ssh"
         assert inner == "ssh://git@github.com/foo/bar.git"
 
-    def test_bare_svn_keeps_url(self) -> None:
+    def test_bare_svn_refused(self) -> None:
         scheme, inner = split_vcs_scheme("svn://example.com/r")
-        assert scheme == "svn"
+        assert scheme is None
         assert inner == "svn://example.com/r"
 
-    def test_bare_git_keeps_url(self) -> None:
+    def test_bare_git_refused(self) -> None:
         scheme, inner = split_vcs_scheme("git://example.com/r.git")
-        assert scheme == "git"
+        assert scheme is None
         assert inner == "git://example.com/r.git"
+
+    def test_hg_https_refused(self) -> None:
+        url = "hg+https://hg.example.com/r"
+        scheme, inner = split_vcs_scheme(url)
+        assert scheme is None
+        assert inner == url
 
     def test_https_archive_returns_none(self) -> None:
         url = "https://example.com/pkg.whl"
@@ -254,3 +260,24 @@ class TestAdmitVcsUrlNonVcsRefusal:
         """Non-VCS direct URLs are refused before the BLOCK check."""
         with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
             admit_vcs_url("https://example.com/pkg.whl", VcsConfig())
+
+    def test_hg_url_refused(self) -> None:
+        with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
+            admit_vcs_url(
+                "hg+https://hg.example.com/r",
+                _allow_https(),
+            )
+
+    def test_svn_url_refused(self) -> None:
+        with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
+            admit_vcs_url(
+                "svn+https://svn.example.com/r",
+                _allow_https(),
+            )
+
+    def test_bzr_url_refused(self) -> None:
+        with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
+            admit_vcs_url(
+                "bzr+https://bzr.example.com/r",
+                _allow_https(),
+            )

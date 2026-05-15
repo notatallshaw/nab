@@ -299,6 +299,23 @@ def _emit_universal_requirements(
         _write_one_tuple_requirements(successful[0], output, with_hashes=with_hashes)
         return
 
+    substituted_paths: dict[str, str] = {}
+    for tr in successful:
+        substituted = template.format(
+            python_version=tr.tuple_.python_version,
+            platform_id=tr.tuple_.platform_id,
+        )
+        if substituted in substituted_paths:
+            sys.stderr.write(
+                "Error: tuples"
+                f" {substituted_paths[substituted]!r} and {tr.tuple_.label!r}"
+                f" both map to {substituted!r}; --output {output} is missing"
+                " a template variable to disambiguate.  Use both"
+                " {python_version} and {platform_id} in the path.\n"
+            )
+            sys.exit(1)
+        substituted_paths[substituted] = tr.tuple_.label
+
     for tr in successful:
         substituted = template.format(
             python_version=tr.tuple_.python_version,

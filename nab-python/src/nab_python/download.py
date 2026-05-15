@@ -136,29 +136,36 @@ async def _run_downloads(
     client = AsyncSimpleClient(transport)
     written: list[Path] = []
     skipped: list[Path] = []
+
+    async def _one(entry: DownloadEntry) -> None:
+        async with sem:
+            target = output_dir / entry.filename
+            if _already_present(target, entry.hash_algo, entry.digest):
+                skipped.append(target)
+                logger.info("skip %s (%s matches)", entry.filename, entry.hash_algo)
+                return
+            data = await client.download(entry.url)
+            actual = hashlib.new(entry.hash_algo, data).hexdigest()
+            if actual != entry.digest:
+                msg = (
+                    f"{entry.package}=={entry.version}: {entry.hash_algo}"
+                    f" mismatch for {entry.filename}\n"
+                    f"  expected: {entry.digest}\n  actual:   {actual}"
+                )
+                raise DownloadError(msg)
+            target.write_bytes(data)
+            written.append(target)
+            logger.info("wrote %s", target)
+
+    tasks = [asyncio.create_task(_one(a)) for a in artefacts]
     try:
-
-        async def _one(entry: DownloadEntry) -> None:
-            async with sem:
-                target = output_dir / entry.filename
-                if _already_present(target, entry.hash_algo, entry.digest):
-                    skipped.append(target)
-                    logger.info("skip %s (%s matches)", entry.filename, entry.hash_algo)
-                    return
-                data = await client.download(entry.url)
-                actual = hashlib.new(entry.hash_algo, data).hexdigest()
-                if actual != entry.digest:
-                    msg = (
-                        f"{entry.package}=={entry.version}: {entry.hash_algo}"
-                        f" mismatch for {entry.filename}\n"
-                        f"  expected: {entry.digest}\n  actual:   {actual}"
-                    )
-                    raise DownloadError(msg)
-                target.write_bytes(data)
-                written.append(target)
-                logger.info("wrote %s", target)
-
-        await asyncio.gather(*(_one(a) for a in artefacts))
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
     finally:
         await client.aclose()
     return DownloadResult(written=tuple(written), skipped=tuple(skipped))

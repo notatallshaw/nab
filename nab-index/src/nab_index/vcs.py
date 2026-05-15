@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # VCS-admission code in ``nab_python.provider`` shares one definition with
 # the clone-time validation in this module.
 FULL_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-_VCS_PREFIX_RE = re.compile(r"^(git|hg|bzr|svn)\+")
+_VCS_PREFIX_RE = re.compile(r"^git\+")
 
 
 class VcsCloneError(Exception):
@@ -90,7 +90,6 @@ class VcsRequest:
         if match is None:
             msg = f"not a recognised VCS URL: {url!r}"
             raise VcsCloneError(msg)
-        scheme = match.group(1)
         inner = url_no_frag[len(match.group(0)) :]
         repo, ref = _split_repo_ref(inner)
 
@@ -99,7 +98,7 @@ class VcsRequest:
             key, _, value = fragment_part.partition("=")
             if key == "subdirectory":
                 subdirectory = value
-        return cls(scheme=scheme, repo_url=repo, ref=ref, subdirectory=subdirectory)
+        return cls(scheme="git", repo_url=repo, ref=ref, subdirectory=subdirectory)
 
 
 def _split_repo_ref(inner: str) -> tuple[str, str]:
@@ -110,10 +109,17 @@ def _split_repo_ref(inner: str) -> tuple[str, str]:
     so branch names containing ``/`` (e.g. ``release/1.0``) survive.
     A ``user@`` in the authority section is left alone.
 
-    For the SSH shortcut form (``user@host:path``) there is no ref;
-    pip and uv require explicit ``@<ref>`` only on URL forms.
+    For the SSH shortcut form (``user@host:path[@<ref>]``), the first
+    ``:`` separates the auth+host from the path; an optional
+    ``@<ref>`` may follow the path.
     """
     if "://" not in inner:
+        if ":" not in inner:
+            return (inner, "")
+        host_part, _, path_part = inner.partition(":")
+        if "@" in path_part:
+            path_repo, _, ref = path_part.rpartition("@")
+            return (f"{host_part}:{path_repo}", ref)
         return (inner, "")
 
     scheme_part, _, rest = inner.partition("://")
@@ -196,14 +202,21 @@ def _resolve_sha(request: VcsRequest, *, require_pin: bool) -> str:
         msg = f"git ls-remote {request.repo_url} {target}: {exc}"
         raise VcsCloneError(msg) from exc
 
-    line = proc.stdout.strip().splitlines()
-    if not line:
+    lines = proc.stdout.strip().splitlines()
+    if not lines:
         msg = f"no ref {target!r} found at {request.repo_url}"
         raise VcsCloneError(msg)
 
-    sha = line[0].split()[0]
+    # ``git ls-remote`` advertises the tag-object SHA on the
+    # ``refs/tags/<name>`` line for annotated tags, with the peeled
+    # commit on a companion ``refs/tags/<name>^{}`` line.  Prefer the
+    # peeled commit so the lock pins a commit, not a tag object.
+    peeled = next((ln for ln in lines if ln.split()[-1].endswith("^{}")), None)
+    chosen = peeled if peeled is not None else lines[0]
+
+    sha = chosen.split()[0]
     if not FULL_GIT_SHA_RE.match(sha):
-        msg = f"unexpected ls-remote output: {line[0]!r}"
+        msg = f"unexpected ls-remote output: {chosen!r}"
         raise VcsCloneError(msg)
 
     return sha

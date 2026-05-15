@@ -131,11 +131,12 @@ def _linux_platform_tags(
     out = [f"manylinux_{major}_{m}_{arch}" for m in range(minor, -1, -1)]
     # Legacy aliases (PEPs 513/571/599).  These map to specific
     # glibc versions: manylinux1=2.5, manylinux2010=2.12,
-    # manylinux2014=2.17.  We include them when they're <= floor.
+    # manylinux2014=2.17.  Listed highest-glibc first so the output
+    # stays in install-preference order alongside the PEP 600 forms.
     legacy_aliases = [
-        ("manylinux1", (2, 5)),
-        ("manylinux2010", (2, 12)),
         ("manylinux2014", (2, 17)),
+        ("manylinux2010", (2, 12)),
+        ("manylinux1", (2, 5)),
     ]
     out.extend(
         f"{name}_{arch}" for name, lver in legacy_aliases if lver <= manylinux_floor

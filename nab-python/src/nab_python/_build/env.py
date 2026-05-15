@@ -117,7 +117,7 @@ class NabBuildEnv:
         self._requires = list(requires)
         self._config = config
         self._python_version = python_version
-        self._transport = transport_factory()
+        self._transport_factory = transport_factory
 
         self._tmpdir: tempfile.TemporaryDirectory[str] | None = None
         self._venv_path: Path | None = None
@@ -273,9 +273,13 @@ class NabBuildEnv:
             uploaded_prior_to=self._config.uploaded_prior_to,
             uploaded_prior_to_overrides=self._config.uploaded_prior_to_overrides,
         )
+        # download_lock closes its transport, and ``install`` may call
+        # this again for ``get_requires_for_build_wheel`` follow-ups;
+        # build a fresh transport each time.
+        transport = self._transport_factory()
         result = resolve_pyproject(
             synthetic,
-            self._transport,
+            transport,
             config=inner_config,
             python_version=self._python_version,
         )
@@ -298,7 +302,7 @@ class NabBuildEnv:
             )
             raise BuildEnvError(msg)
 
-        download_result = download_lock(result.lock_input, self._transport, wheel_dir)
+        download_result = download_lock(result.lock_input, transport, wheel_dir)
         # Both wheels and sdists are downloaded; only wheels feed
         # ``installer.install``.  The sdists are inert clutter under
         # the temp dir, cleaned up with the env.

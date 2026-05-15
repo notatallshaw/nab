@@ -1038,12 +1038,14 @@ class _FakeProvider:
         listings: dict[str, list[tuple[Version, WheelFile | SdistFile]]] | None = None,
         local_sources: dict[str, LocalSource] | None = None,
         vcs_sources: dict[str, VcsSource] | None = None,
+        vcs_pins: dict[str, str] | None = None,
         listing_indexes: dict[str, str] | None = None,
         dist_policy_overrides: dict[str, DistPolicy] | None = None,
     ) -> None:
         self._listings = listings or {}
         self._local = local_sources or {}
         self._vcs = vcs_sources or {}
+        self._vcs_pins = vcs_pins or {}
         self._dist_policy_overrides = dist_policy_overrides or {}
         self.coordinator = _FakeCoordinator(listing_indexes)
 
@@ -1052,6 +1054,9 @@ class _FakeProvider:
 
     def vcs_source_for(self, canonical: str) -> VcsSource | None:
         return self._vcs.get(canonical)
+
+    def vcs_pin_for(self, canonical: str) -> str | None:
+        return self._vcs_pins.get(canonical)
 
     def dist_files_for(
         self, canonical: str, version: Version
@@ -1213,6 +1218,25 @@ class TestBuildLockInputFromProvider:
         pin = lock_input.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.commit_id == "a" * 40
+
+    def test_vcs_source_prefers_resolved_sha_over_url_ref(self) -> None:
+        """The post-clone SHA on the provider wins over the URL's ``@<ref>``."""
+        resolved = "b" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url="git+https://example.com/r.git@v1.0",
+                ),
+            },
+            vcs_pins={"foo": resolved},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.commit_id == resolved
 
     def test_vcs_source_without_ref_yields_empty_commit(self) -> None:
         provider = _FakeProvider(
