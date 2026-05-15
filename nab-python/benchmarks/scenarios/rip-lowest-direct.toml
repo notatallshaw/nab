@@ -1,0 +1,121 @@
+# Resolver scenarios filed against prefix-dev/rip.
+
+[snowflake-connector-rip-156]
+# https://github.com/prefix-dev/rip/issues/156
+# rip panicked when sdist build failed for snowflake-connector-python==2.9.0.
+# nab does not build sdists, but the listing search still hits the same
+# version space. Useful as a backtracking baseline.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-01-20 14:00:00"
+requirements = ["snowflake-connector-python==2.9.0"]
+
+[rip-pandas-performance]
+# https://github.com/prefix-dev/rip/issues/25
+# pandas[performance] hits numerodnx metadata errors and gets slow; resolver-side
+# stress still worth benchmarking.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2023-09-28 17:56:01"
+requirements = ["pandas[performance]"]
+
+[rip-pandas-excel]
+# https://github.com/prefix-dev/rip/issues/24
+# pandas[excel] resolved to ancient 1.5.3; test reporter/backtracking preference.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2023-09-28 17:54:07"
+requirements = ["pandas[excel]"]
+
+[rip-apache-airflow-all]
+# https://github.com/prefix-dev/rip/issues/27
+# and https://github.com/prefix-dev/rip/issues/74
+# apache-airflow[all] is a torture test for every Python resolver.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-11-14 10:39:53"
+requirements = ["apache-airflow[all]"]
+
+[rip-apache-airflow-bare]
+# https://github.com/prefix-dev/rip/issues/75
+# resolvo panic on bare apache-airflow; captures that same backtracking region.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2023-11-14 10:44:44"
+requirements = ["apache-airflow"]
+
+[rip-apache-airflow-all-pinned]
+# https://github.com/prefix-dev/rip/issues/174
+# apache-airflow[all]==2.8.1 panic'd in rip; good backtracking baseline.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-01-26 20:00:00"
+requirements = ["apache-airflow[all]==2.8.1"]
+
+[rip-botocore-urllib3-latest]
+# https://github.com/prefix-dev/rip/issues/191
+# Near-duplicate of existing boto3-urllib3, at the time of rip's report.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-02 13:35:01"
+requirements = [
+    "urllib3>=2.2",
+    "botocore",
+]
+
+[rip-snowflake-connector-modern]
+# https://github.com/prefix-dev/rip/issues/156
+# Later datetime, same snowflake-connector-python==2.9.0 pin (sdist avoidance check).
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-06-01 14:00:00"
+requirements = ["snowflake-connector-python==2.9.0"]
+
+[rip-apache-airflow-all-modern]
+# https://github.com/prefix-dev/rip/issues/174 (re-run at 2025 index snapshot)
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-01-15 14:00:00"
+requirements = ["apache-airflow[all]==2.10.4"]
+
+[rip-botocore-urllib3-pinned]
+# https://github.com/prefix-dev/rip/issues/191
+# Companion to the original boto3-urllib3; pin urllib3 high, watch botocore backtrack.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-02 13:35:01"
+requirements = [
+    "urllib3==2.2.0",
+    "botocore>=1.30",
+]
+
+[rip-aiobotocore]
+# https://github.com/prefix-dev/rip/issues/191 (extended)
+# aiobotocore triples down on the botocore / urllib3 ceiling game.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-02 13:35:01"
+requirements = [
+    "aiobotocore",
+    "urllib3<2",
+]
+
+[rip-airflow-all-latest]
+# https://github.com/prefix-dev/rip/issues/74
+# Current-state test: apache-airflow[all] at a recent index snapshot.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-10-01 14:00:00"
+requirements = ["apache-airflow[all]"]

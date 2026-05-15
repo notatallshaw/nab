@@ -1,0 +1,107 @@
+# Workspaces
+
+> [!WARNING]
+> Workspace support is experimental. Discovery rules, member
+> validation, and the auto-promoted build policy may change.
+
+A workspace is a parent project whose `pyproject.toml` declares one
+or more in-tree members. When `nab lock` runs against a member (or
+the root itself), the resolver prefers the in-tree members over PyPI
+for any package whose canonical name matches a member's
+`[project].name`.
+
+## Declaring a workspace
+
+The workspace root carries a `[tool.nab.workspace]` table:
+
+```toml
+# /repo/pyproject.toml
+[tool.nab.workspace]
+members = [
+    "packages/core",
+    "packages/extras",
+    "tools/cli",
+]
+```
+
+`members` is a list of literal directory paths relative to the
+workspace root. Globs (`*`, `?`, `[`) are rejected; spell out each
+member.
+
+Every listed member must contain a `pyproject.toml` with a
+`[project].name`. Two members cannot share the same canonical name
+(`Foo_Bar` and `foo-bar` collide). Both raise
+`WorkspaceDiscoveryError` at config-parse time.
+
+## How discovery works
+
+When `nab lock <member>/pyproject.toml` is invoked, nab walks
+upwards from the member's directory looking for the first ancestor
+`pyproject.toml` that carries a `[tool.nab.workspace]` table. The
+member's own pyproject also counts: running `nab lock` at the root
+activates discovery the same way.
+
+The matched root's `members` list is then read and each member
+contributes a local source. The provider prefers those local
+sources over PyPI for any requirement whose canonical name matches.
+
+## Interaction with `[[tool.nab.local-sources]]`
+
+Explicit `[[tool.nab.local-sources]]` entries always win. When a
+workspace-discovered member shares a canonical name with an
+explicit entry, the discovered entry is dropped and the override is
+logged at INFO so it can be audited. Use this to point a workspace
+member at a checkout outside the tree without removing it from the
+`members` list.
+
+## Build policy floor
+
+Workspace members frequently declare `dynamic = ["version"]` or
+similar. nab promotes the active `[tool.nab].build-policy` to at
+least `build-local` whenever a workspace is in scope, so PEP 517
+metadata extraction runs even when the user-set policy is stricter.
+A policy that is already `build-local` or `build-remote` is left
+alone.
+
+## Example layout
+
+```
+/repo
+├── pyproject.toml          # carries [tool.nab.workspace]
+├── packages/
+│   ├── core/
+│   │   ├── pyproject.toml  # [project].name = "myorg-core"
+│   │   └── src/...
+│   └── extras/
+│       ├── pyproject.toml  # [project].name = "myorg-extras"
+│       └── src/...
+└── tools/
+    └── cli/
+        ├── pyproject.toml  # [project].name = "myorg-cli"
+        └── src/...
+```
+
+```toml
+# /repo/pyproject.toml
+[project]
+name = "myorg"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "myorg-core",
+    "myorg-extras",
+    "myorg-cli",
+]
+
+[tool.nab.workspace]
+members = [
+    "packages/core",
+    "packages/extras",
+    "tools/cli",
+]
+```
+
+`nab lock /repo/pyproject.toml` resolves the three workspace
+dependencies against the in-tree directories rather than fetching
+them from PyPI. Transitive dependencies of each member are still
+resolved through the configured indexes.

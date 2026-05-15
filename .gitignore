@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.hypothesis/
+.coverage*
+.ruff_cache/
+.hatch/
+docs/_build/
+
+*token*.txt
+*.pypirc
+.pypirc
+
+# Profiling artefacts.  By convention these live in `profiling/` at
+# the workspace root and never inside `docs/`, so the Sphinx build
+# never has to scan them.
+profiling/

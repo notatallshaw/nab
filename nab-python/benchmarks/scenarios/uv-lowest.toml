@@ -1,0 +1,1764 @@
+# Resolver scenarios filed against astral-sh/uv.
+#
+# Requirement sets that caused slow resolution, excessive
+# backtracking, wrong-version selection, or "no solution" errors in
+# uv.  Some have since been fixed upstream; the inputs are kept as
+# regression baselines.
+
+[boto3-urllib3]
+# https://github.com/astral-sh/uv/issues/1398 + rip #191 (same family)
+# Classic backtracking storm: urllib3 chosen high, then botocore upper
+# bound forces every minor of botocore to be tried.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2024-06-07 14:00:00"
+requirements = ["boto3", "urllib3<2"]
+
+[boto3-urllib3-transient]
+# https://github.com/astral-sh/uv/issues/1398
+# urllib3 upper bound surfaces only via dandi -> zarr-checksum -> boto3.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2023-10-01 14:00:00"
+requirements = [
+    "click >= 7.0",
+    "click-loglevel ~= 0.2",
+    "dandi >= 0.24.0",
+    "psutil ~= 5.9",
+    "pyyaml",
+    "selenium",
+]
+
+[numpy-numba]
+# https://github.com/astral-sh/uv/issues/6281#issuecomment-2316240724
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-08-28 14:00:00"
+requirements = ["numpy>=2.1,<2.2", "numba<=0.60,>0.1"]
+
+[numpy-umap-learn]
+# https://github.com/astral-sh/uv/issues/12060
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-03-12 14:00:00"
+requirements = ["numpy", "umap-learn"]
+
+[starlette-fastapi-pinned]
+# https://github.com/astral-sh/uv/issues/1575
+# Constrained version triggers ~30 candidates of fastapi look-ahead.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-17 14:00:00"
+requirements = ["starlette<=0.36.0", "fastapi<=0.115.2"]
+
+[svcs]
+# https://github.com/astral-sh/uv/issues/1575
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-02-17 14:00:00"
+requirements = [
+    "attrs>=21.3.0",
+    "svcs[tests,typing]",
+    "tox>4",
+    "httpx",
+]
+
+[sentry-rapid-json]
+# https://github.com/astral-sh/uv/issues/8157
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-10 14:00:00"
+requirements = [
+    "python-rapidjson<=1.20,>=1.4",
+    "sentry-kafka-schemas<=0.1.113,>=0.1.50",
+]
+
+[zamba]
+# https://github.com/astral-sh/uv/issues/3143
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2024-04-20 14:00:00"
+requirements = [
+    "appdirs",
+    "av",
+    "cloudpathlib[s3]",
+    "botocore>=1.34.0",
+    "ffmpeg-python",
+    "future",
+    "fvcore",
+    "gitpython",
+    "loguru",
+    "numpy",
+    "opencv-python-headless",
+    "openpyxl",
+    "pandas>=2.0.0",
+    "pandas_path",
+    "pqdm",
+    "pydantic<2.0.0",
+    "python-dotenv",
+    "pytorch-lightning>=2.0.0",
+    "pytorchvideo",
+    "scikit-learn",
+    "tensorboard",
+    "thop==0.0.31.post2005241907",
+    "timm",
+    "torch",
+    "torchinfo",
+    "torchvision>=0.10.0",
+    "tqdm",
+    "typer[all]",
+    "coverage",
+    "Pillow>=9.0.0",
+    "pytest",
+    "pytest-coverage",
+    "pytest-mock",
+    "wheel",
+]
+
+[old-web3]
+# https://github.com/astral-sh/uv/issues/4372
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-06-17 14:00:00"
+requirements = ["eth-typing", "numpy", "streamlit", "web3"]
+
+[uv-issue-17649]
+# https://github.com/astral-sh/uv/issues/17649
+# uv pins numpy too high then backtracks numba past the requires-python
+# floor, ending up at llvmlite 0.36.0 which only supports Python <3.10.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2026-01-21 21:48:28"
+requirements = [
+    "openai-whisper>=20250625",
+    "numpy>=1.26.4",
+]
+
+[uv-issue-16601-xinference]
+# https://github.com/astral-sh/uv/issues/16601
+# Loose huggingface-hub>=0.19.4 lets uv pin 1.0.1, then it backtracks
+# transformers down to 4.12.2 (2021) instead of revising huggingface-hub.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-11-05 14:52:13"
+requirements = ["xinference"]
+
+[uv-issue-16601-xinference-fixed]
+# https://github.com/astral-sh/uv/issues/16601
+# Same scenario with the upper bound on transformers added at top level.
+# Resolves an order of magnitude faster (~21ms vs ~1.6s).
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-11-05 14:52:13"
+requirements = ["xinference", "transformers>=4.40.0"]
+
+[uv-issue-18534-bokeh-panel]
+# https://github.com/astral-sh/uv/issues/18534
+# bokeh 3.9.0 + panel<1.8.10 falls back to panel 0.10.3 from the era
+# where panel had no upper bound on bokeh.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2026-03-17 22:42:26"
+requirements = ["bokeh", "panel<1.8.10"]
+
+[uv-issue-17257-trcli-jsonschema]
+# https://github.com/astral-sh/uv/issues/17257
+# Adding jsonschema==4.19.2 alongside trcli==1.12.5 pulls in older
+# openapi-spec-validator (0.5.5) when 0.7.2 satisfies both.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-12-29 22:03:09"
+requirements = ["trcli==1.12.5", "jsonschema==4.19.2"]
+
+[uv-issue-7881-xarray-complete]
+# https://github.com/astral-sh/uv/issues/7881
+# uv sync --extra=complete on xarray pulls in llvmlite 0.36.0 which
+# can't build on Python 3.11. pip resolves to 0.43.0.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-02 22:46:09"
+requirements = ["xarray[complete]"]
+
+[uv-issue-10664-umap-learn-numpy-pandas]
+# https://github.com/astral-sh/uv/issues/10664
+# Resolution depends on argument order: umap-learn,pandas,numpy fails
+# while umap-learn,numpy,pandas succeeds.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-01-16 02:12:58"
+requirements = ["umap-learn", "pandas", "numpy"]
+
+[uv-issue-9413-statsforecast]
+# https://github.com/astral-sh/uv/issues/9413
+# numba 0.53.1 pulls llvmlite 0.36.0 which fails the Python guard.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-11-25 10:08:56"
+requirements = ["numpy", "statsforecast"]
+
+[uv-issue-9898-llvmlite-fail]
+# https://github.com/astral-sh/uv/issues/9898
+# Direct llvmlite add fails to resolve to a wheel-only version.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2024-12-14 20:24:28"
+requirements = ["llvmlite"]
+
+[uv-issue-10828-aiohttp-langchain]
+# https://github.com/astral-sh/uv/issues/10828
+# 0.5.17 regression: async-timeout marker pulls langchain to 0.0.133
+# even though aiohttp + langchain should resolve cleanly to 0.3.15.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-01-21 21:40:47"
+requirements = ["aiohttp", "langchain"]
+
+[uv-issue-10473-pandas-numpy-pin]
+# https://github.com/astral-sh/uv/issues/10473
+# Pinning pandas==1.5.3 with numpy>=2.2.1 picks an incompatible numpy.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-01-10 16:59:42"
+requirements = [
+    "matplotlib>=3.10.0",
+    "numpy>=2.2.1",
+    "openpyxl>=3.1.5",
+    "pandas==1.5.3",
+    "scikit-learn>=1.6.1",
+]
+
+[uv-issue-3504-typer-spacy-py312]
+# https://github.com/astral-sh/uv/issues/3504
+# uv chooses older spacy/typer when 3.12 wheels exist for both.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-05-10 12:59:31"
+requirements = ["typer", "spacy"]
+
+[uv-issue-4333-jsonschema-reana-client]
+# https://github.com/astral-sh/uv/issues/4333
+# Specific to Python 3.12: combination triggers backtracking down to
+# snakemake==6.8.0 which can't build on 3.12.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-06-14 22:02:14"
+requirements = ["jsonschema>=3.0.0", "reana-client>=0.8.0"]
+
+[uv-issue-4333-recast-atlas-reana]
+# https://github.com/astral-sh/uv/issues/4333
+# Top-level alias of the same problem on Python 3.12.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-06-14 22:02:14"
+requirements = ["recast-atlas[reana]"]
+
+[uv-issue-12060-numpy-umap-learn-py311]
+# https://github.com/astral-sh/uv/issues/12060
+# Same family as #10664/#numpy-umap-learn but on Python 3.11.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-03-07 23:25:51"
+requirements = ["numpy", "umap-learn"]
+
+[uv-issue-11636-winpython]
+# https://github.com/astral-sh/uv/issues/11636
+# Full WinPython distribution dependency set, ~495 packages.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-02-19 20:01:16"
+requirements = [
+    "datashader",
+    "llvmlite",
+    "numba",
+    "scipy",
+    "scikit-learn",
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "bokeh",
+    "ipython",
+    "ipykernel",
+    "jupyterlab",
+    "notebook",
+    "sympy",
+    "statsmodels",
+    "xarray",
+    "dask",
+    "h5py",
+    "pyarrow",
+    "polars",
+    "pillow",
+    "scikit-image",
+    "imageio",
+    "tifffile",
+    "networkx",
+    "spyder",
+    "pyqt5",
+    "scrapy",
+    "requests",
+    "flask",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "pyzmq",
+    "tornado",
+    "pytest",
+    "hypothesis",
+    "black",
+    "ruff",
+    "mypy",
+    "isort",
+]
+
+[uv-issue-11726-textattack]
+# https://github.com/astral-sh/uv/issues/11726
+# uv installs ancient flair 0.6.1.post1 instead of 0.15.1 alongside
+# textattack and transformers[sentencepiece].
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-02-23 16:28:08"
+requirements = ["textattack", "transformers[sentencepiece]==4.49.0"]
+
+[uv-issue-9425-onnxruntime-py39]
+# https://github.com/astral-sh/uv/issues/9425
+# uv resolves to onnxruntime==1.20.1 which dropped Python 3.9 wheels;
+# 1.19.2 was the last version with 3.9 support.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2024-11-25 19:50:16"
+requirements = ["onnxruntime"]
+
+[uv-issue-14523-s3fs-calver]
+# https://github.com/astral-sh/uv/issues/14523
+# s3fs switched from SemVer to CalVer; without an explicit lower bound
+# uv picks 0.4.2 from 2018.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-07-09 15:23:44"
+requirements = ["s3fs"]
+
+[uv-issue-3326-dstack-all]
+# https://github.com/astral-sh/uv/issues/3326
+# uv installs dstack==0.10.5 (without the [all] extra) instead of 0.18.1.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-04-30 17:58:07"
+requirements = ["dstack[all]"]
+
+[uv-issue-2062-pyhf-tensorflow]
+# https://github.com/astral-sh/uv/issues/2062
+# uv picks tensorflow 2.11.1 + tensorflow-probability 0.20.1 (broken)
+# while pip picks 2.13.1 + 0.21.0 (working).
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2024-02-29 00:24:21"
+requirements = ["pyhf[all,test]"]
+
+[uv-issue-9840-tensorflow-py39]
+# https://github.com/astral-sh/uv/issues/9840
+# tensorflow-io-gcs-filesystem 0.37.1 has no Windows wheel; uv add
+# fails while uv pip install picks the Windows-friendly 0.31.0.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2024-12-12 14:09:33"
+requirements = ["tensorflow"]
+
+[uv-issue-12092-tensorflow-2_14]
+# https://github.com/astral-sh/uv/issues/12092
+# tensorflow==2.14 only ships dist-info, no actual package on macOS arm64.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-03-10 10:06:15"
+requirements = ["tensorflow==2.14"]
+
+[uv-issue-13568-protobuf-retina-face]
+# https://github.com/astral-sh/uv/issues/13568
+# Adding protobuf and retina-face simultaneously forces tensorflow==2.9.0
+# (no arm64 wheel). Adding tensorflow first works.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-05-21 09:12:43"
+requirements = ["protobuf", "retina-face"]
+
+[uv-issue-5046-colabfold-alphafold]
+# https://github.com/astral-sh/uv/issues/5046
+# Universal resolution produces a verbose conflict message and pins
+# numpy<1.26.0 due to disjoint jax + tensorflow constraints.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-07-14 14:42:14"
+requirements = ["colabfold[alphafold]==1.5.5"]
+
+[uv-issue-5796-element-calcium-imaging]
+# https://github.com/astral-sh/uv/issues/5796
+# Order of packages in install_requires changes uv resolution result;
+# pulls scikit-image 0.19.3 (no Python 3.12 support).
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-08-05 17:22:00"
+requirements = [
+    "datajoint",
+    "element-interface",
+    "ipykernel",
+    "matplotlib",
+    "ipywidgets",
+    "pyarrow",
+    "ruff",
+    "dandi",
+    "pynwb",
+    "scikit-image",
+    "dash",
+    "dash-extensions",
+    "plotly",
+    "pandas",
+]
+
+[uv-issue-12141-opentelemetry-asgi]
+# https://github.com/astral-sh/uv/issues/12141
+# Opentelemetry pin combined with the asgi instrumentation produces a
+# misleading "no version of opentelemetry-api==1.31.0" error.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-03-12 18:48:39"
+requirements = [
+    "opentelemetry-api==1.31.0",
+    "opentelemetry-instrumentation-asgi==0.52b0",
+]
+
+[uv-issue-7551-ansible-lint]
+# https://github.com/astral-sh/uv/issues/7551
+# uv sync vs uv pip compile pick different ansible-lint versions
+# (6.8.7 vs 24.9.0) for the same pyproject.toml.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-09-19 14:19:04"
+requirements = [
+    "ansible",
+    "ansible-core",
+    "ansible-pylibssh",
+    "hvac",
+    "jmespath",
+    "netaddr",
+    "paramiko",
+    "ansible-lint",
+    "icecream",
+    "ruff",
+]
+
+[uv-issue-7869-geojson-py312]
+# https://github.com/astral-sh/uv/issues/7869
+# uv add geojson==3.0.0 silently installs even though it's not 3.12-compatible.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-10-02 15:01:43"
+requirements = ["geojson==3.0.0"]
+
+[uv-issue-2538-uta-align-prerelease]
+# https://github.com/astral-sh/uv/issues/2538
+# Alpha release uta-align==0.3.0a5 not selected without --prerelease.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-03-19 03:25:27"
+requirements = ["uta-align==0.3.0a5"]
+
+[uv-issue-1659-airflow-242]
+# https://github.com/astral-sh/uv/issues/1659
+# apache-airflow==2.4.2 with constraints conflicts on swagger-ui-bundle.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2024-02-18 17:33:35"
+requirements = ["apache-airflow==2.4.2"]
+
+[uv-issue-4133-warehouse]
+# https://github.com/astral-sh/uv/issues/4133
+# Warehouse (PyPI's own backend) takes 3s to lock universally.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-06-07 15:41:13"
+requirements = [
+    "alembic>=0.7.0",
+    "alembic-postgresql-enum",
+    "Automat",
+    "argon2-cffi",
+    "b2sdk",
+    "Babel",
+    "bcrypt",
+    "boto3",
+    "celery[sqs]>=5.2.2,<5.3.2",
+    "celery-redbeat",
+    "certifi",
+    "click",
+    "cryptography",
+    "datadog>=0.19.0",
+    "disposable-email-domains",
+    "elasticsearch>=7.0.0,<7.11.0",
+    "elasticsearch_dsl>=7.0.0,<8.0.0",
+    "first",
+    "forcediphttpsadapter",
+    "github-reserved-names>=1.0.0",
+    "google-cloud-bigquery",
+    "google-cloud-storage",
+    "hiredis",
+    "html5lib",
+    "humanize",
+    "itsdangerous",
+    "Jinja2>=2.8",
+    "kombu[sqs]<5.3.2",
+    "limits",
+    "linehaul",
+    "lxml",
+    "mistune",
+    "msgpack",
+    "natsort",
+    "orjson",
+    "packaging>=23.2",
+    "packaging_legacy",
+    "paginate>=0.5.2",
+    "paginate_sqlalchemy",
+    "passlib>=1.6.4",
+    "premailer",
+    "psycopg[c]",
+    "pycurl",
+    "pydantic",
+    "pyqrcode",
+    "pyramid>=2.0",
+    "pymacaroons",
+    "pyramid_jinja2>=2.5",
+    "pyramid_mailer>=0.14.1",
+    "pyramid_openapi3>=0.17.1",
+    "pyramid_retry>=0.3",
+    "pyramid_rpc>=0.7",
+    "pyramid_services>=2.1",
+    "pyramid_tm>=0.12",
+    "python-slugify",
+    "pytz",
+    "PyJWT[crypto]>=2.8.0",
+    "readme-renderer[md]>=36.0",
+    "requests",
+    "requests-aws4auth",
+    "redis>=2.8.0,<6.0.0",
+    "rfc3986",
+    "sentry-sdk",
+    "setuptools",
+    "sqlalchemy[asyncio]>=2.0,<3.0",
+    "stdlib-list",
+    "stripe",
+    "structlog",
+    "transaction",
+    "trove-classifiers",
+    "ua-parser",
+    "urllib3<2",
+    "webauthn>=1.0.0,<3.0.0",
+    "whitenoise",
+    "WTForms[email]>=2.0.0",
+    "zope.sqlalchemy",
+    "zxcvbn",
+]
+
+[uv-issue-10438-airflow-2_3_4]
+# https://github.com/astral-sh/uv/issues/10438
+# Airflow 2.3.4 stress test driving offline 13s+ resolution.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2025-01-09 16:53:39"
+requirements = [
+    "apache-airflow[amazon,async,google,google_auth,grpc,hashicorp,http,ldap,mysql,odbc,pandas,postgres,redis,sftp,slack,ssh,statsd,virtualenv]==2.3.4",
+    "alembic>=1.8.1",
+    "ipython>=8.4.0",
+]
+
+[uv-issue-10344-airflow-py312]
+# https://github.com/astral-sh/uv/issues/10344
+# Airflow benchmark used to drive resolver-thread optimisations.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-01-07 09:24:34"
+requirements = [
+    "apache-airflow[amazon,async,google,google_auth,grpc,hashicorp,http,ldap,mysql,odbc,pandas,postgres,redis,sftp,slack,ssh,statsd,virtualenv]==2.3.4",
+    "alembic>=1.8.1",
+    "ipython>=8.4.0",
+]
+
+[uv-issue-1560-airflow-all]
+# https://github.com/astral-sh/uv/issues/1560
+# Original "uv backtracks all the way to apache-beam 2.2.0" reproducer.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-17 01:54:22"
+requirements = ["apache-airflow[all]"]
+
+[uv-issue-3078-airflow-2_8_4]
+# https://github.com/astral-sh/uv/issues/3078
+# Already covered in problematic.toml at 2024-04-17, this is a 2024-06
+# variant when more apache-beam versions had been published.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-06-15 14:00:00"
+requirements = ["apache-airflow[all]==2.8.4"]
+
+[uv-issue-3127-mqt-core]
+# https://github.com/astral-sh/uv/issues/3127
+# Recursive self-extras (mqt[test], mqt[coverage]) regressed in 0.1.33.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-04-18 22:06:39"
+requirements = [
+    "scikit-build-core[pyproject]==0.8.1",
+    "pytest>=7.0",
+    "pytest-cov>=4",
+]
+
+[uv-issue-13321-axolotl-stack]
+# https://github.com/astral-sh/uv/issues/13321
+# Big ML stack with vllm, transformers, axolotl extras and unsloth.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-05-06 22:13:25"
+# Sdist-only deps along the resolved path.  outlines-core (Rust),
+# sentencepiece (C++), and xformers (CUDA) need native toolchains;
+# the rest are pure Python.
+build_packages = [
+    "gpustat",
+    "outlines-core",
+    "ratelimit",
+    "sentencepiece",
+    "xformers",
+]
+requirements = [
+    "torch==2.6.0",
+    "torchvision",
+    "huggingface_hub[cli,torch]>=0.30.0",
+    "transformers>=4.51",
+    "evaluate>=0.4.0",
+    "datasets>=3.5.0",
+    "accelerate>=1.6.0",
+    "peft>=0.15.0",
+    "bitsandbytes>=0.45.0",
+    "trl>=0.17.0",
+    "unsloth",
+    "sentencepiece",
+    "openai",
+    "scikit-learn",
+    "scipy",
+    "jupyterlab",
+    "matplotlib",
+    "seaborn",
+    "gradio",
+    "wandb",
+    "nltk==3.9.1",
+    "pandas",
+    "tenacity",
+    "requests",
+    "aiohttp",
+    "ratelimit",
+    "importlib_resources",
+    "mypy",
+    "python-dotenv",
+    "nvitop",
+    "gpustat",
+    "vllm==0.8.5",
+]
+
+[uv-issue-12098-vllm-langchain]
+# https://github.com/astral-sh/uv/issues/12098
+# vllm + langchain combo resolves but vllm CLI ends up missing.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-03-10 16:16:57"
+requirements = [
+    "pandas>=2.2.3",
+    "ipykernel>=6.29.5",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.1",
+    "numpy>=2.2.3",
+    "seaborn>=0.13.2",
+    "pydantic-settings>=2.8.1",
+    "langchain>=0.3.20",
+    "langchain-openai>=0.3.8",
+    "langgraph>=0.3.5",
+    "langchain-community>=0.3.19",
+    "vllm>=0.1.2",
+]
+
+[uv-issue-9763-tensorrt-llm]
+# https://github.com/astral-sh/uv/issues/9763
+# tensorrt-llm install missing tensorrt_bindings.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-12-10 04:02:55"
+requirements = ["tensorrt_llm"]
+
+[uv-issue-13698-pytorch-ignite-torchrl]
+# https://github.com/astral-sh/uv/issues/13698
+# uv sync took 6m41s on Windows for this combination.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-05-28 09:28:24"
+requirements = [
+    "torch>=2.7",
+    "torchrl",
+    "tensordict",
+    "pytorch-ignite",
+    "scikit-learn",
+    "matplotlib",
+    "openpyxl",
+    "pandas",
+    "seaborn",
+    "tqdm",
+    "xlsxwriter",
+    "toml",
+]
+
+[uv-issue-14836-torch-py38]
+# https://github.com/astral-sh/uv/issues/14836
+# uv add torch on Python 3.8 errors instead of finding a compatible version.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2025-07-23 06:40:24"
+requirements = ["torch"]
+
+[uv-issue-2014-slow-resolution]
+# https://github.com/astral-sh/uv/issues/2014
+# Reference issue tracking "see which packages took long to resolve".
+# Test with a heavyweight ML stack to surface slow paths.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-02-27 13:53:23"
+requirements = [
+    "tensorflow",
+    "torch",
+    "jax",
+    "scikit-learn",
+    "scipy",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "statsmodels",
+]
+
+[uv-issue-6404-botocore-pin]
+# https://github.com/astral-sh/uv/issues/6404
+# botocore has 2000+ releases; pinning latest avoids backtracking storm.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-08-22 03:28:00"
+requirements = ["boto3", "botocore==1.35.3"]
+
+[uv-issue-3504-spacy-typer-py311]
+# https://github.com/astral-sh/uv/issues/3504
+# Same as 3504 above but on 3.11 to capture the older interpreter.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-05-10 12:59:31"
+requirements = ["typer", "spacy"]
+
+[uv-issue-13248-extra-index-latest]
+# https://github.com/astral-sh/uv/issues/13248
+# uv breaks with --extra-index-url on latest version when fetching nightly.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-01 06:51:37"
+requirements = [
+    "torch",
+    "torchvision",
+    "torchaudio",
+]
+
+[uv-issue-1641-pydantic-prerelease]
+# https://github.com/astral-sh/uv/issues/1641
+# pydantic<2.0.0 chooses 2.0b3 when prereleases are allowed.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-02-18 11:54:52"
+requirements = ["pydantic<2.0.0"]
+
+[uv-issue-1563-lowest-direct-upgrade]
+# https://github.com/astral-sh/uv/issues/1563
+# Combining --resolution=lowest-direct with --upgrade got stuck.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-02-17 02:48:11"
+requirements = ["sphinx", "myst-parser", "sphinx-rtd-theme"]
+
+[uv-issue-11418-pytorch-torch-cu124]
+# https://github.com/astral-sh/uv/issues/11418
+# torch 2.5.1 lock pin on cu124 fails on the wrong manylinux platform.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-02-11 11:44:09"
+requirements = ["torch>=2.5.1"]
+
+[uv-issue-10481-platform-markers]
+# https://github.com/astral-sh/uv/issues/10481
+# Many platform markers in pip compile output (0.5.8+).
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-01-10 22:36:45"
+requirements = [
+    "tensorboard",
+    "celery",
+    "kombu",
+    "boto3",
+    "pandas",
+    "redis",
+    "click",
+]
+
+[uv-issue-2477-manylinux-priority]
+# https://github.com/astral-sh/uv/issues/2477
+# Prioritising newest manylinux platform tags.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-03-15 17:27:57"
+requirements = ["numpy", "scipy", "pandas", "scikit-learn"]
+
+[uv-issue-9647-markupsafe-pytorch-cpu]
+# https://github.com/astral-sh/uv/issues/9647
+# markupsafe pulled from PyTorch CPU index; no platform-compatible wheel.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-12-04 20:13:16"
+requirements = [
+    "torch",
+    "torchvision",
+    "markupsafe",
+]
+
+[uv-issue-8128-accelerate-datasets]
+# https://github.com/astral-sh/uv/issues/8128
+# uv installs old datasets 2.x for accelerate's tests on Python 3.8.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2024-10-11 14:10:35"
+requirements = [
+    "accelerate",
+    "datasets>=3.0.0",
+    "torch",
+    "transformers",
+    "pytest",
+]
+
+[uv-issue-8054-click-extra-tabulate]
+# https://github.com/astral-sh/uv/issues/8054
+# Constraint conflict produces a confusing error message but still
+# represents a real-world resolution attempt.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-09 19:26:00"
+requirements = ["click-extra>=4.11.0"]
+constraints = ["tabulate==0.8.10"]
+
+[uv-issue-6907-sam2-pytorch]
+# https://github.com/astral-sh/uv/issues/6907
+# segment-anything-2 needs tqdm>=4.66.1 but pytorch 2.4.0 pinned 4.64.1.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-09-01 04:46:14"
+requirements = [
+    "torch==2.4.0",
+    "torchvision==0.19.0",
+    "tqdm>=4.66.1",
+]
+
+[uv-issue-6880-pytorch-system]
+# https://github.com/astral-sh/uv/issues/6880
+# uv sync downgrades torch from system 2.5.0a0 to 2.4.0 unexpectedly.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-08-30 16:40:47"
+requirements = [
+    "torch",
+    "transformers",
+    "accelerate",
+    "datasets",
+    "scipy",
+    "numpy",
+]
+
+[uv-issue-2560-old-torch-reinstall]
+# https://github.com/astral-sh/uv/issues/2560
+# uv reinstalls old version of torch unexpectedly.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-03-20 04:39:19"
+requirements = ["torch", "torchvision", "torchaudio"]
+
+[uv-issue-12507-kaleido-arm]
+# https://github.com/astral-sh/uv/issues/12507
+# uv add kaleido picks the armv7l-only 0.2.1.post1 on x86_64.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-03-27 07:42:55"
+requirements = ["kaleido"]
+
+[uv-issue-3710-confusing-error]
+# https://github.com/astral-sh/uv/issues/3710
+# Confusing resolver error message reproducer.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-05-21 17:49:43"
+requirements = [
+    "scikit-learn",
+    "tensorflow",
+    "torch",
+    "jax",
+]
+
+[uv-issue-6038-unsatisfiable-compile]
+# https://github.com/astral-sh/uv/issues/6038
+# uv pip compile possibly generating an unsatisfiable requirements file.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-08-12 16:24:33"
+requirements = [
+    "django",
+    "django-stubs",
+    "celery",
+    "redis",
+    "psycopg",
+]
+
+[uv-issue-9711-no-sdist]
+# https://github.com/astral-sh/uv/issues/9711
+# Tracking issue: package without source distribution gets an "incomplete"
+# resolution. Test with a sample requiring sdist fallback.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2024-12-07 20:46:40"
+requirements = [
+    "pyarrow",
+    "duckdb",
+    "polars",
+]
+
+[uv-issue-4640-divergent-constraints]
+# https://github.com/astral-sh/uv/issues/4640
+# Universal resolver fails when multiple divergent constraints are provided.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-06-28 23:14:30"
+requirements = [
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "tensorflow>=2.13",
+    "torch>=2.0",
+    "jax>=0.4.20",
+]
+
+[uv-issue-4669-narrow-requires-python]
+# https://github.com/astral-sh/uv/issues/4669
+# Narrowing requires-python in forks; tests fork pruning logic.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2024-06-30 21:30:07"
+requirements = [
+    "numpy>=1.20",
+    "scipy>=1.7",
+    "scikit-learn",
+]
+
+[uv-issue-5618-marker-self-dependency]
+# https://github.com/astral-sh/uv/issues/5618
+# Error messages expose dependency relationship between a and a{marker}.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-07-30 17:43:33"
+requirements = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "starlette",
+]
+
+[uv-issue-6125-python-marker-simplify]
+# https://github.com/astral-sh/uv/issues/6125
+# python_version and python_full_version should be simplified together.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-08-15 18:49:41"
+requirements = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "torch",
+]
+
+[uv-issue-8492-fork-wheel-range]
+# https://github.com/astral-sh/uv/issues/8492
+# Fork when wheels only support a specific range.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-10-23 09:03:41"
+requirements = [
+    "pyarrow",
+    "numpy>=1.26",
+    "pandas>=2",
+]
+
+[uv-issue-10042-tensorflow-macos]
+# https://github.com/astral-sh/uv/issues/10042
+# Unable to import tensorflow after uv install on macOS.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-12-19 21:37:09"
+requirements = ["tensorflow"]
+
+[uv-issue-13073-source-conflict]
+# https://github.com/astral-sh/uv/issues/13073
+# Source ignored with extra/group when conflict table is present.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-04-23 19:27:24"
+requirements = [
+    "torch",
+    "torchvision",
+    "transformers[torch]",
+    "accelerate",
+]
+
+[uv-issue-15310-pyside6-fallback]
+# https://github.com/astral-sh/uv/issues/15310
+# UV cannot fall back to compatible PySide6 installation.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-08-15 14:14:04"
+requirements = ["PySide6"]
+
+[uv-issue-13710-uv-run-deletes-venv]
+# https://github.com/astral-sh/uv/issues/13710
+# Edge-case requirement set that triggered venv deletion (now fixed).
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-05-28 21:26:37"
+requirements = ["fastapi", "uvicorn[standard]"]
+
+[uv-issue-15116-override-invalid]
+# https://github.com/astral-sh/uv/issues/15116
+# Override gives invalid resolution.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-08-06 19:23:00"
+requirements = [
+    "tensorflow>=2.13",
+    "tensorboard",
+    "protobuf",
+]
+
+[uv-issue-1854-conflict-source]
+# https://github.com/astral-sh/uv/issues/1854
+# Show the source of conflicting dependencies (older but representative).
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-02-22 04:20:07"
+requirements = [
+    "boto3",
+    "botocore<1.34",
+    "s3transfer",
+]
+
+[uv-issue-3716-pinned-incompatible]
+# https://github.com/astral-sh/uv/issues/3716
+# Avoid reference to root when pinned requirements are incompatible.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-05-21 18:51:29"
+requirements = [
+    "django==4.2",
+    "django<4.0",
+]
+
+[uv-issue-12802-version-not-found]
+# https://github.com/astral-sh/uv/issues/12802
+# uv pip install should show available versions when required version
+# doesn't exist.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-04-10 10:15:23"
+requirements = ["numpy==999.999.999"]
+
+[uv-issue-9123-impossible-py-version]
+# https://github.com/astral-sh/uv/issues/9123
+# --exclude-newer warning on impossible Python versions.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2024-11-14 16:53:16"
+requirements = ["numpy", "pandas", "scipy"]
+
+[uv-issue-1538-self-optional]
+# https://github.com/astral-sh/uv/issues/1538
+# Error if a package depends on itself via an optional group at wrong version.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-16 20:20:04"
+requirements = [
+    "pip-tools",
+    "pip-tools[testing]",
+]
+
+[uv-issue-2065-constraint-cause]
+# https://github.com/astral-sh/uv/issues/2065
+# Confusing error when a constraint is the cause of not finding a version.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-29 00:31:17"
+requirements = ["jinja2>=3"]
+constraints = ["jinja2<3"]
+
+[uv-issue-7889-resolution-local]
+# https://github.com/astral-sh/uv/issues/7889
+# Add --resolution=local for projects supporting wide Python ranges.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2024-10-03 08:04:35"
+requirements = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+]
+
+[uv-issue-8377-show-versions]
+# https://github.com/astral-sh/uv/issues/8377
+# Show available versions when pip install package==x.y.z is unsatisfiable.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-20 06:39:33"
+requirements = ["requests==99.0.0"]
+
+[uv-issue-5043-requires-python-extra]
+# https://github.com/astral-sh/uv/issues/5043
+# Requires-python causality only half-explained when an extra is involved.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2024-07-14 14:05:12"
+requirements = ["fastapi[all]"]
+
+[uv-issue-9886-confusing-python]
+# https://github.com/astral-sh/uv/issues/9886
+# Confusing Python requirement statement in resolver error.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-12-13 21:11:16"
+requirements = [
+    "scipy",
+    "scikit-learn",
+    "numpy>=2",
+]
+
+[uv-issue-10473-pandas-numpy-secondary]
+# https://github.com/astral-sh/uv/issues/10473
+# Same combo with looser pin as a comparison.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-01-10 16:59:42"
+requirements = [
+    "matplotlib",
+    "numpy",
+    "openpyxl",
+    "pandas==1.5.3",
+    "scikit-learn",
+]
+
+[uv-issue-6141-old-version-warn]
+# https://github.com/astral-sh/uv/issues/6141
+# Warn when backtracking to a very old version of a package.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2024-08-16 03:21:41"
+requirements = [
+    "numba",
+    "numpy",
+    "scipy",
+]
+
+[uv-issue-7035-old-build-failure]
+# https://github.com/astral-sh/uv/issues/7035
+# Special-case error messages when build fails on a very old version.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-09-04 17:00:32"
+requirements = ["numpy<1.20"]
+
+[uv-issue-12276-validate-locked]
+# https://github.com/astral-sh/uv/issues/12276
+# Validate locked versions against constraints in lock file.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-03-18 12:15:25"
+requirements = [
+    "django>=5",
+    "django-rest-framework",
+]
+
+[uv-issue-13218-flair-textattack]
+# https://github.com/astral-sh/uv/issues/11726
+# Slimmed flair + textattack combo, kept separately for direct compare.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-02-23 16:28:08"
+requirements = [
+    "flair",
+    "textattack",
+    "transformers",
+]
+
+[uv-issue-1235-display-versions]
+# https://github.com/astral-sh/uv/issues/1235
+# Improve display of conclusions after enumerating available versions.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-02-02 18:02:57"
+requirements = [
+    "lxml<4",
+    "scrapy",
+]
+
+[uv-issue-9425-onnxruntime-gpu]
+# https://github.com/astral-sh/uv/issues/9425
+# Variant including onnxruntime-gpu instead.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2024-11-25 19:50:16"
+requirements = ["onnxruntime", "onnxruntime-gpu"]
+
+[uv-issue-5260-403-backtrack]
+# https://github.com/astral-sh/uv/issues/5260
+# uv pip resolver should be able to backtrack on 403.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-07-21 16:29:25"
+requirements = [
+    "transformers",
+    "torch",
+    "datasets",
+]
+
+[uv-issue-10473-numpy26]
+# https://github.com/astral-sh/uv/issues/10473
+# Same family with numpy 2.6 floor (still incompatible with old pandas).
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-01-10 16:59:42"
+requirements = [
+    "matplotlib>=3.10.0",
+    "numpy",
+    "openpyxl>=3.1.5",
+    "pandas==1.5.3",
+    "scikit-learn",
+]
+
+[uv-issue-1206-prefetch-lock]
+# https://github.com/astral-sh/uv/issues/1206
+# Prefetch all dependencies when resolving with a lockfile.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-01-31 15:48:30"
+requirements = [
+    "fastapi",
+    "uvicorn",
+    "sqlalchemy",
+    "alembic",
+    "psycopg2-binary",
+    "redis",
+    "celery",
+    "pydantic",
+]
+
+[uv-issue-2700-pydantic-rebuild]
+# https://github.com/astral-sh/uv/issues/4473
+# Pydantic with PDM dev-dependencies copied to optional-dependencies.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-06-24 13:52:18"
+requirements = [
+    "pydantic-core",
+    "annotated-types",
+    "pytest",
+    "hypothesis",
+    "mypy",
+    "pyright",
+    "ruff",
+    "coverage[toml]",
+    "devtools",
+    "rich",
+    "email-validator",
+    "dirty-equals",
+]
+
+[uv-issue-15201-elide-versions]
+# https://github.com/astral-sh/uv/issues/15201
+# Elide list of versions in error messages, e.g. by using exclusive ranges.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-08-10 11:51:18"
+requirements = [
+    "pandas==99",
+]
+
+[uv-issue-11506-respect-python]
+# https://github.com/astral-sh/uv/issues/11506
+# uv pip install does not respect the python version specified in pyproject.toml.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-02-14 11:29:28"
+requirements = ["jax>=0.4.33"]
+
+[uv-issue-15060-platform-machine]
+# https://github.com/astral-sh/uv/issues/15060
+# platform_machine environment marker not handled correctly.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-08-04 14:28:52"
+requirements = [
+    "torch",
+    "torchvision",
+]
+
+[uv-issue-6038-django-stubs]
+# https://github.com/astral-sh/uv/issues/6038
+# Variant with django-stubs that creates platform-specific conflicts.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-08-12 16:24:33"
+requirements = [
+    "django>=4.2",
+    "django-stubs[compatible-mypy]>=4.2",
+    "djangorestframework",
+    "djangorestframework-stubs",
+    "mypy",
+]
+
+[uv-issue-12511-no-usable-wheels]
+# https://github.com/astral-sh/uv/issues/12511
+# python-nvd3 with --only-binary=":all:" produces extra requirements.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-03-27 16:39:21"
+requirements = ["python-nvd3>=0.15.0"]
+
+[uv-issue-12060-numpy-floor]
+# https://github.com/astral-sh/uv/issues/12060
+# Same as before but with numpy explicit floor.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-03-07 23:25:51"
+requirements = ["numpy", "umap-learn==0.5.7"]
+
+[uv-issue-1419-upgrade-all]
+# https://github.com/astral-sh/uv/issues/1419
+# Upgrade-all behaviour stress test (large stable env).
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-16 03:48:14"
+requirements = [
+    "django",
+    "djangorestframework",
+    "celery",
+    "redis",
+    "boto3",
+    "psycopg2",
+    "pillow",
+    "pytest",
+    "pytest-django",
+    "factory-boy",
+    "faker",
+    "requests",
+    "click",
+    "pyyaml",
+]
+
+# ----------------------------------------------------------------------
+# Posts that need pip features nab does not model.
+#
+# vcs_dependencies        - "@ git+https://..." in requirements
+# url_dependencies        - direct .whl / .tar.gz URL in requirements
+# multiple_indexes        - --extra-index-url, --find-links
+# project_install         - pip install . / -e .
+# universal_resolution    - resolution must hold across platforms
+# prerelease              - --pre or pin to .devN / .rcN
+# build_dependencies      - sdist build inputs (e.g. cython, numpy)
+# python_version_range    - resolution covering multiple python versions
+#
+# [so-flax-t5x-75755923]
+# https://stackoverflow.com/q/75755923
+# vcs_dependencies (flax + t5x git URLs)
+#
+# [so-jax-cuda-find-links-75802128]
+# https://stackoverflow.com/q/75802128
+# multiple_indexes (jax[cuda] --find-links)
+#
+# [so-rocm-torch-pytorch-discuss-106319]
+# https://discuss.python.org/t/error-resolutionimpossible-runtimeerror-couldnt-install-torch/106319
+# multiple_indexes (--index-url to ROCm nightlies)
+#
+# [so-django-graphql-jwt-find-links-70457186]
+# https://stackoverflow.com/q/70457186
+# multiple_indexes (--find-links wheels) + project_install
+#
+# [so-pdm-backend-pkg-a-pkg-b-77178883]
+# https://stackoverflow.com/q/77178883
+# project_install (two local packages depending on each other)
+#
+# [so-paddlepaddle-find-links-77252186]
+# https://stackoverflow.com/q/77252186
+# multiple_indexes (paddlepaddle.org.cn extra index)
+#
+# [so-fbprophet-cmdstanpy-78537317]
+# https://stackoverflow.com/q/78537317
+# build_dependencies (fbprophet sdist needs pystan/cython)
+#
+# [discuss-pytorch-3-13-106319]
+# https://discuss.python.org/t/unable-to-install-pytorch-on-python-3-13
+# python_version_range / prerelease (torch nightly only)
+#
+# [so-keras-conda-vs-pip-76244638]
+# https://stackoverflow.com/q/76244638
+# build_dependencies + multiple_indexes (conda + pip mixed env)
+
+
+# ============================================================================
+# Migrated from unsupported.toml (2026-04-27).  These were filed against
+# original tool-specific features (uv universal resolution, multi-index,
+# --pre flag, project install) but the requirement list itself is a valid
+# single-platform PyPI input that nab can resolve.  Scenarios marked with
+# allow_prereleases = true require pre-release pinning to find a candidate.
+# ============================================================================
+
+[uv-pyspark-resolution]
+# https://github.com/astral-sh/uv/issues/15293
+# Originally a uv universal-resolution failure across platforms; the
+# single-platform Linux input is a plain `pyspark` resolve.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-08-12 14:00:00"
+requirements = ["pyspark"]
+
+[uv-issue-9988-platform-pytorch]
+# https://github.com/astral-sh/uv/issues/9988
+# Two torch lines guarded by sys_platform/platform_machine markers.
+# On Linux x86_64 only the second branch (torch>1.13) activates.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-12-18 03:35:04"
+requirements = [
+    "torch>1.13,<2.3; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "torch>1.13; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+]
+
+[uv-issue-11151-pypy-marker]
+# https://github.com/astral-sh/uv/issues/11151
+# vcrpy gated by platform_python_implementation != 'PyPy'; on host
+# CPython both reqs are active.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-02-01 11:04:48"
+requirements = [
+    "urllib3==2.3.0",
+    "vcrpy==7.0.0 ; platform_python_implementation != 'PyPy'",
+]
+
+[uv-issue-12797-torch-add]
+# https://github.com/astral-sh/uv/issues/12797
+# Originally a `uv add torch` index-selection issue; resolving plain
+# `torch` against PyPI is a valid bench input.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-04-10 01:57:09"
+requirements = ["torch"]
+
+[uv-issue-9395-prerelease-sync]
+# https://github.com/astral-sh/uv/issues/9395
+# Originally needed --prerelease=allow.  At the chosen datetime PyPI
+# already exposes stable torch + torchvision, so plain inputs resolve.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-12-04 14:00:00"
+requirements = ["torch", "torchvision"]
+
+[uv-issue-14269-torch-pep517]
+# https://github.com/astral-sh/uv/issues/14269
+# Originally a PEP 517 source-build issue; the requirement list is a
+# realistic torch dev environment that resolves wheel-only on PyPI.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-06-26 09:13:40"
+requirements = [
+    "torch",
+    "setuptools>=62.3.0",
+    "wheel",
+    "astunparse",
+    "cmake>=3.27",
+    "ninja",
+    "numpy",
+    "pyyaml",
+    "requests",
+    "typing-extensions>=4.10.0",
+]
+
+[uv-issue-18298-playwright-required]
+# https://github.com/astral-sh/uv/issues/18298
+# Originally a uv universal-resolution issue; plain `playwright` on
+# Linux/3.11 is a small bench input.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2026-03-05 02:55:12"
+requirements = ["playwright"]
+
+[uv-issue-11636-llvmlite-prerelease]
+# https://github.com/astral-sh/uv/issues/11636
+# llvmlite==0.44.0 only exists as a pre-release on PyPI at the chosen
+# date; needs allow_prereleases to find a candidate.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-02-19 20:01:16"
+allow_prereleases = true
+requirements = ["llvmlite==0.44.0"]
+
+[uv-tensorflow-macos]
+# https://github.com/astral-sh/uv/issues/13568
+# Cross-platform resolution where tensorflow has different markers
+# on macOS vs Linux. Now resolvable via Phase A impersonation.
+resolution = "lowest"
+python_version = "3.11"
+datetime = "2025-06-09 14:00:00"
+requirements = ["tensorflow"]
+[uv-tensorflow-macos.marker_environment]
+platform_system = "Darwin"
+sys_platform = "darwin"
+platform_machine = "arm64"
+
+[uv-issue-8601-jax-py-marker]
+# https://github.com/astral-sh/uv/issues/8601
+# jax marker python_version >= "3.10" evaluates False on python 3.9 so
+# the resolution is empty.  Single-tuple impersonation: just records that
+# the marker correctly does not activate.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2024-10-27 01:41:35"
+requirements = [
+    'jax>=0.4.33;python_version>="3.10"',
+]
+
+[uv-issue-11664-pywin32-environments]
+# https://github.com/astral-sh/uv/issues/11664
+# pywin32 marker sys_platform == 'win32' is now exercised via Phase A
+# impersonation (a single-tuple Windows resolve from any host).
+resolution = "lowest"
+python_version = "3.12"
+datetime = "2025-02-20 12:19:21"
+requirements = [
+    "pywin32; sys_platform == 'win32'",
+]
+[uv-issue-11664-pywin32-environments.marker_environment]
+platform_system = "Windows"
+sys_platform = "win32"
+os_name = "nt"
+platform_machine = "AMD64"
+
+[uv-add-torch-pytorch-index]
+# https://github.com/astral-sh/uv/issues/12797
+# torch resolution from a custom PyTorch CPU index alongside PyPI.
+# Resolvable via the multi-index runner: torch is listed on both
+# PyPI and the PyTorch CPU index; presence-based first-index picks
+# PyPI (the first entry).
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-04-10 14:00:00"
+requirements = ["torch"]
+[[uv-add-torch-pytorch-index.indexes]]
+name = "pypi"
+url = "https://pypi.org/simple/"
+[[uv-add-torch-pytorch-index.indexes]]
+name = "torch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+
+[uv-issue-16111-jax-extra-index]
+# https://github.com/astral-sh/uv/issues/16111
+# jax / jaxlib <= 0.3.15 are not on PyPI for Python 3.9 (Google's
+# legacy storage bucket index).  Adding the legacy bucket as a
+# secondary index lets presence-based first-index fall through to it
+# for jax / jaxlib while staying on PyPI for everything else.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2025-10-03 07:39:25"
+requirements = [
+    "numpy >= 1.20.2,<1.24.4",
+    "scipy >= 1.6.0,<1.11.1",
+    "absl-py >= 0.12.0",
+    "gdown >= 3.12.2",
+    "tqdm >= 4.60.0",
+    "flax >= 0.3.5",
+    "jax <=0.3.15",
+    "jaxlib <= 0.3.15",
+    "ml_collections >= 0.1.0",
+    "optax >= 0.0.6,<0.1.5",
+    "tensorboard < 2.15",
+    "tensorflow-probability == 0.17.0",
+    "imageio >= 2.9.0",
+    "imageio-ffmpeg >= 0.4.3",
+    "wandb<0.19.12",
+    "tensorboardX",
+    "cython <3, >=0.29",
+    "chex==0.1.5",
+]
+[[uv-issue-16111-jax-extra-index.indexes]]
+name = "pypi"
+url = "https://pypi.org/simple/"
+[[uv-issue-16111-jax-extra-index.indexes]]
+name = "jax-legacy"
+url = "https://storage.googleapis.com/jax-releases/jax_releases.html"
+
+[uv-issue-18278-h5py-myproject-style]
+# https://github.com/astral-sh/uv/issues/18278
+# zhqrbitee / 2026-03-03: order-dependent resolution; reduces to h5py
+# 3.15.x + scientific stack DFS shape.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Darwin"
+datetime = "2026-03-03 20:46:35"
+requirements = ["h5py>=3.14.0", "scipy", "pandas"]
+
+[uv-issue-18533-u8darts-sklearn]
+# https://github.com/astral-sh/uv/issues/18533
+# Adding scikit-learn>=1.6.0 silently downgrades u8darts from 0.41 to
+# 0.39 with --resolution=highest.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Darwin"
+datetime = "2026-03-17 22:32:57"
+requirements = ["u8darts>=0.39.0", "scikit-learn>=1.6.0"]
+
+[uv-issue-18440-pytorch-rocm-pypi-only]
+# https://github.com/astral-sh/uv/issues/18440
+# PyPI-only variant of the ROCm scenario in unsupported.toml.  uv
+# 0.10.9 spent 3m52s resolving 34 pkgs for torch nightly + diffusers.
+resolution = "lowest"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2026-03-13 09:33:36"
+requirements = [
+    "torch>=2.12.dev0",
+    "torchvision>=0.26.0.dev0",
+    "diffusers",
+]

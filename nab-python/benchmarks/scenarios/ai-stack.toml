@@ -1,0 +1,808 @@
+# AI / RAG / LLM-app stack scenarios.
+#
+# HuggingFace transformers / datasets / diffusers, langchain /
+# langgraph / llama-index / autogen, vllm, vector DBs (chroma,
+# pinecone, weaviate), and RAG recipes.  Tight minor-version
+# constraints across the family cause heavy backtracking on releases.
+
+[open-r1]
+# https://github.com/huggingface/open-r1/issues/668
+# Core deps of HuggingFace open-r1 (without their git deps).
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-29 08:33:51"
+# deepspeed at this version is sdist-only; uv builds it.  nab needs
+# a native CUDA toolchain to build it locally and benchmarks may
+# fail at build time on a stripped-down CI host -- the override
+# documents the requirement.
+build_packages = ["deepspeed"]
+requirements = [
+    "accelerate==1.4.0",
+    "bitsandbytes>=0.43.0",
+    "datasets>=3.2.0",
+    "deepspeed==0.16.8",
+    "einops>=0.8.0",
+    "hf_transfer>=0.1.4",
+    "huggingface-hub[cli]>=0.30.2,<1.0",
+    "liger-kernel>=0.5.10",
+    "math-verify==0.5.2",
+    "torch>=2.5.0",
+    "transformers>=4.51.0",
+    "trl>=0.16.0",
+    "vllm>=0.7.3",
+    "wandb>=0.19.1",
+]
+
+# -----------------------------------------------------------------------
+# HuggingFace family
+# -----------------------------------------------------------------------
+
+[langchain-huggingface-docs]
+# https://github.com/langchain-ai/langchain/issues/35060
+# Latest langchain-huggingface 1.2.x + transformers 5.1+ chain triggers
+# ResolutionImpossible around huggingface_hub 0.36 vs 1.14.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2026-02-07 11:49:57"
+requirements = [
+    "langchain-huggingface",
+    "transformers>=5.1.0",
+    "sentence-transformers>=5.2.0",
+    "huggingface_hub>=1.0.0",
+]
+
+[langchain-huggingface-old-hub]
+# https://github.com/langchain-ai/langchain/issues/35060 (variant)
+# User forced the older hub, pip backtracks deep.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-11-05 14:00:00"
+requirements = [
+    "langchain-huggingface",
+    "huggingface_hub==0.36.2",
+    "transformers",
+]
+
+[transformers-numpy2-tf]
+# https://github.com/huggingface/transformers/issues/32055
+# transformers with tensorflow + numpy>=2 triggers a cascade backtrack
+# because tf / faiss still want numpy<2 in this window.
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-07-18 12:57:49"
+requirements = [
+    "transformers",
+    "tensorflow",
+    "numpy>=2.0.0",
+    "soxr",
+    "faiss-cpu",
+]
+
+[transformers-bnb-torch-peft]
+# https://github.com/huggingface/transformers/issues/44279
+# Kaggle-style reinstall loop: torch pinned old, bitsandbytes new, peft
+# new, datasets new on numpy<2. pip backtracks through every torch.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2026-02-25 13:09:17"
+requirements = [
+    "numpy<2.0.0",
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "torchaudio==2.6.0",
+    "bitsandbytes==0.49.2",
+    "transformers",
+    "accelerate",
+    "peft",
+    "huggingface_hub",
+    "datasets",
+    "pyarrow",
+    "sentence-transformers",
+    "evaluate",
+    "rouge_score",
+    "bert-score",
+]
+
+[datasets-pyarrow-cudf]
+# https://github.com/huggingface/datasets/issues/7112
+# datasets>=2.19 wants pyarrow>=15, cudf wants <15, ibis-framework wants
+# <16 -> pip's resolver oscillates.
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-08-20 08:13:55"
+requirements = [
+    "accelerate>=0.16.0",
+    "torchvision",
+    "transformers>=4.25.1",
+    "datasets>=2.19.1",
+    "peft==0.7.0",
+    "cudf-cu12==24.4.1",
+    "ibis-framework==8.0.0",
+]
+
+[datasets-fsspec-2024-9]
+# https://github.com/huggingface/datasets/issues/7190
+# datasets 3.0.1 pins fsspec<=2024.6; user pinned 2024.9 -> impossible.
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-10-02 16:43:46"
+requirements = ["datasets==3.0.1", "fsspec==2024.9.0"]
+
+[open-r1-resolution-too-deep]
+# https://github.com/huggingface/open-r1/issues/668
+# User reports "error: resolution-too-deep" on open-r1 install.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-29 08:33:51"
+requirements = [
+    "accelerate>=1.4.0",
+    "bitsandbytes>=0.43.0",
+    "datasets>=3.2.0",
+    "deepspeed>=0.16.0",
+    "einops>=0.8.0",
+    "hf_transfer>=0.1.4",
+    "huggingface-hub[cli]>=0.30.2,<1.0",
+    "lighteval",
+    "math-verify",
+    "torch>=2.5.0",
+    "transformers>=4.50.0",
+    "trl>=0.16.0",
+    "vllm>=0.7.3",
+    "wandb>=0.19.1",
+]
+
+[open-r1-dev-stuck]
+# https://github.com/huggingface/open-r1/issues/676
+# "Stuck resolving dependencies" on open-r1[dev] around 2025-06-13.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-13 13:30:31"
+requirements = [
+    "accelerate",
+    "bitsandbytes",
+    "datasets",
+    "deepspeed",
+    "einops",
+    "hf_transfer",
+    "huggingface-hub[cli]",
+    "lighteval[dev]",
+    "math-verify",
+    "torch",
+    "transformers",
+    "trl",
+    "vllm",
+    "wandb",
+    "ruff",
+    "isort",
+    "pytest",
+    "parameterized",
+]
+
+[open-r1-lighteval-090]
+# https://github.com/huggingface/open-r1/issues/719
+# lighteval 0.9.x wants a newer transformers than open-r1 allows.
+# open-r1 is git-only (huggingface/open-r1); not published to PyPI.
+unsupported_reason = "open-r1 is git-only, not on PyPI"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2026-02-27 08:52:13"
+requirements = [
+    "lighteval>=0.9.0",
+    "transformers<4.51.0",
+    "open-r1",
+]
+
+[open-r1-lighteval-torch251]
+# https://github.com/huggingface/open-r1/issues/122
+# lighteval 0.7 pins torch<2.5; user wants torch 2.5.1 -> incompatible.
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-01-30 12:46:44"
+requirements = ["lighteval==0.7.0", "torch==2.5.1"]
+
+[diffusers-advanced-training]
+# https://github.com/huggingface/diffusers/issues/10142
+# Minimum advanced-diffusion-training set; requirements.txt omits wandb
+# / prodigyopt causing surprising backtracking for new installs.
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-12-06 10:21:00"
+requirements = [
+    "diffusers",
+    "accelerate",
+    "transformers",
+    "peft",
+    "wandb",
+    "prodigyopt",
+    "datasets",
+    "torch",
+    "torchvision",
+    "bitsandbytes",
+]
+
+[vllm-gemma4-transformers5]
+# https://github.com/vllm-project/vllm/issues/39204
+# vllm 0.19.0 caps transformers<5; xgrammar + compressed-tensors add
+# extra pins that force deep backtracking.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2026-04-07 16:36:18"
+requirements = [
+    "vllm==0.19.0",
+    "transformers>=5.5.0",
+    "compressed-tensors",
+    "xgrammar>=0.1.33",
+    "huggingface_hub>=1.9.0",
+]
+
+[vllm-with-torch26]
+# vllm needs a specific torch; users forcing torch==2.6 hit old vllm.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-04-15 10:00:00"
+requirements = ["vllm>=0.7.0", "torch==2.6.0", "transformers>=4.48.0"]
+
+[vllm-transformers-floor]
+# Install the vllm floor requirements stated in their setup.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-08-01 10:00:00"
+requirements = [
+    "vllm",
+    "transformers",
+    "tokenizers",
+    "outlines",
+    "lm-format-enforcer",
+    "xformers",
+]
+
+# -----------------------------------------------------------------------
+# LangChain / LangGraph / LlamaIndex / AutoGen
+# -----------------------------------------------------------------------
+
+[langchain-doctran]
+# https://github.com/langchain-ai/langchain/issues/31245
+# doctran pulls pydantic<2 / openai<1; langchain-* wants pydantic>=2.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-15 11:20:16"
+requirements = [
+    "langchain>=0.3.25",
+    "langchain-core",
+    "langchain-openai",
+    "langgraph",
+    "langserve",
+    "doctran",
+    "pydantic-settings",
+    "unstructured-client",
+    "ollama",
+]
+
+[langgraph-supervisor]
+# https://github.com/langchain-ai/langchain/issues/33622
+# langgraph-supervisor pinned to <0.7; user wants langgraph==1.0.1.
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-10-21 07:17:49"
+requirements = [
+    "langgraph_supervisor==0.0.29",
+    "langgraph==1.0.1",
+]
+
+[langchain-debug-set]
+# https://github.com/langchain-ai/langchain/issues/29347
+# Mixed-pin langchain family. Classic "installed package X in a split
+# release" pattern.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-01-21 21:29:52"
+requirements = [
+    "langchain==0.3.15",
+    "langchain-core==0.2.0",
+    "langchain-text-splitters",
+]
+
+[langchain-create-agent]
+# https://github.com/langchain-ai/langchain/issues/33804
+# 1.0.3 create_agent clashes with langgraph-prebuilt 1.0.2.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-11-03 19:52:29"
+requirements = [
+    "langchain==1.0.3",
+    "langgraph-prebuilt==1.0.2",
+]
+
+[llama-index-chroma-040]
+# https://github.com/run-llama/llama_index/issues/13441
+# llama-index-vector-stores-chroma 0.0.1 pins core <0.10 while every
+# other llama-index-* wants >=0.10.1 -> full backtrack.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-05-11 23:44:45"
+requirements = [
+    "llama-index==0.10.28",
+    "llama-index-agent-openai",
+    "llama-index-cli",
+    "llama-index-embeddings-huggingface",
+    "llama-index-embeddings-mistralai",
+    "llama-index-embeddings-openai",
+    "llama-index-experimental",
+    "llama-index-indices-managed-llama-cloud",
+    "llama-index-llms-anthropic",
+    "llama-index-llms-bedrock",
+    "llama-index-llms-groq",
+    "llama-index-llms-huggingface",
+    "llama-index-llms-ollama",
+    "llama-index-llms-openai",
+    "llama-index-llms-openai-like",
+    "llama-index-multi-modal-llms-ollama",
+    "llama-index-multi-modal-llms-openai",
+    "llama-index-program-openai",
+    "llama-index-question-gen-openai",
+    "llama-index-readers-file",
+    "llama-index-readers-llama-parse",
+    "llama-index-vector-stores-chroma==0.0.1",
+]
+
+[llama-index-upgrade-hang]
+# https://github.com/run-llama/llama_index/issues/19917
+# "pip install runs forever" when trying to upgrade llama-index family.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-09-22 07:39:59"
+requirements = [
+    "llama-index~=0.13.6",
+    "llama-index-core~=0.13.6",
+    "llama-index-llms-openai",
+    "llama-index-llms-azure-openai",
+    "llama-index-llms-anthropic",
+    "llama-index-llms-gemini",
+    "llama-index-vector-stores-mongodb",
+    "llama-index-vector-stores-qdrant",
+    "llama-index-embeddings-openai",
+    "llama-index-embeddings-azure-openai",
+    "llama-index-readers-mongodb",
+    "llama-index-question-gen-openai",
+    "llama-index-utils-workflow",
+    "llama-index-tools-exa",
+]
+
+[llama-index-upgrade-older]
+# https://github.com/run-llama/llama_index/issues/19917 (variant)
+# Same requirements, earlier PyPI snapshot.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-08-04 12:00:00"
+requirements = [
+    "openai==1.99.1",
+    "llama-index~=0.12.52",
+    "llama-index-core~=0.12.52",
+    "llama-index-llms-openai",
+    "llama-index-llms-azure-openai",
+    "llama-index-llms-anthropic",
+    "llama-index-llms-gemini",
+    "llama-index-vector-stores-mongodb",
+    "llama-index-vector-stores-qdrant",
+    "llama-index-embeddings-openai",
+    "llama-index-embeddings-azure-openai",
+    "llama-index-readers-mongodb",
+    "llama-index-question-gen-openai",
+    "llama-index-utils-workflow",
+    "llama-index-tools-exa",
+]
+
+[llama-index-openai-041]
+# https://github.com/run-llama/llama_index/issues/18930
+# llama-index-cli 0.4.1 pins llms-openai<0.4; user wants ==0.4.1.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-02 10:41:55"
+requirements = [
+    "llama-index==0.12.39",
+    "llama-index-llms-openai==0.4.1",
+]
+
+[llama-index-update-0143]
+# https://github.com/run-llama/llama_index/issues/20004
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-10-03 07:04:38"
+requirements = [
+    "llama-index==0.14.3",
+    "llama-index-llms-openai==0.6.1",
+    "llama-index-llms-azure-openai==0.4.2",
+]
+
+[llama-index-vertexai-search]
+# https://github.com/run-llama/llama_index/issues/20107
+# vertexai-search retriever pins google-cloud-discoveryengine<0.12.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-10-17 02:18:01"
+requirements = [
+    "llama-index-retrievers-vertexai-search",
+    "google-cloud-discoveryengine>=0.13.12",
+    "google-adk",
+]
+
+[llama-index-confluence]
+# https://github.com/run-llama/llama_index/issues/19975
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-09-29 15:05:57"
+requirements = ["llama-index-readers-confluence>=0.3,<0.4"]
+
+[llama-index-docling]
+# https://github.com/run-llama/llama_index/issues/19167
+# docling 1.20 pins deepsearch-glm<0.23, not on PyPI, -> backtrack.
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-06-21 10:33:57"
+requirements = ["llama-index-readers-docling"]
+
+[llama-index-openai-like]
+# https://github.com/run-llama/llama_index/issues/19659
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-08-13 06:32:08"
+requirements = [
+    "llama-index-embeddings-openai-like==0.2.1",
+    "llama-index-core>=0.12.0",
+]
+
+[llama-index-pinecone]
+# https://github.com/run-llama/llama_index/issues/19168
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-21 14:26:12"
+requirements = [
+    "llama-index-vector-stores-pinecone",
+    "llama-index>=0.12.0",
+]
+
+[llama-index-experimental-gpt5]
+# https://github.com/run-llama/llama_index/issues/19629
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-08-09 08:17:20"
+# Pure-Python sdists (newspaper3k transitive chain) with no wheel
+# under the exclude-newer date.
+build_packages = [
+    "feedfinder2",
+    "html2text",
+    "sgmllib3k",
+    "spider-client",
+    "tinysegmenter",
+]
+requirements = [
+    "llama-index",
+    "llama-index-experimental",
+    "llama-index-embeddings-openai",
+    "llama-index-finetuning",
+    "llama-index-readers-web",
+    "openai>=1.60.0",
+]
+
+[autogen-studio-ext]
+# https://github.com/microsoft/autogen/issues/7173
+# autogenstudio 0.4.2.2 caps autogen-agentchat<0.6; user wants 0.7.5.
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2026-01-15 11:50:09"
+requirements = [
+    "autogenstudio==0.4.2.2",
+    "autogen-agentchat==0.7.5",
+]
+
+[autogen-videosurfer]
+# https://github.com/microsoft/autogen/issues/5840
+# autogen-ext[video-surfer] pulls openai-whisper build; backtracks past
+# every autogen-ext version looking for a no-build combination.
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-03-05 16:33:06"
+requirements = ["autogen-ext[video-surfer]==0.4.8"]
+
+[autogen-task-centric-memory]
+# https://github.com/microsoft/autogen/issues/6304
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-04-15 14:59:02"
+requirements = [
+    "autogen-ext[task-centric-memory]",
+    "chromadb",
+    "opentelemetry-proto",
+]
+
+[pyautogen-long-context]
+# https://github.com/microsoft/autogen/issues/2756
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-05-22 11:54:02"
+requirements = ["pyautogen[long-context]", "PyMuPDF"]
+
+# -----------------------------------------------------------------------
+# Streamlit / Gradio / Flask-based UI
+# -----------------------------------------------------------------------
+
+[streamlit-langchain]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-01 10:00:00"
+requirements = [
+    "streamlit",
+    "langchain",
+    "langchain-openai",
+    "langchain-community",
+    "openai",
+    "chromadb",
+    "tiktoken",
+    "pypdf",
+]
+
+# -----------------------------------------------------------------------
+# Specific ML/RAG recipes that appear in issue trackers
+# -----------------------------------------------------------------------
+
+[rag-chroma-langchain]
+# https://github.com/langchain-ai/langchain/issues/29253
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-01-16 13:37:05"
+requirements = [
+    "langchain",
+    "langchain-community",
+    "chromadb",
+    "pypdf",
+    "pdf2image",
+    "unstructured",
+    "sentence-transformers",
+]
+
+[rag-pinecone]
+# https://github.com/langchain-ai/langchain/issues/29352
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-01-22 10:17:01"
+requirements = [
+    "langchain",
+    "langchain-pinecone",
+    "pinecone-client",
+    "openai",
+]
+
+[rag-qdrant-async]
+# https://github.com/langchain-ai/langchain/issues/32195
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-07-22 21:21:47"
+requirements = [
+    "langchain",
+    "langchain-qdrant",
+    "qdrant-client",
+]
+
+# -----------------------------------------------------------------------
+# Vector-DB / search combos
+# -----------------------------------------------------------------------
+
+[chromadb-langchain-openai]
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-08-01 10:00:00"
+requirements = [
+    "chromadb==0.4.24",
+    "langchain==0.2.1",
+    "langchain-openai",
+    "openai",
+]
+
+[weaviate-langchain]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2862562444 variant
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-12-01 10:00:00"
+requirements = [
+    "weaviate-client>=4.9.3",
+    "langchain-weaviate",
+    "langchain",
+    "openai",
+]
+
+[pinecone-plus-llms]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-02-01 10:00:00"
+requirements = [
+    "pinecone-client",
+    "langchain-pinecone",
+    "langchain-openai",
+    "anthropic",
+    "cohere",
+]
+
+# -----------------------------------------------------------------------
+# Serving / API wrapping
+# -----------------------------------------------------------------------
+
+[fastapi-transformers-server]
+# Typical inference server.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-08-01 10:00:00"
+requirements = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2",
+    "transformers",
+    "torch",
+    "sentencepiece",
+    "protobuf<5",
+]
+
+# -----------------------------------------------------------------------
+# Variant scenarios: same shapes, different cutoff
+# -----------------------------------------------------------------------
+
+[langchain-ml-course-v2]
+# Variant of existing langchain-ml-course earlier in history.
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-07-01 10:00:00"
+requirements = [
+    "openai",
+    "anthropic",
+    "transformers",
+    "diffusers",
+    "accelerate",
+    "bitsandbytes",
+    "evaluate",
+    "langchain",
+    "langchain-core",
+    "langchain-text-splitters",
+    "langchain-openai",
+    "langchain-chroma",
+    "langchain-community",
+    "scikit-learn",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "tf-keras",
+    "datasets",
+    "streamlit",
+    "gradio",
+    "flask",
+    "python-dotenv",
+    "ipykernel",
+    "ipywidgets",
+    "tavily-python",
+    "requests",
+    "plotly",
+    "nbformat",
+]
+
+[open-r1-earlier]
+# Variant of open-r1 with earlier cutoff (when TRL was on 0.15).
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-02-10 10:00:00"
+requirements = [
+    "accelerate>=1.2.0",
+    "datasets>=3.0.0",
+    "deepspeed>=0.15.0",
+    "huggingface-hub[cli]>=0.26.0",
+    "torch>=2.4.0",
+    "transformers>=4.48.0",
+    "trl>=0.13.0",
+    "vllm>=0.7.0",
+    "wandb",
+]
+
+# -----------------------------------------------------------------------
+# Large "everything" scenarios for typical agent-startup installs
+# -----------------------------------------------------------------------
+
+[ai-agent-builder]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-07-01 10:00:00"
+requirements = [
+    "langchain",
+    "langgraph",
+    "langchain-openai",
+    "langchain-anthropic",
+    "langchain-google-genai",
+    "openai",
+    "anthropic",
+    "google-generativeai",
+    "tavily-python",
+    "duckduckgo-search",
+    "playwright",
+    "beautifulsoup4",
+    "httpx",
+    "fastapi",
+    "uvicorn",
+    "chromadb",
+    "sentence-transformers",
+    "pydantic",
+    "python-dotenv",
+]
+
+[langchain-plus-huggingface]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-09-01 10:00:00"
+requirements = [
+    "langchain",
+    "langchain-huggingface",
+    "langchain-community",
+    "transformers",
+    "sentence-transformers",
+    "torch",
+    "faiss-cpu",
+    "huggingface_hub",
+]
+
+# -----------------------------------------------------------------------
+# Additional recipe variants with slightly different PyPI states
+# -----------------------------------------------------------------------
+
+[transformers-datasets-minimal-2024]
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-06-01 10:00:00"
+requirements = [
+    "transformers>=4.40",
+    "datasets>=2.18",
+    "accelerate>=0.28",
+    "torch>=2.2",
+    "tokenizers>=0.19",
+    "huggingface_hub>=0.22",
+]
+
+[transformers-datasets-minimal-2025]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-01 10:00:00"
+requirements = [
+    "transformers>=4.45",
+    "datasets>=3.0",
+    "accelerate>=0.34",
+    "torch>=2.4",
+    "tokenizers>=0.20",
+    "huggingface_hub>=0.25",
+]
+
+[diffusers-stable-diffusion]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-12-01 10:00:00"
+requirements = [
+    "diffusers>=0.30",
+    "transformers",
+    "accelerate",
+    "safetensors",
+    "torch",
+    "Pillow",
+    "numpy",
+    "torchvision",
+    "xformers",
+]
+
+[diffusers-flux-train]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-03-01 10:00:00"
+requirements = [
+    "diffusers>=0.32",
+    "transformers>=4.43",
+    "accelerate>=0.33",
+    "peft>=0.12",
+    "torch>=2.3",
+    "bitsandbytes",
+    "wandb",
+    "datasets",
+    "sentencepiece",
+    "prodigyopt",
+]

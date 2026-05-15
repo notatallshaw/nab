@@ -1,0 +1,237 @@
+# Apache Airflow scenarios.
+#
+# apache-airflow has one of the deepest dependency trees on PyPI.
+# Provider extras multiply the search space and backtracking on cffi,
+# cryptography, snowflake-connector-python, and SQLAlchemy is common.
+
+[apache-airflow-beam]
+# https://github.com/astral-sh/uv/issues/3078#issuecomment-2062907457
+# rip #174 captures the same family.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-04-17 14:00:00"
+requirements = ["apache-airflow[apache-beam]==2.8.4"]
+
+[airflow-beam-dill]
+# https://github.com/astral-sh/uv/issues/3078#issuecomment-2062907457
+# Backtracks all of apache-beam looking for a compatible dill.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-04-17 14:00:00"
+requirements = ["dill>=0.2.2", "apache-beam<=2.49.0"]
+
+# -----------------------------------------------------------------------
+# Apache Airflow family (deep, diamond-shaped dependency set)
+# -----------------------------------------------------------------------
+
+[airflow-2-8-1-awscli]
+# https://github.com/apache/airflow/issues/39657
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-05-16 03:47:24"
+requirements = [
+    "apache-airflow==2.8.1",
+    "awscli==1.31.13",
+]
+
+[airflow-2-10-5-flask-wtf]
+# https://github.com/apache/airflow/issues/50367
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-05-08 18:14:48"
+requirements = [
+    "apache-airflow==2.10.5",
+    "flask-wtf==1.2.2",
+]
+
+[airflow-3-0-2-awswrangler]
+# https://github.com/apache/airflow/issues/52191
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-06-24 19:40:28"
+requirements = [
+    "apache-airflow==3.0.2",
+    "awswrangler==3.11.0",
+    "packaging",
+    "redshift-connector==2.1.7",
+]
+
+[airflow-3-0-3-pandas-sqlalchemy]
+# https://github.com/apache/airflow/issues/53560
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-07-20 08:58:06"
+requirements = [
+    "apache-airflow==3.0.3",
+    "pandas==2.2.3",
+    "SQLAlchemy==1.4.54",
+]
+
+[airflow-2-6-1-importlib-meta]
+# https://github.com/apache/airflow/issues/31552
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-05-25 17:09:20"
+requirements = [
+    "apache-airflow[amazon,postgres,slack,snowflake]==2.6.1",
+    "importlib-metadata==6.6.0",
+]
+
+[airflow-2-5-1-snowflake]
+# https://github.com/apache/airflow/issues/33241
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-08-08 23:16:24"
+requirements = [
+    "apache-airflow[crypto,celery,statsd]==2.5.1",
+    "snowflake-connector-python[pandas]",
+    "pyarrow==9.0.0",
+]
+
+[airflow-devel-all]
+# https://github.com/apache/airflow/issues/37560
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-20 12:16:20"
+requirements = [
+    "apache-airflow[devel-all]==2.9.0.dev0",
+    "kubernetes-asyncio==24.2.3",
+]
+
+[airflow-portalocker-qdrant]
+# https://github.com/apache/airflow/issues/52545
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-30 10:59:50"
+requirements = [
+    "apache-airflow==3.0.2",
+    "portalocker",
+    "qdrant-client",
+]
+
+[airflow-structlog]
+# https://github.com/apache/airflow/issues/57426
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-10-28 13:20:47"
+requirements = [
+    "apache-airflow==3.1.1",
+    "structlog>=25.5.0",
+]
+
+[airflow-fastapi-121]
+# https://github.com/apache/airflow/issues/57752
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-11-03 15:41:19"
+requirements = [
+    "apache-airflow==3.0.6",
+    "fastapi==0.121.0",
+]
+
+[airflow-fab-1]
+# Common airflow with fab provider install
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-20 10:00:00"
+requirements = [
+    "apache-airflow[fab,google,amazon]==2.10.5",
+]
+
+[airflow-plus-mlflow]
+# Classic downstream combo.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-09-01 10:00:00"
+requirements = [
+    "apache-airflow==2.10.5",
+    "mlflow>=2.19.0",
+    "boto3",
+]
+
+[airflow-portalocker-qdrant-v2]
+# Variant: earlier PyPI state of airflow + qdrant.
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-01 10:00:00"
+requirements = [
+    "apache-airflow==2.9.3",
+    "portalocker",
+    "qdrant-client",
+]
+
+# -----------------------------------------------------------------------
+# More Airflow provider combos
+# -----------------------------------------------------------------------
+
+[airflow-celery-redis]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-09-01 10:00:00"
+requirements = [
+    "apache-airflow==2.9.3",
+    "apache-airflow-providers-celery",
+    "apache-airflow-providers-redis",
+    "celery",
+    "redis",
+]
+
+[airflow-snowflake-amazon]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-01-01 10:00:00"
+requirements = [
+    "apache-airflow[amazon,snowflake]==2.10.4",
+    "snowflake-connector-python",
+    "snowflake-sqlalchemy",
+    "boto3",
+]
+
+[airflow-k8s-pod]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-11-01 10:00:00"
+requirements = [
+    "apache-airflow[cncf-kubernetes,kubernetes]==2.10.0",
+    "kubernetes",
+    "kubernetes-asyncio",
+]
+
+[airflow-october-regression-py310-full]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3399373356
+# Adds apache-airflow-core and apache-airflow-task-sdk co-pins to
+# airflow-october-regression (the CI run installs all three).  Fails
+# on 3.10 / 3.11 / 3.13; succeeds on 3.12.
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-10-13 23:19:02"
+requirements = [
+    "apache-airflow[aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,common-messaging,docker,elasticsearch,fab,ftp,git,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv]==3.1.1",
+    "apache-airflow-core==3.1.1",
+    "apache-airflow-task-sdk==1.1.1",
+]
+
+[airflow-october-regression-py313-full]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3399373356
+# Same as airflow-october-regression-py310-full on Python 3.13.
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-10-13 23:19:02"
+requirements = [
+    "apache-airflow[aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,common-messaging,docker,elasticsearch,fab,ftp,git,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv]==3.1.1",
+    "apache-airflow-core==3.1.1",
+    "apache-airflow-task-sdk==1.1.1",
+]
+
+[airflow-october-regression-py312-pass]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3399373356
+# 3.12 was reported as the only Python that resolves.  Kept as a
+# passing baseline against airflow-october-regression-py310-full.
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-10-13 23:19:02"
+requirements = [
+    "apache-airflow[aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,common-messaging,docker,elasticsearch,fab,ftp,git,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv]==3.1.1",
+    "apache-airflow-core==3.1.1",
+    "apache-airflow-task-sdk==1.1.1",
+]

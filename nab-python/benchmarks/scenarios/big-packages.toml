@@ -1,0 +1,67 @@
+# Single packages with large dependency trees
+
+[tensorflow]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["tensorflow"]
+
+[dask]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["dask"]
+
+[dagster]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["dagster"]
+
+[spacy]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["spacy"]
+
+[prefect]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["prefect"]
+
+[kedro]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["kedro"]
+
+[salt]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["salt"]
+
+[pyinfra]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["pyinfra"]
+
+[flair]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["flair"]
+
+[stanza]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["stanza"]
+
+[holoviews]
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["holoviews"]

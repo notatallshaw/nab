@@ -1,0 +1,222 @@
+[project]
+name = "nab"
+version = "0.0.1"
+description = "PubGrub-based dependency resolver for Python packages"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Damian Shaw", email = "damian.peter.shaw@gmail.com" },
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    "nab-resolver==0.0.1",
+    "nab-python==0.0.1",
+    "nab-index==0.0.1",
+    "tyro>=1.0",
+]
+
+[project.optional-dependencies]
+httpx = ["nab-index[httpx]==0.0.1"]
+niquests = ["nab-index[niquests]==0.0.1"]
+
+[project.urls]
+Homepage = "https://github.com/notatallshaw/nab"
+Documentation = "https://nab.readthedocs.io/"
+Issues = "https://github.com/notatallshaw/nab/issues"
+Source = "https://github.com/notatallshaw/nab"
+Changelog = "https://github.com/notatallshaw/nab/blob/main/CHANGELOG.md"
+
+[project.scripts]
+nab = "nab.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# https://docs.pytest.org/en/stable/reference/reference.html#confval-addopts
+[tool.pytest.ini_options]
+minversion = "9.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+    "--showlocals",
+    "-m",
+    "not property and not crosshair and not network",
+]
+testpaths = [
+    "nab-resolver/tests",
+    "nab-python/tests",
+    "tests",
+]
+xfail_strict = true
+filterwarnings = ["error"]
+markers = [
+    "slow: scenarios that take more than a second",
+    "network: hits a real network endpoint (skipped by default in CI)",
+    "property: Hypothesis property tests (opt-in; run with -m property)",
+    "crosshair: CrossHair-backed property tests (opt-in; very slow; -m crosshair)",
+]
+
+# https://coverage.readthedocs.io/en/latest/config.html#run
+[tool.coverage.run]
+branch = true
+relative_files = true
+parallel = true
+concurrency = ["thread", "multiprocessing"]
+sigterm = true
+source_pkgs = [
+    "nab_resolver",
+    "nab_python",
+    "nab",
+]
+source = []
+omit = [
+    "*/tests/property/*",
+    "*/tests/property_python/*",
+    "*/tests/universal/property_universal/*",
+    "*/test_crosshair_*.py",
+    "*/_vendor/*",
+    "*/nab_python/_testing/*",
+]
+
+# https://coverage.readthedocs.io/en/latest/config.html#report
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+skip_empty = true
+exclude_also = [
+    "def __repr__",
+    "raise NotImplementedError",
+    "raise RuntimeError.*unreachable",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+    "^\\s+pass$",
+    "if TYPE_CHECKING:",
+]
+
+# https://coverage.readthedocs.io/en/latest/config.html#paths
+[tool.coverage.paths]
+nab_resolver = [
+    "nab-resolver/src/nab_resolver",
+    "*/nab_resolver",
+]
+nab_python = [
+    "nab-python/src/nab_python",
+    "*/nab_python",
+]
+nab = [
+    "src/nab",
+    "*/nab",
+]
+
+# https://docs.astral.sh/ruff/settings/
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["**/_vendor/**"]
+
+# https://docs.astral.sh/ruff/settings/#lint_per-file-ignores
+[tool.ruff.lint.per-file-ignores]
+
+# Benchmarks intentionally print, lack docstrings, run subprocesses, and
+# carry many scenario knobs.
+"**/benchmarks/**" = [
+    "T201",     # Print statements (benchmark output)
+    "D103",     # Missing docstring in public function
+    "INP001",   # Implicit namespace package (scripts live outside packages)
+    "S607",     # subprocess with partial executable path
+    "BLE001",   # Blind exception catch (surface every failure mode)
+    "C901",     # mccabe complexity (scenario knobs add branches)
+    "PLR0912",  # Too many branches (same reason as C901)
+    "PLR0915",  # Too many statements (long main()s)
+    "PLR2004",  # Magic value in comparison (benchmark thresholds)
+    "SLF001",   # Private member access (sibling scripts share helpers)
+    "N818",     # Exception name not Error-suffixed (private signal types)
+]
+
+# Tests use their own per-directory ruff.toml that extends this config.
+# See tests/ruff.toml and the per-package tests/ruff.toml files.
+
+# docs/conf.py sits outside any Python package by Sphinx convention.
+"docs/conf.py" = ["INP001"]
+
+# Subpackages defer imports to break cycles with their parent modules.
+"nab-python/src/nab_python/_provider/*.py" = ["PLC0415"]
+"nab-python/src/nab_python/_build/*.py" = ["PLC0415"]
+"nab-python/src/nab_python/_lockfile/*.py" = ["PLC0415"]
+
+# https://docs.astral.sh/ruff/settings/#lint
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    # Frameworks we don't use.
+    "AIR",     # Airflow
+    "DJ",      # Django
+    "FAST",    # FastAPI
+    "NPY",     # NumPy
+    "PD",      # Pandas
+
+    # Conflicts with the formatter.
+    "COM812",  # Trailing comma
+    "COM819",  # Prohibited trailing comma
+    "ISC001",  # Implicit string concatenation (single line)
+    "ISC002",  # Implicit string concatenation (multi-line)
+
+    # Mutually-exclusive pairs; pick one of each.
+    "D203",    # one-blank-line-before-class (we use D211)
+    "D212",    # multi-line-summary-first-line (we use D213)
+
+    # Individual rules.
+    "ANN401",  # Disallows Any (needed for generic library)
+    "S101",    # Assert usage (needed for type narrowing and tests)
+    "TID252",  # Bans relative imports; the project prefers them.
+]
+
+# https://docs.astral.sh/ruff/settings/#lintpylint
+[tool.ruff.lint.pylint]
+max-args = 8
+
+# https://docs.astral.sh/ruff/settings/#lintpydocstyle
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+# https://docs.astral.sh/ruff/settings/#lintisort
+[tool.ruff.lint.isort]
+known-first-party = ["nab", "nab_index", "nab_python", "nab_resolver"]
+
+# https://microsoft.github.io/pyright/#/configuration?id=main-pyright-settings
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "standard"
+include = [
+    "nab-resolver/src",
+    "nab-resolver/tests",
+]
+
+# https://mypy.readthedocs.io/en/stable/config_file.html#using-a-pyproject-toml-file
+[tool.mypy]
+python_version = "3.10"
+strict = true
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = ["nab-resolver/src"]
+enable_error_code = [
+    "redundant-expr",
+    "truthy-bool",
+    "possibly-undefined",
+    "explicit-override",
+    "mutable-override",
+]

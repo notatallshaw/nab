@@ -1,0 +1,110 @@
+# Cross-tracker follow-ups.
+#
+# Scenarios motivated by an issue in one ecosystem but reproduced
+# with inputs harvested from another (poetry+rip+pdm overlap, etc).
+
+[cross-boto3-aiobotocore-full]
+# Combined from poetry 5962 + rip 191 + pdm 2633.
+# aiobotocore + boto3 + pinned urllib3 at 2024-ish.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-02-15 11:48:13"
+requirements = [
+    "aiobotocore>=2.2.0",
+    "boto3>=1.34.25",
+    "urllib3<2",
+]
+
+[cross-tensorflow-tf-keras-ml-dtypes]
+# Variant of poetry 9745: add explicit ml-dtypes to probe the inner impossibility.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-10-09 10:34:52"
+requirements = [
+    "tensorflow>=2.16.2,<3.0.0",
+    "tf-keras>=2.16.0,<3.0.0",
+    "mediapipe>=0.10.11,<0.11.0",
+    "ml-dtypes>=0.4.1,<0.5.0",
+]
+
+[cross-jax-tensorflow-numpy-ceiling]
+# poetry 9745 family: jax + tensorflow + numpy<2 is the inner contradiction.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-10-09 10:34:52"
+requirements = [
+    "tensorflow>=2.16.2,<3.0.0",
+    "jax",
+    "jaxlib",
+    "numpy<2",
+]
+
+[cross-airflow-beam-2024]
+# rip 174 + poetry 9956 territory: airflow + beam + dill with 2024 metadata.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-06-01 14:00:00"
+requirements = [
+    "apache-airflow[apache-beam]==2.9.0",
+    "dill>=0.3",
+]
+
+[cross-aiplatform-kfp-2025]
+# poetry 8475 replayed at a more recent index.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-01 14:00:00"
+requirements = [
+    "google-cloud-aiplatform",
+    "kfp",
+]
+
+[cross-dask-tsfresh-modern]
+# poetry 2545 at modern index: tsfresh pulls dask[dataframe] on py3.11.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-09-01 14:00:00"
+requirements = ["tsfresh"]
+
+[cross-mediapipe-jax-modern]
+# poetry 9745 family at 2025 index.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-01 14:00:00"
+requirements = [
+    "mediapipe",
+    "jax",
+    "tensorflow",
+]
+
+[cross-langchain-pydantic-v1-v2]
+# pdm 3027: langchain (pydantic v2) + older package that forces pydantic v1.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-06-01 14:00:00"
+requirements = [
+    "langchain",
+    "gretel-client",
+    "pydantic",
+]
+
+[cross-sphinx-myst-plantuml]
+# pdm 3146 + poetry sphinx territory.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-09-07 01:02:58"
+requirements = [
+    "sphinx>=7,<8",
+    "sphinx-plantuml>=1,<2",
+    "myst-parser",
+    "sphinx-rtd-theme",
+]

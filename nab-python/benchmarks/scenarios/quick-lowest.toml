@@ -1,0 +1,13 @@
+# Small scenarios for quick smoke tests
+
+[requests]
+resolution = "lowest"
+python_version = "3.11"
+datetime = "2024-10-07 14:00:00"
+requirements = ["requests"]
+
+[six]
+resolution = "lowest"
+python_version = "3.11"
+datetime = "2024-10-07 14:00:00"
+requirements = ["six"]

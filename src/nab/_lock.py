@@ -1,0 +1,476 @@
+"""``nab lock`` subcommand and its lockfile-emission helpers.
+
+Wires :func:`resolve_pyproject` / :func:`resolve_universal_pyproject`
+to the writers in :mod:`nab_python.lockfile`, plus the universal-mode
+per-tuple emission shapes (single-tuple file, templated per-tuple
+files, multi-block stdout).
+
+External callers (the resolver entry points, the lockfile writers,
+the merge helper) are accessed through :mod:`nab.cli` so the test
+suite's ``patch("nab.cli.resolve_pyproject")`` style of monkey
+patches keeps working after the per-command split.
+"""
+
+from __future__ import annotations
+
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from nab._version import __version__
+from nab_python.config import (
+    NabProjectConfig,
+    ResolveMode,
+)
+from nab_python.lockfile import (
+    Provenance,
+    read_lockfile_anchor,
+)
+from nab_python.provider import ResolutionStrategy
+from nab_python.requirements_file import (
+    read_pyproject_groups,
+    read_pyproject_optional_dependencies,
+)
+
+from . import cli as _cli
+from .cli import (
+    HttpBackend,
+    LockFormat,
+    PathArg,
+    ResolutionFlag,
+    app,
+)
+
+if TYPE_CHECKING:
+    from nab_index.transport import AsyncHttpTransport
+    from nab_python.resolve import ResolutionResult
+    from nab_python.universal.resolve import TupleResult, UniversalResult
+
+
+@app.command
+def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config object would hide the user-facing surface
+    path: PathArg = Path("pyproject.toml"),
+    *,
+    output: Path | None = None,
+    format: LockFormat = "pylock",  # noqa: A002 - shadows builtin by convention
+    http_backend: HttpBackend = "urllib3",
+    cache_dir: Path | None = None,
+    no_cache: bool = False,
+    offline: bool = False,
+    groups: tuple[str, ...] = (),
+    all_groups: bool = False,
+    extras: tuple[str, ...] = (),
+    all_extras: bool = False,
+    no_workspace_discovery: bool = False,
+    resolution: ResolutionFlag | None = None,
+    upgrade: bool = False,
+) -> None:
+    """Resolve dependencies and emit a lockfile or pin list.
+
+    Formats: ``pylock`` (PEP 751), ``requirements`` (pip-style with
+    ``--hash`` lines), ``requirements-without-hashes`` (plain
+    ``name==version``).  ``--output`` defaults to ``pylock.toml`` or
+    ``requirements.txt``; ``--output -`` writes to stdout.
+
+    ``--groups`` / ``--all-groups`` select PEP 735 dependency groups;
+    ``--extras`` / ``--all-extras`` select entries from
+    ``[project.optional-dependencies]``.  Selected names are folded into
+    the resolve and recorded in the lockfile.
+
+    Universal mode (``[tool.nab].mode = "universal"``) supports all
+    three formats.  For requirements formats, an ``--output`` template
+    containing ``{python_version}`` or ``{platform_id}`` writes one
+    file per matrix tuple; a plain path is rejected when multiple
+    tuples would collide.
+
+    ``--resolution`` overrides ``[tool.nab].resolution`` for this run.
+    ``--upgrade`` re-anchors the ``P<n>D`` cutoff to ``datetime.now(UTC)``
+    instead of reusing the timestamp recorded in any existing lockfile.
+    """
+    anchor = _determine_lock_anchor(output=output, format=format, upgrade=upgrade)
+    config = _cli._load_config(  # noqa: SLF001
+        path, discover_workspace=not no_workspace_discovery, anchor=anchor
+    )
+    effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
+        cache_dir, no_cache=no_cache
+    )
+    provenance = _build_provenance(path, config=config, anchor=anchor)
+    selected_groups = _resolve_group_selection(
+        path, groups=groups, all_groups=all_groups
+    )
+    selected_extras = _resolve_extra_selection(
+        path, extras=extras, all_extras=all_extras
+    )
+    strategy_override = (
+        ResolutionStrategy(resolution) if resolution is not None else None
+    )
+
+    transport = _cli._make_transport(http_backend)  # noqa: SLF001
+    if config.mode is ResolveMode.UNIVERSAL:
+        _emit_universal(
+            path,
+            config=config,
+            cache_dir=effective_cache_dir,
+            transport=transport,
+            offline=offline,
+            output=output,
+            format=format,
+            provenance=provenance,
+            groups=selected_groups,
+            extras=selected_extras,
+            resolution_strategy=strategy_override,
+        )
+        return
+
+    result = _cli._resolve_specific(  # noqa: SLF001
+        path,
+        config=config,
+        cache_dir=effective_cache_dir,
+        offline=offline,
+        transport=transport,
+        failure_prefix="Cannot lock",
+        groups=selected_groups,
+        extras=selected_extras,
+        resolution_strategy=strategy_override,
+    )
+    _emit_specific(result, format=format, output=output, provenance=provenance)
+
+
+def _emit_specific(
+    result: ResolutionResult,
+    *,
+    format: str,  # noqa: A002 - shadows builtin by convention
+    output: Path | None,
+    provenance: Provenance | None = None,
+) -> None:
+    """Write a single-environment resolution in the requested format."""
+    lock_input = result.lock_input
+    if provenance is not None:
+        lock_input.provenance = provenance
+
+    if _cli._is_stdout(output):  # noqa: SLF001
+        if format == "pylock":
+            sys.stdout.write(_cli.write_lock(lock_input))
+        elif format == "requirements":
+            sys.stdout.write(_cli.write_requirements_with_hashes(lock_input))
+        else:
+            sys.stdout.write(_cli.write_requirements_without_hashes(lock_input))
+        return
+
+    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
+    if format == "pylock":
+        _cli.write_lock(lock_input, output_path=target)
+    elif format == "requirements":
+        _cli.write_requirements_with_hashes(lock_input, output_path=target)
+    else:
+        _cli.write_requirements_without_hashes(lock_input, output_path=target)
+    sys.stderr.write(f"Wrote {target} ({len(result.pins)} packages)\n")
+
+
+def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproject kwarg
+    path: Path,
+    *,
+    config: NabProjectConfig,
+    cache_dir: Path | None,
+    transport: AsyncHttpTransport,
+    offline: bool,
+    output: Path | None,
+    format: str,  # noqa: A002 - shadows builtin by convention
+    provenance: Provenance | None = None,
+    groups: tuple[str, ...] = (),
+    extras: tuple[str, ...] = (),
+    resolution_strategy: ResolutionStrategy | None = None,
+) -> None:
+    """Run the universal resolver and emit the requested artefact."""
+    sys.stderr.write(
+        "warning: mode = 'universal' is experimental; output format may"
+        " change without notice\n"
+    )
+
+    try:
+        result = _cli.resolve_universal_pyproject(
+            path,
+            config=config,
+            cache_dir=cache_dir,
+            transport=transport,
+            offline=offline,
+            groups=groups,
+            extras=extras,
+            resolution_strategy=resolution_strategy,
+        )
+    except KeyError:
+        sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
+        sys.exit(1)
+    except LookupError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
+
+    if not result.success:
+        # Always print per-tuple blocks on failure so the user sees
+        # which tuple(s) failed and why; the resolved tuples still
+        # appear so partial progress is visible.
+        _print_universal_blocks(result)
+        sys.exit(1)
+
+    if format == "pylock":
+        _emit_universal_pylock(
+            result,
+            output=output,
+            provenance=provenance,
+            groups=groups,
+            extras=extras,
+        )
+    else:
+        _emit_universal_requirements(
+            result, output=output, with_hashes=format == "requirements"
+        )
+
+
+def _emit_universal_pylock(
+    result: UniversalResult,
+    *,
+    output: Path | None,
+    provenance: Provenance | None = None,
+    groups: tuple[str, ...] = (),
+    extras: tuple[str, ...] = (),
+) -> None:
+    """Merge per-tuple LockInputs into one pylock and write/print it."""
+    lock_input = _cli.merge_universal_lock_inputs(
+        result,
+        extras=extras,
+        dependency_groups=groups,
+        default_groups=groups,
+    )
+    if provenance is not None:
+        lock_input.provenance = provenance
+
+    try:
+        text = _cli.write_lock(lock_input)
+    except _cli.MissingHashError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
+
+    if _cli._is_stdout(output):  # noqa: SLF001
+        sys.stdout.write(text)
+        return
+    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
+    target.write_text(text, encoding="utf-8")
+    sys.stderr.write(f"Wrote {target} ({len(result.tuple_results)} tuples)\n")
+
+
+def _emit_universal_requirements(
+    result: UniversalResult, *, output: Path | None, with_hashes: bool
+) -> None:
+    """Emit one requirements file per matrix tuple.
+
+    Three output shapes:
+
+    * ``output`` is ``None`` or ``-``: write one stdout dump with
+      ``# label`` blocks separating each tuple's pins.  Inspection /
+      piping shape; pip cannot install a multi-block file directly.
+    * ``output`` contains ``{python_version}`` or ``{platform_id}``:
+      write one file per successful tuple, substituting the tuple's
+      values into the template.  This is the constraints-per-
+      Python-version shape (e.g. ``constraints-{python_version}.txt``).
+    * ``output`` is a plain path AND the matrix has exactly one tuple:
+      write that tuple's pins to ``output`` directly.
+
+    A plain path with multiple tuples errors clearly: there is no
+    one-file shape that pip can install from across all tuples.
+    """
+    if output is None or _cli._is_stdout(output):  # noqa: SLF001
+        _emit_universal_requirements_stdout(result, with_hashes=with_hashes)
+        return
+
+    template = str(output)
+    successful = [tr for tr in result.tuple_results if tr.success]
+    if not any(var in template for var in _cli._TUPLE_TEMPLATE_VARS):  # noqa: SLF001
+        if len(successful) > 1:
+            sys.stderr.write(
+                "Error: universal mode produced multiple tuples but"
+                f" --output {output} has no template variable to"
+                " disambiguate.  Use {python_version} and/or"
+                " {platform_id} in the path, e.g.:\n"
+                "  --output 'constraints-{python_version}.txt'\n"
+            )
+            sys.exit(1)
+        # Single successful tuple: write directly to the fixed path.
+        _write_one_tuple_requirements(successful[0], output, with_hashes=with_hashes)
+        return
+
+    for tr in successful:
+        substituted = template.format(
+            python_version=tr.tuple_.python_version,
+            platform_id=tr.tuple_.platform_id,
+        )
+        _write_one_tuple_requirements(tr, Path(substituted), with_hashes=with_hashes)
+
+
+def _emit_universal_requirements_stdout(
+    result: UniversalResult, *, with_hashes: bool
+) -> None:
+    """Stdout shape: per-tuple ``# label`` blocks merged into one stream."""
+    lock_input = _cli.merge_universal_lock_inputs(result)
+    try:
+        if with_hashes:
+            text = _cli.write_requirements_with_hashes(lock_input)
+        else:
+            text = _cli.write_requirements_without_hashes(lock_input)
+    except _cli.MissingHashError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
+    sys.stdout.write(text)
+
+
+def _write_one_tuple_requirements(
+    tr: TupleResult, output: Path, *, with_hashes: bool
+) -> None:
+    """Write a single TupleResult's pins to ``output``."""
+    if tr.lock_input is None:  # pragma: no cover - successful tuples carry one
+        return
+
+    try:
+        if with_hashes:
+            text = _cli.write_requirements_with_hashes(tr.lock_input)
+        else:
+            text = _cli.write_requirements_without_hashes(tr.lock_input)
+    except _cli.MissingHashError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
+
+    output.write_text(text, encoding="utf-8")
+    sys.stderr.write(
+        f"Wrote {output} ({len(tr.lock_input.pins)} packages,"
+        f" tuple {tr.tuple_.label})\n"
+    )
+
+
+def _resolve_group_selection(
+    path: Path,
+    *,
+    groups: tuple[str, ...],
+    all_groups: bool,
+) -> tuple[str, ...]:
+    """Return the canonical, deduplicated group selection for this run.
+
+    ``groups`` is the user-supplied list (already split by tyro on
+    commas).  ``all_groups`` overrides it: when set, every group
+    defined in the project's ``[dependency-groups]`` table is
+    selected.  An ``--all-groups`` paired with a non-empty
+    ``--groups`` list raises a clean error rather than silently
+    preferring one over the other.
+    """
+    if all_groups and groups:
+        sys.stderr.write("Error: --all-groups and --groups are mutually exclusive\n")
+        sys.exit(1)
+    if not all_groups:
+        return tuple(dict.fromkeys(groups))
+
+    try:
+        defined = read_pyproject_groups(path)
+    except FileNotFoundError:
+        sys.stderr.write(f"Error: {path} not found\n")
+        sys.exit(1)
+    return tuple(defined.keys())
+
+
+def _resolve_extra_selection(
+    path: Path,
+    *,
+    extras: tuple[str, ...],
+    all_extras: bool,
+) -> tuple[str, ...]:
+    """Return the canonical, deduplicated extras selection for this run."""
+    if all_extras and extras:
+        sys.stderr.write("Error: --all-extras and --extras are mutually exclusive\n")
+        sys.exit(1)
+    if not all_extras:
+        return tuple(dict.fromkeys(extras))
+
+    try:
+        defined = read_pyproject_optional_dependencies(path)
+    except FileNotFoundError:
+        sys.stderr.write(f"Error: {path} not found\n")
+        sys.exit(1)
+    return tuple(defined.keys())
+
+
+def _build_provenance(
+    path: Path, *, config: NabProjectConfig, anchor: datetime
+) -> Provenance:
+    """Capture the inputs that produced this run for the lockfile.
+
+    The block lands under ``[tool.nab]`` and is informational only.
+
+    ``anchor`` is the timestamp used as ``now`` when resolving relative
+    ``P<n>D`` durations on this run.  Recording it as ``created-at``
+    lets the next ``nab lock`` reuse the same anchor and reproduce the
+    same cutoff.
+    """
+    python_specifier: str | None
+    platforms: tuple[str, ...]
+    if config.mode is ResolveMode.UNIVERSAL and config.matrix is not None:
+        python_specifier = config.matrix.python
+        platforms = tuple(config.matrix.platforms)
+    else:
+        python_specifier = config.requires_python
+        platforms = ()
+
+    return Provenance(
+        nab_version=__version__,
+        created_at=anchor,
+        command_line=tuple(sys.argv),
+        input_path=str(path),
+        mode=config.mode.value,
+        python_specifier=python_specifier,
+        platforms=platforms,
+    )
+
+
+def _determine_lock_anchor(
+    *,
+    output: Path | None,
+    format: str,  # noqa: A002 - shadows builtin by convention
+    upgrade: bool,
+) -> datetime:
+    """Pick the ``P<n>D`` anchor for ``nab lock``.
+
+    Returns ``datetime.now(UTC)`` (a fresh anchor) when:
+
+    - ``--upgrade`` is set: the user is opting into a calendar refresh.
+    - Output is stdout (``-``): there is no file to read back later, so
+      no point preserving an anchor that nothing will reuse.
+    - Format is not ``pylock``: requirements files do not carry the
+      ``[tool.nab]`` block we read the anchor from.
+    - The expected pylock does not exist or has no recorded anchor:
+      first lock or a damaged file.
+
+    Otherwise returns the ``[tool.nab].created-at`` from the existing
+    pylock, so a re-lock against the same project produces the same
+    cutoff for ``P<n>D`` durations.
+    """
+    fresh = datetime.now(timezone.utc)
+    if upgrade:
+        return fresh
+    if _cli._is_stdout(output):  # noqa: SLF001
+        return fresh
+    if format != "pylock":
+        return fresh
+    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
+    prior = read_lockfile_anchor(target)
+    return prior if prior is not None else fresh
+
+
+def _print_universal_blocks(result: UniversalResult) -> None:
+    """Write per-tuple pin blocks (with FAILED markers) to stdout."""
+    blocks: list[str] = []
+    for tr in result.tuple_results:
+        label = tr.tuple_.label
+        if not tr.success:
+            blocks.append(f"# {label}: FAILED")
+            blocks.extend(f"#   {raw}" for raw in (tr.error or "").splitlines())
+            continue
+        blocks.append(f"# {label}")
+        blocks.extend(f"{name}=={tr.pins[name]}" for name in sorted(tr.pins))
+    sys.stdout.write("\n".join(blocks) + "\n")

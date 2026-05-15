@@ -1,0 +1,531 @@
+# Miscellaneous ecosystem scenarios.
+#
+# Scenarios that don't fit a single source-tool or package-family
+# bucket: AWS/cloud SDKs, scientific Python, Jupyter, web frameworks,
+# data engineering, and synthetic stress combos.
+
+[awscli-boto3-minor-pin]
+# https://github.com/aws/aws-cli/issues/5173
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2020-05-04 14:43:18"
+requirements = [
+    "awscli>=1.18.34,<1.19",
+    "boto3>=1.12.34,<1.13",
+    "botocore>=1.15.34,<1.16",
+]
+
+[awscli-pip-install-2023]
+# https://github.com/aws/aws-cli/issues/8036
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2023-07-17 15:44:48"
+requirements = ["awscli"]
+
+[boto3-pin-botocore]
+# https://github.com/boto/boto3/issues/3515
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2022-12-01 21:54:40"
+requirements = ["boto3==1.26.21"]
+
+[boto3-v1-poetry-mac]
+# https://github.com/boto/boto3/issues/3047
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2021-10-19 20:04:53"
+requirements = ["boto3==1.18.65"]
+
+# -----------------------------------------------------------------------
+# Ray / RLlib / ray[llm] / ray[tune]
+# -----------------------------------------------------------------------
+
+[ray-rllib-windows-py313]
+# https://github.com/ray-project/ray/issues/56373
+resolution = "lowest-direct"
+python_version = "3.13"
+platform_system = "Windows"
+datetime = "2025-09-09 08:16:20"
+requirements = ["ray[rllib]"]
+
+[ray-llm-arm]
+# https://github.com/ray-project/ray/issues/61880
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2026-03-19 16:03:38"
+requirements = ["ray[llm]==2.54.0"]
+
+[ray-llm-native-libs]
+# https://github.com/ray-project/ray/issues/62111
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2026-03-26 21:21:01"
+requirements = ["ray[llm]==2.55"]
+
+[ray-tune-sklearn]
+# https://github.com/ray-project/ray/issues/47266
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-08-22 00:31:58"
+requirements = ["tune-sklearn", "ray[tune]"]
+
+[ray-train-tune-import]
+# https://github.com/ray-project/ray/issues/58280
+resolution = "lowest-direct"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-10-29 11:00:46"
+requirements = ["ray[tune]==2.51.0"]
+
+[ray-full]
+# "ray" with all extras -> huge dependency fanout.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-01 10:00:00"
+requirements = ["ray[default,tune,serve,data,train]==2.40.0"]
+
+# -----------------------------------------------------------------------
+# MLflow
+# -----------------------------------------------------------------------
+
+[mlflow-uv-torch-cu128]
+# https://github.com/mlflow/mlflow/issues/22596
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2026-04-14 22:49:39"
+requirements = [
+    "mlflow>=3.11.1,<4",
+    "torch==2.7.1",
+]
+
+[mlflow-dev-requirements]
+# https://github.com/mlflow/mlflow/issues/9463
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-08-26 14:53:02"
+requirements = [
+    "mlflow",
+    "pytest",
+    "scikit-learn",
+    "xgboost",
+    "tensorflow",
+]
+
+[gradio-6-leaderboard]
+# https://github.com/gradio-app/gradio/issues/12449
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-11-22 21:16:56"
+requirements = [
+    "gradio==6.0.0",
+    "gradio_leaderboard",
+]
+
+[gradio-client-sync]
+# https://github.com/gradio-app/gradio/issues/12844
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2026-01-29 08:24:15"
+requirements = [
+    "gradio==6.5.0",
+    "gradio-client==2.0.3",
+]
+
+# -----------------------------------------------------------------------
+# Dask / Modin
+# -----------------------------------------------------------------------
+
+[dask-distributed-head]
+# https://github.com/dask/dask/issues/12167
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-11-21 16:49:04"
+requirements = [
+    "dask==2025.11.0",
+    "distributed==2025.11.0",
+]
+
+[dask-bottleneck-2024]
+# https://github.com/dask/dask/issues/12198
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-12-16 10:55:07"
+requirements = [
+    "dask>=2024.11.0",
+    "bottleneck",
+    "pandas",
+    "numpy",
+]
+
+# -----------------------------------------------------------------------
+# Rasa
+# -----------------------------------------------------------------------
+
+[rasa-326-tf]
+# https://github.com/rasahq/rasa/issues/11483
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2022-08-23 13:53:27"
+requirements = ["rasa==3.2.6"]
+
+# -----------------------------------------------------------------------
+# Adversarial robustness / ML security
+# -----------------------------------------------------------------------
+
+[adversarial-robustness]
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-01-01 10:00:00"
+requirements = [
+    "adversarial-robustness-toolbox",
+    "torch",
+    "tensorflow",
+    "scikit-learn",
+]
+
+# -----------------------------------------------------------------------
+# promptflow
+# -----------------------------------------------------------------------
+
+[promptflow-rag-macos]
+# https://github.com/microsoft/promptflow/issues/3717
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-09-05 12:07:58"
+requirements = ["promptflow-rag"]
+
+[promptflow-azure-cli]
+# https://github.com/microsoft/promptflow/issues/2807
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-04-15 16:53:08"
+requirements = [
+    "promptflow==1.8.0",
+    "azure-cli",
+]
+
+[promptflow-azure-function]
+# https://github.com/microsoft/promptflow/issues/3991
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-04-03 10:57:56"
+requirements = [
+    "promptflow",
+    "azure-functions",
+    "azure-ai-ml",
+]
+
+[promptflow-marshmallow]
+# https://github.com/microsoft/promptflow/issues/3902
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-01-06 18:43:03"
+requirements = [
+    "promptflow",
+    "marshmallow==3.24.0",
+]
+
+# -----------------------------------------------------------------------
+# Ultralytics / YOLO variants
+# -----------------------------------------------------------------------
+
+[ultralytics-modern]
+# Newer ultralytics install hitting modern torch/ultralytics-thop.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2026-04-15 10:00:00"
+requirements = ["ultralytics"]
+
+[ultralytics-export-old]
+# https://github.com/ultralytics/ultralytics/issues/22758 (older snap)
+# Same as ultralytics-export but six months earlier PyPI state.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-05-01 10:00:00"
+requirements = ["ultralytics[export]"]
+
+[ultralytics-py313]
+resolution = "lowest-direct"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2026-03-27 10:13:11"
+requirements = ["ultralytics"]
+
+# -----------------------------------------------------------------------
+# Kedro
+# -----------------------------------------------------------------------
+
+[kedro-pyspark-starter]
+# https://github.com/kedro-org/kedro/issues/5331
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2026-01-16 10:23:01"
+requirements = [
+    "kedro",
+    "kedro-datasets[spark]",
+    "pyspark==3.5.0",
+]
+
+# -----------------------------------------------------------------------
+# Generic pandas / pyarrow / numpy tension
+# -----------------------------------------------------------------------
+
+[pandas-plus-pyarrow-strings]
+# Large pandas[all] style install.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-03-01 10:00:00"
+requirements = [
+    "pandas>=2.2",
+    "pyarrow>=16",
+    "numpy>=1.26",
+    "fastparquet",
+    "openpyxl",
+    "sqlalchemy",
+    "boto3",
+]
+
+[pandas-with-aws-s3]
+# https://github.com/pandas-dev/pandas/issues/55480 follow-up
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-05-01 10:00:00"
+requirements = [
+    "pandas[aws,parquet]>=2.2",
+    "boto3",
+    "s3fs",
+    "fsspec",
+]
+
+[scipy-numpy-pinned]
+# numpy 2 / scipy compatibility.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-01 10:00:00"
+requirements = [
+    "numpy==2.1.0",
+    "scipy>=1.13,<1.15",
+]
+
+# -----------------------------------------------------------------------
+# Classic ML + Jupyter users
+# -----------------------------------------------------------------------
+
+[jupyter-ml-bundle]
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-01 10:00:00"
+requirements = [
+    "jupyter",
+    "ipykernel",
+    "ipywidgets",
+    "scikit-learn",
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "seaborn",
+    "plotly",
+    "nbformat",
+    "nbconvert",
+    "jupyterlab",
+    "tensorflow",
+    "torch",
+    "transformers",
+]
+
+[kaggle-starter]
+# Kaggle-style public-notebook install triggers heavy backtracking.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-01-01 10:00:00"
+requirements = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "xgboost",
+    "lightgbm",
+    "catboost",
+    "matplotlib",
+    "seaborn",
+    "plotly",
+    "torch",
+    "transformers",
+    "kaggle",
+    "opencv-python",
+]
+
+# -----------------------------------------------------------------------
+# Notebook / data-viz grief
+# -----------------------------------------------------------------------
+
+[mlflow-airflow-dbt]
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-01 10:00:00"
+requirements = [
+    "apache-airflow==2.10.0",
+    "mlflow",
+    "dbt-core",
+    "dbt-postgres",
+]
+
+[bigquery-pandas-heavy]
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-01 10:00:00"
+requirements = [
+    "google-cloud-bigquery[pandas]>=3.25",
+    "pandas",
+    "pyarrow",
+    "db-dtypes",
+    "google-cloud-bigquery-storage",
+]
+
+[boto3-urllib3-2025]
+# Variant of boto3-urllib3 with 2025 PyPI state.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-09-01 10:00:00"
+requirements = ["boto3", "urllib3<2"]
+
+[boto3-urllib3-py312]
+# Same idea on python 3.12.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-09-01 10:00:00"
+requirements = ["boto3", "urllib3<2"]
+
+[starlette-fastapi-2025]
+# Variant of starlette-fastapi-pinned, newer cutoff.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-10-01 10:00:00"
+requirements = ["starlette<=0.45", "fastapi<=0.118"]
+
+[pandas-aws-boto3-2024]
+# Variant of pandas-aws-boto3, newer cutoff.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-11-01 10:00:00"
+requirements = ["pandas[aws]", "boto3>=1"]
+
+[zamba-v2]
+# Variant of zamba with later cutoff.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-03-01 10:00:00"
+requirements = [
+    "appdirs",
+    "av",
+    "cloudpathlib[s3]",
+    "botocore>=1.34.0",
+    "ffmpeg-python",
+    "fvcore",
+    "gitpython",
+    "loguru",
+    "numpy",
+    "opencv-python-headless",
+    "pandas>=2.0.0",
+    "pqdm",
+    "pydantic<2.0.0",
+    "python-dotenv",
+    "pytorch-lightning>=2.0.0",
+    "pytorchvideo",
+    "scikit-learn",
+    "tensorboard",
+    "timm",
+    "torch",
+    "torchinfo",
+    "torchvision>=0.10.0",
+    "tqdm",
+    "typer[all]",
+]
+
+# -----------------------------------------------------------------------
+# Modin variant
+# -----------------------------------------------------------------------
+
+[modin-ray]
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-01 10:00:00"
+requirements = [
+    "modin[ray]",
+    "pandas>=2.0",
+    "numpy",
+    "ray[default]",
+]
+
+[apache-beam-sdist-build]
+# https://github.com/astral-sh/uv/issues/1560 (and rip #174)
+# Originally tagged build_dependencies because uv backtracked to
+# apache-beam==2.2.0 which fails to build sdist.  Under
+# BuildPolicy.NEVER, nab skips dynamic-deps sdists rather than aborting.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-17 14:00:00"
+requirements = ["apache-airflow[all]"]
+
+[eval-framework-all]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3460521289
+# Project-style install with self-referential extras
+# (eval_framework[all] -> eval_framework[determined,openai,transformers]).
+# scenarios.py expand_project_extras flattens the self-extra into root
+# requirements.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-10-29 09:17:56"
+project_name = "eval-framework"
+project_extras = ["all"]
+requirements = [
+    "pyyaml>=6.0.1,<7",
+    "datasets>=2.19.1,<4",
+    "pydantic>=2.7,<3",
+    "boto3>=1.40.54,<2",
+]
+[eval-framework-all.optional_dependencies]
+determined = ["determined>=0.38,<0.39", "tensorboard==2.19.0"]
+openai = ["openai>=1.62,<2", "tiktoken>=0.9,<0.10"]
+transformers = ["transformers>=4.45.2,<5", "torch>=2.5,<3"]
+all = [
+    "eval_framework[determined,openai,transformers]",
+]

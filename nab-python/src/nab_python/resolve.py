@@ -1,0 +1,497 @@
+"""Orchestrate dependency resolution from a pyproject.toml file."""
+
+from __future__ import annotations
+
+import logging
+import sys
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+from nab_resolver.resolver import (
+    Incompatibility,
+    IncompatibilityCause,
+    ResolutionError,
+    Resolver,
+)
+
+from ._vcs_admission import admit_vcs_url
+from ._vendor.packaging.markers import default_environment
+from ._vendor.packaging.ranges import VersionRange
+from ._vendor.packaging.requirements import Requirement
+from ._vendor.packaging.specifiers import SpecifierSet
+from ._vendor.packaging.utils import canonicalize_name
+from ._vendor.packaging.version import InvalidVersion, Version
+from .config import NabProjectConfig, ResolveMode, read_pyproject_config
+from .fetch import FetchCoordinator
+from .lockfile import LockInput, build_lock_input_from_provider
+from .provider import (
+    Provider,
+    ResolutionStrategy,
+    join_extra,
+    split_extra,
+)
+from .requirements_file import (
+    expand_self_extras,
+    read_pyproject_dependencies,
+    read_pyproject_groups,
+    read_pyproject_name,
+    read_pyproject_optional_dependencies,
+    resolve_groups_to_requirements,
+    select_optional_dependencies,
+)
+from .universal.matrix import Matrix
+from .universal.resolve import UniversalResult, resolve_universal
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
+
+    from nab_index.transport import AsyncHttpTransport
+
+
+__all__ = [
+    "ResolutionResult",
+    "UnsupportedModeError",
+    "resolve_pyproject",
+    "resolve_universal_pyproject",
+]
+
+
+_logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ResolutionResult:
+    """A finished single-environment resolution and its lock input.
+
+    ``pins`` is the canonical-name -> :class:`Version` mapping.
+    ``lock_input`` carries everything needed to write a PEP 751
+    ``pylock.toml`` or a hashed ``requirements.txt`` and to download
+    the chosen artefacts.
+    """
+
+    pins: dict[str, Version]
+    lock_input: LockInput
+
+
+class UnsupportedModeError(NotImplementedError):
+    """Resolve mode requested is not handled by this entry point."""
+
+
+def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling into a config object would hide it
+    path: Path,
+    transport: AsyncHttpTransport,
+    *,
+    config: NabProjectConfig | None = None,
+    cache_dir: Path | None = None,
+    offline: bool = False,
+    python_version: str | None = None,
+    groups: Sequence[str] = (),
+    extras: Sequence[str] = (),
+    resolution_strategy: ResolutionStrategy | None = None,
+) -> ResolutionResult:
+    """Resolve a project's dependencies for a single environment.
+
+    ``config`` defaults to :func:`read_pyproject_config(path)`. The
+    caller supplies ``transport`` so the HTTP library choice stays
+    outside nab-python. ``cache_dir``, ``offline`` and
+    ``python_version`` are runtime overrides from the CLI.
+
+    ``groups`` and ``extras`` name PEP 735 groups and
+    ``[project.optional-dependencies]`` keys to fold in.
+    ``resolution_strategy`` overrides ``config.resolution`` when set.
+
+    Use :func:`resolve_universal_pyproject` when
+    ``config.mode is ResolveMode.UNIVERSAL``. Returns a
+    :class:`ResolutionResult` with ``pins`` and ``lock_input``.
+    """
+    if config is None:
+        config = read_pyproject_config(path)
+
+    if config.mode is not ResolveMode.SPECIFIC:
+        msg = (
+            f"resolve_pyproject only handles ResolveMode.SPECIFIC; got"
+            f" {config.mode.value}.  Use resolve_universal_pyproject for"
+            " mode = 'universal'."
+        )
+        raise UnsupportedModeError(msg)
+
+    if python_version is not None:
+        effective_python = python_version
+    elif config.requires_python is not None:
+        effective_python = _resolve_target_python(config.requires_python)
+    else:
+        vi = sys.version_info
+        effective_python = f"{vi.major}.{vi.minor}.{vi.micro}"
+
+    effective_strategy = (
+        resolution_strategy if resolution_strategy is not None else config.resolution
+    )
+
+    requirements = read_pyproject_dependencies(path)
+    requirements.extend(_load_group_requirements(path, groups))
+    requirements.extend(_load_extra_requirements(path, extras))
+    marker_environment = _build_marker_environment(
+        python_version=effective_python,
+        overrides=config.marker_environment,
+    )
+    resolver_requirements, root_extras = _build_resolver_inputs(
+        requirements, config, environment=marker_environment
+    )
+    resolver_constraints = _build_constraints(config)
+    direct_packages = frozenset(
+        name for name in resolver_requirements if split_extra(name)[1] is None
+    )
+
+    with FetchCoordinator(
+        transport,
+        indexes=list(config.indexes),
+        cache_dir=cache_dir,
+        offline=offline,
+        index_overrides=list(config.index_overrides),
+        marker_environment=dict(config.marker_environment) or None,
+    ) as coordinator:
+        provider = Provider(
+            coordinator,
+            python_version=effective_python,
+            root_requirements=resolver_requirements,
+            uploaded_prior_to=config.uploaded_prior_to,
+            uploaded_prior_to_overrides=config.uploaded_prior_to_overrides or None,
+            root_extras=root_extras,
+            dist_policy=config.dist_policy,
+            dist_policy_overrides=config.dist_policy_overrides or None,
+            build_policy=config.build_policy,
+            build_policy_overrides=dict(config.build_policy_overrides) or None,
+            vcs_config=config.vcs,
+            marker_environment=dict(config.marker_environment) or None,
+            local_sources=list(config.local_sources) or None,
+            vcs_sources=list(config.vcs_sources) or None,
+            vcs_cache_dir=cache_dir / "vcs" if cache_dir is not None else None,
+            build_config=config,
+            resolution_strategy=effective_strategy,
+            direct_packages=direct_packages,
+        )
+
+        resolver: Resolver[str, Version] = Resolver(
+            provider, range_type=VersionRange, root_version="0"
+        )
+        try:
+            raw = resolver.resolve(
+                resolver_requirements, constraints=resolver_constraints
+            )
+        except ResolutionError as exc:
+            _augment_resolution_error(exc, provider)
+            raise
+        pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
+        lock_input = build_lock_input_from_provider(
+            provider,
+            pins,
+            requires_python=config.requires_python,
+            extras=tuple(extras),
+            dependency_groups=tuple(groups),
+            default_groups=tuple(groups),
+            indexes=config.indexes,
+        )
+        return ResolutionResult(pins=pins, lock_input=lock_input)
+
+
+def _load_group_requirements(path: Path, selected: Sequence[str]) -> list[Requirement]:
+    """Read [dependency-groups] from ``path`` and expand ``selected``."""
+    if not selected:
+        return []
+    groups = read_pyproject_groups(path)
+    if not groups:
+        msg = (
+            "groups requested but [dependency-groups] is missing from"
+            f" {path}: {sorted(selected)!r}"
+        )
+        raise LookupError(msg)
+    return resolve_groups_to_requirements(groups, selected)
+
+
+def _load_extra_requirements(path: Path, selected: Sequence[str]) -> list[Requirement]:
+    """Read [project.optional-dependencies] from ``path`` and expand ``selected``.
+
+    Self-references (``{project_name}[a, b]`` inside an extra's
+    contents) are expanded transitively so that the third-party deps
+    they ultimately reach reach the resolver as root requirements.
+    See :func:`expand_self_extras` for the rationale.
+    """
+    if not selected:
+        return []
+    optional = read_pyproject_optional_dependencies(path)
+    if not optional:
+        msg = (
+            "extras requested but [project.optional-dependencies] is"
+            f" missing from {path}: {sorted(selected)!r}"
+        )
+        raise LookupError(msg)
+    project_name = read_pyproject_name(path)
+    expanded = expand_self_extras(optional, project_name, selected)
+    return select_optional_dependencies(optional, expanded)
+
+
+def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
+    """Append per-package NO_VERSIONS diagnostics to ``exc`` in-place.
+
+    Walks the derivation tree carried on the exception, collects
+    every package that appears in a NO_VERSIONS clause, and looks up
+    the provider-side reason for each.  When at least one reason is
+    available, rewrites the exception's args so that ``str(exc)``
+    surfaces the diagnostics alongside the original derivation tree.
+    """
+    if exc.incompatibility is None:
+        return
+    packages: list[str] = []
+    seen: set[str] = set()
+    for package in _walk_no_versions_packages(exc.incompatibility):
+        if package in seen:
+            continue
+        seen.add(package)
+        packages.append(package)
+    hints: list[str] = []
+    for package in packages:
+        reason = provider.get_no_versions_reason(package)
+        if reason is not None:
+            hints.append(f"{package}: {reason}")
+    if not hints:
+        return
+    base = str(exc)
+    augmented = base + "\n\nDiagnostics:\n  - " + "\n  - ".join(hints)
+    exc.args = (augmented,)
+
+
+def _walk_no_versions_packages(
+    incompatibility: Incompatibility[Any, Any],
+) -> list[str]:
+    """Return package names from every NO_VERSIONS clause in the tree."""
+    out: list[str] = []
+    seen_ids: set[int] = set()
+
+    def visit(node: Incompatibility[Any, Any]) -> None:
+        if id(node) in seen_ids:
+            return
+        seen_ids.add(id(node))
+        if node.cause is IncompatibilityCause.NO_VERSIONS:
+            for term in node.terms:
+                pkg = term.package
+                if isinstance(pkg, str):
+                    out.append(pkg)
+        if node.cause_left is not None:
+            visit(node.cause_left)
+        if node.cause_right is not None:
+            visit(node.cause_right)
+
+    visit(incompatibility)
+    return out
+
+
+def _build_resolver_inputs(
+    requirements: list[Requirement],
+    config: NabProjectConfig,
+    *,
+    environment: dict[str, str],
+) -> tuple[dict[str, VersionRange], set[tuple[str, str]]]:
+    """Convert PEP 508 ``Requirement`` objects to the resolver's input shape.
+
+    Requirements whose PEP 508 marker evaluates to ``False`` under
+    ``environment`` are skipped, matching pip/uv's root-requirement
+    handling.
+    """
+    resolver_requirements: dict[str, VersionRange] = {}
+    root_extras: set[tuple[str, str]] = set()
+    for req in requirements:
+        if req.marker is not None and not req.marker.evaluate(environment):
+            continue
+        if req.url is not None:
+            admit_vcs_url(req.url, config.vcs)
+            msg = (
+                f"VCS requirement admitted by policy but resolver path is not"
+                f" implemented: {req.name} @ {req.url}"
+            )
+            raise NotImplementedError(msg)
+        name = str(canonicalize_name(req.name))
+        resolver_requirements[name] = req.specifier.to_range()
+        for extra in req.extras:
+            extra_key = join_extra(name, extra)
+            resolver_requirements[extra_key] = VersionRange.full()
+            _, normalized_extra = split_extra(extra_key)
+            assert normalized_extra is not None  # join_extra always sets one
+            root_extras.add((name, normalized_extra))
+    return resolver_requirements, root_extras
+
+
+_PYTHON_VERSION_PARTS = 2
+
+
+def _build_marker_environment(
+    *,
+    python_version: str,
+    overrides: Mapping[str, str],
+) -> dict[str, str]:
+    """Return the merged PEP 508 environment used for root-marker evaluation.
+
+    Mirrors :class:`Provider`: defaults from
+    :func:`default_environment`, then ``python_version`` /
+    ``python_full_version`` rewritten from the effective Python, then
+    user overrides.
+    """
+    env: dict[str, str] = {
+        key: value
+        for key, value in default_environment().items()
+        if isinstance(value, str)
+    }
+    try:
+        release = Version(python_version).release
+    except InvalidVersion:
+        pass
+    else:
+        env["python_version"] = (
+            f"{release[0]}.{release[1]}"
+            if len(release) >= _PYTHON_VERSION_PARTS
+            else python_version
+        )
+        env["python_full_version"] = python_version
+    env.update(overrides)
+    return env
+
+
+def resolve_universal_pyproject(
+    path: Path,
+    *,
+    config: NabProjectConfig | None = None,
+    cache_dir: Path | None = None,
+    transport: AsyncHttpTransport | None = None,
+    offline: bool = False,
+    groups: Sequence[str] = (),
+    extras: Sequence[str] = (),
+    resolution_strategy: ResolutionStrategy | None = None,
+) -> UniversalResult:
+    """Run a universal resolve for the project at ``path``.
+
+    Reads ``[project].dependencies`` as the requirement list and the
+    matrix declaration from ``[tool.nab.matrix]``.  Requires
+    ``config.mode == ResolveMode.UNIVERSAL``.
+
+    ``groups`` names PEP 735 dependency groups; ``extras`` names
+    entries from ``[project.optional-dependencies]``.  Both are
+    folded into every per-tuple resolve.  The CLI passes the
+    selections through to ``merge_universal_lock_inputs`` so the
+    lockfile records what produced the pin set.
+    """
+    if config is None:
+        config = read_pyproject_config(path)
+    if config.mode is not ResolveMode.UNIVERSAL:
+        msg = (
+            f"resolve_universal_pyproject requires mode = 'universal'; got"
+            f" {config.mode.value}.  Set [tool.nab].mode = 'universal'."
+        )
+        raise UnsupportedModeError(msg)
+    if config.matrix is None:  # pragma: no cover - guarded at config parse
+        msg = "mode = 'universal' requires a [tool.nab.matrix] table"
+        raise UnsupportedModeError(msg)
+
+    requirements = read_pyproject_dependencies(path)
+    requirements.extend(_load_group_requirements(path, groups))
+    requirements.extend(_load_extra_requirements(path, extras))
+    requirement_strings = [str(r) for r in requirements]
+    matrix = Matrix(
+        python=config.matrix.python,
+        platforms=config.matrix.platforms,
+        python_order=config.matrix.python_order,
+        python_patches=(
+            dict(config.matrix.python_patches)
+            if config.matrix.python_patches is not None
+            else None
+        ),
+    )
+    effective_strategy = (
+        resolution_strategy if resolution_strategy is not None else config.resolution
+    )
+    return resolve_universal(
+        matrix=matrix,
+        requirements=requirement_strings,
+        transport=transport,
+        offline=offline,
+        constraints=list(config.constraints) or None,
+        cache_dir=cache_dir,
+        uploaded_prior_to=config.uploaded_prior_to,
+        uploaded_prior_to_overrides=config.uploaded_prior_to_overrides or None,
+        dist_policy=config.dist_policy,
+        dist_policy_overrides=config.dist_policy_overrides or None,
+        build_policy=config.build_policy,
+        build_policy_overrides=dict(config.build_policy_overrides) or None,
+        vcs_config=config.vcs,
+        local_sources=list(config.local_sources) or None,
+        vcs_sources=list(config.vcs_sources) or None,
+        vcs_cache_dir=cache_dir / "vcs" if cache_dir is not None else None,
+        build_config=config,
+        indexes=list(config.indexes),
+        index_overrides=list(config.index_overrides) or None,
+        resolution_strategy=effective_strategy.value,
+    )
+
+
+_PYTHON_CANDIDATE_MAJORS = (3, 4)
+_PYTHON_CANDIDATE_MINORS = range(30)
+_PYTHON_CANDIDATE_PATCHES = range(30)
+
+
+def _resolve_target_python(specifier: str) -> str:
+    """Pick a concrete Python version that satisfies ``specifier``.
+
+    ``specifier`` is a PEP 440 specifier set (already validated at
+    config-parse time, see :func:`_parse_requires_python`).  The
+    resolve target is the lowest enumerated ``M.N.P`` release that the
+    specifier admits: deterministic regardless of host, and matches
+    the user's written intent ("lock for >=3.13" -> "use 3.13.0
+    markers"; "lock for ==3.10.5" -> "use 3.10.5 markers").
+
+    Falls back to the host Python when no enumerated candidate
+    satisfies (e.g. an open-ended ``<X.Y`` specifier with no lower
+    bound, or a range that admits only versions outside the candidate
+    grid).  The host fallback warns via the logger so the operator can
+    notice when their lockfile's ``requires-python`` field implies a
+    target the resolve could not actually impersonate.
+    """
+    spec_set = SpecifierSet(specifier)
+
+    # M.N.0 first so >=3.13 resolves to 3.13.0 (not 3.13.<something>).
+    # filter() preserves input order, so the first match is the lowest.
+    candidates: list[Version] = []
+    for major in _PYTHON_CANDIDATE_MAJORS:
+        for minor in _PYTHON_CANDIDATE_MINORS:
+            candidates.append(Version(f"{major}.{minor}.0"))
+            for patch in _PYTHON_CANDIDATE_PATCHES:
+                if patch == 0:
+                    continue
+                candidates.append(Version(f"{major}.{minor}.{patch}"))
+
+    matches = [str(v) for v in spec_set.filter(candidates)]
+    if matches:
+        return matches[0]
+    vi = sys.version_info
+    host = f"{vi.major}.{vi.minor}.{vi.micro}"
+    _logger.warning(
+        "requires-python = %r matches no enumerated CPython release;"
+        " falling back to host Python %s for the resolve target",
+        specifier,
+        host,
+    )
+    return host
+
+
+def _build_constraints(config: NabProjectConfig) -> dict[str, VersionRange]:
+    """Parse constraint strings from config into resolver-input ranges."""
+    out: dict[str, VersionRange] = {}
+    for cstr in config.constraints:
+        req = Requirement(cstr)
+        if req.url is not None:
+            admit_vcs_url(req.url, config.vcs)
+            msg = (
+                f"VCS constraint admitted by policy but resolver path is not"
+                f" implemented: {req.name} @ {req.url}"
+            )
+            raise NotImplementedError(msg)
+        out[canonicalize_name(req.name)] = req.specifier.to_range()
+    return out

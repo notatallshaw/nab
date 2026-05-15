@@ -1,0 +1,175 @@
+# PyTorch ecosystem scenarios.
+#
+# torch / torchvision / torchaudio / pytorch-lightning / triton /
+# deepspeed / fine-tuning stacks (trl, peft, axolotl).  Wheel-tag
+# coverage gaps and tightly-coupled version triples cause most of
+# the backtracking.
+
+[torch-xpu-nightly]
+# https://github.com/pytorch/pytorch/issues/148680
+# Nightly index with mismatching versions -> pip tries every torch.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-03-06 15:44:50"
+requirements = [
+    "torch",
+    "torchvision",
+    "torchaudio",
+]
+
+[torch-vision-audio-pins]
+# Users commonly pin inexact triples. The resolver has to scan all of
+# torchvision's matrix looking for a compatible torch.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-03-01 10:00:00"
+requirements = [
+    "torch>=2.5,<2.6",
+    "torchvision>=0.20,<0.21",
+    "torchaudio>=2.5,<2.6",
+]
+
+[torch-flash-attn]
+# https://github.com/huggingface/open-r1/issues/684
+# flash_attn + torch version matrix grief.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-26 21:54:41"
+requirements = [
+    "torch==2.6.0",
+    "flash_attn>=2.7.0",
+    "transformers",
+]
+
+[pytorch-lightning-packaging]
+# https://github.com/Lightning-AI/pytorch-lightning/issues/20772
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-04-28 09:54:07"
+requirements = [
+    "lightning==2.5.1.post0",
+    "packaging==25.0",
+]
+
+[pytorch-lightning-numpy1]
+# https://github.com/Lightning-AI/pytorch-lightning/issues/20069
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-07-10 13:10:10"
+requirements = [
+    "lightning==2.3.3",
+    "numpy<2",
+]
+
+[pytorch-lightning-lite]
+# https://github.com/Lightning-AI/pytorch-lightning/issues/20000
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-06-20 14:12:59"
+requirements = [
+    "lightning==2.3.0",
+    "pytorch_lightning==2.2.5",
+    "torchmetrics",
+    "torch",
+]
+
+[pytorch-lightning-tensorrt]
+# https://github.com/Lightning-AI/pytorch-lightning/issues/21424
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-12-15 18:44:28"
+requirements = [
+    "pytorch-lightning",
+    "torch-tensorrt",
+    "torch==2.5.1",
+]
+
+# -----------------------------------------------------------------------
+# DeepSpeed
+# -----------------------------------------------------------------------
+
+[deepspeed-with-transformers]
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-09-01 10:00:00"
+requirements = [
+    "deepspeed>=0.15.0",
+    "transformers>=4.45.0",
+    "torch>=2.4.0",
+    "accelerate",
+]
+
+[deepspeed-fsdp]
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-12-01 10:00:00"
+requirements = [
+    "deepspeed==0.14.4",
+    "transformers",
+    "torch",
+    "peft",
+    "bitsandbytes",
+    "trl",
+]
+
+# -----------------------------------------------------------------------
+# Fine-tuning stacks
+# -----------------------------------------------------------------------
+
+[trl-peft-transformers]
+# Popular SFT/RLHF stack. Competing upper bounds in transformers/trl/peft.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-01 10:00:00"
+requirements = [
+    "trl>=0.9",
+    "peft>=0.11",
+    "transformers>=4.42",
+    "accelerate>=0.30",
+    "bitsandbytes",
+    "datasets",
+    "torch>=2.3",
+]
+
+[axolotl-style]
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-07-01 10:00:00"
+requirements = [
+    "transformers>=4.43",
+    "accelerate>=0.32",
+    "bitsandbytes>=0.43",
+    "peft>=0.11",
+    "trl>=0.9",
+    "datasets>=2.20",
+    "evaluate",
+    "deepspeed>=0.14",
+    "torch>=2.3",
+    "fschat",
+    "flash-attn>=2.5",
+]
+
+[triton-transformers]
+# Users forcing triton pin with transformers stack.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-11-01 10:00:00"
+requirements = [
+    "transformers",
+    "torch",
+    "triton>=2.1",
+    "flash-attn",
+    "xformers",
+]

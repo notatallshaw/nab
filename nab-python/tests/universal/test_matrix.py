@@ -1,0 +1,258 @@
+"""Unit tests for the matrix-expansion logic.
+
+Run with ``.venv/bin/python -m pytest examples/universal/test_matrix.py``
+from the ``nab/`` directory.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from nab_python._vendor.packaging.markers import Marker
+from nab_python.universal.matrix import (
+    _KNOWN_PYTHON_MINORS,
+    _PLATFORM_DEFAULTS,
+    Matrix,
+    MatrixTuple,
+    _pythons_in_range,
+)
+from nab_python.universal.wheel_selection import PlatformSpec
+
+
+class TestPythonsInRange:
+    """``_pythons_in_range`` matches PEP 440 specifiers to known minors."""
+
+    def test_lower_bound_inclusive(self) -> None:
+        """``>=3.11`` admits 3.11, 3.12, 3.13, ..."""
+        assert "3.11" in list(_pythons_in_range(">=3.11"))
+
+    def test_upper_bound_exclusive(self) -> None:
+        """``<3.13`` excludes 3.13 itself."""
+        out = list(_pythons_in_range(">=3.10, <3.13"))
+        assert "3.13" not in out
+        assert "3.12" in out
+
+    def test_exact_version_admits_one_minor(self) -> None:
+        """``==3.12`` matches exactly one minor."""
+        assert list(_pythons_in_range("==3.12")) == ["3.12"]
+
+    def test_unknown_minor_yields_nothing(self) -> None:
+        """A spec satisfied by no known minor returns an empty list."""
+        assert list(_pythons_in_range(">=4.0")) == []
+
+
+class TestMatrixExpand:
+    """``Matrix.expand`` builds tuples and validates inputs."""
+
+    def test_simple_range_expands_to_known_minors(self) -> None:
+        """A python range maps to the union of known minors that satisfy it."""
+        matrix = Matrix(python=">=3.11, <3.13", platforms=("linux_x86_64",))
+        tuples = matrix.expand()
+        assert [t.python_version for t in tuples] == ["3.11", "3.12"]
+        assert all(t.platform_id == "linux_x86_64" for t in tuples)
+
+    def test_cross_product_pythons_and_platforms(self) -> None:
+        """All (python, platform) pairs are present in the cross-product."""
+        matrix = Matrix(
+            python=">=3.10, <3.12",
+            platforms=("linux_x86_64", "macos_arm64", "windows_amd64"),
+        )
+        tuples = matrix.expand()
+        expected_count = 6
+        assert len(tuples) == expected_count
+        pairs = {(t.python_version, t.platform_id) for t in tuples}
+        assert pairs == {
+            ("3.10", "linux_x86_64"),
+            ("3.10", "macos_arm64"),
+            ("3.10", "windows_amd64"),
+            ("3.11", "linux_x86_64"),
+            ("3.11", "macos_arm64"),
+            ("3.11", "windows_amd64"),
+        }
+
+    def test_environment_has_all_required_pep508_keys(self) -> None:
+        """Every PEP 508 marker variable must be set per tuple."""
+        matrix = Matrix(python="==3.12", platforms=("macos_arm64",))
+        tuples = matrix.expand()
+        assert len(tuples) == 1
+        env = tuples[0].environment
+        required_keys = {
+            "python_version",
+            "python_full_version",
+            "implementation_name",
+            "implementation_version",
+            "os_name",
+            "platform_machine",
+            "platform_python_implementation",
+            "platform_release",
+            "platform_system",
+            "platform_version",
+            "sys_platform",
+        }
+        assert required_keys.issubset(env)
+        assert env["python_version"] == "3.12"
+        assert env["sys_platform"] == "darwin"
+        assert env["platform_machine"] == "arm64"
+
+    def test_unknown_platform_id_raises(self) -> None:
+        """An unknown platform id is a user error, raised eagerly."""
+        matrix = Matrix(python=">=3.11", platforms=("freebsd_amd64",))
+        with pytest.raises(ValueError, match="Unknown platform"):
+            matrix.expand()
+
+    def test_empty_python_range_raises(self) -> None:
+        """A python spec satisfied by no known minor is a user error."""
+        matrix = Matrix(python=">=4.0", platforms=("linux_x86_64",))
+        with pytest.raises(ValueError, match="No known Python"):
+            matrix.expand()
+
+    def test_python_order_desc_reverses_iteration(self) -> None:
+        """``python_order='desc'`` yields tuples in reversed Python order."""
+        asc = Matrix(python=">=3.10, <3.13", platforms=("linux_x86_64",))
+        desc = Matrix(
+            python=">=3.10, <3.13",
+            platforms=("linux_x86_64",),
+            python_order="desc",
+        )
+        assert [t.python_version for t in asc.expand()] == ["3.10", "3.11", "3.12"]
+        assert [t.python_version for t in desc.expand()] == ["3.12", "3.11", "3.10"]
+
+    def test_invalid_python_order_raises(self) -> None:
+        """Anything other than asc/desc is a user error."""
+        with pytest.raises(ValueError, match="python_order"):
+            Matrix(
+                python=">=3.10",
+                platforms=("linux_x86_64",),
+                python_order="banana",
+            ).expand()
+
+    def test_python_patches_override_full_version(self) -> None:
+        """``python_patches`` sets ``python_full_version`` per minor."""
+        matrix = Matrix(
+            python=">=3.11, <3.13",
+            platforms=("linux_x86_64",),
+            python_patches={"3.11": "3.11.4", "3.12": "3.12.1"},
+        )
+        tuples = matrix.expand()
+        py311 = next(t for t in tuples if t.python_version == "3.11")
+        py312 = next(t for t in tuples if t.python_version == "3.12")
+        assert py311.environment["python_full_version"] == "3.11.4"
+        assert py312.environment["python_full_version"] == "3.12.1"
+        assert py311.environment["implementation_version"] == "3.11.4"
+
+    def test_python_patches_default_to_zero(self) -> None:
+        """When patches not declared, ``.0`` is used."""
+        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        tuples = matrix.expand()
+        assert tuples[0].environment["python_full_version"] == "3.11.0"
+
+    def test_python_patches_partial_mapping(self) -> None:
+        """A partial mapping uses overrides for declared minors only."""
+        matrix = Matrix(
+            python=">=3.11, <3.13",
+            platforms=("linux_x86_64",),
+            python_patches={"3.11": "3.11.4"},
+        )
+        tuples = matrix.expand()
+        py311 = next(t for t in tuples if t.python_version == "3.11")
+        py312 = next(t for t in tuples if t.python_version == "3.12")
+        assert py311.environment["python_full_version"] == "3.11.4"
+        assert py312.environment["python_full_version"] == "3.12.0"
+
+    def test_patch_level_marker_evaluation(self) -> None:
+        """Patch-bound markers evaluate against the declared full version."""
+        from nab_python._vendor.packaging.markers import Marker
+
+        matrix = Matrix(
+            python="==3.11",
+            platforms=("linux_x86_64",),
+            python_patches={"3.11": "3.11.5"},
+        )
+        env = matrix.expand()[0].environment
+        assert Marker('python_full_version >= "3.11.4"').evaluate(env)
+        assert not Marker('python_full_version >= "3.11.6"').evaluate(env)
+
+    def test_platform_release_default_is_empty_string(self) -> None:
+        """Without a user declaration, ``platform_release`` is ``""``."""
+        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        env = matrix.expand()[0].environment
+        assert env["platform_release"] == ""
+        assert env["platform_version"] == ""
+
+    def test_platform_release_from_spec(self) -> None:
+        """A spec-declared ``platform_release`` flows into the environment."""
+        spec = PlatformSpec(
+            "linux_x86_64", platform_release="5.10.0", platform_version="#1 SMP"
+        )
+        matrix = Matrix(python="==3.11", platforms=(spec,))
+        env = matrix.expand()[0].environment
+        assert env["platform_release"] == "5.10.0"
+        assert env["platform_version"] == "#1 SMP"
+
+    def test_kernel_marker_evaluates_against_declared_release(self) -> None:
+        """Kernel-conditioned markers fire when the user declares a target."""
+        spec = PlatformSpec("linux_x86_64", platform_release="5.10.0")
+        matrix = Matrix(python="==3.11", platforms=(spec,))
+        env = matrix.expand()[0].environment
+        assert Marker('platform_release >= "5.10"').evaluate(env)
+        assert not Marker('platform_release >= "6.0"').evaluate(env)
+
+    def test_marker_evaluation_works_against_environment(self) -> None:
+        """A real PEP 508 marker should evaluate against the tuple's env."""
+        matrix = Matrix(
+            python=">=3.11, <3.12",
+            platforms=("windows_amd64", "linux_x86_64"),
+        )
+        tuples = matrix.expand()
+        win_env = next(
+            t.environment for t in tuples if t.platform_id == "windows_amd64"
+        )
+        linux_env = next(
+            t.environment for t in tuples if t.platform_id == "linux_x86_64"
+        )
+
+        win_marker = Marker("sys_platform == 'win32'")
+        assert win_marker.evaluate(win_env) is True
+        assert win_marker.evaluate(linux_env) is False
+
+        py_marker = Marker('python_version >= "3.10"')
+        assert py_marker.evaluate(win_env) is True
+        assert py_marker.evaluate(linux_env) is True
+
+
+class TestMatrixTuple:
+    """``MatrixTuple`` is a lightweight value object."""
+
+    def test_label_is_short_and_stable(self) -> None:
+        """``label`` is a short id suitable for filenames and logs."""
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={},
+        )
+        assert t.label == "py311-linux_x86_64"
+
+
+class TestKnownConstants:
+    """Coverage for the module-level lookup tables."""
+
+    def test_known_python_minors_are_sorted(self) -> None:
+        """Stability matters because callers rely on iteration order."""
+        as_versions = [
+            tuple(int(part) for part in m.split(".")) for m in _KNOWN_PYTHON_MINORS
+        ]
+        assert as_versions == sorted(as_versions)
+
+    def test_each_platform_default_has_required_keys(self) -> None:
+        """Every platform default must define the OS/arch markers."""
+        required = {
+            "sys_platform",
+            "platform_system",
+            "platform_machine",
+            "os_name",
+            "platform_python_implementation",
+            "implementation_name",
+        }
+        for platform_id, env in _PLATFORM_DEFAULTS.items():
+            missing = required - env.keys()
+            assert not missing, f"{platform_id} missing {missing}"

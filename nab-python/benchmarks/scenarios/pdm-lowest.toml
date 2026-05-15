@@ -1,0 +1,336 @@
+# Resolver scenarios filed against pdm-project/pdm.
+
+[stackstac]
+# https://github.com/pdm-project/pdm/issues/2193
+# 40+ minutes in PDM, pip resolves quickly. Regression baseline.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-08-19 15:50:41"
+requirements = [
+    "dask[array]>=2022.1.1",
+    "pyproj>=3.0.0,<4.0.0",
+    "rasterio>=1.3.0,<2.0.0",
+    "xarray>=0.18",
+    "numpy>1.23,<3",
+    "pandas>=2,<3",
+]
+
+# --------------------------------------------------------------------------
+# PDM
+# --------------------------------------------------------------------------
+
+[pdm-litestar-ml]
+# https://github.com/pdm-project/pdm/issues/2633
+# Gets stuck in an infinite s3transfer loop. Large ML + litestar stack.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-15 11:48:13"
+requirements = [
+    "litestar[cli,jinja,jwt,pydantic,sqlalchemy,standard]",
+    "pydantic-settings>=2.0.3",
+    "asyncpg>=0.28.0",
+    "python-dotenv>=1.0.0",
+    "passlib[argon2]>=1.7.4",
+    "litestar-saq>=0.1.16",
+    "litestar-vite>=0.1.4",
+    "litestar-aiosql>=0.1.1",
+    "boto3>=1.34.25",
+    "python-ffmpeg>=2.0.10",
+    "pyav>=12.0.2",
+    "boto3-stubs[essential]>=1.34.27",
+    "s3fs",
+    "awscli>=1.32.28",
+    "faster-whisper>=0.10.0",
+    "pydub>=0.25.1",
+    "numpy>=1.26.3",
+]
+
+[pdm-sanic-httpx]
+# https://github.com/pdm-project/pdm/issues/1119
+# Original "adding httpx -> infinity loop" reproduction from 2022.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2022-06-06 11:22:26"
+requirements = [
+    "httpx",
+    "sanic>=22.3.1",
+    "sanic-jwt>=1.7.0",
+    "bcrypt>=3.2.0",
+    "aiobotocore>=2.2.0",
+    "alembic>=1.7.7",
+    "psycopg2-binary>=2.9.3",
+    "aio-pika>=7.1.2",
+    "motor>=2.5.1",
+    "aiohttp>=3.8.1",
+    "pymongo>=3.12.3",
+    "typing-extensions>=4.2.0",
+    "psutil>=5.9.0",
+    "pytz>=2022.1",
+    "ujson>=5.2.0",
+    "defusedxml>=0.7.1",
+    "sanic-ext==22.3.0",
+    "aioredis[hiredis]>=2.0.1",
+    "pydantic>=1.9.0",
+    "tortoise-orm[asyncpg]>=0.19.0",
+]
+
+[pdm-eth-brownie]
+# https://github.com/pdm-project/pdm/issues/744
+# eth-brownie ~= 1.17 hangs indefinitely; tight == pins everywhere.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2021-11-18 18:22:05"
+requirements = ["eth-brownie>=1.17,<1.18"]
+
+[pdm-skypilot-dvc]
+# https://github.com/pdm-project/pdm/issues/2545
+# skypilot[aws] + dvc[s3] never terminates; >3 minutes in the report.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-01-09 16:42:36"
+requirements = [
+    "skypilot[aws]",
+    "dvc[s3]",
+]
+
+[pdm-langchain-gretel]
+# https://github.com/pdm-project/pdm/issues/3027
+# 10k rounds of spin for an obvious pydantic conflict between langchain and gretel-client.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-07-16 20:38:21"
+requirements = [
+    "langchain",
+    "gretel-client",
+]
+
+[pdm-sphinx-plantuml]
+# https://github.com/pdm-project/pdm/issues/3146
+# sphinx-plantuml needs sphinx==4.4.0 but pdm installs 7.x (backtrack test).
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-09-07 01:02:58"
+requirements = [
+    "sphinx>=7,<8",
+    "sphinx-plantuml>=1,<2",
+]
+
+[pdm-matplotlib-pandas-py37]
+# https://github.com/pdm-project/pdm/issues/776
+# Loops indefinitely, should quickly conclude requires-python too low.
+resolution = "lowest"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2021-12-05 05:37:15"
+requirements = [
+    "matplotlib==3.4.3",
+    "pandas==1.3.4",
+]
+
+[pdm-paddlespeech-gpu]
+# https://github.com/pdm-project/pdm/issues/2664
+# 18m+ resolving paddlespeech + paddlepaddle-gpu on a pinned numpy ceiling.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2024-03-05 07:03:50"
+requirements = [
+    "paddlepaddle>=2.4.2,<3.0.0",
+    "pytest-runner>=6.0.1",
+    "setuptools>=69.1.1",
+    "paddlespeech>=1.4.1",
+    "numpy<=1.23.5",
+    "paddlespeech-ctcdecoders>=0.2.1",
+    "opencc==1.1.6",
+]
+
+[pdm-vs-poetry-ml]
+# https://github.com/pdm-project/pdm/issues/2796
+# "PDM is slower than Poetry": numpyro + polars + pydantic + typer.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-04-11 07:00:39"
+requirements = [
+    "numpyro>=0.14.0",
+    "polars>=0.20.19",
+    "jaxtyping>=0.2.28",
+    "jpholiday>=0.1.9",
+    "joblib>=1.4.0",
+    "pyyaml>=6.0.1",
+    "pydantic>=2.6.4",
+    "typer>=0.12.3",
+    "ruff>=0.3.5",
+    "black>=24.3.0",
+    "pyright>=1.1.358",
+    "pytest-cov>=5.0.0",
+    "ipykernel>=6.29.4",
+    "matplotlib>=3.8.4",
+]
+
+[pdm-sentry-requirements-base]
+# https://github.com/pdm-project/pdm/issues/3667
+# Python Package Manager Shootout: pdm lock timed out after 6 hours on sentry deps.
+# (Regression from ~2 minutes baseline.)
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-11-06 19:39:34"
+requirements = [
+    "sentry-sdk",
+    "django>=5.1",
+    "djangorestframework",
+    "celery",
+    "redis",
+    "psycopg2-binary",
+    "boto3",
+    "google-cloud-storage",
+    "cryptography",
+    "lxml",
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "structlog",
+    "uwsgi",
+    "ujson",
+    "msgpack",
+    "PyJWT",
+    "maxminddb",
+    "mmh3",
+    "sqlparse",
+    "tiktoken",
+]
+
+[pdm-jax-extras]
+# https://github.com/pdm-project/pdm/issues/2369
+# jax[cpu] vs. jax[cuda] with a local version identifier; wrong resolution.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-11-04 20:51:13"
+requirements = [
+    "jax==0.4.17",
+    "jax[cpu]",
+]
+
+[pdm-moto-all-jupyter]
+# https://github.com/pdm-project/pdm/issues/2358
+# moto[all] + jupyter: add works, install sees ResolutionImpossible.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2023-11-01 22:28:26"
+requirements = [
+    "moto[all]",
+    "jupyter",
+]
+
+[pdm-gpu-torch-slow-lock]
+# https://github.com/pdm-project/pdm/issues/3373
+# pyspark-heavy deps that went from ~4s to 90s+ lock between 2.21 and 2.22.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-01-07 23:34:32"
+requirements = [
+    "pyspark==3.5.3",
+    "pyarrow>=14.0.1",
+    "h3<4.0.0",
+    "tzfpy>=0.15.4",
+    "pyspark-extension==2.12.0.3.5",
+    "pyyaml>=6.0.1",
+    "google-cloud-core>=2.4.1",
+    "shapely>=2.0.4",
+    "pydantic-settings>=2.2.1",
+    "delta-spark>=3.2.0",
+    "pandas>=2.2.2",
+    "google-cloud-bigquery>=3.23.1",
+    "numpy>=1.26",
+    "deltalake>=0.18.1",
+    "h3-pyspark>=1.2.6",
+    "geopy>=2.4.1",
+    "h3ronpy>=0.22.0",
+]
+
+[pdm-pydantic-old-wheel]
+# https://github.com/pdm-project/pdm/issues/3171
+# pydantic 0.17 py36 wheel trips the resolver when it should just be skipped.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-09-19 17:36:19"
+requirements = ["pydantic>=2.7,<3.0"]
+
+[pdm-clickhouse-driver-lz4-marker]
+# https://github.com/pdm-project/pdm/issues/3636
+# Repeats round 4 forever due to clickhouse-driver lz4 marker conflict.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-10-02 09:14:49"
+requirements = [
+    "click==8.1.7",
+    "lz4==4.3.3",
+    "clickhouse-driver[lz4,zstd,numpy]>=0.2.2,<0.3.0",
+]
+
+[pdm-docutils-regression]
+# https://github.com/pdm-project/pdm/issues/21
+# Oldest-known PDM bug: docutils<0.16 installs 0.15.post1 instead of 0.15.2.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2020-02-07 05:53:56"
+requirements = ["docutils<0.16,>=0.10"]
+
+[pdm-pytest-more-itertools-markers]
+# https://github.com/pdm-project/pdm/issues/47
+# Markers not merged when there are multiple sources/resolutions.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2020-02-21 14:30:32"
+requirements = [
+    "pytest==4.6.*",
+    "more-itertools>=4.0.0,<6.0.0",
+]
+
+[pdm-rfc3986-httpx-old]
+# https://github.com/pdm-project/pdm/issues/1001
+# pdm add httpx historically picked the wrong rfc3986; tests candidate ordering.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2022-03-28 12:19:43"
+requirements = ["httpx"]
+
+[pdm-numpy-wide-python-range]
+# https://github.com/pdm-project/pdm/issues/3464
+# Originally about lock-per-python with requires-python = ">=3.8,<3.13".
+# nab resolves a single python_version, so the fixed 3.12 input is fine.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-04-11 19:14:19"
+requirements = ["numpy"]
+
+[pdm-3634-pre-prod-pydantic]
+# https://github.com/pdm-project/pdm/issues/3634
+# Two siblings ask for pydantic>=2.10.6 vs >=2.12.0a1 and pdm refuses
+# despite a valid pre-release satisfying both.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-10-02 08:42:21"
+allow_prereleases = true
+requirements = [
+    "pydantic>=2.10.6",
+    "pydantic>=2.12.0a1",
+]

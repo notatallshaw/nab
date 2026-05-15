@@ -1,0 +1,2129 @@
+# Resolver scenarios filed against pypa/pip.
+#
+# Includes the #13281 ResolutionTooDeep meta-thread plus standalone
+# pip issues that triggered backtracking storms, hangs, or
+# misleading errors.  Each entry pins its python_version,
+# platform_system, datetime, and requirements to roughly match
+# what the resolver saw at the time of the report.
+
+[autogluon]
+# https://github.com/pypa/pip/issues/12990
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["autogluon==1.1.1"]
+
+[pandas-aws-boto3]
+# https://github.com/pandas-dev/pandas/issues/55480
+# Same urllib3/botocore upper-bound pattern via pandas[aws].
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2023-10-10 23:21:00"
+requirements = ["pandas[aws]", "boto3>=1"]
+
+[pandas-aws-boto3-dandi-frenzy]
+# https://github.com/pypa/pip/issues/12274
+# pip downloads hundreds of boto3/botocore patch versions before
+# settling. Deep transitive trigger via dandi + selenium.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2023-09-11 14:00:00"
+requirements = ["dandi", "selenium"]
+
+[pip-issue-12754]
+# https://github.com/pypa/pip/issues/12754
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-06-07 14:00:00"
+requirements = [
+    "auditree-arboretum>=0.5.0",
+    "deprecated>=1.2.10",
+    "configparser",
+    "python-dateutil",
+    "PyYAML",
+    "requests",
+    "ilcli>=0.3.2",
+    "PyJWT>=2.6.0",
+    "requests>=2.28.2",
+    "python-dateutil<3.0.0",
+    "SoftLayer>=5.7.2",
+    "sdcclient>=0.10.0",
+    "pygithub>=1.58.0",
+    "kubernetes>=21.7.0",
+    "pytenable>=1.4.12",
+    "strenum>=0.4.10",
+    "ibm-platform-services>=0.30.3",
+    "ibm_cloud_sdk_core>=3.16.1",
+    "GitPython",
+    "ibm-cos-sdk>=2.12.1",
+]
+
+[apache-airflow-google-cloud]
+# https://github.com/pypa/pip/issues/12754#issuecomment-2458484064
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-11-09 14:00:00"
+requirements = [
+    "apache-airflow==2.7.3",
+    "google-cloud-logging==3.10.0",
+]
+
+[TTS]
+# https://github.com/pypa/pip/issues/12305
+# Reported as 1-2 hours then ResolutionTooDeep in pip.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2023-10-01 14:00:00"
+requirements = ["TTS"]
+
+[backtracks-to-old-scipy]
+# https://github.com/pypa/pip/issues/13037
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-10-22 14:00:00"
+requirements = [
+    "numpy==1.21.5",
+    "spacy<4.0.0,>=3.0.0",
+    "mlflow<3.0.0,>=2.13.0",
+]
+
+[starlette-fastapi]
+# Historically slow for nab; baseline target ~0.5s.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-07 14:00:00"
+requirements = ["starlette", "fastapi"]
+
+[sphinx]
+# https://github.com/pypa/pip/issues/12430
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2023-12-09 14:00:00"
+requirements = [
+    "sphinx",
+    "sphinx-rtd-theme",
+    "sphinx-toolbox",
+    "myst-parser",
+    "sphinxcontrib-bibtex",
+    "nbsphinx",
+]
+
+[kedro-test]
+# https://github.com/pradyunsg/pip-resolver-benchmarks/discussions/8
+# Also pip #12768. Resolves under uv but pip reports impossible.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-12-09 14:00:00"
+requirements = ["kedro[test]==0.18.13"]
+
+[django-stubs]
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-11-04 14:00:00"
+requirements = [
+    "django-stubs[compatible-mypy]",
+    "djangorestframework-stubs[compatible-mypy]>=3",
+]
+
+[kauldron-docs]
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-11-26 14:00:00"
+requirements = ["kauldron[docs]"]
+
+[ipykernel-windows]
+# https://github.com/pypa/pip/issues/13267
+# Windows-only; nab skips when platform_system != current.
+resolution = "lowest-direct"
+python_version = "3.14"
+platform_system = "Windows"
+datetime = "2025-03-06 14:00:00"
+requirements = ["ipykernel"]
+
+[aicsimageio-napari]
+# https://github.com/pypa/pip/issues/12210
+# Diamond dependency pattern, extremely slow resolution.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2023-08-07 07:19:54"
+requirements = [
+    "aicsimageio==4.9.1",
+    "napari-aicsimageio==0.7.2",
+    "napari==0.4.18",
+]
+
+[ultralytics-export]
+# https://github.com/ultralytics/ultralytics/issues/22758
+# ResolutionTooDeep on Jetson (arm64), resolves on x86 Linux. Baseline.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-11-22 15:47:49"
+requirements = ["ultralytics[export]"]
+
+[trustllm]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3539489771
+# fschat dependency pulls in heavy ML stack.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-11-16 23:48:07"
+requirements = ["trustllm"]
+
+[metagpt]
+# https://github.com/FoundationAgents/MetaGPT/issues/1825
+# ResolutionImpossible (not too-deep), kept as a regression check.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-05-11 06:38:41"
+requirements = ["metagpt"]
+
+[mem0ai-graph-extras]
+# https://github.com/mem0ai/mem0/issues/3655
+# Loose langchain-community>=0.0.0 blows up search space.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-10-23 18:32:54"
+requirements = ["mem0ai[graph,extras]"]
+
+[langchain-ml-course]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3813389543
+resolution = "lowest-direct"
+python_version = "3.14"
+platform_system = "Linux"
+datetime = "2026-01-28 19:21:17"
+requirements = [
+    "openai",
+    "anthropic",
+    "transformers",
+    "diffusers",
+    "accelerate",
+    "bitsandbytes",
+    "evaluate",
+    "langchain",
+    "langchain-core",
+    "langchain-text-splitters",
+    "langchain-openai",
+    "langchain-chroma",
+    "langchain-community",
+    "scikit-learn",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "tf-keras",
+    "datasets",
+    "streamlit",
+    "gradio",
+    "flask",
+    "python-dotenv",
+    "ipykernel",
+    "ipywidgets",
+    "tavily-python",
+    "requests",
+    "plotly",
+    "nbformat",
+]
+
+[apache-airflow-311-full]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3476741666
+# cffi conflict between cryptography and snowflake-connector-python.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-11-01 19:46:40"
+requirements = [
+    "apache-airflow[aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,common-messaging,docker,elasticsearch,fab,ftp,git,google,google-auth,graphviz,grpc,hashicorp,http,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv]==3.1.1",
+]
+
+[promptflow-vectordb]
+# https://github.com/microsoft/promptflow/issues/4018
+# ~30 minutes then resolution-too-deep in pip.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-06-06 12:35:16"
+requirements = ["promptflow", "promptflow-vectordb"]
+
+[google-bigquery-weaviate]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2862562444
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-08 10:32:05"
+requirements = ["google-cloud-bigquery>=3.27", "weaviate-client>=4.9.3"]
+
+[google-bigquery-soda]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2855868098
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-06 20:19:31"
+requirements = ["google-cloud-bigquery>=3", "soda-core"]
+
+[paddleocr]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2933275750
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-03 03:35:14"
+requirements = [
+    "alembic~=1.15",
+    "fastapi[standard]<1.0",
+    "httpx",
+    "numpy~=2.0",
+    "onnxruntime~=1.22",
+    "opencv-python~=4.11",
+    "opencv-python-headless~=4.11",
+    "paddleocr>=3.0.0",
+    "paddlepaddle",
+    "Pillow~=11.0",
+    "pycryptodomex~=3.23",
+    "pydantic~=2.0",
+    "scikit-image<1.0",
+    "scipy~=1.15",
+    "sqlalchemy~=2.0",
+    "tqdm",
+]
+
+[datacontract-cli]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2954206760
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-08 17:23:33"
+requirements = ["datacontract-cli==0.10.10"]
+
+[rasa-pro]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2979547359
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-17 09:04:05"
+requirements = ["rasa-pro"]
+
+[copick]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2993134249
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-06-20 23:38:03"
+requirements = ["copick==1.2.0"]
+
+[pyiceberg-pyspark]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3004854118
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-25 13:49:07"
+requirements = [
+    "boto3",
+    "pydantic",
+    "pyiceberg[s3fs,sql-sqlite]",
+    "pypika",
+    "pyspark[pandas_on_spark]==3.5.0",
+    "pyarrow",
+    "pandas",
+]
+
+# --- issue #13281 meta-thread: comments with fresh repros ---
+
+[airflow-py312-providers]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2833540863
+# Near-duplicate of apache-airflow-311-full but at an earlier date and pin.
+# Airflow 3.1.0 meta-install with 30+ provider extras on Python 3.12.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-04-27 16:40:41"
+requirements = [
+    "apache-airflow[aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,common-messaging,docker,elasticsearch,fab,ftp,git,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv]==3.1.0",
+]
+
+[cburroughs-v3]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2837189308
+# Roughly 80 minutes then ResolutionTooDeep on pip 25.1. Two resolution
+# "knots": boto3/botocore/boto3-stubs and opentelemetry-instrumentation.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-04-29 01:34:23"
+requirements = [
+    "acryl-datahub[datahub-rest]==0.14.1.2",
+    "aiobotocore[boto3]",
+    "aiohttp~=3.10.11",
+    "alembic>=1.8.1",
+    "ansicolors~=1.1.8",
+    "awswrangler~=3.7.3",
+    "backoff>=2.2.1",
+    "beautifulsoup4>=4.12.2,<4.13.0",
+    "boto3",
+    "boto3-stubs[essential]",
+    "botocore",
+    "bottleneck",
+    "cachetools",
+    "catboost>=1.2.2",
+    "cf_xarray",
+    "click",
+    "cloudpathlib[s3]>=0.13.0",
+    "coolname==2.2.0",
+    "coverage[toml]==7.6.10",
+    "croniter>=1.3.8,<2",
+    "cronsim",
+    "cycler",
+    "dagster",
+    "dagster-aws",
+    "dagster-dbt",
+    "dagster-docker",
+    "dagster-pipes",
+    "dagster-postgres",
+    "dagster-webserver",
+    "darts>=0.30,<1.0",
+    "dash-extensions~=0.1.11",
+    "dash[diskcache]>=2.18.2,<3.0",
+    "dash_bootstrap_components",
+    "databricks-connect==15.4",
+    "databricks-sdk[notebook]>=0.29.0",
+    "databricks-sql-connector~=3.7.2",
+    "dataclasses_json",
+    "dbt-core~=1.9.0",
+    "dbt-snowflake~=1.9.0",
+    "deepdiff>=6.2.1",
+    "dill",
+    "duckdb==1.1.1",
+    "fastapi[standard,pydantic-settings]",
+    "filelock",
+    "flask~=2.2.2",
+    "flask_awscognito>=1.3",
+    "flask_cors>=3.0.10",
+    "flask_jwt_extended>=4.4.4",
+    "fpdf2",
+    "fsspec[s3,tqdm]",
+    "geopy",
+    "GitPython",
+    "gql[requests]>3",
+    "grafanalib>=0.7.0",
+    "grpcio",
+    "grpcio-health-checking",
+    "grpcio-reflection",
+    "gunicorn~=23.0.0",
+    "hikaru-core==1.1.2",
+    "holidays",
+    "hyperopt==0.2.5",
+    "hypothesis==6.127.9",
+    "ipython>8,<9",
+    "joblib<2",
+    "jsonpickle>=3.0.1",
+    "jupyter",
+    "jupyterlab",
+    "keras",
+    "kubernetes==31.0.0",
+    "langchain==0.3.20",
+    "langchain-community==0.3.19",
+    "langchain-core==0.3.43",
+    "langchain-huggingface==0.1.2",
+    "langchain-openai==0.3.8",
+    "langchain-pinecone==0.2.3",
+    "langchain-text-splitters==0.3.6",
+    "langgraph==0.3.5",
+    "lightgbm<5,>=4.6.0",
+    "loguru",
+    "matplotlib<3.9.0",
+    "metaflow[stubs]==2.12.17",
+    "mkdocs-material~=9.5.17",
+    "mlflow>=2.0,<2.18.0",
+    "moto[sts,server,dynamodb]>=5,<6",
+    "mypy[dmypy,faster-cache]==1.15.0",
+    "netcdf4<1.7",
+    "networkx>=2.8.8",
+    "numpy>=1.26.0,<2",
+    "oauthlib[signedtoken]>=3.2.2",
+    "openai==1.65.5",
+    "openpyxl>=3.1.2",
+    "opentelemetry-instrumentation-fastapi",
+    "opentelemetry-instrumentation-flask",
+    "opentelemetry-instrumentation-grpc",
+    "opentelemetry-instrumentation-openai",
+    "opentelemetry-instrumentation-requests",
+    "opentelemetry-instrumentation-threading==0.50b0",
+    "opentelemetry-semantic-conventions",
+    "optuna",
+    "pandas[compression,consortium-standard,parquet,performance]~=2.2.3",
+    "pandera[polars]>=0.22",
+    "pinecone==5.4.2",
+    "plotly>=5.16.0,<6",
+    "polars==1.24.0",
+    "prometheus-client>=0.17.1",
+    "prometheus-fastapi-instrumentator",
+    "protobuf",
+    "psutil>=5.8.0,<6",
+    "psycopg2-binary",
+    "psycopg[binary]",
+    "pyarrow",
+    "pydantic>2.5.0",
+    "pytest>=7.2.0,<8",
+    "python-dateutil>=2.8.2",
+    "ray[tune]",
+    "requests",
+    "rich",
+    "ruamel.yaml",
+    "s3fs[boto3]",
+    "scikit-learn>=1.2.2,<1.6",
+    "scipy",
+    "selenium==4.16.0",
+    "shap>=0.42",
+    "snowflake-connector-python[pandas]~=3.13.1",
+    "snowflake-snowpark-python[pandas]~=1.21.1",
+    "snowflake-sqlalchemy~=1.7.1",
+    "sortedcontainers",
+    "sqlalchemy[postgresql-psycopgbinary,mypy]>2",
+    "sqlfluff==3.2.5",
+    "statsmodels>=0.14.0",
+    "torch",
+    "tqdm>=4.66.1",
+    "typer>=0.12.4",
+    "urllib3",
+    "uvicorn",
+    "werkzeug~=3.0.6",
+    "xarray<=2025.1.2",
+    "xgboost<2.1.0",
+]
+constraints = [
+    "Logbook==1.5.3",
+    "bottleneck==1.3.7",
+    "cftime==1.6.3",
+    "fastavro==1.9.0",
+    "future==1.0.0",
+    "greenlet==3.0.3",
+    "grpcio==1.70.0",
+    "h5py==3.11.0",
+    "lightgbm==4.6.0",
+    "osqp==0.6.3",
+    "pendulum==2.1.2",
+    "psutil==5.9.8",
+    "scs==3.2.4.post1",
+    "sqlalchemy==2.0.36",
+    "tables==3.9.2",
+    "thrift==0.16.0",
+    "confluent-kafka>=2.1.0",
+    "dm-tree<0.1.9",
+    "kaleido==0.2.1",
+    "lz4<=4.3.3",
+    "protobuf~=5.29.3",
+    "oscrypto==1.3.0.post1",
+    "cryptography>=43",
+    "urllib3>=2.2.0",
+    "cvxpy>=1.6",
+    "boto3~=1.35.0",
+    "botocore~=1.35.0",
+    "boto3-stubs~=1.35.0",
+    "moto>=4.2.14",
+    "cachetools>=5.3.0",
+    "click>=8.1.0",
+    "coverage>=7.3.0",
+    "dash>=2.10.0",
+    "dash_bootstrap_components>=1.4.0",
+    "freezegun>=1.3.0",
+    "graphene>=3.0",
+    "holidays>=0.30",
+    "ipython>=8.0.0",
+    "kubernetes>=28.0.0",
+    "loguru>=0.6.0",
+    "matplotlib>=3.7.0",
+    "metaflow>=2.11.15",
+    "pytest-mock>=3.9.0",
+    "pytest-xdist>=3.0.0",
+    "pytz>=2023.3",
+    "requests>=2.20.0",
+    "rich>=13.7.1",
+    "ruamel.yaml>=0.17.0",
+    "s3fs>=2023.1.0",
+    "setuptools>=69.0.0",
+    "shap>=0.40.0",
+    "spacy>=3.4.1,<3.7.6",
+    "torch>=2.0",
+    "xarray>=2023.10.1",
+    "XlsxWriter>=3.2.0",
+]
+
+[cburroughs-v3-loosened]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2843881861
+# notatallshaw's rewritten version that resolves; useful as a speed regression
+# check rather than for the failure mode.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-01 01:35:03"
+requirements = [
+    "acryl-datahub[datahub-rest]==0.14.1.2",
+    "aiobotocore[boto3]",
+    "aiohttp~=3.10.11",
+    "alembic>=1.8.1",
+    "awswrangler~=3.7.3",
+    "boto3",
+    "boto3-stubs[essential]",
+    "botocore",
+    "dbt-core~=1.9.0",
+    "dbt-snowflake~=1.9.0",
+    "fastapi[standard,pydantic-settings]",
+    "flask~=2.2.2",
+    "langchain==0.3.20",
+    "langchain-community==0.3.19",
+    "mkdocs-material~=9.5.17",
+    "mlflow>=2.0,<2.18.0",
+    "moto[sts,server,dynamodb]>=5,<6",
+    "opentelemetry-instrumentation-fastapi",
+    "opentelemetry-instrumentation-flask",
+    "opentelemetry-instrumentation-openai",
+    "opentelemetry-instrumentation-requests",
+    "opentelemetry-instrumentation-threading>=0.50b0",
+    "pandas[compression,consortium-standard,parquet,performance]~=2.2.3",
+    "snowflake-connector-python[pandas]~=3.13.1",
+    "snowflake-snowpark-python[pandas]~=1.21.1",
+    "sqlalchemy[postgresql-psycopgbinary,mypy]>2",
+]
+constraints = [
+    "boto3~=1.35.0",
+    "botocore~=1.35.0",
+    "boto3-stubs~=1.35.0",
+    "cryptography>=43",
+    "urllib3>=2.2.0",
+]
+
+[weaviate-bigquery-grpc-hint]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2862562444
+# Same thread: okhaliavka reports adding grpcio-tools>=1.31 helps.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-05-08 10:32:05"
+requirements = [
+    "google-cloud-bigquery>=3.27",
+    "weaviate-client>=4.9.3",
+    "grpcio-tools>=1.30",
+]
+
+[paddleocr-full-stack]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2933275750
+# Near-duplicate of paddleocr already in problematic.toml; kept for Windows
+# reproducibility (MikuAuahDark reported on Windows 11).
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Windows"
+datetime = "2025-06-03 03:35:14"
+requirements = [
+    "alembic~=1.15",
+    "fastapi[standard]<1.0",
+    "httpx",
+    "numpy~=2.0",
+    "onnxruntime~=1.22",
+    "opencv-python~=4.11",
+    "opencv-python-headless~=4.11",
+    "paddleocr>=3.0.0",
+    "paddlepaddle",
+    "Pillow~=11.0",
+    "pycryptodomex~=3.23",
+    "pydantic~=2.0",
+    "scikit-image<1.0",
+    "scipy~=1.15",
+    "sqlalchemy~=2.0",
+    "tqdm",
+]
+
+[datacontract-cli-pinned]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2954187055
+# SammyJunghanns's experiment: giving soda-core-duckdb explicitly avoids the
+# ResolutionTooDeep that datacontract-cli==0.10.10 alone triggers.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-06-08 17:23:33"
+requirements = [
+    "datacontract-cli==0.10.10",
+    "soda-core-duckdb<3.4.0,>=3.3.1",
+]
+
+[copick-old-pyproject]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2993134249
+# Original (pre-fix) copick pyproject: pip 25.1.1 backtracks all the way down
+# to s3fs-0.4.2 and a 2021 aiobotocore. Near-duplicate of [copick] but with
+# the exact dependencies as specified in pyproject.toml rather than the
+# rolled-up "copick==1.2.0".
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Darwin"
+datetime = "2025-06-20 23:38:03"
+requirements = [
+    "click",
+    "cryoet-data-portal>=4.4.1",
+    "fsspec>=2024.6.0",
+    "numpy",
+    "ome-zarr",
+    "psutil",
+    "pydantic>=2",
+    "s3fs",
+    "scikit-image",
+    "trimesh",
+    "zarr<3",
+    "numcodecs<0.16.0",
+    "distinctipy",
+    "tqdm",
+    "textual",
+    "mrcfile",
+]
+
+[airflow-providers-june-repro]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2972515987
+# Follow-on to the April airflow repro but with updated provider versions
+# (amazon 9.8.0, celery 3.11.0, ...). Kept as a drift check.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2025-06-14 09:11:08"
+requirements = [
+    "apache-airflow[aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,common-messaging,docker,elasticsearch,fab,ftp,git,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv]==3.1.0",
+]
+
+[airflow-october-regression]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3399373356
+# Airflow 3.1.1 from main: ResolutionTooDeep on 3.10 / 3.11 / 3.13 but not 3.12.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-10-13 23:19:02"
+requirements = [
+    "apache-airflow[aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,common-messaging,docker,elasticsearch,fab,ftp,git,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv]==3.1.1",
+]
+
+[eval-framework-aleph]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3460521289
+# Aleph Alpha eval-framework pyproject. pip 25.2 on Python 3.12.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-10-29 09:17:56"
+requirements = [
+    "pyyaml>=6.0.1,<7",
+    "xmltodict>=0.13.0,<0.16",
+    "pydantic>=2.7,<3",
+    "datasets>=2.19.1,<4",
+    "sacrebleu>=2.4.3,<3",
+    "colorama>=0.4.4,<1",
+    "pycountry>=24.6.1,<25",
+    "nltk>=3.9.1,<4",
+    "python-dotenv>=1.0.1,<2",
+    "lingua-language-detector>=2.0.2,<3",
+    "google-crc32c>=1.5.0,<2",
+    "kubernetes>=31.0.0,<32",
+    "langdetect>=1.0.9,<2",
+    "spacy>=3.8.3,<4",
+    "jsonschema>=4.23.0,<5",
+    "mysql-connector-python>=9.0.0,<10",
+    "psycopg2-binary>=2.9.9,<3",
+    "sympy>=1.13.1,<2",
+    "llm-sandbox[docker]>=0.1.8,<0.2",
+    "jsonlines>=4,<5",
+    "lxml>=6,<7",
+    "python-iso639>=2025.2.18",
+    "wandb>=0.21.1,<1",
+    "boto3>=1.40.54,<2",
+]
+
+[airflow-32-all-python]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3476741666
+# Airflow 3.2.0 with all-providers fails for all Python versions;
+# same cffi / cryptography / snowflake-connector-python knot as apache-airflow-311-full.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-11-01 19:46:40"
+requirements = [
+    "apache-airflow[aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,common-messaging,docker,elasticsearch,fab,ftp,git,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv]==3.2.0",
+]
+
+[airflow-32-cffi-pin-hint]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3476743888
+# notatallshaw's diagnosis: cffi 2.0+ is required to unblock the
+# cryptography/snowflake-connector-python knot. Adding cffi>=2.0 as a user
+# requirement is the hint; resolution is still deep.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-11-01 19:50:43"
+requirements = [
+    "apache-airflow[aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,common-messaging,docker,elasticsearch,fab,ftp,git,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv]==3.2.0",
+    "cffi>=2.0",
+]
+
+[trustllm-windows]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3539489771
+# Near-duplicate of [trustllm] already in problematic.toml but on Windows
+# with Python 3.14, matching the report exactly.
+resolution = "lowest-direct"
+python_version = "3.14"
+platform_system = "Windows"
+datetime = "2025-11-16 23:48:07"
+requirements = ["trustllm"]
+
+[langchain-ml-course-macos]
+# https://github.com/pypa/pip/issues/13281#issuecomment-3813389543
+# Near-duplicate of [langchain-ml-course] but on Darwin with a slightly different
+# datetime, capturing the repeated report from a different user environment.
+resolution = "lowest-direct"
+python_version = "3.14"
+platform_system = "Darwin"
+datetime = "2026-01-28 19:21:17"
+requirements = [
+    "openai",
+    "anthropic",
+    "transformers",
+    "diffusers",
+    "accelerate",
+    "bitsandbytes",
+    "evaluate",
+    "langchain",
+    "langchain-core",
+    "langchain-text-splitters",
+    "langchain-openai",
+    "langchain-chroma",
+    "langchain-community",
+    "scikit-learn",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "tf-keras",
+    "datasets",
+    "streamlit",
+    "gradio",
+    "flask",
+    "python-dotenv",
+    "ipykernel",
+    "ipywidgets",
+    "tavily-python",
+    "requests",
+    "plotly",
+    "nbformat",
+]
+
+# --- standalone issues that aren't linked from #13281 ---
+
+[pip-12972-comfyui-layerstyle]
+# https://github.com/pypa/pip/issues/12972#issuecomment-2364096564
+# ComfyUI LayerStyle launcher: backtracking explodes when certain packages are
+# already installed in the environment. Requirements-only repro is the second
+# requirements.txt from wfjsw's comment.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Windows"
+datetime = "2024-09-20 16:28:14"
+requirements = [
+    "numpy<2.0",
+    "pillow",
+    "torch",
+    "matplotlib",
+    "Scipy",
+    "scikit_image",
+    "scikit_learn",
+    "opencv-contrib-python",
+    "pymatting",
+    "segment_anything",
+    "timm",
+    "addict",
+    "yapf",
+    "colour-science",
+    "wget",
+    "mediapipe",
+    "loguru",
+    "typer_config",
+    "fastapi",
+    "rich",
+    "google-generativeai",
+    "diffusers",
+    "omegaconf",
+    "tqdm",
+    "transformers>=4.43.3",
+    "kornia",
+    "ultralytics>=8.2.0",
+    "blend_modes",
+    "blind-watermark",
+    "qrcode",
+    "pyzbar",
+    "transparent-background",
+    "huggingface_hub>=0.23.3",
+    "accelerate",
+    "onnxruntime",
+    "bitsandbytes>=0.41.1",
+    "torchscale",
+    "wandb",
+    "psd-tools",
+    "hydra-core",
+    "inference-cli>=0.13.0",
+    "inference-gpu[yolo-world]>=0.13.0",
+]
+
+[pip-12972-comfyui-env-baseline]
+# https://github.com/pypa/pip/issues/12972#issuecomment-2364096564
+# The env.txt portion that the user pre-installs with --no-deps, then re-runs
+# the above. Kept as a baseline for "all pins already satisfied" tests.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Windows"
+datetime = "2024-09-20 16:28:14"
+requirements = [
+    "numpy==1.26.4",
+    "pillow==10.4.0",
+    "matplotlib==3.8.0",
+    "Scipy==1.12.0",
+    "scikit_image==0.20.0",
+    "opencv-contrib-python==4.8.1.78",
+    "pymatting==1.1.12",
+    "segment_anything==1.0",
+    "timm==0.6.13",
+    "addict==2.4.0",
+    "yapf==0.40.2",
+    "colour-science==0.4.4",
+    "wget==3.2",
+    "mediapipe==0.10.7",
+    "loguru==0.7.2",
+    "typer_config==1.4.0",
+    "fastapi==0.111.1",
+    "rich==13.7.1",
+    "google-generativeai==0.7.2",
+    "diffusers==0.29.2",
+    "omegaconf==2.3.0",
+    "tqdm==4.66.4",
+    "transformers==4.43.3",
+    "kornia==0.7.1",
+    "blend_modes==2.1.0",
+    "blind-watermark==0.4.4",
+    "qrcode==7.4.2",
+    "pyzbar==0.1.9",
+    "transparent-background==1.3.1",
+    "huggingface_hub==0.24.2",
+    "accelerate==0.31.0",
+    "onnxruntime==1.17.0",
+    "psd-tools==1.9.34",
+    "fonttools==4.43.1",
+    "python-dateutil==2.8.2",
+    "pyparsing==3.1.1",
+    "packaging==24.1",
+    "cycler==0.12.1",
+    "kiwisolver==1.4.5",
+    "contourpy==1.1.1",
+    "tifffile==2023.9.26",
+    "lazy_loader==0.3",
+    "PyWavelets==1.5.0",
+    "networkx==3.1",
+    "imageio==2.31.5",
+    "numba==0.58.1",
+    "pyyaml==6.0.1",
+    "platformdirs==3.11.0",
+    "importlib-metadata==6.8.0",
+    "tomli==2.0.1",
+    "typing-extensions==4.8.0",
+    "flatbuffers==23.5.26",
+    "attrs==23.1.0",
+    "sounddevice==0.4.6",
+    "absl-py==2.0.0",
+    "protobuf==3.20.3",
+    "win32-setctime==1.1.0",
+    "colorama==0.4.6",
+    "typer==0.12.3",
+    "email_validator==2.2.0",
+    "starlette==0.37.2",
+    "fastapi-cli==0.0.4",
+    "httpx==0.26.0",
+    "python-multipart==0.0.9",
+    "uvicorn==0.30.3",
+    "jinja2==3.1.2",
+    "pydantic==2.8.2",
+    "pygments==2.18.0",
+    "markdown-it-py==3.0.0",
+    "google-ai-generativelanguage==0.6.6",
+    "google-api-core==2.19.1",
+    "google-api-python-client==2.138.0",
+    "google-auth==2.32.0",
+    "proto-plus==1.24.0",
+    "safetensors==0.4.2",
+    "filelock==3.12.4",
+    "requests==2.32.3",
+    "regex==2023.8.8",
+    "antlr4-python3-runtime==4.9.3",
+    "tokenizers==0.19.1",
+    "psutil==5.9.5",
+    "pandas==2.1.3",
+    "seaborn==0.13.0",
+    "opencv-python==4.8.1.78",
+    "py-cpuinfo==9.0.0",
+    "pypng==0.20220715.0",
+    "gdown==5.2.0",
+    "easydict==1.11",
+    "flet==0.23.2",
+    "albumentations==1.3.1",
+    "fsspec==2023.9.1",
+    "coloredlogs==15.0.1",
+    "sympy==1.12",
+    "gitpython==3.1.40",
+    "setuptools==65.5.0",
+    "click==8.1.7",
+    "aggdraw==1.3.18.post0",
+    "docopt==0.6.2",
+    "urllib3==1.26.18",
+    "pywin32==306",
+    "jsonschema==4.20.0",
+    "tabulate==0.9.0",
+    "python-dotenv==1.0.1",
+    "PrettyTable==3.9.0",
+    "cachetools==5.4.0",
+    "cryptography==43.0.0",
+    "boto3==1.34.150",
+    "botocore==1.34.150",
+    "shapely==2.0.2",
+    "openai==1.37.1",
+    "piexif==1.1.3",
+    "dill==0.3.8",
+    "ftfy==6.1.1",
+    "aiosignal==1.3.1",
+    "yarl==1.9.2",
+    "frozenlist==1.4.0",
+    "multidict==6.0.4",
+    "async-timeout==4.0.3",
+    "qudida==0.0.4",
+    "opencv-python-headless==4.7.0.72",
+    "sniffio==1.3.0",
+    "anyio==4.2.0",
+    "distro==1.9.0",
+    "pytz==2023.3.post1",
+    "six==1.16.0",
+    "jmespath==1.0.1",
+    "s3transfer==0.10.2",
+    "dnspython==2.6.1",
+    "idna==3.4",
+]
+
+[pip-12317-pystac]
+# https://github.com/pypa/pip/issues/12317
+# Bug in backjumping optimization: satisfiable requirements fail.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2023-10-04 22:40:17"
+requirements = [
+    "pandas>=1.3.5,<=1.4.0",
+    "pystac>=1.8.2,<=1.8.3",
+    "pystac-client>=0.3.2,<=0.3.3",
+    "sat-stac<=0.1.1",
+]
+
+[pip-12305-TTS-narrow-pins]
+# https://github.com/pypa/pip/issues/12318
+# notatallshaw's TTS flattened requirement list; ResolutionTooDeep on main,
+# solves on the narrow-causes branch. Near-duplicate of [TTS] but with
+# flat pins rather than TTS metapackage.
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2023-10-05 00:03:11"
+requirements = [
+    "numpy==1.21.6",
+    "cython==0.29.28",
+    "scipy>=1.4.0",
+    "torch>=1.7",
+    "torchaudio",
+    "soundfile",
+    "librosa==0.10.0.*",
+    "numba==0.55.1",
+    "inflect==5.6.0",
+    "tqdm",
+    "anyascii",
+    "pyyaml",
+    "fsspec>=2021.04.0",
+    "aiohttp",
+    "packaging",
+    "flask",
+    "pysbd",
+    "pandas",
+    "matplotlib",
+    "trainer==0.0.20",
+    "coqpit>=0.0.16",
+    "pypinyin",
+    "mecab-python3==1.0.5",
+    "jamo",
+    "bangla==0.0.2",
+    "k_diffusion",
+    "einops",
+    "transformers",
+]
+
+[pip-12990-autogluon-transitive]
+# https://github.com/pypa/pip/issues/12990
+# AutoGluon 1.1.1: pip picks onnx-1.10.0 which fails to build. Caused by the
+# spacy -> blis -> thinc dependency chain after spacy 3.8.2 released.
+# Near-duplicate of [autogluon] but with an earlier datetime, right after
+# spacy 3.8.2 was published.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-04 17:00:35"
+requirements = ["autogluon==1.1.1"]
+
+[pip-12990-autogluon-spacy-bound]
+# https://github.com/pypa/pip/issues/12990#issuecomment-2394849972
+# Workaround: adding spacy<3.8 unblocks resolution. Useful as a passing-baseline
+# twin to [pip-12990-autogluon-transitive].
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-04 17:00:35"
+requirements = [
+    "autogluon==1.1.1",
+    "spacy<3.8",
+]
+
+[pip-9841-autobahn-hyperlink]
+# https://github.com/pypa/pip/issues/9841
+# Historical: pip 21.1 regresses ResolutionImpossible to ResolutionTooDeep
+# for a trivial hyperlink-vs-autobahn conflict. Python 3.6.13 targeted.
+resolution = "lowest-direct"
+python_version = "3.6"
+platform_system = "Linux"
+datetime = "2021-04-25 00:59:50"
+requirements = [
+    "attrs==19.3.0",
+    "autobahn==20.12.3",
+    "hyperlink==19.0.0",
+    "cffi==1.14.0",
+    "cryptography>=3.2",
+    "idna==2.10",
+    "pycparser==2.20",
+    "txaio==20.4.1",
+]
+
+[pip-12172-mlflow21-docker]
+# https://github.com/pypa/pip/issues/12172
+# python:3.9 docker image with pandas + boto3 + s3fs + pycaret + mlflow 2.1
+# + tensorflow-data-validation. Stuck for hours.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2023-07-20 16:09:45"
+requirements = [
+    "pandas",
+    "boto3",
+    "s3fs",
+    "pyarrow",
+    "pycaret",
+    "pymongo",
+    "pymongo[srv]",
+    "mlflow==2.1",
+    "uvicorn",
+    "gunicorn",
+    "psutil",
+    "python-multipart",
+    "tensorflow-data-validation",
+    "loguru",
+    "kubernetes",
+    "shap",
+    "numpy==1.21",
+    "pathlib",
+    "typing-extensions",
+    "fastapi",
+    "typer",
+]
+
+[pip-12114-legacy-resolver-flask-restful]
+# https://github.com/pypa/pip/issues/12114
+# Smoke-test only: the original pip bug was an AssertionError in pip's
+# installation_report code path - the deprecated --use-deprecated
+# legacy-resolver never populates ireq.download_info, so `pip install
+# --report -` raised "No download_info for flask-restful~=0.3.8".
+# Closed wontfix, legacy resolver is deprecated.  The package set itself
+# resolves cleanly on modern pip and on nab (~13 deps, no conflicts);
+# kept here as a regression smoke test to confirm we never re-introduce
+# a similar internal contract bug.
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2023-06-29 20:36:26"
+requirements = ["flask-restful~=0.3.8"]
+
+[pip-11928-awscli-endless]
+# https://github.com/pypa/pip/issues/11928
+# pip endlessly downloads every awscli version when no upper bound helps.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2023-04-06 14:33:33"
+requirements = ["awscli"]
+
+[pip-8922-marshmallow-sqlalchemy]
+# https://github.com/pypa/pip/issues/8922
+# Classic demo that 2 incompatible specifications trigger exponential search
+# once you add unrelated packages (scipy) with unpinned transitives (numpy).
+resolution = "lowest-direct"
+python_version = "3.6"
+platform_system = "Linux"
+datetime = "2020-09-26 17:31:50"
+requirements = [
+    "marshmallow-sqlalchemy",
+    "sqlalchemy==0.6.0",
+    "psycopg2-binary",
+    "scipy",
+]
+
+[pip-9969-tfx-tensorflow]
+# https://github.com/pypa/pip/issues/9969
+# TFX 0.29.0 with tensorflow 2.4.1 pre-installed: pip gets stuck looking at
+# tensorflow-hub and tensorflow-estimator even though ranges only allow one
+# version each.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Windows"
+datetime = "2021-05-11 08:39:58"
+requirements = [
+    "tfx==0.29.0",
+    "tensorflow==2.4.1",
+]
+
+[pip-11760-torchgeo-min]
+# https://github.com/pypa/pip/issues/11760
+# Microsoft TorchGeo min.old: 6+ hour hang on Python 3.7 after a transitive
+# dependency update. Approximated via its listed min-version pins.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2023-01-29 06:46:46"
+# Sdist-only at the listed pins.  shapely needs libgeos to build;
+# the rest are pure Python.
+build_packages = [
+    "antlr4-python3-runtime",
+    "efficientnet-pytorch",
+    "future",
+    "pretrainedmodels",
+    "shapely",
+]
+requirements = [
+    "einops==0.3",
+    "fiona==1.8.19",
+    "kornia==0.6.5",
+    "matplotlib==3.3.3",
+    "numpy==1.17.2",
+    "omegaconf==2.1.0",
+    "pillow==8.0.0",
+    "pyproj==2.2.0",
+    "pytorch-lightning==1.5.1",
+    "rasterio==1.0.20",
+    "rtree==1.0.0",
+    "scikit-learn==0.21.0",
+    "segmentation-models-pytorch==0.2.0",
+    "shapely==1.3.0",
+    "timm==0.4.12",
+    "torch==1.12.0",
+    "torchmetrics==0.10.0",
+    "torchvision==0.13.0",
+]
+
+[pip-11760-torchgeo-nbconvert-pin]
+# https://github.com/pypa/pip/issues/11760#issuecomment-1407763199
+# Same family as pip-11760-torchgeo-min but with the nbconvert pin found to be
+# the key workaround; used here to verify the hint.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2023-01-29 20:33:23"
+# Pure-Python sdists with no wheel under the exclude-newer date.  Building
+# them is cheap enough to run inside the benchmark host.
+build_packages = ["antlr4-python3-runtime", "future"]
+requirements = [
+    "einops==0.3",
+    "kornia==0.6.5",
+    "matplotlib==3.3.3",
+    "numpy==1.17.2",
+    "omegaconf==2.1.0",
+    "pillow==8.0.0",
+    "pytorch-lightning==1.5.1",
+    "torch==1.12.0",
+    "torchmetrics==0.10.0",
+    "torchvision==0.13.0",
+    "nbconvert<7",
+]
+
+[pip-10398-azure-mgmt]
+# https://github.com/pypa/pip/issues/10398
+# ~8 hour hang then ResolutionTooDeep on pip 21.2.2 driven by many
+# azure-mgmt-* packages. Approximated from the issue description (the gist
+# is 404 now, so we use a curated Azure-heavy set as a regression baseline).
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Windows"
+datetime = "2021-08-26 07:56:44"
+requirements = [
+    "azure-mgmt-core",
+    "azure-mgmt-compute",
+    "azure-mgmt-network",
+    "azure-mgmt-resource",
+    "azure-mgmt-storage",
+    "azure-identity",
+    "azure-keyvault-secrets",
+    "azure-storage-blob",
+    "msrestazure",
+    "adal",
+    "requests",
+    "numpy",
+    "pandas",
+]
+
+[pip-10473-dms-tools2]
+# https://github.com/pypa/pip/issues/10473
+# dms_tools2 on Python 3.8 miniconda, ResolutionTooDeep after several hours.
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Darwin"
+datetime = "2021-09-14 20:43:53"
+requirements = ["dms_tools2"]
+
+[pip-9997-jupyterhub]
+# https://github.com/pypa/pip/issues/9997
+# jupyterhub 1.4.0 base + mixed awscli + tpsubmitter + tpscripts.
+# tpsubmitter and tpscripts are private packages from the OP's
+# environment and were never published to PyPI.
+resolution = "lowest-direct"
+unsupported_reason = "tpsubmitter and tpscripts not on PyPI"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-05-18 21:43:54"
+requirements = [
+    "tpsubmitter==0.52.0",
+    "tpscripts==0.34.0",
+    "awscli",
+    "jupyterlab",
+    "jupyterhub-ldapauthenticator",
+    "jupyter_contrib_nbextensions",
+    "psycopg2-binary",
+    "pandas==0.25.0",
+    "SQLAlchemy==1.3.6",
+]
+
+[pip-8290-jupyter-big]
+# https://github.com/pypa/pip/issues/8290
+# The original "pip resolver fails on jupyter with a big requirements.txt"
+# report that drove much of pip's early resolver tuning.
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2020-05-21 14:50:07"
+requirements = [
+    "boto",
+    "boto3",
+    "click",
+    "concurrentloghandler",
+    "django>=1.11,<1.11.99",
+    "dulwich",
+    "future",
+    "fuzzywuzzy",
+    "genty",
+    "graphyte",
+    "gunicorn",
+    "inflect",
+    "jellyfish",
+    "numpy",
+    "pandas",
+    "pynlpl",
+    "python-levenshtein",
+    "pyyaml",
+    "regex",
+    "requests>=2.20",
+    "supervisor",
+    "tqdm",
+    "uwsgi",
+    "uwsgidecorators",
+    "awscli",
+    "black",
+    "cmd2",
+    "datadiff",
+    "pip-tools",
+    "pyflakes",
+    "pylint-django",
+    "pylint<2.5",
+    "virtualenv",
+    "virtualenvwrapper",
+    "jupyter",
+    "pudb",
+]
+
+[pip-8683-elasticsearch-awsebcli]
+# https://github.com/pypa/pip/issues/8683
+# Early new-resolver hang report.
+resolution = "lowest-direct"
+python_version = "3.6"
+platform_system = "Linux"
+datetime = "2020-08-02 14:42:35"
+requirements = [
+    "boto3>=1.14.33",
+    "elasticsearch-dsl>=7.1,<7.2",
+    "elasticsearch>=7.0,<8.0",
+    "user-agents>=1.1.0",
+    "requests_mock>=1.6",
+    "awsebcli>=3.18",
+]
+
+[pip-10924-github3-flask-appbuilder]
+# https://github.com/pypa/pip/issues/10924
+# Airflow-affecting regression: github3.py 3.1.2 tightened PyJWT>=2.3.0 while
+# Flask App Builder pinned PyJWT<2.0.0. Hours of backtracking.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2022-02-25 17:58:04"
+requirements = [
+    "apache-airflow",
+    "github3.py",
+    "Flask-AppBuilder",
+    "PyJWT",
+]
+
+[pip-10568-flake8-isort]
+# https://github.com/pypa/pip/issues/10568
+# Backtracks to an old flake8-isort that doesn't pin flake8, rather than
+# backtracking on flake8 itself.
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Darwin"
+datetime = "2021-10-11 08:23:58"
+requirements = [
+    "flake8",
+    "flake8-isort",
+]
+
+[pip-9572-textract-pypdf2]
+# https://github.com/pypa/pip/issues/9572
+# `pip install --upgrade` on textract + PyPDF2 + a list of docx/email
+# utilities walks back to very old releases.
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-02-09 09:53:34"
+# Pure-Python sdists with no wheel under the exclude-newer date.
+# olefile is built indirectly via extract-msg's pin chain (older
+# pins reference olefile==0.43 / 0.46, both sdist-only).
+build_packages = [
+    "compressed-rtf",
+    "docx2txt",
+    "ebooklib",
+    "olefile",
+    "pypdf2",
+    "python-pptx",
+    "textract",
+]
+requirements = [
+    "argcomplete",
+    "beautifulsoup4",
+    "chardet",
+    "docx2txt",
+    "EbookLib",
+    "extract-msg",
+    "IMAPClient",
+    "lxml",
+    "olefile",
+    "pdfminer.six",
+    "Pillow",
+    "pycryptodome",
+    "PyPDF2",
+    "python-pptx",
+    "pytz",
+    "setuptools",
+    "six",
+    "sortedcontainers",
+    "soupsieve",
+    "SpeechRecognition",
+    "textract",
+    "tzlocal",
+    "xlrd",
+    "XlsxWriter",
+]
+
+[pip-12592-triad-numpy-pre]
+# https://github.com/pypa/pip/issues/12592
+# --pre flag: pip picks numpy-2.0.0b1 then drops it when pandas pins don't
+# match, instead of backtracking on pandas.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-03-23 21:19:29"
+requirements = [
+    "triad==0.9.5",
+    "numpy==2.0.0b1",
+]
+
+[pip-13267-ipykernel-py314-alpha]
+# https://github.com/pypa/pip/issues/13267
+# Near-duplicate of [ipykernel-windows] but at 3.14a05 (not 3.14 stable)
+# and an earlier datetime.
+resolution = "lowest-direct"
+python_version = "3.14"
+platform_system = "Windows"
+datetime = "2025-03-06 16:05:59"
+requirements = ["ipykernel"]
+
+[pip-12489-pycaret-sklearn14]
+# https://github.com/pypa/pip/issues/12489
+# pycaret 3.3.0 + scikit-learn 1.4 (bumped in PR) fails with ResolutionTooDeep.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Windows"
+datetime = "2024-01-26 10:04:05"
+requirements = [
+    "pycaret==3.3.0",
+    "scikit-learn>=1.4",
+]
+
+[pip-12275-old-pypi-date]
+# https://github.com/pypa/pip/issues/12275
+# Installing against an old PyPI date is the workaround scenarios use; kept
+# here as a baseline marker. scipy + pandas + matplotlib at 2019 cutoff
+# exhibits heavy backtracking because of the cython/ numpy transitive tree.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2019-12-01 00:00:00"
+requirements = [
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "numpy",
+    "scikit-learn",
+]
+
+[pip-13164-scipy-numpy-unsolvable]
+# https://github.com/pypa/pip/issues/13164
+# Unsolvable but pip backtracks through many scipy versions before reporting
+# the wrong cause. Kept minus the git+ source.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-01-13 19:06:28"
+requirements = [
+    "numpy>=2",
+    "scipy",
+    "numpy<2",
+]
+
+[pip-13608-wheel-edge]
+# https://github.com/pypa/pip/issues/13608
+# Wheel-tag selection edge case. Not a backtracking storm but still exposes
+# a correctness bug where pip rejects all wheels for a version if the first
+# one seen is incompatible. Useful as a correctness test.
+resolution = "lowest-direct"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2025-10-02 17:33:55"
+requirements = [
+    "a==1",
+    "b==1",
+]
+
+[pip-10788-home-assistant-sample]
+# https://github.com/pypa/pip/issues/10788
+# Home Assistant's requirements_all.txt takes 12 hours. Full list is 1000+
+# packages; the sample below is the representative core Home Assistant
+# top-level install that reproduces multi-hour backtracking.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2022-01-12 17:31:10"
+requirements = [
+    "homeassistant",
+]
+
+[pip-12318-resolve-too-deep-TTS-only-binary]
+# https://github.com/pypa/pip/issues/12318
+# Near-duplicate of [pip-12305-TTS-narrow-pins] with the --only-binary
+# restriction encoded into requirements (no sdist trap), matching the exact
+# repro from the issue body.
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2023-10-05 00:03:11"
+requirements = [
+    "numpy==1.21.6",
+    "cython==0.29.28",
+    "scipy>=1.4.0",
+    "torch>=1.7",
+    "torchaudio",
+    "soundfile",
+    "librosa==0.10.0.*",
+    "numba==0.55.1",
+    "inflect==5.6.0",
+    "tqdm",
+    "anyascii",
+    "pyyaml",
+    "fsspec>=2021.04.0",
+    "aiohttp",
+    "packaging",
+    "flask",
+    "pysbd",
+    "pandas",
+    "matplotlib",
+    "trainer==0.0.20",
+    "coqpit>=0.0.16",
+    "pypinyin",
+    "mecab-python3==1.0.5",
+    "jamo",
+    "bangla==0.0.2",
+    "einops",
+    "transformers",
+]
+
+[pip-11321-django-python36]
+# https://github.com/pypa/pip/issues/11321
+# Trivially unsolvable on Python 3.6 (django 4.0.6 requires >=3.8) but pip's
+# error message is misleading. Small and fast; useful as correctness baseline.
+resolution = "lowest-direct"
+python_version = "3.6"
+platform_system = "Linux"
+datetime = "2022-07-28 22:47:39"
+requirements = [
+    "django",
+    "django==4.0.6",
+]
+
+[pip-10719-oldest-supported-numpy-s390x]
+# https://github.com/pypa/pip/issues/10719
+# oldest-supported-numpy 0.13 has conflicting same-package requirements on
+# s390x Python 3.8. nab won't be on s390x but the scenario exercises the
+# "pip silently downgrades to a version without the conflict" pattern.
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-12-09 16:53:19"
+requirements = ["oldest-supported-numpy==0.13"]
+
+[pip-10544-confluent-kafka-avro]
+# https://github.com/pypa/pip/issues/10544
+# pip install -r requirements.txt and pip install with the same pins behave
+# differently. The command-line form backtracks forever.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Darwin"
+datetime = "2021-10-04 21:45:14"
+requirements = [
+    "configparser>=3.5",
+    "kafka-python>=1.4.3",
+    "confluent-kafka[avro]==1.3.0",
+    "fastavro",
+    "avro-python3==1.9.2.1",
+    "isort>=4",
+    "scipy",
+    "numpy>1.17.2",
+    "teamcity-messages>=1.17",
+    "vertica_python>=0.9.1",
+    "numpy>1.19",
+]
+
+[pip-9576-st-boto3-lambda-like]
+# https://github.com/pypa/pip/issues/9576
+# Reconstruction of the "stub package pins boto3/botocore tightly, another
+# package uses a loose bound" pattern. Uses two public packages whose pins
+# approximate the behavior (awscli pins boto/botocore hard, s3fs loose).
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2021-02-09 19:27:37"
+requirements = [
+    "awscli==1.18.0",
+    "s3fs",
+]
+
+[pip-12275-old-index-2023]
+# https://github.com/pypa/pip/issues/12275
+# Re-run of pip-12275-old-pypi-date but in 2023. Useful as a historical
+# point: even in 2023 a 2019 PyPI cutoff sees heavy backtracking.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2020-06-01 00:00:00"
+requirements = [
+    "tensorflow",
+    "pandas",
+    "numpy",
+    "scipy",
+    "scikit-learn",
+    "matplotlib",
+]
+
+[pip-10642-tf-models-official]
+# https://github.com/pypa/pip/issues/10642
+# `pip install tf-models-official==2.5.0` with tensorflow==2.5.0 pre-installed
+# upgrades tensorflow when it shouldn't.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2021-11-08 01:45:26"
+requirements = [
+    "tensorflow==2.5.0",
+    "tf-models-official==2.5.0",
+]
+
+[pip-11480-pywebview-rpaframework]
+# https://github.com/pypa/pip/issues/11480
+# pywebview[qt]==3.6.2 + rpaframework==15.6.0: 4+ hour fail on Linux in the
+# vjmp/pipbacktracking reproducer.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2022-10-03 13:17:24"
+requirements = [
+    "pywebview[qt]==3.6.2",
+    "rpaframework==15.6.0",
+]
+
+[pip-12035-awscli-metadata-backtrack]
+# https://github.com/pypa/pip/issues/12035
+# Triggered via the pylint + awscli + colorama Windows knot; near-duplicate of
+# [pip-11928-awscli-endless] with two requirements.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Windows"
+datetime = "2023-05-18 16:22:15"
+requirements = [
+    "awscli",
+    "pylint",
+]
+
+[pip-11913-inmanta-extras]
+# https://github.com/pypa/pip/issues/11924
+# Extras aren't inherited: `inmanta-core==6.0.0` and `inmanta-core[pytest-inmanta-extensions]`
+# are treated as independent and pip backtracks over every version.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2023-04-05 15:52:20"
+requirements = [
+    "inmanta-core==6.0.0",
+    "inmanta-core[pytest-inmanta-extensions]",
+]
+
+[pip-12268-openvino-onnxruntime-order]
+# https://github.com/pypa/pip/issues/12268
+# Install order affects resolution: installing openvino==2021.* first then
+# `pip install onnxruntime openvino` replaces openvino, but the reverse
+# preserves it. Captured as a single install here.
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2023-09-07 11:07:51"
+requirements = [
+    "openvino==2021.*",
+    "onnxruntime",
+]
+
+[pip-10398-azure-small]
+# https://github.com/pypa/pip/issues/10398
+# Minimal Azure mgmt knot: pin a specific azure-mgmt-core alongside a newer
+# azure-identity and msal to reproduce the transitive version explosion.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Windows"
+datetime = "2021-08-26 07:56:44"
+requirements = [
+    "azure-mgmt-core==1.2.1",
+    "azure-identity",
+    "azure-keyvault-secrets",
+    "msal",
+    "msrestazure",
+]
+
+[pip-13263-user-req-preference]
+# https://github.com/pypa/pip/issues/13263
+# The feature-request case for preferring user requirements when backtracking.
+# Use apache-airflow + sqlalchemy==1.4.* (old). Forces heavy backtracking on
+# every airflow version that wants sqlalchemy>=2.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-03-05 23:43:01"
+requirements = [
+    "apache-airflow",
+    "sqlalchemy==1.4.*",
+]
+
+[pip-13111-cross-platform-dry-run]
+# https://github.com/pypa/pip/issues/13111
+# A cross-platform dry-run of a heavy ML stack. Kept as a baseline to confirm
+# nab's single-platform-only behavior doesn't degrade on this stack.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-12-11 00:09:22"
+requirements = [
+    "torch",
+    "transformers",
+    "accelerate",
+    "diffusers",
+]
+
+[pip-9792-production-deploy]
+# https://github.com/pypa/pip/issues/9792
+# A production requirements.txt that runs for 5+ hours on pip 21.0.1.
+# Full contents 404 now, so we use the representative mix from the issue
+# tags (web app + data + Django + pinned specific versions).
+resolution = "lowest-direct"
+python_version = "3.6"
+platform_system = "Linux"
+datetime = "2021-04-07 21:48:03"
+requirements = [
+    "django",
+    "djangorestframework",
+    "celery",
+    "redis",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "scipy",
+    "requests",
+    "boto3",
+]
+
+[pip-8316-docker-python37]
+# https://github.com/pypa/pip/issues/8316
+# Early new-resolver ResolutionTooDeep on python:3.7.7 docker.
+# Gist for requirements.txt 404, so use the issue's environment + a mid-2020
+# reasonable approximation of the Python 3.7 ML/AWS stack.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2020-05-24 10:36:05"
+requirements = [
+    "boto3",
+    "botocore",
+    "requests",
+    "numpy",
+    "pandas",
+    "tensorflow==2.1.0",
+    "keras",
+    "flask",
+    "sqlalchemy",
+]
+
+[pip-12430-sphinx-extras]
+# https://github.com/pypa/pip/issues/12430
+# Same family as [sphinx] but pinned to Python 3.8 and the specific
+# ResolutionTooDeep date. Near-duplicate kept because 3.8's smaller
+# requires-python surface makes backtracking worse.
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2023-12-10 14:57:09"
+requirements = [
+    "sphinx",
+    "sphinx-rtd-theme",
+    "sphinx-toolbox",
+    "myst-parser",
+    "sphinxcontrib-bibtex",
+    "nbsphinx",
+]
+
+[pip-13267-ipykernel-windows-313]
+# https://github.com/pypa/pip/issues/13267
+# Same as [pip-13267-ipykernel-py314-alpha] but on Python 3.13.2, reported
+# as the workaround that succeeds. Kept as success-case twin.
+resolution = "lowest-direct"
+python_version = "3.13"
+platform_system = "Windows"
+datetime = "2025-03-06 16:05:59"
+requirements = ["ipykernel"]
+
+[pip-12395-pvn3d-pytorch]
+# https://github.com/pypa/pip/issues/12395
+# Installing PointNet++ with torch 1.4.0 + cuda 10.1 on Python 3.7 yields
+# ResolutionTooDeep.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Windows"
+datetime = "2023-11-09 08:41:14"
+requirements = [
+    "torch==1.4.0",
+    "torchvision==0.5.0",
+    "numpy",
+    "tqdm",
+    "opencv-python",
+    "scipy",
+    "matplotlib",
+    "plyfile",
+    "pyyaml",
+    "easydict",
+    "termcolor",
+    "ninja",
+]
+
+[pip-13623-agent-framework]
+# https://github.com/pypa/pip/issues/13623
+# Near-duplicate of [airflow-32-all-python] (both traced by notatallshaw to
+# the cffi knot) but with a very small top-level requirement.
+resolution = "lowest-direct"
+python_version = "3.13"
+platform_system = "Windows"
+datetime = "2025-10-15 09:59:15"
+requirements = ["agent-framework"]
+
+[pip-10788-homeassistant-top20]
+# https://github.com/pypa/pip/issues/10788
+# Representative Home Assistant requirements: top 20 most common integrations.
+# Approximation of requirements_all.txt which is ~1000 lines.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2022-01-12 17:31:10"
+requirements = [
+    "homeassistant>=2022.1.0",
+    "aiohttp",
+    "async-timeout",
+    "attrs",
+    "cryptography",
+    "httpx",
+    "jinja2",
+    "paho-mqtt",
+    "python-slugify",
+    "pyyaml",
+    "requests",
+    "voluptuous",
+    "yarl",
+    "zeroconf",
+    "bluetooth-adapters",
+    "pyserial",
+    "python-miio",
+    "pyHS100",
+    "beautifulsoup4",
+    "certifi",
+]
+
+[pip-11760-torchgeo-py38]
+# https://github.com/pypa/pip/issues/11760
+# Same TorchGeo issue but on Python 3.8 (the fixed/bumped branch).
+resolution = "lowest-direct"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2023-01-29 20:54:08"
+requirements = [
+    "einops==0.3",
+    "fiona==1.8.19",
+    "kornia==0.6.5",
+    "matplotlib==3.3.3",
+    "numpy==1.17.2",
+    "omegaconf==2.1.0",
+    "pillow==8.0.0",
+    "pyproj==2.2.0",
+    "pytorch-lightning==1.5.1",
+    "rasterio==1.0.20",
+    "rtree==1.0.0",
+    "scikit-learn==0.21.0",
+    "segmentation-models-pytorch==0.2.0",
+    "shapely==1.3.0",
+    "timm==0.4.12",
+    "torch==1.12.0",
+    "torchmetrics==0.10.0",
+    "torchvision==0.13.0",
+]
+
+[pip-11569-moto-responses]
+# https://github.com/pypa/pip/issues/11569
+# Bogus responses==0.23.0 pin in a constraints file triggers misleading
+# ResolutionImpossible. Useful as a correctness baseline.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Darwin"
+datetime = "2022-11-02 16:36:45"
+requirements = ["moto==4.0.9"]
+constraints = ["responses==0.23.0"]
+
+[pip-12028-awscli-pylint-colorama]
+# https://github.com/pypa/pip/issues/12028
+# pylint + awscli + colorama trio: no solution on Windows because of
+# colorama conflict. Heavy backtracking trying every awscli release.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Windows"
+datetime = "2023-05-11 13:57:14"
+requirements = [
+    "pylint",
+    "awscli",
+]
+
+[pip-12210-aicsimageio-py312]
+# https://github.com/pypa/pip/issues/12210
+# Same as [aicsimageio-napari] but at a different datetime (after Python 3.12
+# had stable wheels). Near-duplicate with drift detection value.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-01-01 00:00:00"
+requirements = [
+    "aicsimageio==4.9.1",
+    "napari-aicsimageio==0.7.2",
+    "napari==0.4.18",
+]
+
+[pip-8218-numpy-upgrade-flaky]
+# https://github.com/pypa/pip/issues/8218
+# `pip install --upgrade` randomly skips upgrading numpy. Reconstructed with a
+# clear numpy<2,>=1.14.3 vs numpy<2,>=1.16 pair.
+resolution = "lowest-direct"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2020-05-10 20:50:22"
+requirements = [
+    "numpy<2,>=1.14.3",
+    "numpy<2,>=1.16",
+    "tensorflow==2.2.0",
+]
+
+[pip-13281-airflow-pd312-mysql]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2834218598
+# mysql-connector-python>=8.2.0 joins Airflow's frenzy on Python 3.12 only.
+# Isolated to the single package that pip walked through.
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-04-28 07:21:27"
+requirements = [
+    "apache-airflow-providers-mysql",
+    "apache-airflow==2.10.0",
+    "mysql-connector-python>=8.2.0",
+]
+
+[pip-13281-rasa-pro-regression]
+# https://github.com/pypa/pip/issues/13281#issuecomment-2979547359
+# Near-duplicate of [rasa-pro] already in problematic.toml, but pinned to
+# pip 24 (2024-10-01) to capture the pre-regression passing state for
+# speed comparison.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-10-01 00:00:00"
+requirements = ["rasa-pro"]
+
+[pip-12274-dandi-selenium-py310]
+# https://github.com/pypa/pip/issues/12274
+# Near-duplicate of pandas-aws-boto3-dandi-frenzy but pinned to Python 3.10
+# (which has different metadata wheel availability) at a different datetime.
+resolution = "lowest-direct"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-09-11 15:50:03"
+requirements = [
+    "dandi",
+    "selenium",
+]
+
+# -----------------------------------------------------------------------
+# Spec-heavy combos from pip #13281 thread (ML adjacent)
+# -----------------------------------------------------------------------
+
+[pip-13281-airflow-crest]
+# https://github.com/pypa/pip/issues/13281 community report
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-11-01 10:00:00"
+requirements = [
+    "apache-airflow[celery,postgres,redis,amazon,google,microsoft-azure]==3.0.2",
+    "dbt-core",
+    "dbt-bigquery",
+]
+
+[pip-13281-ml-agent]
+resolution = "lowest-direct"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-10-01 10:00:00"
+requirements = [
+    "langchain",
+    "langchain-openai",
+    "langchain-community",
+    "openai",
+    "anthropic",
+    "google-generativeai",
+    "llama-index",
+    "chromadb",
+    "faiss-cpu",
+    "sentence-transformers",
+    "transformers",
+    "torch",
+]
+
+[pip-12234-requires-python-range]
+# https://github.com/pypa/pip/issues/12234
+# Original pip bug was about Requires-Python ranges at resolve vs install
+# time; the single-version input is a fixed-python tensorflow resolve.
+resolution = "lowest-direct"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2023-08-21 21:19:55"
+requirements = ["tensorflow"]
+
+[pip-12212-sdist-metadata-fail]
+# https://github.com/pypa/pip/issues/12212
+# Sdist metadata extraction failure halts pip's resolution.  Under
+# BuildPolicy.NEVER + look-ahead MetadataError skip, nab steps over
+# bad sdists rather than failing.
+resolution = "lowest-direct"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2023-08-08 03:59:32"
+requirements = ["awscli==1.28.1"]
+
+[pip-13281-purldb-django]
+# https://github.com/pypa/pip/issues/13281#issuecomment-4395556038
+# Hritik14 / 2026-05-07: pip 25.1.1 ResolutionTooDeep on the purldb
+# setup.cfg dev-extras stack (Django + scancode-toolkit + scancodeio).
+resolution = "lowest-direct"
+python_version = "3.13"
+platform_system = "Linux"
+datetime = "2026-05-07 08:42:53"
+requirements = [
+    "aboutcode.pipeline>=0.2.1",
+    "arrow>=1.3.0",
+    "debian-inspector>=31.1.1",
+    "commoncode>=32.3.0",
+    "Django>=5.1.11",
+    "django-environ>=0.12.0",
+    "django-rq>=3.0.1",
+    "djangorestframework>=3.16.0",
+    "django-filter>=25.1",
+    "drf-spectacular>=0.28.0",
+    "fetchcode>=0.6.0",
+    "gunicorn>=23.0.0",
+    "ftputil>=5.1.0",
+    "jawa>=2.2.0",
+    "markdown>=3.8.2",
+    "natsort>=8.4.0",
+    "packageurl-python>=0.17.3",
+    "psycopg[binary]>=3.2.9",
+    "PyGithub>=2.6.1",
+    "rq-scheduler>=0.14.0",
+    "rubymarshal==1.0.3",
+    "scancode-toolkit[packages]>=32.4.0",
+    "matchcode-toolkit>=7.2.2",
+    "purl2vcs>=2.0.0",
+    "univers>=31.0.0",
+    "scancodeio>=35.5.0",
+    "GitPython>=3.1.44",
+    "samecode>=0.5.1",
+    "pytest>=7.0.1",
+    "Sphinx>=5.0.2",
+    "sphinx-rtd-theme>=1.0.0",
+]

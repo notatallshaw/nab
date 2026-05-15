@@ -1,0 +1,1349 @@
+# Resolver scenarios reported on forums.
+#
+# Sources: discuss.python.org and Stack Overflow.  Each entry
+# captures the user-visible inputs the resolver saw
+# (python_version, platform_system, datetime, requirements).
+
+[so-librosa-rpi-66008760]
+# https://stackoverflow.com/q/66008760
+# "pip's dependency resolver takes way too long to solve the conflict",
+# librosa on Raspberry Pi, user left it running for 2 days.
+resolution = "lowest"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2021-02-02 11:24:29"
+requirements = ["librosa"]
+
+[so-botocore-urllib3-69607984]
+# https://stackoverflow.com/q/69607984
+# Classic urllib3 vs old botocore: urllib3==1.26.5 conflicts with
+# botocore 1.13.50 which pins urllib3<1.26.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2021-10-17 19:41:32"
+requirements = ["botocore", "urllib3==1.26.5"]
+
+[so-tensorboard-tensorflow1-65226693]
+# https://stackoverflow.com/q/65226693
+# VIBE repo: tensorboard==2.1.0 with tensorflow 1.15.4 (which pins
+# tensorboard<1.16). Heavy ML stack from Apache MXNet era.
+resolution = "lowest"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2020-12-10 00:02:52"
+requirements = [
+    "numpy==1.17.5",
+    "torchvision==0.5.0",
+    "filterpy==1.4.5",
+    "gdown==3.6.4",
+    "h5py==2.10.0",
+    "joblib==0.14.1",
+    "llvmlite==0.32.1",
+    "matplotlib==3.1.3",
+    "numba==0.47.0",
+    "opencv-python==4.1.2.30",
+    "pillow==6.2.1",
+    "progress==1.5",
+    "pyrender==0.1.36",
+    "PyYAML==5.3.1",
+    "scikit-image==0.16.2",
+    "scikit-video==1.1.11",
+    "scipy==1.4.1",
+    "tensorboard==2.1.0",
+    "tensorflow==1.15.4",
+    "trimesh==3.5.25",
+]
+
+[so-pyyaml-old-pin-67761170]
+# https://stackoverflow.com/q/67761170
+# Internal package pinned pyyaml==3.12, user requested 5.4.1.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-05-30 12:30:50"
+requirements = [
+    "pyyaml==5.4.1",
+    "openapi-spec-validator==0.2.8",
+]
+
+[so-django-asgiref-constraint-70827285]
+# https://stackoverflow.com/q/70827285
+# Constraint asgiref==3.5.0 vs django 3.2.11 (asgiref<4,>=3.3.2).
+# Inclusive ordered comparison thread.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2022-01-23 19:22:00"
+requirements = ["django==3.2.11", "asgiref==3.5.0"]
+
+[so-deepface-tensorflow-m1-68603717]
+# https://stackoverflow.com/q/68603717
+# Apple M1: tensorflow-macos installed but deepface depends on
+# upstream tensorflow.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Darwin"
+datetime = "2021-07-31 15:59:46"
+requirements = ["deepface", "tensorflow-macos==2.5.0"]
+
+[so-tensorflowjs-converter-65895454]
+# https://stackoverflow.com/q/65895454
+# Backtracks from tensorflowjs 3.0.0 down through all 2.x versions
+# looking for compatible h5py / numpy / tensorflow-hub.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Windows"
+datetime = "2021-01-26 06:00:00"
+requirements = ["tensorflowjs"]
+
+[so-jupyter-nest-asyncio-75407687]
+# https://stackoverflow.com/q/75407687
+# nest-asyncio==1.5.6 requested but sparkmagic 0.20.0 pins ==1.5.5.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-02-10 05:45:00"
+requirements = [
+    "nest-asyncio==1.5.6",
+    "ipykernel==6.16.2",
+    "jupyter-client==7.3.4",
+    "nbclassic==0.4.5",
+    "nbclient==0.7.0",
+    "notebook==6.5.1",
+    "sparkmagic==0.20.0",
+]
+
+[so-guesslang-tensorflow-pin-75112136]
+# https://stackoverflow.com/q/75112136
+# guesslang versions all pin specific tensorflow versions; pip walks
+# every release looking for one whose tensorflow exists.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Windows"
+datetime = "2023-01-13 16:49:24"
+requirements = ["guesslang"]
+
+[so-en-core-web-trf-spacy-70725486]
+# https://stackoverflow.com/q/70725486
+# spacy + en_core_web_trf, common spaCy transformer install conflict.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2022-01-15 12:40:00"
+requirements = ["spacy", "en_core_web_trf", "spacy-transformers"]
+
+[so-airflow-2-0-0-cattrs-68791073]
+# https://stackoverflow.com/q/68791073
+# apache-airflow==2.0.0 with python:3.9 - prior to airflow constraint
+# fix.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2021-08-15 08:00:00"
+requirements = ["apache-airflow[postgres,ssh,s3]==2.0.0"]
+
+[so-chatterbot-sqlalchemy-67023963]
+# https://stackoverflow.com/q/67023963
+# chatterbot 0.8.4 pins sqlalchemy<1.3,>=1.2 vs user SQLAlchemy==1.1.11.
+resolution = "lowest"
+python_version = "3.6"
+platform_system = "Windows"
+datetime = "2021-04-09 09:51:00"
+requirements = [
+    "Flask==0.12.3",
+    "chatterbot==0.8.4",
+    "SQLAlchemy==1.1.11",
+    "gunicorn==19.10.0",
+]
+
+[so-six-pin-too-old-66450085]
+# https://stackoverflow.com/q/66450085
+# Massive Django stack pinning six==1.10.0; many transitive deps
+# require six>=1.13.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-03-03 13:38:17"
+requirements = [
+    "six==1.10.0",
+    "django>=2",
+    "djangorestframework",
+    "django-anymail",
+    "django-extensions",
+    "drf-yasg",
+    "google-api-core",
+    "bcrypt",
+    "cvxpy",
+    "fake-factory",
+]
+
+[so-swifter-modin-65238819]
+# https://stackoverflow.com/q/65238819
+# Backtracks all jupyter-core / jupyter-client versions hunting
+# for modin + dask + bleach combo.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2020-12-10 16:50:31"
+requirements = ["swifter"]
+
+[so-pipreqs-gitpython-double-76785608]
+# https://stackoverflow.com/q/76785608
+# Two GitPython lines in requirements at different versions.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-07-28 10:00:00"
+requirements = [
+    "GitPython==3.1.31",
+    "GitPython==3.1.32",
+    "oss2==2.17.0",
+    "Requests==2.31.0",
+]
+
+[so-tfx-tfx-bsl-71085704]
+# https://stackoverflow.com/q/71085704
+# All tfx versions backtrack against tensorflow-data-validation /
+# tfx-bsl / pyarrow.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2022-02-11 06:03:14"
+requirements = ["tfx"]
+
+[so-djangorestframework-jwt-70699805]
+# https://stackoverflow.com/q/70699805
+# PyJWT==2.0.0 vs djangorestframework-jwt 1.11.0 (PyJWT<2).
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2022-01-13 14:00:00"
+requirements = ["PyJWT==2.0.0", "djangorestframework-jwt==1.11.0"]
+
+[so-mwaa-airflow-2-0-2-70674545]
+# https://stackoverflow.com/q/70674545
+# AWS MWAA airflow 2.0.2 frozen requirements; pip resolution
+# regularly fails.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2022-01-11 03:00:00"
+requirements = [
+    "alembic==1.5.8",
+    "amqp==2.6.1",
+    "apache-airflow==2.0.2",
+    "apache-airflow-providers-amazon==1.4.0",
+    "apache-airflow-providers-celery==1.0.1",
+    "apache-airflow-providers-cncf-kubernetes==1.0.0",
+    "apache-airflow-providers-databricks==1.0.1",
+    "apache-airflow-providers-docker==1.2.0",
+    "apache-airflow-providers-ftp==1.0.1",
+    "apache-airflow-providers-http==1.1.1",
+    "apache-airflow-providers-imap==1.0.1",
+    "apache-airflow-providers-oracle==1.1.0",
+    "apache-airflow-providers-postgres==1.0.2",
+    "apache-airflow-providers-presto==1.0.2",
+    "apache-airflow-providers-sftp==1.2.0",
+    "apache-airflow-providers-slack==3.0.0",
+    "apache-airflow-providers-sqlite==1.0.2",
+    "apache-airflow-providers-ssh==1.3.0",
+    "apache-airflow-providers-tableau==1.0.0",
+    "apispec==3.3.2",
+    "boto3==1.9.199",
+    "botocore==1.12.253",
+    "celery==4.4.7",
+    "Flask==1.1.2",
+    "Flask-AppBuilder==3.3.2",
+    "Flask-SQLAlchemy==2.5.1",
+    "kombu==4.6.11",
+    "marshmallow==3.11.1",
+    "pandas==1.1.5",
+    "pendulum==2.1.2",
+    "pyOpenSSL==20.0.1",
+    "redis==3.5.3",
+    "SQLAlchemy==1.3.24",
+    "Werkzeug==1.0.1",
+]
+
+[so-particle-requests-70341698]
+# https://stackoverflow.com/q/70341698
+# python-particle 0.2 pins requests==2.7.0 vs constraint requests>=2.25.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2021-12-13 10:00:00"
+requirements = ["python-particle==0.2", "requests>=2.25.0"]
+
+[so-tf-object-detection-69534322]
+# https://stackoverflow.com/q/69534322
+# Airflow + crypto + postgres + slack + kubernetes + gcp + docker + ssh
+# heavy extras combo.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-10-12 08:00:00"
+requirements = [
+    "apache-airflow[crypto,postgres,slack,kubernetes,gcp,docker,ssh]==1.10.15",
+]
+
+[so-mwaa-snowflake-79151113]
+# https://stackoverflow.com/q/79151113
+# MWAA + snowflake + astronomer-cosmos + pyarrow combo.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-11-02 15:00:00"
+requirements = [
+    "pyarrow==14.0.2",
+    "filelock==3.15.4",
+    "platformdirs==4.2.2",
+    "pydantic==2.8.2",
+    "virtualenv==20.26.3",
+    "distlib==0.3.8",
+    "snowflake-connector-python==3.12.1",
+    "snowflake-sqlalchemy==1.6.1",
+    "astronomer-cosmos==1.7.1",
+    "apache-airflow-providers-snowflake==5.7.0",
+]
+
+[so-llamaindex-onnxruntime-78057262]
+# https://stackoverflow.com/q/78057262
+# llama-index-vector-stores-chroma pulls onnxruntime>=1.17 which has
+# limited platform coverage.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-02-25 18:56:36"
+requirements = ["llama-index"]
+
+[so-airflow-spark-79463598]
+# https://stackoverflow.com/q/79463598
+# Dockerfile build "takes extremely long time" with airflow + spark.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2025-02-24 12:56:34"
+requirements = [
+    "apache-airflow",
+    "apache-airflow-providers-apache-spark",
+    "apache-airflow-providers-celery>=3.3.0",
+    "apache-airflow-providers-google",
+    "pandas",
+    "psycopg2-binary",
+    "pytest",
+    "pyspark",
+    "requests",
+    "sqlalchemy",
+]
+
+[so-fbprophet-windows-78537317]
+# https://stackoverflow.com/q/78537317
+# fbprophet 0.7.1 with cmdstanpy==0.9.5 (very old) plus Python 3.12.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Windows"
+datetime = "2024-05-27 14:00:00"
+requirements = ["fbprophet"]
+
+[so-mwaa-amazon-provider-78509126]
+# https://stackoverflow.com/q/78509126
+# Constraint and direct requirement both pin same version, pip
+# still complains.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-05-20 11:00:00"
+requirements = ["apache-airflow-providers-amazon==8.16.0"]
+
+[so-jupyter-pywin32-77832647]
+# https://stackoverflow.com/q/77832647
+# jupyter-server picks newest jupyter-core which depends on pywin32
+# (Windows-only). Reproduces on Linux too due to prior platform pin.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Windows"
+datetime = "2024-01-17 10:00:00"
+requirements = ["jupyter-server", "jupyter-core"]
+
+[so-teachable-machine-77664987]
+# https://stackoverflow.com/q/77664987
+# teachable-machine pulls tensorflow with no upper bound on Python 3.12.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2023-12-15 08:09:01"
+requirements = ["teachable-machine"]
+
+[so-numpy-1-23-conflict-cluster-76776745]
+# https://stackoverflow.com/q/76776745
+# Many libs around numpy: argilla, langchain, layoutparser,
+# matplotlib, numexpr, onnxruntime.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-07-27 14:00:00"
+requirements = [
+    "numpy==1.23.5",
+    "argilla==1.13.2",
+    "contourpy==1.1.0",
+    "langchain==0.0.200",
+    "layoutparser==0.3.4",
+    "matplotlib==3.7.1",
+    "numexpr==2.8.4",
+    "onnxruntime==1.15.1",
+]
+
+[so-tensorflowjs-decision-forests-78402886]
+# https://stackoverflow.com/q/78402886
+# tensorflowjs 4.18 requires tensorflow>=2.13 but
+# tensorflow-decision-forests 1.8.1 pins ~=2.15.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-04-29 10:00:00"
+requirements = ["tensorflowjs", "tensorflow-decision-forests==1.8.1"]
+
+[so-iexfinance-pandas-openpyxl-76062556]
+# https://stackoverflow.com/q/76062556
+# botocore 1.16.2 vs python-dateutil==2.8.1 vs pandas 2.0.0
+# (>=2.8.2).
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-04-20 09:00:00"
+requirements = [
+    "pandas==2.0.0",
+    "python-dateutil==2.8.1",
+    "botocore==1.16.2",
+    "openpyxl",
+]
+
+[so-diffusion-cbor-pin-75929413]
+# https://stackoverflow.com/q/75929413
+# diffusion 6.x pins diffusion-cbor / diffusion-core to private
+# unavailable versions; pip walks every diffusion release.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-04-04 10:00:00"
+requirements = ["diffusion"]
+
+[so-easyocr-torch-storm-75227460]
+# https://stackoverflow.com/q/75227460
+# Backtracks every easyocr release looking for compatible torch.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Windows"
+datetime = "2023-01-24 08:00:00"
+requirements = ["easyocr"]
+
+[so-django-grpcio-73675308]
+# https://stackoverflow.com/q/73675308
+# Django GCP deployment with grpcio==1.48.1 pinned.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2022-09-10 14:00:00"
+requirements = [
+    "django",
+    "django-storages",
+    "google-cloud-storage",
+    "google-cloud-firestore",
+    "grpcio==1.48.1",
+]
+
+[so-arches-71994082]
+# https://stackoverflow.com/q/71994082
+# Constraints file from airflow main pins alembic, but apache-airflow
+# 2.0.2 wants alembic 1.5.8 only.
+resolution = "lowest"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2022-04-25 16:00:00"
+requirements = [
+    "alembic==1.5.8",
+    "apache-airflow==2.0.2",
+    "apache-airflow-providers-amazon==1.3.0",
+    "apache-airflow-providers-celery==1.0.1",
+    "apache-airflow-providers-ftp==1.0.1",
+    "apache-airflow-providers-http==1.1.1",
+    "apache-airflow-providers-imap==1.0.1",
+    "apache-airflow-providers-sqlite==1.0.2",
+    "boto3==1.17.53",
+    "botocore==1.20.53",
+    "celery==4.4.7",
+    "Flask==1.1.2",
+    "Flask-AppBuilder==3.3.0",
+    "Jinja2==2.11.3",
+    "MarkupSafe==1.1.1",
+    "SQLAlchemy==1.3.24",
+]
+
+[so-tf-models-official-70869059]
+# https://stackoverflow.com/q/70869059
+# TensorFlow object detection API pulls tf-models-official which
+# requires tensorflow-addons.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2022-01-26 10:00:00"
+requirements = ["tf-models-official>=2.5.1", "tensorflow-addons"]
+
+[so-textract-bs4-66992921]
+# https://stackoverflow.com/q/66992921
+# beautifulsoup4==4.9.1 vs textract 1.6.3 pinning bs4==4.8.0.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-04-07 14:00:00"
+requirements = ["beautifulsoup4==4.9.1", "textract==1.6.3"]
+
+[so-django-2-0-13-pin-66719251]
+# https://stackoverflow.com/q/66719251
+# Django==2.0.13 vs many django-* requiring Django>=2.2.
+resolution = "lowest"
+python_version = "3.6"
+platform_system = "Linux"
+datetime = "2021-03-20 14:00:00"
+requirements = [
+    "Django==2.0.13",
+    "django-crontab==0.7.1",
+    "django-dbbackup==3.3.0",
+    "django-debug-toolbar==2.2",
+    "django-storages==1.10.1",
+]
+
+[so-idna-3-pin-66483306]
+# https://stackoverflow.com/q/66483306
+# idna==3.1 vs requests 2.25.1 (idna<3,>=2.5).
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-03-04 12:00:00"
+requirements = ["idna==3.1", "requests==2.25.1"]
+
+[so-neuralprophet-torch-66001089]
+# https://stackoverflow.com/q/66001089
+# neuralprophet 0.2.x pins torch<1.7,>=1.4 which has limited Windows
+# wheels at the time.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Windows"
+datetime = "2021-02-01 18:00:00"
+requirements = ["neuralprophet"]
+
+[so-six-tensorflow-pin-68457991]
+# https://stackoverflow.com/q/68457991
+# tensorflow 2.5.0 pins six~=1.15.0 vs user six==1.16.0.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Windows"
+datetime = "2021-07-20 17:00:00"
+requirements = [
+    "tensorflow==2.5.0",
+    "six==1.16.0",
+    "absl-py==0.13.0",
+    "bleach==3.3.1",
+    "google-auth==1.33.0",
+    "grpcio==1.38.1",
+    "protobuf==3.17.3",
+    "python-dateutil==2.8.2",
+]
+
+[so-orion-ml-tensorflow1-66230637]
+# https://stackoverflow.com/q/66230637
+# orion-ml -> mlprimitives 0.2.x pins tensorflow<2,>=1.11.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-02-16 14:00:00"
+requirements = ["orion-ml"]
+
+[so-airflow-2-2-0-cattrs-69631604]
+# https://stackoverflow.com/q/69631604
+# Airflow 2.2.0 needs cattrs<1.7,~=1.1 but constraint pins ==1.0.0.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-10-19 14:00:00"
+requirements = ["apache-airflow[celery]==2.2.0", "cattrs==1.0.0"]
+
+[so-delta-lake-reader-pyarrow-67030572]
+# https://stackoverflow.com/q/67030572
+# delta-lake-reader[aws] pins pyarrow<3,>=2 which had no MacOS Mojave
+# wheel.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-04-10 14:00:00"
+requirements = ["delta-lake-reader[aws]"]
+
+[so-spacy-ray-66893061]
+# https://stackoverflow.com/q/66893061
+# spacy-ray pins ray<1.0,>=0.8 which has very few wheels.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-03-31 14:00:00"
+requirements = ["spacy-ray"]
+
+[so-termcolor-tensorflow-66379975]
+# https://stackoverflow.com/q/66379975
+# Backtracks all tensorflow versions hunting for one not pinning
+# termcolor.
+resolution = "lowest"
+python_version = "3.7"
+platform_system = "Windows"
+datetime = "2021-02-26 14:00:00"
+requirements = ["tensorflow", "termcolor==2.0.0"]
+
+[so-statsmodels-numpy-65207609]
+# https://stackoverflow.com/q/65207609
+# statsmodels build vs numpy unbounded.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2020-12-08 14:00:00"
+requirements = ["statsmodels", "numpy", "pandas", "scipy"]
+
+[so-azure-storage-blob-72871055]
+# https://stackoverflow.com/q/72871055
+# azure-storage-blob==2.1.0 vs azure-storage-file-datalake (>=12.12).
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2022-07-05 09:00:00"
+requirements = [
+    "azure-storage-blob==2.1.0",
+    "azure-storage-file-datalake==12.7.0",
+]
+
+[so-jupyter-cookiecutter-jinja2-73623680]
+# https://stackoverflow.com/q/73623680
+# Jinja2==2.11.3 vs flask 2.2.2 (Jinja2>=3) and cookiecutter.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2022-09-06 12:00:00"
+requirements = [
+    "Jinja2==2.11.3",
+    "flask==2.2.2",
+    "cookiecutter==2.1.1",
+    "distributed==2022.8.0",
+]
+
+[so-django-asgiref-3-2-5-72851772]
+# https://stackoverflow.com/q/72851772
+# Django==3.1.14 wants asgiref>=3.2.10 but user pinned 3.2.5.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2022-07-04 14:00:00"
+requirements = [
+    "asgiref==3.2.5",
+    "Django==3.1.14",
+    "django-allauth==0.41.0",
+    "django-crispy-forms==1.9.0",
+    "django-heroku==0.3.1",
+    "djangorestframework==3.12.4",
+    "Pillow==9.0.1",
+    "requests==2.23.0",
+    "stripe==2.43.0",
+]
+
+[so-spacy-ray-72454793]
+# https://stackoverflow.com/q/72454793
+# Reported "installing some requirements taking too much time"
+# with spacy stack.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2022-05-31 09:00:00"
+requirements = ["spacy", "scrapy", "scikit-learn"]
+
+[so-airflow-providers-amazon-78477932]
+# https://stackoverflow.com/q/78477932
+# Django + intriniorealtime which pins requests==2.19.1 vs user 2.20.0.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-05-14 10:00:00"
+requirements = [
+    "requests==2.20.0",
+    "intriniorealtime==2.2.0",
+    "coreapi",
+    "django-allauth==0.40.0",
+]
+
+[so-ultralytics-rpi-78162256]
+# https://stackoverflow.com/q/78162256
+# Backtracking on ultralytics for Raspberry Pi 4 (arm); torchvision
+# wheel coverage gap.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2024-03-14 14:00:00"
+requirements = ["ultralytics"]
+
+[so-pytorch-nvcr-79676971]
+# https://stackoverflow.com/q/79676971
+# NVIDIA pytorch:23.05 base image, pip install -r is "extremely
+# slow".
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-06-24 12:00:00"
+requirements = [
+    "transformers",
+    "accelerate",
+    "datasets",
+    "peft",
+    "trl",
+    "deepspeed",
+    "wandb",
+    "scikit-learn",
+    "scipy",
+    "numpy",
+    "pandas",
+]
+
+[so-torch-1-10-pyannote-79327727]
+# https://stackoverflow.com/q/79327727
+# torch 1.10.0+cpu / torchaudio 0.10.0 / torchvision 0.11.0 vs
+# lightning 2.3.3 (needs torch 2.x).
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2025-01-03 14:00:00"
+requirements = [
+    "torch==1.10.0",
+    "torchaudio==0.10.0",
+    "torchvision==0.11.0",
+    "pyannote-audio==0.0.1",
+    "lightning==2.3.3",
+    "numpy",
+    "scipy",
+    "pandas",
+    "soundfile",
+    "matplotlib",
+]
+
+[so-evals-spacy-tensorflow-79091722]
+# https://stackoverflow.com/q/79091722
+# evals -> spacy-universal-sentence-encoder which requires
+# tensorflow<3,>=2.4 with tensorboard~=2.6 narrow range.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Darwin"
+datetime = "2024-10-15 14:00:00"
+requirements = ["evals"]
+
+[so-tensorflow-federated-79775875]
+# https://stackoverflow.com/q/79775875
+# tensorflow_federated on Python 3.12 - large backtracking through
+# every tff release.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-09-26 14:00:00"
+requirements = ["tensorflow-federated", "tensorflow==2.19.0"]
+
+[so-tensorflow-federated-78497549]
+# https://stackoverflow.com/q/78497549
+# tensorflow_federated walks every release looking for compatible
+# absl-py / dm-tree / dp-accounting.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Windows"
+datetime = "2024-05-17 14:00:00"
+requirements = ["tensorflow-federated"]
+
+[so-pip-pandas-77311670]
+# https://stackoverflow.com/q/77311670
+# google-colab transitively constrains many other libs.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-10-17 14:00:00"
+requirements = [
+    "absl-py",
+    "numpy",
+    "matplotlib",
+    "seaborn",
+    "scipy",
+    "scikit-learn",
+    "gspread",
+    "google-colab",
+    "pandas",
+    "google-auth",
+    "traitlets",
+]
+
+[so-gluonts-mxnet-pin-68451898]
+# https://stackoverflow.com/q/68451898
+# gluonts==0.8.0 with old mxnet/numpy/pandas pins; backtracks heavily.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-07-20 14:00:00"
+# Pure-Python sdists with no wheel under the exclude-newer date.
+build_packages = ["future", "pymeeus"]
+requirements = [
+    "gluonts==0.8.0",
+    "mxnet~=1.7",
+    "numpy==1.17.2",
+    "pandas==1.0.5",
+    "ujson==4.0.2",
+    "torch~=1.6",
+    "pytorch-lightning~=1.1",
+]
+
+[so-django-private-chat-65598463]
+# https://stackoverflow.com/q/65598463
+# "INFO: pip is looking at multiple versions of django-* ..." for
+# many django subpackages.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-01-06 14:00:00"
+requirements = [
+    "django-private-chat==0.3.0",
+    "django-polymorphic",
+    "django-parler",
+    "django-mptt",
+    "django-model-utils",
+    "django-meta",
+    "django-loginas",
+    "django-ipware",
+    "django-cms",
+    "djangorestframework",
+]
+
+[so-super-gradients-76170947]
+# https://stackoverflow.com/q/76170947
+# super-gradients 3.x requires multiple versions explored before
+# settling.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Windows"
+datetime = "2023-05-04 14:00:00"
+requirements = ["super-gradients"]
+
+[so-pennylane-amazon-braket-75891916]
+# https://stackoverflow.com/q/75891916
+# Quantum-computing stack: amazon-braket-pennylane-plugin pulls
+# tensorflow + keras + cvxpy.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2023-03-30 14:00:00"
+requirements = [
+    "amazon-braket-pennylane-plugin==1.1.0.post1",
+    "cvxopt==1.2.6",
+    "cvxpy==1.1.11",
+    "dill==0.3.3",
+    "ipywidgets==7.6.3",
+    "matplotlib==3.3.4",
+    "numpy==1.19.5",
+    "pandas==1.2.2",
+    "scikit-learn==0.24.1",
+    "scipy==1.6.0",
+    "pennylane==0.16.0",
+    "pennylane-cirq==0.14.0",
+    "keras==2.4.3",
+    "tensorflow==2.4.1",
+    "rsmf==0.2",
+]
+
+[so-cinder-oslo-vmware-69516182]
+# https://stackoverflow.com/q/69516182
+# OpenStack/devstack: oslo-vmware 3.9.1 needs suds-jurko>=0.6 but
+# constraint pins ===0.6.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2021-10-10 14:00:00"
+requirements = ["cinder", "oslo-vmware==3.9.1", "suds-jurko==0.6"]
+
+[so-mxnet-tflite-66705900]
+# https://stackoverflow.com/q/66705900
+# tensorflow-federated source-build attempt on Apple Silicon.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Darwin"
+datetime = "2021-03-19 14:00:00"
+requirements = ["tensorflow-federated"]
+
+[so-locust-flask-cors-69531427]
+# https://stackoverflow.com/q/69531427
+# locust install backtracks flask, flask-cors, flask-basicauth,
+# click on Windows.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Windows"
+datetime = "2021-10-11 14:00:00"
+requirements = ["locust"]
+
+[so-google-bigquery-soda-old-77067622]
+# https://stackoverflow.com/q/77067622
+# Sentry-sdk + many transitive deps in py3.8 docker image.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2023-09-08 14:00:00"
+requirements = [
+    "sentry-sdk==1.9.5",
+    "celery==5.3.4",
+    "boto3",
+    "Django==4.2",
+    "django-storages",
+    "redis",
+    "channels",
+    "psycopg2-binary",
+    "openpyxl",
+    "pandas",
+]
+
+[so-cvat-fiftyone-76745306]
+# https://stackoverflow.com/q/76745306
+# Same Dockerfile worked 4 weeks ago; new pip backtracking failure.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-07-22 14:00:00"
+requirements = [
+    "pycurl==7.45.1",
+    "delta==0.4.2",
+    "fiftyone==0.21.0",
+    "filetype==1.2.0",
+    "Flask==2.2.2",
+    "kfp==1.8.19",
+    "kfp_pipeline_spec==0.1.16",
+    "numpy==1.23.5",
+    "pandas==1.5.2",
+    "Pillow==9.4.0",
+    "pyspark==3.3.2",
+    "requests==2.28.1",
+    "shortuuid==1.0.11",
+    "ultralytics==8.0.109",
+    "cvat_sdk==2.4.4",
+    "onnxruntime==1.14.1",
+    "PyJWT==2.7.0",
+    "Flask-JWT-Extended==4.4.4",
+    "Flask-SQLAlchemy==3.0.3",
+    "SQLAlchemy==1.4.48",
+    "Jinja2==3.0.3",
+]
+
+[so-dbt-core-snowflake-79744735]
+# https://stackoverflow.com/q/79744735
+# astronomer-cosmos with dbt-core/dbt-snowflake recent versions.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-08-24 14:00:00"
+requirements = [
+    "astronomer-cosmos==1.9.0",
+    "dbt-core==1.9.0",
+    "dbt-snowflake==1.9.0",
+    "psycopg2-binary==2.9.9",
+]
+
+[so-tensorflow-2-5-tensorflow-py39-75172201]
+# https://stackoverflow.com/q/75172201
+# Streamlit dashboard with prophet + tensorflow + pmdarima.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2023-01-19 14:00:00"
+requirements = [
+    "altair==4.1.0",
+    "cmdstanpy==1.0.8",
+    "h5py==3.1.0",
+    "keras-preprocessing==1.1.2",
+    "matplotlib==3.4.2",
+    "numpy",
+    "opt-einsum==3.3.0",
+    "pandas==1.2.4",
+    "pmdarima==2.0.2",
+    "prophet==1.1.1",
+    "pydeck==0.6.2",
+    "scikit-learn==0.24.2",
+    "scipy==1.6.3",
+    "seaborn==0.11.1",
+    "statsmodels==0.13.5",
+    "streamlit==0.81.1",
+    "tensorboard==2.5.0",
+    "tensorflow==2.5.0",
+]
+
+[so-deepface-m1-73626442]
+# https://stackoverflow.com/q/73626442
+# Apple M1 deepface install conflicts with tensorflow-deps + keras.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Darwin"
+datetime = "2022-09-06 14:00:00"
+requirements = ["deepface", "tensorflow-macos", "tensorflow-metal"]
+
+[so-discuss-easyocr-44344]
+# https://discuss.python.org/t/unable-to-install-easyocr-dependencies/44344
+# Backtracks every easyocr release looking for a torch wheel for 3.12
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Windows"
+datetime = "2024-01-28 12:00:00"
+requirements = ["easyocr==1.7.1"]
+
+[discuss-resolver-clever-deps-44405]
+# https://discuss.python.org/t/could-resolver-be-more-clever-about-deps-that-cant-be-met/44405
+# Pip walked >30 versions of easyocr before failing on torch.
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2024-01-30 14:00:00"
+requirements = ["easyocr"]
+
+[so-old-numpy-pin-66315059]
+# https://stackoverflow.com/q/66315059 (related thread)
+# django-mailgun was never published to PyPI; the resolver can only
+# report "no versions" for it.  Kept here for documentation.
+resolution = "lowest"
+unsupported_reason = "django-mailgun not on PyPI"
+python_version = "3.6"
+platform_system = "Linux"
+datetime = "2021-02-22 14:00:00"
+requirements = ["django-mailgun"]
+
+[so-paddleocr-cli-77252186-clone]
+# https://stackoverflow.com/q/77252186
+# Paddle stack (without git dep): paddlepaddle + paddleocr + paddlenlp
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-10-08 14:00:00"
+requirements = ["paddlepaddle", "paddleocr", "paddlenlp"]
+
+[so-pip-bigrequirements-django-69805274]
+# https://stackoverflow.com/q/69805274
+# heroku failing on huge Django requirements; ChatterBot + spacy.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2021-11-02 14:00:00"
+requirements = [
+    "ChatterBot==1.0.4",
+    "chatterbot-corpus==1.2.0",
+    "Django==3.2.8",
+    "django-filter==2.4.0",
+    "django-heroku==0.0.0",
+    "django-simple-chatbot==0.0.9",
+    "django-widget-tweaks==1.4.8",
+    "djangorestframework==3.12.4",
+    "gunicorn==20.1.0",
+    "huggingface-hub==0.0.12",
+    "PyYAML==5.4.1",
+    "requests==2.26.0",
+    "psycopg2==2.9.1",
+    "psycopg2-binary==2.9.1",
+    "Pillow==8.3.2",
+    "Pint==0.17",
+    "nltk==3.6.2",
+    "matplotlib-inline==0.1.3",
+    "line-bot-sdk==1.20.0",
+]
+
+[so-beam-dataflow-stuck-70367056]
+# https://stackoverflow.com/q/70367056
+# apache-beam 2.32 + old fastavro + google-api-core 1.14 conflict.
+resolution = "lowest"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2021-12-15 14:00:00"
+requirements = [
+    "numpy==1.21.4",
+    "pandas==0.25.3",
+    "dateparser==1.1.0",
+    "python-dateutil==2.8.2",
+    "pytz==2021.3",
+    "google-api-core==1.14.0",
+    "google-cloud-storage==1.36.1",
+    "fastavro==0.22.10",
+    "apache-beam[gcp]==2.32.0",
+]
+
+[so-pyobjc-flask-heroku-70993086]
+# https://stackoverflow.com/q/70993086
+# Pip freeze on macOS includes appnope/applaunchservices, fails on
+# Heroku Linux build.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2022-02-04 14:00:00"
+requirements = [
+    "Flask==2.0.2",
+    "appnope==0.1.2",
+    "applaunchservices==0.2.1",
+    "ipykernel==6.4.1",
+    "matplotlib==3.5.1",
+    "numpy==1.22.2",
+    "pandas==1.4.0",
+    "pyobjc-core",
+    "scipy",
+    "Pillow==9.0.1",
+]
+
+[so-google-cloud-mlmd-70887725]
+# https://stackoverflow.com/q/70887725
+# model-card-toolkit pulls tfx, tensorflow-data-validation,
+# ml-metadata varying upper bounds.
+resolution = "lowest"
+python_version = "3.8"
+platform_system = "Linux"
+datetime = "2022-01-28 14:00:00"
+requirements = ["model-card-toolkit"]
+
+[so-airflow-providers-snowflake-extra-79744735-clone]
+# Variant of dbt-core scenario with conflicting astronomer-cosmos
+# and dbt-snowflake constraints.
+resolution = "lowest"
+python_version = "3.11"
+platform_system = "Linux"
+datetime = "2025-08-24 14:00:00"
+requirements = ["astronomer-cosmos[dbt-snowflake]>=1.9", "dbt-core>=1.9"]
+
+[so-tflite-model-maker-m1-71290994]
+# https://stackoverflow.com/q/71290994
+# Backtracks every tflite-model-maker version looking for one
+# satisfying both tflite-support and tensorflow.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Darwin"
+datetime = "2022-02-28 05:41:05"
+requirements = [
+    "tflite-model-maker",
+    "tflite-support",
+    "tensorflow",
+]
+
+[so-airflow-grpcio-tensorflow-bigquery-74620601]
+# https://stackoverflow.com/q/74620601
+# Mixed Cloud Function: tensorflow + google-cloud + grpcio-tools
+# spinning on backtracking.  data-consumption-interface is a private
+# package from the OP's environment and is not published to PyPI.
+resolution = "lowest"
+unsupported_reason = "data-consumption-interface not on PyPI"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2022-11-29 21:50:00"
+requirements = [
+    "tensorflow",
+    "grpcio-tools>=1.44.0",
+    "google-cloud-storage",
+    "google-cloud-pubsub",
+    "google-cloud-firestore",
+    "pandas",
+    "requests",
+    "data-consumption-interface>=1.11",
+]
+
+[so-tflite-jaxlib-76244638]
+# https://stackoverflow.com/q/76244638
+# tflite-model-maker pulls jaxlib pinned to a non-existent platform.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-05-13 14:00:00"
+requirements = ["tensorflow", "tflite-model-maker"]
+
+[so-easyocr-windows-74868424]
+# https://stackoverflow.com/q/74868424
+# easyocr install on Windows; backtracking on opencv-python-headless.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Windows"
+datetime = "2022-12-20 14:00:00"
+requirements = ["easyocr"]
+
+[so-arches-psycopg2-binary-68601119]
+# https://stackoverflow.com/q/68601119
+# arches 5.x pins psycopg2-binary==2.8.4 which has narrow wheel
+# coverage.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Windows"
+datetime = "2021-07-31 14:00:00"
+requirements = ["arches"]
+
+[so-tensorflow-federated-vscode-78497549-clone]
+# https://stackoverflow.com/q/78497549
+# tensorflow-federated 0.48 attrs~=21.4 cachetools~=3.1 (very old).
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Windows"
+datetime = "2024-05-17 14:00:00"
+requirements = ["tensorflow-federated==0.48.0"]
+
+[so-pytorch-pyannote-soundfile-79327727-clone]
+# https://stackoverflow.com/q/79327727
+# pyannote-audio with old torch.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2025-01-03 14:00:00"
+requirements = [
+    "pyannote-audio",
+    "torch==1.10.0",
+    "torchaudio==0.10.0",
+    "torchvision==0.11.0",
+]
+
+[so-locust-windows-tornado-69531427-clone]
+# https://stackoverflow.com/q/69531427 (extended)
+# Windows locust install with greenlet/cffi prebuild requirement.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Windows"
+datetime = "2021-10-11 14:00:00"
+requirements = [
+    "locust",
+    "Cython>=3.0a5",
+    "cffi>=1.12.3",
+    "greenlet>=0.4.17",
+]
+
+[so-airflow-mwaa-2-2-78509126-clone]
+# https://stackoverflow.com/q/78509126 (extended)
+# MWAA local-only build with --find-links and pinned amazon provider.
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-05-20 11:00:00"
+requirements = [
+    "apache-airflow==2.6.3",
+    "apache-airflow-providers-amazon==8.16.0",
+    "apache-airflow-providers-celery",
+    "apache-airflow-providers-postgres",
+]
+
+[so-cv-models-79775875-clone]
+# tensorflow-federated on 3.12 (clone of 79775875 reduced to roots)
+resolution = "lowest"
+python_version = "3.12"
+platform_system = "Linux"
+datetime = "2025-09-26 14:00:00"
+requirements = ["tensorflow_federated", "jax", "jaxlib"]
+
+[so-aws-django-pkgs-69972820]
+# https://stackoverflow.com/q/69972820
+# AWS Lightsail "Slow installation of python/django packages".
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2021-11-15 14:00:00"
+requirements = [
+    "django>=3",
+    "django-storages",
+    "boto3",
+    "Pillow",
+    "psycopg2-binary",
+    "gunicorn",
+    "celery",
+    "redis",
+]
+
+[so-pyiceberg-old-fiftyone-cvat-76745306-min]
+# https://stackoverflow.com/q/76745306 minimized to backtracking core
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2023-07-22 14:00:00"
+requirements = [
+    "fiftyone==0.21.0",
+    "ultralytics==8.0.109",
+    "onnxruntime==1.14.1",
+    "pyspark==3.3.2",
+    "kfp==1.8.19",
+    "Flask-SQLAlchemy==3.0.3",
+    "SQLAlchemy==1.4.48",
+]
+
+[so-tensorflow-extended-tfx-bsl-71085704-extended]
+# https://stackoverflow.com/q/71085704
+# tfx pinned to multiple older versions.
+resolution = "lowest"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2022-02-11 06:03:14"
+requirements = ["tfx==0.21.5", "tensorflow", "tensorflow-data-validation"]
+
+[so-keras-tf-decision-78402886-extended]
+# https://stackoverflow.com/q/78402886 - extended root set
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2024-04-29 10:00:00"
+requirements = [
+    "tensorflowjs==4.18.0",
+    "tensorflow-decision-forests==1.8.1",
+    "tensorflow",
+    "keras",
+]
+
+[so-hf-evals-tf-79091722-extended]
+# https://stackoverflow.com/q/79091722 - more direct roots
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Darwin"
+datetime = "2024-10-15 14:00:00"
+requirements = [
+    "evals",
+    "spacy-universal-sentence-encoder",
+    "tensorflow<3,>=2.4",
+    "google-generativeai",
+]
+
+[so-old-mwaa-airflow-71994082-clone]
+# https://stackoverflow.com/q/71994082 with constraints flavor.
+resolution = "lowest"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2022-04-25 16:00:00"
+requirements = [
+    "apache-airflow==2.0.2",
+    "Flask-AppBuilder==3.3.0",
+    "marshmallow-oneofschema==2.1.0",
+    "marshmallow-sqlalchemy==0.23.1",
+]
+
+[so-rasa-pip-2-x-70829252]
+# https://stackoverflow.com/q/70829252
+# Rasa install issues on Python 3.9 / 3.10.
+resolution = "lowest"
+python_version = "3.9"
+platform_system = "Linux"
+datetime = "2022-01-24 14:00:00"
+requirements = ["rasa"]
+
+[so-airflow-2-3-mxnet-72454793-clone]
+# https://stackoverflow.com/q/72454793 - spacy + scrapy combo
+resolution = "lowest"
+python_version = "3.10"
+platform_system = "Linux"
+datetime = "2022-05-31 09:00:00"
+requirements = ["spacy", "scrapy"]
+
+[so-django-six-deep-66450085-clone]
+# https://stackoverflow.com/q/66450085 - lighter form
+resolution = "lowest"
+python_version = "3.7"
+platform_system = "Linux"
+datetime = "2021-03-03 13:38:17"
+requirements = [
+    "six==1.10.0",
+    "django>=3.2",
+    "drf-yasg>=1.16",
+    "google-api-core",
+    "djangorestframework",
+]

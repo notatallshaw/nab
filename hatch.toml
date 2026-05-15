@@ -1,0 +1,72 @@
+[envs.default]
+workspace.members = ["nab-resolver", "nab-python", "nab-index"]
+
+[envs.hatch-test]
+workspace.members = ["nab-resolver", "nab-python", "nab-index"]
+features = ["httpx", "niquests"]
+extra-dependencies = [
+    "hypothesis>=6.100",
+    "pytest-timeout>=2.3",
+    "respx>=0.22",
+]
+
+[envs.crosshair]
+workspace.members = ["nab-resolver", "nab-python", "nab-index"]
+extra-dependencies = [
+    "crosshair-tool>=0.0.104",
+    "hypothesis-crosshair>=0.0.28",
+    "hypothesis>=6.100",
+    "pytest>=9.0",
+    "pytest-timeout>=2.3",
+]
+
+[envs.crosshair.scripts]
+check = "pytest -m crosshair {args}"
+
+[envs.types]
+workspace.members = ["nab-resolver", "nab-python", "nab-index"]
+dependencies = [
+    "pyright>=1.1.400",
+    "mypy>=1.19",
+    "ty>=0.0.20",
+    "pyrefly>=0.50",
+    "zuban>=0.6",
+    "pytest>=9.0",
+    "hypothesis>=6.100",
+    "pytest-timeout>=2.3",
+]
+
+[envs.types.scripts]
+check-pyright = "pyright {args}"
+check-mypy = "mypy {args:nab-resolver/src}"
+check-ty = "ty check {args:nab-resolver/src}"
+check-pyrefly = "pyrefly check {args:nab-resolver/src}"
+check-zuban = "zuban check {args:nab-resolver/src}"
+all = ["check-pyright", "check-mypy", "check-ty", "check-pyrefly", "check-zuban"]
+
+[envs.lint]
+detached = true
+dependencies = ["ruff>=0.12"]
+
+[envs.lint.scripts]
+check = "ruff check ."
+fix = "ruff check --fix ."
+fmt = "ruff format ."
+fmt-check = "ruff format --check ."
+
+[envs.docs]
+detached = true
+dependencies = [
+    "sphinx>=8",
+    "furo>=2024.8",
+    "myst-parser>=4",
+    "linkify-it-py>=2",
+    "sphinx-design>=0.6",
+    "sphinx-copybutton>=0.5",
+    "sphinx-autobuild>=2024.10",
+]
+
+[envs.docs.scripts]
+build = "sphinx-build -W -b html docs docs/_build/html {args}"
+serve = "sphinx-autobuild docs docs/_build/html {args}"
+clean = "rm -rf docs/_build"
