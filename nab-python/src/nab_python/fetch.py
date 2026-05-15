@@ -740,6 +740,7 @@ class FetchCoordinator:
                 # transitive dep 404s or fails any other way.
                 if req.kind is FetchKind.LISTING:
                     self.index.store_listing(req.package, [])
+                    self._record_serving_index(client, req.package)
                 else:
                     assert req.version is not None
                     if req.kind is FetchKind.METADATA:

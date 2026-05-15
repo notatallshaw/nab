@@ -213,6 +213,49 @@ class TestDownloadLock:
                 tmp_path,
             )
 
+    def test_failure_cancels_sibling_downloads(self, tmp_path: Path) -> None:
+        """One task raising cancels the in-flight siblings, then closes the transport."""
+        fail_pin = _index_pin(name="fail", wheel_sha="0" * 64)
+        slow_pin = _index_pin(name="slow", wheel_sha="a" * 64)
+
+        cancelled = asyncio.Event()
+
+        class _MixedTransport:
+            def __init__(self) -> None:
+                self.closed = False
+                self.requested: list[str] = []
+
+            async def get(
+                self,
+                url: str,
+                *,
+                headers: dict[str, str] | None = None,
+            ) -> _FakeResponse:
+                del headers
+                self.requested.append(url)
+                if "fail" in url:
+                    return _FakeResponse(content=b"REAL")
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+                return _FakeResponse(content=b"slow")  # pragma: no cover
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        transport = _MixedTransport()
+        with pytest.raises(DownloadError, match="sha256 mismatch"):
+            download_lock(
+                LockInput(pins={"fail": fail_pin, "slow": slow_pin}),
+                transport,  # type: ignore[arg-type]
+                tmp_path,
+                max_concurrency=2,
+            )
+        assert cancelled.is_set()
+        assert transport.closed
+
     def test_creates_output_dir(self, tmp_path: Path) -> None:
         target = tmp_path / "nested" / "vendor"
         download_lock(

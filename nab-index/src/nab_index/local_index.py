@@ -133,7 +133,12 @@ def _resolve_local_link(
         path = _parse_file_url(href_no_frag)
         return (path.name, href_no_frag, hashes)
 
-    target = (package_dir / unquote(href_no_frag)).resolve()
+    package_dir_resolved = package_dir.resolve()
+    target = (package_dir_resolved / unquote(href_no_frag)).resolve()
+    try:
+        target.relative_to(package_dir_resolved)
+    except ValueError:
+        return (None, "", ())
     return (target.name, target.as_uri(), hashes)
 
 

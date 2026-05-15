@@ -53,6 +53,7 @@ def _make_wheel(version: str, *, package: str) -> WheelFile:
         requires_python=None,
         has_metadata=True,
         upload_time=None,
+        hashes=(("sha256", "a" * 64),),
     )
 
 
@@ -245,6 +246,31 @@ class TestResolveOneTuple:
         assert not tr.success
         assert tr.error is not None
         assert "ResolutionError" in tr.error
+
+    def test_missing_hash_reports_failed_tuple(self) -> None:
+        """An unhashed wheel resolves but the tuple fails with MissingHashError."""
+        unhashed = WheelFile(
+            filename="pkg-1.0-py3-none-any.whl",
+            url="https://example.com/pkg-1.0.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+        )
+        coordinator = _make_coordinator({"pkg": [unhashed]})
+        tr = _resolve_one_tuple(
+            coordinator,
+            _linux_311(),
+            requirements={"pkg": VersionRange.full()},
+            constraints=None,
+            uploaded_prior_to=None,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+        )
+        assert not tr.success
+        assert tr.error is not None
+        assert "MissingHashError" in tr.error
+        assert tr.pins == {"pkg": Version("1.0")}
 
 
 _FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"

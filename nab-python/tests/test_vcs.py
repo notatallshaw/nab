@@ -73,10 +73,22 @@ class TestVcsRequestParse:
         with pytest.raises(VcsCloneError, match="not a recognised"):
             VcsRequest.parse("https://example.com/not-vcs")
 
-    def test_hg_scheme(self) -> None:
-        req = VcsRequest.parse("hg+https://hg.example.com/repo@v1.0")
-        assert req.scheme == "hg"
-        assert req.ref == "v1.0"
+    def test_hg_scheme_refused(self) -> None:
+        with pytest.raises(VcsCloneError, match="not a recognised"):
+            VcsRequest.parse("hg+https://hg.example.com/repo@v1.0")
+
+    def test_svn_scheme_refused(self) -> None:
+        with pytest.raises(VcsCloneError, match="not a recognised"):
+            VcsRequest.parse("svn+https://svn.example.com/repo")
+
+    def test_bzr_scheme_refused(self) -> None:
+        with pytest.raises(VcsCloneError, match="not a recognised"):
+            VcsRequest.parse("bzr+https://bzr.example.com/repo")
+
+    def test_ssh_shortcut_with_ref(self) -> None:
+        req = VcsRequest.parse("git+git@github.com:x/y.git@" + "c" * 40)
+        assert req.repo_url == "git@github.com:x/y.git"
+        assert req.ref == "c" * 40
 
 
 class TestSplitRepoRef:
@@ -109,6 +121,11 @@ class TestSplitRepoRef:
         repo, ref = _split_repo_ref("git@github.com:x/y.git")
         assert repo == "git@github.com:x/y.git"
         assert ref == ""
+
+    def test_ssh_shortcut_with_ref(self) -> None:
+        repo, ref = _split_repo_ref("git@github.com:x/y.git@v1.0")
+        assert repo == "git@github.com:x/y.git"
+        assert ref == "v1.0"
 
     def test_url_no_path_no_ref(self) -> None:
         repo, ref = _split_repo_ref("https://example.com")
@@ -324,6 +341,11 @@ class TestProviderVcsIntegration:
         versions = provider.fetch_versions("foo")
         assert len(versions) == 1
         assert str(versions[0][0]) == "1.0.0"
+        # Resolved commit SHA is recorded so the lockfile builder can
+        # emit a SHA-pinned VcsPin rather than the raw ``@<ref>`` token.
+        assert provider.vcs_pin_for("foo") == sha
+        # Unknown package returns None.
+        assert provider.vcs_pin_for("missing") is None
 
     def test_vcs_under_block_policy_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="VcsPolicy.ALLOW"):

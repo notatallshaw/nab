@@ -151,8 +151,13 @@ def index_vcs_sources(
     :func:`extract_source_metadata`).  ``VcsPolicy.BLOCK`` still refuses
     any declaration up-front because that is an independent decision
     about whether VCS fetching is permitted at all.
+
+    Each URL is passed through :func:`admit_vcs_url` so the scheme,
+    repo, and pin allowlists apply to ``[[tool.nab.vcs-sources]]``
+    just like project-root direct-URL requirements.
     """
     # Late import: ``pypi`` imports this module at module load.
+    from .._vcs_admission import admit_vcs_url
     from ..provider import VcsPolicy
 
     if not sources:
@@ -168,6 +173,7 @@ def index_vcs_sources(
 
     out: dict[str, VcsSource] = {}
     for src in sources:
+        admit_vcs_url(src.url, provider.vcs_config)
         canonical = canonicalize_name(src.name)
         if canonical in out or canonical in provider.local_sources:
             msg = f"duplicate source declared for {src.name!r}"
@@ -204,6 +210,7 @@ def materialize_vcs_source(
     except VcsCloneError as exc:
         msg = f"vcs source {source.name!r}: {exc}"
         raise UnsupportedSdistError(msg) from exc
+    provider.vcs_pins[canonicalize_name(source.name)] = clone.commit_sha
     path = clone.path / clone.subdirectory if clone.subdirectory else clone.path
     metadata = extract_source_metadata(
         provider,

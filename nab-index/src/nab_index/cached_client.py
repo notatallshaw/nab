@@ -198,7 +198,7 @@ class CachedAsyncSimpleClient:
         """
         pkg_info = self._cache.get_sdist_pkginfo(package, version)
         pyproject_toml = self._cache.get_sdist_pyproject(package, version)
-        if pkg_info is not None:
+        if pkg_info is not None or pyproject_toml is not None:
             return (pkg_info, pyproject_toml)
 
         if self._offline:

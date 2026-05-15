@@ -287,15 +287,31 @@ class TestExtractSdistFiles:
         assert pkg_info == "Metadata-Version: 2.1\n"
 
     def test_skips_directory_named_pkg_info(self) -> None:
+        """A depth-1 directory named PKG-INFO yields no metadata text."""
         body = _build_tarball(
             [
                 ("pkg-1.0/PKG-INFO", None),
-                ("pkg-1.0/real/PKG-INFO", b"Metadata-Version: 2.1\nName: real\n"),
+                ("pkg-1.0/setup.py", b"# something"),
             ]
         )
         pkg_info, _ = _extract_sdist_files(body)
-        assert pkg_info is not None
-        assert "Name: real" in pkg_info
+        assert pkg_info is None
+
+    def test_ignores_pkg_info_below_top_level(self) -> None:
+        """A PKG-INFO buried below the conventional ``<name>-<version>/`` is ignored."""
+        body = _build_tarball(
+            [("pkg-1.0/sub/PKG-INFO", b"Metadata-Version: 2.1\nName: deep\n")]
+        )
+        pkg_info, _ = _extract_sdist_files(body)
+        assert pkg_info is None
+
+    def test_ignores_pyproject_below_top_level(self) -> None:
+        """A pyproject.toml buried below the top level is ignored."""
+        body = _build_tarball(
+            [("pkg-1.0/sub/pyproject.toml", b"[project]\nname = 'deep'\n")]
+        )
+        _, pyproject = _extract_sdist_files(body)
+        assert pyproject is None
 
     def test_returns_none_on_tar_error(self) -> None:
         assert _extract_sdist_files(b"not-a-tarball") == (None, None)

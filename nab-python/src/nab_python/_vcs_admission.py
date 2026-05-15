@@ -77,49 +77,26 @@ _VCS_SCHEMES: frozenset[str] = frozenset(
         "git+http",
         "git+file",
         "git+git",
-        "git",
-        "hg+https",
-        "hg+ssh",
-        "hg+http",
-        "hg+file",
-        "hg+static-http",
-        "bzr+https",
-        "bzr+ssh",
-        "bzr+sftp",
-        "bzr+ftp",
-        "bzr+lp",
-        "bzr+file",
-        "svn",
-        "svn+https",
-        "svn+ssh",
-        "svn+http",
-        "svn+file",
     }
 )
 
-_VCS_INSECURE_SCHEMES: frozenset[str] = frozenset(
-    {"git", "git+git", "git+http", "hg+http", "bzr+http", "svn", "svn+http"}
-)
+_VCS_INSECURE_SCHEMES: frozenset[str] = frozenset({"git+git", "git+http"})
 
 
 def split_vcs_scheme(url: str) -> tuple[str | None, str]:
     """Strip a recognized VCS scheme prefix.
 
     ``"git+https://example.com/r.git@v1"`` -> ``("git+https", "https://example.com/r.git@v1")``.
-    ``"svn://example.com/r"``              -> ``("svn",       "svn://example.com/r")``.
     ``"https://example.com/file.whl"``     -> ``(None,        "https://example.com/file.whl")``.
 
     Returns ``(None, url)`` for non-VCS URLs (e.g. plain ``https://``
     archives or ``file://`` paths) so the caller can refuse them
-    separately.  Pip-compatible scheme list; not standardized by any PEP.
+    separately.  Only ``git+`` schemes are recognised; ``hg+``/``bzr+``/``svn+``
+    are intentionally absent so they are refused as non-VCS.
     """
     for vcs_scheme in _VCS_SCHEMES:
-        if not url.startswith(f"{vcs_scheme}://"):
-            continue
-        inner_scheme, plus, _ = vcs_scheme.partition("+")
-        if not plus:
-            return (vcs_scheme, url)
-        return (vcs_scheme, url[len(inner_scheme) + 1 :])
+        if url.startswith(f"{vcs_scheme}://"):
+            return (vcs_scheme, url[len("git+") :])
     return (None, url)
 
 
@@ -128,9 +105,7 @@ def has_full_commit_sha(url: str) -> bool:
 
     Looks for ``@<sha>`` after the scheme://host portion; ignores any
     ``#`` fragment.  Tolerates ``user@host`` syntax by taking the last
-    ``@`` in the path/ref portion.  Mercurial uses 40-char SHA1 too, so
-    the same regex covers git+hg.  Bzr/svn revisions are not hashes;
-    ``vcs_require_pin = False`` is the way to allow those.
+    ``@`` in the path/ref portion.
     """
     fragmentless = url.split("#", 1)[0]
     after_authority = fragmentless.split("://", 1)[-1]
@@ -152,8 +127,9 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         msg = (
             "refusing direct-URL requirement (not a recognized VCS scheme)\n"
             f"    {url}\n"
-            "    note: nab supports git+/hg+/bzr+/svn+ schemes only;"
-            " plain http(s)/file archive URLs are not supported."
+            "    note: nab supports git+https / git+ssh / git+http /"
+            " git+file / git+git only; hg/bzr/svn and plain"
+            " http(s)/file archive URLs are not supported."
         )
         raise UnsupportedVcsError(msg)
 
