@@ -11,6 +11,7 @@ disjointness validation lives in
 
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -32,7 +33,6 @@ from .._vendor.packaging.version import Version
 from .disjointness import validate_marker_disjointness
 
 if TYPE_CHECKING:
-    import os
     from collections.abc import Mapping, Sequence
 
     from ..lockfile import (
@@ -59,8 +59,14 @@ def write_lock(
     Returns the TOML text.  When ``output_path`` is provided, also
     writes it there; the caller chooses the path (PEP 751 does not
     mandate one).
+
+    Directory, wheel and sdist paths are written relative to
+    ``output_path``'s parent so the lockfile stays portable between
+    machines (PEP 751 records those paths relative to the lock file).
+    With no ``output_path`` the current directory is the base.
     """
-    pylock = build_pylock(lock_input)
+    lock_dir = Path(output_path).parent if output_path is not None else None
+    pylock = build_pylock(lock_input, lock_dir=lock_dir)
     pylock.validate()
     text = tomli_w.dumps(dict(pylock.to_dict()))
     if output_path is not None:
@@ -68,20 +74,28 @@ def write_lock(
     return text
 
 
-def build_pylock(lock_input: LockInput) -> Pylock:
+def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylock:
     """Build a :class:`Pylock` from the input shape.
 
     The resolver-side data structures have already been simplified
     when this function runs.  The remaining work is shape conversion:
     ``Pin`` -> ``Package``, plus marker attachment from the per-tuple
     map.
+
+    ``lock_dir`` is the directory the lockfile will be written to;
+    local-directory, wheel and sdist paths are emitted relative to it
+    so the lockfile is portable.  It defaults to the current working
+    directory when the caller has no path in mind (e.g. stdout).
     """
     from ..lockfile import LOCK_VERSION
 
+    base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
     if lock_input.per_tuple_pins:
-        package_records = _build_per_tuple_packages(lock_input)
+        package_records = _build_per_tuple_packages(lock_input, base)
     else:
-        package_records = [_pin_to_package(pin) for pin in lock_input.pins.values()]
+        package_records = [
+            _pin_to_package(pin, lock_dir=base) for pin in lock_input.pins.values()
+        ]
     package_records.sort(key=_package_sort_key)
     validate_marker_disjointness(
         package_records,
@@ -121,7 +135,23 @@ def build_pylock(lock_input: LockInput) -> Pylock:
     )
 
 
-def _pin_to_package(pin: PinShape, marker: Marker | None = None) -> Package:
+def _relativize_path(target: str | os.PathLike[str], lock_dir: Path) -> str:
+    """Return ``target`` as a POSIX path relative to ``lock_dir``.
+
+    PEP 751 records ``packages.directory.path`` and the wheel/sdist
+    ``path`` fields relative to the lock file so the lockfile stays
+    portable between machines.  :func:`os.path.relpath` is used
+    rather than :meth:`pathlib.Path.relative_to` so a ``target``
+    outside ``lock_dir`` still resolves, to a ``../``-prefixed path.
+    The result uses POSIX separators, which the spec recommends for
+    portable relative paths.
+    """
+    return Path(os.path.relpath(target, lock_dir)).as_posix()
+
+
+def _pin_to_package(
+    pin: PinShape, marker: Marker | None = None, *, lock_dir: Path
+) -> Package:
     from ..lockfile import IndexPin, LocalPin, VcsPin
 
     if isinstance(pin, IndexPin):
@@ -133,18 +163,22 @@ def _pin_to_package(pin: PinShape, marker: Marker | None = None) -> Package:
                 SpecifierSet(pin.requires_python) if pin.requires_python else None
             ),
             index=pin.index,
-            sdist=_sdist_to_package(pin.sdist) if pin.sdist else None,
-            wheels=tuple(_wheel_to_package(w) for w in pin.wheels) or None,
+            sdist=(
+                _sdist_to_package(pin.sdist, lock_dir=lock_dir) if pin.sdist else None
+            ),
+            wheels=tuple(_wheel_to_package(w, lock_dir=lock_dir) for w in pin.wheels)
+            or None,
         )
     if isinstance(pin, LocalPin):
         # PEP 751: omit version for directory sources; it is not
         # deterministic (the source tree may change at install time).
+        # The path is recorded relative to the lock file for portability.
         return Package(
             name=canonicalize_name(pin.name),
             version=None,
             marker=marker,
             directory=PackageDirectory(
-                path=pin.path,
+                path=_relativize_path(pin.path, lock_dir),
                 editable=pin.editable,
                 subdirectory=pin.subdirectory,
             ),
@@ -167,7 +201,22 @@ def _pin_to_package(pin: PinShape, marker: Marker | None = None) -> Package:
     raise TypeError(msg)
 
 
-def _wheel_to_package(wheel: WheelArtifact) -> PackageWheel:
+def _wheel_to_package(wheel: WheelArtifact, *, lock_dir: Path) -> PackageWheel:
+    """Convert a wheel artefact to its PEP 751 ``packages.wheels`` entry.
+
+    A wheel from a local find-links directory carries its on-disk
+    ``local_path``; it is written as a ``path`` relative to the lock
+    file so the lockfile stays portable.  A remote wheel records its
+    ``url`` verbatim.
+    """
+    if wheel.local_path is not None:
+        return PackageWheel(
+            name=wheel.filename,
+            path=_relativize_path(wheel.local_path.resolve(), lock_dir),
+            size=wheel.size,
+            hashes=dict(wheel.hashes),
+            upload_time=wheel.upload_time,
+        )
     return PackageWheel(
         name=wheel.filename,
         url=wheel.url,
@@ -177,7 +226,19 @@ def _wheel_to_package(wheel: WheelArtifact) -> PackageWheel:
     )
 
 
-def _sdist_to_package(sdist: SdistArtifact) -> PackageSdist:
+def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
+    """Convert an sdist artefact to its PEP 751 ``packages.sdist`` entry.
+
+    See :func:`_wheel_to_package` for the ``local_path`` handling.
+    """
+    if sdist.local_path is not None:
+        return PackageSdist(
+            name=sdist.filename,
+            path=_relativize_path(sdist.local_path.resolve(), lock_dir),
+            size=sdist.size,
+            hashes=dict(sdist.hashes),
+            upload_time=sdist.upload_time,
+        )
     return PackageSdist(
         name=sdist.filename,
         url=sdist.url,
@@ -187,7 +248,7 @@ def _sdist_to_package(sdist: SdistArtifact) -> PackageSdist:
     )
 
 
-def _build_per_tuple_packages(lock_input: LockInput) -> list[Package]:
+def _build_per_tuple_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
     """Collapse per-tuple pins into Package entries with markers.
 
     For each canonical package name:
@@ -210,12 +271,14 @@ def _build_per_tuple_packages(lock_input: LockInput) -> list[Package]:
         groups = _group_pins_by_pin(per_tuple)
         for pins, tuple_labels in groups:
             marker = _build_marker(tuple_labels, lock_input.tuple_markers, total_tuples)
-            out.append(_pin_to_package(_merge_pins_in_group(pins), marker))
+            out.append(
+                _pin_to_package(_merge_pins_in_group(pins), marker, lock_dir=lock_dir)
+            )
     # Pins only present in lock_input.pins (e.g. tuples agreed via the
     # single-source path) emit unconditionally.
     for canonical_name, pin in lock_input.pins.items():
         if canonical_name not in by_name:
-            out.append(_pin_to_package(pin))
+            out.append(_pin_to_package(pin, lock_dir=lock_dir))
     return out
 
 

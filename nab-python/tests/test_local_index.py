@@ -54,6 +54,7 @@ class TestFlatWheelhouse:
         assert isinstance(files[0], WheelFile)
         assert files[0].filename == "foo-1.0-py3-none-any.whl"
         assert files[0].version == "1.0"
+        assert files[0].local_path == wheel
 
     def test_finds_sdist_tar_gz(self, tmp_path: Path) -> None:
         (tmp_path / "foo-1.0.tar.gz").write_bytes(b"")
@@ -139,6 +140,9 @@ class TestPep503Directory:
         client = LocalIndexClient(tmp_path.as_uri())
         result = run(client.get_files("foo"))
         assert result[0].url.endswith("foo-1.0-py3-none-any.whl")
+        assert (
+            result[0].local_path == package_dir.resolve() / "foo-1.0-py3-none-any.whl"
+        )
 
     def test_https_href_pass_through(self, tmp_path: Path) -> None:
         body = '<a href="https://example.com/foo/foo-1.0-py3-none-any.whl">foo</a>'
@@ -146,6 +150,7 @@ class TestPep503Directory:
         client = LocalIndexClient(tmp_path.as_uri())
         result = run(client.get_files("foo"))
         assert result[0].url == "https://example.com/foo/foo-1.0-py3-none-any.whl"
+        assert result[0].local_path is None
 
     def test_unrecognised_anchor_skipped(self, tmp_path: Path) -> None:
         body = '<a href="random.txt">junk</a><a href="foo-1.0-py3-none-any.whl">foo</a>'
@@ -179,6 +184,7 @@ class TestPep503Directory:
         result = run(client.get_files("foo"))
         assert len(result) == 1
         assert result[0].filename == "foo-1.0-py3-none-any.whl"
+        assert result[0].local_path == wheel_path
 
     def test_pep503_hash_fragment_extracted(self, tmp_path: Path) -> None:
         digest = "a" * 64
@@ -289,7 +295,16 @@ class TestMetadataAndSdist:
 
 class TestMakeRecord:
     def test_unrecognised_extension_returns_none(self) -> None:
-        assert _make_record("README.txt", "file:///tmp/README.txt", None, ()) is None
+        assert (
+            _make_record(
+                "README.txt",
+                "file:///tmp/README.txt",
+                Path("/tmp/README.txt"),
+                None,
+                (),
+            )
+            is None
+        )
 
 
 class TestContextManager:

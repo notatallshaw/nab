@@ -300,17 +300,23 @@ def _emit_universal_pylock(
     if provenance is not None:
         lock_input.provenance = provenance
 
+    target: Path | None
+    if _cli._is_stdout(output):  # noqa: SLF001
+        target = None
+    else:
+        target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
+
     try:
-        text = _cli.write_lock(lock_input)
+        # Pass the target so wheel/sdist/directory paths are written
+        # relative to the lockfile's own directory, not the cwd.
+        text = _cli.write_lock(lock_input, output_path=target)
     except _cli.MissingHashError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)
 
-    if _cli._is_stdout(output):  # noqa: SLF001
+    if target is None:
         sys.stdout.write(text)
         return
-    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
-    target.write_text(text, encoding="utf-8")
     sys.stderr.write(f"Wrote {target} ({len(result.tuple_results)} tuples)\n")
 
 

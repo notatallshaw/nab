@@ -32,6 +32,7 @@ from ._vendor.packaging.pylock import is_valid_pylock_path
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from datetime import datetime
+    from pathlib import Path
 
     from ._vendor.packaging.markers import Marker
 
@@ -87,6 +88,11 @@ class WheelArtifact:
 
     ``upload_time`` is the index's upload timestamp when available;
     informational provenance per PEP 751 ``packages.wheels.upload-time``.
+
+    ``local_path`` is the on-disk path of a wheel from a local
+    find-links directory; the lockfile writer emits it as a relative
+    ``path`` instead of ``url`` so the lockfile is portable.  ``None``
+    for a wheel fetched from a remote index.
     """
 
     filename: str
@@ -94,6 +100,7 @@ class WheelArtifact:
     hashes: tuple[tuple[str, str], ...]
     size: int | None = None
     upload_time: datetime | None = None
+    local_path: Path | None = None
 
     @property
     def primary_digest(self) -> tuple[str, str]:
@@ -109,8 +116,8 @@ class WheelArtifact:
 class SdistArtifact:
     """An sdist tarball to record in the lockfile.
 
-    See :class:`WheelArtifact` for the meaning of ``hashes`` and
-    ``upload_time``.
+    See :class:`WheelArtifact` for the meaning of ``hashes``,
+    ``upload_time`` and ``local_path``.
     """
 
     filename: str
@@ -118,6 +125,7 @@ class SdistArtifact:
     hashes: tuple[tuple[str, str], ...]
     size: int | None = None
     upload_time: datetime | None = None
+    local_path: Path | None = None
 
     @property
     def primary_digest(self) -> tuple[str, str]:

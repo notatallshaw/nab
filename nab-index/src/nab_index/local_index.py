@@ -101,10 +101,10 @@ def _scan_pep503_directory(
     parser.feed(index_html.read_text(encoding="utf-8"))
     files: list[WheelFile | SdistFile] = []
     for href, requires_python in parser.links:
-        filename, file_url, hashes = _resolve_local_link(href, package_dir)
+        filename, file_url, local_path, hashes = _resolve_local_link(href, package_dir)
         if filename is None:
             continue
-        record = _make_record(filename, file_url, requires_python, hashes)
+        record = _make_record(filename, file_url, local_path, requires_python, hashes)
         if record is not None:
             files.append(record)
     return files
@@ -113,14 +113,18 @@ def _scan_pep503_directory(
 def _resolve_local_link(
     href: str,
     package_dir: Path,
-) -> tuple[str | None, str, tuple[tuple[str, str], ...]]:
-    """Resolve an anchor href to ``(filename, absolute_file_url, hashes)``.
+) -> tuple[str | None, str, Path | None, tuple[tuple[str, str], ...]]:
+    """Resolve an anchor href to ``(filename, url, local_path, hashes)``.
 
     PEP 503 carries the artefact's hash in the URL fragment as
     ``#<algo>=<hexdigest>``; this is the only place the hash appears
     when the index has not opted into PEP 691 JSON.  The fragment is
     parsed here and surfaced as the file record's ``hashes`` tuple so
     the lockfile writer has something to round-trip.
+
+    ``local_path`` is the artefact's on-disk path when the href names
+    a local file, and ``None`` for an ``http``/``https`` href.  It is
+    carried so downstream code never has to reverse the ``file:`` URL.
     """
     href_no_frag, _, fragment = href.partition("#")
     hashes = _parse_pep503_hash_fragment(fragment)
@@ -128,18 +132,18 @@ def _resolve_local_link(
 
     if parsed.scheme in {"http", "https"}:
         filename = unquote(parsed.path.rsplit("/", 1)[-1]) or None
-        return (filename, href_no_frag, hashes)
+        return (filename, href_no_frag, None, hashes)
     if parsed.scheme == "file":
         path = _parse_file_url(href_no_frag)
-        return (path.name, href_no_frag, hashes)
+        return (path.name, href_no_frag, path, hashes)
 
     package_dir_resolved = package_dir.resolve()
     target = (package_dir_resolved / unquote(href_no_frag)).resolve()
     try:
         target.relative_to(package_dir_resolved)
     except ValueError:
-        return (None, "", ())
-    return (target.name, target.as_uri(), hashes)
+        return (None, "", None, ())
+    return (target.name, target.as_uri(), target, hashes)
 
 
 def _parse_pep503_hash_fragment(fragment: str) -> tuple[tuple[str, str], ...]:
@@ -167,7 +171,7 @@ def _scan_flat_wheelhouse(
         parsed_name = _parsed_dist_name(entry.name)
         if parsed_name is None or _canonical(parsed_name) != canonical:
             continue
-        record = _make_record(entry.name, entry.as_uri(), None, ())
+        record = _make_record(entry.name, entry.as_uri(), entry, None, ())
         if record is not None:
             files.append(record)
     return files
@@ -186,6 +190,7 @@ def _parsed_dist_name(filename: str) -> str | None:
 def _make_record(
     filename: str,
     file_url: str,
+    local_path: Path | None,
     requires_python: str | None,
     hashes: tuple[tuple[str, str], ...],
 ) -> WheelFile | SdistFile | None:
@@ -200,6 +205,7 @@ def _make_record(
             has_metadata=False,
             upload_time=None,
             hashes=hashes,
+            local_path=local_path,
         )
     parsed = _parse_sdist_filename(filename)
     if parsed is not None:
@@ -211,6 +217,7 @@ def _make_record(
             requires_python=requires_python,
             upload_time=None,
             hashes=hashes,
+            local_path=local_path,
         )
     return None
 

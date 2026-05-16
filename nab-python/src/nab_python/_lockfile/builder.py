@@ -326,6 +326,7 @@ def _build_artifact(
         hashes=hashes,
         size=source.size,
         upload_time=_parse_upload_time(source.upload_time),
+        local_path=source.local_path,
     )
 
 
