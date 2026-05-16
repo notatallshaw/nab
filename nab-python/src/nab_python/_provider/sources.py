@@ -57,6 +57,8 @@ def materialize_local_source(
     or looser; raises :class:`UnsupportedSdistError` otherwise.
     """
     path = Path(source.path)
+    if source.subdirectory:
+        path = path / source.subdirectory
     metadata = extract_source_metadata(
         provider,
         path,
