@@ -42,6 +42,7 @@ from nab_python.lockfile import (
     WheelArtifact,
     build_lock_input_from_provider,
     build_pylock,
+    read_lockfile_packages,
     write_lock,
     write_requirements_with_hashes,
 )
@@ -770,6 +771,54 @@ class TestReadLockfileAnchor:
         path = tmp_path / "pylock.toml"
         path.write_text("[tool.nab]\ncreated-at = 1234\n")
         assert read_lockfile_anchor(path) is None
+
+
+class TestReadLockfilePackages:
+    """``read_lockfile_packages`` extracts the prior pin set for diffing."""
+
+    def test_returns_none_when_file_missing(self, tmp_path: Path) -> None:
+        assert read_lockfile_packages(tmp_path / "missing.toml") is None
+
+    def test_returns_none_when_file_is_directory(self, tmp_path: Path) -> None:
+        assert read_lockfile_packages(tmp_path) is None
+
+    def test_returns_none_when_toml_invalid(self, tmp_path: Path) -> None:
+        path = tmp_path / "pylock.toml"
+        path.write_text("this is not [[[ valid TOML")
+        assert read_lockfile_packages(path) is None
+
+    def test_returns_none_when_not_a_pylock(self, tmp_path: Path) -> None:
+        # Valid TOML but missing the required PEP 751 keys.
+        path = tmp_path / "pylock.toml"
+        path.write_text('title = "not a lockfile"\n')
+        assert read_lockfile_packages(path) is None
+
+    def test_reads_name_to_version_map(self, tmp_path: Path) -> None:
+        lock_input = LockInput(
+            pins={
+                "foo": _index_pin("foo", "1.2.3"),
+                "bar": _index_pin("bar", "4.5"),
+            }
+        )
+        path = tmp_path / "pylock.toml"
+        write_lock(lock_input, output_path=path)
+        assert read_lockfile_packages(path) == {
+            "foo": Version("1.2.3"),
+            "bar": Version("4.5"),
+        }
+
+    def test_skips_packages_without_version(self, tmp_path: Path) -> None:
+        # A directory (path) package carries no version key.
+        path = tmp_path / "pylock.toml"
+        path.write_text(
+            'lock-version = "1.0"\n'
+            'created-by = "nab"\n\n'
+            "[[packages]]\n"
+            'name = "foo"\n'
+            "[packages.directory]\n"
+            'path = "./foo"\n',
+        )
+        assert read_lockfile_packages(path) == {}
 
 
 class TestDependencyGroups:

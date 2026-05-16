@@ -121,10 +121,8 @@ def _default_cache_dir() -> Path:
     return Path.home() / ".cache" / "nab"
 
 
-def _resolve_effective_cache_dir(
-    cache_dir: Path | None, *, no_cache: bool
-) -> Path | None:
-    if no_cache:
+def _resolve_effective_cache_dir(cache_dir: Path | None, *, cache: bool) -> Path | None:
+    if not cache:
         return None
     if cache_dir is not None:
         return cache_dir

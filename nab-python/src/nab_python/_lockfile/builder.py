@@ -18,6 +18,7 @@ import tomli
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ __all__ = [
     "MissingHashError",
     "build_lock_input_from_provider",
     "read_lockfile_anchor",
+    "read_lockfile_packages",
 ]
 
 
@@ -139,6 +141,30 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
             return None
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     return None
+
+
+def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
+    """Return the ``name -> version`` map from a prior pylock at ``path``.
+
+    Used by ``nab lock`` to diff a re-lock against the previous result.
+    Packages without a recorded version (direct-reference entries that
+    omit it) are skipped.
+
+    Returns ``None`` when ``path`` does not exist, is not valid TOML,
+    or is not a spec-compliant PEP 751 lockfile; the caller falls back
+    to a no-diff summary line.
+    """
+    if not path.is_file():
+        return None
+    try:
+        with path.open("rb") as f:
+            data = tomli.load(f)
+        pylock = Pylock.from_dict(data)
+    except (OSError, tomli.TOMLDecodeError, PylockValidationError):
+        return None
+    return {
+        str(pkg.name): pkg.version for pkg in pylock.packages if pkg.version is not None
+    }
 
 
 def _strip_userinfo(url: str) -> str:

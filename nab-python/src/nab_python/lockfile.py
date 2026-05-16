@@ -19,6 +19,7 @@ from ._lockfile.builder import (
     MissingHashError,
     build_lock_input_from_provider,
     read_lockfile_anchor,
+    read_lockfile_packages,
 )
 from ._lockfile.disjointness import DisjointnessError
 from ._lockfile.pylock import build_pylock, write_lock
@@ -26,6 +27,7 @@ from ._lockfile.requirements import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
+from ._vendor.packaging.pylock import is_valid_pylock_path
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -49,7 +51,9 @@ __all__ = [
     "WheelArtifact",
     "build_lock_input_from_provider",
     "build_pylock",
+    "is_valid_pylock_path",
     "read_lockfile_anchor",
+    "read_lockfile_packages",
     "write_lock",
     "write_requirements_with_hashes",
     "write_requirements_without_hashes",

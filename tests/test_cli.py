@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import contextlib
 import importlib
+import io
 import runpy
 import sys
 from datetime import datetime, timezone
@@ -13,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import tomli
 
 from nab import _version as nab_version
 from nab._download import download
@@ -27,11 +30,13 @@ from nab._lock import (
 from nab.cli import (
     _default_cache_dir,
     _make_transport,
+    app,
     main,
 )
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.niquests_async_transport import NiquestsAsyncTransport
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.version import Version
 from nab_python.download import DownloadError
 from nab_python.lockfile import (
@@ -57,21 +62,21 @@ _LINUX_311_ENV = {
 }
 
 
-def _foo_index_pin(version: str = "1.0") -> IndexPin:
-    """Build a fully-formed IndexPin for ``foo`` with one wheel + sdist."""
+def _foo_index_pin(version: str = "1.0", name: str = "foo") -> IndexPin:
+    """Build a fully-formed IndexPin with one wheel + sdist."""
     return IndexPin(
-        name="foo",
+        name=name,
         version=version,
         index="pypi",
         sdist=SdistArtifact(
-            filename=f"foo-{version}.tar.gz",
-            url=f"https://example.com/foo-{version}.tar.gz",
+            filename=f"{name}-{version}.tar.gz",
+            url=f"https://example.com/{name}-{version}.tar.gz",
             hashes=(("sha256", "b" * 64),),
         ),
         wheels=(
             WheelArtifact(
-                filename=f"foo-{version}-py3-none-any.whl",
-                url=f"https://example.com/foo-{version}-py3-none-any.whl",
+                filename=f"{name}-{version}-py3-none-any.whl",
+                url=f"https://example.com/{name}-{version}-py3-none-any.whl",
                 hashes=(("sha256", "a" * 64),),
             ),
         ),
@@ -84,7 +89,7 @@ def _stub_resolution_result(
     """Build a real :class:`ResolutionResult` with a populated lock input."""
     real_pins = pins if pins is not None else {"foo": V(version)}
     lock_input = LockInput(
-        pins={name: _foo_index_pin(str(ver)) for name, ver in real_pins.items()},
+        pins={name: _foo_index_pin(str(ver), name) for name, ver in real_pins.items()},
     )
     return ResolutionResult(pins=real_pins, lock_input=lock_input)
 
@@ -344,6 +349,29 @@ class TestLockCommandUniversal:
         text = out.read_text()
         assert 'lock-version = "1.0"' in text
         assert 'name = "foo"' in text
+
+    def test_default_groups_from_config_not_cli_groups(self, tmp_path: Path) -> None:
+        """Universal pylock records ``default-groups`` from config, not ``--groups``."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            "[dependency-groups]\ndev = []\ntest = []\n"
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'default-groups = ["dev"]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_universal_pyproject",
+            return_value=_universal_result(success=True),
+        ):
+            lock(pyproject, output=out, groups=("test",))
+        pylock = Pylock.from_dict(tomli.loads(out.read_text()))
+        assert pylock.dependency_groups == ["test"]
+        assert pylock.default_groups == ["dev"]
 
     def test_offline_and_http_backend_passed_to_universal(self, tmp_path: Path) -> None:
         """--http-backend and --offline reach resolve_universal_pyproject."""
@@ -803,6 +831,175 @@ class TestLockCommandUniversal:
         assert not (tmp_path / "constraints-3.12.txt").exists()
 
 
+class TestRelockDiffSummary:
+    """``_emit_specific`` reports what changed against the prior pylock."""
+
+    def test_first_lock_prints_plain_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = tmp_path / "pylock.toml"
+        _emit_specific(
+            _stub_resolution_result(pins={"foo": V("1.0")}),
+            format="pylock",
+            output=out,
+            provenance=None,
+        )
+        err = capsys.readouterr().err
+        assert err.strip().endswith("(1 packages)")
+
+    def test_relock_reports_added_upgraded_removed(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = tmp_path / "pylock.toml"
+        _emit_specific(
+            _stub_resolution_result(pins={"foo": V("1.0"), "bar": V("1.0")}),
+            format="pylock",
+            output=out,
+            provenance=None,
+        )
+        capsys.readouterr()
+        # foo upgraded 1.0 -> 2.0, bar removed, baz added.
+        _emit_specific(
+            _stub_resolution_result(pins={"foo": V("2.0"), "baz": V("1.0")}),
+            format="pylock",
+            output=out,
+            provenance=None,
+        )
+        err = capsys.readouterr().err.strip()
+        assert err.endswith("(2 packages: 1 added, 1 upgraded, 1 removed)")
+
+    def test_relock_reports_downgrade(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = tmp_path / "pylock.toml"
+        _emit_specific(
+            _stub_resolution_result(pins={"foo": V("2.0")}),
+            format="pylock",
+            output=out,
+            provenance=None,
+        )
+        capsys.readouterr()
+        _emit_specific(
+            _stub_resolution_result(pins={"foo": V("1.0")}),
+            format="pylock",
+            output=out,
+            provenance=None,
+        )
+        assert capsys.readouterr().err.strip().endswith("(1 packages: 1 downgraded)")
+
+    def test_relock_unchanged_prints_plain_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A re-lock with identical pins prints no diff suffix."""
+        out = tmp_path / "pylock.toml"
+        for _ in range(2):
+            _emit_specific(
+                _stub_resolution_result(pins={"foo": V("1.0")}),
+                format="pylock",
+                output=out,
+                provenance=None,
+            )
+        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+
+    def test_unparseable_prior_falls_back_to_plain_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = tmp_path / "pylock.toml"
+        out.write_text("this is not valid toml === {[\n")
+        _emit_specific(
+            _stub_resolution_result(pins={"foo": V("1.0")}),
+            format="pylock",
+            output=out,
+            provenance=None,
+        )
+        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+
+    def test_stdout_emits_no_diff(self, capsys: pytest.CaptureFixture[str]) -> None:
+        _emit_specific(
+            _stub_resolution_result(pins={"foo": V("1.0")}),
+            format="pylock",
+            output=Path("-"),
+            provenance=None,
+        )
+        captured = capsys.readouterr()
+        assert "added" not in captured.err
+        assert "packages" not in captured.err
+
+    def test_requirements_format_emits_no_diff(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A requirements re-lock keeps the plain line; only pylock diffs."""
+        out = tmp_path / "requirements.txt"
+        for _ in range(2):
+            _emit_specific(
+                _stub_resolution_result(pins={"foo": V("1.0")}),
+                format="requirements",
+                output=out,
+                provenance=None,
+            )
+        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+
+
+class TestPylockOutputNameValidation:
+    """``--output`` is validated against the PEP 751 file-name rule."""
+
+    def test_specific_rejects_hyphen_name(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=tmp_path / "pylock-dev.toml")
+        err = capsys.readouterr().err
+        assert "PEP 751" in err
+        assert "pylock.dev.toml" in err
+
+    def test_universal_rejects_hyphen_name(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_universal_result(success=True),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock-dev.toml")
+        assert "PEP 751" in capsys.readouterr().err
+
+    def test_specific_accepts_named_pylock(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.dev.toml"
+        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+            lock(pyproject, output=out)
+        assert out.exists()
+
+    def test_unparseable_name_suggests_pylock_toml(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A name with no recoverable label suggests the bare ``pylock.toml``."""
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=tmp_path / "lock.toml")
+        assert "pylock.toml" in capsys.readouterr().err
+
+    def test_stdout_skips_validation(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+            lock(pyproject, output=Path("-"))
+        assert 'lock-version = "1.0"' in capsys.readouterr().out
+
+    def test_requirements_format_skips_validation(self, tmp_path: Path) -> None:
+        """A non-pylock format is free to use any output name."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "constraints.txt"
+        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+            lock(pyproject, output=out, format="requirements")
+        assert out.exists()
+
+
 class TestConfigErrors:
     """Errors in [tool.nab] surface as exit 1 with a clear message."""
 
@@ -1075,7 +1272,7 @@ class TestCacheFlags:
         assert mock_resolve.call_args.kwargs["cache_dir"] == cache
 
     def test_no_cache_disables_cache(self, tmp_path: Path) -> None:
-        """--no-cache wins over --cache-dir and disables persistence."""
+        """``cache=False`` wins over --cache-dir and disables persistence."""
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
@@ -1084,7 +1281,7 @@ class TestCacheFlags:
             ) as mock_resolve,
             patch("nab.cli.write_lock"),
         ):
-            lock(pyproject, no_cache=True, output=tmp_path / "pylock.toml")
+            lock(pyproject, cache=False, output=tmp_path / "pylock.toml")
         assert mock_resolve.call_args.kwargs["cache_dir"] is None
 
     def test_offline_passed_through(self, tmp_path: Path) -> None:
@@ -1114,6 +1311,35 @@ class TestCacheFlags:
         monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
         monkeypatch.setattr("nab.cli.Path.home", lambda: tmp_path)
         assert _default_cache_dir() == tmp_path / ".cache" / "nab"
+
+
+def _command_help(command: str) -> str:
+    """Return the ``--help`` text tyro renders for a subcommand."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.suppress(SystemExit):
+        app.cli(args=[command, "--help"], prog="nab")
+    return buf.getvalue()
+
+
+class TestHelpText:
+    """Boolean flags render without tyro's double-negated aliases."""
+
+    def test_lock_cache_flag_has_no_double_negative(self) -> None:
+        help_text = _command_help("lock")
+        assert "--no-no-cache" not in help_text
+        assert "--cache" in help_text
+        assert "--no-cache" in help_text
+
+    def test_lock_workspace_discovery_has_no_double_negative(self) -> None:
+        help_text = _command_help("lock")
+        assert "--no-no-workspace-discovery" not in help_text
+        assert "--workspace-discovery" in help_text
+        assert "--no-workspace-discovery" in help_text
+
+    def test_download_cache_flag_has_no_double_negative(self) -> None:
+        help_text = _command_help("download")
+        assert "--no-no-cache" not in help_text
+        assert "--no-cache" in help_text
 
 
 class TestPackageVersion:

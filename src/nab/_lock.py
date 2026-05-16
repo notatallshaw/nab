@@ -25,7 +25,9 @@ from nab_python.config import (
 )
 from nab_python.lockfile import (
     Provenance,
+    is_valid_pylock_path,
     read_lockfile_anchor,
+    read_lockfile_packages,
 )
 from nab_python.provider import ResolutionStrategy
 from nab_python.requirements_file import (
@@ -43,7 +45,10 @@ from .cli import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from nab_index.transport import AsyncHttpTransport
+    from nab_python._vendor.packaging.version import Version
     from nab_python.resolve import ResolutionResult
     from nab_python.universal.resolve import TupleResult, UniversalResult
 
@@ -56,13 +61,13 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     format: LockFormat = "pylock",  # noqa: A002 - shadows builtin by convention
     http_backend: HttpBackend = "urllib3",
     cache_dir: Path | None = None,
-    no_cache: bool = False,
+    cache: bool = True,
     offline: bool = False,
     groups: tuple[str, ...] = (),
     all_groups: bool = False,
     extras: tuple[str, ...] = (),
     all_extras: bool = False,
-    no_workspace_discovery: bool = False,
+    workspace_discovery: bool = True,
     resolution: ResolutionFlag | None = None,
     upgrade: bool = False,
 ) -> None:
@@ -88,12 +93,13 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     ``--upgrade`` re-anchors the ``P<n>D`` cutoff to ``datetime.now(UTC)``
     instead of reusing the timestamp recorded in any existing lockfile.
     """
+    _validate_pylock_output_name(output=output, format=format)
     anchor = _determine_lock_anchor(output=output, format=format, upgrade=upgrade)
     config = _cli._load_config(  # noqa: SLF001
-        path, discover_workspace=not no_workspace_discovery, anchor=anchor
+        path, discover_workspace=workspace_discovery, anchor=anchor
     )
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
-        cache_dir, no_cache=no_cache
+        cache_dir, cache=cache
     )
     provenance = _build_provenance(path, config=config, anchor=anchor)
     selected_groups = _resolve_group_selection(
@@ -160,12 +166,52 @@ def _emit_specific(
 
     target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
     if format == "pylock":
+        # Read the prior pins before write_lock overwrites the file.
+        prior = read_lockfile_packages(target)
         _cli.write_lock(lock_input, output_path=target)
+        diff = _diff_summary(prior, result.pins)
     elif format == "requirements":
         _cli.write_requirements_with_hashes(lock_input, output_path=target)
+        diff = ""
     else:
         _cli.write_requirements_without_hashes(lock_input, output_path=target)
-    sys.stderr.write(f"Wrote {target} ({len(result.pins)} packages)\n")
+        diff = ""
+    sys.stderr.write(f"Wrote {target} ({len(result.pins)} packages{diff})\n")
+
+
+def _diff_summary(
+    prior: Mapping[str, Version] | None, current: Mapping[str, Version]
+) -> str:
+    """Return a ``: A added, B upgraded, ...`` suffix for a re-lock.
+
+    ``prior`` is the previous pylock's pins or ``None`` (first lock or
+    an unparseable prior file); both fall back to an empty suffix.  An
+    unchanged pin set also yields an empty suffix.
+    """
+    if prior is None:
+        return ""
+    added = sum(name not in prior for name in current)
+    removed = sum(name not in current for name in prior)
+    upgraded = downgraded = 0
+    for name, version in current.items():
+        old = prior.get(name)
+        if old is None or old == version:
+            continue
+        if version > old:
+            upgraded += 1
+        else:
+            downgraded += 1
+    parts = [
+        f"{count} {label}"
+        for count, label in (
+            (added, "added"),
+            (upgraded, "upgraded"),
+            (downgraded, "downgraded"),
+            (removed, "removed"),
+        )
+        if count
+    ]
+    return f": {', '.join(parts)}" if parts else ""
 
 
 def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproject kwarg
@@ -216,6 +262,7 @@ def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproj
     if format == "pylock":
         _emit_universal_pylock(
             result,
+            config=config,
             output=output,
             provenance=provenance,
             groups=groups,
@@ -230,17 +277,25 @@ def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproj
 def _emit_universal_pylock(
     result: UniversalResult,
     *,
+    config: NabProjectConfig | None = None,
     output: Path | None,
     provenance: Provenance | None = None,
     groups: tuple[str, ...] = (),
     extras: tuple[str, ...] = (),
 ) -> None:
-    """Merge per-tuple LockInputs into one pylock and write/print it."""
+    """Merge per-tuple LockInputs into one pylock and write/print it.
+
+    ``default_groups`` is taken from ``[tool.nab].default-groups``, not
+    from the CLI ``--groups`` selection: PEP 751 ``default-groups``
+    means the groups a default install applies, which is project
+    policy rather than this run's request.
+    """
+    default_groups = config.default_groups if config is not None else ()
     lock_input = _cli.merge_universal_lock_inputs(
         result,
         extras=extras,
         dependency_groups=groups,
-        default_groups=groups,
+        default_groups=default_groups,
     )
     if provenance is not None:
         lock_input.provenance = provenance
@@ -477,6 +532,32 @@ def _determine_lock_anchor(
     target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
     prior = read_lockfile_anchor(target)
     return prior if prior is not None else fresh
+
+
+def _validate_pylock_output_name(
+    *,
+    output: Path | None,
+    format: str,  # noqa: A002 - shadows builtin by convention
+) -> None:
+    """Reject a ``--output`` name that PEP 751 would not recognise.
+
+    A pylock-format lockfile must be ``pylock.toml`` or match
+    ``pylock.<name>.toml`` (dot separators).  stdout (``-``) and the
+    requirements formats are exempt; exits 1 on a bad name with a
+    suggested correction.
+    """
+    if format != "pylock" or output is None or _cli._is_stdout(output):  # noqa: SLF001
+        return
+    if is_valid_pylock_path(output):
+        return
+    dotted = output.with_name(output.name.replace("-", "."))
+    suggestion = dotted.name if is_valid_pylock_path(dotted) else "pylock.toml"
+    sys.stderr.write(
+        f"Error: output file name {output.name!r} must match 'pylock.toml'"
+        " or 'pylock.<name>.toml' per PEP 751 (note the dot separator,"
+        f" not a hyphen).  Try {suggestion!r}.\n"
+    )
+    sys.exit(1)
 
 
 def _print_universal_blocks(result: UniversalResult) -> None:

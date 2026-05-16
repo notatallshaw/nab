@@ -111,6 +111,26 @@ class TestConstraints:
             read_pyproject_config(path)
 
 
+class TestDefaultGroups:
+    def test_default_is_empty(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\n")
+        assert read_pyproject_config(path).default_groups == ()
+
+    def test_round_trip(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\ndefault-groups = ["dev", "test"]\n')
+        assert read_pyproject_config(path).default_groups == ("dev", "test")
+
+    def test_must_be_list(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\ndefault-groups = "dev"\n')
+        with pytest.raises(ConfigError, match="default-groups must be a list"):
+            read_pyproject_config(path)
+
+    def test_entries_must_be_strings(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\ndefault-groups = [1]\n")
+        with pytest.raises(ConfigError, match="default-groups\\[0\\] must be a string"):
+            read_pyproject_config(path)
+
+
 class TestRequiresPython:
     def test_round_trip_specifier(self, tmp_path: Path) -> None:
         """A valid PEP 440 specifier round-trips as the raw string."""

@@ -35,10 +35,10 @@ def download(
     output: Path = Path("wheels"),
     http_backend: HttpBackend = "urllib3",
     cache_dir: Path | None = None,
-    no_cache: bool = False,
+    cache: bool = True,
     offline: bool = False,
     max_concurrency: int = 8,
-    no_workspace_discovery: bool = False,
+    workspace_discovery: bool = True,
 ) -> None:
     """Resolve and download every wheel/sdist into a local directory.
 
@@ -47,14 +47,14 @@ def download(
     left alone.  Local and VCS pins are skipped.
     """
     config = _cli._load_config(  # noqa: SLF001
-        path, discover_workspace=not no_workspace_discovery
+        path, discover_workspace=workspace_discovery
     )
     if config.mode is ResolveMode.UNIVERSAL:
         sys.stderr.write("Error: `nab download` is single-environment only.\n")
         sys.exit(1)
 
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
-        cache_dir, no_cache=no_cache
+        cache_dir, cache=cache
     )
     transport = _cli._make_transport(http_backend)  # noqa: SLF001
     result = _cli._resolve_specific(  # noqa: SLF001

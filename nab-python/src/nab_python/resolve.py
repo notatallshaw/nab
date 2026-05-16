@@ -191,7 +191,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             requires_python=config.requires_python,
             extras=tuple(extras),
             dependency_groups=tuple(groups),
-            default_groups=tuple(groups),
+            default_groups=config.default_groups,
             indexes=config.indexes,
         )
         return ResolutionResult(pins=pins, lock_input=lock_input)

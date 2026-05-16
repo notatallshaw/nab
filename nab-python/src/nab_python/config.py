@@ -55,6 +55,7 @@ _TOP_LEVEL_KEYS = frozenset(
     {
         "mode",
         "constraints",
+        "default-groups",
         "requires-python",
         "uploaded-prior-to",
         "uploaded-prior-to-package",
@@ -107,6 +108,7 @@ class NabProjectConfig:
 
     mode: ResolveMode = ResolveMode.SPECIFIC
     constraints: tuple[str, ...] = ()
+    default_groups: tuple[str, ...] = ()
     requires_python: str | None = None
     uploaded_prior_to: datetime | None = None
     uploaded_prior_to_overrides: Mapping[str, datetime | None] = field(
@@ -233,6 +235,9 @@ def _parse_nab_table(
     return NabProjectConfig(
         mode=mode,
         constraints=_parse_string_list("constraints", raw.get("constraints", [])),
+        default_groups=_parse_string_list(
+            "default-groups", raw.get("default-groups", [])
+        ),
         requires_python=_parse_requires_python(raw.get("requires-python")),
         uploaded_prior_to=_parse_uploaded_prior_to(
             raw.get("uploaded-prior-to"), anchor=anchor

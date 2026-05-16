@@ -591,6 +591,64 @@ class TestResolvePyproject:
         # the strategy decision is keyed on the underlying package.
         assert kwargs["direct_packages"] == frozenset({"requests", "foo"})
 
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
+    def test_default_groups_from_config_not_cli_groups(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """``default_groups`` is the project config value, not ``--groups``."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\ndependencies = ["foo>=1.0"]\n'
+            "[dependency-groups]\ndev = []\ntest = []\n"
+            '[tool.nab]\ndefault-groups = ["dev"]\n',
+        )
+        mock_coord_cls.return_value.__enter__ = lambda s: s
+        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_resolver_cls.return_value.resolve.return_value = {}
+
+        resolve_pyproject(
+            pyproject, _FAKE_TRANSPORT, python_version="3.12.0", groups=("test",)
+        )
+
+        kwargs = mock_build_lock.call_args.kwargs
+        assert kwargs["dependency_groups"] == ("test",)
+        assert kwargs["default_groups"] == ("dev",)
+
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
+    def test_default_groups_empty_when_config_omits_it(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """No ``default-groups`` in config: ``--groups`` does not leak in."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\ndependencies = ["foo>=1.0"]\n[dependency-groups]\ntest = []\n',
+        )
+        mock_coord_cls.return_value.__enter__ = lambda s: s
+        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_resolver_cls.return_value.resolve.return_value = {}
+
+        resolve_pyproject(
+            pyproject, _FAKE_TRANSPORT, python_version="3.12.0", groups=("test",)
+        )
+
+        assert mock_build_lock.call_args.kwargs["default_groups"] == ()
+
 
 class TestResolveUniversalPyproject:
     @patch("nab_python.resolve.resolve_universal")

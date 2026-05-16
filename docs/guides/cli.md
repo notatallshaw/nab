@@ -14,8 +14,8 @@ nab download [PATH] [RUNTIME OPTIONS] [--output DIR] [--max-concurrency N]
 
 `PATH` is positional and defaults to `pyproject.toml` in the
 current directory. Run `nab lock --help` (or `-h`) for the full
-per-command flag list, including type-erased aliases like
-`--no-no-cache` that tyro generates for boolean flags.
+per-command flag list. Boolean flags render as a `--flag` /
+`--no-flag` pair (for example `--cache` / `--no-cache`).
 
 ## `nab lock`
 
