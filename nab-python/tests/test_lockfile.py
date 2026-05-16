@@ -15,6 +15,7 @@ else:
     import tomli as tomllib  # type: ignore[no-redef]
 
 from nab_index.client import SdistFile, WheelFile
+from nab_index.multi_index import IndexConfig
 from nab_python._lockfile.disjointness import (
     _restrict_to_referenced,
     validate_marker_disjointness,
@@ -105,6 +106,8 @@ class TestSingleTuple:
         assert package["directory"]["path"] == str(tmp_path)
         assert "wheels" not in package
         assert "sdist" not in package
+        # PEP 751: version omitted for directory sources (not deterministic).
+        assert "version" not in package
 
     def test_vcs_pin(self) -> None:
         text = write_lock(
@@ -121,11 +124,14 @@ class TestSingleTuple:
             )
         )
         data = tomllib.loads(text)
-        vcs = data["packages"][0]["vcs"]
+        package = data["packages"][0]
+        vcs = package["vcs"]
         assert vcs["type"] == "git"
         assert vcs["url"] == "https://github.com/x/y.git"
         assert vcs["commit-id"] == "a" * 40
         assert vcs["subdirectory"] == "pkg"
+        # PEP 751: version omitted for VCS sources (not deterministic).
+        assert "version" not in package
 
     def test_multiple_packages_sorted_by_name(self) -> None:
         text = write_lock(
@@ -1149,8 +1155,6 @@ class TestBuildLockInputFromProvider:
         assert pin.sdist.hashes == (("sha256", "b" * 64),)
 
     def test_index_pin_records_serving_index(self) -> None:
-        from nab_index.multi_index import IndexConfig
-
         provider = _FakeProvider(
             listings={
                 "foo": [
@@ -1173,8 +1177,6 @@ class TestBuildLockInputFromProvider:
         assert pin.index == "https://download.pytorch.org/whl/cpu/"
 
     def test_index_pin_falls_back_to_default_when_route_missing(self) -> None:
-        from nab_index.multi_index import IndexConfig
-
         provider = _FakeProvider(
             listings={
                 "foo": [
@@ -1191,6 +1193,52 @@ class TestBuildLockInputFromProvider:
         pin = lock_input.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.index == "https://custom.example/simple/"
+
+    def test_index_pin_strips_credentials_from_url(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+            listing_indexes={"foo": "private"},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {"foo": Version("1.0")},
+            indexes=(
+                IndexConfig(
+                    "private", "https://user:token@Private.Example:8443/simple/"
+                ),
+            ),
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.index == "https://Private.Example:8443/simple/"
+
+    def test_index_pin_keeps_url_without_credentials(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+            listing_indexes={"foo": "plain"},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {"foo": Version("1.0")},
+            indexes=(IndexConfig("plain", "https://Plain.Example/simple/"),),
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.index == "https://Plain.Example/simple/"
+
+    def test_index_pin_strips_username_only_credentials(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+            listing_indexes={"foo": "useronly"},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {"foo": Version("1.0")},
+            indexes=(IndexConfig("useronly", "https://user@example.com/simple/"),),
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.index == "https://example.com/simple/"
 
     def test_local_source_emits_local_pin(self, tmp_path: Path) -> None:
         provider = _FakeProvider(
@@ -1283,6 +1331,37 @@ class TestBuildLockInputFromProvider:
         assert isinstance(pin, VcsPin)
         assert pin.commit_id == ""
 
+    def test_vcs_source_strips_credentials_from_url(self) -> None:
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url="git+https://user:token@GitHub.com/org/repo.git",
+                ),
+            },
+            vcs_pins={"foo": "a" * 40},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.repo_url == "git+https://GitHub.com/org/repo.git"
+
+    def test_vcs_source_keeps_url_without_credentials(self) -> None:
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(name="foo", url="git+https://github.com/org/repo.git"),
+            },
+            vcs_pins={"foo": "a" * 40},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.repo_url == "git+https://github.com/org/repo.git"
+
     def test_missing_acceptable_hash_raises(self) -> None:
         wheel = _wheel_file(sha256=None)
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
@@ -1346,8 +1425,6 @@ class TestBuildLockInputFromProvider:
         assert pin.requires_python is None
 
     def test_first_configured_index_url_used_when_route_missing(self) -> None:
-        from nab_index.multi_index import IndexConfig
-
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), _wheel_file())]})
         lock_input = build_lock_input_from_provider(
             provider,

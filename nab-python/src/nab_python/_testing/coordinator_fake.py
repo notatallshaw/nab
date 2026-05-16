@@ -13,7 +13,8 @@ import threading
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-from nab_python.fetch import InMemoryIndex
+from nab_index.multi_index import IndexConfig
+from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, InMemoryIndex
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -207,7 +208,8 @@ def make_coordinator(  # noqa: PLR0913
     Call sites that need request side effects beyond what this helper
     wires up (for example ``request_sdist_archive``) can reassign
     ``.side_effect`` on the returned mock; the index is exposed at
-    ``coordinator.index`` for direct manipulation.
+    ``coordinator.index`` for direct manipulation.  ``coordinator.indexes``
+    defaults to the single default-PyPI :class:`IndexConfig` list.
     """
     index = InMemoryIndex()
     failures = fetch_failures if fetch_failures is not None else set()
@@ -223,6 +225,7 @@ def make_coordinator(  # noqa: PLR0913
 
     coordinator = MagicMock()
     coordinator.index = index
+    coordinator.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
 
     resolve_metadata = _make_metadata_resolver(
         metadata_text=metadata_text,

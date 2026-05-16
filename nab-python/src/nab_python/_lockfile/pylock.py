@@ -57,8 +57,8 @@ def write_lock(
     """Serialise ``lock_input`` to PEP 751 TOML text.
 
     Returns the TOML text.  When ``output_path`` is provided, also
-    writes it atomically; the caller chooses the path (PEP 751 does
-    not mandate one).
+    writes it there; the caller chooses the path (PEP 751 does not
+    mandate one).
     """
     pylock = build_pylock(lock_input)
     pylock.validate()
@@ -137,16 +137,19 @@ def _pin_to_package(pin: PinShape, marker: Marker | None = None) -> Package:
             wheels=tuple(_wheel_to_package(w) for w in pin.wheels) or None,
         )
     if isinstance(pin, LocalPin):
+        # PEP 751: omit version for directory sources; it is not
+        # deterministic (the source tree may change at install time).
         return Package(
             name=canonicalize_name(pin.name),
-            version=Version(pin.version),
+            version=None,
             marker=marker,
             directory=PackageDirectory(path=pin.path, editable=False),
         )
     if isinstance(pin, VcsPin):
+        # PEP 751: omit version for VCS sources for the same reason.
         return Package(
             name=canonicalize_name(pin.name),
-            version=Version(pin.version),
+            version=None,
             marker=marker,
             vcs=PackageVcs(
                 type="git",

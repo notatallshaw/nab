@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, overload
+from urllib.parse import urlsplit, urlunsplit
 
 import tomli
 
@@ -140,6 +141,20 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
     return None
 
 
+def _strip_userinfo(url: str) -> str:
+    """Return ``url`` with any ``user:password@`` userinfo removed.
+
+    Lockfiles are committed to version control, so an index or VCS
+    URL carrying embedded credentials must not be written verbatim.
+    Only the userinfo is dropped: host case and port are preserved
+    and a ``git+`` scheme prefix is left intact.  A no-op for URLs
+    without credentials.
+    """
+    parts = urlsplit(url)
+    netloc = parts.netloc.rpartition("@")[2]
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
 def build_lock_input_from_provider(
     provider: LockInputProvider,
     pins: Mapping[str, Version],
@@ -252,7 +267,7 @@ def _index_pin_from_listing(
     return IndexPin(
         name=canonical,
         version=str(version),
-        index=index_url,
+        index=_strip_userinfo(index_url),
         sdist=sdist,
         wheels=wheels,
         requires_python=requires_python,
@@ -352,6 +367,6 @@ def _vcs_pin_from_source(
     return VcsPin(
         name=canonical,
         version=str(version),
-        repo_url=source.url,
+        repo_url=_strip_userinfo(source.url),
         commit_id=commit_id,
     )
