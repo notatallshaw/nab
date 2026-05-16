@@ -21,9 +21,11 @@ from nab_python._lockfile.disjointness import (
     validate_marker_disjointness,
 )
 from nab_python._lockfile.pylock import (
+    _file_url_to_path,
     _or_markers,
     _pin_discriminator,
     _pin_to_package,
+    _relativize_path,
 )
 from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.pylock import Package, PackageWheel, Pylock
@@ -97,14 +99,17 @@ class TestSingleTuple:
         assert package["sdist"]["url"].endswith("foo-1.0.tar.gz")
 
     def test_local_pin_directory(self, tmp_path: Path) -> None:
+        src = tmp_path / "libs" / "foo"
         text = write_lock(
             LockInput(
-                pins={"foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))},
-            )
+                pins={"foo": LocalPin(name="foo", version="1.0", path=str(src))},
+            ),
+            output_path=tmp_path / "pylock.toml",
         )
         data = tomllib.loads(text)
         package = data["packages"][0]
-        assert package["directory"]["path"] == str(tmp_path)
+        # PEP 751: directory.path is relative to the lock file.
+        assert package["directory"]["path"] == "libs/foo"
         assert "wheels" not in package
         assert "sdist" not in package
         # PEP 751: version omitted for directory sources (not deterministic).
@@ -587,7 +592,7 @@ class TestErrorPaths:
             pass
 
         with pytest.raises(TypeError, match="unknown pin shape"):
-            _pin_to_package(Weird())  # type: ignore[arg-type]
+            _pin_to_package(Weird(), lock_dir=Path("/tmp"))  # type: ignore[arg-type]
 
     def test_or_markers_empty_raises(self) -> None:
         with pytest.raises(ValueError, match="at least one"):
@@ -1850,6 +1855,146 @@ class TestUploadTime:
         data = tomllib.loads(text)
         assert "upload-time" not in data["packages"][0]["wheels"][0]
         assert "upload-time" not in data["packages"][0]["sdist"]
+
+
+class TestRelativeDirectoryPath:
+    """PEP 751: ``packages.directory.path`` is relative to the lock file (#6)."""
+
+    def test_path_inside_lock_dir_is_relative(self, tmp_path: Path) -> None:
+        src = tmp_path / "libs" / "foo"
+        text = write_lock(
+            LockInput(pins={"foo": LocalPin(name="foo", version="1.0", path=str(src))}),
+            output_path=tmp_path / "pylock.toml",
+        )
+        data = tomllib.loads(text)
+        assert data["packages"][0]["directory"]["path"] == "libs/foo"
+
+    def test_path_outside_lock_dir_uses_parent_prefix(self, tmp_path: Path) -> None:
+        src = tmp_path / "src" / "foo"
+        out_dir = tmp_path / "locks"
+        out_dir.mkdir()
+        text = write_lock(
+            LockInput(pins={"foo": LocalPin(name="foo", version="1.0", path=str(src))}),
+            output_path=out_dir / "pylock.toml",
+        )
+        data = tomllib.loads(text)
+        assert data["packages"][0]["directory"]["path"] == "../src/foo"
+
+    def test_no_output_path_relativizes_to_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        src = tmp_path / "pkg"
+        text = write_lock(
+            LockInput(pins={"foo": LocalPin(name="foo", version="1.0", path=str(src))})
+        )
+        data = tomllib.loads(text)
+        assert data["packages"][0]["directory"]["path"] == "pkg"
+
+    def test_build_pylock_honours_explicit_lock_dir(self, tmp_path: Path) -> None:
+        src = tmp_path / "a" / "b" / "foo"
+        pylock = build_pylock(
+            LockInput(pins={"foo": LocalPin(name="foo", version="1.0", path=str(src))}),
+            lock_dir=tmp_path / "a",
+        )
+        directory = pylock.packages[0].directory
+        assert directory is not None
+        assert directory.path == "b/foo"
+
+
+class TestRelativeArtifactPath:
+    """PEP 751: ``file:`` wheel/sdist URLs become relative paths (#22)."""
+
+    def test_file_url_wheel_emitted_as_relative_path(self, tmp_path: Path) -> None:
+        wheel_path = tmp_path / "wheels" / "foo-1.0-py3-none-any.whl"
+        pin = IndexPin(
+            name="foo",
+            version="1.0",
+            index="https://example.com/simple/",
+            wheels=(
+                WheelArtifact(
+                    filename="foo-1.0-py3-none-any.whl",
+                    url=wheel_path.as_uri(),
+                    hashes=(("sha256", "a" * 64),),
+                ),
+            ),
+        )
+        text = write_lock(
+            LockInput(pins={"foo": pin}), output_path=tmp_path / "pylock.toml"
+        )
+        wheel = tomllib.loads(text)["packages"][0]["wheels"][0]
+        assert wheel["path"] == "wheels/foo-1.0-py3-none-any.whl"
+        assert "url" not in wheel
+
+    def test_file_url_sdist_emitted_as_relative_path(self, tmp_path: Path) -> None:
+        sdist_path = tmp_path / "dist" / "foo-1.0.tar.gz"
+        pin = IndexPin(
+            name="foo",
+            version="1.0",
+            index="https://example.com/simple/",
+            sdist=SdistArtifact(
+                filename="foo-1.0.tar.gz",
+                url=sdist_path.as_uri(),
+                hashes=(("sha256", "b" * 64),),
+            ),
+        )
+        text = write_lock(
+            LockInput(pins={"foo": pin}), output_path=tmp_path / "pylock.toml"
+        )
+        sdist = tomllib.loads(text)["packages"][0]["sdist"]
+        assert sdist["path"] == "dist/foo-1.0.tar.gz"
+        assert "url" not in sdist
+
+    def test_remote_url_artifacts_keep_url(self, tmp_path: Path) -> None:
+        text = write_lock(
+            LockInput(pins={"foo": _index_pin()}),
+            output_path=tmp_path / "pylock.toml",
+        )
+        package = tomllib.loads(text)["packages"][0]
+        assert package["wheels"][0]["url"].startswith("https://")
+        assert "path" not in package["wheels"][0]
+        assert package["sdist"]["url"].startswith("https://")
+        assert "path" not in package["sdist"]
+
+    def test_file_url_artifact_outside_lock_dir(self, tmp_path: Path) -> None:
+        wheel_path = tmp_path / "wheelhouse" / "foo-1.0-py3-none-any.whl"
+        out_dir = tmp_path / "build" / "locks"
+        out_dir.mkdir(parents=True)
+        pin = IndexPin(
+            name="foo",
+            version="1.0",
+            index="https://example.com/simple/",
+            wheels=(
+                WheelArtifact(
+                    filename="foo-1.0-py3-none-any.whl",
+                    url=wheel_path.as_uri(),
+                    hashes=(("sha256", "a" * 64),),
+                ),
+            ),
+        )
+        text = write_lock(
+            LockInput(pins={"foo": pin}), output_path=out_dir / "pylock.toml"
+        )
+        wheel = tomllib.loads(text)["packages"][0]["wheels"][0]
+        assert wheel["path"] == "../../wheelhouse/foo-1.0-py3-none-any.whl"
+
+
+class TestPathHelpers:
+    """Unit coverage for the path-relativisation helpers."""
+
+    def test_file_url_to_path_plain(self) -> None:
+        original = Path("/tmp/wheels/foo bar.whl")
+        assert _file_url_to_path(original.as_uri()) == original
+
+    def test_file_url_to_path_with_authority(self) -> None:
+        assert _file_url_to_path("file://host/share/foo.whl") == Path(
+            "//host/share/foo.whl"
+        )
+
+    def test_relativize_path_uses_posix_separators(self, tmp_path: Path) -> None:
+        rel = _relativize_path(tmp_path / "a" / "b", tmp_path)
+        assert rel == "a/b"
+        assert "\\" not in rel
 
 
 class TestWriteRequirementsWithHashes:
