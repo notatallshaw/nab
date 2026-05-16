@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import tomli
 
+from nab_resolver.errors import ResolutionError
+
 from ._vendor.packaging.dependency_groups import resolve_dependency_groups
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
@@ -14,8 +16,11 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
+    from ._vendor.packaging.ranges import VersionRange
+
 __all__ = [
     "expand_self_extras",
+    "raise_for_unsatisfiable",
     "read_pyproject_dependencies",
     "read_pyproject_groups",
     "read_pyproject_name",
@@ -178,3 +183,27 @@ def resolve_groups_to_requirements(
         return []
     resolved = resolve_dependency_groups(groups, *selected)
     return [Requirement(s) for s in resolved]
+
+
+def raise_for_unsatisfiable(
+    ranges: Mapping[str, VersionRange],
+    sources: Mapping[str, Sequence[str]],
+    *,
+    kind: str,
+) -> None:
+    """Raise :class:`ResolutionError` if any folded range is empty.
+
+    ``ranges`` holds one intersected range per package and ``sources``
+    the requirement strings folded into each.  An empty range means
+    those requirements share no version; the error lists them.
+
+    ``kind`` ("requirement" or "constraint") only shapes the wording.
+    """
+    unsatisfiable = [name for name, range_ in ranges.items() if range_.is_empty]
+    if not unsatisfiable:
+        return
+    detail = "\n".join(
+        f"  {name}: {', '.join(sources[name])}" for name in unsatisfiable
+    )
+    msg = f"conflicting {kind}s leave no satisfiable version:\n{detail}"
+    raise ResolutionError(msg)

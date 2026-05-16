@@ -40,6 +40,7 @@ from nab_python.universal.resolve import (
     merge_universal_lock_inputs,
     resolve_with_coordinator,
 )
+from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -209,6 +210,20 @@ class TestParseRequirements:
         assert "1.0.special" in out["pkg"]
         assert Version("1.0") not in out["pkg"]
         assert "pkg[ext]" in out
+
+    def test_duplicate_name_intersects(self) -> None:
+        """Two requirements for one package combine to their overlap."""
+        env = _linux_311().environment
+        out = _parse_requirements(["pkg>=2.0", "pkg<3.0"], env)
+        assert Version("2.5") in out["pkg"]
+        assert Version("1.0") not in out["pkg"]
+        assert Version("5.0") not in out["pkg"]
+
+    def test_conflicting_names_raise(self) -> None:
+        """Contradictory pins for one package raise ResolutionError."""
+        env = _linux_311().environment
+        with pytest.raises(ResolutionError, match="pkg==1.0"):
+            _parse_requirements(["pkg==1.0", "pkg==2.0"], env)
 
 
 class TestResolveOneTuple:
@@ -442,6 +457,36 @@ class TestRunPassSerial:
         )
         assert len(results) == 2
         assert all(r.success for r in results)
+
+
+class TestRunPassConflict:
+    """A contradictory root requirement fails each tuple cleanly."""
+
+    def test_conflicting_requirements_fail_the_tuple(self) -> None:
+        """Pinned-but-different reqs surface as a failed TupleResult.
+
+        ``_parse_requirements`` raises before the resolver runs, so
+        the failure has to be caught per tuple rather than escaping
+        the whole universal pass.
+        """
+        coordinator = _make_coordinator({})
+        results = _run_pass(
+            [_linux_311()],
+            requirements=["pkg==1.0", "pkg==2.0"],
+            constraints=None,
+            coordinator=coordinator,
+            uploaded_prior_to=None,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+            resolution_strategy="highest",
+            direct_packages=frozenset({"pkg"}),
+            preferences={},
+            align_serial=True,
+        )
+        assert len(results) == 1
+        assert not results[0].success
+        assert results[0].error is not None
+        assert "ResolutionError" in results[0].error
 
 
 class TestUniversalResult:

@@ -12,6 +12,7 @@ import pytest
 
 from nab_index.client import SdistFile, WheelFile
 from nab_python._provider.metadata_resolver import (
+    add_classified_dep,
     classify_requirement,
     has_wheel_metadata_at,
     pick_dist_for_metadata,
@@ -633,6 +634,25 @@ class TestGetDependencies:
         assert "bar" in deps
         assert "baz" in deps
 
+    def test_duplicate_requires_dist_intersects(self) -> None:
+        """Two Requires-Dist lines for one name intersect, not overwrite."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\n"
+                "Name: foo\n"
+                "Version: 1.0\n"
+                "Requires-Dist: bar>=2.0\n"
+                "Requires-Dist: bar<5.0\n"
+            ),
+            package="foo",
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert V("3.0") in deps["bar"]
+        assert V("1.0") not in deps["bar"]
+        assert V("9.0") not in deps["bar"]
+
     def test_caches_dependencies(self) -> None:
         """Second call returns cached deps."""
         coordinator = make_coordinator(
@@ -817,6 +837,30 @@ class TestGetDependencies:
         assert "custom-build" in deps["bar"]
         assert V("1.0") not in deps["bar"]
         assert "baz" in deps
+
+
+class TestAddClassifiedDep:
+    """``add_classified_dep`` intersects duplicate dependency names."""
+
+    def test_base_deps_intersect(self) -> None:
+        """A name seen twice as a base dep folds to the intersection."""
+        base: dict[str, VersionRange] = {}
+        extra_map: dict[str, dict[str, VersionRange]] = {}
+        add_classified_dep(Requirement("bar>=2.0"), set(), base, extra_map)
+        add_classified_dep(Requirement("bar<5.0"), set(), base, extra_map)
+        assert V("3.0") in base["bar"]
+        assert V("1.0") not in base["bar"]
+        assert V("9.0") not in base["bar"]
+
+    def test_extra_deps_intersect(self) -> None:
+        """A name seen twice under one extra folds to the intersection."""
+        base: dict[str, VersionRange] = {}
+        extra_map: dict[str, dict[str, VersionRange]] = {"x": {}}
+        add_classified_dep(Requirement("bar>=2.0"), {"x"}, base, extra_map)
+        add_classified_dep(Requirement("bar<5.0"), {"x"}, base, extra_map)
+        assert V("3.0") in extra_map["x"]["bar"]
+        assert V("1.0") not in extra_map["x"]["bar"]
+        assert V("9.0") not in extra_map["x"]["bar"]
 
 
 class TestLocalSources:

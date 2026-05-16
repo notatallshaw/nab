@@ -43,6 +43,7 @@ from ..provider import (
     VcsSource,
     split_extra,
 )
+from ..requirements_file import raise_for_unsatisfiable
 from .provider import UniversalProvider
 
 __all__ = [
@@ -330,10 +331,16 @@ def _run_pass(  # noqa: PLR0913
     """
 
     def resolve(t: MatrixTuple, current_prefs: dict[str, Version]) -> TupleResult:
-        tuple_requirements = _parse_requirements(requirements, t.environment)
-        tuple_constraints = (
-            _parse_requirements(constraints, t.environment) if constraints else None
-        )
+        try:
+            tuple_requirements, tuple_constraints = _parse_tuple_inputs(
+                requirements, constraints, t.environment
+            )
+        except ResolutionError as exc:
+            return TupleResult(
+                tuple_=t,
+                success=False,
+                error=f"{type(exc).__name__}: {exc}"[:_ERROR_MESSAGE_LIMIT],
+            )
         return _resolve_one_tuple(
             coordinator,
             t,
@@ -409,6 +416,8 @@ def _direct_package_names(requirements: list[str]) -> set[str]:
 def _parse_requirements(
     reqs: list[str],
     environment: dict[str, str],
+    *,
+    kind: str = "requirement",
 ) -> dict[str, VersionRange]:
     """Convert PEP 508 strings to resolver requirements for ``environment``.
 
@@ -416,17 +425,42 @@ def _parse_requirements(
     ``environment`` are dropped.  This matches what
     ``Provider._classify_requirement`` does for transitive deps;
     we just apply the same rule at the root.
+
+    Repeated package names are intersected into one range; an empty
+    intersection raises :class:`ResolutionError`.  ``kind``
+    ("requirement" or "constraint") only shapes that error's wording.
     """
     out: dict[str, VersionRange] = {}
+    sources: defaultdict[str, list[str]] = defaultdict(list)
     for req_str in reqs:
         req = Requirement(req_str)
         if req.marker is not None and not req.marker.evaluate(environment):
             continue
         name = canonicalize_name(req.name)
-        out[name] = req.specifier.to_range()
+        out[name] = out.get(name, VersionRange.full()) & req.specifier.to_range()
+        sources[name].append(req_str)
         for extra in req.extras:
             out[f"{name}[{extra}]"] = VersionRange.full()
+    raise_for_unsatisfiable(out, sources, kind=kind)
     return out
+
+
+def _parse_tuple_inputs(
+    requirements: list[str],
+    constraints: list[str] | None,
+    environment: dict[str, str],
+) -> tuple[dict[str, VersionRange], dict[str, VersionRange] | None]:
+    """Parse a tuple's root requirements and constraints for its env.
+
+    Raises :class:`ResolutionError` if either folds to an empty range.
+    """
+    parsed_requirements = _parse_requirements(requirements, environment)
+    parsed_constraints = (
+        _parse_requirements(constraints, environment, kind="constraint")
+        if constraints
+        else None
+    )
+    return parsed_requirements, parsed_constraints
 
 
 def _resolve_one_tuple(  # noqa: PLR0913

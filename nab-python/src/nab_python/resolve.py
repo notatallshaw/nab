@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,7 @@ from .provider import (
 )
 from .requirements_file import (
     expand_self_extras,
+    raise_for_unsatisfiable,
     read_pyproject_dependencies,
     read_pyproject_groups,
     read_pyproject_name,
@@ -296,9 +298,11 @@ def _build_resolver_inputs(
 
     Requirements whose PEP 508 marker evaluates to ``False`` under
     ``environment`` are skipped, matching pip/uv's root-requirement
-    handling.
+    handling.  Repeated package names are intersected into one range;
+    an empty intersection raises :class:`ResolutionError`.
     """
     resolver_requirements: dict[str, VersionRange] = {}
+    sources: defaultdict[str, list[str]] = defaultdict(list)
     root_extras: set[tuple[str, str]] = set()
     for req in requirements:
         if req.marker is not None and not req.marker.evaluate(environment):
@@ -311,13 +315,16 @@ def _build_resolver_inputs(
             )
             raise NotImplementedError(msg)
         name = str(canonicalize_name(req.name))
-        resolver_requirements[name] = req.specifier.to_range()
+        previous = resolver_requirements.get(name, VersionRange.full())
+        resolver_requirements[name] = previous & req.specifier.to_range()
+        sources[name].append(str(req))
         for extra in req.extras:
             extra_key = join_extra(name, extra)
             resolver_requirements[extra_key] = VersionRange.full()
             _, normalized_extra = split_extra(extra_key)
             assert normalized_extra is not None  # join_extra always sets one
             root_extras.add((name, normalized_extra))
+    raise_for_unsatisfiable(resolver_requirements, sources, kind="requirement")
     return resolver_requirements, root_extras
 
 
@@ -482,8 +489,13 @@ def _resolve_target_python(specifier: str) -> str:
 
 
 def _build_constraints(config: NabProjectConfig) -> dict[str, VersionRange]:
-    """Parse constraint strings from config into resolver-input ranges."""
+    """Parse constraint strings from config into resolver-input ranges.
+
+    Repeated package names are intersected into one range; an empty
+    intersection raises :class:`ResolutionError`.
+    """
     out: dict[str, VersionRange] = {}
+    sources: defaultdict[str, list[str]] = defaultdict(list)
     for cstr in config.constraints:
         req = Requirement(cstr)
         if req.url is not None:
@@ -493,5 +505,8 @@ def _build_constraints(config: NabProjectConfig) -> dict[str, VersionRange]:
                 f" implemented: {req.name} @ {req.url}"
             )
             raise NotImplementedError(msg)
-        out[canonicalize_name(req.name)] = req.specifier.to_range()
+        name = str(canonicalize_name(req.name))
+        out[name] = out.get(name, VersionRange.full()) & req.specifier.to_range()
+        sources[name].append(cstr)
+    raise_for_unsatisfiable(out, sources, kind="constraint")
     return out
