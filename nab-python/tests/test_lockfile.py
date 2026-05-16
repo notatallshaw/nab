@@ -21,7 +21,6 @@ from nab_python._lockfile.disjointness import (
     validate_marker_disjointness,
 )
 from nab_python._lockfile.pylock import (
-    _file_url_to_path,
     _or_markers,
     _pin_discriminator,
     _pin_to_package,
@@ -1133,6 +1132,7 @@ def _wheel_file(
     *,
     requires_python: str | None = ">=3.10",
     sha256: str | None = "a" * 64,
+    local_path: Path | None = None,
 ) -> WheelFile:
     hashes = (("sha256", sha256),) if sha256 is not None else ()
     return WheelFile(
@@ -1144,6 +1144,7 @@ def _wheel_file(
         upload_time=None,
         hashes=hashes,
         size=1234,
+        local_path=local_path,
     )
 
 
@@ -1182,6 +1183,17 @@ class TestBuildLockInputFromProvider:
         assert len(pin.wheels) == 1
         assert pin.wheels[0].hashes == (("sha256", "a" * 64),)
         assert lock_input.requires_python == ">=3.10"
+
+    def test_local_path_threads_to_artifact(self, tmp_path: Path) -> None:
+        """A WheelFile.local_path reaches the emitted WheelArtifact."""
+        wheel_path = tmp_path / "foo-1.0-py3-none-any.whl"
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file(local_path=wheel_path))]}
+        )
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].local_path == wheel_path
 
     def test_index_pin_sdist_install_drops_wheels(self) -> None:
         """Wheels seen during resolution stay out of the pin under sdist-install.
@@ -1903,9 +1915,14 @@ class TestRelativeDirectoryPath:
 
 
 class TestRelativeArtifactPath:
-    """PEP 751: ``file:`` wheel/sdist URLs become relative paths (#22)."""
+    """PEP 751: local wheel/sdist artefacts become relative paths (#22).
 
-    def test_file_url_wheel_emitted_as_relative_path(self, tmp_path: Path) -> None:
+    A local artefact carries its filesystem path in ``local_path``;
+    the writer emits that as a relative ``path`` rather than reversing
+    the ``file:`` URL, which is lossy across platforms.
+    """
+
+    def test_local_wheel_emitted_as_relative_path(self, tmp_path: Path) -> None:
         wheel_path = tmp_path / "wheels" / "foo-1.0-py3-none-any.whl"
         pin = IndexPin(
             name="foo",
@@ -1916,6 +1933,7 @@ class TestRelativeArtifactPath:
                     filename="foo-1.0-py3-none-any.whl",
                     url=wheel_path.as_uri(),
                     hashes=(("sha256", "a" * 64),),
+                    local_path=wheel_path,
                 ),
             ),
         )
@@ -1926,7 +1944,7 @@ class TestRelativeArtifactPath:
         assert wheel["path"] == "wheels/foo-1.0-py3-none-any.whl"
         assert "url" not in wheel
 
-    def test_file_url_sdist_emitted_as_relative_path(self, tmp_path: Path) -> None:
+    def test_local_sdist_emitted_as_relative_path(self, tmp_path: Path) -> None:
         sdist_path = tmp_path / "dist" / "foo-1.0.tar.gz"
         pin = IndexPin(
             name="foo",
@@ -1936,6 +1954,7 @@ class TestRelativeArtifactPath:
                 filename="foo-1.0.tar.gz",
                 url=sdist_path.as_uri(),
                 hashes=(("sha256", "b" * 64),),
+                local_path=sdist_path,
             ),
         )
         text = write_lock(
@@ -1945,7 +1964,7 @@ class TestRelativeArtifactPath:
         assert sdist["path"] == "dist/foo-1.0.tar.gz"
         assert "url" not in sdist
 
-    def test_remote_url_artifacts_keep_url(self, tmp_path: Path) -> None:
+    def test_remote_artifacts_keep_url(self, tmp_path: Path) -> None:
         text = write_lock(
             LockInput(pins={"foo": _index_pin()}),
             output_path=tmp_path / "pylock.toml",
@@ -1956,7 +1975,7 @@ class TestRelativeArtifactPath:
         assert package["sdist"]["url"].startswith("https://")
         assert "path" not in package["sdist"]
 
-    def test_file_url_artifact_outside_lock_dir(self, tmp_path: Path) -> None:
+    def test_local_artifact_outside_lock_dir(self, tmp_path: Path) -> None:
         wheel_path = tmp_path / "wheelhouse" / "foo-1.0-py3-none-any.whl"
         out_dir = tmp_path / "build" / "locks"
         out_dir.mkdir(parents=True)
@@ -1969,6 +1988,7 @@ class TestRelativeArtifactPath:
                     filename="foo-1.0-py3-none-any.whl",
                     url=wheel_path.as_uri(),
                     hashes=(("sha256", "a" * 64),),
+                    local_path=wheel_path,
                 ),
             ),
         )
@@ -1980,16 +2000,7 @@ class TestRelativeArtifactPath:
 
 
 class TestPathHelpers:
-    """Unit coverage for the path-relativisation helpers."""
-
-    def test_file_url_to_path_plain(self) -> None:
-        original = Path("/tmp/wheels/foo bar.whl")
-        assert _file_url_to_path(original.as_uri()) == original
-
-    def test_file_url_to_path_with_authority(self) -> None:
-        assert _file_url_to_path("file://host/share/foo.whl") == Path(
-            "//host/share/foo.whl"
-        )
+    """Unit coverage for the path-relativisation helper."""
 
     def test_relativize_path_uses_posix_separators(self, tmp_path: Path) -> None:
         rel = _relativize_path(tmp_path / "a" / "b", tmp_path)

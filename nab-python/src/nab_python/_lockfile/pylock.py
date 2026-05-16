@@ -15,7 +15,6 @@ import os
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import unquote, urlsplit
 
 import tomli_w
 
@@ -150,21 +149,6 @@ def _relativize_path(target: str | os.PathLike[str], lock_dir: Path) -> str:
     return Path(os.path.relpath(target, lock_dir)).as_posix()
 
 
-def _file_url_to_path(url: str) -> Path:
-    """Return the filesystem path a ``file:`` URL points at.
-
-    The inverse of :meth:`pathlib.Path.as_uri`, which nab-index uses
-    to label wheels and sdists discovered in a local find-links
-    directory.  A non-empty URL authority is kept as a leading
-    ``//host`` component.
-    """
-    parts = urlsplit(url)
-    raw = unquote(parts.path)
-    if parts.netloc:
-        raw = f"//{parts.netloc}{raw}"
-    return Path(raw)
-
-
 def _pin_to_package(
     pin: PinShape, marker: Marker | None = None, *, lock_dir: Path
 ) -> Package:
@@ -220,14 +204,15 @@ def _pin_to_package(
 def _wheel_to_package(wheel: WheelArtifact, *, lock_dir: Path) -> PackageWheel:
     """Convert a wheel artefact to its PEP 751 ``packages.wheels`` entry.
 
-    A ``file:`` URL (a wheel from a local find-links directory) is
-    rewritten to a ``path`` relative to the lock file so the lockfile
-    stays portable; a remote ``url`` is recorded verbatim.
+    A wheel from a local find-links directory carries its on-disk
+    ``local_path``; it is written as a ``path`` relative to the lock
+    file so the lockfile stays portable.  A remote wheel records its
+    ``url`` verbatim.
     """
-    if wheel.url.startswith("file:"):
+    if wheel.local_path is not None:
         return PackageWheel(
             name=wheel.filename,
-            path=_relativize_path(_file_url_to_path(wheel.url).resolve(), lock_dir),
+            path=_relativize_path(wheel.local_path.resolve(), lock_dir),
             size=wheel.size,
             hashes=dict(wheel.hashes),
             upload_time=wheel.upload_time,
@@ -244,12 +229,12 @@ def _wheel_to_package(wheel: WheelArtifact, *, lock_dir: Path) -> PackageWheel:
 def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
     """Convert an sdist artefact to its PEP 751 ``packages.sdist`` entry.
 
-    See :func:`_wheel_to_package` for the ``file:`` URL handling.
+    See :func:`_wheel_to_package` for the ``local_path`` handling.
     """
-    if sdist.url.startswith("file:"):
+    if sdist.local_path is not None:
         return PackageSdist(
             name=sdist.filename,
-            path=_relativize_path(_file_url_to_path(sdist.url).resolve(), lock_dir),
+            path=_relativize_path(sdist.local_path.resolve(), lock_dir),
             size=sdist.size,
             hashes=dict(sdist.hashes),
             upload_time=sdist.upload_time,

@@ -136,6 +136,7 @@ def seed_synthetic_listing(
             else None
         ),
         upload_time=None,
+        local_path=path,
     )
     version = metadata.version
     provider.metadata_cache[(normalized, version)] = metadata

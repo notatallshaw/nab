@@ -88,6 +88,11 @@ class WheelFile:
     order PEP 691 declared them (tuple form keeps the dataclass
     hashable).  ``has_metadata`` says whether the index advertised a
     PEP 658/714 sidecar; :attr:`metadata_url` derives the URL lazily.
+
+    ``local_path`` is the on-disk path of a wheel served from a local
+    index, and ``None`` for one fetched from a remote index.  It lets
+    downstream code use the path directly instead of reversing the
+    ``file:`` URL, which is lossy across platforms.
     """
 
     filename: str
@@ -98,6 +103,7 @@ class WheelFile:
     upload_time: str | None
     hashes: tuple[tuple[str, str], ...] = ()
     size: int | None = None
+    local_path: Path | None = None
 
     @property
     def metadata_url(self) -> str | None:
@@ -109,7 +115,8 @@ class WheelFile:
 class SdistFile:
     """A source distribution from the Simple API.
 
-    See :class:`WheelFile` for the meaning of ``hashes`` and ``size``.
+    See :class:`WheelFile` for the meaning of ``hashes``, ``size`` and
+    ``local_path``.
     """
 
     filename: str
@@ -119,6 +126,7 @@ class SdistFile:
     upload_time: str | None
     hashes: tuple[tuple[str, str], ...] = ()
     size: int | None = None
+    local_path: Path | None = None
 
 
 class AsyncSimpleClient:
