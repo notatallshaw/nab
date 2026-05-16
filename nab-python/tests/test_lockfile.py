@@ -15,6 +15,7 @@ else:
     import tomli as tomllib  # type: ignore[no-redef]
 
 from nab_index.client import SdistFile, WheelFile
+from nab_index.multi_index import IndexConfig
 from nab_python._lockfile.disjointness import (
     _restrict_to_referenced,
     validate_marker_disjointness,
@@ -41,6 +42,7 @@ from nab_python.lockfile import (
     WheelArtifact,
     build_lock_input_from_provider,
     build_pylock,
+    read_lockfile_packages,
     write_lock,
     write_requirements_with_hashes,
 )
@@ -105,6 +107,8 @@ class TestSingleTuple:
         assert package["directory"]["path"] == str(tmp_path)
         assert "wheels" not in package
         assert "sdist" not in package
+        # PEP 751: version omitted for directory sources (not deterministic).
+        assert "version" not in package
 
     def test_vcs_pin(self) -> None:
         text = write_lock(
@@ -121,11 +125,14 @@ class TestSingleTuple:
             )
         )
         data = tomllib.loads(text)
-        vcs = data["packages"][0]["vcs"]
+        package = data["packages"][0]
+        vcs = package["vcs"]
         assert vcs["type"] == "git"
         assert vcs["url"] == "https://github.com/x/y.git"
         assert vcs["commit-id"] == "a" * 40
         assert vcs["subdirectory"] == "pkg"
+        # PEP 751: version omitted for VCS sources (not deterministic).
+        assert "version" not in package
 
     def test_multiple_packages_sorted_by_name(self) -> None:
         text = write_lock(
@@ -766,6 +773,54 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) is None
 
 
+class TestReadLockfilePackages:
+    """``read_lockfile_packages`` extracts the prior pin set for diffing."""
+
+    def test_returns_none_when_file_missing(self, tmp_path: Path) -> None:
+        assert read_lockfile_packages(tmp_path / "missing.toml") is None
+
+    def test_returns_none_when_file_is_directory(self, tmp_path: Path) -> None:
+        assert read_lockfile_packages(tmp_path) is None
+
+    def test_returns_none_when_toml_invalid(self, tmp_path: Path) -> None:
+        path = tmp_path / "pylock.toml"
+        path.write_text("this is not [[[ valid TOML")
+        assert read_lockfile_packages(path) is None
+
+    def test_returns_none_when_not_a_pylock(self, tmp_path: Path) -> None:
+        # Valid TOML but missing the required PEP 751 keys.
+        path = tmp_path / "pylock.toml"
+        path.write_text('title = "not a lockfile"\n')
+        assert read_lockfile_packages(path) is None
+
+    def test_reads_name_to_version_map(self, tmp_path: Path) -> None:
+        lock_input = LockInput(
+            pins={
+                "foo": _index_pin("foo", "1.2.3"),
+                "bar": _index_pin("bar", "4.5"),
+            }
+        )
+        path = tmp_path / "pylock.toml"
+        write_lock(lock_input, output_path=path)
+        assert read_lockfile_packages(path) == {
+            "foo": Version("1.2.3"),
+            "bar": Version("4.5"),
+        }
+
+    def test_skips_packages_without_version(self, tmp_path: Path) -> None:
+        # A directory (path) package carries no version key.
+        path = tmp_path / "pylock.toml"
+        path.write_text(
+            'lock-version = "1.0"\n'
+            'created-by = "nab"\n\n'
+            "[[packages]]\n"
+            'name = "foo"\n'
+            "[packages.directory]\n"
+            'path = "./foo"\n',
+        )
+        assert read_lockfile_packages(path) == {}
+
+
 class TestDependencyGroups:
     def test_emits_top_level_arrays(self) -> None:
         text = write_lock(
@@ -1149,8 +1204,6 @@ class TestBuildLockInputFromProvider:
         assert pin.sdist.hashes == (("sha256", "b" * 64),)
 
     def test_index_pin_records_serving_index(self) -> None:
-        from nab_index.multi_index import IndexConfig
-
         provider = _FakeProvider(
             listings={
                 "foo": [
@@ -1173,8 +1226,6 @@ class TestBuildLockInputFromProvider:
         assert pin.index == "https://download.pytorch.org/whl/cpu/"
 
     def test_index_pin_falls_back_to_default_when_route_missing(self) -> None:
-        from nab_index.multi_index import IndexConfig
-
         provider = _FakeProvider(
             listings={
                 "foo": [
@@ -1191,6 +1242,52 @@ class TestBuildLockInputFromProvider:
         pin = lock_input.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.index == "https://custom.example/simple/"
+
+    def test_index_pin_strips_credentials_from_url(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+            listing_indexes={"foo": "private"},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {"foo": Version("1.0")},
+            indexes=(
+                IndexConfig(
+                    "private", "https://user:token@Private.Example:8443/simple/"
+                ),
+            ),
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.index == "https://Private.Example:8443/simple/"
+
+    def test_index_pin_keeps_url_without_credentials(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+            listing_indexes={"foo": "plain"},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {"foo": Version("1.0")},
+            indexes=(IndexConfig("plain", "https://Plain.Example/simple/"),),
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.index == "https://Plain.Example/simple/"
+
+    def test_index_pin_strips_username_only_credentials(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+            listing_indexes={"foo": "useronly"},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {"foo": Version("1.0")},
+            indexes=(IndexConfig("useronly", "https://user@example.com/simple/"),),
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.index == "https://example.com/simple/"
 
     def test_local_source_emits_local_pin(self, tmp_path: Path) -> None:
         provider = _FakeProvider(
@@ -1283,6 +1380,208 @@ class TestBuildLockInputFromProvider:
         assert isinstance(pin, VcsPin)
         assert pin.commit_id == ""
 
+    def test_vcs_source_strips_credentials_from_url(self) -> None:
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url="git+https://user:token@GitHub.com/org/repo.git",
+                ),
+            },
+            vcs_pins={"foo": "a" * 40},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.repo_url == "git+https://GitHub.com/org/repo.git"
+
+    def test_vcs_source_keeps_url_without_credentials(self) -> None:
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(name="foo", url="git+https://github.com/org/repo.git"),
+            },
+            vcs_pins={"foo": "a" * 40},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.repo_url == "git+https://github.com/org/repo.git"
+
+    def test_vcs_source_records_requested_revision_for_floating_ref(self) -> None:
+        """A named ``@<ref>`` resolved to a different SHA is recorded."""
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url="git+https://example.com/r.git@v1.0",
+                ),
+            },
+            vcs_pins={"foo": "b" * 40},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.requested_revision == "v1.0"
+
+    def test_vcs_source_no_requested_revision_when_pinned_to_sha(self) -> None:
+        """When the user pinned the SHA, requested-revision stays None."""
+        sha = "a" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url="git+https://example.com/r.git@" + sha,
+                ),
+            },
+            vcs_pins={"foo": sha},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.requested_revision is None
+
+    def test_vcs_source_no_requested_revision_without_url_ref(self) -> None:
+        """A URL with no ``@<ref>`` yields no requested-revision."""
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(name="foo", url="git+https://example.com/r.git"),
+            },
+            vcs_pins={"foo": "a" * 40},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.requested_revision is None
+
+    def test_vcs_source_no_requested_revision_for_non_vcs_url(self) -> None:
+        """An unparseable VCS URL yields no requested-revision."""
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(name="foo", url="https://example.com/r.git"),
+            },
+            vcs_pins={"foo": "a" * 40},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.requested_revision is None
+
+    def test_local_source_threads_editable(self, tmp_path: Path) -> None:
+        provider = _FakeProvider(
+            local_sources={
+                "foo": LocalSource(name="foo", path=str(tmp_path), editable=True)
+            }
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+local")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, LocalPin)
+        assert pin.editable is True
+
+    def test_local_source_threads_subdirectory(self, tmp_path: Path) -> None:
+        provider = _FakeProvider(
+            local_sources={
+                "foo": LocalSource(
+                    name="foo", path=str(tmp_path), subdirectory="pkg/lib"
+                )
+            }
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+local")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, LocalPin)
+        assert pin.subdirectory == "pkg/lib"
+
+    def test_local_source_defaults_not_editable_no_subdirectory(
+        self, tmp_path: Path
+    ) -> None:
+        provider = _FakeProvider(
+            local_sources={"foo": LocalSource(name="foo", path=str(tmp_path))}
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+local")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, LocalPin)
+        assert pin.editable is False
+        assert pin.subdirectory is None
+
+    def test_wheel_upload_time_parsed_from_index(self) -> None:
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://pypi.org/simple/foo/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=">=3.10",
+            has_metadata=False,
+            upload_time="2026-05-01T12:00:00Z",
+            hashes=(("sha256", "a" * 64),),
+            size=1234,
+        )
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].upload_time == datetime(
+            2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc
+        )
+
+    def test_sdist_upload_time_parsed_from_index(self) -> None:
+        sdist = SdistFile(
+            filename="foo-1.0.tar.gz",
+            url="https://pypi.org/simple/foo/foo-1.0.tar.gz",
+            version="1.0",
+            requires_python=">=3.10",
+            upload_time="2026-05-01T12:00:00Z",
+            hashes=(("sha256", "b" * 64),),
+            size=4321,
+        )
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), sdist)]})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.sdist is not None
+        assert pin.sdist.upload_time == datetime(
+            2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc
+        )
+
+    def test_upload_time_none_when_index_omits_it(self) -> None:
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), _wheel_file())]})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].upload_time is None
+
+    def test_upload_time_invalid_string_is_dropped(self) -> None:
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://pypi.org/simple/foo/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=">=3.10",
+            has_metadata=False,
+            upload_time="not-a-timestamp",
+            hashes=(("sha256", "a" * 64),),
+            size=1234,
+        )
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].upload_time is None
+
     def test_missing_acceptable_hash_raises(self) -> None:
         wheel = _wheel_file(sha256=None)
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
@@ -1346,8 +1645,6 @@ class TestBuildLockInputFromProvider:
         assert pin.requires_python is None
 
     def test_first_configured_index_url_used_when_route_missing(self) -> None:
-        from nab_index.multi_index import IndexConfig
-
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), _wheel_file())]})
         lock_input = build_lock_input_from_provider(
             provider,
@@ -1387,6 +1684,172 @@ class TestBuildLockInputFromProvider:
         pin = lock_input.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.requires_python is None
+
+
+class TestDirectoryFields:
+    """PEP 751 ``packages.directory`` editable + subdirectory emission."""
+
+    def test_editable_emitted_when_true(self, tmp_path: Path) -> None:
+        text = write_lock(
+            LockInput(
+                pins={
+                    "foo": LocalPin(
+                        name="foo",
+                        version="1.0",
+                        path=str(tmp_path),
+                        editable=True,
+                    )
+                },
+            )
+        )
+        data = tomllib.loads(text)
+        assert data["packages"][0]["directory"]["editable"] is True
+
+    def test_editable_false_by_default(self, tmp_path: Path) -> None:
+        text = write_lock(
+            LockInput(
+                pins={"foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))},
+            )
+        )
+        data = tomllib.loads(text)
+        assert data["packages"][0]["directory"]["editable"] is False
+
+    def test_subdirectory_emitted(self, tmp_path: Path) -> None:
+        text = write_lock(
+            LockInput(
+                pins={
+                    "foo": LocalPin(
+                        name="foo",
+                        version="1.0",
+                        path=str(tmp_path),
+                        subdirectory="pkg/lib",
+                    )
+                },
+            )
+        )
+        data = tomllib.loads(text)
+        assert data["packages"][0]["directory"]["subdirectory"] == "pkg/lib"
+
+    def test_subdirectory_omitted_when_none(self, tmp_path: Path) -> None:
+        text = write_lock(
+            LockInput(
+                pins={"foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))},
+            )
+        )
+        data = tomllib.loads(text)
+        assert "subdirectory" not in data["packages"][0]["directory"]
+
+    def test_discriminator_separates_editable(self) -> None:
+        editable = LocalPin(name="foo", version="1.0", path="/a", editable=True)
+        plain = LocalPin(name="foo", version="1.0", path="/a", editable=False)
+        assert _pin_discriminator(editable) != _pin_discriminator(plain)
+
+    def test_discriminator_separates_subdirectory(self) -> None:
+        sub = LocalPin(name="foo", version="1.0", path="/a", subdirectory="lib")
+        plain = LocalPin(name="foo", version="1.0", path="/a")
+        assert _pin_discriminator(sub) != _pin_discriminator(plain)
+
+    def test_per_tuple_editable_diverges(self) -> None:
+        per_tuple = {
+            "py310": {
+                "foo": LocalPin(name="foo", version="1.0", path="/a", editable=True)
+            },
+            "py311": {
+                "foo": LocalPin(name="foo", version="1.0", path="/a", editable=False)
+            },
+        }
+        tuple_markers = {
+            "py310": Marker('python_version == "3.10"'),
+            "py311": Marker('python_version == "3.11"'),
+        }
+        text = write_lock(
+            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+        )
+        data = tomllib.loads(text)
+        assert len(data["packages"]) == 2
+
+
+class TestVcsRequestedRevision:
+    """PEP 751 ``packages.vcs.requested-revision`` emission."""
+
+    def test_requested_revision_emitted(self) -> None:
+        text = write_lock(
+            LockInput(
+                pins={
+                    "foo": VcsPin(
+                        name="foo",
+                        version="1.0",
+                        repo_url="https://github.com/x/y.git",
+                        commit_id="a" * 40,
+                        requested_revision="v2.1.0",
+                    ),
+                },
+            )
+        )
+        data = tomllib.loads(text)
+        assert data["packages"][0]["vcs"]["requested-revision"] == "v2.1.0"
+
+    def test_requested_revision_omitted_when_none(self) -> None:
+        text = write_lock(
+            LockInput(
+                pins={
+                    "foo": VcsPin(
+                        name="foo",
+                        version="1.0",
+                        repo_url="https://github.com/x/y.git",
+                        commit_id="a" * 40,
+                    ),
+                },
+            )
+        )
+        data = tomllib.loads(text)
+        assert "requested-revision" not in data["packages"][0]["vcs"]
+
+
+class TestUploadTime:
+    """PEP 751 ``packages.wheels/sdist.upload-time`` emission."""
+
+    def test_wheel_upload_time_emitted(self) -> None:
+        ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        pin = IndexPin(
+            name="foo",
+            version="1.0",
+            index="pypi",
+            wheels=(
+                WheelArtifact(
+                    filename="foo-1.0-py3-none-any.whl",
+                    url="https://example.com/foo-1.0-py3-none-any.whl",
+                    hashes=(("sha256", "a" * 64),),
+                    upload_time=ts,
+                ),
+            ),
+        )
+        text = write_lock(LockInput(pins={"foo": pin}))
+        data = tomllib.loads(text)
+        assert data["packages"][0]["wheels"][0]["upload-time"] == ts
+
+    def test_sdist_upload_time_emitted(self) -> None:
+        ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+        pin = IndexPin(
+            name="foo",
+            version="1.0",
+            index="pypi",
+            sdist=SdistArtifact(
+                filename="foo-1.0.tar.gz",
+                url="https://example.com/foo-1.0.tar.gz",
+                hashes=(("sha256", "b" * 64),),
+                upload_time=ts,
+            ),
+        )
+        text = write_lock(LockInput(pins={"foo": pin}))
+        data = tomllib.loads(text)
+        assert data["packages"][0]["sdist"]["upload-time"] == ts
+
+    def test_upload_time_omitted_when_none(self) -> None:
+        text = write_lock(LockInput(pins={"foo": _index_pin()}))
+        data = tomllib.loads(text)
+        assert "upload-time" not in data["packages"][0]["wheels"][0]
+        assert "upload-time" not in data["packages"][0]["sdist"]
 
 
 class TestWriteRequirementsWithHashes:

@@ -12,11 +12,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, overload
+from urllib.parse import urlsplit, urlunsplit
 
 import tomli
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
@@ -40,6 +42,7 @@ __all__ = [
     "MissingHashError",
     "build_lock_input_from_provider",
     "read_lockfile_anchor",
+    "read_lockfile_packages",
 ]
 
 
@@ -140,6 +143,44 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
     return None
 
 
+def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
+    """Return the ``name -> version`` map from a prior pylock at ``path``.
+
+    Used by ``nab lock`` to diff a re-lock against the previous result.
+    Packages without a recorded version (direct-reference entries that
+    omit it) are skipped.
+
+    Returns ``None`` when ``path`` does not exist, is not valid TOML,
+    or is not a spec-compliant PEP 751 lockfile; the caller falls back
+    to a no-diff summary line.
+    """
+    if not path.is_file():
+        return None
+    try:
+        with path.open("rb") as f:
+            data = tomli.load(f)
+        pylock = Pylock.from_dict(data)
+    except (OSError, tomli.TOMLDecodeError, PylockValidationError):
+        return None
+    return {
+        str(pkg.name): pkg.version for pkg in pylock.packages if pkg.version is not None
+    }
+
+
+def _strip_userinfo(url: str) -> str:
+    """Return ``url`` with any ``user:password@`` userinfo removed.
+
+    Lockfiles are committed to version control, so an index or VCS
+    URL carrying embedded credentials must not be written verbatim.
+    Only the userinfo is dropped: host case and port are preserved
+    and a ``git+`` scheme prefix is left intact.  A no-op for URLs
+    without credentials.
+    """
+    parts = urlsplit(url)
+    netloc = parts.netloc.rpartition("@")[2]
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
 def build_lock_input_from_provider(
     provider: LockInputProvider,
     pins: Mapping[str, Version],
@@ -176,6 +217,8 @@ def build_lock_input_from_provider(
                 name=canonical,
                 version=str(version),
                 path=str(Path(local_source.path).resolve()),
+                editable=local_source.editable,
+                subdirectory=local_source.subdirectory,
             )
             continue
         vcs_source = provider.vcs_source_for(canonical)
@@ -252,7 +295,7 @@ def _index_pin_from_listing(
     return IndexPin(
         name=canonical,
         version=str(version),
-        index=index_url,
+        index=_strip_userinfo(index_url),
         sdist=sdist,
         wheels=wheels,
         requires_python=requires_python,
@@ -282,7 +325,24 @@ def _build_artifact(
         url=source.url,
         hashes=hashes,
         size=source.size,
+        upload_time=_parse_upload_time(source.upload_time),
     )
+
+
+def _parse_upload_time(raw: str | None) -> datetime | None:
+    """Parse an index ``upload-time`` string to a ``datetime``.
+
+    Accepts the RFC 3339 form the Simple/JSON API serves (``Z`` or an
+    explicit offset).  Returns ``None`` when the field is absent or
+    unparseable; the timestamp is informational, so a bad value is
+    dropped rather than fatal.
+    """
+    if raw is None:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _filter_acceptable_hashes(
@@ -336,22 +396,26 @@ def _vcs_pin_from_source(
     provider) over the URL's ``@<ref>``: annotated tags and floating
     refs only resolve to a commit after the clone runs.  Fall back to
     the URL ref when the source was never materialised.
+
+    ``requested_revision`` is the URL's ``@<ref>``, kept only when it
+    is a named ref that differs from ``commit_id`` (i.e. the user did
+    not pin the bare SHA).  An absent or unparseable ref leaves it
+    ``None``.
     """
     from nab_index.vcs import VcsCloneError, VcsRequest
 
     from ..lockfile import VcsPin
 
-    if resolved_sha is not None:
-        commit_id = resolved_sha
-    else:
-        try:
-            parsed = VcsRequest.parse(source.url)
-            commit_id = parsed.ref
-        except VcsCloneError:
-            commit_id = ""
+    try:
+        url_ref = VcsRequest.parse(source.url).ref
+    except VcsCloneError:
+        url_ref = ""
+    commit_id = resolved_sha if resolved_sha is not None else url_ref
+    requested_revision = url_ref if url_ref and url_ref != commit_id else None
     return VcsPin(
         name=canonical,
         version=str(version),
-        repo_url=source.url,
+        repo_url=_strip_userinfo(source.url),
         commit_id=commit_id,
+        requested_revision=requested_revision,
     )

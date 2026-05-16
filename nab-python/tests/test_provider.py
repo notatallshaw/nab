@@ -927,6 +927,25 @@ class TestLocalSources:
         provider.prefetch_new_deps({"foo": SpecifierSet("").to_range()})
         coordinator.request_listing.assert_not_called()
 
+    def test_local_source_reads_from_subdirectory(self, tmp_path: Path) -> None:
+        """A local source with a subdirectory resolves the package there."""
+        sub = tmp_path / "packages" / "foo"
+        sub.mkdir(parents=True)
+        (sub / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "4.5.6"\n', encoding="utf-8"
+        )
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            local_sources=[
+                LocalSource("foo", str(tmp_path), subdirectory="packages/foo")
+            ],
+            build_policy=BuildPolicy.NEVER,
+        )
+        versions = provider.fetch_versions("foo")
+        assert len(versions) == 1
+        assert str(versions[0][0]) == "4.5.6"
+
     def test_local_source_dependencies(self, tmp_path: Path) -> None:
         """Local source deps round-trip through ``get_dependencies``."""
 

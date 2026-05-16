@@ -57,8 +57,8 @@ def write_lock(
     """Serialise ``lock_input`` to PEP 751 TOML text.
 
     Returns the TOML text.  When ``output_path`` is provided, also
-    writes it atomically; the caller chooses the path (PEP 751 does
-    not mandate one).
+    writes it there; the caller chooses the path (PEP 751 does not
+    mandate one).
     """
     pylock = build_pylock(lock_input)
     pylock.validate()
@@ -137,22 +137,30 @@ def _pin_to_package(pin: PinShape, marker: Marker | None = None) -> Package:
             wheels=tuple(_wheel_to_package(w) for w in pin.wheels) or None,
         )
     if isinstance(pin, LocalPin):
+        # PEP 751: omit version for directory sources; it is not
+        # deterministic (the source tree may change at install time).
         return Package(
             name=canonicalize_name(pin.name),
-            version=Version(pin.version),
+            version=None,
             marker=marker,
-            directory=PackageDirectory(path=pin.path, editable=False),
+            directory=PackageDirectory(
+                path=pin.path,
+                editable=pin.editable,
+                subdirectory=pin.subdirectory,
+            ),
         )
     if isinstance(pin, VcsPin):
+        # PEP 751: omit version for VCS sources for the same reason.
         return Package(
             name=canonicalize_name(pin.name),
-            version=Version(pin.version),
+            version=None,
             marker=marker,
             vcs=PackageVcs(
                 type="git",
                 url=pin.repo_url,
                 commit_id=pin.commit_id,
                 subdirectory=pin.subdirectory,
+                requested_revision=pin.requested_revision,
             ),
         )
     msg = f"unknown pin shape: {pin!r}"
@@ -165,6 +173,7 @@ def _wheel_to_package(wheel: WheelArtifact) -> PackageWheel:
         url=wheel.url,
         size=wheel.size,
         hashes=dict(wheel.hashes),
+        upload_time=wheel.upload_time,
     )
 
 
@@ -174,6 +183,7 @@ def _sdist_to_package(sdist: SdistArtifact) -> PackageSdist:
         url=sdist.url,
         size=sdist.size,
         hashes=dict(sdist.hashes),
+        upload_time=sdist.upload_time,
     )
 
 
@@ -242,8 +252,18 @@ def _pin_discriminator(pin: PinShape) -> tuple:
     if isinstance(pin, IndexPin):
         return ("index", pin.version, pin.index)
     if isinstance(pin, LocalPin):
-        return ("local", pin.version, pin.path)
+        # editable and subdirectory change install behaviour, so two
+        # otherwise-identical local pins differing only here are distinct.
+        return (
+            "local",
+            pin.version,
+            pin.path,
+            pin.editable,
+            pin.subdirectory or "",
+        )
     if isinstance(pin, VcsPin):
+        # requested_revision is informational; it does not affect the
+        # checkout, so it is intentionally left out of the discriminator.
         return ("vcs", pin.commit_id, pin.repo_url, pin.subdirectory or "")
     msg = f"unknown pin shape: {pin!r}"
     raise TypeError(msg)

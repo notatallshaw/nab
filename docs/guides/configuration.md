@@ -15,6 +15,10 @@ mode = "specific"
 # into the resolution.
 constraints = ["urllib3<2"]
 
+# Dependency-group names recorded in the lockfile's
+# default-groups array.
+default-groups = ["dev"]
+
 # Override the host's Python for a single-environment resolve.
 # Single value, not a range; for multi-Python locking use the
 # [tool.nab.matrix] table below.
@@ -150,6 +154,11 @@ candidate for the named package.
 name = "my-fork"
 path = "../my-fork"
 ```
+
+Two optional keys are accepted.  `editable` (boolean, default
+`false`) records a PEP 660 editable install in the lockfile.
+`subdirectory` locates the package below `path`, for monorepo
+layouts.
 
 Reading static dependencies from a local pyproject.toml works at
 every `build-policy` level.  Dynamic dependencies require

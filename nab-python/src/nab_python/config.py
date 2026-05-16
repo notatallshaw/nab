@@ -55,6 +55,7 @@ _TOP_LEVEL_KEYS = frozenset(
     {
         "mode",
         "constraints",
+        "default-groups",
         "requires-python",
         "uploaded-prior-to",
         "uploaded-prior-to-package",
@@ -107,6 +108,7 @@ class NabProjectConfig:
 
     mode: ResolveMode = ResolveMode.SPECIFIC
     constraints: tuple[str, ...] = ()
+    default_groups: tuple[str, ...] = ()
     requires_python: str | None = None
     uploaded_prior_to: datetime | None = None
     uploaded_prior_to_overrides: Mapping[str, datetime | None] = field(
@@ -233,6 +235,9 @@ def _parse_nab_table(
     return NabProjectConfig(
         mode=mode,
         constraints=_parse_string_list("constraints", raw.get("constraints", [])),
+        default_groups=_parse_string_list(
+            "default-groups", raw.get("default-groups", [])
+        ),
         requires_python=_parse_requires_python(raw.get("requires-python")),
         uploaded_prior_to=_parse_uploaded_prior_to(
             raw.get("uploaded-prior-to"), anchor=anchor
@@ -671,6 +676,9 @@ def _parse_build_policy_package(value: object) -> Mapping[str, BuildPolicy]:
     return out
 
 
+_LOCAL_SOURCE_KEYS = frozenset({"name", "path", "editable", "subdirectory"})
+
+
 def _parse_local_sources(
     value: object, *, pyproject_dir: Path
 ) -> tuple[LocalSource, ...]:
@@ -682,6 +690,13 @@ def _parse_local_sources(
         if not isinstance(entry, dict):
             msg = f"local-sources[{i}] must be a table, got {type(entry).__name__}"
             raise ConfigError(msg)
+        unknown = sorted(set(entry) - _LOCAL_SOURCE_KEYS)
+        if unknown:
+            msg = (
+                f"unknown local-sources[{i}] keys: {unknown!r};"
+                f" expected {sorted(_LOCAL_SOURCE_KEYS)!r}"
+            )
+            raise ConfigError(msg)
         try:
             name = entry["name"]
             path_value = entry["path"]
@@ -691,8 +706,23 @@ def _parse_local_sources(
         if not isinstance(name, str) or not isinstance(path_value, str):
             msg = f"local-sources[{i}] name and path must be strings"
             raise ConfigError(msg)
+        editable = entry.get("editable", False)
+        if not isinstance(editable, bool):
+            msg = f"local-sources[{i}] editable must be a boolean"
+            raise ConfigError(msg)
+        subdirectory = entry.get("subdirectory")
+        if subdirectory is not None and not isinstance(subdirectory, str):
+            msg = f"local-sources[{i}] subdirectory must be a string"
+            raise ConfigError(msg)
         resolved = str((pyproject_dir / path_value).resolve())
-        out.append(LocalSource(name=name, path=resolved))
+        out.append(
+            LocalSource(
+                name=name,
+                path=resolved,
+                editable=editable,
+                subdirectory=subdirectory,
+            )
+        )
     return tuple(out)
 
 
