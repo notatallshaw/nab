@@ -80,12 +80,16 @@ class WheelArtifact:
     published.  PEP 751 mandates at least one hash per artefact;
     nab requires at least one of ``sha256``, ``sha384``, ``sha512``
     so the lockfile is consumable by pip's hash-checking mode.
+
+    ``upload_time`` is the index's upload timestamp when available;
+    informational provenance per PEP 751 ``packages.wheels.upload-time``.
     """
 
     filename: str
     url: str
     hashes: tuple[tuple[str, str], ...]
     size: int | None = None
+    upload_time: datetime | None = None
 
     @property
     def primary_digest(self) -> tuple[str, str]:
@@ -101,13 +105,15 @@ class WheelArtifact:
 class SdistArtifact:
     """An sdist tarball to record in the lockfile.
 
-    See :class:`WheelArtifact` for the meaning of ``hashes``.
+    See :class:`WheelArtifact` for the meaning of ``hashes`` and
+    ``upload_time``.
     """
 
     filename: str
     url: str
     hashes: tuple[tuple[str, str], ...]
     size: int | None = None
+    upload_time: datetime | None = None
 
     @property
     def primary_digest(self) -> tuple[str, str]:
@@ -141,22 +147,34 @@ class LocalPin:
 
     ``path`` is the absolute filesystem path the resolver was pointed
     at.  Lockfile consumers walk the same tree to install.
+
+    ``editable`` records a PEP 660 editable install request;
+    ``subdirectory`` is a path under ``path`` for monorepo layouts.
+    Both come from the ``[[tool.nab.local-sources]]`` entry.
     """
 
     name: str
     version: str
     path: str
+    editable: bool = False
+    subdirectory: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class VcsPin:
-    """A package resolved from a VCS clone."""
+    """A package resolved from a VCS clone.
+
+    ``requested_revision`` is the human-readable ref (tag or branch)
+    the user pinned, recorded only when it differs from ``commit_id``;
+    informational per PEP 751 ``packages.vcs.requested-revision``.
+    """
 
     name: str
     version: str
     repo_url: str
     commit_id: str
     subdirectory: str | None = None
+    requested_revision: str | None = None
 
 
 PinShape = IndexPin | LocalPin | VcsPin

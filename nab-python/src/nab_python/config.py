@@ -671,6 +671,9 @@ def _parse_build_policy_package(value: object) -> Mapping[str, BuildPolicy]:
     return out
 
 
+_LOCAL_SOURCE_KEYS = frozenset({"name", "path", "editable", "subdirectory"})
+
+
 def _parse_local_sources(
     value: object, *, pyproject_dir: Path
 ) -> tuple[LocalSource, ...]:
@@ -682,6 +685,13 @@ def _parse_local_sources(
         if not isinstance(entry, dict):
             msg = f"local-sources[{i}] must be a table, got {type(entry).__name__}"
             raise ConfigError(msg)
+        unknown = sorted(set(entry) - _LOCAL_SOURCE_KEYS)
+        if unknown:
+            msg = (
+                f"unknown local-sources[{i}] keys: {unknown!r};"
+                f" expected {sorted(_LOCAL_SOURCE_KEYS)!r}"
+            )
+            raise ConfigError(msg)
         try:
             name = entry["name"]
             path_value = entry["path"]
@@ -691,8 +701,23 @@ def _parse_local_sources(
         if not isinstance(name, str) or not isinstance(path_value, str):
             msg = f"local-sources[{i}] name and path must be strings"
             raise ConfigError(msg)
+        editable = entry.get("editable", False)
+        if not isinstance(editable, bool):
+            msg = f"local-sources[{i}] editable must be a boolean"
+            raise ConfigError(msg)
+        subdirectory = entry.get("subdirectory")
+        if subdirectory is not None and not isinstance(subdirectory, str):
+            msg = f"local-sources[{i}] subdirectory must be a string"
+            raise ConfigError(msg)
         resolved = str((pyproject_dir / path_value).resolve())
-        out.append(LocalSource(name=name, path=resolved))
+        out.append(
+            LocalSource(
+                name=name,
+                path=resolved,
+                editable=editable,
+                subdirectory=subdirectory,
+            )
+        )
     return tuple(out)
 
 

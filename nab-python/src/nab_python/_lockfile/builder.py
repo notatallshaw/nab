@@ -191,6 +191,8 @@ def build_lock_input_from_provider(
                 name=canonical,
                 version=str(version),
                 path=str(Path(local_source.path).resolve()),
+                editable=local_source.editable,
+                subdirectory=local_source.subdirectory,
             )
             continue
         vcs_source = provider.vcs_source_for(canonical)
@@ -297,7 +299,24 @@ def _build_artifact(
         url=source.url,
         hashes=hashes,
         size=source.size,
+        upload_time=_parse_upload_time(source.upload_time),
     )
+
+
+def _parse_upload_time(raw: str | None) -> datetime | None:
+    """Parse an index ``upload-time`` string to a ``datetime``.
+
+    Accepts the RFC 3339 form the Simple/JSON API serves (``Z`` or an
+    explicit offset).  Returns ``None`` when the field is absent or
+    unparseable; the timestamp is informational, so a bad value is
+    dropped rather than fatal.
+    """
+    if raw is None:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _filter_acceptable_hashes(
@@ -351,22 +370,26 @@ def _vcs_pin_from_source(
     provider) over the URL's ``@<ref>``: annotated tags and floating
     refs only resolve to a commit after the clone runs.  Fall back to
     the URL ref when the source was never materialised.
+
+    ``requested_revision`` is the URL's ``@<ref>``, kept only when it
+    is a named ref that differs from ``commit_id`` (i.e. the user did
+    not pin the bare SHA).  An absent or unparseable ref leaves it
+    ``None``.
     """
     from nab_index.vcs import VcsCloneError, VcsRequest
 
     from ..lockfile import VcsPin
 
-    if resolved_sha is not None:
-        commit_id = resolved_sha
-    else:
-        try:
-            parsed = VcsRequest.parse(source.url)
-            commit_id = parsed.ref
-        except VcsCloneError:
-            commit_id = ""
+    try:
+        url_ref = VcsRequest.parse(source.url).ref
+    except VcsCloneError:
+        url_ref = ""
+    commit_id = resolved_sha if resolved_sha is not None else url_ref
+    requested_revision = url_ref if url_ref and url_ref != commit_id else None
     return VcsPin(
         name=canonical,
         version=str(version),
         repo_url=_strip_userinfo(source.url),
         commit_id=commit_id,
+        requested_revision=requested_revision,
     )

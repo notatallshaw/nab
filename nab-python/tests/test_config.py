@@ -745,6 +745,63 @@ class TestLocalSources:
         with pytest.raises(ConfigError, match="name and path must be strings"):
             read_pyproject_config(path)
 
+    def test_editable_defaults_false(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\n',
+        )
+        srcs = read_pyproject_config(path).local_sources
+        assert srcs[0].editable is False
+
+    def test_editable_parsed(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\neditable = true\n',
+        )
+        srcs = read_pyproject_config(path).local_sources
+        assert srcs[0].editable is True
+
+    def test_editable_must_be_bool(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\neditable = "y"\n',
+        )
+        with pytest.raises(ConfigError, match="editable must be a boolean"):
+            read_pyproject_config(path)
+
+    def test_subdirectory_defaults_none(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\n',
+        )
+        srcs = read_pyproject_config(path).local_sources
+        assert srcs[0].subdirectory is None
+
+    def test_subdirectory_parsed(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.local-sources]]\n"
+            'name = "x"\npath = "../x"\nsubdirectory = "pkg/lib"\n',
+        )
+        srcs = read_pyproject_config(path).local_sources
+        assert srcs[0].subdirectory == "pkg/lib"
+
+    def test_subdirectory_must_be_string(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\nsubdirectory = 1\n',
+        )
+        with pytest.raises(ConfigError, match="subdirectory must be a string"):
+            read_pyproject_config(path)
+
+    def test_unknown_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\nbogus = 1\n',
+        )
+        with pytest.raises(ConfigError, match="unknown local-sources"):
+            read_pyproject_config(path)
+
 
 class TestVcsSources:
     def test_round_trip(self, tmp_path: Path) -> None:
