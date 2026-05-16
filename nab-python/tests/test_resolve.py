@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     MatrixConfig,
@@ -18,6 +19,8 @@ from nab_python.resolve import (
     ResolutionResult,
     UnsupportedModeError,
     _augment_resolution_error,
+    _build_constraints,
+    _build_resolver_inputs,
     _load_extra_requirements,
     _load_group_requirements,
     _resolve_target_python,
@@ -904,6 +907,74 @@ class TestLoadExtraRequirements:
         # original ``x[test]`` placeholder so the resolver still sees
         # the project's own extras-proxy.
         assert "pytest" in names
+
+
+class TestBuildResolverInputs:
+    """``_build_resolver_inputs`` folds duplicate names by intersection."""
+
+    def test_duplicate_name_intersects(self) -> None:
+        """Two requirements for one package combine to their overlap."""
+        reqs = [Requirement("foo>=2.0"), Requirement("foo<3.0")]
+        resolver_requirements, _ = _build_resolver_inputs(
+            reqs, NabProjectConfig(), environment={}
+        )
+        foo = resolver_requirements["foo"]
+        assert V("2.5") in foo
+        assert V("1.0") not in foo
+        assert V("5.0") not in foo
+
+    def test_conflicting_names_raise(self) -> None:
+        """Pinned-but-different requirements for one package raise."""
+        reqs = [Requirement("foo==1.0"), Requirement("foo==2.0")]
+        with pytest.raises(ResolutionError, match="foo==1.0"):
+            _build_resolver_inputs(reqs, NabProjectConfig(), environment={})
+
+
+class TestBuildConstraints:
+    """``_build_constraints`` folds duplicate constraint lines."""
+
+    def test_duplicate_constraint_intersects(self) -> None:
+        """Two constraint lines for one package combine to their overlap."""
+        out = _build_constraints(NabProjectConfig(constraints=("foo>=2.0", "foo<3.0")))
+        assert V("2.5") in out["foo"]
+        assert V("1.0") not in out["foo"]
+        assert V("5.0") not in out["foo"]
+
+    def test_conflicting_constraints_raise(self) -> None:
+        """Pinned-but-different constraint lines for one package raise."""
+        with pytest.raises(ResolutionError, match="conflicting constraints"):
+            _build_constraints(NabProjectConfig(constraints=("foo==1.0", "foo==2.0")))
+
+
+class TestResolvePyprojectConflicts:
+    """End-to-end: contradictory folded requirements fail loudly."""
+
+    def test_conflicting_groups_raise_resolution_error(self, tmp_path: Path) -> None:
+        """Two groups pinning one package to different versions raise.
+
+        The ``nab lock --all-groups`` shape: every group folds into the
+        root, so two groups that pin one package differently must fail.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["foo"]\n'
+            "[dependency-groups]\n"
+            'g1 = ["bar==1.0"]\n'
+            'g2 = ["bar==2.0"]\n'
+        )
+        # The conflict is caught while building resolver inputs, before
+        # any fetch; FetchCoordinator is patched so a regression fails
+        # offline instead of reaching PyPI.
+        with (
+            patch("nab_python.resolve.FetchCoordinator"),
+            pytest.raises(ResolutionError, match="bar=="),
+        ):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                groups=["g1", "g2"],
+            )
 
 
 class TestAugmentResolutionError:

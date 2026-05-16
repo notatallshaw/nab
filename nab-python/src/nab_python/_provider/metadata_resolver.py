@@ -430,7 +430,11 @@ def add_classified_dep(
     base_deps: dict[str, VersionRange],
     extra_deps_map: dict[str, dict[str, VersionRange]],
 ) -> None:
-    """Add a classified requirement to the appropriate dep set."""
+    """Add a classified requirement to the appropriate dep set.
+
+    A name appearing on several ``Requires-Dist`` lines is intersected
+    into one range.
+    """
     # Late import: ``pypi`` imports this module at module load.
     from ..provider import join_extra
 
@@ -439,12 +443,12 @@ def add_classified_dep(
     dep_extras: set[str] = req.extras
 
     if not req_extras:
-        base_deps[name] = vi
+        base_deps[name] = base_deps.get(name, VersionRange.full()) & vi
         for re in dep_extras:
             base_deps[join_extra(name, re)] = VersionRange.full()
     else:
         for extra_name in req_extras:
             edeps = extra_deps_map[extra_name]
-            edeps[name] = vi
+            edeps[name] = edeps.get(name, VersionRange.full()) & vi
             for re in dep_extras:
                 edeps[join_extra(name, re)] = VersionRange.full()
