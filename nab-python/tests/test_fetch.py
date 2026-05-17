@@ -258,7 +258,7 @@ class TestFetchCoordinator:
     def test_request_metadata_cached(self) -> None:
         with _coord() as coord:
             coord.index.store_metadata("pkg", "2.0", "cached")
-            event = coord.request_metadata("pkg", "2.0", "https://x.com/m")
+            event = coord.request_metadata("pkg", "2.0", "https://example.com/m")
             assert event.is_set()
 
     @respx.mock
@@ -292,7 +292,7 @@ class TestFetchCoordinator:
                 "pkg",
                 "2.0",
                 "pkg-2.0-py3-none-any.whl",
-                "https://x.com/m",
+                "https://example.com/m",
             )
             assert event.is_set()
 

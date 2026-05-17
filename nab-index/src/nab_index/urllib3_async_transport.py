@@ -74,9 +74,16 @@ class Urllib3AsyncTransport:
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
     ) -> _Urllib3Response:
-        """Send a GET request, off-loaded to a worker thread."""
+        """Send a GET request, off-loaded to a worker thread.
+
+        Requests gzip; without it urllib3's stdlib base sends
+        ``Accept-Encoding: identity``, which disables compression.
+        """
+        request_headers = {"Accept-Encoding": "gzip"}
+        if headers is not None:
+            request_headers.update(headers)
         response = await asyncio.to_thread(
-            self._pool.request, "GET", url, headers=headers
+            self._pool.request, "GET", url, headers=request_headers
         )
         return _Urllib3Response(response)
 
