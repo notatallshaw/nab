@@ -74,6 +74,16 @@ size = 286433
   requires at least one of the three so the lockfile is
   consumable by pip's hash-checking mode.
 
+### Portable paths
+
+A lockfile can reference content on disk: a `LocalPin`'s
+directory, or a wheel or sdist served from a local find-links
+directory. nab writes those paths relative to the lockfile's
+own directory, with POSIX separators, as PEP 751 requires. A
+committed lockfile therefore stays usable on another machine as
+long as the surrounding layout is preserved; it never carries an
+absolute, machine-specific path.
+
 ### Universal mode
 
 Under `[tool.nab].mode = "universal"`, `nab lock --format pylock`

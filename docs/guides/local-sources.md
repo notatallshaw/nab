@@ -54,7 +54,9 @@ Setting `"never"` instead skips the version with
 
 ## Lockfile shape
 
-Local pins land in the lockfile as `LocalPin` records with the
-absolute path the resolver was pointed at.  They do not carry a
-`sha256` (the contents are not under nab's control), so
-`nab download` skips them.
+Local pins land in the lockfile as `LocalPin` records.  The path
+is written relative to the lockfile's own directory, with POSIX
+separators, as PEP 751 requires, so a committed lockfile stays
+usable on another machine.  They do not carry a `sha256` (the
+contents are not under nab's control), so `nab download` skips
+them.
