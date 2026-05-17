@@ -53,12 +53,14 @@ class TestFetchCoordinatorTransport:
 class TestHttpxAsyncTransport:
     @respx.mock
     def test_get_returns_httpx_response(self) -> None:
-        respx.get("https://x.com/").mock(return_value=httpx.Response(200, text="hello"))
+        respx.get("https://example.com/").mock(
+            return_value=httpx.Response(200, text="hello")
+        )
 
         async def go() -> str:
             transport = HttpxAsyncTransport(http2=False)
             try:
-                resp = await transport.get("https://x.com/")
+                resp = await transport.get("https://example.com/")
                 resp.raise_for_status()
                 return resp.text
             finally:
@@ -85,7 +87,7 @@ class TestNiquestsAsyncTransport:
         async def go() -> Any:
             transport = NiquestsAsyncTransport()
             try:
-                return await transport.get("https://x.com/", headers={"a": "b"})
+                return await transport.get("https://example.com/", headers={"a": "b"})
             finally:
                 await transport.aclose()
 
@@ -96,7 +98,9 @@ class TestNiquestsAsyncTransport:
         assert kwargs["revocation_configuration"] is None
         # Pool sized to match our default fetch concurrency.
         assert kwargs["pool_maxsize"] >= 50
-        fake_session.get.assert_awaited_once_with("https://x.com/", headers={"a": "b"})
+        fake_session.get.assert_awaited_once_with(
+            "https://example.com/", headers={"a": "b"}
+        )
         fake_session.close.assert_awaited_once()
 
 
@@ -105,7 +109,7 @@ class TestUrllib3AsyncTransport:
         fake_response = MagicMock(spec=urllib3.BaseHTTPResponse)
         fake_response.data = body
         fake_response.status = status
-        fake_response.geturl.return_value = "https://x.com/"
+        fake_response.geturl.return_value = "https://example.com/"
         pool = MagicMock(spec=urllib3.PoolManager)
         pool.request.return_value = fake_response
         return pool
@@ -122,7 +126,7 @@ class TestUrllib3AsyncTransport:
         async def go() -> tuple[bytes, str]:
             transport = Urllib3AsyncTransport()
             try:
-                resp = await transport.get("https://x.com/", headers={"k": "v"})
+                resp = await transport.get("https://example.com/", headers={"k": "v"})
                 resp.raise_for_status()
                 return resp.content, resp.text
             finally:
@@ -132,9 +136,60 @@ class TestUrllib3AsyncTransport:
         assert content == b"world"
         assert text == "world"
         pool.request.assert_called_once_with(
-            "GET", "https://x.com/", headers={"k": "v"}
+            "GET", "https://example.com/", headers={"Accept-Encoding": "gzip", "k": "v"}
         )
         pool.clear.assert_called_once()
+
+    def test_get_requests_gzip_without_caller_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """get() advertises gzip even when the caller passes no headers.
+
+        urllib3 sits on stdlib http.client, which emits
+        ``Accept-Encoding: identity`` when no Accept-Encoding header is
+        supplied, telling the server not to compress.
+        """
+        pool = self._fake_pool(b"{}")
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager",
+            lambda **kw: pool,
+        )
+
+        async def go() -> None:
+            transport = Urllib3AsyncTransport()
+            try:
+                await transport.get("https://example.com/")
+            finally:
+                await transport.aclose()
+
+        asyncio.run(go())
+        pool.request.assert_called_once_with(
+            "GET", "https://example.com/", headers={"Accept-Encoding": "gzip"}
+        )
+
+    def test_get_lets_caller_override_accept_encoding(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A caller-supplied Accept-Encoding overrides the gzip default."""
+        pool = self._fake_pool(b"{}")
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager",
+            lambda **kw: pool,
+        )
+
+        async def go() -> None:
+            transport = Urllib3AsyncTransport()
+            try:
+                await transport.get(
+                    "https://example.com/", headers={"Accept-Encoding": "identity"}
+                )
+            finally:
+                await transport.aclose()
+
+        asyncio.run(go())
+        pool.request.assert_called_once_with(
+            "GET", "https://example.com/", headers={"Accept-Encoding": "identity"}
+        )
 
     def test_response_json(self) -> None:
         fake = MagicMock(spec=urllib3.BaseHTTPResponse)
@@ -146,7 +201,7 @@ class TestUrllib3AsyncTransport:
         fake = MagicMock(spec=urllib3.BaseHTTPResponse)
         fake.data = b""
         fake.status = 404
-        fake.geturl.return_value = "https://x.com/missing"
+        fake.geturl.return_value = "https://example.com/missing"
         with pytest.raises(urllib3.exceptions.HTTPError, match="404"):
             _Urllib3Response(fake).raise_for_status()
 
@@ -241,7 +296,7 @@ class TestAsyncSimpleClient:
 
         async def go() -> str:
             async with AsyncSimpleClient(transport) as c:
-                return await c.get_metadata_text("https://x.com/pkg.metadata")
+                return await c.get_metadata_text("https://example.com/pkg.metadata")
 
         assert asyncio.run(go()) == "Metadata-Version: 2.1\n"
 
