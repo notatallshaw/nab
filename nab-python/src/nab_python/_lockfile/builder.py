@@ -254,18 +254,16 @@ def _index_pin_from_listing(
     """Construct an :class:`IndexPin` for an index-served package.
 
     The recorded ``index`` is the URL of the configured index that
-    served the package's listing during the resolve, looked up from
-    the coordinator's :class:`InMemoryIndex` (which records the
-    serving index by name) and resolved against ``indexes`` for the
-    URL.  When ``indexes`` is empty or the route is unknown the URL
-    falls back to the default Simple-API root.
+    served the package's listing during the resolve, or ``None`` when
+    the serving index cannot be identified.  ``packages.index`` is
+    optional under PEP 751; nab does not guess when the source is
+    unknown.
 
     Under :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` the
     package's wheels stayed in ``versions_cache`` as a possible
     metadata source for the resolver; only the sdist is emitted
     into the lock so installers download and build that archive.
     """
-    from ..fetch import DEFAULT_INDEX_URL
     from ..lockfile import IndexPin, SdistArtifact, WheelArtifact
     from ..provider import DistPolicy
 
@@ -287,17 +285,11 @@ def _index_pin_from_listing(
     requires_python = _common_requires_python(files)
     serving_name = provider.coordinator.index.get_listing_index(canonical)
     by_name = {ix.name: ix.url for ix in indexes}
-
-    if serving_name is not None and serving_name in by_name:
-        index_url = by_name[serving_name]
-    elif indexes:
-        index_url = indexes[0].url
-    else:
-        index_url = DEFAULT_INDEX_URL
+    url = by_name.get(serving_name) if serving_name is not None else None
     return IndexPin(
         name=canonical,
         version=str(version),
-        index=_strip_userinfo(index_url),
+        index=_strip_userinfo(url) if url is not None else None,
         sdist=sdist,
         wheels=wheels,
         requires_python=requires_python,

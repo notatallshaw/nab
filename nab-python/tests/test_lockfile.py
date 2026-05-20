@@ -1168,10 +1168,14 @@ class TestBuildLockInputFromProvider:
                     (Version("1.0"), _wheel_file()),
                     (Version("1.0"), _sdist_file()),
                 ]
-            }
+            },
+            listing_indexes={"foo": "pypi"},
         )
         lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("1.0")}, requires_python=">=3.10"
+            provider,
+            {"foo": Version("1.0")},
+            requires_python=">=3.10",
+            indexes=(IndexConfig("pypi", "https://pypi.org/simple/"),),
         )
         pin = lock_input.pins["foo"]
         assert isinstance(pin, IndexPin)
@@ -1242,7 +1246,7 @@ class TestBuildLockInputFromProvider:
         assert isinstance(pin, IndexPin)
         assert pin.index == "https://download.pytorch.org/whl/cpu/"
 
-    def test_index_pin_falls_back_to_default_when_route_missing(self) -> None:
+    def test_index_pin_omits_index_when_route_missing(self) -> None:
         provider = _FakeProvider(
             listings={
                 "foo": [
@@ -1258,7 +1262,21 @@ class TestBuildLockInputFromProvider:
         )
         pin = lock_input.pins["foo"]
         assert isinstance(pin, IndexPin)
-        assert pin.index == "https://custom.example/simple/"
+        assert pin.index is None
+
+    def test_index_pin_omits_index_when_route_name_unconfigured(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+            listing_indexes={"foo": "gone"},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {"foo": Version("1.0")},
+            indexes=(IndexConfig("custom", "https://custom.example/simple/"),),
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.index is None
 
     def test_index_pin_strips_credentials_from_url(self) -> None:
         provider = _FakeProvider(
@@ -1660,17 +1678,6 @@ class TestBuildLockInputFromProvider:
         pin = lock_input.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.requires_python is None
-
-    def test_first_configured_index_url_used_when_route_missing(self) -> None:
-        provider = _FakeProvider(listings={"foo": [(Version("1.0"), _wheel_file())]})
-        lock_input = build_lock_input_from_provider(
-            provider,
-            {"foo": Version("1.0")},
-            indexes=(IndexConfig("primary", "https://primary.example/simple/"),),
-        )
-        pin = lock_input.pins["foo"]
-        assert isinstance(pin, IndexPin)
-        assert pin.index == "https://primary.example/simple/"
 
     def test_extras_passed_through(self) -> None:
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), _wheel_file())]})

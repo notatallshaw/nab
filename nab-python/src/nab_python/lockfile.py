@@ -142,12 +142,13 @@ class IndexPin:
     """A package resolved from a Simple-API index.
 
     ``index`` is the URL of the Simple-API root that served the
-    package, matching what PEP 751 expects for ``packages.index``.
+    package, or ``None`` when the serving index cannot be identified.
+    ``packages.index`` is optional under PEP 751.
     """
 
     name: str
     version: str
-    index: str
+    index: str | None = None
     sdist: SdistArtifact | None = None
     wheels: tuple[WheelArtifact, ...] = ()
     requires_python: str | None = None
