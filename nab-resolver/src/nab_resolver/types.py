@@ -80,15 +80,8 @@ class RangeProtocol(Protocol[VersionType_contra]):
         """Complement the range."""
         ...
 
-    @override
-    def __eq__(self, other: object) -> bool:
-        """Test equality."""
-        ...
-
-    @override
-    def __hash__(self) -> int:
-        """Return hash."""
-        ...
+    # __eq__ and __hash__ come from object; redeclaring them in the
+    # Protocol adds no constraint and mypy and zuban disagree on @override.
 
 
 class Term(Generic[PackageType, VersionType]):
