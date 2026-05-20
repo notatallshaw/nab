@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import httpx
 import pytest
@@ -26,9 +26,6 @@ from nab_python.fetch import (
     InMemoryIndex,
     _resolve_overrides,
 )
-
-if TYPE_CHECKING:
-    import asyncio
 
 
 def _coord(**kwargs: object) -> FetchCoordinator:
@@ -238,7 +235,9 @@ class TestFetchCoordinator:
             e1 = coord.request_listing("testpkg")
             e2 = coord.request_listing("testpkg")
             e1.wait(timeout=5)
-            assert e1 is e2
+            e2.wait(timeout=5)
+            # call_count proves dedup without assuming the fetcher thread
+            # cannot interleave between the two Python calls.
             assert route.call_count == 1
 
     @respx.mock
@@ -299,9 +298,17 @@ class TestFetchCoordinator:
     @respx.mock
     def test_request_wheel_metadata_deduplicates(self) -> None:
         """A second concurrent per-wheel fetch reuses the in-flight event."""
+
+        async def slow(request: httpx.Request) -> httpx.Response:
+            # Hold the response so the second call observes the pending
+            # entry instead of a cached result (otherwise Windows wins
+            # the race and exercises the cached early-return path only).
+            await asyncio.sleep(0.2)
+            return httpx.Response(200, text=METADATA_TEXT)
+
         route = respx.get(
             "https://files.example.com/dup-1.0-py3-none-any.whl.metadata"
-        ).mock(return_value=httpx.Response(200, text=METADATA_TEXT))
+        ).mock(side_effect=slow)
         with _coord() as coord:
             args = (
                 "dup",
@@ -311,8 +318,9 @@ class TestFetchCoordinator:
             )
             e1 = coord.request_wheel_metadata(*args)
             e2 = coord.request_wheel_metadata(*args)
-            assert e1 is e2
             e1.wait(timeout=5)
+            e2.wait(timeout=5)
+            # See test_request_listing_deduplicates for why ``is`` is not asserted.
             assert route.call_count == 1
 
     @respx.mock
@@ -433,6 +441,21 @@ class TestFetchCoordinator:
             event.wait(timeout=5)
             assert not coord._crashed
             # store_sdist_metadata(None) was called via the failure handler.
+            assert coord.index.get_metadata("broken", "1.0") is None
+
+    @respx.mock
+    def test_metadata_fetch_failure_records_empty(self) -> None:
+        """When metadata fetch errors, store_metadata(None) unblocks the
+        waiter and the coordinator does not crash."""
+        respx.get("https://files.example.com/broken-1.0.whl.metadata").mock(
+            return_value=httpx.Response(500)
+        )
+        with _coord() as coord:
+            event = coord.request_metadata(
+                "broken", "1.0", "https://files.example.com/broken-1.0.whl.metadata"
+            )
+            event.wait(timeout=5)
+            assert not coord._crashed
             assert coord.index.get_metadata("broken", "1.0") is None
 
     def test_crashed_raises(self) -> None:

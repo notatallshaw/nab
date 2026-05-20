@@ -314,7 +314,7 @@ def _venv_python(venv_path: Path) -> Path:
     r"""Return the venv interpreter path (``Scripts\python.exe`` on Windows)."""
     if sys.platform == "win32":
         return venv_path / "Scripts" / "python.exe"  # pragma: no cover
-    return venv_path / "bin" / "python"
+    return venv_path / "bin" / "python"  # pragma: no cover
 
 
 def _venv_scheme_paths(python_executable: Path) -> dict[str, str]:

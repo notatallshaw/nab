@@ -30,6 +30,7 @@ from nab_python.universal.resolve import (
     _parse_requirements,
     merge_universal_lock_inputs,
 )
+from nab_resolver.errors import ResolutionError
 
 from .strategies import LINUX_ENV, PROPERTY_SETTINGS
 
@@ -130,7 +131,12 @@ class TestMarkerFiltering:
     ) -> None:
         """Requirements with non-matching markers are absent from the parsed dict."""
         linux_env = _fake_tuple().environment
-        out = _parse_requirements(reqs, linux_env)
+        try:
+            out = _parse_requirements(reqs, linux_env)
+        except ResolutionError:
+            # Self-contradictory draws (e.g. ``pkg<0.0``) are rejected
+            # by the function; this property tests marker filtering only.
+            return
         assert all(isinstance(v, VersionRange) for v in out.values())
 
 

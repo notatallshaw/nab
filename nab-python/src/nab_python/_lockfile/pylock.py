@@ -145,8 +145,14 @@ def _relativize_path(target: str | os.PathLike[str], lock_dir: Path) -> str:
     outside ``lock_dir`` still resolves, to a ``../``-prefixed path.
     The result uses POSIX separators, which the spec recommends for
     portable relative paths.
+
+    A Windows cross-drive ValueError falls back to the absolute path.
     """
-    return Path(os.path.relpath(target, lock_dir)).as_posix()
+    try:
+        rel = os.path.relpath(target, lock_dir)
+    except ValueError:
+        rel = os.fspath(target)
+    return Path(rel).as_posix()
 
 
 def _pin_to_package(

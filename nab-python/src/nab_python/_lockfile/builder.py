@@ -135,8 +135,10 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
     if isinstance(raw, datetime):
         return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
     if isinstance(raw, str):
+        # Python 3.10's fromisoformat rejects a trailing 'Z'; 3.11+ accept it.
+        iso = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
         try:
-            dt = datetime.fromisoformat(raw)
+            dt = datetime.fromisoformat(iso)
         except ValueError:
             return None
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)

@@ -24,6 +24,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 
 from ._naming import canonical as _canonical
 from .client import (
@@ -43,7 +44,12 @@ __all__ = [
 
 
 def _parse_file_url(url: str) -> Path:
-    """Resolve a ``file://`` URL to an absolute filesystem path."""
+    """Resolve a ``file://`` URL to an absolute filesystem path.
+
+    Uses :func:`urllib.request.url2pathname` so Windows-style drive
+    paths (``file:///C:/...``) and percent-encoded characters round-trip
+    cleanly across platforms.
+    """
     parsed = urlparse(url)
     if parsed.scheme != "file":
         msg = f"expected file:// URL, got {url!r}"
@@ -51,7 +57,7 @@ def _parse_file_url(url: str) -> Path:
     raw = parsed.path
     if parsed.netloc:
         raw = f"//{parsed.netloc}{raw}"
-    return Path(unquote(raw))
+    return Path(url2pathname(raw))
 
 
 _REQUIRES_PYTHON_ATTR = "data-requires-python"

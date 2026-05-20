@@ -738,9 +738,11 @@ class TestLocalSources:
     def test_absolute_path_unchanged(self, tmp_path: Path) -> None:
         abs_dir = tmp_path / "abs-fork"
         abs_dir.mkdir()
+        # POSIX form avoids ``\U`` escapes in the TOML on Windows.
         path = write(
             tmp_path,
-            f'[[tool.nab.local-sources]]\nname = "abs-fork"\npath = "{abs_dir!s}"\n',
+            f'[[tool.nab.local-sources]]\nname = "abs-fork"\n'
+            f'path = "{abs_dir.as_posix()}"\n',
         )
         srcs = read_pyproject_config(path).local_sources
         assert srcs == (LocalSource(name="abs-fork", path=str(abs_dir.resolve())),)
@@ -1142,17 +1144,17 @@ class TestWorkspaceDiscoveryIntegration:
         self, tmp_path: Path
     ) -> None:
         member = self._ws(tmp_path)
+        # Bare ``/explicit/...`` is drive-relative on Windows; use tmp_path.
+        explicit = (tmp_path / "explicit-alpha").resolve()
         member.write_text(
             '[project]\nname = "alpha"\nversion = "0"\n'
             "[tool.nab]\n"
             "[[tool.nab.local-sources]]\n"
             'name = "alpha"\n'
-            'path = "/explicit/alpha"\n',
+            f'path = "{explicit.as_posix()}"\n',
         )
         config = read_pyproject_config(member)
-        assert config.local_sources == (
-            LocalSource(name="alpha", path="/explicit/alpha"),
-        )
+        assert config.local_sources == (LocalSource(name="alpha", path=str(explicit)),)
 
     def test_workspace_promotes_never_to_build_local_and_logs(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
