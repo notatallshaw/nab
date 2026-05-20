@@ -129,6 +129,11 @@ class NabProjectConfig:
     matrix: MatrixConfig | None = None
     resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST
     workspace: WorkspaceConfig | None = None
+    # Canonical names of workspace members. Populated by
+    # _apply_workspace_discovery; empty otherwise. Distinct from
+    # ``local_sources``, which also carries explicit
+    # ``[[tool.nab.local-sources]]`` entries.
+    workspace_member_names: frozenset[str] = field(default_factory=frozenset)
 
 
 class ConfigError(ValueError):
@@ -202,6 +207,9 @@ def _apply_workspace_discovery(
         config,
         local_sources=merged,
         build_policy=promoted_policy,
+        workspace_member_names=frozenset(
+            canonicalize_name(src.name) for src in discovered
+        ),
     )
 
 
