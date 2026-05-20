@@ -2007,6 +2007,19 @@ class TestPathHelpers:
         assert rel == "a/b"
         assert "\\" not in rel
 
+    def test_relativize_path_cross_drive_falls_back_to_absolute(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cross-drive ValueError falls back to the absolute path."""
+
+        def cross_drive(*_args: object, **_kwargs: object) -> str:
+            msg = "path is on mount 'D:', start on mount 'C:'"
+            raise ValueError(msg)
+
+        monkeypatch.setattr("nab_python._lockfile.pylock.os.path.relpath", cross_drive)
+        target = tmp_path / "elsewhere"
+        assert _relativize_path(target, tmp_path) == target.as_posix()
+
 
 class TestWriteRequirementsWithHashes:
     def test_index_pin_emits_hashes(self) -> None:

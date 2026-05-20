@@ -88,7 +88,9 @@ def _atomic_write(path: Path, data: bytes) -> None:
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
-        tmp_path.replace(path)
+        # Path.replace would route around os.replace on Python 3.10
+        # (pathlib captures it at import time), defeating monkeypatches.
+        os.replace(tmp_path, path)  # noqa: PTH105
     except BaseException:
         with contextlib.suppress(OSError):
             tmp_path.unlink()

@@ -9,8 +9,10 @@ provider implementations can be shared across files.
 from __future__ import annotations
 
 import itertools
+from collections.abc import Mapping
 
 from nab_resolver.ranges import Range
+from nab_resolver.types import Incompatibility, RangeProtocol
 
 
 class FuzzProvider:
@@ -30,7 +32,9 @@ class FuzzProvider:
             return []
         return sorted(self._graph[package].keys(), reverse=True)
 
-    def choose_version(self, package: str, version_range: Range[int]) -> int | None:
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
         """Pick the newest version within the allowed range."""
         for version in self._get_versions(package):
             if version in version_range:
@@ -44,9 +48,9 @@ class FuzzProvider:
     def prioritize(
         self,
         package: str,
-        version_range: Range[int],
-        conflict_counts: dict[str, int],
-        culprit_counts: dict[str, int] | None = None,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[str, int],
+        culprit_counts: Mapping[str, int] | None = None,
     ) -> int:
         """Prioritize by number of matching versions."""
         del conflict_counts, culprit_counts
@@ -60,13 +64,13 @@ class FuzzProvider:
 
     def receive_partial_solution_hint(
         self,
-        positive_ranges: dict[str, Range[int]],
-        decisions: dict[str, int],
+        positive_ranges: Mapping[str, RangeProtocol[int]],
+        decisions: Mapping[str, int],
     ) -> None:
         """No-op: test provider does not use partial solution state."""
         del positive_ranges, decisions
 
-    def consume_pending_clauses(self) -> list[object]:
+    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         """No queued clauses."""
         return []
 
@@ -98,7 +102,9 @@ class PromotingFuzzProvider:
             return []
         return sorted(self._graph[package].keys(), reverse=True)
 
-    def choose_version(self, package: str, version_range: Range[int]) -> int | None:
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
         """Pick the newest version within the allowed range."""
         for version in self._get_versions(package):
             if version in version_range:
@@ -112,9 +118,9 @@ class PromotingFuzzProvider:
     def prioritize(
         self,
         package: str,
-        version_range: Range[int],
-        conflict_counts: dict[str, int],
-        culprit_counts: dict[str, int] | None = None,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[str, int],
+        culprit_counts: Mapping[str, int] | None = None,
     ) -> tuple[int, int]:
         """Promote packages above the conflict threshold."""
         del culprit_counts
@@ -132,13 +138,13 @@ class PromotingFuzzProvider:
 
     def receive_partial_solution_hint(
         self,
-        positive_ranges: dict[str, Range[int]],
-        decisions: dict[str, int],
+        positive_ranges: Mapping[str, RangeProtocol[int]],
+        decisions: Mapping[str, int],
     ) -> None:
         """No-op: test provider does not use partial solution state."""
         del positive_ranges, decisions
 
-    def consume_pending_clauses(self) -> list[object]:
+    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         """No queued clauses."""
         return []
 
@@ -165,7 +171,9 @@ class OldestFirstProvider:
             return []
         return sorted(self._graph[package].keys())
 
-    def choose_version(self, package: str, version_range: Range[int]) -> int | None:
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
         """Pick the oldest version within the allowed range."""
         for version in self._get_versions(package):
             if version in version_range:
@@ -179,9 +187,9 @@ class OldestFirstProvider:
     def prioritize(
         self,
         package: str,
-        version_range: Range[int],
-        conflict_counts: dict[str, int],
-        culprit_counts: dict[str, int] | None = None,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[str, int],
+        culprit_counts: Mapping[str, int] | None = None,
     ) -> int:
         """Prioritize by number of matching versions."""
         del conflict_counts, culprit_counts
@@ -195,13 +203,13 @@ class OldestFirstProvider:
 
     def receive_partial_solution_hint(
         self,
-        positive_ranges: dict[str, Range[int]],
-        decisions: dict[str, int],
+        positive_ranges: Mapping[str, RangeProtocol[int]],
+        decisions: Mapping[str, int],
     ) -> None:
         """No-op: test provider does not use partial solution state."""
         del positive_ranges, decisions
 
-    def consume_pending_clauses(self) -> list[object]:
+    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         """No queued clauses."""
         return []
 

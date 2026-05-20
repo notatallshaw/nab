@@ -202,4 +202,3 @@ requirements = [
     "pyqt5==5.15.11 ; sys_platform != 'win32'",
     "pyqt5-sip==12.18.0 ; sys_platform != 'win32'",
 ]
-

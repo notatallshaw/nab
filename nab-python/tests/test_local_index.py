@@ -33,9 +33,12 @@ class TestParseFileUrl:
         url = tmp_path.as_uri()
         assert _parse_file_url(url) == tmp_path
 
-    def test_url_encoding_round_trip(self) -> None:
-        # Spaces and unicode in the path must round-trip cleanly
-        path = Path("/tmp/with space/foo")
+    def test_url_encoding_round_trip(self, tmp_path: Path) -> None:
+        # Spaces and unicode in the path must round-trip cleanly.
+        # Build under tmp_path so the path is absolute on Windows.
+        path = tmp_path / "with space" / "foo"
+        path.parent.mkdir(parents=True)
+        path.touch()
         url = path.as_uri()
         assert _parse_file_url(url) == path
 

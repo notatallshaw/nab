@@ -3,6 +3,9 @@ and end-to-end resolution with a simple in-memory provider."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import pytest
 
 from nab_resolver.conflict import (
@@ -26,7 +29,12 @@ from nab_resolver.resolver import (
     ResolverObserver,
 )
 from nab_resolver.root import ROOT
-from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+from nab_resolver.types import (
+    Incompatibility,
+    IncompatibilityCause,
+    RangeProtocol,
+    Term,
+)
 
 
 class DictProvider:
@@ -40,7 +48,9 @@ class DictProvider:
             return []
         return sorted(self._packages[package].keys(), reverse=True)
 
-    def choose_version(self, package: str, version_range: Range) -> int | None:
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
         for version in self._get_versions(package):
             if version in version_range:
                 return version
@@ -52,9 +62,9 @@ class DictProvider:
     def prioritize(
         self,
         package: str,
-        version_range: Range,
-        conflict_counts: dict[str, int],
-        culprit_counts: dict[str, int] | None = None,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[str, int],
+        culprit_counts: Mapping[str, int] | None = None,
     ) -> object:
         versions = self._get_versions(package)
         return sum(1 for v in versions if v in version_range)
@@ -65,12 +75,12 @@ class DictProvider:
 
     def receive_partial_solution_hint(
         self,
-        positive_ranges: dict[str, Range],
-        decisions: dict[str, int],
+        positive_ranges: Mapping[str, RangeProtocol[int]],
+        decisions: Mapping[str, int],
     ) -> None:
         """No-op: test provider does not use partial solution state."""
 
-    def consume_pending_clauses(self) -> list:
+    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         """No queued clauses for this in-memory provider."""
         return []
 
@@ -87,9 +97,9 @@ class PromotingProvider(DictProvider):
     def prioritize(
         self,
         package: str,
-        version_range: Range,
-        conflict_counts: dict[str, int],
-        culprit_counts: dict[str, int] | None = None,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[str, int],
+        culprit_counts: Mapping[str, int] | None = None,
     ) -> tuple[bool, int]:
         promoted = conflict_counts.get(package, 0) >= self._CONFLICT_THRESHOLD
         versions = self._get_versions(package)
@@ -105,13 +115,13 @@ class _PendingClauseProvider(DictProvider):
     def __init__(
         self,
         packages: dict[str, dict[int, dict[str, Range]]],
-        clauses: list[Incompatibility],
+        clauses: list[Incompatibility[str, int]],
     ) -> None:
         super().__init__(packages)
         self._queued = list(clauses)
         self._fired = False
 
-    def consume_pending_clauses(self) -> list[Incompatibility]:
+    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         """Return the queued clauses once, then nothing."""
         if self._fired:
             return []
@@ -130,20 +140,22 @@ class _NoCandidateProvider(DictProvider):
         self,
         packages: dict[str, dict[int, dict[str, Range]]],
         target: str,
-        clauses: list[Incompatibility],
+        clauses: list[Incompatibility[str, int]],
     ) -> None:
         super().__init__(packages)
         self._target = target
         self._queued = list(clauses)
         self._refused_target = False
 
-    def choose_version(self, package: str, version_range: Range) -> int | None:
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
         if package == self._target:
             self._refused_target = True
             return None
         return super().choose_version(package, version_range)
 
-    def consume_pending_clauses(self) -> list[Incompatibility]:
+    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         # Only fire on the call right after we returned None for our target.
         if not self._refused_target:
             return []
@@ -161,8 +173,8 @@ class TestPendingClausesHook:
         # is decided at the next-best version (1).
         clause = Incompatibility(
             [
-                Term("root", Range.singleton(1), positive=True),
-                Term("foo", Range.singleton(2), positive=True),
+                Term[str, int]("root", Range.singleton(1), positive=True),
+                Term[str, int]("foo", Range.singleton(2), positive=True),
             ],
             cause=IncompatibilityCause.DEPENDENCY,
         )
@@ -187,8 +199,8 @@ class TestPendingClausesHook:
         # forbid the entire ``foo`` range.
         clause = Incompatibility(
             [
-                Term("root", Range.singleton(1), positive=True),
-                Term("foo", Range.singleton(2), positive=True),
+                Term[str, int]("root", Range.singleton(1), positive=True),
+                Term[str, int]("foo", Range.singleton(2), positive=True),
             ],
             cause=IncompatibilityCause.DEPENDENCY,
         )
@@ -373,9 +385,9 @@ class OrderedProvider(DictProvider):
     def prioritize(
         self,
         package: str,
-        version_range: Range,
-        conflict_counts: dict[str, int],
-        culprit_counts: dict[str, int] | None = None,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[str, int],
+        culprit_counts: Mapping[str, int] | None = None,
     ) -> int:
         return self._order.get(package, 99)
 
@@ -561,7 +573,7 @@ class EventTrackingObserver(ResolverObserver):
     def on_backjump(self, from_level: int, to_level: int) -> None:
         self.events.append(f"backjump:{from_level}->{to_level}")
 
-    def on_no_versions(self, package: str, version_range: Range) -> None:
+    def on_no_versions(self, package: str, version_range: RangeProtocol[int]) -> None:
         self.events.append(f"no_versions:{package}")
 
 
@@ -1366,7 +1378,9 @@ class _ForceBackTrackProvider(DictProvider):
         self._choose_count = 0
         self._fired = False
 
-    def choose_version(self, package: str, version_range: Range) -> int | None:
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
         self._choose_count += 1
         return super().choose_version(package, version_range)
 
@@ -1783,21 +1797,23 @@ class TestForceResolutionStep:
 
         sol.decide(ROOT, 1)
 
+        # Term[Any, int] sidesteps the invariant PackageType TypeVar so
+        # ROOT and str entries can share a list.
+        root_y_terms: list[Term[Any, int]] = [
+            Term(ROOT, Range.singleton(1), positive=True),
+            Term("y", Range.between(1, 10), positive=False),
+        ]
         inc_root_y_wide = Incompatibility(
-            [
-                Term(ROOT, Range.singleton(1), positive=True),
-                Term("y", Range.between(1, 10), positive=False),
-            ],
-            cause=IncompatibilityCause.DEPENDENCY,
+            root_y_terms, cause=IncompatibilityCause.DEPENDENCY
         )
         sol.derive("y", Range.between(1, 10), positive=True, cause=inc_root_y_wide)
 
+        root_x_terms: list[Term[Any, int]] = [
+            Term(ROOT, Range.singleton(1), positive=True),
+            Term("x", Range.singleton(1), positive=False),
+        ]
         inc_root_x = Incompatibility(
-            [
-                Term(ROOT, Range.singleton(1), positive=True),
-                Term("x", Range.singleton(1), positive=False),
-            ],
-            cause=IncompatibilityCause.DEPENDENCY,
+            root_x_terms, cause=IncompatibilityCause.DEPENDENCY
         )
         sol.derive("x", Range.singleton(1), positive=True, cause=inc_root_x)
 

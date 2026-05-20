@@ -2488,12 +2488,14 @@ class TestExtras:
 
     def test_conditional_base_dep_not_extra_gated(self) -> None:
         """A dep with an env marker (not extra) is a base dep."""
+        # ``python_version >= "3.0"`` is true everywhere; ``sys_platform``
+        # would tie the test to one host OS.
         metadata = (
             "Metadata-Version: 2.1\n"
             "Name: foo\n"
             "Version: 1.0\n"
             "Provides-Extra: dev\n"
-            'Requires-Dist: bar>=1.0; sys_platform == "linux"\n'
+            'Requires-Dist: bar>=1.0; python_version >= "3.0"\n'
             'Requires-Dist: baz; extra == "dev"\n'
         )
         coordinator = make_coordinator(

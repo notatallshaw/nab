@@ -43,6 +43,57 @@ nab = "nab.cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Dependency groups feed `nab lock` for CI lockfiles; regenerate via
+# tasks/refresh-locks.sh. Local dev uses hatch envs from hatch.toml.
+[dependency-groups]
+tests = [
+    "pytest>=9",
+    "pytest-timeout>=2.3",
+    "coverage>=7",
+    "hypothesis>=6.100",
+    "respx>=0.22",
+    "httpx[http2]>=0.28",
+    "niquests>=3.18",
+]
+types = [
+    {include-group = "tests"},
+    "mypy>=1.19",
+    "pyright>=1.1.400",
+    "ty>=0.0.20",
+    "pyrefly>=0.50",
+    "zuban>=0.6",
+]
+pre-commit = [
+    "pre-commit>=4",
+]
+
+# `nab lock` config: universal mode resolves the full matrix in one
+# pass, P7D matches the 7-day Dependabot cooldown.
+[tool.nab.workspace]
+members = ["nab-resolver", "nab-python", "nab-index"]
+
+[tool.nab]
+mode = "universal"
+uploaded-prior-to = "P7D"
+
+[tool.nab.matrix]
+python = ">=3.10,<3.15"
+# Platform IDs from nab_python.universal.matrix._PLATFORM_DEFAULTS.
+platforms = [
+    "linux_x86_64",
+    "linux_aarch64",
+    "macos_arm64",
+    "macos_x86_64",
+    "windows_amd64",
+]
+
+# Workspace packages skip the cooldown; bumps land immediately.
+[tool.nab.uploaded-prior-to-package]
+nab = false
+nab-resolver = false
+nab-python = false
+nab-index = false
+
 # https://docs.pytest.org/en/stable/reference/reference.html#confval-addopts
 [tool.pytest.ini_options]
 minversion = "9.0"
@@ -205,6 +256,18 @@ include = [
     "nab-resolver/src",
     "nab-resolver/tests",
 ]
+# Editable installs hide the workspace packages from pyright's auto-detection;
+# point it at the source trees directly so cross-package imports resolve.
+extraPaths = [
+    "nab-resolver/src",
+    "nab-python/src",
+    "nab-index/src",
+    "src",
+]
+
+# https://pyrefly.org/en/docs/configuration/
+[tool.pyrefly]
+project-includes = ["nab-resolver/src"]
 
 # https://mypy.readthedocs.io/en/stable/config_file.html#using-a-pyproject-toml-file
 [tool.mypy]

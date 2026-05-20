@@ -1,0 +1,8 @@
+[default.extend-words]
+# Real words and identifiers typos misreads.
+unparseable = "unparseable"
+contextful = "contextful"
+mis = "mis"
+ba = "ba"
+Sur = "Sur"
+Pn = "Pn"

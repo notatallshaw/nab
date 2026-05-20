@@ -8,8 +8,11 @@ changes resolution behavior.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import ResolutionError, Resolver
+from nab_resolver.types import Incompatibility, RangeProtocol
 
 
 class _TrackingProvider:
@@ -19,7 +22,9 @@ class _TrackingProvider:
         self._packages = packages
         self.seen_conflict_counts: list[dict[str, int]] = []
 
-    def choose_version(self, package: str, version_range: Range) -> int | None:
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
         """Pick the newest version within the allowed range."""
         for version in sorted(self._packages.get(package, {}).keys(), reverse=True):
             if version in version_range:
@@ -33,9 +38,9 @@ class _TrackingProvider:
     def prioritize(
         self,
         package: str,
-        version_range: Range,
-        conflict_counts: dict[str, int],
-        culprit_counts: dict[str, int] | None = None,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[str, int],
+        culprit_counts: Mapping[str, int] | None = None,
     ) -> int:
         """Record conflict counts and prioritize by version count."""
         self.seen_conflict_counts.append(dict(conflict_counts))
@@ -48,16 +53,16 @@ class _TrackingProvider:
 
     def receive_partial_solution_hint(
         self,
-        positive_ranges: dict[str, Range],
-        decisions: dict[str, int],
+        positive_ranges: Mapping[str, RangeProtocol[int]],
+        decisions: Mapping[str, int],
     ) -> None:
         """No-op: test provider does not use partial solution state."""
 
-    def consume_pending_clauses(self) -> list:
+    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         """No queued clauses for this test provider."""
         return []
 
-    def consume_force_backtrack_targets(self) -> list:
+    def consume_force_backtrack_targets(self) -> list[str]:
         """No force-backtrack signal from this test provider."""
         return []
 
@@ -69,7 +74,9 @@ class _PromotingProvider:
         self._packages = packages
         self.seen_conflict_counts: list[dict[str, int]] = []
 
-    def choose_version(self, package: str, version_range: Range) -> int | None:
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
         """Pick the newest version within the allowed range."""
         for version in sorted(self._packages.get(package, {}).keys(), reverse=True):
             if version in version_range:
@@ -83,9 +90,9 @@ class _PromotingProvider:
     def prioritize(
         self,
         package: str,
-        version_range: Range,
-        conflict_counts: dict[str, int],
-        culprit_counts: dict[str, int] | None = None,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[str, int],
+        culprit_counts: Mapping[str, int] | None = None,
     ) -> tuple[int, int]:
         """Promoted packages sort first (0 before 1)."""
         self.seen_conflict_counts.append(dict(conflict_counts))
@@ -100,16 +107,16 @@ class _PromotingProvider:
 
     def receive_partial_solution_hint(
         self,
-        positive_ranges: dict[str, Range],
-        decisions: dict[str, int],
+        positive_ranges: Mapping[str, RangeProtocol[int]],
+        decisions: Mapping[str, int],
     ) -> None:
         """No-op: test provider does not use partial solution state."""
 
-    def consume_pending_clauses(self) -> list:
+    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         """No queued clauses for this test provider."""
         return []
 
-    def consume_force_backtrack_targets(self) -> list:
+    def consume_force_backtrack_targets(self) -> list[str]:
         """No force-backtrack signal from this test provider."""
         return []
 

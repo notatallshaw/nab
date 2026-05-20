@@ -379,8 +379,10 @@ def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime | N
     if duration_match is not None:
         days = int(duration_match.group(1))
         return anchor - timedelta(days=days)
+    # Python 3.10's fromisoformat rejects a trailing 'Z'; 3.11+ accept it.
+    iso_value = f"{value[:-1]}+00:00" if value.endswith("Z") else value
     try:
-        dt = datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(iso_value)
     except ValueError as exc:
         msg = (
             "uploaded-prior-to must be an ISO 8601 datetime with"
