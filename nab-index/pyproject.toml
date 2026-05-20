@@ -20,6 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "packaging>=24.0",
+    "truststore>=0.10",
     "typing_extensions>=4.6",
     "urllib3>=2.0",
 ]

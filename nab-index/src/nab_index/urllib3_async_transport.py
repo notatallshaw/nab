@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json as _json
+import ssl
 from typing import TYPE_CHECKING, Any
 
+import truststore
 import urllib3
 
 if TYPE_CHECKING:
@@ -23,6 +25,25 @@ __all__ = [
 
 
 _HTTP_BAD_REQUEST = 400
+
+
+class _SSLContext(truststore.SSLContext):
+    """truststore SSLContext that answers urllib3-future's cert probe.
+
+    urllib3-future removed the ``ssl_context is None`` guard from
+    ``ssl_wrap_socket`` in commit ``23d13d6`` (Jun 2025) and now calls
+    ``context.cert_store_stats()`` whenever no ``ca_certs`` is supplied;
+    truststore's ``cert_store_stats`` raises ``NotImplementedError`` by
+    design (``sethmlarson/truststore`` commit ``63dc9e1``, Feb 2023).
+    Returning a non-empty count tells urllib3-future the context already
+    has trust roots, which is true: truststore delegates verification to
+    the OS framework. Upstream ``urllib3`` 2.x is unaffected because PR
+    1566 (Apr 2019) left the guard in place. Drop this subclass once
+    urllib3-future restores the guard.
+    """
+
+    def cert_store_stats(self) -> dict[str, int]:
+        return {"x509_ca": 1, "x509": 1, "crl": 0}
 
 
 class _Urllib3Response:
@@ -69,7 +90,11 @@ class Urllib3AsyncTransport:
 
     def __init__(self, *, num_pools: int = 10, maxsize: int = 50) -> None:
         """Create a transport."""
-        self._pool = urllib3.PoolManager(num_pools=num_pools, maxsize=maxsize)
+        self._pool = urllib3.PoolManager(
+            num_pools=num_pools,
+            maxsize=maxsize,
+            ssl_context=_SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+        )
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None

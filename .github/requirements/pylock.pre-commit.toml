@@ -1014,6 +1014,30 @@ size = 6675
 sha256 = "188306098d013b691fcadc011abd66727d3c414c571bb01b1a174ba8c983cf90"
 
 [[packages]]
+name = "truststore"
+version = "0.10.4"
+requires-python = ">=3.10"
+index = "https://pypi.org/simple/"
+
+[packages.sdist]
+name = "truststore-0.10.4.tar.gz"
+upload-time = 2025-08-12 18:49:02.730234+00:00
+url = "https://files.pythonhosted.org/packages/53/a3/1585216310e344e8102c22482f6060c7a6ea0322b63e026372e6dcefcfd6/truststore-0.10.4.tar.gz"
+size = 26169
+
+[packages.sdist.hashes]
+sha256 = "9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301"
+
+[[packages.wheels]]
+name = "truststore-0.10.4-py3-none-any.whl"
+upload-time = 2025-08-12 18:49:01.460601+00:00
+url = "https://files.pythonhosted.org/packages/19/97/56608b2249fe206a67cd573bc93cd9896e1efb9e98bce9c163bcdc704b88/truststore-0.10.4-py3-none-any.whl"
+size = 18660
+
+[packages.wheels.hashes]
+sha256 = "adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981"
+
+[[packages]]
 name = "typeguard"
 version = "4.5.1"
 requires-python = ">=3.9"

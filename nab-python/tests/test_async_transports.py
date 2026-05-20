@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import ssl
 import tarfile
 from collections.abc import Mapping
 from typing import Any
@@ -13,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 import respx
+import truststore
 import urllib3
 
 from nab_index.client import AsyncSimpleClient, _extract_sdist_files
@@ -20,6 +22,7 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.niquests_async_transport import NiquestsAsyncTransport
 from nab_index.urllib3_async_transport import (
     Urllib3AsyncTransport,
+    _SSLContext,
     _Urllib3Response,
 )
 from nab_python.fetch import FetchCoordinator
@@ -67,6 +70,14 @@ class TestHttpxAsyncTransport:
                 await transport.aclose()
 
         assert asyncio.run(go()) == "hello"
+
+    def test_uses_truststore_ssl_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """AsyncClient gets a truststore SSLContext via verify=."""
+        cls = MagicMock()
+        monkeypatch.setattr("nab_index.httpx_async_transport.httpx.AsyncClient", cls)
+        HttpxAsyncTransport()
+        verify = cls.call_args.kwargs["verify"]
+        assert isinstance(verify, truststore.SSLContext)
 
 
 class TestNiquestsAsyncTransport:
@@ -228,6 +239,32 @@ class TestUrllib3AsyncTransport:
         adapter = _Urllib3Response(fake)
         assert adapter.status_code == 304
         assert adapter.headers["etag"] == "abc"
+
+    def test_uses_truststore_ssl_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PoolManager gets a truststore SSLContext via ssl_context=."""
+        captured: dict[str, Any] = {}
+
+        def fake_pool_manager(**kw: Any) -> MagicMock:
+            captured.update(kw)
+            return MagicMock(spec=urllib3.PoolManager)
+
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager",
+            fake_pool_manager,
+        )
+        Urllib3AsyncTransport()
+        assert isinstance(captured["ssl_context"], truststore.SSLContext)
+
+    def test_ssl_context_satisfies_urllib3_cert_check(self) -> None:
+        """``_SSLContext`` returns a non-empty CA count for urllib3-future.
+
+        urllib3-future calls ``cert_store_stats()`` to decide whether to
+        load default certs; truststore raises ``NotImplementedError``
+        there, so the subclass returns a non-zero ``x509_ca`` count.
+        """
+        ctx = _SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        stats = ctx.cert_store_stats()
+        assert stats["x509_ca"] >= 1
 
 
 class TestAsyncSimpleClient:
