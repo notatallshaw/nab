@@ -1,0 +1,90 @@
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  pre-commit:
+    name: pre-commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: .github/requirements/pylock.pre-commit.toml
+
+      - name: Upgrade pip to PEP 751 install support
+        run: python -m pip install --upgrade "pip>=26.1"
+
+      - name: Install pre-commit
+        run: pip install -r .github/requirements/pylock.pre-commit.toml
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit on all files
+        run: pre-commit run --show-diff-on-failure --color=always --all-files
+
+  types:
+    name: ${{ matrix.checker }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        checker: [mypy, pyright, ty, pyrefly, zuban]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: .github/requirements/pylock.types.toml
+
+      - name: Upgrade pip to PEP 751 install support
+        run: python -m pip install --upgrade "pip>=26.1"
+
+      - name: Install type-checking deps
+        run: pip install -r .github/requirements/pylock.types.toml
+
+      - name: Install workspace packages
+        run: pip install --no-deps -e nab-resolver -e nab-python -e nab-index -e .
+
+      - name: Run ${{ matrix.checker }}
+        # Pyright needs --pythonpath to discover the venv; the other
+        # checkers find it via sys.executable or PATH.
+        run: |
+          case "${CHECKER}" in
+            mypy)    python -m mypy nab-resolver/src ;;
+            pyright) python -m pyright --pythonpath "$(which python)" ;;
+            ty)      ty check nab-resolver/src ;;
+            pyrefly) pyrefly check nab-resolver/src ;;
+            zuban)   zuban check nab-resolver/src ;;
+          esac
+        env:
+          CHECKER: ${{ matrix.checker }}

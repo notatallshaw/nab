@@ -33,4 +33,3 @@ guides/universal
 * Universal resolution across a user-declared `(python, platform)`
   matrix.  Opt-in via `[tool.nab].mode = "universal"`; the API and
   output format are still subject to change.
-

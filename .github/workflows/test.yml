@@ -1,0 +1,102 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, windows, macos]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        name: Install Python ${{ matrix.python-version }}
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: .github/requirements/pylock.tests.toml
+          allow-prereleases: true
+
+      - name: Upgrade pip to PEP 751 install support
+        run: python -m pip install --upgrade "pip>=26.1"
+
+      - name: Install third-party deps
+        run: pip install -r .github/requirements/pylock.tests.toml
+
+      - name: Install workspace packages
+        run: pip install --no-deps -e nab-resolver -e nab-python -e nab-index -e .
+
+      - name: Run tests with coverage
+        run: |
+          python -m coverage run -m pytest
+          python -m coverage combine
+          python -m coverage report
+
+  property-tests:
+    name: Property tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HYPOTHESIS_PROFILE: ci
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: .github/requirements/pylock.tests.toml
+          allow-prereleases: true
+
+      - name: Upgrade pip to PEP 751 install support
+        run: python -m pip install --upgrade "pip>=26.1"
+
+      - name: Install third-party deps
+        run: pip install -r .github/requirements/pylock.tests.toml
+
+      - name: Install workspace packages
+        run: pip install --no-deps -e nab-resolver -e nab-python -e nab-index -e .
+
+      - name: Run property-based tests
+        # The crosshair file imports hypothesis-crosshair at module
+        # level; opt in via the [envs.crosshair] hatch env.
+        run: python -m pytest -m property --ignore=nab-resolver/tests/property/test_crosshair_ranges.py
+
+  pass:
+    name: All tests pass
+    if: always()
+    needs:
+      - test
+      - property-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe  # v1.2.2
+        with:
+          jobs: ${{ toJSON(needs) }}
