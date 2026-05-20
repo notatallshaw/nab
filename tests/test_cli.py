@@ -112,6 +112,26 @@ def _universal_pyproject(tmp_path: Path) -> Path:
     )
 
 
+def _workspace_pyproject(tmp_path: Path, *, universal: bool = False) -> Path:
+    """Build a workspace root with one member named ``alpha``."""
+    member_dir = tmp_path / "alpha"
+    member_dir.mkdir()
+    (member_dir / "pyproject.toml").write_text(
+        '[project]\nname = "alpha"\nversion = "0"\n'
+    )
+    body = '[project]\nname = "ws"\nversion = "0"\ndependencies = ["foo"]\n'
+    if universal:
+        body += (
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+    body += '[tool.nab.workspace]\nmembers = ["alpha"]\n'
+    return _make_pyproject(tmp_path, body)
+
+
 def _universal_result(*, success: bool, error: str | None = None) -> UniversalResult:
     """Build a real :class:`UniversalResult` with one matrix tuple."""
     matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
@@ -829,6 +849,176 @@ class TestLockCommandUniversal:
         # file is written.
         assert not (tmp_path / "constraints-3.11.txt").exists()
         assert not (tmp_path / "constraints-3.12.txt").exists()
+
+
+class TestNoEmitWorkspace:
+    """``--no-emit-workspace`` drops workspace pins from the lockfile."""
+
+    @staticmethod
+    def _alpha_and_foo_result() -> ResolutionResult:
+        """A specific-mode result with a workspace pin (alpha) and foo."""
+        return ResolutionResult(
+            pins={"alpha": V("0"), "foo": V("1.0")},
+            lock_input=LockInput(
+                pins={
+                    "alpha": _foo_index_pin("0", "alpha"),
+                    "foo": _foo_index_pin("1.0", "foo"),
+                }
+            ),
+        )
+
+    @staticmethod
+    def _alpha_and_foo_universal() -> UniversalResult:
+        """A universal result with alpha + foo on a single tuple."""
+        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        tup = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment=dict(_LINUX_311_ENV),
+            platform_spec=PlatformSpec("linux_x86_64"),
+        )
+        pins = {"alpha": V("0"), "foo": V("1.0")}
+        lock_input = LockInput(
+            pins={
+                "alpha": _foo_index_pin("0", "alpha"),
+                "foo": _foo_index_pin("1.0", "foo"),
+            }
+        )
+        tr = TupleResult(
+            tuple_=tup, success=True, pins=pins, error=None, lock_input=lock_input
+        )
+        return UniversalResult(matrix=matrix, tuple_results=[tr])
+
+    def test_specific_pylock_drops_workspace_pin(self, tmp_path: Path) -> None:
+        """Specific mode + pylock with the flag set drops the workspace pin."""
+        pyproject = _workspace_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_pyproject", return_value=self._alpha_and_foo_result()
+        ):
+            lock(pyproject, output=out, no_emit_workspace=True)
+        text = out.read_text()
+        assert 'name = "foo"' in text
+        assert 'name = "alpha"' not in text
+
+    def test_specific_pylock_flag_off_keeps_workspace_pin(self, tmp_path: Path) -> None:
+        """Without the flag, workspace pins remain in the lockfile."""
+        pyproject = _workspace_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_pyproject", return_value=self._alpha_and_foo_result()
+        ):
+            lock(pyproject, output=out)
+        text = out.read_text()
+        assert 'name = "alpha"' in text
+
+    def test_specific_count_message_reflects_filter(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The ``Wrote ... (N packages)`` count drops by the filtered amount."""
+        pyproject = _workspace_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_pyproject", return_value=self._alpha_and_foo_result()
+        ):
+            lock(pyproject, output=out, no_emit_workspace=True)
+        assert "(1 packages)" in capsys.readouterr().err
+
+    def test_specific_requirements_drops_workspace_pin(self, tmp_path: Path) -> None:
+        """Requirements format also honours --no-emit-workspace."""
+        pyproject = _workspace_pyproject(tmp_path)
+        out = tmp_path / "requirements.txt"
+        with patch(
+            "nab.cli.resolve_pyproject", return_value=self._alpha_and_foo_result()
+        ):
+            lock(pyproject, output=out, format="requirements", no_emit_workspace=True)
+        text = out.read_text()
+        assert "foo==1.0" in text
+        assert "alpha==" not in text
+
+    def test_universal_pylock_drops_workspace_pin(self, tmp_path: Path) -> None:
+        """Universal pylock drops workspace pins from the merged output."""
+        pyproject = _workspace_pyproject(tmp_path, universal=True)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_universal_pyproject",
+            return_value=self._alpha_and_foo_universal(),
+        ):
+            lock(pyproject, output=out, no_emit_workspace=True)
+        text = out.read_text()
+        assert 'name = "foo"' in text
+        assert 'name = "alpha"' not in text
+
+    def test_universal_requirements_stdout_drops_workspace_pin(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Universal requirements + stdout drops workspace pin lines."""
+        pyproject = _workspace_pyproject(tmp_path, universal=True)
+        with patch(
+            "nab.cli.resolve_universal_pyproject",
+            return_value=self._alpha_and_foo_universal(),
+        ):
+            lock(
+                pyproject,
+                format="requirements-without-hashes",
+                no_emit_workspace=True,
+            )
+        out = capsys.readouterr().out
+        assert "foo==1.0" in out
+        assert "alpha==" not in out
+
+    def test_universal_requirements_template_drops_workspace_pin(
+        self, tmp_path: Path
+    ) -> None:
+        """Universal requirements + templated --output drops workspace pins."""
+        pyproject = _workspace_pyproject(tmp_path, universal=True)
+        out = tmp_path / "constraints-{python_version}.txt"
+        with patch(
+            "nab.cli.resolve_universal_pyproject",
+            return_value=self._alpha_and_foo_universal(),
+        ):
+            lock(
+                pyproject,
+                output=out,
+                format="requirements-without-hashes",
+                no_emit_workspace=True,
+            )
+        text = (tmp_path / "constraints-3.11.txt").read_text()
+        assert "foo==1.0" in text
+        assert "alpha==" not in text
+
+    def test_universal_requirements_single_tuple_file_drops_workspace_pin(
+        self, tmp_path: Path
+    ) -> None:
+        """Single-tuple universal + plain --output path filters workspace pins."""
+        pyproject = _workspace_pyproject(tmp_path, universal=True)
+        out = tmp_path / "requirements.txt"
+        with patch(
+            "nab.cli.resolve_universal_pyproject",
+            return_value=self._alpha_and_foo_universal(),
+        ):
+            lock(
+                pyproject,
+                output=out,
+                format="requirements-without-hashes",
+                no_emit_workspace=True,
+            )
+        text = out.read_text()
+        assert "foo==1.0" in text
+        assert "alpha==" not in text
+
+    def test_flag_without_workspace_is_a_noop(self, tmp_path: Path) -> None:
+        """No workspace declared: --no-emit-workspace leaves pins intact."""
+        # _make_pyproject builds a plain project with no [tool.nab.workspace].
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_pyproject", return_value=self._alpha_and_foo_result()
+        ):
+            lock(pyproject, output=out, no_emit_workspace=True)
+        text = out.read_text()
+        assert 'name = "alpha"' in text
+        assert 'name = "foo"' in text
 
 
 class TestRelockDiffSummary:
