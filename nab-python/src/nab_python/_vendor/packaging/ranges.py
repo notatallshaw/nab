@@ -1,14 +1,16 @@
 # This file is dual licensed under the terms of the Apache License, Version
 # 2.0, and the BSD License. See the LICENSE file in the root of this repository
 # for complete details.
-"""Public :class:`VersionRange` API and supporting range helpers.
+"""Public :class:`VersionRange` API.
 
 The :class:`VersionRange` class exposes a set-algebra view of the
 versions accepted by a :class:`~packaging.specifiers.Specifier` or
-:class:`~packaging.specifiers.SpecifierSet`. Private helpers in this
-module also drive the range-filter hot path used by
-:meth:`Specifier.contains` / :meth:`Specifier.filter` and
-:meth:`SpecifierSet.contains` / :meth:`SpecifierSet.filter`.
+:class:`~packaging.specifiers.SpecifierSet`. Bound primitives, range
+algebra, and the spec-to-bounds dispatch live in
+:mod:`packaging._range_utils`; this module composes them into the
+public class plus the :meth:`VersionRange.to_specifier_set` encoders,
+``__repr__``, and pickle helpers that only :class:`VersionRange`
+itself uses.
 
 .. testsetup::
 
@@ -19,8 +21,6 @@ module also drive the range-filter hot path used by
 
 from __future__ import annotations
 
-import enum
-import functools
 import typing
 from typing import (
     TYPE_CHECKING,
@@ -29,11 +29,29 @@ from typing import (
     Union,
 )
 
+from ._range_utils import (
+    FULL_RANGE,
+    NEG_INF,
+    POS_INF,
+    BoundaryKind,
+    BoundaryVersion,
+    LowerBound,
+    UpperBound,
+    bound_match_string,
+    bounds_for_spec,
+    filter_by_ranges,
+    intersect_ranges,
+    intersect_specifier_bounds,
+    matches_bounds_only,
+    range_is_empty,
+)
+from ._version_utils import coerce_version
 from .version import InvalidVersion, Version
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
 
+    from ._range_utils import Interval
     from .specifiers import Specifier, SpecifierSet
 
 
@@ -44,469 +62,21 @@ def __dir__() -> list[str]:
     return __all__
 
 
-#: The smallest possible PEP 440 version. No valid version is less than this.
-_MIN_VERSION: Final[Version] = Version("0.dev0")
-
 #: Packed pickle form of a single bound: ``(version_str_or_None,
 #: inclusive, kind_or_None)``. Uses only strings, bools, and ``None``
 #: so the format stays stable across packaging releases.
 _PackedBound = tuple[Union[str, None], bool, Union[str, None]]
 
-
-def _trim_release(release: tuple[int, ...]) -> tuple[int, ...]:
-    """Strip trailing zeros from a release tuple."""
-    end = len(release)
-    while end > 1 and release[end - 1] == 0:
-        end -= 1
-    return release if end == len(release) else release[:end]
-
-
-def _next_prefix_dev0(version: Version) -> Version:
-    """Smallest version in the next prefix: ``1.2 -> 1.3.dev0``."""
-    release = (*version.release[:-1], version.release[-1] + 1)
-    return Version.from_parts(epoch=version.epoch, release=release, dev=0)
-
-
-def _base_dev0(version: Version) -> Version:
-    """The ``.dev0`` of a version's base release: ``1.2 -> 1.2.dev0``."""
-    return Version.from_parts(epoch=version.epoch, release=version.release, dev=0)
-
-
-def _coerce_version(version: Version | str) -> Version | None:
-    """Parse *version*; ``None`` if invalid."""
-    if not isinstance(version, Version):
-        try:
-            version = Version(version)
-        except InvalidVersion:
-            return None
-    return version
-
-
-class _BoundaryKind(enum.Enum):
-    """Where a boundary marker sits in the version ordering."""
-
-    AFTER_LOCALS = enum.auto()  # after V+local, before V.post0
-    AFTER_POSTS = enum.auto()  # after V.postN, before next release
-
-
-@functools.total_ordering
-class _BoundaryVersion:
-    """A synthetic point between two real PEP 440 versions.
-
-    PEP 440 specifier semantics imply boundaries between real versions
-    (``<=1.0`` includes ``1.0+local``; ``>1.0`` excludes ``1.0.post0``).
-    Relative to a base version V::
-
-        V < V+local < AFTER_LOCALS(V) < V.post0 < AFTER_POSTS(V)
-
-    AFTER_LOCALS is the upper bound of ``<=V``, ``==V``, ``!=V`` (no
-    local), and the lower bound of the upper-side range of ``!=V``.
-    AFTER_POSTS is the lower bound of ``>V`` (V final or pre-release),
-    excluding V's post-releases per PEP 440.
-    """
-
-    __slots__ = (
-        "_cached_dev",
-        "_cached_epoch",
-        "_cached_post",
-        "_cached_pre",
-        "_cached_trimmed_release",
-        "_kind",
-        "version",
-    )
-
-    def __init__(self, version: Version, kind: _BoundaryKind) -> None:
-        self.version = version
-        self._kind = kind
-        self._cached_trimmed_release = _trim_release(version.release)
-        self._cached_epoch = version.epoch
-        self._cached_pre = version.pre
-        self._cached_post = version.post
-        self._cached_dev = version.dev
-
-    def _is_family(self, other: Version) -> bool:
-        """Is ``other`` a version that this boundary sorts above?"""
-        if other.epoch != self._cached_epoch:
-            return False
-        # Inline release-trim comparison: other.release matches the
-        # trimmed release iff its leading slice is equal and any extra
-        # components are zero. Avoids _trim_release's tuple allocation.
-        other_release = other.release
-        trimmed_release = self._cached_trimmed_release
-        trimmed_length = len(trimmed_release)
-        if len(other_release) < trimmed_length:
-            return False
-        if other_release[:trimmed_length] != trimmed_release:
-            return False
-        for i in range(trimmed_length, len(other_release)):
-            if other_release[i] != 0:
-                return False
-        if other.pre != self._cached_pre:
-            return False
-        if self._kind == _BoundaryKind.AFTER_LOCALS:
-            # Local family: same public version, any local label.
-            return other.post == self._cached_post and other.dev == self._cached_dev
-        # Post family: V itself + any post-release of V.
-        return other.dev == self._cached_dev or other.post is not None
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, _BoundaryVersion):
-            return self.version == other.version and self._kind == other._kind
-        return NotImplemented
-
-    def __lt__(self, other: _BoundaryVersion | Version) -> bool:
-        if isinstance(other, _BoundaryVersion):
-            if self.version != other.version:
-                return self.version < other.version
-            return self._kind.value < other._kind.value  # pragma: no cover
-        # boundary < other_version iff V < other AND other not in family.
-        # The cheap V >= other path short-circuits before the family check.
-        if not (self.version < other):
-            return False
-        return not self._is_family(other)
-
-    def __gt__(self, other: _BoundaryVersion | Version) -> bool:
-        # Defined directly to bypass functools.total_ordering's
-        # NotImplemented round-trip on reflected ``Version < boundary``.
-        if isinstance(other, _BoundaryVersion):
-            if self.version != other.version:
-                return self.version > other.version
-            return self._kind.value > other._kind.value
-        if self.version >= other:
-            return True
-        return self._is_family(other)
-
-    def __hash__(self) -> int:
-        return hash((self.version, self._kind))
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self.version!r}, {self._kind.name})"
-
-
-if TYPE_CHECKING:
-    _VersionOrBoundary = Union[Version, _BoundaryVersion, None]
-
-
-def _make_above_after_posts(version: Version) -> Callable[[Version], bool]:
-    """Predicate ``parsed > AFTER_POSTS(v)`` for a lower bound.
-
-    Per PEP 440, ``>V`` excludes V's post-releases unless V is itself
-    a post-release. AFTER_POSTS sits above V and every V.postN (with
-    or without local), and just below the next release.
-    """
-    version_ge = version.__ge__
-    version_epoch = version.epoch
-    version_pre = version.pre
-    version_dev = version.dev
-    version_release_trimmed = _trim_release(version.release)
-    trimmed_length = len(version_release_trimmed)
-
-    def above(parsed: Version) -> bool:
-        if version_ge(parsed):
-            return False
-        # parsed > v cmpkey-wise: above the boundary iff NOT in v's
-        # post family.
-        if parsed.epoch != version_epoch:
-            return True
-        parsed_release = parsed.release
-        if len(parsed_release) < trimmed_length:
-            return True
-        if parsed_release[:trimmed_length] != version_release_trimmed:
-            return True
-        for i in range(trimmed_length, len(parsed_release)):
-            if parsed_release[i] != 0:
-                return True
-        if parsed.pre != version_pre:
-            return True
-        # In post family iff: same dev as v (covers v itself + v+local),
-        # or any post-release (covers v.postN + v.postN+local).
-        if parsed.dev == version_dev or parsed.post is not None:
-            return False
-        # Different dev with no post means parsed sorts before v
-        # cmpkey-wise, in which case version_ge returned True already.
-        return False  # pragma: no cover
-
-    return above
-
-
-def _make_above_after_locals(version: Version) -> Callable[[Version], bool]:
-    """Predicate ``parsed > AFTER_LOCALS(v)`` for a lower bound.
-
-    Used by the upper-side range of ``!=v`` (when *v* has no local
-    segment). AFTER_LOCALS sits above v and every ``v+local`` but
-    just below ``v.post0``.
-    """
-    version_ge = version.__ge__
-    version_epoch = version.epoch
-    version_pre = version.pre
-    version_post = version.post
-    version_dev = version.dev
-    version_release_trimmed = _trim_release(version.release)
-    trimmed_length = len(version_release_trimmed)
-
-    def above(parsed: Version) -> bool:
-        if version_ge(parsed):
-            return False
-        # parsed > v cmpkey-wise: above the boundary iff NOT in v's
-        # local family (same public version, any local segment).
-        if parsed.epoch != version_epoch:
-            return True
-        parsed_release = parsed.release
-        if len(parsed_release) < trimmed_length:
-            return True
-        if parsed_release[:trimmed_length] != version_release_trimmed:
-            return True
-        for i in range(trimmed_length, len(parsed_release)):
-            if parsed_release[i] != 0:
-                return True
-        if parsed.pre != version_pre:
-            return True
-        if parsed.post != version_post:
-            return True
-        return parsed.dev != version_dev
-
-    return above
-
-
-def _make_below_after_locals(version: Version) -> Callable[[Version], bool]:
-    """Predicate ``parsed <= AFTER_LOCALS(v)`` for an upper bound.
-
-    Used by ``<=v``, ``==v``, ``!=v`` (no local). ``parsed`` is at or
-    below the boundary when it is at or below v cmpkey-wise, or when
-    it is in v's local family.
-    """
-    version_ge = version.__ge__
-    version_epoch = version.epoch
-    version_pre = version.pre
-    version_post = version.post
-    version_dev = version.dev
-    version_release_trimmed = _trim_release(version.release)
-    trimmed_length = len(version_release_trimmed)
-
-    def below(parsed: Version) -> bool:
-        if version_ge(parsed):
-            return True
-        # parsed > v cmpkey-wise: below the boundary iff in v's local
-        # family.
-        if parsed.epoch != version_epoch:
-            return False
-        parsed_release = parsed.release
-        if len(parsed_release) < trimmed_length:
-            return False
-        if parsed_release[:trimmed_length] != version_release_trimmed:
-            return False
-        for i in range(trimmed_length, len(parsed_release)):
-            if parsed_release[i] != 0:
-                return False
-        if parsed.pre != version_pre:
-            return False
-        if parsed.post != version_post:
-            return False
-        return parsed.dev == version_dev
-
-    return below
-
-
-def _make_below_after_posts(version: Version) -> Callable[[Version], bool]:
-    """Predicate ``parsed <= AFTER_POSTS(v)`` for an upper bound.
-
-    Mirror of :func:`_make_above_after_posts`. Produced only by
-    :meth:`VersionRange.complement` of a range whose lower bound is
-    AFTER_POSTS(v). ``parsed`` is at or below the boundary when it is
-    at or below v cmpkey-wise, or when it is in v's post family.
-    """
-    version_ge = version.__ge__
-    version_epoch = version.epoch
-    version_pre = version.pre
-    version_dev = version.dev
-    version_release_trimmed = _trim_release(version.release)
-    trimmed_length = len(version_release_trimmed)
-
-    def below(parsed: Version) -> bool:
-        if version_ge(parsed):
-            return True
-        # parsed > v cmpkey-wise: below the boundary iff in v's post family.
-        if parsed.epoch != version_epoch:
-            return False
-        parsed_release = parsed.release
-        if len(parsed_release) < trimmed_length:
-            return False
-        if parsed_release[:trimmed_length] != version_release_trimmed:
-            return False
-        for i in range(trimmed_length, len(parsed_release)):
-            if parsed_release[i] != 0:
-                return False
-        if parsed.pre != version_pre:
-            return False
-        # Same dev as v with no post means parsed sorts <= v already
-        # (handled by version_ge above); reach here only with parsed.post set.
-        return parsed.dev == version_dev or parsed.post is not None
-
-    return below
-
-
-@functools.total_ordering
-class _LowerBound:
-    """Lower bound of a version range.
-
-    A ``version`` of ``None`` is unbounded below (-inf). At equal
-    versions, ``[v`` sorts before ``(v`` (inclusive starts earlier).
-    """
-
-    __slots__ = ("_above", "inclusive", "version")
-
-    def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
-        self.version = version
-        self.inclusive = inclusive
-        # Pre-bind a predicate "is parsed at or above this lower
-        # bound?" for the hot filter / contains loops. One direct
-        # call per check, no operator-dispatch chain.
-        if version is None:
-            self._above: Callable[[Version], bool] | None = None
-        elif isinstance(version, _BoundaryVersion):
-            # >v produces an AFTER_POSTS lower bound; the upper-side
-            # range of !=v produces an AFTER_LOCALS lower bound.
-            if version._kind == _BoundaryKind.AFTER_POSTS:
-                self._above = _make_above_after_posts(version.version)
-            else:
-                self._above = _make_above_after_locals(version.version)
-        elif inclusive:
-            self._above = version.__le__
-        else:
-            self._above = version.__lt__
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, _LowerBound):
-            return NotImplemented  # pragma: no cover
-        return self.version == other.version and self.inclusive == other.inclusive
-
-    def __lt__(self, other: _LowerBound) -> bool:
-        if not isinstance(other, _LowerBound):  # pragma: no cover
-            return NotImplemented
-        # -inf < anything (except -inf itself).
-        if self.version is None:
-            return other.version is not None
-        if other.version is None:
-            return False
-        if self.version != other.version:
-            return self.version < other.version
-        # ``[v < (v``: inclusive starts earlier.
-        return self.inclusive and not other.inclusive
-
-    def __hash__(self) -> int:
-        return hash((self.version, self.inclusive))
-
-    def __repr__(self) -> str:
-        bracket = "[" if self.inclusive else "("
-        return f"<{self.__class__.__name__} {bracket}{self.version!r}>"
-
-
-@functools.total_ordering
-class _UpperBound:
-    """Upper bound of a version range.
-
-    A ``version`` of ``None`` is unbounded above (+inf). At equal
-    versions, ``v)`` sorts before ``v]`` (exclusive ends earlier).
-    """
-
-    __slots__ = ("_below", "inclusive", "version")
-
-    def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
-        self.version = version
-        self.inclusive = inclusive
-        # Pre-bind a predicate "is parsed at or below this upper
-        # bound?". See _LowerBound for the rationale.
-        if version is None:
-            self._below: Callable[[Version], bool] | None = None
-        elif isinstance(version, _BoundaryVersion):
-            # Standard specifiers only ever produce AFTER_LOCALS upper
-            # bounds (from <=v / ==v / !=v with no local). Complement
-            # reverses bound roles, so a range whose lower bound is
-            # AFTER_POSTS(v) becomes an upper bound after complementing.
-            if version._kind == _BoundaryKind.AFTER_LOCALS:
-                self._below = _make_below_after_locals(version.version)
-            else:
-                self._below = _make_below_after_posts(version.version)
-        elif inclusive:
-            self._below = version.__ge__
-        else:
-            self._below = version.__gt__
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, _UpperBound):
-            return NotImplemented  # pragma: no cover
-        return self.version == other.version and self.inclusive == other.inclusive
-
-    def __lt__(self, other: _UpperBound) -> bool:
-        if not isinstance(other, _UpperBound):  # pragma: no cover
-            return NotImplemented
-        # Nothing < +inf (except +inf itself).
-        if self.version is None:
-            return False
-        if other.version is None:
-            return True
-        if self.version != other.version:
-            return self.version < other.version
-        # ``v) < v]``: exclusive ends earlier.
-        return not self.inclusive and other.inclusive
-
-    def __hash__(self) -> int:
-        return hash((self.version, self.inclusive))
-
-    def __repr__(self) -> str:
-        bracket = "]" if self.inclusive else ")"
-        return f"<{self.__class__.__name__} {self.version!r}{bracket}>"
-
-
-if TYPE_CHECKING:
-    #: A single contiguous version range, as a (lower, upper) pair.
-    _VersionRange = tuple[_LowerBound, _UpperBound]
-
-
-_NEG_INF = _LowerBound(None, False)
-_POS_INF = _UpperBound(None, False)
-_FULL_RANGE: tuple[_VersionRange] = ((_NEG_INF, _POS_INF),)
-
-
-def _range_is_empty(lower: _LowerBound, upper: _UpperBound) -> bool:
-    """True when the range ``(lower, upper)`` contains no versions."""
-    if lower.version is None or upper.version is None:
-        return False
-    if lower.version == upper.version:
-        return not (lower.inclusive and upper.inclusive)
-    return lower.version > upper.version
-
-
-def _intersect_ranges(
-    left: Sequence[_VersionRange],
-    right: Sequence[_VersionRange],
-) -> list[_VersionRange]:
-    """Intersect two sorted, non-overlapping range lists (two-pointer merge)."""
-    result: list[_VersionRange] = []
-    left_index = right_index = 0
-    while left_index < len(left) and right_index < len(right):
-        left_lower, left_upper = left[left_index]
-        right_lower, right_upper = right[right_index]
-
-        lower = max(left_lower, right_lower)
-        upper = min(left_upper, right_upper)
-
-        if not _range_is_empty(lower, upper):
-            result.append((lower, upper))
-
-        # Advance whichever side has the smaller upper bound.
-        if left_upper < right_upper:
-            left_index += 1
-        else:
-            right_index += 1
-
-    return result
+#: Cached empty frozenset for :meth:`VersionRange._build_simple` to
+#: assign to ``_admit`` / ``_reject``; saves a frozenset construction
+#: on every cold-path range build.
+_EMPTY_FROZENSET: Final[frozenset[str]] = frozenset()
 
 
 def _union_ranges(
-    left: Sequence[_VersionRange],
-    right: Sequence[_VersionRange],
-) -> list[_VersionRange]:
+    left: Sequence[Interval],
+    right: Sequence[Interval],
+) -> list[Interval]:
     """Union two sorted, non-overlapping range lists.
 
     Linear merge over the two pre-sorted inputs followed by a single
@@ -519,7 +89,7 @@ def _union_ranges(
         return list(left)
 
     # Merge two sorted lists by lower bound (linear, no resort).
-    merged_input: list[_VersionRange] = []
+    merged_input: list[Interval] = []
     left_index = right_index = 0
     while left_index < len(left) and right_index < len(right):
         if left[left_index][0] <= right[right_index][0]:
@@ -531,7 +101,7 @@ def _union_ranges(
     merged_input.extend(left[left_index:])
     merged_input.extend(right[right_index:])
 
-    merged: list[_VersionRange] = [merged_input[0]]
+    merged: list[Interval] = [merged_input[0]]
     for lower, upper in merged_input[1:]:
         prev_lower, prev_upper = merged[-1]
 
@@ -559,8 +129,8 @@ def _union_ranges(
 
 
 def _complement_ranges(
-    ranges: Sequence[_VersionRange],
-) -> list[_VersionRange]:
+    ranges: Sequence[Interval],
+) -> list[Interval]:
     """Complement a sorted, non-overlapping range list.
 
     Yields the gaps between ranges plus a leading gap before the first
@@ -568,176 +138,43 @@ def _complement_ranges(
     so complement-of-complement round-trips back to the input.
     """
     if not ranges:
-        return list(_FULL_RANGE)
+        return list(FULL_RANGE)
 
-    result: list[_VersionRange] = []
-    prev_upper: _UpperBound | None = None
+    result: list[Interval] = []
+    prev_upper: UpperBound | None = None
 
     for lower, upper in ranges:
         if prev_upper is None:
             # Leading gap from -inf up to the first range's lower.
             if lower.version is not None:
-                gap_upper = _UpperBound(lower.version, not lower.inclusive)
-                result.append((_NEG_INF, gap_upper))
+                gap_upper = UpperBound(lower.version, inclusive=not lower.inclusive)
+                result.append((NEG_INF, gap_upper))
         else:
-            gap_lower = _LowerBound(prev_upper.version, not prev_upper.inclusive)
-            gap_upper = _UpperBound(lower.version, not lower.inclusive)
+            gap_lower = LowerBound(
+                prev_upper.version, inclusive=not prev_upper.inclusive
+            )
+            gap_upper = UpperBound(lower.version, inclusive=not lower.inclusive)
             # Adjacent ranges in the input are non-touching by
             # construction, so the gap between them is non-empty.
-            if not _range_is_empty(gap_lower, gap_upper):  # pragma: no branch
+            if not range_is_empty(gap_lower, gap_upper):  # pragma: no branch
                 result.append((gap_lower, gap_upper))
         prev_upper = upper
 
     # Trailing gap from the final range's upper to +inf.
     if prev_upper is not None and prev_upper.version is not None:
-        gap_lower = _LowerBound(prev_upper.version, not prev_upper.inclusive)
-        result.append((gap_lower, _POS_INF))
+        gap_lower = LowerBound(prev_upper.version, inclusive=not prev_upper.inclusive)
+        result.append((gap_lower, POS_INF))
 
     return result
 
 
-def _filter_by_ranges(
-    ranges: Sequence[_VersionRange],
-    iterable: Iterable[Any],
-    key: Callable[[Any], Version | str] | None,
-    prereleases: bool | None,
-) -> Iterator[Any]:
-    """Filter *iterable* against precomputed version *ranges*.
-
-    With ``prereleases=None``, the PEP 440 default applies: pre-releases
-    are excluded unless no final matches, in which case buffered
-    pre-releases come out at the end.
-    """
-    if prereleases is None:
-        # PEP 440 default: yield finals immediately; buffer
-        # pre-releases until at least one final has been emitted.
-        nonfinal_buffer: list[Any] = []
-        found_final = False
-
-        if len(ranges) == 1:
-            lower, upper = ranges[0]
-            above = lower._above
-            below = upper._below
-            for item in iterable:
-                parsed = _coerce_version(item if key is None else key(item))
-                if parsed is None:
-                    continue
-                if above is not None and not above(parsed):
-                    continue
-                if below is not None and not below(parsed):
-                    continue
-                if parsed.is_prerelease:
-                    if not found_final:
-                        nonfinal_buffer.append(item)
-                else:
-                    found_final = True
-                    yield item
-            if not found_final:
-                yield from nonfinal_buffer
-            return
-
-        for item in iterable:
-            parsed = _coerce_version(item if key is None else key(item))
-            if parsed is None:
-                continue
-            for lower, upper in ranges:
-                above = lower._above
-                if above is not None and not above(parsed):
-                    break
-                below = upper._below
-                if below is None or below(parsed):
-                    if parsed.is_prerelease:
-                        if not found_final:
-                            nonfinal_buffer.append(item)
-                    else:
-                        found_final = True
-                        yield item
-                    break
-        if not found_final:
-            yield from nonfinal_buffer
-        return
-
-    exclude_prereleases = prereleases is False
-
-    if len(ranges) == 1:
-        # Hot path: most specifiers and small SpecifierSets reduce to
-        # a single contiguous range.
-        lower, upper = ranges[0]
-        above = lower._above
-        below = upper._below
-        for item in iterable:
-            parsed = _coerce_version(item if key is None else key(item))
-            if parsed is None:
-                continue
-            if exclude_prereleases and parsed.is_prerelease:
-                continue
-            if above is not None and not above(parsed):
-                continue
-            if below is None or below(parsed):
-                yield item
-        return
-
-    for item in iterable:
-        parsed = _coerce_version(item if key is None else key(item))
-        if parsed is None:
-            continue
-        if exclude_prereleases and parsed.is_prerelease:
-            continue
-        for lower, upper in ranges:
-            above = lower._above
-            if above is not None and not above(parsed):
-                break
-            below = upper._below
-            if below is None or below(parsed):
-                yield item
-                break
-
-
-def _matches_bounds_only(
-    bounds: Sequence[_VersionRange],
-    item: Version,
-) -> bool:
-    """Pure-bounds membership check for a parsed Version."""
-    if not bounds:
-        return False
-    if len(bounds) == 1:
-        lower, upper = bounds[0]
-        above = lower._above
-        if above is not None and not above(item):
-            return False
-        below = upper._below
-        return below is None or below(item)
-    for lower, upper in bounds:
-        above = lower._above
-        if above is not None and not above(item):
-            return False
-        below = upper._below
-        if below is None or below(item):
-            return True
-    return False
-
-
-def _bound_match_string(bounds: Sequence[_VersionRange], s: str) -> bool:
-    """Bound-only check for the case-folded string *s*.
-
-    Full-range bounds admit any string. Other shapes require *s* to
-    parse and fall inside the intervals.
-    """
-    if tuple(bounds) == _FULL_RANGE:
-        return True
-    parsed = _coerce_version(s)
-    if parsed is None:
-        return False
-    return _matches_bounds_only(bounds, parsed)
-
-
 def _lowest_release_at_or_above(
-    value: Version | _BoundaryVersion | None,
+    value: Version | BoundaryVersion | None,
 ) -> Version | None:
     """Smallest non-pre-release version at or above *value*, or None."""
     if value is None:
         return None
-    if isinstance(value, _BoundaryVersion):
+    if isinstance(value, BoundaryVersion):
         inner_version = value.version
         if inner_version.is_prerelease:
             # AFTER_LOCALS(1.0a1) -> nearest non-pre is 1.0
@@ -752,7 +189,7 @@ def _lowest_release_at_or_above(
     return value.__replace__(pre=None, dev=None, local=None)
 
 
-def _ranges_are_prerelease_only(ranges: Sequence[_VersionRange]) -> bool:
+def _ranges_are_prerelease_only(ranges: Sequence[Interval]) -> bool:
     """``True`` when every range in *ranges* contains only pre-releases.
 
     Used to detect unsatisfiable specifier sets when ``prereleases=False``:
@@ -769,140 +206,51 @@ def _ranges_are_prerelease_only(ranges: Sequence[_VersionRange]) -> bool:
     return True
 
 
-def _wildcard_ranges(op: str, base: Version) -> list[_VersionRange]:
-    """Ranges for ``==V.*`` and ``!=V.*``.
-
-    ``==1.2.*`` -> ``[1.2.dev0, 1.3.dev0)``;  ``!=1.2.*`` -> complement.
-    """
-    lower = _base_dev0(base)
-    upper = _next_prefix_dev0(base)
-    if op == "==":
-        return [(_LowerBound(lower, True), _UpperBound(upper, False))]
-    # !=
-    return [
-        (_NEG_INF, _UpperBound(lower, False)),
-        (_LowerBound(upper, True), _POS_INF),
-    ]
-
-
-def _standard_ranges(op: str, version: Version, has_local: bool) -> list[_VersionRange]:
-    """Ranges for the standard PEP 440 operators (no wildcard, no ===).
-
-    *has_local* indicates whether the spec string included a ``+local``
-    segment; relevant only for ``==`` / ``!=`` to decide whether the
-    upper bound includes V's local family.
-    """
-    if op == ">=":
-        return [(_LowerBound(version, True), _POS_INF)]
-
-    if op == "<=":
-        return [
-            (
-                _NEG_INF,
-                _UpperBound(
-                    _BoundaryVersion(version, _BoundaryKind.AFTER_LOCALS), True
-                ),
-            )
-        ]
-
-    if op == ">":
-        if version.dev is not None:
-            # >V.devN: dev versions have no post-releases, so the
-            # next real version is V.dev(N+1).
-            lower_bound = version.__replace__(dev=version.dev + 1, local=None)
-            return [(_LowerBound(lower_bound, True), _POS_INF)]
-        if version.post is not None:
-            # >V.postN: next real version is V.post(N+1).dev0.
-            lower_bound = version.__replace__(post=version.post + 1, dev=0, local=None)
-            return [(_LowerBound(lower_bound, True), _POS_INF)]
-        # >V (final or pre-release V): exclude V itself, V+local, and
-        # every V.postN per PEP 440.
-        return [
-            (
-                _LowerBound(
-                    _BoundaryVersion(version, _BoundaryKind.AFTER_POSTS), False
-                ),
-                _POS_INF,
-            )
-        ]
-
-    if op == "<":
-        # <V excludes pre-releases of V when V is not a pre-release.
-        # V.dev0 is the earliest pre-release of V.
-        bound = (
-            version if version.is_prerelease else version.__replace__(dev=0, local=None)
-        )
-        if bound <= _MIN_VERSION:
-            return []
-        return [(_NEG_INF, _UpperBound(bound, False))]
-
-    # ==, !=: local versions of V match when the spec has no local segment.
-    after_locals = _BoundaryVersion(version, _BoundaryKind.AFTER_LOCALS)
-    upper = version if has_local else after_locals
-
-    if op == "==":
-        return [(_LowerBound(version, True), _UpperBound(upper, True))]
-
-    if op == "!=":
-        return [
-            (_NEG_INF, _UpperBound(version, False)),
-            (_LowerBound(upper, False), _POS_INF),
-        ]
-
-    if op == "~=":
-        prefix = version.__replace__(release=version.release[:-1])
-        return [
-            (_LowerBound(version, True), _UpperBound(_next_prefix_dev0(prefix), False))
-        ]
-
-    raise ValueError(f"Unknown operator: {op!r}")  # pragma: no cover
-
-
-def _format_lower(bound: _LowerBound) -> str:
+def _format_lower(bound: LowerBound) -> str:
     if bound.version is None:
         return "(-inf"
     bracket = "[" if bound.inclusive else "("
     inner = (
         bound.version.version
-        if isinstance(bound.version, _BoundaryVersion)
+        if isinstance(bound.version, BoundaryVersion)
         else bound.version
     )
     return f"{bracket}{inner}"
 
 
-def _format_upper(bound: _UpperBound) -> str:
+def _format_upper(bound: UpperBound) -> str:
     if bound.version is None:
         return "+inf)"
     bracket = "]" if bound.inclusive else ")"
     inner = (
         bound.version.version
-        if isinstance(bound.version, _BoundaryVersion)
+        if isinstance(bound.version, BoundaryVersion)
         else bound.version
     )
     return f"{inner}{bracket}"
 
 
-def _pack_bound(bound: _LowerBound | _UpperBound) -> _PackedBound:
+def _pack_bound(bound: LowerBound | UpperBound) -> _PackedBound:
     """Serialize a bound to a primitive triple. See _PackedBound."""
     bound_version = bound.version
     if bound_version is None:
         return (None, bound.inclusive, None)
-    if isinstance(bound_version, _BoundaryVersion):
-        return (str(bound_version.version), bound.inclusive, bound_version._kind.name)
+    if isinstance(bound_version, BoundaryVersion):
+        return (str(bound_version.version), bound.inclusive, bound_version.kind.name)
     return (str(bound_version), bound.inclusive, None)
 
 
 def _unpack_bound(
-    cls: type[_LowerBound | _UpperBound],
+    cls: type[LowerBound | UpperBound],
     packed: _PackedBound,
-) -> _LowerBound | _UpperBound:
+) -> LowerBound | UpperBound:
     """Reverse of _pack_bound."""
     version_str, inclusive, kind_name = packed
     if version_str is None:
         return cls(None, inclusive)
     base = Version(version_str)
     if kind_name is not None:
-        return cls(_BoundaryVersion(base, _BoundaryKind[kind_name]), inclusive)
+        return cls(BoundaryVersion(base, BoundaryKind[kind_name]), inclusive)
     return cls(base, inclusive)
 
 
@@ -920,8 +268,8 @@ def _restore_version_range(
     """
     bounds = tuple(
         (
-            typing.cast("_LowerBound", _unpack_bound(_LowerBound, lower)),
-            typing.cast("_UpperBound", _unpack_bound(_UpperBound, upper)),
+            typing.cast("LowerBound", _unpack_bound(LowerBound, lower)),
+            typing.cast("UpperBound", _unpack_bound(UpperBound, upper)),
         )
         for lower, upper in packed_bounds
     )
@@ -967,7 +315,7 @@ class _NotEncodable:
 _NOT_ENCODABLE: Final = _NotEncodable()
 
 
-def _encode_lower(lower: _LowerBound) -> list[str] | _NotEncodable:
+def _encode_lower(lower: LowerBound) -> list[str] | _NotEncodable:
     """Encode a lower bound as a list of specifier fragments.
 
     ``[]`` for ``-inf``, one or more fragments otherwise, or
@@ -978,10 +326,10 @@ def _encode_lower(lower: _LowerBound) -> list[str] | _NotEncodable:
     lower_version = lower.version
     if lower_version is None:
         return []
-    if isinstance(lower_version, _BoundaryVersion):
-        if lower_version._kind == _BoundaryKind.AFTER_POSTS and not lower.inclusive:
+    if isinstance(lower_version, BoundaryVersion):
+        if lower_version.kind == BoundaryKind.AFTER_POSTS and not lower.inclusive:
             return [f">{lower_version.version}"]
-        if lower_version._kind == _BoundaryKind.AFTER_LOCALS:
+        if lower_version.kind == BoundaryKind.AFTER_LOCALS:
             # Strictly above V's local family. ``>=V,!=V`` produces
             # ``[V, +inf)`` minus ``[V, AFTER_LOCALS(V)]``, leaving
             # ``(AFTER_LOCALS(V), +inf)``.
@@ -994,7 +342,7 @@ def _encode_lower(lower: _LowerBound) -> list[str] | _NotEncodable:
     return _NOT_ENCODABLE
 
 
-def _encode_upper(upper: _UpperBound) -> list[str] | _NotEncodable:
+def _encode_upper(upper: UpperBound) -> list[str] | _NotEncodable:
     """Encode an upper bound as a list of specifier fragments.
 
     ``[]`` for ``+inf``, one or more fragments otherwise, or
@@ -1003,8 +351,8 @@ def _encode_upper(upper: _UpperBound) -> list[str] | _NotEncodable:
     upper_version = upper.version
     if upper_version is None:
         return []
-    if isinstance(upper_version, _BoundaryVersion):
-        if upper_version._kind == _BoundaryKind.AFTER_LOCALS and upper.inclusive:
+    if isinstance(upper_version, BoundaryVersion):
+        if upper_version.kind == BoundaryKind.AFTER_LOCALS and upper.inclusive:
             return [f"<={upper_version.version}"]
         return _NOT_ENCODABLE
     if not upper.inclusive:
@@ -1020,8 +368,8 @@ def _encode_upper(upper: _UpperBound) -> list[str] | _NotEncodable:
 
 
 def _encode_interval(
-    lower: _LowerBound,
-    upper: _UpperBound,
+    lower: LowerBound,
+    upper: UpperBound,
 ) -> list[str] | None:
     """Encode one interval as a list of specifier fragments, or ``None``.
 
@@ -1033,8 +381,8 @@ def _encode_interval(
     if (
         lower.version is not None
         and upper.version is not None
-        and not isinstance(lower.version, _BoundaryVersion)
-        and not isinstance(upper.version, _BoundaryVersion)
+        and not isinstance(lower.version, BoundaryVersion)
+        and not isinstance(upper.version, BoundaryVersion)
         and lower.inclusive
         and upper.inclusive
         and lower.version == upper.version
@@ -1051,8 +399,8 @@ def _encode_interval(
 
 
 def _detect_not_equal(
-    left_upper: _UpperBound,
-    right_lower: _LowerBound,
+    left_upper: UpperBound,
+    right_lower: LowerBound,
 ) -> Version | None:
     """If ``[..., V (excl)] [AFTER_LOCALS(V) (excl), ...]`` matches, return V.
 
@@ -1060,13 +408,13 @@ def _detect_not_equal(
     bounds. Only ``!=V`` pattern that can appear inside a multi-interval
     range.
     """
-    if isinstance(left_upper.version, _BoundaryVersion):
+    if isinstance(left_upper.version, BoundaryVersion):
         return None
     if left_upper.version is None or left_upper.inclusive:
         return None
-    if not isinstance(right_lower.version, _BoundaryVersion):
+    if not isinstance(right_lower.version, BoundaryVersion):
         return None
-    if right_lower.version._kind != _BoundaryKind.AFTER_LOCALS:
+    if right_lower.version.kind != BoundaryKind.AFTER_LOCALS:
         return None
     if right_lower.inclusive:
         # AFTER_LOCALS lower with inclusive=True does not arise from
@@ -1080,8 +428,8 @@ def _detect_not_equal(
 
 
 def _detect_not_equal_wildcard(
-    left_upper: _UpperBound,
-    right_lower: _LowerBound,
+    left_upper: UpperBound,
+    right_lower: LowerBound,
 ) -> Version | None:
     """If ``[..., V.dev0 (excl)] [V_next.dev0 (incl), ...]`` matches, return V.
 
@@ -1092,8 +440,8 @@ def _detect_not_equal_wildcard(
     """
     left_upper_v = left_upper.version
     right_lower_v = right_lower.version
-    if isinstance(left_upper_v, _BoundaryVersion) or isinstance(
-        right_lower_v, _BoundaryVersion
+    if isinstance(left_upper_v, BoundaryVersion) or isinstance(
+        right_lower_v, BoundaryVersion
     ):
         return None
     if left_upper_v is None or right_lower_v is None:
@@ -1143,8 +491,11 @@ class VersionRange:
     version-ordering rule.
     """
 
-    __slots__ = ("_admit", "_bounds", "_reject")
-    _bounds: tuple[_VersionRange, ...]
+    __slots__ = ("_admit", "_bounds", "_is_simple", "_reject")
+    _bounds: tuple[Interval, ...]
+    #: Whether :meth:`filter` can dispatch straight to the bounds-only
+    #: filter: no admit/reject literals and bounds aren't the full range.
+    _is_simple: bool
     #: Case-folded strings the range admits in addition to its bounds.
     #: ``===wat`` produces ``_admit = {"wat"}``.
     _admit: frozenset[str]
@@ -1164,7 +515,7 @@ class VersionRange:
     @classmethod
     def _build(
         cls,
-        bounds: tuple[_VersionRange, ...],
+        bounds: tuple[Interval, ...],
         admit: frozenset[str] = frozenset(),
         reject: frozenset[str] = frozenset(),
     ) -> VersionRange:
@@ -1177,13 +528,30 @@ class VersionRange:
         if admit and reject:
             admit = admit - reject
         if admit:
-            admit = frozenset(s for s in admit if not _bound_match_string(bounds, s))
+            admit = frozenset(s for s in admit if not bound_match_string(bounds, s))
         if reject:
-            reject = frozenset(s for s in reject if _bound_match_string(bounds, s))
+            reject = frozenset(s for s in reject if bound_match_string(bounds, s))
         instance = object.__new__(cls)
         instance._bounds = bounds
         instance._admit = admit
         instance._reject = reject
+        # Pure-bound range: filter can skip the admission dispatch.
+        instance._is_simple = not admit and not reject and bounds != FULL_RANGE
+        return instance
+
+    @classmethod
+    def _build_simple(cls, bounds: tuple[Interval, ...]) -> VersionRange:
+        """Internal fast factory for ranges with no admit/reject literals.
+
+        Equivalent to ``cls._build(bounds)`` when both literal sets are
+        empty; skips the (empty) literal-handling branches that dominate
+        cold-path overhead for specifiers built from PEP 440 operators.
+        """
+        instance = object.__new__(cls)
+        instance._bounds = bounds
+        instance._admit = _EMPTY_FROZENSET
+        instance._reject = _EMPTY_FROZENSET
+        instance._is_simple = bounds != FULL_RANGE
         return instance
 
     def _has_literals(self) -> bool:
@@ -1210,7 +578,7 @@ class VersionRange:
         >>> VersionRange.full().is_empty
         False
         """
-        return cls._build(_FULL_RANGE)
+        return cls._build(FULL_RANGE)
 
     @classmethod
     def singleton(cls, version: Version | str) -> VersionRange:
@@ -1227,8 +595,8 @@ class VersionRange:
         """
         if not isinstance(version, Version):
             version = Version(version)
-        lower = _LowerBound(version, True)
-        upper = _UpperBound(version, True)
+        lower = LowerBound(version, inclusive=True)
+        upper = UpperBound(version, inclusive=True)
         return cls._build(((lower, upper),))
 
     def intersection(self, other: VersionRange) -> VersionRange:
@@ -1241,8 +609,8 @@ class VersionRange:
         True
         """
         if not self._has_literals() and not other._has_literals():
-            return self._build(tuple(_intersect_ranges(self._bounds, other._bounds)))
-        new_bounds = tuple(_intersect_ranges(self._bounds, other._bounds))
+            return self._build(tuple(intersect_ranges(self._bounds, other._bounds)))
+        new_bounds = tuple(intersect_ranges(self._bounds, other._bounds))
         return self._combine_literals(other, new_bounds, intersect=True)
 
     def union(self, other: VersionRange) -> VersionRange:
@@ -1284,7 +652,7 @@ class VersionRange:
     def _combine_literals(
         self,
         other: VersionRange,
-        new_bounds: tuple[_VersionRange, ...],
+        new_bounds: tuple[Interval, ...],
         *,
         intersect: bool,
     ) -> VersionRange:
@@ -1302,7 +670,7 @@ class VersionRange:
             self_in = self._matches_literal(literal)
             other_in = other._matches_literal(literal)
             want = (self_in and other_in) if intersect else (self_in or other_in)
-            bound_in = _bound_match_string(new_bounds, literal)
+            bound_in = bound_match_string(new_bounds, literal)
             if want and not bound_in:
                 admits.add(literal)
             elif not want and bound_in:
@@ -1317,7 +685,7 @@ class VersionRange:
             return False
         if literal in self._admit:
             return True
-        return _bound_match_string(self._bounds, literal)
+        return bound_match_string(self._bounds, literal)
 
     def __and__(self, other: object) -> VersionRange:
         """Operator alias for :meth:`intersection`."""
@@ -1356,13 +724,9 @@ class VersionRange:
         >>> list(r.filter(["0.9", "1.5", "2.0"]))
         ['1.5']
         """
-        if self._admit or self._reject:
-            return self._filter_with_admission(iterable, key, prereleases)
-        if self._bounds == _FULL_RANGE:
-            # Full-range carve-out: admit any item, parseable or not,
-            # so behaviour matches ``SpecifierSet("").filter``.
-            return self._filter_with_admission(iterable, key, prereleases)
-        return _filter_by_ranges(self._bounds, iterable, key, prereleases)
+        if self._is_simple:
+            return filter_by_ranges(self._bounds, iterable, key, prereleases)
+        return self._filter_with_admission(iterable, key, prereleases)
 
     def _filter_with_admission(
         self,
@@ -1378,7 +742,7 @@ class VersionRange:
         """
         admit_set = self._admit
         reject_set = self._reject
-        full_bounds = self._bounds == _FULL_RANGE
+        full_bounds = self._bounds == FULL_RANGE
 
         def admit(item: Any) -> tuple[bool, Version | None]:  # noqa: ANN401
             raw: Version | str = item if key is None else key(item)
@@ -1386,8 +750,8 @@ class VersionRange:
             if reject_set and raw_lower in reject_set:
                 return False, None
             if admit_set and raw_lower in admit_set:
-                return True, _coerce_version(raw)
-            parsed = _coerce_version(raw)
+                return True, coerce_version(raw)
+            parsed = coerce_version(raw)
             if parsed is None:
                 return full_bounds, None
             if not full_bounds and not self._matches_bounds(parsed):
@@ -1443,33 +807,15 @@ class VersionRange:
     def from_specifier(cls, specifier: Specifier) -> VersionRange:
         """Return the :class:`VersionRange` accepted by *specifier*.
 
-        Results are cached on the *specifier* instance.
-
         >>> isinstance(VersionRange.from_specifier(Specifier(">=1.0")), VersionRange)
         True
         """
-        cached = specifier._range_cache
-        if cached is not None:
-            return cached
-
         op = specifier.operator
+        ver = specifier.version
         if op == "===":
-            arb_result = cls._build((), admit=frozenset({specifier.version.lower()}))
-            specifier._range_cache = arb_result
-            return arb_result
+            return cls._build(bounds=(), admit=frozenset({ver.lower()}))
 
-        ver_str = specifier.version
-        result: VersionRange
-        if ver_str.endswith(".*"):
-            base = specifier._require_spec_version(ver_str[:-2])
-            result = cls._build(tuple(_wildcard_ranges(op, base)))
-        else:
-            version = specifier._require_spec_version(ver_str)
-            has_local = "+" in ver_str
-            result = cls._build(tuple(_standard_ranges(op, version, has_local)))
-
-        specifier._range_cache = result
-        return result
+        return cls._build_simple(bounds=bounds_for_spec(op, ver))
 
     @classmethod
     def from_specifier_set(cls, specifier_set: SpecifierSet) -> VersionRange:
@@ -1477,8 +823,9 @@ class VersionRange:
 
         The intersection of every specifier in the set. An empty
         :class:`SpecifierSet` yields the unbounded range; an
-        unsatisfiable set yields an empty :class:`VersionRange`.
-        Results are cached on the *specifier_set* instance.
+        unsatisfiable set yields an empty :class:`VersionRange`. To reuse
+        the result, call :meth:`SpecifierSet.to_range`, which caches it
+        on the instance.
 
         >>> isinstance(
         ...     VersionRange.from_specifier_set(SpecifierSet(">=1.0,<2.0")),
@@ -1488,50 +835,43 @@ class VersionRange:
         >>> VersionRange.from_specifier_set(SpecifierSet(">=2.0,<1.0")).is_empty
         True
         """
-        cached = specifier_set._range_cache
-        if cached is not None:
-            return cached
+        specs = []
+        arbitrary_specs = []
+        for spec in specifier_set:
+            specs.append(spec)
+            if spec.operator == "===":
+                arbitrary_specs.append(spec)
 
-        # ``===`` literals are handled separately from rangelike specs:
-        # the rangelike specs build the bounds, and a single literal
-        # is admitted only if it also satisfies those bounds.
-        arbitrary_specs = [s for s in specifier_set._specs if s.operator == "==="]
-        rangelike_specs = [s for s in specifier_set._specs if s.operator != "==="]
-
-        if not rangelike_specs:
-            rangelike_result: VersionRange = cls._build(_FULL_RANGE)
-        else:
-            tmp: VersionRange | None = None
-            for s in rangelike_specs:
-                sub = cls.from_specifier(s)
-                if tmp is None:
-                    tmp = sub
-                else:
-                    tmp = tmp.intersection(sub)
-                    if tmp.is_empty:
-                        break
-            assert tmp is not None
-            rangelike_result = tmp
+        if not specs:
+            return cls._build(bounds=FULL_RANGE)
 
         if not arbitrary_specs:
-            specifier_set._range_cache = rangelike_result
-            return rangelike_result
+            # Common case: no ``===`` literals. Intersect raw bound
+            # tuples; one wrapper allocation for the result.
+            return cls._build_simple(intersect_specifier_bounds(specs))
+
+        # ``===`` literals need separate handling: the rangelike specs
+        # build the bounds, and a single literal is admitted only if
+        # it also satisfies those bounds.
+        rangelike_specs = [s for s in specs if s.operator != "==="]
+        if not rangelike_specs:
+            rangelike_result: VersionRange = cls._build(bounds=FULL_RANGE)
+        else:
+            rangelike_result = cls._build_simple(
+                intersect_specifier_bounds(rangelike_specs)
+            )
 
         # Each ``===L_i`` requires the candidate's string to equal L_i.
         # Distinct literals can never all match, so the result is empty.
         literals_lower = {s.version.lower() for s in arbitrary_specs}
-        result: VersionRange
         if len(literals_lower) > 1:
-            result = cls._build(())
-        else:
-            (literal_lower,) = literals_lower
-            if literal_lower in rangelike_result:
-                result = cls._build((), admit=frozenset({literal_lower}))
-            else:
-                result = cls._build(())
+            return cls._build(bounds=())
 
-        specifier_set._range_cache = result
-        return result
+        (literal_lower,) = literals_lower
+        if literal_lower in rangelike_result:
+            return cls._build(bounds=(), admit=frozenset({literal_lower}))
+
+        return cls._build(bounds=())
 
     def to_specifier_set(self) -> SpecifierSet | None:
         """Return a single :class:`SpecifierSet` whose
@@ -1566,7 +906,7 @@ class VersionRange:
             # ``<0`` parses to upper = 0.dev0 (excl), the smallest
             # possible PEP 440 version, so the range contains nothing.
             return SpecifierSet("<0")
-        if self._bounds == _FULL_RANGE:
+        if self._bounds == FULL_RANGE:
             return SpecifierSet("")
 
         # Walk left-to-right, merging adjacent intervals whose gap is
@@ -1622,7 +962,7 @@ class VersionRange:
             return (single,)
         if self.is_empty:
             return (SpecifierSet("<0"),)
-        if self._bounds == _FULL_RANGE:
+        if self._bounds == FULL_RANGE:
             return (SpecifierSet(""),)
 
         # Prefer the single-set form when it exists; that catches
@@ -1700,7 +1040,7 @@ class VersionRange:
         if self._reject:
             return False
         for literal in self._admit:
-            parsed = _coerce_version(literal)
+            parsed = coerce_version(literal)
             if parsed is None or not parsed.is_prerelease:
                 return False
         if self._bounds:
@@ -1737,7 +1077,7 @@ class VersionRange:
                 return False
             if item_str in self._admit:
                 return True
-        if self._bounds == _FULL_RANGE:
+        if self._bounds == FULL_RANGE:
             # ``SpecifierSet("")`` admits any string. Match that.
             return True
         if not isinstance(item, Version):
@@ -1749,7 +1089,7 @@ class VersionRange:
 
     def _matches_bounds(self, item: Version) -> bool:
         """Bound-only membership check; ignores admit/reject."""
-        return _matches_bounds_only(self._bounds, item)
+        return matches_bounds_only(self._bounds, item)
 
     def __eq__(self, other: object) -> bool:
         """Structural equality. Two ranges are equal when they admit
