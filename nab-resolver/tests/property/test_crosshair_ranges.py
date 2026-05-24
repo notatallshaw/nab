@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("hypothesis_crosshair")
+pytest.importorskip("hypothesis_crosshair_provider")
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st

@@ -55,6 +55,11 @@ tests = [
     "httpx[http2]>=0.28",
     "niquests>=3.18",
 ]
+crosshair = [
+    {include-group = "tests"},
+    "crosshair-tool>=0.0.104",
+    "hypothesis-crosshair>=0.0.28",
+]
 types = [
     {include-group = "tests"},
     "mypy>=1.19",
