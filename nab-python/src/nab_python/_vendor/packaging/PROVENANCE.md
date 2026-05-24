@@ -9,8 +9,8 @@ from an in-flight pull request, vendored so nab can use the public
 - Upstream repository: https://github.com/pypa/packaging
 - Pull request: https://github.com/pypa/packaging/pull/1182
 - Source branch: `notatallshaw/packaging:public-pep440-version-range`
-- Pinned commit: `536a8a7ba0c552b4573522292d1ea63ccb4ad34c`
-- Snapshot date: 2026-05-03
+- Pinned commit: `82799d02ffec2815769d5889062e54686e7c6863`
+- Snapshot date: 2026-05-23
 
 The snapshot is the full `src/packaging/` tree at that commit, plus
 `LICENSE`, `LICENSE.APACHE`, and `LICENSE.BSD` from the repository
