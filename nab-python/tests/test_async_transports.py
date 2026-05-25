@@ -241,7 +241,7 @@ class TestUrllib3AsyncTransport:
         assert adapter.headers["etag"] == "abc"
 
     def test_uses_truststore_ssl_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """PoolManager gets a truststore SSLContext via ssl_context=."""
+        """Each per-thread PoolManager gets a truststore SSLContext."""
         captured: dict[str, Any] = {}
 
         def fake_pool_manager(**kw: Any) -> MagicMock:
@@ -252,8 +252,24 @@ class TestUrllib3AsyncTransport:
             "nab_index.urllib3_async_transport.urllib3.PoolManager",
             fake_pool_manager,
         )
-        Urllib3AsyncTransport()
+        # Pools are created lazily per worker thread, so build one.
+        Urllib3AsyncTransport()._pool()
         assert isinstance(captured["ssl_context"], truststore.SSLContext)
+
+    def test_pool_is_per_thread(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Each thread gets its own PoolManager so the truststore context is unshared."""
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager",
+            lambda **kw: MagicMock(spec=urllib3.PoolManager),
+        )
+        transport = Urllib3AsyncTransport()
+        pools = [
+            asyncio.run(asyncio.to_thread(transport._pool)),
+            asyncio.run(asyncio.to_thread(transport._pool)),
+        ]
+        # Distinct worker threads -> distinct pools; all tracked for aclose.
+        assert pools[0] is not pools[1]
+        assert set(map(id, pools)) <= set(map(id, transport._pools))
 
     def test_ssl_context_satisfies_urllib3_cert_check(self) -> None:
         """``_SSLContext`` returns a non-empty CA count for urllib3-future.

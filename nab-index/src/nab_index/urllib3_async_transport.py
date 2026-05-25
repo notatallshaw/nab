@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import ssl
+import threading
 from typing import TYPE_CHECKING, Any
 
 import truststore
@@ -83,18 +84,41 @@ class _Urllib3Response:
 class Urllib3AsyncTransport:
     """Async HTTP transport using urllib3 (sync) wrapped in to_thread.
 
-    Each ``get`` runs the underlying sync request on the asyncio
-    default executor. The PoolManager is thread-safe, so concurrent
-    requests from many tasks share connections cleanly.
+    Each ``get`` runs the underlying sync request on the asyncio default
+    executor.  A separate :class:`~urllib3.PoolManager` (and truststore
+    SSLContext) is kept per worker thread: truststore toggles the
+    context's ``verify_mode`` to ``CERT_NONE`` for the duration of each
+    ``wrap_socket`` (truststore#209), so sharing one context across the
+    executor threads races that toggle and trips spurious
+    ``InsecureRequestWarning``s.  One context per thread means no two
+    threads ever touch the same context; connections are still reused
+    within each thread.
     """
 
     def __init__(self, *, num_pools: int = 10, maxsize: int = 50) -> None:
         """Create a transport."""
-        self._pool = urllib3.PoolManager(
-            num_pools=num_pools,
-            maxsize=maxsize,
-            ssl_context=_SSLContext(ssl.PROTOCOL_TLS_CLIENT),
-        )
+        self._num_pools = num_pools
+        self._maxsize = maxsize
+        self._local = threading.local()
+        self._pools: list[urllib3.PoolManager] = []
+        self._pools_lock = threading.Lock()
+
+    def _pool(self) -> urllib3.PoolManager:
+        """Return this worker thread's pool, creating it on first use."""
+        pool: urllib3.PoolManager | None = getattr(self._local, "pool", None)
+        if pool is None:
+            pool = urllib3.PoolManager(
+                num_pools=self._num_pools,
+                maxsize=self._maxsize,
+                ssl_context=_SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+            )
+            self._local.pool = pool
+            with self._pools_lock:
+                self._pools.append(pool)
+        return pool
+
+    def _request(self, url: str, headers: dict[str, str]) -> urllib3.BaseHTTPResponse:
+        return self._pool().request("GET", url, headers=headers)
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
@@ -107,11 +131,12 @@ class Urllib3AsyncTransport:
         request_headers = {"Accept-Encoding": "gzip"}
         if headers is not None:
             request_headers.update(headers)
-        response = await asyncio.to_thread(
-            self._pool.request, "GET", url, headers=request_headers
-        )
+        response = await asyncio.to_thread(self._request, url, request_headers)
         return _Urllib3Response(response)
 
     async def aclose(self) -> None:
-        """Close the underlying pool."""
-        await asyncio.to_thread(self._pool.clear)
+        """Close every per-thread pool."""
+        with self._pools_lock:
+            pools = list(self._pools)
+        for pool in pools:
+            await asyncio.to_thread(pool.clear)
