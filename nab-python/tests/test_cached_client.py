@@ -242,6 +242,40 @@ class TestZipSdistDropped:
         assert all(isinstance(f, WheelFile) for f in files)
 
 
+class TestParseHashes:
+    def test_single_entry(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": "a" * 64}) == (("sha256", "a" * 64),)
+
+    def test_single_entry_malformed(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": 123}) == ()
+
+    def test_multiple_entries(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        result = _parse_hashes({"sha256": "a" * 64, "md5": "b" * 32})
+        assert result == (("sha256", "a" * 64), ("md5", "b" * 32))
+
+    def test_multiple_entries_skips_malformed(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        result = _parse_hashes({"sha256": "a" * 64, "md5": 123})
+        assert result == (("sha256", "a" * 64),)
+
+    def test_non_dict(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes("sha256:abc") == ()
+
+    def test_empty_dict(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({}) == ()
+
+
 class TestParseMaxAge:
     def test_default_when_none(self) -> None:
         assert _parse_max_age(None) == 600
