@@ -186,6 +186,7 @@ class IncompatibilityState(enum.Enum):
     """Result of evaluating an incompatibility against the partial solution."""
 
     CONFLICT = enum.auto()
+    CONTRADICTED = enum.auto()
 
 
 class IncompatibilityCause(enum.Enum):

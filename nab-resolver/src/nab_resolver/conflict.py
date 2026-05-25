@@ -135,6 +135,7 @@ def conflict_resolution(
 
             from_level = resolver.solution.decision_level
             resolver.solution.backtrack(backjump_target)
+            resolver.prune_contradicted(backjump_target)
             resolver.stats.backjumps += 1
             resolver.observer.on_backjump(from_level, backjump_target)
 
@@ -420,6 +421,8 @@ def maybe_restart(
     resolver.stats.restarts += 1
     resolver.solution = PartialSolution(range_type=resolver.range_type)
     resolver.solution.decide(ROOT, resolver.root_version)
+    # Restart widens every package, so all cached contradictions are stale.
+    resolver.contradicted_at.clear()
     resolver.pending_targeted_backtrack.clear()
     resolver.stats.targeted_backtracks = 0
 
@@ -487,5 +490,6 @@ def apply_targeted_backtrack(resolver: Resolver[Any, Any]) -> Any | None:
         return None
 
     resolver.solution.backtrack(target_level)
+    resolver.prune_contradicted(target_level)
     resolver.stats.targeted_backtracks += 1
     return triggering_package

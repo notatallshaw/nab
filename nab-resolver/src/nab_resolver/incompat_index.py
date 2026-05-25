@@ -116,4 +116,6 @@ def maybe_merge_dependency(
     # Safe to replace in place: DEPENDENCY clauses have no cause_left/right
     # references that would break.
     resolver.incompatibilities[existing_index] = merged
+    # A widening merge can un-contradict the clause; drop its cached entry.
+    resolver.contradicted_at.pop(existing_index, None)
     return True

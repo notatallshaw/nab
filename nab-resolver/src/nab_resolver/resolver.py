@@ -267,6 +267,10 @@ class Resolver(Generic[PackageType, VersionType]):
             list
         )
 
+        # Incompatibility index -> decision level it became contradicted at;
+        # pruned on backtrack, cleared on restart.
+        self.contradicted_at: dict[int, int] = {}
+
         # Keyed by (package, dep_package, dep_constraint, dep_positive); used
         # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
         self.dependency_index: dict[Any, int] = {}
@@ -419,6 +423,20 @@ class Resolver(Generic[PackageType, VersionType]):
             root_sentinel=ROOT,
         )
 
+    def prune_contradicted(self, target_level: int) -> None:
+        """Drop contradicted-clause cache entries recorded above ``target_level``.
+
+        A backtrack to ``target_level`` pops every assignment above it, so any
+        clause that became contradicted at a higher level may now be live again
+        and must be re-evaluated. Entries at or below the target stay valid
+        because their contradicting assignments survive the backtrack.
+        """
+        self.contradicted_at = {
+            index: level
+            for index, level in self.contradicted_at.items()
+            if level <= target_level
+        }
+
     def _reset(
         self,
         constraints: Mapping[PackageType, RangeProtocol[VersionType]] | None,
@@ -426,6 +444,7 @@ class Resolver(Generic[PackageType, VersionType]):
         """Reset solver state for a new resolution."""
         self.incompatibilities.clear()
         self.package_to_incompatibilities.clear()
+        self.contradicted_at.clear()
         self.dependency_index.clear()
         self.solution = PartialSolution(range_type=self.range_type)
         self.stats = ResolverStats()

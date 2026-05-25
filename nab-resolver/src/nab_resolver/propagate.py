@@ -41,6 +41,8 @@ def unit_propagation(
     """
     propagation_queue: deque[Any] = deque([changed_package])
     in_queue: set[Any] = {changed_package}
+    # Contradiction holds until a backtrack widens it, so skip cached indices.
+    contradicted_at = resolver.contradicted_at
 
     while propagation_queue:
         package = propagation_queue.popleft()
@@ -48,11 +50,19 @@ def unit_propagation(
         related_indices = resolver.package_to_incompatibilities.get(package, [])
 
         for incompatibility_index in related_indices:
+            if incompatibility_index in contradicted_at:
+                continue
             incompatibility = resolver.incompatibilities[incompatibility_index]
             evaluation = evaluate_incompatibility(resolver, incompatibility)
 
             if evaluation is IncompatibilityState.CONFLICT:
                 return incompatibility
+
+            if evaluation is IncompatibilityState.CONTRADICTED:
+                contradicted_at[incompatibility_index] = (
+                    resolver.solution.decision_level
+                )
+                continue
 
             if isinstance(evaluation, Term):
                 negated_term = evaluation.negate()
@@ -86,8 +96,11 @@ def evaluate_incompatibility(
 
     Returns:
       ``IncompatibilityState.CONFLICT``: all terms satisfied
+      ``IncompatibilityState.CONTRADICTED``: some term is contradicted; the
+        clause is dead until a backtrack and is safe to cache as skippable
       ``Term``: exactly one undetermined term (unit propagation candidate)
-      ``None``: 0 or 2+ undetermined terms (nothing to do yet)
+      ``None``: 2+ undetermined terms (nothing to do yet, not cacheable since
+        an undetermined term becomes determined without a backtrack)
     """
     undetermined_term: Term[Any, Any] | None = None
 
@@ -96,7 +109,7 @@ def evaluate_incompatibility(
         if relation is SetRelation.SATISFIED:
             continue
         if relation is SetRelation.CONTRADICTED:
-            return None
+            return IncompatibilityState.CONTRADICTED
         if undetermined_term is not None:
             return None
         undetermined_term = term

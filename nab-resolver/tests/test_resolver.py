@@ -21,6 +21,7 @@ from nab_resolver.incompat_index import (
     maybe_merge_dependency,
 )
 from nab_resolver.partial_solution import PartialSolution
+from nab_resolver.propagate import evaluate_incompatibility, unit_propagation
 from nab_resolver.ranges import Range
 from nab_resolver.report import explain_incompatibility, prior_cause, union_terms
 from nab_resolver.resolver import (
@@ -32,6 +33,7 @@ from nab_resolver.root import ROOT
 from nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
+    IncompatibilityState,
     RangeProtocol,
     Term,
 )
@@ -1891,3 +1893,96 @@ class TestRegressions:
         resolver = Resolver(provider)
         with pytest.raises(ResolutionError):
             resolver.resolve({"root": Range.singleton(1)})
+
+
+class TestContradictedCache:
+    """The contradicted-incompatibility skip cache (card 026)."""
+
+    def _decided(self, package: str, version: int) -> PartialSolution:
+        solution: PartialSolution = PartialSolution()
+        root = Incompatibility(
+            [Term(package, Range.full())], cause=IncompatibilityCause.ROOT
+        )
+        solution.derive(package, Range.at_least(1), positive=True, cause=root)
+        solution.decide(package, version)
+        return solution
+
+    def test_evaluate_returns_contradicted(self) -> None:
+        """A positive term whose range excludes the decision is contradicted."""
+        resolver = Resolver(DictProvider({}))
+        resolver.solution = self._decided("x", 2)
+        incompatibility = Incompatibility(
+            [Term("x", Range.singleton(5), positive=True)],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert (
+            evaluate_incompatibility(resolver, incompatibility)
+            is IncompatibilityState.CONTRADICTED
+        )
+
+    def test_evaluate_two_undetermined_is_not_cacheable(self) -> None:
+        """Two undetermined terms return None, not the contradicted sentinel."""
+        resolver = Resolver(DictProvider({}))
+        incompatibility = Incompatibility(
+            [
+                Term("a", Range.full(), positive=True),
+                Term("b", Range.full(), positive=True),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert evaluate_incompatibility(resolver, incompatibility) is None
+
+    def test_propagation_records_contradicted_index(self) -> None:
+        """Unit propagation caches a contradicted clause at the current level."""
+        resolver = Resolver(DictProvider({}))
+        resolver.solution = self._decided("x", 2)
+        add_incompatibility(
+            resolver,
+            Incompatibility(
+                [Term("x", Range.singleton(5), positive=True)],
+                cause=IncompatibilityCause.DEPENDENCY,
+            ),
+        )
+        assert unit_propagation(resolver, "x") is None
+        assert resolver.contradicted_at == {0: resolver.solution.decision_level}
+
+    def test_propagation_skips_cached_index(self) -> None:
+        """A cached index is skipped even when it would otherwise conflict."""
+        resolver = Resolver(DictProvider({}))
+        resolver.solution = self._decided("x", 2)
+        add_incompatibility(
+            resolver,
+            Incompatibility(
+                [Term("x", Range.singleton(2), positive=True)],
+                cause=IncompatibilityCause.DEPENDENCY,
+            ),
+        )
+        resolver.contradicted_at[0] = 0
+        assert unit_propagation(resolver, "x") is None
+
+    def test_prune_keeps_low_levels_drops_high(self) -> None:
+        resolver = Resolver(DictProvider({}))
+        resolver.contradicted_at = {1: 2, 2: 4, 3: 5}
+        resolver.prune_contradicted(4)
+        assert resolver.contradicted_at == {1: 2, 2: 4}
+
+    def test_merge_evicts_widened_index(self) -> None:
+        """Widening a clause on merge drops its cached contradiction."""
+        resolver = Resolver(DictProvider({}))
+        dep = Term("d", Range.singleton(9), positive=False)
+        add_incompatibility(
+            resolver,
+            Incompatibility(
+                [Term("p", Range.singleton(1), positive=True), dep],
+                cause=IncompatibilityCause.DEPENDENCY,
+            ),
+        )
+        resolver.contradicted_at[0] = 1
+        add_incompatibility(
+            resolver,
+            Incompatibility(
+                [Term("p", Range.singleton(2), positive=True), dep],
+                cause=IncompatibilityCause.DEPENDENCY,
+            ),
+        )
+        assert 0 not in resolver.contradicted_at
