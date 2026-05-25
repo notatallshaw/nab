@@ -257,8 +257,8 @@ def _index_pin_from_listing(
     served the package's listing during the resolve, looked up from
     the coordinator's :class:`InMemoryIndex` (which records the
     serving index by name) and resolved against ``indexes`` for the
-    URL.  When ``indexes`` is empty or the route is unknown the URL
-    falls back to the default Simple-API root.
+    URL.  A pinned package's serving index is always recorded and is
+    one of ``indexes``, so the URL is always known.
 
     Under :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` the
     package's wheels stayed in ``versions_cache`` as a possible
@@ -287,12 +287,17 @@ def _index_pin_from_listing(
     requires_python = _common_requires_python(files)
     serving_name = provider.coordinator.index.get_listing_index(canonical)
     by_name = {ix.name: ix.url for ix in indexes}
-
-    if serving_name is not None and serving_name in by_name:
-        index_url = by_name[serving_name]
-    elif indexes:
-        index_url = indexes[0].url
-    else:
+    index_url = by_name.get(serving_name) if serving_name is not None else None
+    if index_url is None:
+        if by_name:
+            # Can't happen for a real pin (the serving index is always
+            # recorded and configured); raise, don't guess.
+            msg = (
+                f"{canonical}: recorded serving index {serving_name!r} is "
+                "not one of the configured indexes"
+            )
+            raise AssertionError(msg)
+        # No indexes configured (unit tests only); use the default root.
         index_url = DEFAULT_INDEX_URL
     return IndexPin(
         name=canonical,

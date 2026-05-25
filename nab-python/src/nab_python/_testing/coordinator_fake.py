@@ -43,6 +43,8 @@ def _pre_populate_index(
     """Load listings and pre-store validator-visible slots into ``index``."""
     for pkg_name, pkg_wheels in listings_map.items():
         index.store_listing(pkg_name, pkg_wheels)
+        # Mirror production: every fetched listing records its serving index.
+        index.store_listing_index(pkg_name, DEFAULT_INDEX_NAME)
         if baseline_metadata is not None and pkg_name in baseline_metadata:
             for w in pkg_wheels:
                 index.store_metadata(pkg_name, w.version, baseline_metadata[pkg_name])
