@@ -21,13 +21,18 @@ from nab_python.resolve import (
     _augment_resolution_error,
     _build_constraints,
     _build_resolver_inputs,
+    _check_group_disjointness,
+    _check_group_disjointness_across_tuples,
+    _find_group_conflicts,
     _load_extra_requirements,
     _load_group_requirements,
+    _load_group_requirements_by_group,
     _resolve_target_python,
     _walk_no_versions_packages,
     resolve_pyproject,
     resolve_universal_pyproject,
 )
+from nab_python.universal.matrix import MatrixTuple
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import (
     Incompatibility,
@@ -1035,6 +1040,296 @@ class TestResolvePyprojectConflicts:
             )
 
 
+class TestLoadGroupRequirementsByGroup:
+    """``_load_group_requirements_by_group`` keeps group origin.
+
+    Same expansion path as ``_load_group_requirements`` but returns a
+    mapping of group name to its own list of requirements so a later
+    check can name the group a requirement came from.
+    """
+
+    def test_empty_selection_returns_empty(self, tmp_path: Path) -> None:
+        path = tmp_path / "pyproject.toml"
+        path.write_text("[project]\nname = 'x'\n")
+        assert _load_group_requirements_by_group(path, []) == {}
+
+    def test_missing_table_raises_with_selected_names(self, tmp_path: Path) -> None:
+        path = tmp_path / "pyproject.toml"
+        path.write_text("[project]\nname = 'x'\n")
+        with pytest.raises(LookupError, match=r"\[dependency-groups\] is missing"):
+            _load_group_requirements_by_group(path, ["dev"])
+
+    def test_maps_each_group_to_its_requirements(self, tmp_path: Path) -> None:
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            "[project]\nname = 'x'\n"
+            "[dependency-groups]\n"
+            "dev = ['pytest>=7']\n"
+            "docs = ['sphinx<7', 'furo']\n"
+        )
+        per_group = _load_group_requirements_by_group(path, ["dev", "docs"])
+        assert [str(r) for r in per_group["dev"]] == ["pytest>=7"]
+        assert [str(r) for r in per_group["docs"]] == ["sphinx<7", "furo"]
+
+
+class TestCheckGroupDisjointness:
+    """``_check_group_disjointness`` names the two conflicting groups."""
+
+    def test_direct_conflict_names_both_groups(self) -> None:
+        per_group = {
+            "docs": [Requirement("sphinx<7")],
+            "test": [Requirement("sphinx>=7")],
+        }
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, environment={})
+        message = str(info.value)
+        assert "'docs'" in message
+        assert "'test'" in message
+        assert "sphinx" in message
+        assert "sphinx<7" in message
+        assert "sphinx>=7" in message
+
+    def test_message_sorts_group_names(self) -> None:
+        """Group order in the message is sorted, not insertion order."""
+        per_group = {
+            "test": [Requirement("sphinx>=7")],
+            "docs": [Requirement("sphinx<7")],
+        }
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, environment={})
+        message = str(info.value)
+        assert message.index("'docs'") < message.index("'test'")
+
+    def test_no_conflict_is_silent(self) -> None:
+        per_group = {
+            "docs": [Requirement("sphinx>=6,<8")],
+            "test": [Requirement("sphinx>=7")],
+        }
+        _check_group_disjointness(per_group, environment={})
+
+    def test_disjoint_packages_do_not_conflict(self) -> None:
+        """Groups touching different packages never conflict."""
+        per_group = {
+            "docs": [Requirement("sphinx<7")],
+            "test": [Requirement("pytest>=8")],
+        }
+        _check_group_disjointness(per_group, environment={})
+
+    def test_single_group_is_noop(self) -> None:
+        per_group = {"docs": [Requirement("sphinx<7"), Requirement("sphinx>=7")]}
+        _check_group_disjointness(per_group, environment={})
+
+    def test_empty_mapping_is_noop(self) -> None:
+        _check_group_disjointness({}, environment={})
+
+    def test_marker_filtered_requirement_is_skipped(self) -> None:
+        """A requirement whose marker is False under the env is ignored."""
+        per_group = {
+            "docs": [Requirement("sphinx<7")],
+            "test": [Requirement("sphinx>=7 ; python_version < '3'")],
+        }
+        _check_group_disjointness(per_group, environment={"python_version": "3.12"})
+
+    def test_within_group_intersection_before_pairwise(self) -> None:
+        """A group's own two ranges fold before the cross-group check.
+
+        ``docs`` folds to ``>=6,<7``; ``test`` pins ``>=7``; the pair is
+        empty so the conflict is reported.
+        """
+        per_group = {
+            "docs": [Requirement("sphinx>=6"), Requirement("sphinx<7")],
+            "test": [Requirement("sphinx>=7")],
+        }
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, environment={})
+        assert "sphinx" in str(info.value)
+
+    def test_three_groups_names_the_conflicting_pair(self) -> None:
+        """With three groups, only the conflicting pair is named."""
+        per_group = {
+            "docs": [Requirement("sphinx<7")],
+            "lint": [Requirement("ruff>=0.5")],
+            "test": [Requirement("sphinx>=7")],
+        }
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, environment={})
+        message = str(info.value)
+        assert "'docs'" in message
+        assert "'test'" in message
+        assert "'lint'" not in message
+
+    def test_url_requirement_does_not_conflict(self) -> None:
+        """A URL requirement has no version range, so it never conflicts."""
+        per_group = {
+            "docs": [Requirement("sphinx @ https://example.com/sphinx.whl")],
+            "test": [Requirement("sphinx>=7")],
+        }
+        _check_group_disjointness(per_group, environment={})
+
+    def test_extras_only_requirement_does_not_conflict(self) -> None:
+        """An extras-only requirement carries a full range, so no conflict."""
+        per_group = {
+            "docs": [Requirement("sphinx[docs]")],
+            "test": [Requirement("sphinx>=7")],
+        }
+        _check_group_disjointness(per_group, environment={})
+
+
+class TestFindGroupConflictsManyGroups:
+    """``_find_group_conflicts`` only compares groups sharing a package.
+
+    With many groups that touch distinct packages, the package-inverted
+    walk must compare just the groups that name the same package, so the
+    one true conflict is found and the unrelated groups produce nothing.
+    """
+
+    _GROUP_COUNT = 50
+    _LEFT = "g10"
+    _RIGHT = "g37"
+
+    def _disjoint_groups(self) -> dict[str, list[Requirement]]:
+        """Build groups that each require only their own unique package."""
+        return {
+            f"g{i:02d}": [Requirement(f"pkg{i:02d}>=1")]
+            for i in range(self._GROUP_COUNT)
+        }
+
+    def test_single_conflicting_pair_is_found(self) -> None:
+        """One incompatible shared package yields exactly one conflict."""
+        per_group = self._disjoint_groups()
+        per_group[self._LEFT].append(Requirement("shared<2"))
+        per_group[self._RIGHT].append(Requirement("shared>=2"))
+        conflicts = _find_group_conflicts(per_group, environment={})
+        assert len(conflicts) == 1
+        conflict = conflicts[0]
+        assert conflict.left_group == self._LEFT
+        assert conflict.right_group == self._RIGHT
+        assert conflict.left_group < conflict.right_group
+        assert conflict.package == "shared"
+        assert conflict.left_req == "shared<2"
+        assert conflict.right_req == "shared>=2"
+
+    def test_disjoint_variant_finds_nothing(self) -> None:
+        """The same shared package with overlapping ranges is no conflict."""
+        per_group = self._disjoint_groups()
+        per_group[self._LEFT].append(Requirement("shared>=1"))
+        per_group[self._RIGHT].append(Requirement("shared<5"))
+        assert _find_group_conflicts(per_group, environment={}) == []
+
+
+class TestResolvePyprojectGroupConflict:
+    """End-to-end: a two-group direct conflict names the groups."""
+
+    def test_conflict_message_names_groups(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["foo"]\n'
+            "[dependency-groups]\n"
+            'docs = ["sphinx<7"]\n'
+            'test = ["sphinx>=7"]\n'
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator"),
+            pytest.raises(ResolutionError) as info,
+        ):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                groups=["docs", "test"],
+            )
+        message = str(info.value)
+        assert "Dependency groups" in message
+        assert "'docs'" in message
+        assert "'test'" in message
+        assert "sphinx" in message
+
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
+    def test_single_group_skips_check(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """One group means no pair to check; the resolve proceeds."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["foo>=1.0"]\n'
+            "[dependency-groups]\n"
+            'docs = ["sphinx<7"]\n'
+        )
+        mock_coord_cls.return_value.__enter__ = lambda s: s
+        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_resolver_cls.return_value.resolve.return_value = {"foo": V("2.0")}
+
+        result = resolve_pyproject(
+            pyproject,
+            _FAKE_TRANSPORT,
+            python_version="3.12.0",
+            groups=["docs"],
+        )
+        assert "foo" in result.pins
+
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
+    def test_no_groups_skips_check(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Zero groups means the check is a no-op and the resolve runs."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\ndependencies = ["foo>=1.0"]\n')
+        mock_coord_cls.return_value.__enter__ = lambda s: s
+        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_resolver_cls.return_value.resolve.return_value = {"foo": V("2.0")}
+
+        result = resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        assert "foo" in result.pins
+
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
+    def test_no_conflict_multi_group_resolves(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Two compatible groups pass the check and resolve normally."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["foo>=1.0"]\n'
+            "[dependency-groups]\n"
+            'docs = ["sphinx>=6"]\n'
+            'test = ["pytest>=8"]\n'
+        )
+        mock_coord_cls.return_value.__enter__ = lambda s: s
+        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_resolver_cls.return_value.resolve.return_value = {"foo": V("2.0")}
+
+        result = resolve_pyproject(
+            pyproject,
+            _FAKE_TRANSPORT,
+            python_version="3.12.0",
+            groups=["docs", "test"],
+        )
+        assert "foo" in result.pins
+
+
 class TestAugmentResolutionError:
     """``resolve_pyproject`` enriches errors with provider hints."""
 
@@ -1163,3 +1458,257 @@ class TestAugmentResolutionError:
                 resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
         assert "Diagnostics:" in str(info.value)
         assert "foo: package not found on any configured index" in str(info.value)
+
+
+def _tuple_for_python(python_version: str) -> MatrixTuple:
+    """Build a linux_x86_64 tuple for ``python_version``.
+
+    Only the marker environment matters for the group pre-pass, so the
+    platform axis is held constant and the python axis varies; the
+    label encodes the python version so a conflict message can be
+    asserted against it.
+    """
+    return MatrixTuple(
+        python_version=python_version,
+        platform_id="linux_x86_64",
+        environment={
+            "python_version": python_version,
+            "python_full_version": f"{python_version}.0",
+            "implementation_name": "cpython",
+            "implementation_version": f"{python_version}.0",
+            "os_name": "posix",
+            "platform_machine": "x86_64",
+            "platform_python_implementation": "CPython",
+            "platform_release": "",
+            "platform_system": "Linux",
+            "platform_version": "",
+            "sys_platform": "linux",
+        },
+    )
+
+
+class TestCheckGroupDisjointnessAcrossTuples:
+    """``_check_group_disjointness_across_tuples`` runs the per-group
+    range check under each tuple's marker environment and raises early
+    when any tuple shows an empty intersection."""
+
+    def test_conflict_gated_to_some_tuples_names_them(self) -> None:
+        """A marker-gated conflict names only the tuples it holds on.
+
+        ``foo<2`` is live only on the 3.10 tuple; ``foo>=2`` is live
+        everywhere.  The intersection is empty on 3.10 and full on
+        3.12, so the message names the 3.10 tuple and not the 3.12 one.
+        """
+        per_group = {
+            "a": [Requirement("foo<2 ; python_version < '3.11'")],
+            "b": [Requirement("foo>=2")],
+        }
+        tuples = [_tuple_for_python("3.10"), _tuple_for_python("3.12")]
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness_across_tuples(per_group, tuples)
+        message = str(info.value)
+        assert "'a'" in message
+        assert "'b'" in message
+        assert "foo" in message
+        assert "py310-linux_x86_64" in message
+        assert "py312-linux_x86_64" not in message
+
+    def test_conflict_on_all_tuples_names_all(self) -> None:
+        """An unconditional conflict names every targeted tuple."""
+        per_group = {
+            "a": [Requirement("foo<2")],
+            "b": [Requirement("foo>=2")],
+        }
+        tuples = [_tuple_for_python("3.10"), _tuple_for_python("3.12")]
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness_across_tuples(per_group, tuples)
+        message = str(info.value)
+        assert "py310-linux_x86_64" in message
+        assert "py312-linux_x86_64" in message
+
+    def test_no_conflict_is_silent(self) -> None:
+        """Compatible groups across all tuples raise nothing."""
+        per_group = {
+            "a": [Requirement("foo>=1")],
+            "b": [Requirement("foo<5")],
+        }
+        tuples = [_tuple_for_python("3.10"), _tuple_for_python("3.12")]
+        _check_group_disjointness_across_tuples(per_group, tuples)
+
+    def test_single_group_is_noop(self) -> None:
+        per_group = {"a": [Requirement("foo<2"), Requirement("foo>=2")]}
+        tuples = [_tuple_for_python("3.10"), _tuple_for_python("3.12")]
+        _check_group_disjointness_across_tuples(per_group, tuples)
+
+    def test_empty_mapping_is_noop(self) -> None:
+        tuples = [_tuple_for_python("3.12")]
+        _check_group_disjointness_across_tuples({}, tuples)
+
+    def test_three_groups_names_only_conflicting_pair(self) -> None:
+        """With three groups, the message names the conflicting pair only."""
+        per_group = {
+            "a": [Requirement("foo<2")],
+            "b": [Requirement("foo>=2")],
+            "c": [Requirement("bar>=1")],
+        }
+        tuples = [_tuple_for_python("3.12")]
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness_across_tuples(per_group, tuples)
+        message = str(info.value)
+        assert "'a'" in message
+        assert "'b'" in message
+        assert "'c'" not in message
+
+    def test_message_sorts_group_names(self) -> None:
+        """Group names print sorted, not in insertion order."""
+        per_group = {
+            "b": [Requirement("foo>=2")],
+            "a": [Requirement("foo<2")],
+        }
+        tuples = [_tuple_for_python("3.12")]
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness_across_tuples(per_group, tuples)
+        message = str(info.value)
+        assert message.index("'a'") < message.index("'b'")
+
+    def test_tuple_labels_sorted_in_message(self) -> None:
+        """Affected tuple labels appear in sorted order.
+
+        The tuples are passed newest-first; the message must still list
+        the labels in sorted order so the diagnostic is deterministic
+        regardless of matrix ordering.
+        """
+        per_group = {
+            "a": [Requirement("foo<2")],
+            "b": [Requirement("foo>=2")],
+        }
+        tuples = [_tuple_for_python("3.12"), _tuple_for_python("3.10")]
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness_across_tuples(per_group, tuples)
+        message = str(info.value)
+        assert message.index("py310-linux_x86_64") < message.index("py312-linux_x86_64")
+
+
+class TestResolveUniversalPyprojectGroupConflict:
+    """``resolve_universal_pyproject`` raises early for a direct group
+    conflict instead of returning per-tuple ``TupleResult.error``
+    strings."""
+
+    def test_marker_gated_conflict_raises_early(self, tmp_path: Path) -> None:
+        """A conflict live on only one matrix tuple raises before resolve.
+
+        ``resolve_universal`` is patched so a regression that lets the
+        pre-pass slip through would call it (and the assertion that it
+        was never called fails) rather than reaching PyPI.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            "a = [\"foo<2 ; python_version < '3.12'\"]\n"
+            'b = ["foo>=2"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ResolutionError) as info,
+        ):
+            resolve_universal_pyproject(pyproject, groups=["a", "b"])
+        mock_universal.assert_not_called()
+        message = str(info.value)
+        assert "Dependency groups" in message
+        assert "'a'" in message
+        assert "'b'" in message
+        assert "foo" in message
+        assert "py311-linux_x86_64" in message
+        assert "py312-linux_x86_64" not in message
+
+    def test_conflict_on_all_tuples_raises_early(self, tmp_path: Path) -> None:
+        """An unconditional conflict raises naming every tuple."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'a = ["foo<2"]\n'
+            'b = ["foo>=2"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ResolutionError) as info,
+        ):
+            resolve_universal_pyproject(pyproject, groups=["a", "b"])
+        mock_universal.assert_not_called()
+        message = str(info.value)
+        assert "py311-linux_x86_64" in message
+        assert "py312-linux_x86_64" in message
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_no_conflict_proceeds_to_resolve(
+        self, mock_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """Two compatible groups skip the pre-pass and reach resolution."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'a = ["foo>=1"]\n'
+            'b = ["foo<5"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        sentinel = MagicMock()
+        mock_universal.return_value = sentinel
+        result = resolve_universal_pyproject(pyproject, groups=["a", "b"])
+        assert result is sentinel
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_single_group_skips_prepass(
+        self, mock_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """One group means no pair to check; resolution proceeds."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'a = ["foo<2"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        sentinel = MagicMock()
+        mock_universal.return_value = sentinel
+        result = resolve_universal_pyproject(pyproject, groups=["a"])
+        assert result is sentinel
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_no_groups_skips_prepass(
+        self, mock_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """Zero groups means the pre-pass is a no-op; resolution proceeds."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        sentinel = MagicMock()
+        mock_universal.return_value = sentinel
+        result = resolve_universal_pyproject(pyproject)
+        assert result is sentinel

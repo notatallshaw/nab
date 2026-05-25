@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import sys
 from collections import defaultdict
@@ -49,6 +50,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport
+
+    from .universal.matrix import MatrixTuple
 
 
 __all__ = [
@@ -137,6 +140,11 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         python_version=effective_python,
         overrides=config.marker_environment,
     )
+    if len(groups) > 1:
+        _check_group_disjointness(
+            _load_group_requirements_by_group(path, groups),
+            environment=marker_environment,
+        )
     resolver_requirements, root_extras = _build_resolver_inputs(
         requirements, config, environment=marker_environment
     )
@@ -209,6 +217,160 @@ def _load_group_requirements(path: Path, selected: Sequence[str]) -> list[Requir
         )
         raise LookupError(msg)
     return resolve_groups_to_requirements(groups, selected)
+
+
+def _load_group_requirements_by_group(
+    path: Path, selected: Sequence[str]
+) -> dict[str, list[Requirement]]:
+    """Expand ``selected`` groups, keyed by group name.
+
+    Like :func:`_load_group_requirements`, but keeps each group's
+    requirements separate so a caller can name the source group.
+    """
+    if not selected:
+        return {}
+    groups = read_pyproject_groups(path)
+    if not groups:
+        msg = (
+            "groups requested but [dependency-groups] is missing from"
+            f" {path}: {sorted(selected)!r}"
+        )
+        raise LookupError(msg)
+    return {
+        group: resolve_groups_to_requirements(groups, [group]) for group in selected
+    }
+
+
+def _group_package_ranges(
+    requirements: list[Requirement], environment: dict[str, str]
+) -> tuple[dict[str, VersionRange], dict[str, list[str]]]:
+    """Fold one group's direct requirements into per-package ranges.
+
+    Mirrors :func:`_build_resolver_inputs` (marker filtering,
+    canonicalisation, intersection); URL requirements are skipped. Also
+    returns the requirement strings per package, for the conflict message.
+    """
+    ranges: dict[str, VersionRange] = {}
+    sources: dict[str, list[str]] = defaultdict(list)
+    for req in requirements:
+        if req.marker is not None and not req.marker.evaluate(environment):
+            continue
+        if req.url is not None:
+            continue
+        name = str(canonicalize_name(req.name))
+        previous = ranges.get(name, VersionRange.full())
+        ranges[name] = previous & req.specifier.to_range()
+        sources[name].append(str(req))
+    return ranges, sources
+
+
+@dataclass(frozen=True, slots=True)
+class _GroupConflict:
+    """One direct group-vs-group conflict on a single package.
+
+    Group names are stored sorted so the conflict has a stable identity.
+    """
+
+    left_group: str
+    right_group: str
+    package: str
+    left_req: str
+    right_req: str
+
+
+def _find_group_conflicts(
+    per_group: Mapping[str, list[Requirement]],
+    environment: dict[str, str],
+) -> list[_GroupConflict]:
+    """Return the direct group-vs-group conflicts under ``environment``.
+
+    Only direct conflicts are caught; one that emerges through a shared
+    transitive dependency falls through to the resolver. The result is
+    sorted by ``(left_group, right_group, package)``.
+    """
+    # Invert to: package -> the groups that name it directly, each with
+    # its folded range and the requirement strings behind it. Visiting
+    # groups in sorted order makes every pair below read low-to-high.
+    requirers: defaultdict[str, list[tuple[str, VersionRange, list[str]]]] = (
+        defaultdict(list)
+    )
+    for group in sorted(per_group):
+        ranges, sources = _group_package_ranges(per_group[group], environment)
+        for package, package_range in ranges.items():
+            requirers[package].append((group, package_range, sources[package]))
+
+    # Two groups conflict on a package when their ranges cannot both
+    # hold. Only groups that share a package are paired, so the work
+    # scales with real overlap rather than with the number of groups.
+    conflicts: list[_GroupConflict] = []
+    for package, group_ranges in requirers.items():
+        for left, right in itertools.combinations(group_ranges, 2):
+            left_group, left_range, left_sources = left
+            right_group, right_range, right_sources = right
+            if (left_range & right_range).is_empty:
+                conflicts.append(
+                    _GroupConflict(
+                        left_group=left_group,
+                        right_group=right_group,
+                        package=package,
+                        left_req=", ".join(left_sources),
+                        right_req=", ".join(right_sources),
+                    )
+                )
+
+    # Sort so the first conflict, which specific mode reports, is stable.
+    conflicts.sort(key=lambda c: (c.left_group, c.right_group, c.package))
+    return conflicts
+
+
+def _check_group_disjointness(
+    per_group: Mapping[str, list[Requirement]],
+    *,
+    environment: dict[str, str],
+) -> None:
+    """Raise on the first direct conflict between two groups, naming them.
+
+    Single-environment wrapper over :func:`_find_group_conflicts`.
+    """
+    for conflict in _find_group_conflicts(per_group, environment):
+        msg = (
+            f"Dependency groups {conflict.left_group!r} and"
+            f" {conflict.right_group!r} conflict on {conflict.package!r}: group"
+            f" {conflict.left_group!r} requires {conflict.left_req} but group"
+            f" {conflict.right_group!r} requires {conflict.right_req}."
+        )
+        raise ResolutionError(msg)
+
+
+def _check_group_disjointness_across_tuples(
+    per_group: Mapping[str, list[Requirement]],
+    tuples: Sequence[MatrixTuple],
+) -> None:
+    """Raise if a direct group conflict holds on any targeted tuple.
+
+    Checks each tuple's marker environment, aggregates conflicts by
+    identity, and names the affected tuples. A no-op below two groups.
+    """
+    affected: dict[_GroupConflict, set[str]] = defaultdict(set)
+    for t in tuples:
+        for conflict in _find_group_conflicts(per_group, t.environment):
+            affected[conflict].add(t.label)
+    if not affected:
+        return
+    clauses: list[str] = []
+    for conflict in sorted(
+        affected,
+        key=lambda c: (c.left_group, c.right_group, c.package),
+    ):
+        labels = ", ".join(sorted(affected[conflict]))
+        clauses.append(
+            f"Dependency groups {conflict.left_group!r} and"
+            f" {conflict.right_group!r} conflict on {conflict.package!r} for"
+            f" tuple(s) {labels}: group {conflict.left_group!r} requires"
+            f" {conflict.left_req} but group {conflict.right_group!r} requires"
+            f" {conflict.right_req}."
+        )
+    raise ResolutionError("; ".join(clauses))
 
 
 def _load_extra_requirements(path: Path, selected: Sequence[str]) -> list[Requirement]:
@@ -412,6 +574,11 @@ def resolve_universal_pyproject(
             else None
         ),
     )
+    if len(groups) > 1:
+        _check_group_disjointness_across_tuples(
+            _load_group_requirements_by_group(path, groups),
+            matrix.expand(),
+        )
     effective_strategy = (
         resolution_strategy if resolution_strategy is not None else config.resolution
     )
