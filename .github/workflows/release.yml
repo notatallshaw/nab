@@ -1,0 +1,101 @@
+name: Release
+
+# Publishing a GitHub release (against a v* tag created by the release PR) is the
+# trigger and the human gate. Nothing publishes until you click Publish there.
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  build:
+    name: Build and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      # Default checkout ref for a release event is the tag's commit.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      # No pip cache: a workflow that publishes artifacts must not trust a
+      # runtime cache (zizmor cache-poisoning), and build deps are hash-pinned.
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Upgrade pip to PEP 751 install support
+        run: python -m pip install --upgrade "pip>=26.1"
+
+      - name: Install release toolchain
+        run: pip install -r .github/requirements/pylock.release.toml
+
+      - name: Verify the tag matches the package versions
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: python tasks/release.py check "${RELEASE_TAG}"
+
+      - name: Build, verify reproducibility, check metadata, smoke test
+        run: python tasks/build_dists.py
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The pypi environment matches the trusted-publisher config (OIDC).
+    environment:
+      name: pypi
+      url: https://pypi.org/project/nab/
+    permissions:
+      id-token: write  # OIDC for PyPI trusted publishing; nothing else needs it
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish nab-resolver
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          packages-dir: dist/nab-resolver
+          print-hash: true
+          skip-existing: true
+
+      - name: Publish nab-index
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          packages-dir: dist/nab-index
+          print-hash: true
+          skip-existing: true
+
+      - name: Publish nab-python
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          packages-dir: dist/nab-python
+          print-hash: true
+          skip-existing: true
+
+      - name: Publish nab
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          packages-dir: dist/nab
+          print-hash: true
+          skip-existing: true

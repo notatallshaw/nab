@@ -1,6 +1,6 @@
 [project]
 name = "nab"
-version = "0.0.2"
+version = "0.0.3.dev0"
 description = "PubGrub-based dependency resolver for Python packages"
 readme = "README.md"
 license = "MIT"
@@ -19,22 +19,22 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "nab-resolver==0.0.2",
-    "nab-python==0.0.2",
-    "nab-index==0.0.2",
+    "nab-resolver==0.0.3.dev0",
+    "nab-python==0.0.3.dev0",
+    "nab-index==0.0.3.dev0",
     "tyro>=1.0",
 ]
 
 [project.optional-dependencies]
-httpx = ["nab-index[httpx]==0.0.2"]
-niquests = ["nab-index[niquests]==0.0.2"]
+httpx = ["nab-index[httpx]==0.0.3.dev0"]
+niquests = ["nab-index[niquests]==0.0.3.dev0"]
 
 [project.urls]
 Homepage = "https://github.com/notatallshaw/nab"
 Documentation = "https://nab.readthedocs.io/"
 Issues = "https://github.com/notatallshaw/nab/issues"
 Source = "https://github.com/notatallshaw/nab"
-Changelog = "https://github.com/notatallshaw/nab/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/notatallshaw/nab/releases"
 
 [project.scripts]
 nab = "nab.cli:main"
@@ -54,6 +54,7 @@ tests = [
     "respx>=0.22",
     "httpx[http2]>=0.28",
     "niquests>=3.18",
+    "tomlkit>=0.13",
 ]
 crosshair = [
     {include-group = "tests"},
@@ -70,6 +71,14 @@ types = [
 ]
 pre-commit = [
     "pre-commit>=4",
+]
+release = [
+    "packaging>=24.0",
+    "tomlkit>=0.13",
+    "tyro>=1.0",
+    "build>=1.2",
+    "hatchling>=1.27",
+    "twine>=6.1",
 ]
 
 # `nab lock` config: universal mode resolves the full matrix in one
@@ -201,6 +210,15 @@ extend-exclude = ["**/_vendor/**"]
     "PLR2004",  # Magic value in comparison (benchmark thresholds)
     "SLF001",   # Private member access (sibling scripts share helpers)
     "N818",     # Exception name not Error-suffixed (private signal types)
+]
+
+# Release tooling prints, shells out to git, and lives outside any package.
+"tasks/**" = [
+    "T201",     # print (CLI output)
+    "S603",     # subprocess call
+    "S607",     # subprocess with partial executable path (git)
+    "INP001",   # implicit namespace package (scripts live outside packages)
+    "PLC2801",  # direct __replace__ call (copy.replace is 3.13+, we support 3.10)
 ]
 
 # Tests use their own per-directory ruff.toml that extends this config.

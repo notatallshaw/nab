@@ -1,6 +1,6 @@
 [project]
 name = "nab-resolver"
-version = "0.0.2"
+version = "0.0.3.dev0"
 description = "Generic PubGrub dependency-resolver core"
 readme = "README.md"
 license = "MIT"
@@ -27,7 +27,7 @@ Homepage = "https://github.com/notatallshaw/nab"
 Documentation = "https://nab.readthedocs.io/"
 Issues = "https://github.com/notatallshaw/nab/issues"
 Source = "https://github.com/notatallshaw/nab"
-Changelog = "https://github.com/notatallshaw/nab/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/notatallshaw/nab/releases"
 
 [build-system]
 requires = ["hatchling"]
