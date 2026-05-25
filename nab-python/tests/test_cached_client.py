@@ -18,6 +18,7 @@ from nab_index.cached_client import (
     _header,
     _parse_max_age,
 )
+from nab_index.client import SdistFile, WheelFile, _parse_files, _parse_sdist_filename
 
 LISTING = {
     "meta": {"api-version": "1.0"},
@@ -184,6 +185,61 @@ class TestYankedFiltering:
         }
         files = _parse_files(data, "https://example.com/", "foo")
         assert len(files) == 1
+
+
+class TestZipSdistDropped:
+    """nab admits only .tar.gz sdists; .zip is dropped at parse time."""
+
+    def test_parse_sdist_filename_rejects_zip(self) -> None:
+        assert _parse_sdist_filename("foo-1.0.zip") is None
+
+    def test_parse_sdist_filename_accepts_tar_gz(self) -> None:
+        assert _parse_sdist_filename("foo-1.0.tar.gz") == ("foo", "1.0")
+
+    def test_zip_alongside_tar_gz_keeps_only_tar_gz(self) -> None:
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0.tar.gz",
+                    "url": "https://example.com/foo-1.0.tar.gz",
+                },
+                {
+                    "filename": "foo-1.0.zip",
+                    "url": "https://example.com/foo-1.0.zip",
+                },
+            ],
+        }
+        files = _parse_files(data, "https://example.com/", "foo")
+        assert [f.filename for f in files] == ["foo-1.0.tar.gz"]
+        assert all(isinstance(f, SdistFile) for f in files)
+
+    def test_zip_only_release_yields_no_sdist(self) -> None:
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0.zip",
+                    "url": "https://example.com/foo-1.0.zip",
+                },
+            ],
+        }
+        assert _parse_files(data, "https://example.com/", "foo") == []
+
+    def test_zip_dropped_wheel_kept(self) -> None:
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": "https://example.com/foo-1.0-py3-none-any.whl",
+                },
+                {
+                    "filename": "foo-1.0.zip",
+                    "url": "https://example.com/foo-1.0.zip",
+                },
+            ],
+        }
+        files = _parse_files(data, "https://example.com/", "foo")
+        assert [f.filename for f in files] == ["foo-1.0-py3-none-any.whl"]
+        assert all(isinstance(f, WheelFile) for f in files)
 
 
 class TestParseMaxAge:

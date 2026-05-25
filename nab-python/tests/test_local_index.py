@@ -67,12 +67,10 @@ class TestFlatWheelhouse:
         assert isinstance(files[0], SdistFile)
         assert files[0].version == "1.0"
 
-    def test_finds_sdist_zip(self, tmp_path: Path) -> None:
+    def test_ignores_sdist_zip(self, tmp_path: Path) -> None:
         (tmp_path / "foo-1.0.zip").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
-        files = run(client.get_files("foo"))
-        assert len(files) == 1
-        assert isinstance(files[0], SdistFile)
+        assert run(client.get_files("foo")) == []
 
     def test_filters_other_packages(self, tmp_path: Path) -> None:
         (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
@@ -243,6 +241,16 @@ class TestPep503Directory:
         result = run(client.get_files("foo"))
         assert len(result) == 1
         assert result[0].hashes == (("sha256", digest),)
+
+    def test_pep503_zip_sdist_dropped(self, tmp_path: Path) -> None:
+        body = '<a href="foo-1.0.zip">foo-zip</a><a href="foo-1.0.tar.gz">foo-sdist</a>'
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-1.0.zip").write_bytes(b"")
+        (package_dir / "foo-1.0.tar.gz").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert [r.filename for r in result] == ["foo-1.0.tar.gz"]
+        assert isinstance(result[0], SdistFile)
 
     def test_pep503_yanked_link_excluded(self, tmp_path: Path) -> None:
         body = (

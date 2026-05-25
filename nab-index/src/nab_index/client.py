@@ -58,16 +58,20 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
 
 
 def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
-    """Parse an sdist filename.  Supports ``.tar.gz`` and ``.zip``.
+    """Parse a ``.tar.gz`` sdist filename to ``(canonical_name, version)``.
 
-    Returns ``(canonical_name, version_string)`` or ``None`` for any
-    filename packaging rejects.  Note that legacy filenames with
-    embedded build tags (e.g. ``cffi-1.0.2-2.tar.gz``) parse to a
-    surprising ``(name="cffi-1-0-2", version="2")`` tuple per
-    :func:`packaging.utils.parse_sdist_filename`'s last-dash split;
-    callers MUST drop files whose canonical name does not match the
-    package they queried.  See :func:`_parse_files`.
+    Returns ``None`` for anything packaging rejects and for ``.zip``
+    sdists, which nab does not support (gzip-tar only, and not part of
+    the PEP 625 standard).
+
+    Legacy filenames with embedded build tags (e.g. ``cffi-1.0.2-2.tar.gz``)
+    parse to a surprising ``(name="cffi-1-0-2", version="2")``, so callers
+    MUST drop files whose canonical name does not match the queried
+    package.  See :func:`_parse_files`.
     """
+    if filename.endswith(".zip"):
+        return None
+
     try:
         name, version = parse_sdist_filename(filename)
     except InvalidSdistFilename:
