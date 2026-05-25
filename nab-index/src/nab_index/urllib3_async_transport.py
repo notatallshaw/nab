@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 import truststore
 import urllib3
 
+from ._retry import urllib3_retry
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -94,6 +96,7 @@ class Urllib3AsyncTransport:
             num_pools=num_pools,
             maxsize=maxsize,
             ssl_context=_SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+            retries=urllib3_retry(),
         )
 
     async def get(

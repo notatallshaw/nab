@@ -16,7 +16,15 @@ import pytest
 import respx
 import truststore
 import urllib3
+from urllib3.util.retry import Retry
 
+from nab_index._retry import (
+    BACKOFF_FACTOR,
+    RETRY_STATUSES,
+    TOTAL,
+    _backoff,
+    get_with_retry,
+)
 from nab_index.client import AsyncSimpleClient, _extract_sdist_files
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.niquests_async_transport import NiquestsAsyncTransport
@@ -79,6 +87,26 @@ class TestHttpxAsyncTransport:
         verify = cls.call_args.kwargs["verify"]
         assert isinstance(verify, truststore.SSLContext)
 
+    def test_retries_transient_status_then_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 503 is retried and the eventual 200 is returned."""
+        monkeypatch.setattr("nab_index._retry._backoff", lambda _attempt: 0.0)
+        transport = HttpxAsyncTransport()
+        transport._client.get = AsyncMock(
+            side_effect=[httpx.Response(503), httpx.Response(200, text="ok")]
+        )
+
+        async def go() -> int:
+            try:
+                resp = await transport.get("https://example.com/")
+                return resp.status_code
+            finally:
+                await transport.aclose()
+
+        assert asyncio.run(go()) == 200
+        assert transport._client.get.await_count == 2
+
 
 class TestNiquestsAsyncTransport:
     def test_get_calls_underlying_session(
@@ -113,6 +141,17 @@ class TestNiquestsAsyncTransport:
             "https://example.com/", headers={"a": "b"}
         )
         fake_session.close.assert_awaited_once()
+
+    def test_configures_retry_policy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """AsyncSession gets the shared GET retry policy."""
+        cls = MagicMock()
+        monkeypatch.setattr(
+            "nab_index.niquests_async_transport.niquests.AsyncSession", cls
+        )
+        NiquestsAsyncTransport()
+        retries = cls.call_args.kwargs["retries"]
+        assert isinstance(retries, Retry)
+        assert retries.status_forcelist == RETRY_STATUSES
 
 
 class TestUrllib3AsyncTransport:
@@ -265,6 +304,113 @@ class TestUrllib3AsyncTransport:
         ctx = _SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         stats = ctx.cert_store_stats()
         assert stats["x509_ca"] >= 1
+
+    def test_configures_retry_policy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PoolManager gets the shared GET retry policy with backoff."""
+        captured: dict[str, Any] = {}
+
+        def fake_pool_manager(**kw: Any) -> MagicMock:
+            captured.update(kw)
+            return MagicMock(spec=urllib3.PoolManager)
+
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager", fake_pool_manager
+        )
+        Urllib3AsyncTransport()
+        retries = captured["retries"]
+        assert isinstance(retries, Retry)
+        assert retries.backoff_factor == BACKOFF_FACTOR
+        assert retries.status_forcelist == RETRY_STATUSES
+
+
+class TestGetWithRetry:
+    """The shared async retry helper used by the httpx transport."""
+
+    def test_backoff_is_exponential(self) -> None:
+        assert _backoff(0) == BACKOFF_FACTOR
+        assert _backoff(1) == BACKOFF_FACTOR * 2
+        assert _backoff(2) == BACKOFF_FACTOR * 4
+
+    def test_returns_first_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("nab_index._retry._backoff", lambda _a: 0.0)
+        calls = 0
+
+        async def do_get() -> Any:
+            nonlocal calls
+            calls += 1
+            return MagicMock(status_code=200)
+
+        out = asyncio.run(
+            get_with_retry(
+                do_get,
+                transient=ValueError,
+                retry_status=lambda r: r.status_code in RETRY_STATUSES,
+            )
+        )
+        assert out.status_code == 200
+        assert calls == 1
+
+    def test_retries_status_then_transient_then_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("nab_index._retry._backoff", lambda _a: 0.0)
+        results: list[Any] = [
+            MagicMock(status_code=503),
+            ValueError("boom"),
+            MagicMock(status_code=200),
+        ]
+
+        async def do_get() -> Any:
+            item = results.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        out = asyncio.run(
+            get_with_retry(
+                do_get,
+                transient=ValueError,
+                retry_status=lambda r: r.status_code in RETRY_STATUSES,
+            )
+        )
+        assert out.status_code == 200
+        assert results == []
+
+    def test_exhausts_status_retries_then_returns_last(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("nab_index._retry._backoff", lambda _a: 0.0)
+        calls = 0
+
+        async def do_get() -> Any:
+            nonlocal calls
+            calls += 1
+            return MagicMock(status_code=503)
+
+        out = asyncio.run(
+            get_with_retry(
+                do_get,
+                transient=ValueError,
+                retry_status=lambda r: r.status_code in RETRY_STATUSES,
+            )
+        )
+        assert out.status_code == 503
+        assert calls == TOTAL + 1
+
+    def test_propagates_persistent_transient(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("nab_index._retry._backoff", lambda _a: 0.0)
+
+        async def do_get() -> Any:
+            raise ValueError("always")
+
+        with pytest.raises(ValueError, match="always"):
+            asyncio.run(
+                get_with_retry(
+                    do_get, transient=ValueError, retry_status=lambda _r: False
+                )
+            )
 
 
 class TestAsyncSimpleClient:

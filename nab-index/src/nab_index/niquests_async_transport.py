@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import niquests
 
+from ._retry import urllib3_retry
+
 if TYPE_CHECKING:
     from .transport import HttpResponse
 
@@ -31,6 +33,7 @@ class NiquestsAsyncTransport:
             revocation_configuration=None,
             pool_connections=pool_maxsize,
             pool_maxsize=pool_maxsize,
+            retries=urllib3_retry(),
         )
 
     async def get(
