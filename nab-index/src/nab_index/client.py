@@ -8,19 +8,20 @@ Transport-agnostic: any async HTTP client implementing the
 from __future__ import annotations
 
 import io
+import re
 import sys
 import tarfile
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from packaging.utils import (
     InvalidSdistFilename,
-    InvalidWheelFilename,
     canonicalize_name,
     parse_sdist_filename,
-    parse_wheel_filename,
 )
+from packaging.version import InvalidVersion, Version
 
 if TYPE_CHECKING:
     from packaging.utils import NormalizedName
@@ -37,6 +38,26 @@ __all__ = [
 ]
 
 
+# Mirrors packaging.utils._build_tag_regex: PEP 427 build numbers start with a digit.
+_BUILD_TAG_RE = re.compile(r"(\d+)(.*)", re.ASCII)
+# Mirrors packaging.utils' PEP 427 project-name check (re.match, not fullmatch).
+_WHEEL_NAME_RE = re.compile(r"^[\w\d._]*$", re.UNICODE)
+# A wheel filename has 4 dashes, or 5 when it carries a build tag.
+_WHEEL_DASHES = (4, 5)
+_WHEEL_DASHES_WITH_BUILD = 5
+
+
+@lru_cache(maxsize=65536)
+def _intern_version(version: str) -> Version:
+    """Construct a :class:`Version`, reusing one object per distinct string.
+
+    Raises :class:`InvalidVersion`; callers map that to a rejected file.
+    The same version recurs across every per-platform wheel of a release,
+    so the PEP 440 parse runs once per distinct string instead of per file.
+    """
+    return Version(version)
+
+
 def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     """Parse a wheel filename per PEP 427.
 
@@ -47,14 +68,30 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     matches what packaging records on the file; e.g. a wheel
     declaring ``2.0.0`` in its filename comes back as ``"2.0.0"``,
     not ``"2"``.
+
+    This reproduces :func:`packaging.utils.parse_wheel_filename`'s
+    name/version validation but skips its ``parse_tag`` call, whose
+    ``frozenset[Tag]`` result nab discards. With ``validate_order=False``
+    (nab's default) ``parse_tag`` never raises, so the accepted filename
+    set is unchanged. A differential test guards against drift.
     """
     if not filename.endswith(".whl"):
         return None
-    try:
-        name, version, _build, _tags = parse_wheel_filename(filename)
-    except InvalidWheelFilename:
+    stem = filename[:-4]
+    dashes = stem.count("-")
+    if dashes not in _WHEEL_DASHES:
         return None
-    return (name, str(version))
+    parts = stem.split("-", dashes - 2)
+    name_part = parts[0]
+    if "__" in name_part or _WHEEL_NAME_RE.match(name_part) is None:
+        return None
+    try:
+        version = _intern_version(parts[1])
+    except InvalidVersion:
+        return None
+    if dashes == _WHEEL_DASHES_WITH_BUILD and _BUILD_TAG_RE.match(parts[2]) is None:
+        return None
+    return (canonicalize_name(name_part), str(version))
 
 
 def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
