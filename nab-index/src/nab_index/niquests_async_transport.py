@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import niquests
 
 from ._retry import urllib3_retry
+from ._tls import forbid_unverified_https
 
 if TYPE_CHECKING:
     from .transport import HttpResponse
@@ -14,6 +15,9 @@ if TYPE_CHECKING:
 __all__ = [
     "NiquestsAsyncTransport",
 ]
+
+# nab never sends an unverified HTTPS request; make the degrade fatal.
+forbid_unverified_https()
 
 
 class NiquestsAsyncTransport:

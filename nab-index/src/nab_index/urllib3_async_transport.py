@@ -17,6 +17,7 @@ import truststore
 import urllib3
 
 from ._retry import urllib3_retry
+from ._tls import forbid_unverified_https
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -24,6 +25,9 @@ if TYPE_CHECKING:
 __all__ = [
     "Urllib3AsyncTransport",
 ]
+
+# nab never sends an unverified HTTPS request; make the degrade fatal.
+forbid_unverified_https()
 
 
 _HTTP_BAD_REQUEST = 400

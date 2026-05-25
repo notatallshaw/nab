@@ -7,6 +7,7 @@ import io
 import json
 import ssl
 import tarfile
+import warnings
 from collections.abc import Mapping
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -25,6 +26,7 @@ from nab_index._retry import (
     _backoff,
     get_with_retry,
 )
+from nab_index._tls import forbid_unverified_https
 from nab_index.client import AsyncSimpleClient, _extract_sdist_files
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.niquests_async_transport import NiquestsAsyncTransport
@@ -411,6 +413,20 @@ class TestGetWithRetry:
                     do_get, transient=ValueError, retry_status=lambda _r: False
                 )
             )
+
+
+class TestForbidUnverifiedHttps:
+    def test_promotes_insecure_request_warning_to_error(self) -> None:
+        """An unverified HTTPS request raises rather than warning and proceeding."""
+        with warnings.catch_warnings():
+            warnings.resetwarnings()
+            forbid_unverified_https()
+            with pytest.raises(urllib3.exceptions.InsecureRequestWarning):
+                warnings.warn(
+                    "unverified",
+                    urllib3.exceptions.InsecureRequestWarning,
+                    stacklevel=2,
+                )
 
 
 class TestAsyncSimpleClient:
