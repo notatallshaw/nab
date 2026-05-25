@@ -2172,6 +2172,54 @@ size = 6675
 sha256 = "188306098d013b691fcadc011abd66727d3c414c571bb01b1a174ba8c983cf90"
 
 [[packages]]
+name = "tomlkit"
+version = "0.15.0"
+requires-python = ">=3.9"
+index = "https://pypi.org/simple/"
+
+[packages.sdist]
+name = "tomlkit-0.15.0.tar.gz"
+upload-time = 2026-05-10 07:38:22.245337+00:00
+url = "https://files.pythonhosted.org/packages/51/db/03eaf4331631ef6b27d6e3c9b68c54dc6f0d63d87201fed600cc409307fd/tomlkit-0.15.0.tar.gz"
+size = 161875
+
+[packages.sdist.hashes]
+sha256 = "7d1a9ecba3086638211b13814ea79c90dd54dd11993564376f3aa92271f5c7a3"
+
+[[packages.wheels]]
+name = "tomlkit-0.15.0-py3-none-any.whl"
+upload-time = 2026-05-10 07:38:23.517364+00:00
+url = "https://files.pythonhosted.org/packages/6a/43/8bd850ee71a191bf072e31302c73a66be413fecdd98fdcd111ecbcce13ca/tomlkit-0.15.0-py3-none-any.whl"
+size = 41328
+
+[packages.wheels.hashes]
+sha256 = "4dbc8f0fc024412b57ced8757ac7461305126a648ff8c2c807fcb8e133a78738"
+
+[[packages]]
+name = "truststore"
+version = "0.10.4"
+requires-python = ">=3.10"
+index = "https://pypi.org/simple/"
+
+[packages.sdist]
+name = "truststore-0.10.4.tar.gz"
+upload-time = 2025-08-12 18:49:02.730234+00:00
+url = "https://files.pythonhosted.org/packages/53/a3/1585216310e344e8102c22482f6060c7a6ea0322b63e026372e6dcefcfd6/truststore-0.10.4.tar.gz"
+size = 26169
+
+[packages.sdist.hashes]
+sha256 = "9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301"
+
+[[packages.wheels]]
+name = "truststore-0.10.4-py3-none-any.whl"
+upload-time = 2025-08-12 18:49:01.460601+00:00
+url = "https://files.pythonhosted.org/packages/19/97/56608b2249fe206a67cd573bc93cd9896e1efb9e98bce9c163bcdc704b88/truststore-0.10.4-py3-none-any.whl"
+size = 18660
+
+[packages.wheels.hashes]
+sha256 = "adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981"
+
+[[packages]]
 name = "typeguard"
 version = "4.5.2"
 requires-python = ">=3.9"

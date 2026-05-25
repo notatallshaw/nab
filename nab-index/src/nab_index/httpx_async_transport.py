@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ssl
 from typing import TYPE_CHECKING
 
 import httpx
+import truststore
 
 if TYPE_CHECKING:
     from .transport import HttpResponse
@@ -24,7 +26,10 @@ class HttpxAsyncTransport:
 
     def __init__(self, *, http2: bool = True) -> None:
         """Create a transport."""
-        self._client = httpx.AsyncClient(http2=http2)
+        self._client = httpx.AsyncClient(
+            http2=http2,
+            verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+        )
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
