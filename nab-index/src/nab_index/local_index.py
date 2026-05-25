@@ -7,10 +7,11 @@ Two flavours, both keyed off a ``file://`` URL pointing at a directory:
   :class:`~nab_index.client.WheelFile` /
   :class:`~nab_index.client.SdistFile` records mirror what an HTTPS
   Simple API returns.
-* Flat wheelhouse: a directory containing ``.whl`` and ``.tar.gz`` /
-  ``.zip`` files at the top level (pip's ``--find-links ./wheels``
-  shape). On-disk filenames are parsed for ``(name, version)`` and
-  every distribution for a package is returned by ``get_files``.
+* Flat wheelhouse: a directory containing ``.whl`` and ``.tar.gz``
+  files at the top level (pip's ``--find-links ./wheels`` shape).
+  On-disk filenames are parsed for ``(name, version)`` and every
+  distribution for a package is returned by ``get_files``.  ``.zip``
+  sdists are ignored, matching the remote-index behaviour.
 
 Reads run synchronously off the filesystem; the filesystem is the
 cache. The async surface is a thin shim over the sync helpers so the
@@ -93,7 +94,7 @@ class _Pep503Parser(HTMLParser):
             self.links.append((href, requires_python))
 
 
-_FLAT_EXTS = re.compile(r"\.(whl|tar\.gz|zip)$", re.IGNORECASE)
+_FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
 
 
 def _scan_pep503_directory(
