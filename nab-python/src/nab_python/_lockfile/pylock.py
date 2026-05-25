@@ -172,7 +172,10 @@ def _pin_to_package(
             sdist=(
                 _sdist_to_package(pin.sdist, lock_dir=lock_dir) if pin.sdist else None
             ),
-            wheels=tuple(_wheel_to_package(w, lock_dir=lock_dir) for w in pin.wheels)
+            wheels=tuple(
+                _wheel_to_package(w, lock_dir=lock_dir)
+                for w in sorted(pin.wheels, key=_wheel_sort_key)
+            )
             or None,
         )
     if isinstance(pin, LocalPin):
@@ -220,14 +223,14 @@ def _wheel_to_package(wheel: WheelArtifact, *, lock_dir: Path) -> PackageWheel:
             name=wheel.filename,
             path=_relativize_path(wheel.local_path.resolve(), lock_dir),
             size=wheel.size,
-            hashes=dict(wheel.hashes),
+            hashes=dict(sorted(wheel.hashes)),
             upload_time=wheel.upload_time,
         )
     return PackageWheel(
         name=wheel.filename,
         url=wheel.url,
         size=wheel.size,
-        hashes=dict(wheel.hashes),
+        hashes=dict(sorted(wheel.hashes)),
         upload_time=wheel.upload_time,
     )
 
@@ -242,14 +245,14 @@ def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
             name=sdist.filename,
             path=_relativize_path(sdist.local_path.resolve(), lock_dir),
             size=sdist.size,
-            hashes=dict(sdist.hashes),
+            hashes=dict(sorted(sdist.hashes)),
             upload_time=sdist.upload_time,
         )
     return PackageSdist(
         name=sdist.filename,
         url=sdist.url,
         size=sdist.size,
-        hashes=dict(sdist.hashes),
+        hashes=dict(sorted(sdist.hashes)),
         upload_time=sdist.upload_time,
     )
 
@@ -303,9 +306,14 @@ def _group_by_name(
 def _group_pins_by_pin(
     per_tuple: dict[str, PinShape],
 ) -> list[tuple[list[PinShape], list[str]]]:
-    """Bucket tuples by structural pin discriminator, keeping every pin."""
+    """Bucket tuples by pin discriminator, keeping every pin.
+
+    Walked in sorted label order so the output is independent of dict
+    insertion order.
+    """
     by_key: dict[tuple, tuple[list[PinShape], list[str]]] = {}
-    for tuple_label, pin in per_tuple.items():
+    for tuple_label in sorted(per_tuple):
+        pin = per_tuple[tuple_label]
         key = _pin_discriminator(pin)
         if key not in by_key:
             by_key[key] = ([], [])
@@ -372,7 +380,7 @@ def _merge_pins_in_group(pins: list[PinShape]) -> PinShape:
         version=head.version,
         index=head.index,
         sdist=sdist,
-        wheels=tuple(seen_wheels.values()),
+        wheels=tuple(sorted(seen_wheels.values(), key=_wheel_sort_key)),
         requires_python=requires_python,
     )
 
@@ -404,9 +412,29 @@ def _or_markers(markers: Sequence[Marker]) -> Marker:
         raise ValueError(msg)
     if len(markers) == 1:
         return markers[0]
-    parts = [f"({m})" for m in markers]
+    # str(Marker) does not canonicalise OR-clause order, so sort the
+    # fragments by string to keep the joined marker order-independent.
+    parts = [f"({m})" for m in sorted(markers, key=str)]
     return Marker(" or ".join(parts))
 
 
-def _package_sort_key(package: Package) -> tuple:
-    return (str(package.name), str(package.version) if package.version else "")
+def _wheel_sort_key(wheel: WheelArtifact) -> tuple[str, str, str]:
+    """Stable sort key for a wheel: filename, then url, then local path.
+
+    Wheel tags are not used as a key; they parse to a ``frozenset``,
+    which has no total order.
+    """
+    return (wheel.filename, wheel.url or "", str(wheel.local_path or ""))
+
+
+def _package_sort_key(package: Package) -> tuple[str, str, str]:
+    """Stable sort key for a package row: name, version, marker string.
+
+    The marker tiebreak separates two rows that share a name and version
+    but differ by environment marker, as a universal resolve emits.
+    """
+    return (
+        str(package.name),
+        str(package.version) if package.version else "",
+        str(package.marker) if package.marker else "",
+    )
