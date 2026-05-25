@@ -70,3 +70,15 @@ dependencies = [
 build = "sphinx-build -W -b html docs docs/_build/html {args}"
 serve = "sphinx-autobuild docs docs/_build/html {args}"
 clean = "rm -rf docs/_build"
+
+[envs.release]
+detached = true
+
+[envs.release.scripts]
+# Install only the hash-pinned lock; never resolve unpinned dependencies.
+_sync = [
+    'python -m pip install --upgrade "pip>=26.1"',
+    "python -m pip install -r .github/requirements/pylock.release.toml",
+]
+make = ["_sync", "python tasks/release.py make {args}"]
+build = ["_sync", "python tasks/build_dists.py {args}"]
