@@ -55,8 +55,8 @@ def _header(response: HttpResponse, key: str) -> str | None:
     """Case-insensitive header lookup.
 
     The :class:`HttpResponse` Protocol only promises a plain
-    :class:`Mapping`. All real transports (httpx, niquests, urllib3)
-    return case-insensitive header containers, but we don't rely on
+    :class:`Mapping`. Both real transports (httpx, urllib3) return
+    case-insensitive header containers, but we don't rely on
     that here so a plain-dict fake also works.
     """
     headers = response.headers

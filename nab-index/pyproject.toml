@@ -27,7 +27,6 @@ dependencies = [
 
 [project.optional-dependencies]
 httpx = ["httpx[http2]>=0.28"]
-niquests = ["niquests>=3.18"]
 
 [project.urls]
 Homepage = "https://github.com/notatallshaw/nab"

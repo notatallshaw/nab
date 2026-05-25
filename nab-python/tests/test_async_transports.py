@@ -9,7 +9,7 @@ import ssl
 import tarfile
 from collections.abc import Mapping
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -19,7 +19,6 @@ import urllib3
 
 from nab_index.client import AsyncSimpleClient, _extract_sdist_files
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_index.niquests_async_transport import NiquestsAsyncTransport
 from nab_index.urllib3_async_transport import (
     Urllib3AsyncTransport,
     _SSLContext,
@@ -78,41 +77,6 @@ class TestHttpxAsyncTransport:
         HttpxAsyncTransport()
         verify = cls.call_args.kwargs["verify"]
         assert isinstance(verify, truststore.SSLContext)
-
-
-class TestNiquestsAsyncTransport:
-    def test_get_calls_underlying_session(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Verify the wrapper forwards to niquests.AsyncSession."""
-        fake_response = MagicMock(text="ok", content=b"ok")
-        fake_session = MagicMock()
-        fake_session.get = AsyncMock(return_value=fake_response)
-        fake_session.close = AsyncMock(return_value=None)
-
-        cls = MagicMock(return_value=fake_session)
-        monkeypatch.setattr(
-            "nab_index.niquests_async_transport.niquests.AsyncSession", cls
-        )
-
-        async def go() -> Any:
-            transport = NiquestsAsyncTransport()
-            try:
-                return await transport.get("https://example.com/", headers={"a": "b"})
-            finally:
-                await transport.aclose()
-
-        result = asyncio.run(go())
-        assert result is fake_response
-        # OCSP/CRL revocation must be off so we don't pay that cost.
-        kwargs = cls.call_args.kwargs
-        assert kwargs["revocation_configuration"] is None
-        # Pool sized to match our default fetch concurrency.
-        assert kwargs["pool_maxsize"] >= 50
-        fake_session.get.assert_awaited_once_with(
-            "https://example.com/", headers={"a": "b"}
-        )
-        fake_session.close.assert_awaited_once()
 
 
 class TestUrllib3AsyncTransport:

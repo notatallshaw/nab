@@ -32,17 +32,14 @@ is `uv` on recent pipx; the `pip` backend works equivalently.
 
 ## Picking an HTTP backend
 
-`nab-index` ships urllib3 by default. `httpx` and `niquests` are
-opt-in via extras:
+`nab-index` ships urllib3 by default. `httpx` is opt-in via an extra:
 
 ```bash
 uv tool install 'nab[httpx]'
-uv tool install 'nab[niquests]'
 ```
 
-Pick one at run-time with `--http-backend httpx` or
-`--http-backend niquests`. Selecting a backend that was not
-installed surfaces a helpful `ImportError`.
+Pick it at run-time with `--http-backend httpx`. Selecting a backend
+that was not installed surfaces a helpful `ImportError`.
 
 ## Throw-away invocations
 

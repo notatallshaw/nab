@@ -3,7 +3,7 @@ workspace.members = ["nab-resolver", "nab-python", "nab-index"]
 
 [envs.hatch-test]
 workspace.members = ["nab-resolver", "nab-python", "nab-index"]
-features = ["httpx", "niquests"]
+features = ["httpx"]
 extra-dependencies = [
     "hypothesis>=6.100",
     "pytest-timeout>=2.3",

@@ -6,10 +6,9 @@ PyPI Simple-API client and on-disk cache used by
 
 It provides:
 
-- A small async transport interface with three drop-in backends:
+- A small async transport interface with two drop-in backends:
   - `urllib3` (default; pulled in by the base install).
   - `httpx` (extra: `nab-index[httpx]`).
-  - `niquests` (extra: `nab-index[niquests]`).
 - A Simple-API client with JSON and HTML decoders.
 - A disk cache for project listings and file metadata responses.
 - A multi-index router (ordered named indexes plus per-package
