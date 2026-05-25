@@ -228,7 +228,7 @@ nab lock [PATH]
   --cache-dir PATH        # override on-disk cache location
   --no-cache              # disable cache for this run
   --offline               # use cache only, no network
-  --http-backend X        # urllib3 (default) | httpx | niquests
+  --http-backend X        # urllib3 (default) | httpx
 ```
 
 Anything that defines *what* gets resolved goes in `[tool.nab]`; the

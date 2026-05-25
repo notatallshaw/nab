@@ -295,8 +295,7 @@ class Provider:
     Fetches version lists and .metadata from PyPI via nab-index.
     A thread pool submits listing fetches in the background so
     transitive deps are fetched concurrently with resolution.
-    The niquests session is shared across threads (thread-safe
-    with HTTP/2 connection reuse).
+    The HTTP connection pool is shared across threads for reuse.
     """
 
     # Drives two prefetch paths: the speculative root-batch prefetch

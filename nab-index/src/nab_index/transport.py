@@ -1,7 +1,7 @@
 """HTTP transport abstractions for nab-index.
 
 Defines minimal protocols for async HTTP GET requests.
-Implementations can use any async HTTP library (httpx, niquests, urllib3
+Implementations can use any async HTTP library (httpx, or urllib3
 wrapped in to_thread, etc.).
 """
 

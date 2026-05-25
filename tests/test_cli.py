@@ -34,7 +34,6 @@ from nab.cli import (
     main,
 )
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_index.niquests_async_transport import NiquestsAsyncTransport
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.version import Version
@@ -1620,14 +1619,6 @@ class TestMakeTransport:
         finally:
             asyncio.run(transport.aclose())
 
-    def test_niquests(self) -> None:
-        """``"niquests"`` resolves to :class:`NiquestsAsyncTransport`."""
-        transport = _make_transport("niquests")
-        try:
-            assert isinstance(transport, NiquestsAsyncTransport)
-        finally:
-            asyncio.run(transport.aclose())
-
     def test_urllib3(self) -> None:
         """``"urllib3"`` resolves to :class:`Urllib3AsyncTransport`."""
         transport = _make_transport("urllib3")
@@ -1652,23 +1643,6 @@ class TestMakeTransport:
             _make_transport("httpx")
         assert info.value.code == 1
         assert "nab[httpx]" in capsys.readouterr().err
-
-    def test_niquests_missing_exits_with_hint(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """When niquests isn't installed, the CLI exits cleanly with a hint."""
-        original_import = builtins.__import__
-
-        def fake_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "nab_index.niquests_async_transport":
-                raise ImportError(name)
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
-        with pytest.raises(SystemExit) as info:
-            _make_transport("niquests")
-        assert info.value.code == 1
-        assert "nab[niquests]" in capsys.readouterr().err
 
 
 class TestDownloadCommand:

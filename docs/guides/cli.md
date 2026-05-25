@@ -96,7 +96,7 @@ Both subcommands accept the same runtime knobs:
 | `--cache-dir PATH` | `~/.cache/nab` | Override the on-disk cache root. |
 | `--no-cache` | off | Disable cache for this run. Combine with `--offline` only if the cache already has every file. |
 | `--offline` | off | Use cache only, never hit the network. |
-| `--http-backend {urllib3,httpx,niquests}` | `urllib3` | Pick the async transport for fetches. `httpx` and `niquests` need their respective extras (see [installation](installation.md)). |
+| `--http-backend {urllib3,httpx}` | `urllib3` | Pick the async transport for fetches. `httpx` needs its extra (see [installation](installation.md)). |
 
 `urllib3` is the only backend pulled in by the base install. The
 others surface a helpful `ImportError` if selected without the

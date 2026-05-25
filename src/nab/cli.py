@@ -61,7 +61,7 @@ PathArg = Annotated[Path, tyro.conf.Positional]
 
 # Lowercase Literal types so --http-backend and --format render lowercase
 # choices in --help rather than the uppercase enum names.
-HttpBackend = Literal["urllib3", "httpx", "niquests"]
+HttpBackend = Literal["urllib3", "httpx"]
 LockFormat = Literal["pylock", "requirements", "requirements-without-hashes"]
 ResolutionFlag = Literal["highest", "lowest", "lowest-direct"]
 
@@ -80,8 +80,8 @@ app = SubcommandApp()
 
 
 def _make_transport(backend: HttpBackend) -> AsyncHttpTransport:
-    # httpx and niquests are optional extras; import lazily so a
-    # urllib3-only install doesn't need them.
+    # httpx is an optional extra; import lazily so a urllib3-only
+    # install doesn't need it.
     if backend == "httpx":
         try:
             from nab_index.httpx_async_transport import (  # noqa: PLC0415
@@ -93,18 +93,6 @@ def _make_transport(backend: HttpBackend) -> AsyncHttpTransport:
             )
             sys.exit(1)
         return HttpxAsyncTransport()
-
-    if backend == "niquests":
-        try:
-            from nab_index.niquests_async_transport import (  # noqa: PLC0415
-                NiquestsAsyncTransport,
-            )
-        except ImportError:
-            sys.stderr.write(
-                "Error: niquests is not installed; run `pip install nab[niquests]`\n"
-            )
-            sys.exit(1)
-        return NiquestsAsyncTransport()
 
     return Urllib3AsyncTransport()
 
