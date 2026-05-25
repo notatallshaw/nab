@@ -20,7 +20,9 @@ from nab_index.vcs import (
     _split_repo_ref,
     prepare_clone,
 )
+from nab_python._vendor.packaging.version import Version
 from nab_python.fetch import InMemoryIndex
+from nab_python.lockfile import VcsPin, build_lock_input_from_provider
 from nab_python.provider import (
     BuildPolicy,
     LocalSource,
@@ -346,6 +348,55 @@ class TestProviderVcsIntegration:
         assert provider.vcs_pin_for("foo") == sha
         # Unknown package returns None.
         assert provider.vcs_pin_for("missing") is None
+
+    def test_floating_ref_lock_records_resolved_sha(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A branch ref under require_pin=False locks the resolved SHA.
+
+        End-to-end seam: the resolver materialises the clone (recording
+        the ls-remote SHA), then the lock builder reads it back.  PEP 751
+        wants commit_id to be the immutable SHA; the branch name lands in
+        requested_revision, never in commit_id.  Guards the path that
+        could otherwise emit a branch name as the commit id.
+        """
+        sha = "b" * 40
+        clone_dir = tmp_path / "cache" / "vcs" / "k" / sha
+        (clone_dir / ".git").mkdir(parents=True)
+        (clone_dir / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "1.0.0"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "k")
+
+        def fake_run(cmd: list[str], **_kwargs: object) -> object:
+            assert cmd[:2] == ["git", "ls-remote"]
+            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n"})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        provider = Provider(
+            self.coordinator(),
+            vcs_config=VcsConfig(
+                policy=VcsPolicy.ALLOW,
+                allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
+                require_pin=False,
+            ),
+            vcs_sources=[
+                VcsSource(name="foo", url="git+https://example.com/foo.git@main"),
+            ],
+            vcs_cache_dir=tmp_path / "cache",
+            build_policy=BuildPolicy.NEVER,
+        )
+        provider.fetch_versions("foo")
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.commit_id == sha
+        assert pin.requested_revision == "main"
 
     def test_vcs_under_block_policy_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="VcsPolicy.ALLOW"):

@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "MissingHashError",
+    "MissingVcsCommitError",
     "build_lock_input_from_provider",
     "read_lockfile_anchor",
     "read_lockfile_packages",
@@ -108,6 +109,18 @@ class MissingHashError(ValueError):
     spec-compliant entry.  Surface the failure with the offending
     package and filename so the user can either add a hash to their
     local index or exclude the package.
+    """
+
+
+class MissingVcsCommitError(ValueError):
+    """A VCS source reached the lock writer without a resolved commit SHA.
+
+    PEP 751 requires ``packages.vcs.commit-id`` to be an immutable
+    identifier.  nab records the post-clone SHA on the provider during
+    materialisation, before any version can be pinned, so a missing SHA
+    here means a VCS source was pinned without being cloned.  Surface it
+    loudly rather than emit a branch name or empty string as the commit
+    id, which would silently produce a non-reproducible lock.
     """
 
 
@@ -395,30 +408,40 @@ def _vcs_pin_from_source(
 ) -> VcsPin:
     """Build a :class:`VcsPin` from a :class:`VcsSource`.
 
-    Prefer ``resolved_sha`` (the post-clone SHA recorded on the
-    provider) over the URL's ``@<ref>``: annotated tags and floating
-    refs only resolve to a commit after the clone runs.  Fall back to
-    the URL ref when the source was never materialised.
+    ``resolved_sha`` is the post-clone SHA recorded on the provider by
+    :func:`~nab_python._provider.sources.materialize_vcs_source`.  A VCS
+    source cannot be pinned without first being materialised, so a
+    ``None`` here is an internal invariant violation: raise
+    :class:`MissingVcsCommitError` rather than emit a branch name or
+    empty string as ``commit_id``.
 
     ``requested_revision`` is the URL's ``@<ref>``, kept only when it
     is a named ref that differs from ``commit_id`` (i.e. the user did
-    not pin the bare SHA).  An absent or unparseable ref leaves it
-    ``None``.
+    not pin the bare SHA).  ``subdirectory`` carries the
+    ``#subdirectory=`` fragment so an installer can locate the project
+    inside the repo.
     """
-    from nab_index.vcs import VcsCloneError, VcsRequest
+    from nab_index.vcs import VcsRequest
 
     from ..lockfile import VcsPin
 
-    try:
-        url_ref = VcsRequest.parse(source.url).ref
-    except VcsCloneError:
-        url_ref = ""
-    commit_id = resolved_sha if resolved_sha is not None else url_ref
-    requested_revision = url_ref if url_ref and url_ref != commit_id else None
+    if resolved_sha is None:
+        msg = (
+            f"{canonical}: VCS source pinned without a resolved commit SHA;"
+            " materialize_vcs_source records the post-clone SHA before any"
+            " version can be pinned, so this is an internal invariant"
+            " violation"
+        )
+        raise MissingVcsCommitError(msg)
+    parsed = VcsRequest.parse(source.url)
+    requested_revision = (
+        parsed.ref if parsed.ref and parsed.ref != resolved_sha else None
+    )
     return VcsPin(
         name=canonical,
         version=str(version),
         repo_url=_strip_userinfo(source.url),
-        commit_id=commit_id,
+        commit_id=resolved_sha,
+        subdirectory=parsed.subdirectory or None,
         requested_revision=requested_revision,
     )

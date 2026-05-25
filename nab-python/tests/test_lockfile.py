@@ -37,6 +37,7 @@ from nab_python.lockfile import (
     LocalPin,
     LockInput,
     MissingHashError,
+    MissingVcsCommitError,
     Provenance,
     SdistArtifact,
     VcsPin,
@@ -1324,7 +1325,8 @@ class TestBuildLockInputFromProvider:
                     name="foo",
                     url="git+https://example.com/r.git@" + "a" * 40,
                 ),
-            }
+            },
+            vcs_pins={"foo": "a" * 40},
         )
         lock_input = build_lock_input_from_provider(
             provider, {"foo": Version("0.0.0+vcs")}
@@ -1332,6 +1334,41 @@ class TestBuildLockInputFromProvider:
         pin = lock_input.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.commit_id == "a" * 40
+
+    def test_vcs_source_records_subdirectory(self) -> None:
+        """The ``#subdirectory=`` fragment survives into the VcsPin."""
+        sha = "a" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url=f"git+https://example.com/r.git@{sha}#subdirectory=pkg/sub",
+                ),
+            },
+            vcs_pins={"foo": sha},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.subdirectory == "pkg/sub"
+
+    def test_vcs_source_without_resolved_sha_raises(self) -> None:
+        """A pinned VCS source with no recorded SHA is an invariant breach.
+
+        materialize_vcs_source records the post-clone SHA before any
+        version can be pinned, so reaching the builder without one is
+        impossible through a real resolve; guard it loudly rather than
+        emit a branch name as the commit id.
+        """
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(name="foo", url="git+https://example.com/r.git@main"),
+            },
+        )
+        with pytest.raises(MissingVcsCommitError, match="resolved commit SHA"):
+            build_lock_input_from_provider(provider, {"foo": Version("0.0.0+vcs")})
 
     def test_vcs_source_prefers_resolved_sha_over_url_ref(self) -> None:
         """The post-clone SHA on the provider wins over the URL's ``@<ref>``."""
@@ -1351,51 +1388,6 @@ class TestBuildLockInputFromProvider:
         pin = lock_input.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.commit_id == resolved
-
-    def test_vcs_source_without_ref_yields_empty_commit(self) -> None:
-        provider = _FakeProvider(
-            vcs_sources={
-                "foo": VcsSource(
-                    name="foo",
-                    url="git+https://example.com/r.git",
-                ),
-            }
-        )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
-        assert isinstance(pin, VcsPin)
-        assert pin.commit_id == ""
-
-    def test_vcs_source_ssh_userinfo_without_ref(self) -> None:
-        provider = _FakeProvider(
-            vcs_sources={
-                "foo": VcsSource(
-                    name="foo",
-                    url="git+ssh://git@example.com/x/y.git",
-                ),
-            }
-        )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
-        assert isinstance(pin, VcsPin)
-        assert pin.commit_id == ""
-
-    def test_vcs_source_non_vcs_url_yields_empty_commit(self) -> None:
-        provider = _FakeProvider(
-            vcs_sources={
-                "foo": VcsSource(name="foo", url="https://example.com/r.git"),
-            }
-        )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
-        assert isinstance(pin, VcsPin)
-        assert pin.commit_id == ""
 
     def test_vcs_source_strips_credentials_from_url(self) -> None:
         provider = _FakeProvider(
@@ -1470,21 +1462,6 @@ class TestBuildLockInputFromProvider:
         provider = _FakeProvider(
             vcs_sources={
                 "foo": VcsSource(name="foo", url="git+https://example.com/r.git"),
-            },
-            vcs_pins={"foo": "a" * 40},
-        )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
-        assert isinstance(pin, VcsPin)
-        assert pin.requested_revision is None
-
-    def test_vcs_source_no_requested_revision_for_non_vcs_url(self) -> None:
-        """An unparseable VCS URL yields no requested-revision."""
-        provider = _FakeProvider(
-            vcs_sources={
-                "foo": VcsSource(name="foo", url="https://example.com/r.git"),
             },
             vcs_pins={"foo": "a" * 40},
         )
