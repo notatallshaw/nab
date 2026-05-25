@@ -299,16 +299,22 @@ def _parse_files(
 
 
 def _parse_hashes(value: object) -> tuple[tuple[str, str], ...]:
+    # Algo names are a tiny fixed vocabulary, so interning dedups them.
     if not isinstance(value, dict):
         return ()
+
+    # The common case is a single hash; skip the list build.
+    if len(value) == 1:
+        ((algo, digest),) = value.items()
+        if isinstance(algo, str) and isinstance(digest, str):
+            return ((sys.intern(algo), digest),)
+        return ()
+
     out: list[tuple[str, str]] = []
     for algo, digest in value.items():
         if isinstance(algo, str) and isinstance(digest, str):
-            # Hash algo names are drawn from a fixed vocabulary
-            # (``sha256``, ``md5``, ``blake2b``...) but appear once per
-            # file; interning collapses the duplicates into the handful
-            # actually used.
             out.append((sys.intern(algo), digest))
+
     return tuple(out)
 
 
