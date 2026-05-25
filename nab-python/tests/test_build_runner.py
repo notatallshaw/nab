@@ -13,13 +13,19 @@ The end-to-end test against a real source distribution is marked
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import io
 import sys
+import tarfile
+import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from installer.utils import Scheme
 
+from nab_index.multi_index import IndexConfig
 from nab_python._build.env import (
     BuildEnvError,
     NabBuildEnv,
@@ -27,6 +33,7 @@ from nab_python._build.env import (
 )
 from nab_python._build.runner import BuildBackendError, run_build_backend
 from nab_python.config import NabProjectConfig
+from nab_python.download import DownloadResult
 
 # A minimal, in-tree PEP 517 backend.  Implements
 # ``prepare_metadata_for_build_wheel`` only, enough to exercise
@@ -101,6 +108,63 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
         zf.writestr(f"{distinfo}/RECORD", "")
     return wheel_name
 '''
+
+
+def _wheel_record_hash(data: bytes) -> str:
+    digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
+    return "sha256=" + digest.decode()
+
+
+def _make_installable_wheel(path: Path, name: str, version: str) -> None:
+    """Write a minimal but installer-valid pure-Python wheel."""
+    dist = f"{name}-{version}"
+    files = {
+        f"{name}/__init__.py": b"",
+        f"{dist}.dist-info/METADATA": (
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n".encode()
+        ),
+        f"{dist}.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nGenerator: nab-test\n"
+            b"Root-Is-Purelib: true\nTag: py3-none-any\n"
+        ),
+    }
+    record = "".join(
+        f"{p},{_wheel_record_hash(d)},{len(d)}\n" for p, d in files.items()
+    )
+    record += f"{dist}.dist-info/RECORD,,\n"
+    files[f"{dist}.dist-info/RECORD"] = record.encode()
+    with zipfile.ZipFile(path, "w") as zf:
+        for member, data in files.items():
+            zf.writestr(member, data)
+
+
+def _make_pep643_sdist(path: Path, name: str, version: str) -> None:
+    """Write an sdist whose PKG-INFO is static (PEP 643), so no build is needed."""
+    pkg_info = f"Metadata-Version: 2.2\nName: {name}\nVersion: {version}\n".encode()
+    with tarfile.open(path, "w:gz") as tf:
+        info = tarfile.TarInfo(f"{name}-{version}/PKG-INFO")
+        info.size = len(pkg_info)
+        tf.addfile(info, io.BytesIO(pkg_info))
+
+
+def _make_local_index(root: Path, name: str, version: str) -> None:
+    """Create a PEP 503 ``file://`` index serving ``name`` as a wheel + sdist."""
+    pkg_dir = root / name
+    pkg_dir.mkdir(parents=True)
+    wheel = pkg_dir / f"{name}-{version}-py3-none-any.whl"
+    sdist = pkg_dir / f"{name}-{version}.tar.gz"
+    _make_installable_wheel(wheel, name, version)
+    _make_pep643_sdist(sdist, name, version)
+
+    def _digest(p: Path) -> str:
+        return hashlib.sha256(p.read_bytes()).hexdigest()
+
+    links = "".join(
+        f'<a href="{p.name}#sha256={_digest(p)}">{p.name}</a>\n' for p in (wheel, sdist)
+    )
+    (pkg_dir / "index.html").write_text(
+        f"<!DOCTYPE html><html><body>{links}</body></html>", encoding="utf-8"
+    )
 
 
 def _write_fake_backend_project(
@@ -425,25 +489,46 @@ class TestRunBuildBackendDefaults:
     """
 
     def test_extra_build_requires_branch(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When the backend's ``get_requires_for_build_wheel`` returns
-        non-empty, the runner installs the extras (no-op here because
-        the requires list is empty / already-installed)."""
+        """A non-empty get_requires_for_build_wheel resolves and installs it.
+
+        The requirement is resolved from a local ``file://`` index; the
+        download step (HTTP-only, so it cannot fetch ``file://``) is
+        stubbed to write the wheel locally, so the whole flow runs
+        offline.
+        """
+        index_dir = tmp_path / "index"
+        _make_local_index(index_dir, "buildstub", "1.0")
+        config = NabProjectConfig(indexes=(IndexConfig("local", index_dir.as_uri()),))
+
+        def fake_download_lock(
+            lock_input: object, _transport: object, wheel_dir: Path, *_a: object
+        ) -> DownloadResult:
+            written = []
+            for name, pin in lock_input.pins.items():  # type: ignore[attr-defined]
+                wheel = wheel_dir / f"{name}-{pin.version}-py3-none-any.whl"
+                _make_installable_wheel(wheel, name, pin.version)
+                written.append(wheel)
+            return DownloadResult(written=tuple(written), skipped=())
+
+        monkeypatch.setattr("nab_python._build.env.download_lock", fake_download_lock)
         backend_src = _FAKE_BACKEND_SRC.replace(
             "def get_requires_for_build_wheel(config_settings=None):\n    return []",
             "def get_requires_for_build_wheel(config_settings=None):\n"
-            "    return ['pip']",  # already in the build env
+            "    return ['buildstub']",
         )
-        (tmp_path / "nab_test_backend.py").write_text(backend_src, encoding="utf-8")
-        (tmp_path / "pyproject.toml").write_text(
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "nab_test_backend.py").write_text(backend_src, encoding="utf-8")
+        (proj / "pyproject.toml").write_text(
             "[build-system]\n"
             "requires = []\n"
             'build-backend = "nab_test_backend"\n'
             'backend-path = ["."]\n',
             encoding="utf-8",
         )
-        metadata = run_build_backend(tmp_path, config=config)
+        metadata = run_build_backend(proj, config=config)
         assert metadata.name == "fake-pkg"
 
     def test_backend_exception_remapped(
