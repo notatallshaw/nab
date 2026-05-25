@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._lockfile.builder import (
     MissingHashError,
+    MissingVcsCommitError,
     build_lock_input_from_provider,
     read_lockfile_anchor,
     read_lockfile_packages,
@@ -45,6 +46,7 @@ __all__ = [
     "LocalPin",
     "LockInput",
     "MissingHashError",
+    "MissingVcsCommitError",
     "PinShape",
     "Provenance",
     "SdistArtifact",
