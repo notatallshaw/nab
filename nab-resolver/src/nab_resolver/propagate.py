@@ -10,6 +10,7 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#unit-propa
 
 from __future__ import annotations
 
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from .types import IncompatibilityState, SetRelation, Term
@@ -38,15 +39,15 @@ def unit_propagation(
 
     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#unit-propagation
     """
-    propagation_queue: list[Any] = [changed_package]
+    propagation_queue: deque[Any] = deque([changed_package])
     in_queue: set[Any] = {changed_package}
 
     while propagation_queue:
-        package = propagation_queue.pop(0)
+        package = propagation_queue.popleft()
         in_queue.discard(package)
         related_indices = resolver.package_to_incompatibilities.get(package, [])
 
-        for incompatibility_index in list(related_indices):
+        for incompatibility_index in related_indices:
             incompatibility = resolver.incompatibilities[incompatibility_index]
             evaluation = evaluate_incompatibility(resolver, incompatibility)
 
