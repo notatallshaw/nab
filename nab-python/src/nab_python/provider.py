@@ -1032,16 +1032,20 @@ class Provider:
 
     def receive_partial_solution_hint(
         self,
-        positive_ranges: Mapping[str, RangeProtocol[Version]],
-        decisions: Mapping[str, Version],
+        positive_ranges: dict[str, RangeProtocol[Version]],
+        decisions: dict[str, Version],
     ) -> None:
         """Accept a snapshot of the resolver's positive-range assignments.
 
         Decision-only forward checking is safer than reasoning over
         derivations because backjumping a decision also undoes its derivations.
+
+        The caller hands over fresh snapshots it does not retain or mutate, so
+        we store them directly. We only ever read these maps, never mutate them
+        in place; both are reassigned wholesale on the next hint.
         """
-        self.solution_ranges = dict(positive_ranges)
-        self.solution_decisions = dict(decisions)
+        self.solution_ranges = positive_ranges
+        self.solution_decisions = decisions
 
     def _look_ahead_ok(
         self, package: str, version: Version, *, check_decisions: bool = True

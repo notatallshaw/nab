@@ -1475,6 +1475,16 @@ class TestDecisionLookAhead:
         assert provider.solution_decisions == decisions
         assert provider.solution_ranges == ranges
 
+    def test_hint_stores_snapshots_without_copying(self) -> None:
+        """The caller hands over owned snapshots, so they are stored as-is."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(coordinator)
+        ranges = {"bar": SpecifierSet(">=1.0").to_range()}
+        decisions = {"bar": V("1.0")}
+        provider.receive_partial_solution_hint(ranges, decisions)
+        assert provider.solution_ranges is ranges
+        assert provider.solution_decisions is decisions
+
     def test_first_candidate_blocked_by_decision_records_clause(self) -> None:
         """When the newest candidate's deps disagree with a decision, a binary
         clause is queued for the resolver to absorb via consume_pending_clauses."""
