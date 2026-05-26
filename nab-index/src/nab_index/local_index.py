@@ -144,12 +144,10 @@ def _resolve_local_link(
         path = _parse_file_url(href_no_frag)
         return (path.name, href_no_frag, path, hashes)
 
-    package_dir_resolved = package_dir.resolve()
-    target = (package_dir_resolved / unquote(href_no_frag)).resolve()
-    try:
-        target.relative_to(package_dir_resolved)
-    except ValueError:
-        return (None, "", None, ())
+    # A relative href resolves against the package page wherever it points;
+    # the standard mirror layout links to a shared ../../packages/ tree, so the
+    # target legitimately sits outside the package directory.
+    target = (package_dir.resolve() / unquote(href_no_frag)).resolve()
     return (target.name, target.as_uri(), target, hashes)
 
 

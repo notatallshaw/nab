@@ -145,6 +145,20 @@ class TestPep503Directory:
             result[0].local_path == package_dir.resolve() / "foo-1.0-py3-none-any.whl"
         )
 
+    def test_relative_href_resolves_outside_package_dir(self, tmp_path: Path) -> None:
+        simple = tmp_path / "simple"
+        package_dir = simple / "foo"
+        package_dir.mkdir(parents=True)
+        body = '<a href="../../packages/ab/cd/foo-1.0-py3-none-any.whl">foo</a>'
+        (package_dir / "index.html").write_text(body, encoding="utf-8")
+        wheel_path = tmp_path / "packages" / "ab" / "cd" / "foo-1.0-py3-none-any.whl"
+        wheel_path.parent.mkdir(parents=True)
+        wheel_path.write_bytes(b"")
+        client = LocalIndexClient(simple.as_uri())
+        result = run(client.get_files("foo"))
+        assert len(result) == 1
+        assert result[0].local_path == wheel_path.resolve()
+
     def test_https_href_pass_through(self, tmp_path: Path) -> None:
         body = '<a href="https://example.com/foo/foo-1.0-py3-none-any.whl">foo</a>'
         self._make_index(tmp_path, body)
