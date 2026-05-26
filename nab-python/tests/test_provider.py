@@ -326,6 +326,108 @@ class TestChooseVersion:
         assert provider.choose_version("foo", spec.to_range()) is None
 
 
+class TestPreferences:
+    """``choose_version`` honours seed pins from a prior lock."""
+
+    def test_preferred_version_wins_in_range(self) -> None:
+        """A seeded version in range and usable beats the strategy default."""
+        wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
+        coordinator = make_coordinator(wheels, package="foo", auto_metadata=True)
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_requirements={"foo": VersionRange.full()},
+            preferences={"foo": V("1.0")},
+        )
+        assert provider.choose_version("foo", VersionRange.full()) == V("1.0")
+
+    def test_canonicalizes_preference_keys(self) -> None:
+        """A non-canonical preference name still matches the package."""
+        wheels = [make_wheel(v) for v in ("1.0", "2.0")]
+        coordinator = make_coordinator(wheels, package="foo-bar", auto_metadata=True)
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_requirements={"foo-bar": VersionRange.full()},
+            preferences={"Foo.Bar": V("1.0")},
+        )
+        assert provider.choose_version("foo-bar", VersionRange.full()) == V("1.0")
+
+    def test_preferred_out_of_range_falls_through(self) -> None:
+        """A seed outside the requested range yields to the strategy."""
+        wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
+        coordinator = make_coordinator(wheels, package="foo", auto_metadata=True)
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_requirements={"foo": SpecifierSet(">=2.0").to_range()},
+            preferences={"foo": V("1.0")},
+        )
+        chosen = provider.choose_version("foo", SpecifierSet(">=2.0").to_range())
+        assert chosen == V("3.0")
+
+    def test_preferred_version_absent_falls_through(self) -> None:
+        """A seed naming a version that no longer exists yields."""
+        wheels = [make_wheel(v) for v in ("1.0", "2.0")]
+        coordinator = make_coordinator(wheels, package="foo", auto_metadata=True)
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_requirements={"foo": VersionRange.full()},
+            preferences={"foo": V("9.0")},
+        )
+        assert provider.choose_version("foo", VersionRange.full()) == V("2.0")
+
+    def test_preference_for_other_package_ignored(self) -> None:
+        """A seed for a different package does not steer this one."""
+        wheels = [make_wheel(v) for v in ("1.0", "2.0")]
+        coordinator = make_coordinator(wheels, package="foo", auto_metadata=True)
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_requirements={"foo": VersionRange.full()},
+            preferences={"bar": V("1.0")},
+        )
+        assert provider.choose_version("foo", VersionRange.full()) == V("2.0")
+
+    def test_preferred_rejected_by_lookahead_falls_through(self) -> None:
+        """A seed whose deps conflict with a decision yields to the scan."""
+        wheels = [make_wheel("1.0"), make_wheel("2.0")]
+        coordinator = make_coordinator(
+            wheels,
+            package="foo",
+            metadata_by_version={
+                "1.0": (
+                    "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+                    "Requires-Dist: bar>=5.0\n"
+                ),
+                "2.0": "Metadata-Version: 2.1\nName: foo\nVersion: 2.0\n",
+            },
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_requirements={"foo": VersionRange.full()},
+            preferences={"foo": V("1.0")},
+        )
+        provider.solution_decisions["bar"] = V("3.0")
+        assert provider.choose_version("foo", VersionRange.full()) == V("2.0")
+
+    def test_extra_proxy_skips_preference(self) -> None:
+        """An extras proxy never consults the seed map."""
+        wheels = [make_wheel("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(
+            wheels, metadata_text=EXTRA_METADATA, package="foo"
+        )
+        provider = Provider(coordinator, preferences={"foo": V("2.0")})
+        provider.receive_partial_solution_hint(
+            {"foo": SpecifierSet("<2.0").to_range()}, {}
+        )
+        assert provider.choose_version(
+            "foo[security]", SpecifierSet("").to_range()
+        ) == V("1.0")
+
+
 class TestResolutionStrategy:
     """``choose_version`` honours ``ResolutionStrategy``."""
 

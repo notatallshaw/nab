@@ -101,8 +101,11 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     refuse directory entries because they cannot be hashed.
 
     ``--resolution`` overrides ``[tool.nab].resolution`` for this run.
+    A re-lock seeds the resolver with the prior pylock's pins so the
+    result stays stable unless a requirement forces a change.
     ``--upgrade`` re-anchors the ``P<n>D`` cutoff to ``datetime.now(UTC)``
-    instead of reusing the timestamp recorded in any existing lockfile.
+    instead of reusing the timestamp recorded in any existing lockfile,
+    and drops the seed so every pin re-floats.
     """
     _validate_pylock_output_name(output=output, format=format)
     anchor = _determine_lock_anchor(path, output=output, format=format, upgrade=upgrade)
@@ -127,6 +130,8 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         config.workspace_member_names if no_emit_workspace else frozenset()
     )
 
+    seed_pins = _seed_pins(output=output, format=format, upgrade=upgrade)
+
     transport = _cli._make_transport(http_backend)  # noqa: SLF001
     if config.mode is ResolveMode.UNIVERSAL:
         _emit_universal(
@@ -142,6 +147,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
             extras=selected_extras,
             resolution_strategy=strategy_override,
             workspace_to_drop=workspace_to_drop,
+            seed_pins=seed_pins,
         )
         return
 
@@ -155,6 +161,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         groups=selected_groups,
         extras=selected_extras,
         resolution_strategy=strategy_override,
+        seed_pins=seed_pins,
     )
     _emit_specific(
         result,
@@ -163,6 +170,23 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         provenance=provenance,
         workspace_to_drop=workspace_to_drop,
     )
+
+
+def _seed_pins(
+    *,
+    output: Path | None,
+    format: str,  # noqa: A002 - shadows builtin by convention
+    upgrade: bool,
+) -> dict[str, Version] | None:
+    """Return the prior pylock's pins to seed a stable re-lock.
+
+    Returns ``None`` (no seeding) for ``--upgrade``, a non-pylock
+    format, stdout output, or a missing/unparseable prior file.
+    """
+    if upgrade or format != "pylock" or _cli._is_stdout(output):  # noqa: SLF001
+        return None
+    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
+    return read_lockfile_packages(target)
 
 
 def _drop_workspace_pins(
@@ -281,6 +305,7 @@ def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproj
     extras: tuple[str, ...] = (),
     resolution_strategy: ResolutionStrategy | None = None,
     workspace_to_drop: frozenset[str] = frozenset(),
+    seed_pins: dict[str, Version] | None = None,
 ) -> None:
     """Run the universal resolver and emit the requested artefact."""
     sys.stderr.write(
@@ -297,6 +322,7 @@ def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproj
         groups=groups,
         extras=extras,
         resolution_strategy=resolution_strategy,
+        seed_pins=seed_pins,
     )
 
     if format == "pylock":

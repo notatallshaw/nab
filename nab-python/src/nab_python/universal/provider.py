@@ -29,7 +29,6 @@ from nab_index.client import SdistFile, WheelFile
 
 from .._vendor.packaging.markers import default_environment
 from .._vendor.packaging.ranges import VersionRange
-from .._vendor.packaging.utils import canonicalize_name
 from ..provider import (
     BuildPolicy,
     DistPolicy,
@@ -120,6 +119,7 @@ class UniversalProvider(Provider):
             build_config=build_config,
             resolution_strategy=resolution_strategy,
             direct_packages=direct_packages,
+            preferences=preferences,
         )
         merged: dict[str, str] = {
             key: value
@@ -129,11 +129,6 @@ class UniversalProvider(Provider):
         merged.update(marker_environment)
         self.environment = merged
         self.env_with_extra = dict(merged)
-        # Normalize preferences keys so lookup matches the provider's
-        # canonical naming scheme.
-        self._preferences: dict[str, Version] = {
-            canonicalize_name(k): v for k, v in (preferences or {}).items()
-        }
         self._platform_spec = platform_spec
         self._py_minor = marker_environment.get("python_version")
         self._implementation = marker_environment.get("implementation_name", "cpython")
@@ -161,7 +156,7 @@ class UniversalProvider(Provider):
                 self._flush_pending_blocks()
                 return preferred
 
-        return super().choose_version(package, version_range)
+        return super()._choose_version_core(package, version_range)
 
     def filter_distributions(
         self, normalized: str, files: Sequence[WheelFile | SdistFile]

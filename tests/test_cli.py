@@ -25,6 +25,7 @@ from nab._lock import (
     _emit_universal_pylock,
     _resolve_extra_selection,
     _resolve_group_selection,
+    _seed_pins,
     lock,
 )
 from nab.cli import (
@@ -45,6 +46,7 @@ from nab_python.lockfile import (
     MissingHashError,
     SdistArtifact,
     WheelArtifact,
+    write_lock,
 )
 from nab_python.provider import ResolutionStrategy, UnsupportedVcsError
 from nab_python.requirements_file import InvalidProjectRequirementError
@@ -1420,6 +1422,93 @@ class TestDetermineLockAnchor:
             pyproject, output=target, format="pylock", upgrade=False
         )
         assert anchor == self._RECORDED
+
+
+class TestSeedPins:
+    """``_seed_pins`` reads prior pins to keep a re-lock stable."""
+
+    def _write_prior(self, target: Path) -> None:
+        write_lock(
+            LockInput(pins={"foo": _foo_index_pin("1.2.3")}),
+            output_path=target,
+        )
+
+    def test_upgrade_drops_seed(self, tmp_path: Path) -> None:
+        target = tmp_path / "pylock.toml"
+        self._write_prior(target)
+        assert _seed_pins(output=target, format="pylock", upgrade=True) is None
+
+    def test_non_pylock_format_drops_seed(self, tmp_path: Path) -> None:
+        assert (
+            _seed_pins(
+                output=tmp_path / "requirements.txt",
+                format="requirements",
+                upgrade=False,
+            )
+            is None
+        )
+
+    def test_stdout_drops_seed(self) -> None:
+        assert _seed_pins(output=Path("-"), format="pylock", upgrade=False) is None
+
+    def test_missing_prior_returns_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        assert _seed_pins(output=None, format="pylock", upgrade=False) is None
+
+    def test_reads_explicit_output(self, tmp_path: Path) -> None:
+        target = tmp_path / "pylock.toml"
+        self._write_prior(target)
+        assert _seed_pins(output=target, format="pylock", upgrade=False) == {
+            "foo": V("1.2.3")
+        }
+
+    def test_reads_default_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        self._write_prior(tmp_path / "pylock.toml")
+        assert _seed_pins(output=None, format="pylock", upgrade=False) == {
+            "foo": V("1.2.3")
+        }
+
+
+class TestLockSeedsResolver:
+    """End-to-end: `lock` forwards prior pins to the resolver."""
+
+    def _write_prior(self, target: Path) -> None:
+        write_lock(
+            LockInput(pins={"foo": _foo_index_pin("1.2.3")}),
+            output_path=target,
+        )
+
+    def test_specific_lock_forwards_seed(self, tmp_path: Path) -> None:
+        prior = tmp_path / "pylock.toml"
+        self._write_prior(prior)
+        pyproject = _make_pyproject(tmp_path)
+        resolve = MagicMock(return_value=_stub_resolution_result(version="1.2.3"))
+        with patch("nab.cli.resolve_pyproject", resolve):
+            lock(pyproject, output=prior)
+        assert resolve.call_args.kwargs["seed_pins"] == {"foo": V("1.2.3")}
+
+    def test_upgrade_forwards_no_seed(self, tmp_path: Path) -> None:
+        prior = tmp_path / "pylock.toml"
+        self._write_prior(prior)
+        pyproject = _make_pyproject(tmp_path)
+        resolve = MagicMock(return_value=_stub_resolution_result())
+        with patch("nab.cli.resolve_pyproject", resolve):
+            lock(pyproject, output=prior, upgrade=True)
+        assert resolve.call_args.kwargs["seed_pins"] is None
+
+    def test_universal_lock_forwards_seed(self, tmp_path: Path) -> None:
+        prior = tmp_path / "pylock.toml"
+        self._write_prior(prior)
+        pyproject = _universal_pyproject(tmp_path)
+        resolve = MagicMock(return_value=_universal_result(success=True))
+        with patch("nab.cli.resolve_universal_pyproject", resolve):
+            lock(pyproject, output=prior)
+        assert resolve.call_args.kwargs["seed_pins"] == {"foo": V("1.2.3")}
 
 
 class TestLockAnchorReuse:

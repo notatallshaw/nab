@@ -417,6 +417,7 @@ class Provider:
         build_config: NabProjectConfig | None = None,
         resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
         direct_packages: frozenset[str] | None = None,
+        preferences: dict[str, Version] | None = None,
     ) -> None:
         """Construct the provider; see the class docstring for parameters."""
         self.coordinator = coordinator
@@ -438,6 +439,13 @@ class Provider:
         self.build_policy = build_policy
         self._resolution_strategy = resolution_strategy
         self._direct_packages: frozenset[str] = direct_packages or frozenset()
+
+        # Seed pins from a prior lock: choose_version returns one of these
+        # when it is still in range, keeping a re-lock stable. Keys are
+        # canonicalized to match the provider's naming.
+        self._preferences: dict[str, Version] = {
+            canonicalize_name(k): v for k, v in (preferences or {}).items()
+        }
 
         self._build_policy_overrides = _canonical_override_map(
             build_policy_overrides, "build-policy"
@@ -685,6 +693,39 @@ class Provider:
         return _listing.pick_best_candidate(self, normalized, versions)
 
     def choose_version(
+        self, package: str, version_range: RangeProtocol[Version]
+    ) -> Version | None:
+        """Pick a version within the allowed range, respecting the strategy.
+
+        A seed preference wins when it is still in range and its metadata
+        is extractable; otherwise the strategy scan in
+        ``_choose_version_core`` decides.
+        """
+        assert isinstance(version_range, VersionRange)
+        if self._preferences:
+            _, extra, normalized = self.split_and_normalize(package)
+            if extra is None:
+                preferred = self._preferred_version(package, normalized, version_range)
+                if preferred is not None:
+                    return preferred
+        return self._choose_version_core(package, version_range)
+
+    def _preferred_version(
+        self, package: str, normalized: str, version_range: VersionRange
+    ) -> Version | None:
+        """Return the seeded version for ``package`` if it is usable here."""
+        preferred = self._preferences.get(normalized)
+        if preferred is None:
+            return None
+        all_versions = self.versions_only(normalized, self.fetch_versions(package))
+        if preferred in set(version_range.filter(all_versions)) and self._look_ahead_ok(
+            normalized, preferred, check_decisions=True
+        ):
+            self._flush_pending_blocks()
+            return preferred
+        return None
+
+    def _choose_version_core(
         self, package: str, version_range: RangeProtocol[Version]
     ) -> Version | None:
         """Pick a version within the allowed range, respecting the strategy."""

@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from nab_index.transport import AsyncHttpTransport
+    from nab_python._vendor.packaging.version import Version
     from nab_python.provider import ResolutionStrategy
     from nab_python.resolve import ResolutionResult
     from nab_python.universal.resolve import UniversalResult
@@ -162,6 +163,7 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
     groups: tuple[str, ...] = (),
     extras: tuple[str, ...] = (),
     resolution_strategy: ResolutionStrategy | None = None,
+    seed_pins: dict[str, Version] | None = None,
 ) -> ResolutionResult:
     """Run the single-environment resolver and translate errors to exits."""
     try:
@@ -174,6 +176,7 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
             groups=groups,
             extras=extras,
             resolution_strategy=resolution_strategy,
+            seed_pins=seed_pins,
         )
     except ResolutionError as e:
         sys.stderr.write(f"Resolution failed: {e}\n")
@@ -201,7 +204,7 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
         sys.exit(1)
 
 
-def _resolve_universal(
+def _resolve_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproject kwarg
     path: Path,
     *,
     config: NabProjectConfig,
@@ -211,6 +214,7 @@ def _resolve_universal(
     groups: tuple[str, ...] = (),
     extras: tuple[str, ...] = (),
     resolution_strategy: ResolutionStrategy | None = None,
+    seed_pins: dict[str, Version] | None = None,
 ) -> UniversalResult:
     """Run the universal resolver, translating errors to exits.
 
@@ -228,6 +232,7 @@ def _resolve_universal(
             groups=groups,
             extras=extras,
             resolution_strategy=resolution_strategy,
+            seed_pins=seed_pins,
         )
     except KeyError:
         sys.stderr.write(f"Error: {path} has no [project].dependencies\n")

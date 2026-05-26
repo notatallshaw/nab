@@ -270,6 +270,33 @@ class TestResolvePyproject:
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
+    def test_seed_pins_passed_to_provider(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Seed pins from a prior lock reach the provider as preferences."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\ndependencies = ["foo>=1.0"]\n')
+
+        mock_coord_cls.return_value.__enter__ = lambda s: s
+        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_resolver_cls.return_value.resolve.return_value = {"foo": V("1.0")}
+
+        seed = {"foo": V("1.0")}
+        resolve_pyproject(
+            pyproject, _FAKE_TRANSPORT, python_version="3.12.0", seed_pins=seed
+        )
+
+        assert mock_provider_cls.call_args.kwargs["preferences"] == seed
+
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
     def test_extras_create_proxy_packages(
         self,
         mock_coord_cls: MagicMock,

@@ -96,6 +96,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     resolution_strategy: ResolutionStrategy | None = None,
+    seed_pins: dict[str, Version] | None = None,
 ) -> ResolutionResult:
     """Resolve a project's dependencies for a single environment.
 
@@ -107,6 +108,9 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     ``groups`` and ``extras`` name PEP 735 groups and
     ``[project.optional-dependencies]`` keys to fold in.
     ``resolution_strategy`` overrides ``config.resolution`` when set.
+    ``seed_pins`` maps canonical names to versions preferred from a
+    prior lock, keeping a re-lock stable unless a constraint forces a
+    change.
 
     Use :func:`resolve_universal_pyproject` when
     ``config.mode is ResolveMode.UNIVERSAL``. Returns a
@@ -182,6 +186,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             build_config=config,
             resolution_strategy=effective_strategy,
             direct_packages=direct_packages,
+            preferences=seed_pins,
         )
 
         resolver: Resolver[str, Version] = Resolver(
@@ -515,7 +520,7 @@ def _build_marker_environment(
     return env
 
 
-def resolve_universal_pyproject(
+def resolve_universal_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling into a config object would hide it
     path: Path,
     *,
     config: NabProjectConfig | None = None,
@@ -525,6 +530,7 @@ def resolve_universal_pyproject(
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     resolution_strategy: ResolutionStrategy | None = None,
+    seed_pins: dict[str, Version] | None = None,
 ) -> UniversalResult:
     """Run a universal resolve for the project at ``path``.
 
@@ -594,6 +600,7 @@ def resolve_universal_pyproject(
         indexes=list(config.indexes),
         index_overrides=list(config.index_overrides) or None,
         resolution_strategy=effective_strategy.value,
+        preferences=seed_pins,
     )
 
 
