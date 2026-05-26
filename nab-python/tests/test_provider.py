@@ -4557,6 +4557,29 @@ class TestExtrasInvalidMetadata:
         version = provider.choose_version("foo[security]", VersionRange.full())
         assert version == V("1.0")
 
+    def test_user_extra_skips_invalid_metadata(self) -> None:
+        """A user-requested extra must not pick a known-invalid version.
+
+        get_dependencies raises MetadataError for a version in
+        _invalid_metadata, so returning 2.0 here crashes when the proxy
+        later fetches its dependencies.
+        """
+        wheels = [make_wheel("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(
+            wheels,
+            metadata_by_version={"2.0": EXTRA_METADATA, "1.0": EXTRA_METADATA},
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            extras_mode=ExtrasMode.WARN,
+            root_extras={("foo", "security")},
+        )
+        provider._invalid_metadata[("foo", V("2.0"))] = "stub"
+        version = provider.choose_version("foo[security]", VersionRange.full())
+        assert version == V("1.0")
+
 
 class TestScanBatchNoFirstCandidate:
     """Cover the `first_candidate is None` skip in _scan_batch."""
