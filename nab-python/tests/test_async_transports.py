@@ -280,15 +280,16 @@ class TestAsyncSimpleClient:
                 raise RuntimeError(msg)
 
     class _FakeTransport:
-        def __init__(self, body: bytes) -> None:
+        def __init__(self, body: bytes, status: int = 200) -> None:
             self._body = body
+            self._status = status
             self.calls: list[tuple[str, dict[str, str] | None]] = []
 
         async def get(
             self, url: str, *, headers: dict[str, str] | None = None
         ) -> TestAsyncSimpleClient._FakeResponse:
             self.calls.append((url, headers))
-            return TestAsyncSimpleClient._FakeResponse(self._body)
+            return TestAsyncSimpleClient._FakeResponse(self._body, self._status)
 
         async def aclose(self) -> None:
             return None
@@ -307,6 +308,15 @@ class TestAsyncSimpleClient:
         assert transport.calls[0][1] == {
             "Accept": "application/vnd.pypi.simple.v1+json"
         }
+
+    def test_get_files_404_returns_empty(self) -> None:
+        transport = self._FakeTransport(b"not found", status=404)
+
+        async def go() -> list:
+            async with AsyncSimpleClient(transport, "https://pypi.org/simple/") as c:
+                return await c.get_files("absent")
+
+        assert asyncio.run(go()) == []
 
     def test_get_metadata_text(self) -> None:
         transport = self._FakeTransport(b"Metadata-Version: 2.1\n")

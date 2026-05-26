@@ -129,6 +129,7 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
 
 
 _JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
+_HTTP_NOT_FOUND = 404
 
 DEFAULT_INDEX = "https://pypi.org/simple/"
 
@@ -214,6 +215,8 @@ class AsyncSimpleClient:
         """Fetch all distribution files for a package."""
         url = f"{self._index_url}{package}/"
         response = await self._transport.get(url, headers={"Accept": _JSON_ACCEPT})
+        if response.status_code == _HTTP_NOT_FOUND:
+            return []
         response.raise_for_status()
         return _parse_files(response.json(), self._index_url, package)
 
