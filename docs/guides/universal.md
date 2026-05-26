@@ -114,6 +114,33 @@ evaluate False on a 3.11 cell, the safe direction (drop the
 gated dep) but a silent failure if your deployed interpreter is
 actually 3.11.4 or later.
 
+## Interpreter implementations
+
+`implementations` selects the interpreter implementations to model.
+It defaults to `["cpython"]`, so leaving it out keeps the matrix and
+its lockfile output unchanged.
+
+```toml
+[tool.nab.matrix]
+python = ">=3.11,<3.14"
+platforms = ["linux_x86_64"]
+implementations = ["cpython", "pypy"]
+```
+
+Each implementation multiplies the tuple count (pythons x platforms x
+implementations). A PyPy tuple sets `platform_python_implementation =
+"PyPy"` / `implementation_name = "pypy"` for marker evaluation and
+accepts `ppXY-pypyXY_pp73` wheel tags instead of `cpXY`. Labels use the
+`pp` interpreter prefix (`pp311-linux_x86_64`).
+
+The CPython tuple's lockfile marker stays unconstrained
+(`python_version`, `sys_platform`, `platform_machine` only) for
+backward compatibility; a non-CPython tuple adds an
+`implementation_name` clause so its entry is distinguishable. PyPy's
+`implementation_version` is modelled as the Python level, not PyPy's
+own release, so the rare marker comparing `implementation_version`
+against a PyPy version misevaluates.
+
 ## Trade-offs versus marker-fork PubGrub
 
 | Property | Matrix (nab) | Marker-fork (uv) |

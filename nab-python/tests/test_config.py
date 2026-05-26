@@ -894,6 +894,28 @@ class TestMatrix:
         assert matrix.python_order == "desc"
         assert matrix.python_patches == {"3.11": "3.11.4"}
 
+    def test_implementations_default_is_cpython(self, tmp_path: Path) -> None:
+        path = write(tmp_path, self._matrix_body())
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.implementations == ("cpython",)
+
+    def test_implementations_parsed(self, tmp_path: Path) -> None:
+        body = self._matrix_body(implementations='["cpython", "pypy"]')
+        matrix = read_pyproject_config(write(tmp_path, body)).matrix
+        assert matrix is not None
+        assert matrix.implementations == ("cpython", "pypy")
+
+    def test_implementations_empty_rejected(self, tmp_path: Path) -> None:
+        body = self._matrix_body(implementations="[]")
+        with pytest.raises(ConfigError, match="at least one implementation"):
+            read_pyproject_config(write(tmp_path, body))
+
+    def test_implementations_unknown_rejected(self, tmp_path: Path) -> None:
+        body = self._matrix_body(implementations='["jython"]')
+        with pytest.raises(ConfigError, match="unknown matrix.implementations"):
+            read_pyproject_config(write(tmp_path, body))
+
     def test_must_be_table(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,

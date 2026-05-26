@@ -181,6 +181,7 @@ def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
         wheels_at_version,
         python_version=tup.python_version,
         spec=tup.platform_spec,
+        implementation=tup.implementation,
     )
     if chosen is None:
         status = (

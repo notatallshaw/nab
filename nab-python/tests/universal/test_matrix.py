@@ -10,6 +10,7 @@ import pytest
 
 from nab_python._vendor.packaging.markers import Marker
 from nab_python.universal.matrix import (
+    _IMPLEMENTATION_DEFAULTS,
     _KNOWN_PYTHON_MINORS,
     _PLATFORM_DEFAULTS,
     Matrix,
@@ -220,6 +221,53 @@ class TestMatrixExpand:
         assert py_marker.evaluate(linux_env) is True
 
 
+class TestImplementationAxis:
+    """The implementation axis adds PyPy alongside the default CPython."""
+
+    def test_default_is_cpython_only(self) -> None:
+        """Without declaring implementations, every tuple is CPython."""
+        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        tuples = matrix.expand()
+        assert len(tuples) == 1
+        env = tuples[0].environment
+        assert tuples[0].implementation == "cpython"
+        assert env["implementation_name"] == "cpython"
+        assert env["platform_python_implementation"] == "CPython"
+
+    def test_count_is_pythons_times_platforms_times_implementations(self) -> None:
+        """The implementation axis multiplies the tuple count."""
+        matrix = Matrix(
+            python=">=3.11, <3.13",
+            platforms=("linux_x86_64", "macos_arm64"),
+            implementations=("cpython", "pypy"),
+        )
+        tuples = matrix.expand()
+        assert len(tuples) == 2 * 2 * 2
+
+    def test_pypy_tuple_has_pypy_markers(self) -> None:
+        """A PyPy tuple sets the PyPy interpreter-identity markers."""
+        matrix = Matrix(
+            python="==3.11",
+            platforms=("linux_x86_64",),
+            implementations=("pypy",),
+        )
+        env = matrix.expand()[0].environment
+        assert env["implementation_name"] == "pypy"
+        assert env["platform_python_implementation"] == "PyPy"
+        assert Marker('platform_python_implementation == "PyPy"').evaluate(env)
+        assert not Marker('platform_python_implementation == "CPython"').evaluate(env)
+
+    def test_unknown_implementation_raises(self) -> None:
+        """An unknown implementation is a user error, raised eagerly."""
+        matrix = Matrix(
+            python="==3.11",
+            platforms=("linux_x86_64",),
+            implementations=("jython",),
+        )
+        with pytest.raises(ValueError, match="Unknown implementations"):
+            matrix.expand()
+
+
 class TestMatrixTuple:
     """``MatrixTuple`` is a lightweight value object."""
 
@@ -232,6 +280,43 @@ class TestMatrixTuple:
         )
         assert t.label == "py311-linux_x86_64"
 
+    def test_pypy_label_uses_pp_prefix(self) -> None:
+        """A PyPy tuple's label uses the ``pp`` interpreter prefix."""
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={},
+            implementation="pypy",
+        )
+        assert t.label == "pp311-linux_x86_64"
+
+    def test_cpython_marker_omits_implementation(self) -> None:
+        """The default CPython marker keeps its three-clause form."""
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "implementation_name": "cpython",
+            },
+        )
+        assert "implementation_name" not in t.marker_string
+
+    def test_pypy_marker_constrains_implementation(self) -> None:
+        """A PyPy marker adds an ``implementation_name`` clause."""
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "implementation_name": "pypy",
+            },
+            implementation="pypy",
+        )
+        assert t.marker_string.endswith('and implementation_name == "pypy"')
+
 
 class TestKnownConstants:
     """Coverage for the module-level lookup tables."""
@@ -243,6 +328,12 @@ class TestKnownConstants:
         ]
         assert as_versions == sorted(as_versions)
 
+    def test_each_implementation_default_has_interpreter_markers(self) -> None:
+        """Every implementation default sets the two interpreter markers."""
+        required = {"platform_python_implementation", "implementation_name"}
+        for impl, env in _IMPLEMENTATION_DEFAULTS.items():
+            assert required == env.keys(), impl
+
     def test_each_platform_default_has_required_keys(self) -> None:
         """Every platform default must define the OS/arch markers."""
         required = {
@@ -250,8 +341,6 @@ class TestKnownConstants:
             "platform_system",
             "platform_machine",
             "os_name",
-            "platform_python_implementation",
-            "implementation_name",
         }
         for platform_id, env in _PLATFORM_DEFAULTS.items():
             missing = required - env.keys()

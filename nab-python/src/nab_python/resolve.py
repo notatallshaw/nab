@@ -563,6 +563,7 @@ def resolve_universal_pyproject(
             if config.matrix.python_patches is not None
             else None
         ),
+        implementations=config.matrix.implementations,
     )
     if len(groups) > 1:
         _check_group_disjointness_across_tuples(
