@@ -18,6 +18,7 @@ from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.version import Version
+from nab_python.config import ConfigError
 from nab_python.lockfile import IndexPin, LockInput
 from nab_python.provider import (
     BuildPolicy,
@@ -224,6 +225,12 @@ class TestParseRequirements:
         env = _linux_311().environment
         with pytest.raises(ResolutionError, match="pkg==1.0"):
             _parse_requirements(["pkg==1.0", "pkg==2.0"], env)
+
+    def test_constraint_extras_rejected(self) -> None:
+        """A constraint carrying extras is rejected, matching pip."""
+        env = _linux_311().environment
+        with pytest.raises(ConfigError, match="extras"):
+            _parse_requirements(["pkg[dev]<2.0"], env, kind="constraint")
 
 
 class TestResolveOneTuple:

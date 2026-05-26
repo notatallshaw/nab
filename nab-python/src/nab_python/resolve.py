@@ -23,7 +23,7 @@ from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
-from .config import NabProjectConfig, ResolveMode, read_pyproject_config
+from .config import ConfigError, NabProjectConfig, ResolveMode, read_pyproject_config
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, build_lock_input_from_provider
 from .provider import (
@@ -665,6 +665,9 @@ def _build_constraints(config: NabProjectConfig) -> dict[str, VersionRange]:
     sources: defaultdict[str, list[str]] = defaultdict(list)
     for cstr in config.constraints:
         req = Requirement(cstr)
+        if req.extras:
+            msg = f"Constraints cannot have extras: {cstr}"
+            raise ConfigError(msg)
         if req.url is not None:
             admit_vcs_url(req.url, config.vcs)
             msg = (

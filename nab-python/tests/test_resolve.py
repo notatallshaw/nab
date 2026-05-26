@@ -10,6 +10,7 @@ import pytest
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
+    ConfigError,
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
@@ -1007,6 +1008,11 @@ class TestBuildConstraints:
         """Pinned-but-different constraint lines for one package raise."""
         with pytest.raises(ResolutionError, match="conflicting constraints"):
             _build_constraints(NabProjectConfig(constraints=("foo==1.0", "foo==2.0")))
+
+    def test_constraint_with_extras_rejected(self) -> None:
+        """A constraint carrying extras is rejected, matching pip."""
+        with pytest.raises(ConfigError, match="extras"):
+            _build_constraints(NabProjectConfig(constraints=("foo[dev]<2.0",)))
 
 
 class TestResolvePyprojectConflicts:
