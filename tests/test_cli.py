@@ -45,7 +45,7 @@ from nab_python.lockfile import (
     SdistArtifact,
     WheelArtifact,
 )
-from nab_python.provider import ResolutionStrategy
+from nab_python.provider import ResolutionStrategy, UnsupportedVcsError
 from nab_python.resolve import ResolutionResult
 from nab_python.universal.matrix import Matrix, MatrixTuple
 from nab_python.universal.resolve import TupleResult, UniversalResult
@@ -284,6 +284,20 @@ class TestLockCommandSpecific:
         ):
             lock(pyproject)
         assert "Resolution failed" in capsys.readouterr().err
+
+    def test_unsupported_vcs_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                side_effect=UnsupportedVcsError("refusing direct-URL requirement"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        assert "refusing direct-URL requirement" in capsys.readouterr().err
 
     def test_missing_dependencies_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
