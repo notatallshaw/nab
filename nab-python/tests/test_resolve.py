@@ -1000,7 +1000,9 @@ class TestBuildConstraints:
 
     def test_duplicate_constraint_intersects(self) -> None:
         """Two constraint lines for one package combine to their overlap."""
-        out = _build_constraints(NabProjectConfig(constraints=("foo>=2.0", "foo<3.0")))
+        out = _build_constraints(
+            NabProjectConfig(constraints=("foo>=2.0", "foo<3.0")), environment={}
+        )
         assert V("2.5") in out["foo"]
         assert V("1.0") not in out["foo"]
         assert V("5.0") not in out["foo"]
@@ -1008,12 +1010,35 @@ class TestBuildConstraints:
     def test_conflicting_constraints_raise(self) -> None:
         """Pinned-but-different constraint lines for one package raise."""
         with pytest.raises(ResolutionError, match="conflicting constraints"):
-            _build_constraints(NabProjectConfig(constraints=("foo==1.0", "foo==2.0")))
+            _build_constraints(
+                NabProjectConfig(constraints=("foo==1.0", "foo==2.0")), environment={}
+            )
+
+    def test_marker_false_constraint_dropped(self) -> None:
+        """A constraint whose marker is False is not applied."""
+        env = {"python_version": "3.12"}
+        out = _build_constraints(
+            NabProjectConfig(constraints=('foo<2.0 ; python_version < "3.0"',)),
+            environment=env,
+        )
+        assert "foo" not in out
+
+    def test_marker_true_constraint_applied(self) -> None:
+        """A constraint whose marker is True still restricts the range."""
+        env = {"python_version": "3.12"}
+        out = _build_constraints(
+            NabProjectConfig(constraints=('foo<2.0 ; python_version >= "3.0"',)),
+            environment=env,
+        )
+        assert V("1.0") in out["foo"]
+        assert V("5.0") not in out["foo"]
 
     def test_constraint_with_extras_rejected(self) -> None:
         """A constraint carrying extras is rejected, matching pip."""
         with pytest.raises(ConfigError, match="extras"):
-            _build_constraints(NabProjectConfig(constraints=("foo[dev]<2.0",)))
+            _build_constraints(
+                NabProjectConfig(constraints=("foo[dev]<2.0",)), environment={}
+            )
 
 
 class TestResolvePyprojectConflicts:
