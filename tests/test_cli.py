@@ -937,6 +937,59 @@ class TestLockCommandUniversal:
         assert not (tmp_path / "constraints-3.12.txt").exists()
 
 
+class TestMatrixOverrides:
+    """``--platform`` / ``--python-version`` override the matrix axes."""
+
+    def test_python_version_override_reaches_resolve(self, tmp_path: Path) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_universal_pyproject",
+            return_value=_universal_result(success=True),
+        ) as mock_resolve:
+            lock(pyproject, output=out, python_version=">=3.12,<3.14")
+        matrix = mock_resolve.call_args.kwargs["config"].matrix
+        assert matrix.python == ">=3.12,<3.14"
+        assert matrix.platforms == ("linux_x86_64",)
+
+    def test_platform_override_reaches_resolve(self, tmp_path: Path) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_universal_pyproject",
+            return_value=_universal_result(success=True),
+        ) as mock_resolve:
+            lock(pyproject, output=out, platform=("macos_arm64", "windows_amd64"))
+        matrix = mock_resolve.call_args.kwargs["config"].matrix
+        assert matrix.python == "==3.11"
+        assert matrix.platforms == ("macos_arm64", "windows_amd64")
+
+    def test_override_recorded_in_provenance(self, tmp_path: Path) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_universal_pyproject",
+            return_value=_universal_result(success=True),
+        ):
+            lock(
+                pyproject,
+                output=out,
+                platform=("macos_arm64",),
+                python_version="==3.12",
+            )
+        text = out.read_text()
+        assert "macos_arm64" in text
+        assert "==3.12" in text
+
+    def test_override_rejected_in_specific_mode(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, platform=("linux_x86_64",))
+        assert "require mode = 'universal'" in capsys.readouterr().err
+
+
 class TestNoEmitWorkspace:
     """``--no-emit-workspace`` drops workspace pins from the lockfile."""
 

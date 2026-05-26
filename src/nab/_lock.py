@@ -76,6 +76,8 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     no_emit_workspace: bool = False,
     resolution: ResolutionFlag | None = None,
     upgrade: bool = False,
+    platform: tuple[str, ...] = (),
+    python_version: str | None = None,
 ) -> None:
     """Resolve dependencies and emit a lockfile or pin list.
 
@@ -104,11 +106,18 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     ``--resolution`` overrides ``[tool.nab].resolution`` for this run.
     ``--upgrade`` re-anchors the ``P<n>D`` cutoff to ``datetime.now(UTC)``
     instead of reusing the timestamp recorded in any existing lockfile.
+
+    ``--platform`` (repeatable) and ``--python-version`` (a PEP 440
+    specifier) override the ``[tool.nab.matrix]`` axes for this run only.
+    They require universal mode and are rejected otherwise.
     """
     _validate_pylock_output_name(output=output, format=format)
     anchor = _determine_lock_anchor(path, output=output, format=format, upgrade=upgrade)
     config = _cli._load_config(  # noqa: SLF001
         path, discover_workspace=workspace_discovery, anchor=anchor
+    )
+    config = _apply_matrix_overrides(
+        config, platforms=platform, python_version=python_version
     )
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
         cache_dir, cache=cache
@@ -561,6 +570,36 @@ def _resolve_extra_selection(
         sys.stderr.write(f"Error: {path} not found\n")
         sys.exit(1)
     return tuple(defined.keys())
+
+
+def _apply_matrix_overrides(
+    config: NabProjectConfig,
+    *,
+    platforms: tuple[str, ...],
+    python_version: str | None,
+) -> NabProjectConfig:
+    """Replace the matrix axes from ``--platform`` / ``--python-version``.
+
+    Returns ``config`` unchanged when neither flag is given.  The flags
+    require universal mode (a ``[tool.nab.matrix]`` table); in specific
+    mode ``config.matrix`` is ``None`` and the run exits with an error.
+    Unset axes keep their configured value; unknown platform ids and
+    empty python ranges are validated later by ``Matrix.expand``.
+    """
+    if not platforms and python_version is None:
+        return config
+    if config.matrix is None:
+        sys.stderr.write(
+            "Error: --platform / --python-version require mode = 'universal'"
+            " with a [tool.nab.matrix] table\n"
+        )
+        sys.exit(1)
+    matrix = replace(
+        config.matrix,
+        python=config.matrix.python if python_version is None else python_version,
+        platforms=platforms or config.matrix.platforms,
+    )
+    return replace(config, matrix=matrix)
 
 
 def _build_provenance(
