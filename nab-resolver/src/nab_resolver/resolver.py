@@ -160,10 +160,20 @@ class ResolverStats(Generic[PackageType]):
     restarts: int = 0
     targeted_backtracks: int = 0
     incompatibilities_learned: int = 0
+    conflict_threshold_crossings: int = 0
+    culprit_threshold_crossings: int = 0
     package_conflict_counts: defaultdict[PackageType, int] = field(
         default_factory=lambda: defaultdict(int)
     )
     package_culprit_counts: defaultdict[PackageType, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    # Conflict-depth histograms: learned-clause term count and backjump
+    # distance (from_level - target), each mapping value -> frequency.
+    learned_clause_term_counts: defaultdict[int, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    backjump_distances: defaultdict[int, int] = field(
         default_factory=lambda: defaultdict(int)
     )
 
@@ -236,6 +246,10 @@ class Resolver(Generic[PackageType, VersionType]):
     CULPRIT_THRESHOLD = 5
     TARGETED_BT_MIN_CONFLICTS = 30
     MAX_TARGETED_BACKTRACKS = 64
+
+    # Conflict count that triggers a conflict_threshold_crossings increment.
+    # Must match the threshold providers use to classify a package as affected.
+    CONFLICT_THRESHOLD = 5
 
     def __init__(
         self,

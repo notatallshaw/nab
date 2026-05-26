@@ -14,13 +14,14 @@ from nab_resolver.conflict import (
     is_terminal_incompatibility,
     recompute_previous_level,
     try_force_resolution_step,
+    update_culprit_counts,
 )
 from nab_resolver.incompat_index import (
     add_incompatibility,
     dependency_merge_key,
     maybe_merge_dependency,
 )
-from nab_resolver.partial_solution import PartialSolution
+from nab_resolver.partial_solution import Assignment, PartialSolution
 from nab_resolver.ranges import Range
 from nab_resolver.report import explain_incompatibility, prior_cause, union_terms
 from nab_resolver.resolver import (
@@ -1494,6 +1495,70 @@ class TestForceBacktrack:
         # Still no triggering package, but the bump still happened.
         assert result is None
         assert resolver.stats.package_culprit_counts["a"] == resolver.CULPRIT_THRESHOLD
+
+
+class TestConflictDepthInstrumentation:
+    """Conflict-depth metrics: histograms and threshold crossings."""
+
+    def _two_level_conflict(self) -> Resolver:
+        solution = PartialSolution()
+        inc_root = Incompatibility(
+            [Term("x", Range.full())], cause=IncompatibilityCause.ROOT
+        )
+        solution.derive("x", Range.at_least(1), positive=True, cause=inc_root)
+        solution.decide("x", 2)
+        solution.derive("y", Range.at_least(1), positive=True, cause=inc_root)
+        solution.decide("y", 3)
+        resolver = Resolver(DictProvider({}))
+        resolver.solution = solution
+        return resolver
+
+    def _conflict(self) -> Incompatibility:
+        return Incompatibility(
+            [Term("x", Range.singleton(2)), Term("y", Range.singleton(3))],
+            cause=IncompatibilityCause.DERIVED,
+        )
+
+    def test_backjump_distance_recorded(self) -> None:
+        resolver = self._two_level_conflict()
+        conflict_resolution(resolver, self._conflict())
+        assert resolver.stats.backjump_distances == {1: 1}
+
+    def test_conflict_threshold_crossing_counted(self) -> None:
+        resolver = self._two_level_conflict()
+        resolver.stats.package_conflict_counts["y"] = resolver.CONFLICT_THRESHOLD - 1
+        conflict_resolution(resolver, self._conflict())
+        assert (
+            resolver.stats.package_conflict_counts["y"] == resolver.CONFLICT_THRESHOLD
+        )
+        assert resolver.stats.conflict_threshold_crossings == 1
+
+    def test_conflict_threshold_not_crossed(self) -> None:
+        resolver = self._two_level_conflict()
+        conflict_resolution(resolver, self._conflict())
+        assert resolver.stats.conflict_threshold_crossings == 0
+
+    def test_culprit_threshold_crossing_counted_once(self) -> None:
+        provider = DictProvider({"root": {1: {}}})
+        resolver = Resolver(provider)
+        resolver._reset(None)
+        clause = Incompatibility(
+            [Term("affected", Range.full()), Term("culprit", Range.full())],
+            cause=IncompatibilityCause.DERIVED,
+        )
+        satisfier = Assignment(
+            package="affected",
+            accumulated_range=Range.full(),
+            decision_level=1,
+            is_decision=True,
+        )
+        for _ in range(resolver.CULPRIT_THRESHOLD + 2):
+            update_culprit_counts(resolver, clause, "affected", satisfier)
+        assert (
+            resolver.stats.package_culprit_counts["culprit"]
+            > resolver.CULPRIT_THRESHOLD
+        )
+        assert resolver.stats.culprit_threshold_crossings == 1
 
 
 class TestDependencyMerge:

@@ -115,6 +115,9 @@ def conflict_resolution(
             if is_derived:
                 add_incompatibility(resolver, current_incompatibility)
                 resolver.stats.incompatibilities_learned += 1
+                resolver.stats.learned_clause_term_counts[
+                    len(current_incompatibility.terms)
+                ] += 1
                 resolver.observer.on_learned(current_incompatibility)
 
             backjump_target = previous_satisfier_level
@@ -136,12 +139,18 @@ def conflict_resolution(
             from_level = resolver.solution.decision_level
             resolver.solution.backtrack(backjump_target)
             resolver.stats.backjumps += 1
+            resolver.stats.backjump_distances[from_level - backjump_target] += 1
             resolver.observer.on_backjump(from_level, backjump_target)
 
             # Count only the "affected" package so it gets decided first
             # after restart and its dependencies constrain the culprit.
             affected_package = most_recent_satisfier.package
             resolver.stats.package_conflict_counts[affected_package] += 1
+            if (
+                resolver.stats.package_conflict_counts[affected_package]
+                == resolver.CONFLICT_THRESHOLD
+            ):
+                resolver.stats.conflict_threshold_crossings += 1
 
             update_culprit_counts(
                 resolver,
@@ -204,6 +213,8 @@ def update_culprit_counts(
     for package in culprit_packages:
         resolver.stats.package_culprit_counts[package] += 1
         count = resolver.stats.package_culprit_counts[package]
+        if count == threshold:
+            resolver.stats.culprit_threshold_crossings += 1
         if (
             count >= threshold
             and count % threshold == 0
