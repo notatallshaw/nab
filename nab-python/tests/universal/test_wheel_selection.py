@@ -332,6 +332,23 @@ class TestSelectWheelForTuple:
         assert chosen is not None
         assert "manylinux_2_17" in chosen.filename
 
+    def test_legacy_alias_ranks_with_its_glibc(self) -> None:
+        """A legacy alias ranks at its glibc, not after all PEP 600 tags.
+
+        manylinux2014 means glibc 2.17, so it must beat a glibc-2.5
+        wheel.  packaging.tags interleaves each legacy alias right after
+        its equivalent manylinux_X_Y tag, so manylinux2014 outranks
+        manylinux_2_5.
+        """
+        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        wheels = [
+            _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
+            _wheel("pkg-1.0-cp311-cp311-manylinux2014_x86_64.whl"),
+        ]
+        chosen = select_wheel_for_tuple(wheels, python_version="3.11", spec=spec)
+        assert chosen is not None
+        assert "manylinux2014" in chosen.filename
+
     def test_skips_worse_candidate_after_best_set(self) -> None:
         """A later, worse-ranked wheel does not displace an earlier best.
 
