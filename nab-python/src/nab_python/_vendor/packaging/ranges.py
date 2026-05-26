@@ -8,7 +8,8 @@ versions accepted by a :class:`~packaging.specifiers.Specifier` or
 :class:`~packaging.specifiers.SpecifierSet`. Bound primitives, range
 algebra, and the spec-to-bounds dispatch live in
 :mod:`packaging._range_utils`; this module composes them into the
-public class plus the :meth:`VersionRange.to_specifier_set` encoders,
+public class plus the
+:meth:`~packaging.ranges.VersionRange.to_specifier_set` encoders,
 ``__repr__``, and pickle helpers that only :class:`VersionRange`
 itself uses.
 
@@ -41,7 +42,6 @@ from ._range_utils import (
     bounds_for_spec,
     filter_by_ranges,
     intersect_ranges,
-    intersect_specifier_bounds,
     matches_bounds_only,
     range_is_empty,
 )
@@ -402,17 +402,33 @@ def _detect_not_equal(
     left_upper: UpperBound,
     right_lower: LowerBound,
 ) -> Version | None:
-    """If ``[..., V (excl)] [AFTER_LOCALS(V) (excl), ...]`` matches, return V.
+    """If the gap between two intervals is an ``!=V`` exclusion, return V.
 
-    The gap shape ``!=V`` produces when intersected with surrounding
-    bounds. Only ``!=V`` pattern that can appear inside a multi-interval
-    range.
+    Two gap shapes encode as ``!=V``:
+
+    - ``[..., V (excl)] [AFTER_LOCALS(V) (excl), ...]`` -- ``!=V`` for a
+      *V* with no local segment; the gap spans V and its whole local
+      family, exactly what ``==V`` (and thus ``!=V``) covers.
+    - ``[..., V+local (excl)] [V+local (excl), ...]`` -- ``!=V+local``;
+      the gap is the single point ``V+local``, which ``==V+local``
+      matches verbatim. A no-local single point (a strict singleton's
+      complement) has no ``!=`` form, so *V* must carry a local segment.
     """
     if isinstance(left_upper.version, BoundaryVersion):
         return None
     if left_upper.version is None or left_upper.inclusive:
         return None
     if not isinstance(right_lower.version, BoundaryVersion):
+        # Single-point ``!=V+local`` gap: same exclusive bound on both
+        # sides, and V carries a local. An inclusive right lower would
+        # leave no gap; a no-local point has no ``!=`` form.
+        if (
+            right_lower.version is not None
+            and not right_lower.inclusive
+            and right_lower.version == left_upper.version
+            and left_upper.version.local is not None
+        ):
+            return left_upper.version
         return None
     if right_lower.version.kind != BoundaryKind.AFTER_LOCALS:
         return None
@@ -466,12 +482,49 @@ def _detect_not_equal_wildcard(
     return left_upper_v.__replace__(dev=None)
 
 
+def _encode_grouped(bounds: list[Interval]) -> list[list[str]] | None:
+    """Split *bounds* into disjoint groups, encoding each as fragments.
+
+    Consecutive intervals whose gap is an ``!=V`` / ``!=V+local`` /
+    ``!=V.*`` exclusion stay in one group, with that exclusion recorded
+    as an ``!=`` fragment; any other gap starts a new group. Each group
+    encodes as ``_encode_interval`` of its outer bounds plus its ``!=``
+    fragments. Returns one fragment list per group, or ``None`` if any
+    group's outer interval has no PEP 440 form.
+    """
+    groups: list[list[str]] = []
+    group_lower, group_upper = bounds[0]
+    exclusions: list[str] = []
+    for next_lower, next_upper in bounds[1:]:
+        not_equal = _detect_not_equal(group_upper, next_lower)
+        not_equal_wildcard = _detect_not_equal_wildcard(group_upper, next_lower)
+        if not_equal is not None:
+            exclusions.append(f"!={not_equal}")
+        elif not_equal_wildcard is not None:
+            exclusions.append(f"!={not_equal_wildcard}.*")
+        else:
+            # A non-``!=`` gap closes the current group and opens a new one.
+            outer = _encode_interval(group_lower, group_upper)
+            if outer is None:
+                return None
+            groups.append(outer + exclusions)
+            group_lower, exclusions = next_lower, []
+        group_upper = next_upper
+
+    outer = _encode_interval(group_lower, group_upper)
+    if outer is None:
+        return None
+    groups.append(outer + exclusions)
+    return groups
+
+
 class VersionRange:
     """A set of :class:`~packaging.version.Version` values, expressed as
     a union of disjoint intervals on the PEP 440 version ordering.
 
     Construct with :meth:`from_specifier` / :meth:`from_specifier_set`,
-    or via :meth:`Specifier.to_range` / :meth:`SpecifierSet.to_range`.
+    or via :meth:`~packaging.specifiers.Specifier.to_range` /
+    :meth:`~packaging.specifiers.SpecifierSet.to_range`.
     Compose with :meth:`intersection`, :meth:`union`, :meth:`complement`
     (and the ``&`` / ``|`` / ``~`` operator aliases).
 
@@ -484,9 +537,11 @@ class VersionRange:
     False
 
     PEP 440's ``===`` operator matches a candidate string verbatim
-    (case-insensitive) rather than a set of :class:`Version` values.
+    (case-insensitive) rather than a set of
+    :class:`~packaging.version.Version` values.
     Ranges built from ``===`` specifiers still support membership,
-    set operations, and conversion back to a :class:`SpecifierSet`;
+    set operations, and conversion back to a
+    :class:`~packaging.specifiers.SpecifierSet`;
     matching follows the literal-equality rule instead of the
     version-ordering rule.
     """
@@ -715,9 +770,11 @@ class VersionRange:
         pre-releases are buffered and only emitted if no final release
         in *iterable* is in range.
 
-        Filtering matches :class:`SpecifierSet.filter` for the same
-        :class:`Specifier` / :class:`SpecifierSet`, including
-        :class:`SpecifierSet("")`'s admission of unparsable strings
+        Filtering matches
+        :meth:`~packaging.specifiers.SpecifierSet.filter` for the same
+        :class:`~packaging.specifiers.Specifier` /
+        :class:`~packaging.specifiers.SpecifierSet`, including the
+        admission of unparsable strings for the empty ``SpecifierSet("")``
         and the case-insensitive literal match for ``===``.
 
         >>> r = VersionRange.from_specifier_set(SpecifierSet(">=1.0,<2.0"))
@@ -822,10 +879,11 @@ class VersionRange:
         """Return the :class:`VersionRange` accepted by *specifier_set*.
 
         The intersection of every specifier in the set. An empty
-        :class:`SpecifierSet` yields the unbounded range; an
-        unsatisfiable set yields an empty :class:`VersionRange`. To reuse
-        the result, call :meth:`SpecifierSet.to_range`, which caches it
-        on the instance.
+        :class:`~packaging.specifiers.SpecifierSet` yields the
+        unbounded range; an unsatisfiable set yields an empty
+        :class:`VersionRange`. To reuse the result, call
+        :meth:`~packaging.specifiers.SpecifierSet.to_range`, which
+        caches it on the instance.
 
         >>> isinstance(
         ...     VersionRange.from_specifier_set(SpecifierSet(">=1.0,<2.0")),
@@ -835,57 +893,30 @@ class VersionRange:
         >>> VersionRange.from_specifier_set(SpecifierSet(">=2.0,<1.0")).is_empty
         True
         """
-        specs = []
-        arbitrary_specs = []
+        # Intersect every specifier through the public API. ``&`` and
+        # :meth:`from_specifier` already handle ``===`` literals via the
+        # admit set, so the fold needs no operator-specific special
+        # cases. An empty set leaves the unbounded ``full()``.
+        result = cls.full()
         for spec in specifier_set:
-            specs.append(spec)
-            if spec.operator == "===":
-                arbitrary_specs.append(spec)
-
-        if not specs:
-            return cls._build(bounds=FULL_RANGE)
-
-        if not arbitrary_specs:
-            # Common case: no ``===`` literals. Intersect raw bound
-            # tuples; one wrapper allocation for the result.
-            return cls._build_simple(intersect_specifier_bounds(specs))
-
-        # ``===`` literals need separate handling: the rangelike specs
-        # build the bounds, and a single literal is admitted only if
-        # it also satisfies those bounds.
-        rangelike_specs = [s for s in specs if s.operator != "==="]
-        if not rangelike_specs:
-            rangelike_result: VersionRange = cls._build(bounds=FULL_RANGE)
-        else:
-            rangelike_result = cls._build_simple(
-                intersect_specifier_bounds(rangelike_specs)
-            )
-
-        # Each ``===L_i`` requires the candidate's string to equal L_i.
-        # Distinct literals can never all match, so the result is empty.
-        literals_lower = {s.version.lower() for s in arbitrary_specs}
-        if len(literals_lower) > 1:
-            return cls._build(bounds=())
-
-        (literal_lower,) = literals_lower
-        if literal_lower in rangelike_result:
-            return cls._build(bounds=(), admit=frozenset({literal_lower}))
-
-        return cls._build(bounds=())
+            result = result.intersection(cls.from_specifier(spec))
+        return result
 
     def to_specifier_set(self) -> SpecifierSet | None:
-        """Return a single :class:`SpecifierSet` whose
+        """Return a single
+        :class:`~packaging.specifiers.SpecifierSet` whose
         :meth:`from_specifier_set` yields *self*, or ``None`` if no
         such set exists.
 
-        :class:`SpecifierSet` cannot express every range. PEP 440's
+        :class:`~packaging.specifiers.SpecifierSet` cannot express every
+        range. PEP 440's
         operator set has no syntax for the strict singleton ``{V}`` or
         for the bounds produced by complementing ``>V``; for those
         ranges the result is ``None``. Use :meth:`to_specifier_sets`
         when a tuple of specifier sets is acceptable. The empty range
-        maps to ``SpecifierSet("<0")`` (``<0`` excludes ``0.dev0``,
-        the smallest PEP 440 version); the full range maps to
-        ``SpecifierSet("")``.
+        maps to the range ``SpecifierSet("<0")`` (``<0`` excludes
+        ``0.dev0``, the smallest PEP 440 version); the full range maps
+        to the empty ``SpecifierSet("")``.
 
         >>> r = VersionRange.from_specifier_set(SpecifierSet(">=1.0,<2.0"))
         >>> str(r.to_specifier_set())
@@ -909,38 +940,25 @@ class VersionRange:
         if self._bounds == FULL_RANGE:
             return SpecifierSet("")
 
-        # Walk left-to-right, merging adjacent intervals whose gap is
-        # a ``!=V`` or ``!=V.*`` exclusion. The merged outer bounds
-        # plus the chain of ``!=`` fragments form a single SpecifierSet.
-        bounds = list(self._bounds)
-        outer_lower = bounds[0][0]
-        outer_upper = bounds[0][1]
-        exclusions: list[str] = []
-        for next_lower, next_upper in bounds[1:]:
-            not_equal = _detect_not_equal(outer_upper, next_lower)
-            not_equal_wildcard = _detect_not_equal_wildcard(outer_upper, next_lower)
-            if not_equal is not None:
-                exclusions.append(f"!={not_equal}")
-            elif not_equal_wildcard is not None:
-                exclusions.append(f"!={not_equal_wildcard}.*")
-            else:
-                return None
-            outer_upper = next_upper
-
-        outer_parts = _encode_interval(outer_lower, outer_upper)
-        if outer_parts is None:
+        # A single SpecifierSet exists only when every interval joins
+        # into one ``!=``-connected group; a genuine disjoint gap (more
+        # than one group) has no single-set form.
+        groups = _encode_grouped(list(self._bounds))
+        if groups is None or len(groups) != 1:
             return None
-        return SpecifierSet(",".join(outer_parts + exclusions))
+        return SpecifierSet(",".join(groups[0]))
 
     def to_specifier_sets(self) -> tuple[SpecifierSet, ...] | None:
-        """Return a tuple of :class:`SpecifierSet` whose union equals
+        """Return a tuple of
+        :class:`~packaging.specifiers.SpecifierSet` whose union equals
         *self*, or ``None`` if no such tuple exists.
 
-        Looser than :meth:`to_specifier_set`: a range that fits a
-        single :class:`SpecifierSet` returns a one-tuple, otherwise
-        each interval encodes separately. ``None`` only for ranges
-        whose individual intervals still have no PEP 440 specifier
-        (for example the singleton produced by :meth:`singleton`).
+        Looser than :meth:`to_specifier_set`: each maximal run of
+        intervals joined by ``!=V`` / ``!=V.*`` gaps becomes one
+        :class:`~packaging.specifiers.SpecifierSet`, and genuinely
+        disjoint runs become separate ones. ``None`` only when some
+        run's outer interval has no PEP 440 form (for example the
+        strict singleton produced by :meth:`singleton`).
 
         >>> r = (
         ...     VersionRange.from_specifier_set(SpecifierSet(">=1.0,<2.0"))
@@ -965,20 +983,12 @@ class VersionRange:
         if self._bounds == FULL_RANGE:
             return (SpecifierSet(""),)
 
-        # Prefer the single-set form when it exists; that catches
-        # multi-interval ``!=V`` / ``!=V.*`` patterns the per-interval
-        # encoder rejects.
-        single = self.to_specifier_set()
-        if single is not None:
-            return (single,)
-
-        out: list[SpecifierSet] = []
-        for lower, upper in self._bounds:
-            parts = _encode_interval(lower, upper)
-            if parts is None:
-                return None
-            out.append(SpecifierSet(",".join(parts)))
-        return tuple(out)
+        # One SpecifierSet per disjoint group; ``!=`` gaps stay merged
+        # inside their group.
+        groups = _encode_grouped(list(self._bounds))
+        if groups is None:
+            return None
+        return tuple(SpecifierSet(",".join(group)) for group in groups)
 
     def _admit_to_specifier_set(self) -> SpecifierSet | None:
         """Encode a single ``===L`` range as ``SpecifierSet("===L")``.
@@ -1025,7 +1035,9 @@ class VersionRange:
     def is_prerelease_only(self) -> bool:
         """``True`` when every match is a PEP 440 pre-release.
 
-        Used by :meth:`SpecifierSet.is_unsatisfiable` to detect sets
+        Used by
+        :meth:`~packaging.specifiers.SpecifierSet.is_unsatisfiable` to
+        detect sets
         that admit no candidate under the default ``prereleases=False``
         reading. Returns ``False`` for the empty range.
 
@@ -1060,10 +1072,10 @@ class VersionRange:
     def __contains__(self, item: Version | str) -> bool:
         """Return whether *item* is contained in this range.
 
-        Unparsable strings do not match, except where
-        :class:`SpecifierSet` would also match: the full range admits
-        any string, and a ``===`` range admits items whose string
-        equals the literal case-insensitively.
+        Unparsable strings do not match, except where the full
+        ``SpecifierSet`` would also match: the full range admits any
+        string, and a ``===`` range admits items whose string equals
+        the literal case-insensitively.
 
         >>> r = VersionRange.from_specifier_set(SpecifierSet(">=1.0,<2.0"))
         >>> "1.5" in r
