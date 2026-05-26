@@ -76,11 +76,11 @@ def _pick_in_mode(
 ) -> Version | None:
     """Pick a candidate honoring ``ExtrasMode``.
 
-    User-requested extras short-circuit and return the first
-    candidate. Transitive extras validate the base metadata parses
-    so a malformed PKG-INFO becomes a candidate skip instead of a
-    fatal error during the later dependency fetch. BACKTRACK mode
-    additionally checks ``Provides-Extra``.
+    User-requested extras return the first candidate that does not have
+    known-invalid metadata. Transitive extras additionally validate the
+    base metadata parses, so a malformed PKG-INFO becomes a candidate
+    skip instead of a fatal error during the later dependency fetch.
+    BACKTRACK mode additionally checks ``Provides-Extra``.
 
     Missing-metadata cases (no PEP 658, no sdist) fall through;
     mock test coordinators rely on this.
@@ -92,10 +92,10 @@ def _pick_in_mode(
     is_user = (normalized, extra) in provider.root_extras
     backtrack = provider.extras_mode == ExtrasMode.BACKTRACK
     for version in candidates:
-        if is_user:
-            return version
         if provider.has_invalid_metadata(normalized, version):
             continue
+        if is_user:
+            return version
         # Fetch base metadata so an unparseable PKG-INFO is caught
         # before the extras proxy decides this version. Any
         # MetadataError (parse failure or no metadata source) is a
