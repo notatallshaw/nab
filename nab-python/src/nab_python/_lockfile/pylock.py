@@ -94,7 +94,12 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
         package_records = _build_per_tuple_packages(lock_input, base)
     else:
         package_records = [
-            _pin_to_package(pin, lock_dir=base) for pin in lock_input.pins.values()
+            _pin_to_package(
+                pin,
+                lock_dir=base,
+                dependencies=_dependency_entries(name, lock_input.dependencies),
+            )
+            for name, pin in lock_input.pins.items()
         ]
     package_records.sort(key=_package_sort_key)
     validate_marker_disjointness(
@@ -157,8 +162,26 @@ def _relativize_path(target: str | os.PathLike[str], lock_dir: Path) -> str:
     return Path(rel).as_posix()
 
 
+def _dependency_entries(
+    name: str, graph: Mapping[str, tuple[str, ...]]
+) -> list[dict[str, str]] | None:
+    """Render a package's forward edges as PEP 751 dependency tables.
+
+    In single-environment mode each locked package name is unique, so
+    ``name`` alone identifies the target ``[[packages]]`` entry.
+    """
+    deps = graph.get(name)
+    if not deps:
+        return None
+    return [{"name": dep} for dep in deps]
+
+
 def _pin_to_package(
-    pin: PinShape, marker: Marker | None = None, *, lock_dir: Path
+    pin: PinShape,
+    marker: Marker | None = None,
+    *,
+    lock_dir: Path,
+    dependencies: list[dict[str, str]] | None = None,
 ) -> Package:
     from ..lockfile import IndexPin, LocalPin, VcsPin
 
@@ -167,6 +190,7 @@ def _pin_to_package(
             name=canonicalize_name(pin.name),
             version=Version(pin.version),
             marker=marker,
+            dependencies=dependencies,
             requires_python=(
                 SpecifierSet(pin.requires_python) if pin.requires_python else None
             ),
@@ -188,6 +212,7 @@ def _pin_to_package(
             name=canonicalize_name(pin.name),
             version=None,
             marker=marker,
+            dependencies=dependencies,
             directory=PackageDirectory(
                 path=_relativize_path(pin.path, lock_dir),
                 editable=pin.editable,
@@ -202,6 +227,7 @@ def _pin_to_package(
             name=canonicalize_name(pin.name),
             version=None,
             marker=marker,
+            dependencies=dependencies,
             vcs=PackageVcs(
                 type=pin.vcs_type,
                 url=pin.bare_repo_url,

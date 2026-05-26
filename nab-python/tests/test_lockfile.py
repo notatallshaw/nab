@@ -1160,6 +1160,10 @@ class _FakeProvider:
         vcs_pins: dict[str, str] | None = None,
         listing_indexes: dict[str, str] | None = None,
         dist_policy_overrides: dict[str, DistPolicy] | None = None,
+        deps_cache: dict[tuple[str, Version], dict[str, object]] | None = None,
+        extra_deps_map: (
+            dict[tuple[str, Version], dict[str, dict[str, object]]] | None
+        ) = None,
     ) -> None:
         self._listings = listings or {}
         self._local = local_sources or {}
@@ -1167,6 +1171,8 @@ class _FakeProvider:
         self._vcs_pins = vcs_pins or {}
         self._dist_policy_overrides = dist_policy_overrides or {}
         self.coordinator = _FakeCoordinator(listing_indexes)
+        self.deps_cache = deps_cache or {}
+        self.extra_deps_map = extra_deps_map or {}
 
     def local_source_for(self, canonical: str) -> LocalSource | None:
         return self._local.get(canonical)
@@ -2258,3 +2264,73 @@ def test_vcs_config_unused_in_lockfile_path() -> None:
     """VcsConfig is consumed by the provider; lockfile builder ignores it."""
     cfg = VcsConfig(policy=VcsPolicy.BLOCK)
     assert cfg.policy is VcsPolicy.BLOCK
+
+
+class TestDependencyGraph:
+    def test_base_deps_filtered_to_locked(self) -> None:
+        provider = _FakeProvider(
+            listings={
+                name: [(Version("1.0"), _wheel_file(name))]
+                for name in ("foo", "bar", "baz")
+            },
+            deps_cache={
+                ("foo", Version("1.0")): dict.fromkeys(["bar", "missing"]),
+                ("bar", Version("1.0")): {},
+            },
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {"foo": Version("1.0"), "bar": Version("1.0"), "baz": Version("1.0")},
+            resolved_keys=("foo", "bar", "baz"),
+        )
+        # ``missing`` is not locked, so it is dropped; bar and baz have no
+        # locked dependencies, so they are absent from the graph.
+        assert lock_input.dependencies == {"foo": ("bar",)}
+
+    def test_activated_extra_edges_join_graph(self) -> None:
+        provider = _FakeProvider(
+            listings={
+                name: [(Version("1.0"), _wheel_file(name))]
+                for name in ("foo", "plugin")
+            },
+            deps_cache={("foo", Version("1.0")): {}},
+            extra_deps_map={
+                ("foo", Version("1.0")): {"cli": dict.fromkeys(["plugin"])}
+            },
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {"foo": Version("1.0"), "plugin": Version("1.0")},
+            # ``doc`` is activated but has no recorded deps; ``cli`` pulls plugin.
+            resolved_keys=("foo", "foo[cli]", "foo[doc]", "plugin"),
+        )
+        assert lock_input.dependencies == {"foo": ("plugin",)}
+
+    def test_emitted_as_pep751_dependencies(self) -> None:
+        text = write_lock(
+            LockInput(
+                pins={"foo": _index_pin("foo"), "bar": _index_pin("bar")},
+                dependencies={"foo": ("bar",)},
+            )
+        )
+        data = tomllib.loads(text)
+        by_name = {p["name"]: p for p in data["packages"]}
+        assert by_name["foo"]["dependencies"] == [{"name": "bar"}]
+        assert "dependencies" not in by_name["bar"]
+
+    def test_local_pin_carries_dependencies(self, tmp_path: Path) -> None:
+        text = write_lock(
+            LockInput(
+                pins={
+                    "foo": LocalPin(
+                        name="foo", version="1.0", path=str(tmp_path / "foo")
+                    ),
+                    "bar": _index_pin("bar"),
+                },
+                dependencies={"foo": ("bar",)},
+            ),
+            output_path=tmp_path / "pylock.toml",
+        )
+        data = tomllib.loads(text)
+        by_name = {p["name"]: p for p in data["packages"]}
+        assert by_name["foo"]["dependencies"] == [{"name": "bar"}]
