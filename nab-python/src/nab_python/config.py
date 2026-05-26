@@ -400,6 +400,30 @@ def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime | N
     return dt
 
 
+def read_pyproject_lock_anchor(path: Path) -> datetime | None:
+    """Return the absolute ``uploaded-prior-to`` timestamp, if one is set.
+
+    A ``P<n>D`` duration is anchored to run time, so it is not reproducible
+    and returns ``None``. ``nab lock`` uses an absolute cutoff as the lock
+    anchor so re-locks from identical inputs produce identical bytes.
+    Absent or invalid values return ``None``; the full config parse reports
+    the error, including a missing file.
+    """
+    try:
+        with path.open("rb") as f:
+            data = tomli.load(f)
+    except FileNotFoundError:
+        return None
+    raw = data.get("tool", {}).get("nab", {})
+    value = raw.get("uploaded-prior-to") if isinstance(raw, dict) else None
+    if isinstance(value, str) and _DURATION_PATTERN.match(value):
+        return None
+    try:
+        return _parse_uploaded_prior_to(value, anchor=datetime.now(timezone.utc))
+    except ConfigError:
+        return None
+
+
 def _parse_uploaded_prior_to_package(
     value: object, *, anchor: datetime
 ) -> Mapping[str, datetime | None]:

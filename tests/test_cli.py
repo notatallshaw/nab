@@ -1243,6 +1243,8 @@ class TestDetermineLockAnchor:
 
     _RECORDED = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
+    _ABSOLUTE = datetime(2026, 5, 1, tzinfo=timezone.utc)
+
     def _write_prior(self, target: Path) -> None:
         target.write_text(
             f"[tool.nab]\ncreated-at = {self._RECORDED.isoformat()}\n",
@@ -1252,19 +1254,25 @@ class TestDetermineLockAnchor:
         # Even with a prior pylock present, --upgrade re-anchors.
         target = tmp_path / "pylock.toml"
         self._write_prior(target)
-        anchor = _determine_lock_anchor(output=target, format="pylock", upgrade=True)
+        pyproject = _make_pyproject(tmp_path)
+        anchor = _determine_lock_anchor(
+            pyproject, output=target, format="pylock", upgrade=True
+        )
         assert anchor != self._RECORDED
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
 
-    def test_stdout_returns_fresh(self) -> None:
+    def test_stdout_returns_fresh(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            output=Path("-"), format="pylock", upgrade=False
+            pyproject, output=Path("-"), format="pylock", upgrade=False
         )
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
 
     def test_non_pylock_returns_fresh(self, tmp_path: Path) -> None:
         # requirements format has no [tool.nab] block to read from.
+        pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
+            pyproject,
             output=tmp_path / "requirements.txt",
             format="requirements",
             upgrade=False,
@@ -1275,13 +1283,19 @@ class TestDetermineLockAnchor:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        anchor = _determine_lock_anchor(output=None, format="pylock", upgrade=False)
+        pyproject = _make_pyproject(tmp_path)
+        anchor = _determine_lock_anchor(
+            pyproject, output=None, format="pylock", upgrade=False
+        )
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
 
     def test_existing_lockfile_anchor_is_reused(self, tmp_path: Path) -> None:
         target = tmp_path / "pylock.toml"
         self._write_prior(target)
-        anchor = _determine_lock_anchor(output=target, format="pylock", upgrade=False)
+        pyproject = _make_pyproject(tmp_path)
+        anchor = _determine_lock_anchor(
+            pyproject, output=target, format="pylock", upgrade=False
+        )
         assert anchor == self._RECORDED
 
     def test_default_output_path_used_when_output_is_none(
@@ -1290,7 +1304,48 @@ class TestDetermineLockAnchor:
         # No --output but a pylock.toml in cwd -> reuse.
         monkeypatch.chdir(tmp_path)
         self._write_prior(tmp_path / "pylock.toml")
-        anchor = _determine_lock_anchor(output=None, format="pylock", upgrade=False)
+        pyproject = _make_pyproject(tmp_path)
+        anchor = _determine_lock_anchor(
+            pyproject, output=None, format="pylock", upgrade=False
+        )
+        assert anchor == self._RECORDED
+
+    def test_absolute_uploaded_prior_to_is_the_anchor(self, tmp_path: Path) -> None:
+        # An absolute cutoff pins the anchor regardless of any prior lock.
+        target = tmp_path / "pylock.toml"
+        self._write_prior(target)
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            f'[tool.nab]\nuploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n',
+        )
+        anchor = _determine_lock_anchor(
+            pyproject, output=target, format="pylock", upgrade=False
+        )
+        assert anchor == self._ABSOLUTE
+
+    def test_absolute_cutoff_ignored_under_upgrade(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            f'[tool.nab]\nuploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n',
+        )
+        anchor = _determine_lock_anchor(
+            pyproject, output=None, format="pylock", upgrade=True
+        )
+        assert anchor != self._ABSOLUTE
+        assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
+
+    def test_relative_cutoff_falls_through_to_prior(self, tmp_path: Path) -> None:
+        target = tmp_path / "pylock.toml"
+        self._write_prior(target)
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n[tool.nab]\nuploaded-prior-to = "P4D"\n',
+        )
+        anchor = _determine_lock_anchor(
+            pyproject, output=target, format="pylock", upgrade=False
+        )
         assert anchor == self._RECORDED
 
 
@@ -1334,6 +1389,21 @@ class TestLockAnchorReuse:
         assert new_anchor is not None
         assert new_anchor != self._RECORDED
         assert (datetime.now(timezone.utc) - new_anchor).total_seconds() < 60
+
+    def test_absolute_cutoff_records_itself(self, tmp_path: Path) -> None:
+        # An absolute uploaded-prior-to makes created-at deterministic.
+        absolute = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            f'[tool.nab]\nuploaded-prior-to = "{absolute.isoformat()}"\n',
+        )
+        out = tmp_path / "pylock.toml"
+        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+            lock(pyproject, output=out)
+        from nab_python.lockfile import read_lockfile_anchor
+
+        assert read_lockfile_anchor(out) == absolute
 
 
 class TestGroupAndExtraSelection:
