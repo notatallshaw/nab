@@ -139,6 +139,23 @@ class TestSingleTuple:
         # PEP 751: version omitted for VCS sources (not deterministic).
         assert "version" not in package
 
+    def test_vcs_pin_non_git_type(self) -> None:
+        text = write_lock(
+            LockInput(
+                pins={
+                    "foo": VcsPin(
+                        name="foo",
+                        version="1.0",
+                        repo_url="https://example.com/x/y",
+                        commit_id="a" * 40,
+                        vcs_type="hg",
+                    ),
+                },
+            )
+        )
+        data = tomllib.loads(text)
+        assert data["packages"][0]["vcs"]["type"] == "hg"
+
     def test_multiple_packages_sorted_by_name(self) -> None:
         text = write_lock(
             LockInput(
