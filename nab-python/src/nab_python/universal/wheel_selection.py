@@ -53,6 +53,13 @@ _DEFAULT_MACOS_MIN = (11, 0)
 # below 10.13.
 _DEFAULT_MACOS_X86_64_MIN = (10, 13)
 
+# Legacy manylinux aliases (PEPs 513/571/599) keyed by their glibc floor.
+_LEGACY_MANYLINUX: dict[tuple[int, int], str] = {
+    (2, 17): "manylinux2014",
+    (2, 12): "manylinux2010",
+    (2, 5): "manylinux1",
+}
+
 
 @dataclass(frozen=True)
 class PlatformSpec:
@@ -126,21 +133,16 @@ def _linux_platform_tags(
     # manylinux_X_Y: PEP 600 form.  We accept any minor at or below
     # the floor (a wheel built for glibc 2.5 runs on a system with
     # glibc 2.17; a wheel built for glibc 2.34 does not).  Iterate
-    # high-to-low for preference order.
+    # high-to-low for preference order, emitting each legacy alias
+    # right after its equivalent PEP 600 tag so a legacy-named wheel
+    # ranks at its own glibc, matching packaging.tags.
     major, minor = manylinux_floor
-    out = [f"manylinux_{major}_{m}_{arch}" for m in range(minor, -1, -1)]
-    # Legacy aliases (PEPs 513/571/599).  These map to specific
-    # glibc versions: manylinux1=2.5, manylinux2010=2.12,
-    # manylinux2014=2.17.  Listed highest-glibc first so the output
-    # stays in install-preference order alongside the PEP 600 forms.
-    legacy_aliases = [
-        ("manylinux2014", (2, 17)),
-        ("manylinux2010", (2, 12)),
-        ("manylinux1", (2, 5)),
-    ]
-    out.extend(
-        f"{name}_{arch}" for name, lver in legacy_aliases if lver <= manylinux_floor
-    )
+    out: list[str] = []
+    for m in range(minor, -1, -1):
+        out.append(f"manylinux_{major}_{m}_{arch}")
+        legacy = _LEGACY_MANYLINUX.get((major, m))
+        if legacy is not None:
+            out.append(f"{legacy}_{arch}")
     # musllinux_X_Y: PEP 656 form.  Same accept-at-or-below rule.
     mu_major, mu_minor = musllinux_floor
     out.extend(f"musllinux_{mu_major}_{m}_{arch}" for m in range(mu_minor, -1, -1))
