@@ -25,6 +25,7 @@ from nab._lock import (
     _emit_universal_pylock,
     _resolve_extra_selection,
     _resolve_group_selection,
+    _source_date_epoch,
     lock,
 )
 from nab.cli import (
@@ -1278,6 +1279,48 @@ class TestDetermineLockAnchor:
         self._write_prior(tmp_path / "pylock.toml")
         anchor = _determine_lock_anchor(output=None, format="pylock", upgrade=False)
         assert anchor == self._RECORDED
+
+
+class TestSourceDateEpoch:
+    """``SOURCE_DATE_EPOCH`` pins the anchor for reproducible builds."""
+
+    _EPOCH = 1_700_000_000
+    _AS_DATETIME = datetime.fromtimestamp(_EPOCH, tz=timezone.utc)
+    _RECORDED = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def test_unset_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+        assert _source_date_epoch() is None
+
+    def test_parseable_value_is_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SOURCE_DATE_EPOCH", str(self._EPOCH))
+        assert _source_date_epoch() == self._AS_DATETIME
+
+    def test_unparseable_value_is_ignored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SOURCE_DATE_EPOCH", "not-a-number")
+        assert _source_date_epoch() is None
+
+    def test_overflowing_value_is_ignored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SOURCE_DATE_EPOCH", "9" * 30)
+        assert _source_date_epoch() is None
+
+    def test_epoch_wins_over_upgrade(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SOURCE_DATE_EPOCH", str(self._EPOCH))
+        anchor = _determine_lock_anchor(output=Path("-"), format="pylock", upgrade=True)
+        assert anchor == self._AS_DATETIME
+
+    def test_epoch_wins_over_existing_anchor(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("SOURCE_DATE_EPOCH", str(self._EPOCH))
+        target = tmp_path / "pylock.toml"
+        target.write_text(f"[tool.nab]\ncreated-at = {self._RECORDED.isoformat()}\n")
+        anchor = _determine_lock_anchor(output=target, format="pylock", upgrade=False)
+        assert anchor == self._AS_DATETIME
 
 
 class TestLockAnchorReuse:

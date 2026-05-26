@@ -13,6 +13,7 @@ patches keeps working after the per-command split.
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -590,6 +591,17 @@ def _build_provenance(
     )
 
 
+def _source_date_epoch() -> datetime | None:
+    """Return the ``SOURCE_DATE_EPOCH`` anchor, or None if unset or unusable."""
+    raw = os.environ.get("SOURCE_DATE_EPOCH")
+    if raw is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(raw), tz=timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
 def _determine_lock_anchor(
     *,
     output: Path | None,
@@ -598,7 +610,11 @@ def _determine_lock_anchor(
 ) -> datetime:
     """Pick the ``P<n>D`` anchor for ``nab lock``.
 
-    Returns ``datetime.now(UTC)`` (a fresh anchor) when:
+    A parseable ``SOURCE_DATE_EPOCH`` wins over everything else: a
+    reproducible-build environment dictates the clock, so the anchor must
+    be that timestamp regardless of ``--upgrade`` or any existing lock.
+
+    Otherwise returns ``datetime.now(UTC)`` (a fresh anchor) when:
 
     - ``--upgrade`` is set: the user is opting into a calendar refresh.
     - Output is stdout (``-``): there is no file to read back later, so
@@ -612,6 +628,9 @@ def _determine_lock_anchor(
     pylock, so a re-lock against the same project produces the same
     cutoff for ``P<n>D`` durations.
     """
+    epoch = _source_date_epoch()
+    if epoch is not None:
+        return epoch
     fresh = datetime.now(timezone.utc)
     if upgrade:
         return fresh
