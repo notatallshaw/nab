@@ -49,13 +49,20 @@ _WHEEL_DASHES_WITH_BUILD = 5
 
 @lru_cache(maxsize=65536)
 def _intern_version(version: str) -> Version:
-    """Construct a :class:`Version`, reusing one object per distinct string.
-
-    Raises :class:`InvalidVersion`; callers map that to a rejected file.
-    The same version recurs across every per-platform wheel of a release,
-    so the PEP 440 parse runs once per distinct string instead of per file.
-    """
+    """Construct a cached :class:`Version`."""
     return Version(version)
+
+
+@lru_cache(maxsize=65536)
+def _canonical_version(version: str) -> str:
+    """Return a cached canonical version string."""
+    return str(_intern_version(version))
+
+
+@lru_cache(maxsize=65536)
+def _intern_name(name: str) -> NormalizedName:
+    """Return a cached canonical name."""
+    return canonicalize_name(name)
 
 
 def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
@@ -77,21 +84,26 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     """
     if not filename.endswith(".whl"):
         return None
+
     stem = filename[:-4]
     dashes = stem.count("-")
     if dashes not in _WHEEL_DASHES:
         return None
+
     parts = stem.split("-", dashes - 2)
     name_part = parts[0]
     if "__" in name_part or _WHEEL_NAME_RE.match(name_part) is None:
         return None
+
     try:
-        version = _intern_version(parts[1])
+        version = _canonical_version(parts[1])
     except InvalidVersion:
         return None
+
     if dashes == _WHEEL_DASHES_WITH_BUILD and _BUILD_TAG_RE.match(parts[2]) is None:
         return None
-    return (canonicalize_name(name_part), str(version))
+
+    return (_intern_name(name_part), version)
 
 
 def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
