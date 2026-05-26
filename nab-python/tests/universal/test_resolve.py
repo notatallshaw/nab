@@ -23,6 +23,7 @@ from nab_python.lockfile import IndexPin, LockInput
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
+    LocalSource,
     UnsupportedSdistError,
     VcsConfig,
     VcsPolicy,
@@ -677,3 +678,67 @@ class TestResolveUniversalWrapper:
             )
         # FetchCoordinator received the same list (not the default).
         assert fetch_cls.call_args.kwargs["indexes"] is custom
+
+
+class TestLocalVcsRequiresPython:
+    """A local or VCS pin must satisfy each targeted Python version.
+
+    Index candidates are filtered by Requires-Python while listing;
+    local-path and VCS sources skip that filter, so the universal
+    resolve checks them after resolving.
+    """
+
+    def _write(self, tmp_path: Path, body: str) -> LocalSource:
+        (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
+        return LocalSource("foo", str(tmp_path))
+
+    def test_excluding_python_fails_the_tuple(self, tmp_path: Path) -> None:
+        local = self._write(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n',
+        )
+        coord = make_coordinator([], package="foo")
+        result = resolve_with_coordinator(
+            coord,
+            Matrix(python="==3.10", platforms=("linux_x86_64",)),
+            ["foo"],
+            local_sources=[local],
+        )
+        assert not result.success
+        error = result.tuple_results[0].error
+        assert error is not None
+        assert "foo 1.0 requires Python" in error
+        assert "3.10" in error
+
+    def test_compatible_python_with_index_dep_succeeds(self, tmp_path: Path) -> None:
+        local = self._write(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\n'
+            'requires-python = ">=3.10"\ndependencies = ["bar"]\n',
+        )
+        coord = make_coordinator(
+            listings={"bar": [_make_wheel("2.0", package="bar")]},
+            auto_metadata=True,
+        )
+        result = resolve_with_coordinator(
+            coord,
+            Matrix(python="==3.10", platforms=("linux_x86_64",)),
+            ["foo"],
+            local_sources=[local],
+        )
+        assert result.success
+        pins = result.tuple_results[0].pins
+        assert str(pins["foo"]) == "1.0"
+        assert str(pins["bar"]) == "2.0"
+
+    def test_no_requires_python_is_unconstrained(self, tmp_path: Path) -> None:
+        local = self._write(tmp_path, '[project]\nname = "foo"\nversion = "1.0"\n')
+        coord = make_coordinator([], package="foo")
+        result = resolve_with_coordinator(
+            coord,
+            Matrix(python="==3.10", platforms=("linux_x86_64",)),
+            ["foo"],
+            local_sources=[local],
+        )
+        assert result.success
+        assert str(result.tuple_results[0].pins["foo"]) == "1.0"

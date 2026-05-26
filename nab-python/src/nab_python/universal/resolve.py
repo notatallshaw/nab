@@ -23,6 +23,7 @@ from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.utils import canonicalize_name
+from .._vendor.packaging.version import Version
 from ..config import ConfigError
 from ..fetch import (
     DEFAULT_INDEX_NAME,
@@ -70,7 +71,6 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
-    from .._vendor.packaging.version import Version
     from ..config import NabProjectConfig
     from .matrix import Matrix, MatrixTuple
 
@@ -467,6 +467,34 @@ def _parse_tuple_inputs(
     return parsed_requirements, parsed_constraints
 
 
+def _raise_for_local_vcs_python(
+    provider: UniversalProvider,
+    t: MatrixTuple,
+    pins: Mapping[str, Version],
+) -> None:
+    """Reject a local or VCS pin whose Requires-Python excludes the tuple.
+
+    Index candidates are filtered by Requires-Python while listing, but
+    local-path and VCS sources skip that filter, so a checkout that
+    rejects this tuple's Python could otherwise reach the lockfile.
+    """
+    managed = provider.local_sources.keys() | provider.vcs_sources.keys()
+    if not managed:
+        return
+    target = Version(t.python_version)
+    for name, version in pins.items():
+        normalized = canonicalize_name(name)
+        if normalized not in managed:
+            continue
+        spec = provider.metadata_cache[(normalized, version)].requires_python
+        if spec is not None and target not in spec:
+            msg = (
+                f"{normalized} {version} requires Python {spec} but tuple "
+                f"{t.label} targets Python {t.python_version}"
+            )
+            raise ResolutionError(msg)
+
+
 def _resolve_one_tuple(  # noqa: PLR0913
     coordinator: FetchCoordinator,
     t: MatrixTuple,
@@ -518,6 +546,8 @@ def _resolve_one_tuple(  # noqa: PLR0913
     start = time.monotonic()
     try:
         raw = resolver.resolve(requirements, constraints=constraints)
+        pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
+        _raise_for_local_vcs_python(provider, t, pins)
     except ResolutionError as exc:
         return TupleResult(
             tuple_=t,
@@ -528,7 +558,6 @@ def _resolve_one_tuple(  # noqa: PLR0913
             decisions=resolver.stats.decisions,
         )
     elapsed = time.monotonic() - start
-    pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
     try:
         lock_input = build_lock_input_from_provider(
             provider, pins, indexes=coordinator.indexes
