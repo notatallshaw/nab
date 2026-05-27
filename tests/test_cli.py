@@ -621,9 +621,9 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
-        out = capsys.readouterr().out
-        assert "FAILED" in out
-        assert "#   conflict" in out
+        err = capsys.readouterr().err
+        assert "FAILED" in err
+        assert "#   conflict" in err
 
     def test_failed_tuple_multi_line_error(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -639,10 +639,10 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
-        out = capsys.readouterr().out
-        assert "#   first line" in out
-        assert "#   second line" in out
-        assert "#   third line" in out
+        err = capsys.readouterr().err
+        assert "#   first line" in err
+        assert "#   second line" in err
+        assert "#   third line" in err
 
     def test_failed_tuple_no_error_message(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -657,7 +657,7 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
-        assert "FAILED" in capsys.readouterr().out
+        assert "FAILED" in capsys.readouterr().err
 
     def test_missing_dependencies_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -755,10 +755,10 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
-        out = capsys.readouterr().out
-        assert "# py311-linux_x86_64" in out
-        assert "foo==1.0" in out
-        assert "# py311-windows_amd64: FAILED" in out
+        err = capsys.readouterr().err
+        assert "# py311-linux_x86_64" in err
+        assert "foo==1.0" in err
+        assert "# py311-windows_amd64: FAILED" in err
 
     def test_template_writes_one_file_per_tuple(self, tmp_path: Path) -> None:
         """``{python_version}`` in --output expands to one file per tuple."""

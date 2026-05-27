@@ -665,7 +665,7 @@ def _validate_pylock_output_name(
 
 
 def _print_universal_blocks(result: UniversalResult) -> None:
-    """Write per-tuple pin blocks (with FAILED markers) to stdout."""
+    """Write per-tuple pin blocks (with FAILED markers) to stderr."""
     blocks: list[str] = []
     for tr in result.tuple_results:
         label = tr.tuple_.label
@@ -675,4 +675,4 @@ def _print_universal_blocks(result: UniversalResult) -> None:
             continue
         blocks.append(f"# {label}")
         blocks.extend(f"{name}=={tr.pins[name]}" for name in sorted(tr.pins))
-    sys.stdout.write("\n".join(blocks) + "\n")
+    sys.stderr.write("\n".join(blocks) + "\n")
