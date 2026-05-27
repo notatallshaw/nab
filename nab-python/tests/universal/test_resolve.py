@@ -774,3 +774,43 @@ class TestLocalVcsRequiresPython:
         )
         assert result.success
         assert str(result.tuple_results[0].pins["foo"]) == "1.0"
+
+    def test_patch_satisfies_local_requires_python(self, tmp_path: Path) -> None:
+        local = self._write(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.13.1"\n',
+        )
+        coord = make_coordinator([], package="foo")
+        result = resolve_with_coordinator(
+            coord,
+            Matrix(
+                python="==3.13",
+                platforms=("linux_x86_64",),
+                python_patches={"3.13": "3.13.4"},
+            ),
+            ["foo"],
+            local_sources=[local],
+        )
+        assert result.success
+        assert str(result.tuple_results[0].pins["foo"]) == "1.0"
+
+    def test_patch_below_local_requires_python_fails(self, tmp_path: Path) -> None:
+        local = self._write(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.13.5"\n',
+        )
+        coord = make_coordinator([], package="foo")
+        result = resolve_with_coordinator(
+            coord,
+            Matrix(
+                python="==3.13",
+                platforms=("linux_x86_64",),
+                python_patches={"3.13": "3.13.4"},
+            ),
+            ["foo"],
+            local_sources=[local],
+        )
+        assert not result.success
+        error = result.tuple_results[0].error
+        assert error is not None
+        assert "foo 1.0 requires Python" in error
