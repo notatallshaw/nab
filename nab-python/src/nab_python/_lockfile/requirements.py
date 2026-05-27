@@ -69,15 +69,16 @@ def _render_requirements(
 
 
 def _render_per_tuple_requirements(lock_input: LockInput, *, with_hashes: bool) -> str:
-    """Emit one ``# label`` block per tuple followed by that tuple's pins.
+    """Emit one ``# label`` block per tuple in sorted label order.
 
-    Pip cannot install a single requirements.txt across multiple
-    ``(python, platform)`` tuples in hash-checking mode, so a multi-
-    tuple resolve serialises as commented sections that callers are
-    expected to extract per environment.
+    Each block is followed by that tuple's pins.  Pip cannot install a
+    single requirements.txt across multiple ``(python, platform)``
+    tuples in hash-checking mode, so a multi-tuple resolve serialises as
+    commented sections that callers are expected to extract per
+    environment.
     """
     blocks: list[str] = []
-    for label in lock_input.per_tuple_pins:
+    for label in sorted(lock_input.per_tuple_pins):
         pins = lock_input.per_tuple_pins[label]
         block = [f"# {label}"]
         block.extend(_render_pins(pins, with_hashes=with_hashes))

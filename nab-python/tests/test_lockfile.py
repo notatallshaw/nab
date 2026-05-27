@@ -47,6 +47,7 @@ from nab_python.lockfile import (
     read_lockfile_packages,
     write_lock,
     write_requirements_with_hashes,
+    write_requirements_without_hashes,
 )
 from nab_python.provider import DistPolicy, LocalSource, VcsConfig, VcsPolicy, VcsSource
 
@@ -2132,6 +2133,20 @@ class TestWriteRequirementsWithHashes:
             output_path=out,
         )
         assert out.read_text(encoding="utf-8") == text
+
+
+class TestWriteRequirementsPerTuple:
+    def test_blocks_sorted_by_label(self) -> None:
+        # Blocks must come out in sorted label order regardless of the
+        # per_tuple_pins insertion order, matching the pylock writer so
+        # equivalent matrices declared in a different order render the
+        # same bytes.
+        per_tuple = {
+            "py311-linux": {"foo": _index_pin(version="2.0")},
+            "py310-linux": {"foo": _index_pin(version="1.0")},
+        }
+        text = write_requirements_without_hashes(LockInput(per_tuple_pins=per_tuple))
+        assert text.index("# py310-linux") < text.index("# py311-linux")
 
 
 def test_vcs_config_unused_in_lockfile_path() -> None:
