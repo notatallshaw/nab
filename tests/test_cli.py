@@ -1555,6 +1555,79 @@ class TestGroupAndExtraSelection:
         result = _resolve_extra_selection(pyproject, extras=(), all_extras=True)
         assert sorted(result) == ["ci", "test"]
 
+    def test_no_group_selection_skips_read(self, tmp_path: Path) -> None:
+        result = _resolve_group_selection(
+            tmp_path / "missing.toml", groups=(), all_groups=False
+        )
+        assert result == ()
+
+    def test_no_extra_selection_skips_read(self, tmp_path: Path) -> None:
+        result = _resolve_extra_selection(
+            tmp_path / "missing.toml", extras=(), all_extras=False
+        )
+        assert result == ()
+
+    def test_explicit_groups_returns_deduplicated(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[project]\nname = 'x'\n[dependency-groups]\ndev = []\nlint = []\n",
+        )
+        result = _resolve_group_selection(
+            pyproject, groups=("dev", "lint", "dev"), all_groups=False
+        )
+        assert result == ("dev", "lint")
+
+    def test_explicit_extras_returns_deduplicated(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[project]\nname = 'x'\n"
+            "[project.optional-dependencies]\ntest = []\nci = []\n",
+        )
+        result = _resolve_extra_selection(
+            pyproject, extras=("test", "ci", "test"), all_extras=False
+        )
+        assert result == ("test", "ci")
+
+    def test_all_groups_non_table_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("dependency-groups = 'oops'\n[project]\nname = 'x'\n")
+        with pytest.raises(SystemExit, match="1"):
+            _resolve_group_selection(pyproject, groups=(), all_groups=True)
+        assert "[dependency-groups] must be a table" in capsys.readouterr().err
+
+    def test_explicit_groups_non_table_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("dependency-groups = 'oops'\n[project]\nname = 'x'\n")
+        with pytest.raises(SystemExit, match="1"):
+            _resolve_group_selection(pyproject, groups=("dev",), all_groups=False)
+        assert "[dependency-groups] must be a table" in capsys.readouterr().err
+
+    def test_all_extras_non_table_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname = 'x'\noptional-dependencies = 'oops'\n")
+        with pytest.raises(SystemExit, match="1"):
+            _resolve_extra_selection(pyproject, extras=(), all_extras=True)
+        assert "[project.optional-dependencies] must be a table" in (
+            capsys.readouterr().err
+        )
+
+    def test_explicit_extras_non_table_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname = 'x'\noptional-dependencies = 'oops'\n")
+        with pytest.raises(SystemExit, match="1"):
+            _resolve_extra_selection(pyproject, extras=("foo",), all_extras=False)
+        assert "[project.optional-dependencies] must be a table" in (
+            capsys.readouterr().err
+        )
+
 
 class TestEmitHelpers:
     """Helpers accept ``provenance=None``.
