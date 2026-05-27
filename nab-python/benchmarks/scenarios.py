@@ -189,8 +189,12 @@ def parse_datetime(value: str) -> datetime:
 SCENARIO_WALL_TIMEOUT_SECONDS = 120
 
 
-class _ScenarioTimeoutError(Exception):
-    """Raised when a scenario exceeds the per-run wall-clock budget."""
+class _ScenarioTimeoutError(BaseException):
+    """Raised when a scenario exceeds the per-run wall-clock budget.
+
+    Subclasses BaseException so the resolver's internal ``except Exception``
+    handlers cannot swallow the alarm mid-resolve.
+    """
 
 
 def _alarm_handler(_signum: int, _frame: object) -> None:
@@ -252,7 +256,7 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
             success = True
             error = None
             packages_resolved = len(result)
-        except Exception as exc:
+        except (_ScenarioTimeoutError, Exception) as exc:
             elapsed = time.monotonic() - start
             success = False
             error = f"{type(exc).__name__}: {exc}"
