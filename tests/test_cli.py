@@ -1748,6 +1748,15 @@ class TestDownloadCommand:
         with pytest.raises(SystemExit, match="1"):
             download(pyproject)
 
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_non_positive_max_concurrency_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], bad: int
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            download(pyproject, max_concurrency=bad)
+        assert "--max-concurrency must be at least 1" in capsys.readouterr().err
+
     def test_resolution_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
