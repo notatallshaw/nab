@@ -37,6 +37,7 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.version import Version
+from nab_python.config import ConfigError
 from nab_python.download import DownloadError
 from nab_python.lockfile import (
     IndexPin,
@@ -298,6 +299,36 @@ class TestLockCommandSpecific:
         ):
             lock(pyproject)
         assert "refusing direct-URL requirement" in capsys.readouterr().err
+
+    def test_not_implemented_vcs_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A VCS URL admitted by policy but unimplemented exits 1, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                side_effect=NotImplementedError("resolver path is not implemented"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        assert "resolver path is not implemented" in capsys.readouterr().err
+
+    def test_config_error_during_resolve_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A ConfigError raised mid-resolve (e.g. constraint with extras) exits 1."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                side_effect=ConfigError("Constraints cannot have extras: idna[foo]<3"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        assert "Constraints cannot have extras" in capsys.readouterr().err
 
     def test_missing_dependencies_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
