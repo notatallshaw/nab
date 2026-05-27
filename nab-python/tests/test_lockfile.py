@@ -866,6 +866,18 @@ class TestDependencyGroups:
         assert "dependency-groups" not in data
         assert "default-groups" not in data
 
+    def test_group_names_normalized(self) -> None:
+        text = write_lock(
+            LockInput(
+                pins={"foo": _index_pin()},
+                dependency_groups=("Dev_Group", "Doc.s"),
+                default_groups=("Dev_Group",),
+            )
+        )
+        data = tomllib.loads(text)
+        assert data["dependency-groups"] == ["dev-group", "doc-s"]
+        assert data["default-groups"] == ["dev-group"]
+
 
 class TestMarkerDisjointness:
     def _pkg(self, name: str, version: str, marker: str | None = None) -> Package:

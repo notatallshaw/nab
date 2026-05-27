@@ -122,12 +122,14 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
             else None
         ),
         dependency_groups=(
-            tuple(lock_input.dependency_groups)
+            tuple(canonicalize_name(g) for g in lock_input.dependency_groups)
             if lock_input.dependency_groups
             else None
         ),
         default_groups=(
-            tuple(lock_input.default_groups) if lock_input.default_groups else None
+            tuple(canonicalize_name(g) for g in lock_input.default_groups)
+            if lock_input.default_groups
+            else None
         ),
         created_by=lock_input.created_by,
         packages=package_records,
