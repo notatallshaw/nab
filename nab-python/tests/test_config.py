@@ -13,6 +13,7 @@ from nab_python.config import (
     NabProjectConfig,
     ResolveMode,
     read_pyproject_config,
+    read_pyproject_lock_anchor,
 )
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexOverride
 from nab_python.provider import (
@@ -282,6 +283,44 @@ class TestUploadedPriorTo:
             ),
         ):
             read_pyproject_config(path)
+
+
+class TestReadLockAnchor:
+    """``read_pyproject_lock_anchor`` returns only absolute cutoffs."""
+
+    def test_iso_string(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[tool.nab]\nuploaded-prior-to = "2026-05-01T00:00:00Z"\n'
+        )
+        assert read_pyproject_lock_anchor(path) == datetime(
+            2026, 5, 1, tzinfo=timezone.utc
+        )
+
+    def test_native_toml_datetime(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\nuploaded-prior-to = 2026-05-01T00:00:00Z\n")
+        assert read_pyproject_lock_anchor(path) == datetime(
+            2026, 5, 1, tzinfo=timezone.utc
+        )
+
+    def test_duration_returns_none(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nuploaded-prior-to = "P4D"\n')
+        assert read_pyproject_lock_anchor(path) is None
+
+    def test_absent_returns_none(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\n")
+        assert read_pyproject_lock_anchor(path) is None
+
+    def test_invalid_value_returns_none(self, tmp_path: Path) -> None:
+        # The full config parse reports the error; the anchor read stays quiet.
+        path = write(tmp_path, '[tool.nab]\nuploaded-prior-to = "not-a-date"\n')
+        assert read_pyproject_lock_anchor(path) is None
+
+    def test_non_table_tool_nab_returns_none(self, tmp_path: Path) -> None:
+        path = write(tmp_path, 'tool = {nab = "oops"}\n')
+        assert read_pyproject_lock_anchor(path) is None
+
+    def test_missing_file_returns_none(self, tmp_path: Path) -> None:
+        assert read_pyproject_lock_anchor(tmp_path / "missing.toml") is None
 
 
 class TestUploadedPriorToPackage:

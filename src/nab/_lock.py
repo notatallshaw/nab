@@ -24,6 +24,7 @@ from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python.config import (
     NabProjectConfig,
     ResolveMode,
+    read_pyproject_lock_anchor,
 )
 from nab_python.lockfile import (
     LockInput,
@@ -104,7 +105,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     instead of reusing the timestamp recorded in any existing lockfile.
     """
     _validate_pylock_output_name(output=output, format=format)
-    anchor = _determine_lock_anchor(output=output, format=format, upgrade=upgrade)
+    anchor = _determine_lock_anchor(path, output=output, format=format, upgrade=upgrade)
     config = _cli._load_config(  # noqa: SLF001
         path, discover_workspace=workspace_discovery, anchor=anchor
     )
@@ -591,6 +592,7 @@ def _build_provenance(
 
 
 def _determine_lock_anchor(
+    path: Path,
     *,
     output: Path | None,
     format: str,  # noqa: A002 - shadows builtin by convention
@@ -598,7 +600,12 @@ def _determine_lock_anchor(
 ) -> datetime:
     """Pick the ``P<n>D`` anchor for ``nab lock``.
 
-    Returns ``datetime.now(UTC)`` (a fresh anchor) when:
+    When the project pins an absolute ``uploaded-prior-to``, that timestamp
+    is the anchor: the resolve window is already fixed, so anchoring there
+    makes ``created-at`` deterministic and two locks from identical inputs
+    produce identical bytes. ``--upgrade`` still re-floats to now.
+
+    Otherwise returns ``datetime.now(UTC)`` (a fresh anchor) when:
 
     - ``--upgrade`` is set: the user is opting into a calendar refresh.
     - Output is stdout (``-``): there is no file to read back later, so
@@ -615,6 +622,9 @@ def _determine_lock_anchor(
     fresh = datetime.now(timezone.utc)
     if upgrade:
         return fresh
+    absolute = read_pyproject_lock_anchor(path)
+    if absolute is not None:
+        return absolute
     if _cli._is_stdout(output):  # noqa: SLF001
         return fresh
     if format != "pylock":

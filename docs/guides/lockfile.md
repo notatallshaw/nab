@@ -137,6 +137,12 @@ same `uploaded-prior-to` produces the same pin set, so the
 lockfile is truly reproducible rather than "reproducible until
 upstream re-uploads".
 
+When `uploaded-prior-to` is an absolute timestamp, that timestamp
+also becomes the lockfile's `created-at`, so two locks from
+identical inputs are byte-for-byte identical. A relative `P<n>D`
+cutoff is anchored to the wall clock, so `created-at` stays the
+run time; `--upgrade` always re-anchors to now.
+
 ## `nab download`
 
 `nab download` walks the same pin set, fetches every wheel and
