@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from nab_resolver.ranges import Range
@@ -41,6 +41,7 @@ from .strategies import (
     dependency_graphs,
     dependency_ranges,
     empty_dep_graphs,
+    graph_and_constraints,
     guaranteed_solvable_graphs,
     mutual_back_edge_graphs,
     mutual_dep_exhaustive_graphs,
@@ -649,6 +650,56 @@ class TestAgreesWithBruteForce:
                 f"Graph: {graph}\nSolution: {solution}"
             )
             verify_solution(solution, requirements, graph)
+
+    @pytest.mark.timeout(RESOLUTION_TIMEOUT_SECONDS * 200)
+    @given(case=graph_and_constraints())
+    @example(
+        (
+            {
+                "root": {1: {"foo": Range.at_most(7)}},
+                "foo": {7: {"bar": Range.at_least(1)}, 4: {}},
+                "bar": {8: {"foo": Range.less_than(2)}},
+            },
+            {"bar": Range.singleton(8)},
+        )
+    )
+    @BRUTE_FORCE_SETTINGS
+    def test_agrees_with_brute_force_under_constraints(
+        self, case: tuple[dict, dict]
+    ) -> None:
+        """Resolver agrees with constrained brute force for small graphs.
+
+        Constraints restrict but never force a package, so a constraint
+        on a package that a solution never selects is vacuous. Reporting
+        impossible because of such a constraint is a completeness bug.
+        """
+        graph, constraints = case
+        requirements = {"root": Range.singleton(1)}
+        brute_force_sat = brute_force_has_solution(graph, requirements, constraints)
+        if brute_force_sat is None:
+            return
+
+        for provider in (FuzzProvider(graph), PromotingFuzzProvider(graph, 1)):
+            resolver = Resolver(provider, max_iterations=1000)
+            try:
+                solution = resolver.resolve(requirements, constraints=constraints)
+            except ResolutionError as error:
+                if "exceeded" in str(error):
+                    continue
+                assert not brute_force_sat, (
+                    f"Resolver reported impossible but brute-force found a "
+                    f"solution.\nGraph: {graph}\nConstraints: {constraints}"
+                )
+                continue
+
+            assert brute_force_sat, (
+                f"Resolver found a solution but brute-force says impossible.\n"
+                f"Graph: {graph}\nConstraints: {constraints}\nSolution: {solution}"
+            )
+            verify_solution(solution, requirements, graph)
+            for package, constraint_range in constraints.items():
+                if package in solution:
+                    assert solution[package] in constraint_range
 
     @pytest.mark.timeout(RESOLUTION_TIMEOUT_SECONDS * 200)
     @given(
