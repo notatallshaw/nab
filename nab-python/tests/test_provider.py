@@ -1188,6 +1188,23 @@ class TestMarkerEnvironment:
         )
         assert provider.environment["python_version"] == "3.13"
 
+    def test_two_part_python_version_expands_full_version(self) -> None:
+        """A 2-part python_version yields a 3-part python_full_version."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator, python_version="3.10", build_policy=BuildPolicy.NEVER
+        )
+        assert provider.environment["python_version"] == "3.10"
+        assert provider.environment["python_full_version"] == "3.10.0"
+
+    def test_full_python_version_preserved(self) -> None:
+        """A 3-part python_version keeps its patch component."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator, python_version="3.11.5", build_policy=BuildPolicy.NEVER
+        )
+        assert provider.environment["python_full_version"] == "3.11.5"
+
     def test_overlay_with_never_override_passes(self) -> None:
         """Overrides at ``NEVER`` skip the guard's offending branch.
 

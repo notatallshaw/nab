@@ -7,6 +7,7 @@ types.  Uses a thread pool with a shared HTTP session to overlap I/O.
 
 from __future__ import annotations
 
+import contextlib
 import enum
 import logging
 import re
@@ -61,6 +62,7 @@ __all__ = [
     "VcsPolicy",
     "VcsSource",
     "join_extra",
+    "python_axis_environment",
     "split_extra",
 ]
 
@@ -69,8 +71,34 @@ logger = logging.getLogger(__name__)
 
 _EXTRA_RE = re.compile(r"^(?P<base>[^\[]+)\[(?P<extra>[^\]]+)\]$")
 
-# A PEP 508 ``python_version`` value is the ``major.minor`` pair.
+
+# PEP 508 ``python_version`` is the ``major.minor`` pair;
+# ``python_full_version`` is the full ``major.minor.micro`` release.
 _PYTHON_VERSION_PARTS = 2
+_PYTHON_FULL_VERSION_PARTS = 3
+
+
+def python_axis_environment(python_version: str) -> dict[str, str]:
+    """Map an explicit Python version to its PEP 508 marker keys.
+
+    ``python_full_version`` is padded to three components so patch-precision
+    markers evaluate the same here as in the universal matrix. Raises
+    ``InvalidVersion`` if the input is not a version.
+    """
+    release = Version(python_version).release
+    minor = (
+        f"{release[0]}.{release[1]}"
+        if len(release) >= _PYTHON_VERSION_PARTS
+        else python_version
+    )
+    full = (
+        python_version
+        if len(release) >= _PYTHON_FULL_VERSION_PARTS
+        else ".".join(
+            str(part) for part in (*release, 0, 0)[:_PYTHON_FULL_VERSION_PARTS]
+        )
+    )
+    return {"python_version": minor, "python_full_version": full}
 
 
 def _normalize_extra(extra: str) -> str:
@@ -442,19 +470,8 @@ class Provider:
         }
         self.environment: dict[str, str] = env_init
         if python_version is not None:
-            try:
-                release = Version(python_version).release
-            except InvalidVersion:
-                pass
-            else:
-                # python_version is major.minor (PEP 508);
-                # python_full_version is the full release.
-                self.environment["python_version"] = (
-                    f"{release[0]}.{release[1]}"
-                    if len(release) >= _PYTHON_VERSION_PARTS
-                    else python_version
-                )
-                self.environment["python_full_version"] = python_version
+            with contextlib.suppress(InvalidVersion):
+                self.environment.update(python_axis_environment(python_version))
         if marker_environment:
             for key, value in marker_environment.items():
                 self.environment[key] = value
