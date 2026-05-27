@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
+import tomli
 import tyro
 from tyro.extras import SubcommandApp
 
@@ -132,6 +133,9 @@ def _load_config(
         return read_pyproject_config(
             path, discover_workspace=discover_workspace, anchor=anchor
         )
+    except tomli.TOMLDecodeError as exc:
+        sys.stderr.write(f"Error: {path} is not valid TOML: {exc}\n")
+        sys.exit(1)
     except ConfigError as exc:
         sys.stderr.write(f"Error in [tool.nab]: {exc}\n")
         sys.exit(1)

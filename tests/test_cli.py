@@ -345,6 +345,16 @@ class TestLockCommandSpecific:
         with pytest.raises(SystemExit, match="1"):
             lock(tmp_path / "missing.toml")
 
+    def test_malformed_toml_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A TOML syntax error reports a clean message, not a traceback."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\ndependencies = ["foo"\n')
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=Path("-"))
+        assert "is not valid TOML" in capsys.readouterr().err
+
     def test_resolution_flag_threads_to_resolver(self, tmp_path: Path) -> None:
         """``--resolution lowest`` reaches resolve_pyproject as the enum."""
         pyproject = _make_pyproject(tmp_path)

@@ -322,6 +322,11 @@ class TestReadLockAnchor:
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:
         assert read_pyproject_lock_anchor(tmp_path / "missing.toml") is None
 
+    def test_malformed_toml_returns_none(self, tmp_path: Path) -> None:
+        # A syntax error is left for the full config parse to report.
+        path = write(tmp_path, '[project]\ndependencies = ["foo"\n')
+        assert read_pyproject_lock_anchor(path) is None
+
 
 class TestUploadedPriorToPackage:
     """``[tool.nab.uploaded-prior-to-package]`` parses into a mapping."""
