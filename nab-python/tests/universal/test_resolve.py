@@ -24,6 +24,7 @@ from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
     LocalSource,
+    MissingExtraError,
     UnsupportedSdistError,
     VcsConfig,
     VcsPolicy,
@@ -37,6 +38,7 @@ from nab_python.universal.resolve import (
     _direct_package_names,
     _parse_requirements,
     _resolve_one_tuple,
+    _root_extras,
     _run_pass,
     _warn_extra_marker_at_root,
     merge_universal_lock_inputs,
@@ -232,6 +234,24 @@ class TestParseRequirements:
         env = _linux_311().environment
         with pytest.raises(ConfigError, match="extras"):
             _parse_requirements(["pkg[dev]<2.0"], env, kind="constraint")
+
+    def test_extra_proxy_key_normalized(self) -> None:
+        """The proxy key is PEP 685 normalized, matching the single-env path."""
+        env = _linux_311().environment
+        out = _parse_requirements(["pkg[My_Extra]"], env)
+        assert "pkg[my-extra]" in out
+
+
+class TestRootExtras:
+    """``_root_extras`` recovers requested extras from the proxy keys."""
+
+    def test_recovers_and_normalizes_extras(self) -> None:
+        env = _linux_311().environment
+        out = _parse_requirements(["pkg[My_Extra]", "other"], env)
+        assert _root_extras(out) == {("pkg", "my-extra")}
+
+    def test_no_extras_yields_empty(self) -> None:
+        assert _root_extras({"pkg": VersionRange.full()}) == set()
 
 
 class TestResolveOneTuple:
@@ -593,6 +613,18 @@ class TestResolveWithCoordinator:
         )
         assert result.success
         assert result.tuple_results[0].pins == {"pkg": Version("1.0")}
+
+    def test_user_requested_missing_extra_raises(self) -> None:
+        """A user-requested extra a package does not provide raises.
+
+        Matches the single-environment path: with the default
+        ``ExtrasMode.ERROR_USER``, a missing user extra is an error
+        rather than a silent drop.
+        """
+        coordinator = _make_coordinator({"pkg": [_make_wheel("1.0", package="pkg")]})
+        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        with pytest.raises(MissingExtraError):
+            resolve_with_coordinator(coordinator, matrix, ["pkg[missing]"])
 
     def test_constraints_passed_through(self) -> None:
         """User-supplied constraints reach the resolver."""

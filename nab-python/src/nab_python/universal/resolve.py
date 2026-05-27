@@ -43,6 +43,7 @@ from ..provider import (
     LocalSource,
     VcsConfig,
     VcsSource,
+    join_extra,
     split_extra,
 )
 from ..requirements_file import raise_for_unsatisfiable
@@ -444,8 +445,24 @@ def _parse_requirements(
         out[name] = out.get(name, VersionRange.full()) & req.specifier.to_range()
         sources[name].append(req_str)
         for extra in req.extras:
-            out[f"{name}[{extra}]"] = VersionRange.full()
+            out[join_extra(name, extra)] = VersionRange.full()
     raise_for_unsatisfiable(out, sources, kind=kind)
+    return out
+
+
+def _root_extras(requirements: dict[str, VersionRange]) -> set[tuple[str, str]]:
+    """Recover the user's requested extras from the proxy keys.
+
+    ``_parse_requirements`` adds a ``name[extra]`` proxy key for every root
+    extra. Feeding these to the provider as ``root_extras`` matches the
+    single-environment path, so a missing user-requested extra raises
+    ``MissingExtraError`` instead of being silently dropped.
+    """
+    out: set[tuple[str, str]] = set()
+    for key in requirements:
+        base, extra = split_extra(key)
+        if extra is not None:
+            out.add((base, extra))
     return out
 
 
@@ -521,6 +538,7 @@ def _resolve_one_tuple(  # noqa: PLR0913
         coordinator,
         marker_environment=t.environment,
         root_requirements=requirements,
+        root_extras=_root_extras(requirements),
         uploaded_prior_to=uploaded_prior_to,
         uploaded_prior_to_overrides=uploaded_prior_to_overrides,
         dist_policy=dist_policy,
