@@ -538,6 +538,39 @@ class TestGetFiles:
         with pytest.raises(RuntimeError, match="500"):
             asyncio.run(go())
 
+    def test_cold_cache_404_returns_empty(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(b"not found", status=404)])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("absent")
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == []
+        # A 404 is not cached, so a later run re-queries the index.
+        assert cache.get_simple("absent") is None
+
+    def test_revalidate_404_returns_empty(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=1, etag="old"),
+        )
+        transport = _FakeTransport([_FakeResponse(b"gone", status=404)])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == []
+
     def test_legacy_filename_with_build_tag_is_dropped(self, tmp_path: Path) -> None:
         """Legacy sdists like ``cffi-1.0.2-2.tar.gz`` parse to a different
         canonical name (``cffi-1-0-2``) under packaging's last-dash split.
