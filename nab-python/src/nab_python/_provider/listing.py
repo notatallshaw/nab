@@ -97,6 +97,27 @@ def wheel_by_version(
     return cached
 
 
+def yanked_versions(
+    provider: Provider,
+    normalized: str,
+    version_list: list[tuple[Version, DistFile]],
+) -> frozenset[Version]:
+    """Versions whose every distribution file is yanked (PEP 592).
+
+    Such a version is ranked below every non-yanked one and chosen only
+    when no non-yanked version satisfies the request. A version keeping
+    any non-yanked file stays selectable as normal.
+    """
+    cached = provider.yanked_versions_cache.get(normalized)
+    if cached is None:
+        all_yanked: dict[Version, bool] = {}
+        for version, dist in version_list:
+            all_yanked[version] = all_yanked.get(version, True) and dist.yanked
+        cached = frozenset(v for v, yanked in all_yanked.items() if yanked)
+        provider.yanked_versions_cache[normalized] = cached
+    return cached
+
+
 def speculative_prefetch(
     provider: Provider,
     normalized: str,

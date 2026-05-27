@@ -534,6 +534,7 @@ class Provider:
         # Derived views of versions_cache, built lazily alongside the listing.
         self.versions_only_cache: dict[str, list[Version]] = {}
         self.wheel_by_version_cache: dict[str, dict[Version, DistFile]] = {}
+        self.yanked_versions_cache: dict[str, frozenset[Version]] = {}
 
         self.solution_ranges: dict[str, RangeProtocol[Version]] = {}
         self.solution_decisions: dict[str, Version] = {}
@@ -658,6 +659,14 @@ class Provider:
         """See :func:`nab_python._provider.listing.wheel_by_version`."""
         return _listing.wheel_by_version(self, normalized, version_list)
 
+    def _yanked_versions(
+        self,
+        normalized: str,
+        version_list: list[tuple[Version, DistFile]],
+    ) -> frozenset[Version]:
+        """See :func:`nab_python._provider.listing.yanked_versions`."""
+        return _listing.yanked_versions(self, normalized, version_list)
+
     def speculative_prefetch(
         self,
         normalized: str,
@@ -698,6 +707,15 @@ class Provider:
         version_list = self.fetch_versions(package)
         all_versions = self.versions_only(normalized, version_list)
         candidates = list(version_range.filter(all_versions))
+
+        # PEP 592: rank fully-yanked versions below every non-yanked one, so a
+        # yanked release is chosen only when no non-yanked candidate satisfies
+        # the request. That keeps an existing pin to a since-yanked version
+        # resolving while a normal range ignores it.
+        yanked = self._yanked_versions(normalized, version_list)
+        if yanked:
+            live = [c for c in candidates if c not in yanked]
+            candidates = live or candidates
 
         # VersionRange.filter yields newest-first; reverse for LOWEST so
         # look-ahead walks oldest -> newest.
@@ -1270,12 +1288,19 @@ class Provider:
         return self.vcs_pins.get(canonicalize_name(canonical_name))
 
     def dist_files_for(self, canonical_name: str, version: Version) -> list[DistFile]:
-        """Return every distribution file the resolver saw at ``version``.
+        """Return the distribution files the resolver saw at ``version``.
 
         Drawn from the cached listing populated during the resolve, so
         callers do not pay another fetch.  When the package was never
         listed (synthetic / not asked for), returns an empty list.
+
+        Yanked files are dropped when the version keeps any non-yanked
+        file; a fully-yanked version (chosen only when nothing else
+        satisfied the request) returns its yanked files so it stays
+        installable.
         """
         normalized = canonicalize_name(canonical_name)
         listing = self.versions_cache.get(normalized, [])
-        return [dist for v, dist in listing if v == version]
+        at_version = [dist for v, dist in listing if v == version]
+        live = [dist for dist in at_version if not dist.yanked]
+        return live or at_version

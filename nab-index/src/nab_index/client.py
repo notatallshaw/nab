@@ -158,6 +158,10 @@ class WheelFile:
     the PEP 658/714 sidecar, or ``None`` when the index advertised the
     sidecar without a hash.  The fetcher verifies the sidecar bytes
     against it.
+
+    ``yanked`` records the PEP 592 yank flag.  Yanked files stay in the
+    listing so the resolver can fall back to one when no non-yanked file
+    satisfies a request; otherwise they are skipped.
     """
 
     filename: str
@@ -170,6 +174,7 @@ class WheelFile:
     size: int | None = None
     local_path: Path | None = None
     metadata_hash: tuple[str, str] | None = None
+    yanked: bool = False
 
     @property
     def metadata_url(self) -> str | None:
@@ -193,6 +198,7 @@ class SdistFile:
     hashes: tuple[tuple[str, str], ...] = ()
     size: int | None = None
     local_path: Path | None = None
+    yanked: bool = False
 
 
 class AsyncSimpleClient:
@@ -259,14 +265,14 @@ def _parse_files(
     name check those leak into the listing as a phantom version, and
     show up in the resolved lockfile as ``cffi==2``.
 
-    PEP 592 ``yanked`` files are dropped unconditionally.
+    PEP 592 ``yanked`` files are kept and flagged so the resolver can
+    re-admit one under an exact pin; see :attr:`WheelFile.yanked`.
     """
     expected = canonicalize_name(package)
     files: list[WheelFile | SdistFile] = []
     for file_info in data.get("files", []):
         # PEP 592: ``true`` or a non-empty reason string means yanked.
-        if file_info.get("yanked"):
-            continue
+        yanked = bool(file_info.get("yanked"))
         filename = file_info["filename"]
 
         file_url = file_info["url"]
@@ -302,6 +308,7 @@ def _parse_files(
                     hashes=hashes,
                     size=size,
                     metadata_hash=_metadata_hash(file_info),
+                    yanked=yanked,
                 )
             )
             continue
@@ -320,6 +327,7 @@ def _parse_files(
                     upload_time=file_info.get("upload-time"),
                     hashes=hashes,
                     size=size,
+                    yanked=yanked,
                 )
             )
 

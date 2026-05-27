@@ -166,7 +166,10 @@ def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
     """Run the per-pin checks; emit a PinValidation outcome."""
     normalized = canonicalize_name(package)
     listing = coordinator.index.get_listing(normalized) or []
-    files_at_version = [f for f in listing if f.version == str(version)]
+    at_version = [f for f in listing if f.version == str(version)]
+    # PEP 592: ignore yanked files unless every file at the pin is yanked.
+    live = [f for f in at_version if not f.yanked]
+    files_at_version = live or at_version
     wheels_at_version = [f for f in files_at_version if isinstance(f, WheelFile)]
     has_sdist = any(not isinstance(f, WheelFile) for f in files_at_version)
     if not wheels_at_version:

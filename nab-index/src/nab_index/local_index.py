@@ -68,14 +68,15 @@ _YANKED_ATTR = "data-yanked"
 class _Pep503Parser(HTMLParser):
     """Collect ``<a href="..." data-requires-python="...">`` entries.
 
-    Anchors carrying ``data-yanked`` (PEP 592) are dropped at parse
-    time so the listing never surfaces them.  Matches the PEP 691
-    behaviour in :func:`nab_index.client._parse_files`.
+    Anchors carrying ``data-yanked`` (PEP 592) are kept and flagged, so
+    the resolver can fall back to one when no non-yanked file satisfies a
+    request.  Matches the PEP 691 behaviour in
+    :func:`nab_index.client._parse_files`.
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self.links: list[tuple[str, str | None]] = []
+        self.links: list[tuple[str, str | None, bool]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag != "a":
@@ -90,8 +91,8 @@ class _Pep503Parser(HTMLParser):
                 requires_python = value
             elif name == _YANKED_ATTR:
                 yanked = True
-        if href is not None and not yanked:
-            self.links.append((href, requires_python))
+        if href is not None:
+            self.links.append((href, requires_python, yanked))
 
 
 _FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
@@ -107,11 +108,13 @@ def _scan_pep503_directory(
     parser = _Pep503Parser()
     parser.feed(index_html.read_text(encoding="utf-8"))
     files: list[WheelFile | SdistFile] = []
-    for href, requires_python in parser.links:
+    for href, requires_python, yanked in parser.links:
         filename, file_url, local_path, hashes = _resolve_local_link(href, package_dir)
         if filename is None:
             continue
-        record = _make_record(filename, file_url, local_path, requires_python, hashes)
+        record = _make_record(
+            filename, file_url, local_path, requires_python, hashes, yanked=yanked
+        )
         if record is not None:
             files.append(record)
     return files
@@ -198,6 +201,8 @@ def _make_record(
     local_path: Path | None,
     requires_python: str | None,
     hashes: tuple[tuple[str, str], ...],
+    *,
+    yanked: bool = False,
 ) -> WheelFile | SdistFile | None:
     parsed = _parse_wheel_filename(filename)
     if parsed is not None:
@@ -211,6 +216,7 @@ def _make_record(
             upload_time=None,
             hashes=hashes,
             local_path=local_path,
+            yanked=yanked,
         )
     parsed = _parse_sdist_filename(filename)
     if parsed is not None:
@@ -223,6 +229,7 @@ def _make_record(
             upload_time=None,
             hashes=hashes,
             local_path=local_path,
+            yanked=yanked,
         )
     return None
 

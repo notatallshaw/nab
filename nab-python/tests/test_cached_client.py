@@ -178,9 +178,9 @@ class TestMetadataHashParsing:
 
 
 class TestYankedFiltering:
-    """PEP 592 ``yanked`` files are dropped from the listing."""
+    """PEP 592 ``yanked`` files stay in the listing with the flag set."""
 
-    def test_yanked_true_excluded(self) -> None:
+    def test_yanked_true_flagged(self) -> None:
         from nab_index.client import _parse_files
 
         data = {
@@ -197,9 +197,12 @@ class TestYankedFiltering:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
-        assert [f.filename for f in files] == ["foo-2.0-py3-none-any.whl"]
+        assert {f.filename: f.yanked for f in files} == {
+            "foo-1.0-py3-none-any.whl": True,
+            "foo-2.0-py3-none-any.whl": False,
+        }
 
-    def test_yanked_reason_string_excluded(self) -> None:
+    def test_yanked_reason_string_flagged(self) -> None:
         from nab_index.client import _parse_files
 
         data = {
@@ -212,9 +215,9 @@ class TestYankedFiltering:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
-        assert files == []
+        assert [f.yanked for f in files] == [True]
 
-    def test_yanked_false_kept(self) -> None:
+    def test_yanked_false_not_flagged(self) -> None:
         from nab_index.client import _parse_files
 
         data = {
@@ -227,9 +230,9 @@ class TestYankedFiltering:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
-        assert len(files) == 1
+        assert [f.yanked for f in files] == [False]
 
-    def test_yanked_empty_string_kept(self) -> None:
+    def test_yanked_empty_string_not_flagged(self) -> None:
         from nab_index.client import _parse_files
 
         data = {
@@ -242,7 +245,7 @@ class TestYankedFiltering:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
-        assert len(files) == 1
+        assert [f.yanked for f in files] == [False]
 
 
 class TestZipSdistDropped:

@@ -274,7 +274,7 @@ class TestPep503Directory:
         assert [r.filename for r in result] == ["foo-1.0.tar.gz"]
         assert isinstance(result[0], SdistFile)
 
-    def test_pep503_yanked_link_excluded(self, tmp_path: Path) -> None:
+    def test_pep503_yanked_link_flagged(self, tmp_path: Path) -> None:
         body = (
             '<a href="foo-1.0-py3-none-any.whl" data-yanked="security">yanked</a>'
             '<a href="foo-2.0-py3-none-any.whl">live</a>'
@@ -284,15 +284,15 @@ class TestPep503Directory:
         (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         result = run(client.get_files("foo"))
-        assert [r.version for r in result] == ["2.0"]
+        assert {r.version: r.yanked for r in result} == {"1.0": True, "2.0": False}
 
-    def test_pep503_yanked_with_empty_attr_excluded(self, tmp_path: Path) -> None:
+    def test_pep503_yanked_with_empty_attr_flagged(self, tmp_path: Path) -> None:
         body = '<a href="foo-1.0-py3-none-any.whl" data-yanked>foo</a>'
         package_dir = self._make_index(tmp_path, body)
         (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         result = run(client.get_files("foo"))
-        assert result == []
+        assert [r.yanked for r in result] == [True]
 
 
 class TestMetadataAndSdist:

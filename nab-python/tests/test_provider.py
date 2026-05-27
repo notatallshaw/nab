@@ -48,6 +48,7 @@ def make_wheel(
     requires_python: str | None = None,
     has_metadata: bool = True,
     upload_time: str | None = None,
+    yanked: bool = False,
 ) -> WheelFile:
     """Build a WheelFile for testing."""
     return WheelFile(
@@ -57,6 +58,7 @@ def make_wheel(
         requires_python=requires_python,
         has_metadata=has_metadata,
         upload_time=upload_time,
+        yanked=yanked,
     )
 
 
@@ -64,6 +66,7 @@ def make_sdist(
     version: str = "1.0",
     requires_python: str | None = None,
     upload_time: str | None = None,
+    yanked: bool = False,
 ) -> SdistFile:
     """Build a SdistFile for testing."""
     return SdistFile(
@@ -72,6 +75,7 @@ def make_sdist(
         version=version,
         requires_python=requires_python,
         upload_time=upload_time,
+        yanked=yanked,
     )
 
 
@@ -324,6 +328,52 @@ class TestChooseVersion:
         provider = Provider(coordinator)
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) is None
+
+
+class TestYankedReadmission:
+    """PEP 592: a fully-yanked version resolves only under an exact pin."""
+
+    def test_range_skips_fully_yanked_version(self) -> None:
+        wheels = [make_wheel("1.0"), make_wheel("2.0", yanked=True)]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        chosen = provider.choose_version("foo", SpecifierSet(">=1.0").to_range())
+        assert chosen == V("1.0")
+
+    def test_pin_to_yanked_version_readmits_it(self) -> None:
+        wheels = [make_wheel("1.0"), make_wheel("2.0", yanked=True)]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        chosen = provider.choose_version("foo", SpecifierSet("==2.0").to_range())
+        assert chosen == V("2.0")
+
+    def test_sole_yanked_version_readmitted(self) -> None:
+        coordinator = make_coordinator([make_wheel("1.0", yanked=True)], package="foo")
+        provider = Provider(coordinator)
+        chosen = provider.choose_version("foo", SpecifierSet(">=1.0").to_range())
+        assert chosen == V("1.0")
+
+    def test_version_with_one_live_file_stays_selectable(self) -> None:
+        files = [make_wheel("1.0", yanked=True), make_sdist("1.0")]
+        coordinator = make_coordinator(files, package="foo")
+        provider = Provider(coordinator)
+        chosen = provider.choose_version("foo", SpecifierSet(">=1.0").to_range())
+        assert chosen == V("1.0")
+
+    def test_dist_files_for_drops_yanked_when_live_exists(self) -> None:
+        files = [make_wheel("1.0", yanked=True), make_sdist("1.0")]
+        coordinator = make_coordinator(files, package="foo")
+        provider = Provider(coordinator)
+        provider.fetch_versions("foo")
+        kept = provider.dist_files_for("foo", V("1.0"))
+        assert [f.yanked for f in kept] == [False]
+
+    def test_dist_files_for_keeps_yanked_when_all_yanked(self) -> None:
+        coordinator = make_coordinator([make_wheel("1.0", yanked=True)], package="foo")
+        provider = Provider(coordinator)
+        provider.fetch_versions("foo")
+        kept = provider.dist_files_for("foo", V("1.0"))
+        assert [f.yanked for f in kept] == [True]
 
 
 class TestResolutionStrategy:

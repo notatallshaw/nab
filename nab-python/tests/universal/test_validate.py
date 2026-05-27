@@ -75,7 +75,7 @@ _STATIC_DEPS_METADATA_MICRO = _STATIC_DEPS_METADATA.replace(
 )
 
 
-def _wheel(filename: str) -> WheelFile:
+def _wheel(filename: str, *, yanked: bool = False) -> WheelFile:
     parts = filename.split("-")
     return WheelFile(
         filename=filename,
@@ -84,6 +84,7 @@ def _wheel(filename: str) -> WheelFile:
         requires_python=None,
         has_metadata=True,
         upload_time=None,
+        yanked=yanked,
     )
 
 
@@ -175,6 +176,28 @@ class TestValidateLock:
         )
         report = validate_lock(result, coordinator)
         assert report.pins_checked == 1
+        assert report.pins_ok == 1
+        assert all(f.status == "ok" for f in report.findings)
+
+    def test_yanked_only_pin_validates_against_yanked_wheel(self) -> None:
+        """A pin whose only file is yanked still validates against it."""
+        wheel = _wheel("pkg-1.0-cp311-cp311-linux_x86_64.whl", yanked=True)
+        coordinator = _make_coordinator(
+            {"pkg": [wheel]},
+            baseline_metadata={"pkg": _BASE_METADATA},
+            per_wheel_metadata={wheel.filename: _BASE_METADATA},
+        )
+        result = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[
+                TupleResult(
+                    tuple_=_linux_311(),
+                    success=True,
+                    pins={"pkg": Version("1.0")},
+                ),
+            ],
+        )
+        report = validate_lock(result, coordinator)
         assert report.pins_ok == 1
         assert all(f.status == "ok" for f in report.findings)
 
