@@ -37,6 +37,7 @@ from nab_python.lockfile import (
     LocalPin,
     LockInput,
     MissingHashError,
+    MissingSdistError,
     MissingVcsCommitError,
     Provenance,
     SdistArtifact,
@@ -1241,6 +1242,15 @@ class TestBuildLockInputFromProvider:
         assert pin.wheels == ()
         assert pin.sdist is not None
         assert pin.sdist.hashes == (("sha256", "b" * 64),)
+
+    def test_index_pin_sdist_install_without_sdist_raises(self) -> None:
+        """sdist-install with no sdist available raises MissingSdistError."""
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+            dist_policy_overrides={"foo": DistPolicy.SDIST_INSTALL},
+        )
+        with pytest.raises(MissingSdistError, match="sdist-install"):
+            build_lock_input_from_provider(provider, {"foo": Version("1.0")})
 
     def test_index_pin_records_serving_index(self) -> None:
         provider = _FakeProvider(
