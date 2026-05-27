@@ -21,6 +21,7 @@ from nab import _version as nab_version
 from nab._download import download
 from nab._lock import (
     _determine_lock_anchor,
+    _drop_workspace_pins,
     _emit_specific,
     _emit_universal_pylock,
     _resolve_extra_selection,
@@ -1105,6 +1106,45 @@ class TestNoEmitWorkspace:
         text = out.read_text()
         assert 'name = "alpha"' in text
         assert 'name = "foo"' in text
+
+    def test_specific_pylock_drops_dependency_edge_to_workspace(
+        self, tmp_path: Path
+    ) -> None:
+        """A retained package keeps no forward edge to the dropped member."""
+        result = ResolutionResult(
+            pins={"alpha": V("0"), "foo": V("1.0")},
+            lock_input=LockInput(
+                pins={
+                    "alpha": _foo_index_pin("0", "alpha"),
+                    "foo": _foo_index_pin("1.0", "foo"),
+                },
+                dependencies={"foo": ("alpha",)},
+            ),
+        )
+        pyproject = _workspace_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch("nab.cli.resolve_pyproject", return_value=result):
+            lock(pyproject, output=out, no_emit_workspace=True)
+        text = out.read_text()
+        assert 'name = "foo"' in text
+        # alpha's [[packages]] row and the dangling forward edge are both gone.
+        assert 'name = "alpha"' not in text
+
+    def test_drop_filters_dependency_graph(self) -> None:
+        """Dropped members vanish as graph keys and as edge targets."""
+        lock_input = LockInput(
+            pins={
+                "foo": _foo_index_pin("1.0", "foo"),
+                "bar": _foo_index_pin("2.0", "bar"),
+            },
+            dependencies={
+                "foo": ("alpha", "bar"),
+                "bar": ("alpha",),
+                "alpha": ("bar",),
+            },
+        )
+        dropped = _drop_workspace_pins(lock_input, frozenset({"alpha"}))
+        assert dropped.dependencies == {"foo": ("bar",)}
 
 
 class TestRelockDiffSummary:
