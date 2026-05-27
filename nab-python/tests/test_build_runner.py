@@ -482,6 +482,18 @@ class TestParseMetadata:
         with pytest.raises(BuildBackendError, match="invalid Version"):
             _parse_metadata(path)
 
+    def test_invalid_requires_python_raises(self, tmp_path: Path) -> None:
+        from nab_python._build.runner import _parse_metadata
+
+        path = tmp_path / "METADATA"
+        path.write_text(
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+            "Requires-Python: not-a-specifier\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="invalid Requires-Python"):
+            _parse_metadata(path)
+
     def test_unparseable_requires_dist_is_skipped(self, tmp_path: Path) -> None:
         """A malformed Requires-Dist line logs and is dropped; well-formed
         siblings still come through."""
