@@ -34,6 +34,7 @@ from nab_python.lockfile import (
     write_requirements_with_hashes,  # noqa: F401 - re-exported for tests
     write_requirements_without_hashes,  # noqa: F401 - re-exported for tests
 )
+from nab_python.provider import UnsupportedVcsError
 from nab_python.resolve import (
     resolve_pyproject,
     resolve_universal_pyproject,  # noqa: F401 - re-exported for tests
@@ -169,6 +170,9 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
         )
     except ResolutionError as e:
         sys.stderr.write(f"Resolution failed: {e}\n")
+        sys.exit(1)
+    except UnsupportedVcsError as e:
+        sys.stderr.write(f"{failure_prefix}: {e}\n")
         sys.exit(1)
     except KeyError:
         sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
