@@ -21,13 +21,11 @@ from typing import (
     Union,
 )
 
-from ._version_utils import coerce_version, trim_release
+from ._version_utils import coerce_version, trim_release, version_cmpkey
 from .version import Version
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
-
-    from .specifiers import Specifier
 
 
 __all__ = [
@@ -43,9 +41,9 @@ __all__ = [
     "bounds_for_spec",
     "filter_by_ranges",
     "intersect_ranges",
-    "intersect_specifier_bounds",
     "matches_bounds_only",
     "range_is_empty",
+    "resolve_prereleases",
     "standard_ranges",
     "wildcard_ranges",
 ]
@@ -57,6 +55,12 @@ def __dir__() -> list[str]:
 
 #: The smallest possible PEP 440 version. No valid version is less than this.
 _MIN_VERSION: Final[Version] = Version("0.dev0")
+
+#: Sorts above any real post number or local label in an ordering key.
+_BOUNDARY_INF: Final[float] = float("inf")
+
+_BoundaryOrderSuffix = tuple[int, int, int, Union[int, float], int, int]
+_BoundaryOrderKey = tuple[int, tuple[int, ...], _BoundaryOrderSuffix, float]
 
 
 def _next_prefix_dev0(version: Version) -> Version:
@@ -99,9 +103,12 @@ class BoundaryVersion:
         "_cached_post",
         "_cached_pre",
         "_cached_trimmed_release",
+        "_order_key",
         "kind",
         "version",
     )
+
+    _order_key: _BoundaryOrderKey
 
     def __init__(self, version: Version, kind: BoundaryKind) -> None:
         self.version = version
@@ -112,13 +119,19 @@ class BoundaryVersion:
         self._cached_post = version.post
         self._cached_dev = version.dev
 
+        # Distinguish AFTER_LOCALS from AFTER_POSTS.
+        epoch, release, raw_suffix = version_cmpkey(version)
+        suffix: _BoundaryOrderSuffix = raw_suffix
+        if kind == BoundaryKind.AFTER_POSTS:
+            suffix = (suffix[0], suffix[1], 1, _BOUNDARY_INF, 1, 0)
+        self._order_key = (epoch, release, suffix, _BOUNDARY_INF)
+
     def _is_family(self, other: Version) -> bool:
         """Is ``other`` a version that this boundary sorts above?"""
         if other.epoch != self._cached_epoch:
             return False
-        # Inline release-trim comparison: other.release matches the
-        # trimmed release iff its leading slice is equal and any extra
-        # components are zero. Avoids trim_release's tuple allocation.
+
+        # Match the trimmed release without allocating a new tuple.
         other_release = other.release
         trimmed_release = self._cached_trimmed_release
         trimmed_length = len(trimmed_release)
@@ -144,9 +157,7 @@ class BoundaryVersion:
 
     def __lt__(self, other: BoundaryVersion | Version) -> bool:
         if isinstance(other, BoundaryVersion):
-            if self.version != other.version:
-                return self.version < other.version
-            return self.kind.value < other.kind.value  # pragma: no cover
+            return self._order_key < other._order_key
         # boundary < other_version iff V < other AND other not in family.
         # The cheap V >= other path short-circuits before the family check.
         if not (self.version < other):
@@ -157,9 +168,7 @@ class BoundaryVersion:
         # Defined directly to bypass functools.total_ordering's
         # NotImplemented round-trip on reflected ``Version < boundary``.
         if isinstance(other, BoundaryVersion):
-            if self.version != other.version:
-                return self.version > other.version
-            return self.kind.value > other.kind.value
+            return self._order_key > other._order_key
         if self.version >= other:
             return True
         return self._is_family(other)
@@ -465,6 +474,28 @@ def range_is_empty(lower: LowerBound, upper: UpperBound) -> bool:
     return lower.version > upper.version
 
 
+def resolve_prereleases(
+    explicit: bool | None,
+    configured: bool | None,
+    autodetected: bool | None,
+) -> bool | None:
+    """Resolve the effective pre-release policy for filtering / membership.
+
+    Shared by specifier filtering and :class:`~packaging.ranges.VersionRange`
+    construction so both agree on the default. The caller's ``explicit``
+    argument wins; then the constructor ``configured`` value; otherwise an
+    autodetected ``True`` propagates, while an autodetected ``False`` / ``None``
+    falls back to the PEP 440 default (``None``).
+    """
+    if explicit is not None:
+        return explicit
+    if configured is not None:
+        return configured
+    if autodetected:
+        return True
+    return None
+
+
 def intersect_ranges(
     left: Sequence[Interval],
     right: Sequence[Interval],
@@ -741,33 +772,3 @@ def bounds_for_spec(operator: str, version_str: str) -> tuple[Interval, ...]:
     return standard_ranges(
         operator=operator, version=version, has_local="+" in version_str
     )
-
-
-def intersect_specifier_bounds(specs: Iterable[Specifier]) -> tuple[Interval, ...]:
-    """Intersect bounds of every spec in ``specs``.
-
-    Each :class:`~packaging.specifiers.Specifier` contributes its cached
-    :meth:`~packaging.specifiers.Specifier._to_ranges` bounds, which reuse
-    the per-spec parsed-version cache rather than re-parsing the version
-    string.
-
-    ``===`` contributes the empty list, which collapses the intersection
-    to empty; callers that need ``===`` literal handling must filter
-    such specs out beforehand.
-    """
-    result_bounds: Sequence[Interval] | None = None
-    for s in specs:
-        sub_bounds = s._to_ranges()
-        if result_bounds is None:
-            result_bounds = sub_bounds
-        elif not result_bounds:
-            break
-        else:
-            result_bounds = intersect_ranges(result_bounds, sub_bounds)
-
-    if result_bounds is None:
-        # Every caller guards on a non-empty spec list; an empty
-        # intersection would mean the unbounded full range.
-        return FULL_RANGE  # pragma: no cover
-
-    return tuple(result_bounds)
