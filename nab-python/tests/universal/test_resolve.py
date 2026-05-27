@@ -25,6 +25,7 @@ from nab_python.provider import (
     DistPolicy,
     LocalSource,
     UnsupportedSdistError,
+    UnsupportedVcsError,
     VcsConfig,
     VcsPolicy,
     VcsSource,
@@ -46,6 +47,8 @@ from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+_SHA = "a" * 40
 
 
 def _make_wheel(version: str, *, package: str) -> WheelFile:
@@ -232,6 +235,45 @@ class TestParseRequirements:
         env = _linux_311().environment
         with pytest.raises(ConfigError, match="extras"):
             _parse_requirements(["pkg[dev]<2.0"], env, kind="constraint")
+
+    def test_vcs_requirement_blocked_by_default(self) -> None:
+        """A direct-URL requirement is admission-checked, not dropped."""
+        env = _linux_311().environment
+        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+            _parse_requirements([f"pkg @ git+https://e.com/p.git@{_SHA}"], env)
+
+    def test_admitted_vcs_requirement_raises_not_implemented(self) -> None:
+        """An admitted direct-URL requirement reaches the unimplemented path."""
+        env = _linux_311().environment
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW, allowed_schemes=frozenset({"git+https"})
+        )
+        with pytest.raises(NotImplementedError, match="not implemented"):
+            _parse_requirements(
+                [f"pkg @ git+https://e.com/p.git@{_SHA}"], env, vcs_config=config
+            )
+
+    def test_vcs_constraint_blocked_by_default(self) -> None:
+        """A direct-URL constraint is admission-checked, not dropped."""
+        env = _linux_311().environment
+        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+            _parse_requirements(
+                [f"pkg @ git+https://e.com/p.git@{_SHA}"], env, kind="constraint"
+            )
+
+    def test_admitted_vcs_constraint_raises_not_implemented(self) -> None:
+        """An admitted direct-URL constraint reaches the unimplemented path."""
+        env = _linux_311().environment
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW, allowed_schemes=frozenset({"git+https"})
+        )
+        with pytest.raises(NotImplementedError, match="not implemented"):
+            _parse_requirements(
+                [f"pkg @ git+https://e.com/p.git@{_SHA}"],
+                env,
+                kind="constraint",
+                vcs_config=config,
+            )
 
 
 class TestResolveOneTuple:

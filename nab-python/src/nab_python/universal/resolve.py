@@ -19,6 +19,7 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 
+from .._vcs_admission import admit_vcs_url
 from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
@@ -334,7 +335,7 @@ def _run_pass(  # noqa: PLR0913
     def resolve(t: MatrixTuple, current_prefs: dict[str, Version]) -> TupleResult:
         try:
             tuple_requirements, tuple_constraints = _parse_tuple_inputs(
-                requirements, constraints, t.environment
+                requirements, constraints, t.environment, vcs_config=vcs_config
             )
         except ResolutionError as exc:
             return TupleResult(
@@ -419,6 +420,7 @@ def _parse_requirements(
     environment: dict[str, str],
     *,
     kind: str = "requirement",
+    vcs_config: VcsConfig | None = None,
 ) -> dict[str, VersionRange]:
     """Convert PEP 508 strings to resolver requirements for ``environment``.
 
@@ -426,6 +428,10 @@ def _parse_requirements(
     ``environment`` are dropped.  This matches what
     ``Provider._classify_requirement`` does for transitive deps;
     we just apply the same rule at the root.
+
+    A direct-URL requirement is admission-checked then rejected, mirroring
+    the single-environment path; resolving the bare name from the index
+    would silently ignore the URL the user pinned.
 
     Repeated package names are intersected into one range; an empty
     intersection raises :class:`ResolutionError`.  ``kind``
@@ -440,6 +446,13 @@ def _parse_requirements(
             raise ConfigError(msg)
         if req.marker is not None and not req.marker.evaluate(environment):
             continue
+        if req.url is not None:
+            admit_vcs_url(req.url, vcs_config or VcsConfig())
+            msg = (
+                f"VCS {kind} admitted by policy but resolver path is not"
+                f" implemented: {req.name} @ {req.url}"
+            )
+            raise NotImplementedError(msg)
         name = canonicalize_name(req.name)
         out[name] = out.get(name, VersionRange.full()) & req.specifier.to_range()
         sources[name].append(req_str)
@@ -453,14 +466,20 @@ def _parse_tuple_inputs(
     requirements: list[str],
     constraints: list[str] | None,
     environment: dict[str, str],
+    *,
+    vcs_config: VcsConfig | None = None,
 ) -> tuple[dict[str, VersionRange], dict[str, VersionRange] | None]:
     """Parse a tuple's root requirements and constraints for its env.
 
     Raises :class:`ResolutionError` if either folds to an empty range.
     """
-    parsed_requirements = _parse_requirements(requirements, environment)
+    parsed_requirements = _parse_requirements(
+        requirements, environment, vcs_config=vcs_config
+    )
     parsed_constraints = (
-        _parse_requirements(constraints, environment, kind="constraint")
+        _parse_requirements(
+            constraints, environment, kind="constraint", vcs_config=vcs_config
+        )
         if constraints
         else None
     )
