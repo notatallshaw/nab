@@ -1424,10 +1424,9 @@ class TestBuildLockInputFromProvider:
     def test_vcs_pin_carries_bare_repo_url(self) -> None:
         """The bare repo URL is carried through from the parsed source.
 
-        ``repo_url`` keeps the full installable form for the
-        requirements.txt path; ``bare_repo_url`` holds the plain
-        repository URL with no ``git+`` prefix, ``@<ref>``, or
-        ``#subdirectory`` fragment.
+        ``repo_url`` is the installable form re-pinned to ``commit_id``;
+        ``bare_repo_url`` holds the plain repository URL with no ``git+``
+        prefix, ``@<ref>``, or ``#subdirectory`` fragment.
         """
         sha = "a" * 40
         provider = _FakeProvider(
@@ -1444,9 +1443,32 @@ class TestBuildLockInputFromProvider:
         )
         pin = lock_input.pins["foo"]
         assert isinstance(pin, VcsPin)
-        full_url = "git+https://example.com/r.git@release/1.0#subdirectory=pkg/sub"
-        assert pin.repo_url == full_url
+        assert (
+            pin.repo_url == f"git+https://example.com/r.git@{sha}#subdirectory=pkg/sub"
+        )
         assert pin.bare_repo_url == "https://example.com/r.git"
+
+    def test_vcs_requirements_line_pins_to_commit(self) -> None:
+        """A branch/tag-pinned VCS source renders the resolved commit.
+
+        lockfile.md documents the requirements.txt VCS line as
+        ``git+<repo>@<sha>``, and the pylock writer pins to the
+        resolved ``commit-id``.  The requirements emitter must match,
+        not echo the moving ``@<ref>`` the user supplied.
+        """
+        sha = "a" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(name="foo", url="git+https://example.com/r.git@main"),
+            },
+            vcs_pins={"foo": sha},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        text = write_requirements_with_hashes(lock_input)
+        assert f"foo @ git+https://example.com/r.git@{sha}" in text
+        assert "@main" not in text
 
     def test_vcs_pin_pylock_url_is_bare_repo(self) -> None:
         """vcs.url is the bare repository URL; ref and subdirectory are separate fields."""
@@ -1538,7 +1560,7 @@ class TestBuildLockInputFromProvider:
         )
         pin = lock_input.pins["foo"]
         assert isinstance(pin, VcsPin)
-        assert pin.repo_url == "git+https://GitHub.com/org/repo.git"
+        assert pin.repo_url == "git+https://GitHub.com/org/repo.git@" + "a" * 40
 
     def test_vcs_source_keeps_url_without_credentials(self) -> None:
         provider = _FakeProvider(
@@ -1552,7 +1574,7 @@ class TestBuildLockInputFromProvider:
         )
         pin = lock_input.pins["foo"]
         assert isinstance(pin, VcsPin)
-        assert pin.repo_url == "git+https://github.com/org/repo.git"
+        assert pin.repo_url == "git+https://github.com/org/repo.git@" + "a" * 40
 
     def test_vcs_source_records_requested_revision_for_floating_ref(self) -> None:
         """A named ``@<ref>`` resolved to a different SHA is recorded."""
