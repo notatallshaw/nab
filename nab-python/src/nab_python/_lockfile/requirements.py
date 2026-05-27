@@ -117,5 +117,5 @@ def _render_index_pin(pin: IndexPin, *, with_hashes: bool = True) -> list[str]:
     if not digests:
         return [f"{pin.name}=={pin.version}"]
     parts = [f"{pin.name}=={pin.version}"]
-    parts.extend(f"--hash={algo}:{d}" for algo, d in digests)
+    parts.extend(f"--hash={algo}:{d}" for algo, d in sorted(digests))
     return [" \\\n    ".join(parts)]

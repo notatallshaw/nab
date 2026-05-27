@@ -2096,6 +2096,29 @@ class TestWriteRequirementsWithHashes:
         assert "--hash=sha256:" + "a" * 64 in text
         assert "--hash=sha256:" + "b" * 64 in text
 
+    def test_hash_order_canonical_across_wheel_order(self) -> None:
+        wheel_a = WheelArtifact(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://example.com/foo-1.0-py3-none-any.whl",
+            hashes=(("sha256", "a" * 64),),
+            size=1024,
+        )
+        wheel_b = WheelArtifact(
+            filename="foo-1.0-cp311-cp311-manylinux_2_17_x86_64.whl",
+            url="https://example.com/foo-1.0-cp311-cp311-manylinux_2_17_x86_64.whl",
+            hashes=(("sha256", "b" * 64),),
+            size=1024,
+        )
+        forward = IndexPin(
+            name="foo", version="1.0", index="pypi", wheels=(wheel_a, wheel_b)
+        )
+        reverse = IndexPin(
+            name="foo", version="1.0", index="pypi", wheels=(wheel_b, wheel_a)
+        )
+        text_forward = write_requirements_with_hashes(LockInput(pins={"foo": forward}))
+        text_reverse = write_requirements_with_hashes(LockInput(pins={"foo": reverse}))
+        assert text_forward == text_reverse
+
     def test_local_pin_uses_file_url(self, tmp_path: Path) -> None:
         text = write_requirements_with_hashes(
             LockInput(
