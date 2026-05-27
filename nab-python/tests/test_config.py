@@ -1037,51 +1037,41 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="matrix.python must be a string"):
             read_pyproject_config(path)
 
-    def _body_with_python(self, python: str) -> str:
+    def _python_axis_body(self, python: str) -> str:
         return (
             "[tool.nab]\n"
             'mode = "universal"\n'
             "[tool.nab.matrix]\n"
-            f"python = {python}\n"
+            f"python = {python!r}\n"
             'platforms = ["linux_x86_64"]\n'
         )
 
-    def test_python_patch_level_rejected(self, tmp_path: Path) -> None:
-        body = self._body_with_python('">=3.11.5"')
-        with pytest.raises(ConfigError, match="minor \\(language\\) versions only"):
-            read_pyproject_config(write(tmp_path, body))
-
-    def test_python_exact_patch_rejected(self, tmp_path: Path) -> None:
-        body = self._body_with_python('"==3.11.0"')
-        with pytest.raises(ConfigError, match="minor \\(language\\) versions only"):
-            read_pyproject_config(write(tmp_path, body))
-
-    def test_python_minor_wildcard_allowed(self, tmp_path: Path) -> None:
-        matrix = read_pyproject_config(
-            write(tmp_path, self._body_with_python('"==3.11.*"'))
-        ).matrix
+    @pytest.mark.parametrize(
+        "python",
+        [">=3.11", "==3.12", "<3.13", "~=3.11", ">=3.11,<3.14", "==3.11.*", ">=3", ""],
+    )
+    def test_python_minor_axis_accepted(self, tmp_path: Path, python: str) -> None:
+        path = write(tmp_path, self._python_axis_body(python))
+        matrix = read_pyproject_config(path).matrix
         assert matrix is not None
-        assert matrix.python == "==3.11.*"
+        assert matrix.python == python
 
-    def test_python_not_a_specifier_rejected(self, tmp_path: Path) -> None:
-        body = self._body_with_python('"3.11"')
-        with pytest.raises(ConfigError, match="matrix.python must be a PEP 440"):
-            read_pyproject_config(write(tmp_path, body))
+    @pytest.mark.parametrize(
+        "python",
+        [">=3.11.5", "==3.10.2", "~=3.11.5", "==3.11.0", "==3.11a1", "!=3.11.5"],
+    )
+    def test_python_finer_than_minor_rejected(
+        self, tmp_path: Path, python: str
+    ) -> None:
+        path = write(tmp_path, self._python_axis_body(python))
+        with pytest.raises(ConfigError, match=r"language \(minor\) version"):
+            read_pyproject_config(path)
 
-    def test_python_arbitrary_equality_rejected(self, tmp_path: Path) -> None:
-        # An arbitrary-equality pin like ===nightly parses as a specifier but
-        # matches no known Python, so the eager matrix expansion rejects it.
-        with pytest.raises(ConfigError, match="No known Python versions match"):
-            read_pyproject_config(
-                write(tmp_path, self._body_with_python('"===nightly"'))
-            )
-
-    def test_python_empty_specifier_allowed(self, tmp_path: Path) -> None:
-        matrix = read_pyproject_config(
-            write(tmp_path, self._body_with_python('""'))
-        ).matrix
-        assert matrix is not None
-        assert matrix.python == ""
+    @pytest.mark.parametrize("python", ["3.11", "garbage", "===foo"])
+    def test_python_unparseable_rejected(self, tmp_path: Path, python: str) -> None:
+        path = write(tmp_path, self._python_axis_body(python))
+        with pytest.raises(ConfigError):
+            read_pyproject_config(path)
 
     def test_empty_platforms(self, tmp_path: Path) -> None:
         path = write(
