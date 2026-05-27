@@ -14,8 +14,17 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AsyncHttpTransport",
+    "HttpError",
     "HttpResponse",
 ]
+
+
+class HttpError(Exception):
+    """A request failed: a connection/transport error or a 4xx/5xx status.
+
+    Transports raise this from ``get`` and ``raise_for_status`` so callers
+    can handle index failures without importing a specific HTTP backend.
+    """
 
 
 class HttpResponse(Protocol):
@@ -46,7 +55,7 @@ class HttpResponse(Protocol):
         ...
 
     def raise_for_status(self) -> None:
-        """Raise an exception for 4xx/5xx responses."""
+        """Raise :class:`HttpError` for 4xx/5xx responses."""
         ...
 
 
@@ -61,7 +70,10 @@ class AsyncHttpTransport(Protocol):
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
     ) -> HttpResponse:
-        """Send a GET request and return the response."""
+        """Send a GET request and return the response.
+
+        Raises :class:`HttpError` on a connection or transport failure.
+        """
         ...
 
     async def aclose(self) -> None:

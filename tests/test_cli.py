@@ -34,6 +34,7 @@ from nab.cli import (
     main,
 )
 from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.version import Version
@@ -368,6 +369,23 @@ class TestLockCommandSpecific:
             lock(pyproject)
         assert "invalid requirement" in capsys.readouterr().err
 
+    def test_http_error_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An index HTTP failure during resolve exits 1, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                side_effect=HttpError("GET https://pypi.org/simple/foo/ failed: 503"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "503" in err
+
     def test_lookup_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -688,6 +706,23 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements-without-hashes")
         assert "unknown group" in capsys.readouterr().err
+
+    def test_http_error_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An index HTTP failure during a tuple resolve exits 1, not a traceback."""
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=HttpError("GET https://pypi.org/simple/foo/ failed: 503"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes")
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "503" in err
 
     def test_requirements_missing_hash_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
