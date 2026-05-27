@@ -76,7 +76,7 @@ _DEFAULT_OUTPUT: dict[str, str] = {
     "requirements-without-hashes": "requirements.txt",
 }
 
-_TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}")
+TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}")
 
 # Conventional KeyboardInterrupt exit code: 128 + SIGINT(2).
 _SIGINT_EXIT_CODE = 130
@@ -147,7 +147,7 @@ def _load_config(
         sys.exit(1)
 
 
-def _is_stdout(output: Path | None) -> bool:
+def is_stdout(output: Path | None) -> bool:
     return output is not None and str(output) == "-"
 
 
