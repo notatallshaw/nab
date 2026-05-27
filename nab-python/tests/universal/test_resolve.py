@@ -44,6 +44,7 @@ from nab_python.universal.resolve import (
     merge_universal_lock_inputs,
     resolve_with_coordinator,
 )
+from nab_python.universal.wheel_selection import PlatformSpec
 from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:
@@ -597,6 +598,48 @@ class TestMergeUniversalLockInputs:
         # Only the linux tuple survives; windows had no lock_input.
         assert set(merged.per_tuple_pins) == {"py311-linux_x86_64"}
         assert set(merged.tuple_markers) == {"py311-linux_x86_64"}
+
+    def test_distinct_platform_specs_do_not_clobber_pins(self) -> None:
+        """Two specs sharing a platform_id keep separate per-tuple pins.
+
+        Both tuples share python_version and platform_id, so before the
+        label gained a spec discriminator they produced the same label
+        and the second tuple's pins overwrote the first in
+        ``per_tuple_pins``, silently dropping a resolved pin.
+        """
+        matrix = Matrix(
+            python="==3.11",
+            platforms=(
+                PlatformSpec("linux_x86_64", manylinux_floor=(2, 17)),
+                PlatformSpec("linux_x86_64", manylinux_floor=(2, 34)),
+            ),
+        )
+        older, newer = matrix.expand()
+        results = [
+            TupleResult(
+                tuple_=older,
+                success=True,
+                pins={"pkg": Version("1.0")},
+                lock_input=LockInput(
+                    pins={"pkg": IndexPin(name="pkg", version="1.0", index="pypi")},
+                ),
+            ),
+            TupleResult(
+                tuple_=newer,
+                success=True,
+                pins={"pkg": Version("2.0")},
+                lock_input=LockInput(
+                    pins={"pkg": IndexPin(name="pkg", version="2.0", index="pypi")},
+                ),
+            ),
+        ]
+        merged = merge_universal_lock_inputs(
+            UniversalResult(matrix=matrix, tuple_results=results)
+        )
+        assert len(merged.per_tuple_pins) == 2
+        assert len(merged.tuple_markers) == 2
+        versions = {pins["pkg"].version for pins in merged.per_tuple_pins.values()}
+        assert versions == {"1.0", "2.0"}
 
 
 class TestResolveWithCoordinator:

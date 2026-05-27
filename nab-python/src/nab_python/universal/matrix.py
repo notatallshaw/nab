@@ -116,10 +116,12 @@ class MatrixTuple:
 
         Uses the interpreter prefix (``py`` for CPython, ``pp`` for
         PyPy) so tuples that differ only by implementation get distinct
-        labels.
+        labels, and appends the platform spec's floor discriminator so
+        two specs sharing a ``platform_id`` do not collapse.
         """
         prefix = _IMPLEMENTATION_PREFIX[self.implementation]
-        return f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
+        base = f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
+        return base + self.platform_spec.label_suffix()
 
     @property
     def marker_string(self) -> str:
