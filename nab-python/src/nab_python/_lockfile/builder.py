@@ -425,6 +425,10 @@ def _vcs_pin_from_source(
     not pin the bare SHA).  ``subdirectory`` carries the
     ``#subdirectory=`` fragment so an installer can locate the project
     inside the repo.
+
+    ``bare_repo_url`` comes from ``parsed.repo_url``, which
+    :meth:`VcsRequest.parse` has already separated from the ref and the
+    fragment.
     """
     from nab_index.vcs import VcsRequest
 
@@ -446,6 +450,7 @@ def _vcs_pin_from_source(
         name=canonical,
         version=str(version),
         repo_url=_strip_userinfo(source.url),
+        bare_repo_url=_strip_userinfo(parsed.repo_url),
         commit_id=resolved_sha,
         subdirectory=parsed.subdirectory or None,
         requested_revision=requested_revision,

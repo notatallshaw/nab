@@ -178,6 +178,12 @@ class LocalPin:
 class VcsPin:
     """A package resolved from a VCS clone.
 
+    ``repo_url`` is the full pip-style installable URL (``git+`` prefix,
+    ``@<ref>``, and ``#subdirectory=`` fragment) the requirements.txt
+    emitter writes verbatim.  ``bare_repo_url`` is the plain repository
+    URL with none of those parts, captured when the source URL is parsed
+    and written to PEP 751 ``packages.vcs.url``.
+
     ``requested_revision`` is the human-readable ref (tag or branch)
     the user pinned, recorded only when it differs from ``commit_id``;
     informational per PEP 751 ``packages.vcs.requested-revision``.
@@ -190,6 +196,7 @@ class VcsPin:
     name: str
     version: str
     repo_url: str
+    bare_repo_url: str
     commit_id: str
     subdirectory: str | None = None
     requested_revision: str | None = None

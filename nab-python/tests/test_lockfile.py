@@ -123,6 +123,7 @@ class TestSingleTuple:
                         name="foo",
                         version="1.0",
                         repo_url="https://github.com/x/y.git",
+                        bare_repo_url="https://github.com/x/y.git",
                         commit_id="a" * 40,
                         subdirectory="pkg",
                     ),
@@ -147,6 +148,7 @@ class TestSingleTuple:
                         name="foo",
                         version="1.0",
                         repo_url="https://example.com/x/y",
+                        bare_repo_url="https://example.com/x/y",
                         commit_id="a" * 40,
                         vcs_type="hg",
                     ),
@@ -396,6 +398,7 @@ class TestPerTupleMarkerSimplification:
                     name="foo",
                     version="1.0",
                     repo_url="https://x/y.git",
+                    bare_repo_url="https://x/y.git",
                     commit_id="a" * 40,
                 ),
             },
@@ -404,6 +407,7 @@ class TestPerTupleMarkerSimplification:
                     name="foo",
                     version="1.0",
                     repo_url="https://x/y.git",
+                    bare_repo_url="https://x/y.git",
                     commit_id="a" * 40,
                 ),
             },
@@ -1370,6 +1374,73 @@ class TestBuildLockInputFromProvider:
         assert isinstance(pin, VcsPin)
         assert pin.subdirectory == "pkg/sub"
 
+    def test_vcs_pin_carries_bare_repo_url(self) -> None:
+        """The bare repo URL is carried through from the parsed source.
+
+        ``repo_url`` keeps the full installable form for the
+        requirements.txt path; ``bare_repo_url`` holds the plain
+        repository URL with no ``git+`` prefix, ``@<ref>``, or
+        ``#subdirectory`` fragment.
+        """
+        sha = "a" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url="git+https://example.com/r.git@release/1.0#subdirectory=pkg/sub",
+                ),
+            },
+            vcs_pins={"foo": sha},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        full_url = "git+https://example.com/r.git@release/1.0#subdirectory=pkg/sub"
+        assert pin.repo_url == full_url
+        assert pin.bare_repo_url == "https://example.com/r.git"
+
+    def test_vcs_pin_pylock_url_is_bare_repo(self) -> None:
+        """vcs.url is the bare repository URL; ref and subdirectory are separate fields."""
+        sha = "a" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url="git+https://example.com/r.git@release/1.0#subdirectory=pkg/sub",
+                ),
+            },
+            vcs_pins={"foo": sha},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        vcs = tomllib.loads(write_lock(lock_input))["packages"][0]["vcs"]
+        assert vcs["url"] == "https://example.com/r.git"
+        assert vcs["commit-id"] == sha
+        assert vcs["subdirectory"] == "pkg/sub"
+        assert vcs["requested-revision"] == "release/1.0"
+
+    def test_vcs_pin_bare_repo_url_strips_credentials(self) -> None:
+        """Embedded userinfo is dropped from the bare URL, as for repo_url."""
+        sha = "a" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url=f"git+https://user:pass@example.com/r.git@{sha}",
+                ),
+            },
+            vcs_pins={"foo": sha},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.bare_repo_url == "https://example.com/r.git"
+
     def test_vcs_source_without_resolved_sha_raises(self) -> None:
         """A pinned VCS source with no recorded SHA is an invariant breach.
 
@@ -1792,6 +1863,7 @@ class TestVcsRequestedRevision:
                         name="foo",
                         version="1.0",
                         repo_url="https://github.com/x/y.git",
+                        bare_repo_url="https://github.com/x/y.git",
                         commit_id="a" * 40,
                         requested_revision="v2.1.0",
                     ),
@@ -1809,6 +1881,7 @@ class TestVcsRequestedRevision:
                         name="foo",
                         version="1.0",
                         repo_url="https://github.com/x/y.git",
+                        bare_repo_url="https://github.com/x/y.git",
                         commit_id="a" * 40,
                     ),
                 },
@@ -2039,6 +2112,7 @@ class TestWriteRequirementsWithHashes:
                         name="foo",
                         version="1.0",
                         repo_url="git+https://example.com/r.git@abc",
+                        bare_repo_url="https://example.com/r.git",
                         commit_id="abc",
                     ),
                 },

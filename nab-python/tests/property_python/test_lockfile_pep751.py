@@ -116,6 +116,7 @@ def vcs_pins(draw: st.DrawFn) -> VcsPin:
         name=name,
         version=draw(versions),
         repo_url=f"https://github.com/example/{name}.git",
+        bare_repo_url=f"https://github.com/example/{name}.git",
         commit_id=sha_hex,
     )
 
