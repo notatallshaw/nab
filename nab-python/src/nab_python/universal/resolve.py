@@ -23,6 +23,7 @@ from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.utils import canonicalize_name
+from ..config import ConfigError
 from ..fetch import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
@@ -434,6 +435,9 @@ def _parse_requirements(
     sources: defaultdict[str, list[str]] = defaultdict(list)
     for req_str in reqs:
         req = Requirement(req_str)
+        if kind == "constraint" and req.extras:
+            msg = f"Constraints cannot have extras: {req_str}"
+            raise ConfigError(msg)
         if req.marker is not None and not req.marker.evaluate(environment):
             continue
         name = canonicalize_name(req.name)
