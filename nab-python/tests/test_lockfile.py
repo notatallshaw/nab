@@ -1024,6 +1024,30 @@ class TestMarkerDisjointness:
             groups=(),
         )
 
+    def test_extras_collision_with_normalization_mismatch(self) -> None:
+        # PEP 685 compares extra names under normalization.  The
+        # declared names and the marker literals here differ only by
+        # case and separator, so the powerset pruning must normalize
+        # both sides; otherwise both extras drop out of the universe
+        # and the {cpu, fast-io} collision is silently missed.
+        envs = {
+            "linux": {
+                "python_version": "3.11",
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+            },
+        }
+        with pytest.raises(DisjointnessError, match="extras="):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", "1.0", "'CPU' in extras"),
+                    self._pkg("foo", "2.0", "'fast_io' in extras"),
+                ],
+                environments=envs,
+                extras=("cpu", "fast-io"),
+                groups=(),
+            )
+
     def test_powerset_pruned_when_no_marker_uses_groups(self) -> None:
         # Symmetric pruning for ``dependency_groups``: a project with
         # many declared groups whose markers do not reference the

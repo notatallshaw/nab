@@ -16,6 +16,8 @@ import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from .._vendor.packaging.utils import canonicalize_name
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
@@ -177,18 +179,23 @@ def _restrict_to_referenced(
     ``variable`` is the marker token (``"extras"`` or
     ``"dependency_groups"``).  The intersection of declared names
     and regex-matched literals shrinks the powerset axis to what
-    the markers actually depend on.  When the bare token appears
-    in some marker but no literals were extracted (an unusual form
-    the regex did not anticipate), fall back to the full declared
-    list so the validator over-approximates rather than silently
-    misses a collision.
+    the markers actually depend on.  Both sides are normalised with
+    :func:`canonicalize_name` before intersecting, because PEP 685 and
+    PEP 735 compare names under normalisation but :meth:`Marker.__str__`
+    re-emits the membership literal verbatim; a case- or separator-only
+    difference would otherwise drop the name and miss its collision.
+    When the bare token appears in some marker but no literals were
+    extracted (an unusual form the regex did not anticipate), fall back
+    to the full declared list so the validator over-approximates rather
+    than silently misses a collision.
     """
     referenced, has_bare = _referenced_membership_names(markers, variable)
     if not has_bare:
         return ()
     if not referenced:
         return tuple(declared)
-    return tuple(name for name in declared if name in referenced)
+    normalized = {canonicalize_name(name) for name in referenced}
+    return tuple(name for name in declared if canonicalize_name(name) in normalized)
 
 
 def _marker_holds(
