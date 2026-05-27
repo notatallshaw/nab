@@ -26,8 +26,7 @@ __all__ = [
     "unit_propagation",
 ]
 
-# Cap on resolver.relation_cache entries before it is cleared, bounding
-# memory on deep-conflict resolutions where distinct relations accumulate.
+# Upper bound on relation_cache size; cleared on overflow to bound memory.
 RELATION_CACHE_MAX = 100_000
 
 

@@ -1897,9 +1897,6 @@ class TestRegressions:
 
 
 class TestRelationCache:
-    """term_relation memoises its pre-adjustment SetRelation, keyed by
-    (positive, assignment, constraint)."""
-
     def test_caches_relation_and_reuses_it(self) -> None:
         resolver: Resolver[str, int] = Resolver(DictProvider({}))
         resolver.solution.decide("foo", 2)
@@ -1913,9 +1910,7 @@ class TestRelationCache:
         assert term_relation(resolver, term) is first
         assert resolver.relation_cache == {key: first}
 
-    def test_clears_cache_on_overflow(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_clears_cache_on_overflow(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(propagate, "RELATION_CACHE_MAX", 1)
         resolver: Resolver[str, int] = Resolver(DictProvider({}))
         resolver.solution.decide("foo", 2)

@@ -285,7 +285,7 @@ class Resolver(Generic[PackageType, VersionType]):
         self.tiebreak_cache: dict[PackageType, tuple[int, int, str]] = {}
 
         # Memoises term_relation's pre-adjustment SetRelation, keyed by
-        # (positive, assignment, constraint).  Cleared on overflow.
+        # (positive, assignment, constraint). Cleared on overflow.
         self.relation_cache: dict[
             tuple[bool, RangeProtocol[Any], RangeProtocol[Any]], SetRelation
         ] = {}
