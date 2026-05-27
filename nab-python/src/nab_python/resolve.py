@@ -150,7 +150,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     resolver_requirements, root_extras = _build_resolver_inputs(
         requirements, config, environment=marker_environment
     )
-    resolver_constraints = _build_constraints(config)
+    resolver_constraints = _build_constraints(config, environment=marker_environment)
     direct_packages = frozenset(
         name for name in resolver_requirements if split_extra(name)[1] is None
     )
@@ -645,16 +645,22 @@ def _resolve_target_python(specifier: str) -> str:
     return host
 
 
-def _build_constraints(config: NabProjectConfig) -> dict[str, VersionRange]:
+def _build_constraints(
+    config: NabProjectConfig, *, environment: dict[str, str]
+) -> dict[str, VersionRange]:
     """Parse constraint strings from config into resolver-input ranges.
 
-    Repeated package names are intersected into one range; an empty
-    intersection raises :class:`ResolutionError`.
+    Marker-gated constraints whose marker is False in ``environment`` are
+    dropped, matching the universal path and pip. Repeated package names are
+    intersected into one range; an empty intersection raises
+    :class:`ResolutionError`.
     """
     out: dict[str, VersionRange] = {}
     sources: defaultdict[str, list[str]] = defaultdict(list)
     for cstr in config.constraints:
         req = Requirement(cstr)
+        if req.marker is not None and not req.marker.evaluate(environment):
+            continue
         if req.extras:
             msg = f"Constraints cannot have extras: {cstr}"
             raise ConfigError(msg)
