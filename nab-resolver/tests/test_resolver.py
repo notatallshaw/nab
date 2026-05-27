@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from nab_resolver import propagate
 from nab_resolver.conflict import (
     apply_targeted_backtrack,
     conflict_resolution,
@@ -21,6 +22,7 @@ from nab_resolver.incompat_index import (
     maybe_merge_dependency,
 )
 from nab_resolver.partial_solution import PartialSolution
+from nab_resolver.propagate import term_relation
 from nab_resolver.ranges import Range
 from nab_resolver.report import explain_incompatibility, prior_cause, union_terms
 from nab_resolver.resolver import (
@@ -33,6 +35,7 @@ from nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
     RangeProtocol,
+    SetRelation,
     Term,
 )
 
@@ -1891,3 +1894,37 @@ class TestRegressions:
         resolver = Resolver(provider)
         with pytest.raises(ResolutionError):
             resolver.resolve({"root": Range.singleton(1)})
+
+
+class TestRelationCache:
+    """term_relation memoises its pre-adjustment SetRelation, keyed by
+    (positive, assignment, constraint)."""
+
+    def test_caches_relation_and_reuses_it(self) -> None:
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+        term = Term("foo", Range.at_least(1), positive=True)
+
+        assert resolver.relation_cache == {}
+        first = term_relation(resolver, term)
+        key = (True, resolver.solution.get("foo"), term.constraint)
+        assert resolver.relation_cache == {key: first}
+
+        assert term_relation(resolver, term) is first
+        assert resolver.relation_cache == {key: first}
+
+    def test_clears_cache_on_overflow(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(propagate, "RELATION_CACHE_MAX", 1)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+        resolver.relation_cache[(False, Range.full(), Range.full())] = (
+            SetRelation.SATISFIED
+        )
+
+        term = Term("foo", Range.at_least(1), positive=True)
+        result = term_relation(resolver, term)
+
+        key = (True, resolver.solution.get("foo"), term.constraint)
+        assert resolver.relation_cache == {key: result}
