@@ -317,6 +317,21 @@ class TestMatrixTuple:
         )
         assert t.marker_string.endswith('and implementation_name == "pypy"')
 
+    def test_multi_implementation_cpython_marker_excludes_pypy(self) -> None:
+        """In a multi-implementation matrix the CPython tuple constrains
+        ``implementation_name`` so it no longer matches a PyPy environment."""
+        matrix = Matrix(
+            python="==3.11",
+            platforms=("linux_x86_64",),
+            implementations=("cpython", "pypy"),
+        )
+        tuples = matrix.expand()
+        cpython = next(t for t in tuples if t.implementation == "cpython")
+        pypy = next(t for t in tuples if t.implementation == "pypy")
+        assert cpython.marker_string.endswith('and implementation_name == "cpython"')
+        assert not Marker(cpython.marker_string).evaluate(pypy.environment)
+        assert not Marker(pypy.marker_string).evaluate(cpython.environment)
+
 
 class TestKnownConstants:
     """Coverage for the module-level lookup tables."""
