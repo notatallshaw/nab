@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import abc
 import re
-import sys
 import typing
 from typing import (
     TYPE_CHECKING,
@@ -26,7 +25,7 @@ from typing import (
 
 from ._range_utils import (
     filter_by_ranges,
-    intersect_specifier_bounds,
+    intersect_ranges,
     matches_bounds_only,
     standard_ranges,
     wildcard_ranges,
@@ -36,14 +35,14 @@ from .ranges import VersionRange
 from .utils import canonicalize_version
 from .version import Version
 
-if sys.version_info >= (3, 10):
-    from typing import TypeGuard  # pragma: no cover
-elif TYPE_CHECKING:
-    from typing_extensions import TypeGuard
-
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    import sys
+    from collections.abc import Iterable, Iterator, Sequence
 
+    if sys.version_info >= (3, 10):
+        from typing import TypeGuard
+    else:
+        from typing_extensions import TypeGuard
 
 __all__ = [
     "BaseSpecifier",
@@ -210,9 +209,11 @@ class Specifier(BaseSpecifier):
 
     .. tip::
 
-        It is generally not required to instantiate this manually. You should instead
-        prefer to work with :class:`SpecifierSet` instead, which can parse
-        comma-separated version specifiers (which is what package metadata contains).
+        It is generally not required to instantiate this manually. You
+        should instead prefer to work with
+        :class:`~packaging.specifiers.SpecifierSet` instead, which can
+        parse comma-separated version specifiers (which is what package
+        metadata contains).
 
     Instances are safe to serialize with :mod:`pickle`. They use a stable
     format so the same pickle can be loaded in future packaging releases.
@@ -469,6 +470,9 @@ class Specifier(BaseSpecifier):
     @prereleases.setter
     def prereleases(self, value: bool | None) -> None:
         self._prereleases = value
+        # The range carries the resolved prereleases value, so drop the
+        # cache; the bounds-only ``_ranges`` cache is unaffected.
+        self._range_cache = None
 
     def __getstate__(self) -> tuple[tuple[str, str], bool | None]:
         # Return state as a 2-item tuple for compactness:
@@ -628,7 +632,7 @@ class Specifier(BaseSpecifier):
 
         :param item:
             The item to check for, which can be a version string or a
-            :class:`Version` instance.
+            :class:`~packaging.version.Version` instance.
         :param prereleases:
             Whether or not to match prereleases with this Specifier. If set to
             ``None`` (the default), it will follow the recommendation from
@@ -673,11 +677,13 @@ class Specifier(BaseSpecifier):
         return bool(list(self.filter([parsed], prereleases=prereleases)))
 
     def to_range(self) -> VersionRange:
-        """The :class:`VersionRange` accepted by this specifier.
+        """The :class:`~packaging.ranges.VersionRange` accepted by this
+        specifier.
 
         For ``===`` the returned range matches the literal string
-        case-insensitively; no PEP 440 :class:`Version` other than the
-        literal itself is contained.
+        case-insensitively; no PEP 440
+        :class:`~packaging.version.Version` other than the literal
+        itself is contained.
 
         >>> isinstance(Specifier(">=1.0").to_range(), VersionRange)
         True
@@ -716,16 +722,17 @@ class Specifier(BaseSpecifier):
         """Filter items in the given iterable, that match the specifier.
 
         :param iterable:
-            An iterable that can contain version strings and :class:`Version` instances.
-            The items in the iterable will be filtered according to the specifier.
+            An iterable that can contain version strings and
+            :class:`~packaging.version.Version` instances. The items in the
+            iterable will be filtered according to the specifier.
         :param prereleases:
             Whether or not to allow prereleases in the returned iterator. If set to
             ``None`` (the default), it will follow the recommendation from :pep:`440`
             and match prereleases if there are no other versions.
         :param key:
             A callable that takes a single argument (an item from the iterable) and
-            returns a version string or :class:`Version` instance to be used for
-            filtering.
+            returns a version string or :class:`~packaging.version.Version`
+            instance to be used for filtering.
 
         >>> list(Specifier(">=1.2.3").filter(["1.2", "1.3", "1.5a1"]))
         ['1.3']
@@ -742,7 +749,8 @@ class Specifier(BaseSpecifier):
         ... key=lambda x: x["ver"]))
         [{'ver': '1.3'}]
         """
-        # Inlined ``_resolve_prereleases`` for hot-path performance.
+        # Inlined ``resolve_prereleases`` (skips the ``self.prereleases``
+        # lookup unless it is needed).
         if prereleases is None:
             if self._prereleases is not None:
                 prereleases = self._prereleases
@@ -762,22 +770,6 @@ class Specifier(BaseSpecifier):
             )
 
         return self.to_range().filter(iterable, key=key, prereleases=prereleases)
-
-    def _resolve_prereleases(self, prereleases: bool | None) -> bool | None:
-        """Resolve ``prereleases`` for :meth:`filter` / :meth:`contains`.
-
-        Explicit caller argument wins; otherwise the constructor value
-        ``self._prereleases``; otherwise auto-detected ``self.prereleases``
-        only when True (an auto-detected False does not propagate, so
-        non-pre specifiers keep PEP 440 default behaviour).
-        """
-        if prereleases is not None:
-            return prereleases
-        if self._prereleases is not None:
-            return self._prereleases
-        if self.prereleases:
-            return True
-        return None
 
 
 class SpecifierSet(BaseSpecifier):
@@ -846,7 +838,7 @@ class SpecifierSet(BaseSpecifier):
         self._is_unsatisfiable: bool | None = None
         self._range_cache: VersionRange | None = None
         # Internal bounds cache for the hot filter/contains path
-        # (populated by :func:`packaging._range_utils.intersect_specifier_bounds`).
+        # (populated by :meth:`_intersect_bounds`).
         self._ranges: tuple[Any, ...] | None = None
         self._prereleases = prereleases
 
@@ -1096,13 +1088,15 @@ class SpecifierSet(BaseSpecifier):
         return result
 
     def to_range(self) -> VersionRange:
-        """The :class:`VersionRange` accepted by this specifier set.
+        """The :class:`~packaging.ranges.VersionRange` accepted by this
+        specifier set.
 
         The intersection of every specifier in the set. An empty
-        :class:`SpecifierSet` yields the unbounded range; an
-        unsatisfiable set yields an empty :class:`VersionRange`. Sets
-        containing ``===`` produce a range whose only matching items
-        are the literal strings (case-insensitive) that satisfy every
+        :class:`~packaging.specifiers.SpecifierSet` yields the
+        unbounded range; an unsatisfiable set yields an empty
+        :class:`~packaging.ranges.VersionRange`. Sets containing
+        ``===`` produce a range whose only matching items are the
+        literal strings (case-insensitive) that satisfy every
         rangelike specifier in the set as well.
 
         >>> isinstance(SpecifierSet(">=1.0,<2.0").to_range(), VersionRange)
@@ -1120,6 +1114,28 @@ class SpecifierSet(BaseSpecifier):
             self._range_cache = cache
 
         return cache
+
+    def _intersect_bounds(self) -> tuple[Any, ...]:
+        """Intersect every specifier's bounds into a single range.
+
+        Reuses each :class:`Specifier`'s per-instance bounds cache rather
+        than re-parsing version strings. Callers must exclude ``===``
+        specifiers (which have no bound form) and guard against the empty
+        set; the result feeds the cold path of :meth:`__contains__` and
+        :meth:`filter`.
+        """
+        result: Sequence[Any] | None = None
+        for spec in self._specs:
+            sub = spec._to_ranges()
+            if result is None:
+                result = sub
+            elif not result:
+                break
+            else:
+                result = intersect_ranges(result, sub)
+        if result is None:  # pragma: no cover - callers guard non-empty specs
+            raise RuntimeError("intersection over an empty SpecifierSet")
+        return tuple(result)
 
     def __contains__(self, item: UnparsedVersion) -> bool:
         """Return whether or not the item is contained in this specifier.
@@ -1152,7 +1168,7 @@ class SpecifierSet(BaseSpecifier):
 
         :param item:
             The item to check for, which can be a version string or a
-            :class:`Version` instance.
+            :class:`~packaging.version.Version` instance.
         :param prereleases:
             Whether or not to match prereleases with this SpecifierSet. If set to
             ``None`` (the default), it will follow the recommendation from :pep:`440`
@@ -1218,21 +1234,12 @@ class SpecifierSet(BaseSpecifier):
             # interval form; build it once and reuse via ``_ranges``.
             bounds = self._ranges
             if bounds is None:
-                bounds = intersect_specifier_bounds(self._specs)
+                bounds = self._intersect_bounds()
                 self._ranges = bounds
 
             return matches_bounds_only(bounds, version)
 
         return bool(list(self.filter([check_item], prereleases=prereleases)))
-
-    def _resolve_prereleases(self, prereleases: bool | None) -> bool | None:
-        """Resolve ``prereleases`` for :meth:`filter` / :meth:`contains`.
-
-        Explicit caller argument wins; otherwise ``self.prereleases``.
-        """
-        if prereleases is not None:
-            return prereleases
-        return self.prereleases
 
     @typing.overload
     def filter(
@@ -1259,16 +1266,17 @@ class SpecifierSet(BaseSpecifier):
         """Filter items in the given iterable, that match the specifiers in this set.
 
         :param iterable:
-            An iterable that can contain version strings and :class:`Version` instances.
-            The items in the iterable will be filtered according to the specifier.
+            An iterable that can contain version strings and
+            :class:`~packaging.version.Version` instances. The items in the
+            iterable will be filtered according to the specifier.
         :param prereleases:
             Whether or not to allow prereleases in the returned iterator. If set to
             ``None`` (the default), it will follow the recommendation from :pep:`440`
             and match prereleases if there are no other versions.
         :param key:
             A callable that takes a single argument (an item from the iterable) and
-            returns a version string or :class:`Version` instance to be used for
-            filtering.
+            returns a version string or :class:`~packaging.version.Version`
+            instance to be used for filtering.
 
         >>> list(SpecifierSet(">=1.2.3").filter(["1.2", "1.3", "1.5a1"]))
         ['1.3']
@@ -1297,8 +1305,8 @@ class SpecifierSet(BaseSpecifier):
         >>> list(SpecifierSet("").filter(["1.3", "1.5a1"], prereleases=True))
         ['1.3', '1.5a1']
         """
-        # Inlined ``_resolve_prereleases`` for hot-path performance.
-        # ``self.prereleases`` scans every spec, so resolve it once.
+        # Inlined ``resolve_prereleases``: ``self.prereleases`` scans every
+        # spec, so resolve it once and skip it when not needed.
         if prereleases is None:
             resolved = self.prereleases
             if resolved is not None:
@@ -1311,7 +1319,7 @@ class SpecifierSet(BaseSpecifier):
         if not self._has_arbitrary and self._specs:
             bounds = self._ranges
             if bounds is None:
-                bounds = intersect_specifier_bounds(self._specs)
+                bounds = self._intersect_bounds()
                 self._ranges = bounds
 
             return filter_by_ranges(

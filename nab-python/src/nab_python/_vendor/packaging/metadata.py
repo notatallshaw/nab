@@ -22,6 +22,7 @@ from .errors import ExceptionGroup, _ErrorCollector
 
 if typing.TYPE_CHECKING:
     from .licenses import NormalizedLicenseExpression
+    from .version import Version
 
 T = typing.TypeVar("T")
 
@@ -130,6 +131,8 @@ class RawMetadata(TypedDict, total=False):
     # Metadata 2.5 - PEP 794
     import_names: list[str]
     import_namespaces: list[str]
+
+    # Metadata 2.6 - PEP 808 (no new fields, behavior change for Dynamic)
 
 
 # 'keywords' is special as it's a string in the core metadata spec, but we
@@ -511,8 +514,20 @@ _NOT_FOUND = object()
 
 
 # Keep the two values in sync.
-_VALID_METADATA_VERSIONS = ["1.0", "1.1", "1.2", "2.1", "2.2", "2.3", "2.4", "2.5"]
-_MetadataVersion = Literal["1.0", "1.1", "1.2", "2.1", "2.2", "2.3", "2.4", "2.5"]
+_VALID_METADATA_VERSIONS = [
+    "1.0",
+    "1.1",
+    "1.2",
+    "2.1",
+    "2.2",
+    "2.3",
+    "2.4",
+    "2.5",
+    "2.6",
+]
+_MetadataVersion = Literal[
+    "1.0", "1.1", "1.2", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6"
+]
 
 _REQUIRED_ATTRS = frozenset(["metadata_version", "name", "version"])
 
@@ -597,7 +612,7 @@ class _Validator(Generic[T]):
         else:
             return value
 
-    def _process_version(self, value: str) -> version_module.Version:
+    def _process_version(self, value: str) -> Version:
         if not value:
             raise self._invalid_metadata("{field} is a required field")
         try:
@@ -853,7 +868,7 @@ class Metadata:
     """:external:ref:`core-metadata-name`
     (required; validated using :func:`~packaging.utils.canonicalize_name` and its
     *validate* parameter)"""
-    version: _Validator[version_module.Version] = _Validator()
+    version: _Validator[Version] = _Validator()
     """:external:ref:`core-metadata-version` (required)"""
     dynamic: _Validator[list[str] | None] = _Validator(
         added="2.2",
