@@ -10,6 +10,7 @@ import pytest
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
+    ConfigError,
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
@@ -20,6 +21,7 @@ from nab_python.resolve import (
     UnsupportedModeError,
     _augment_resolution_error,
     _build_constraints,
+    _build_marker_environment,
     _build_resolver_inputs,
     _check_group_disjointness,
     _check_group_disjointness_across_tuples,
@@ -1008,6 +1010,11 @@ class TestBuildConstraints:
         with pytest.raises(ResolutionError, match="conflicting constraints"):
             _build_constraints(NabProjectConfig(constraints=("foo==1.0", "foo==2.0")))
 
+    def test_constraint_with_extras_rejected(self) -> None:
+        """A constraint carrying extras is rejected, matching pip."""
+        with pytest.raises(ConfigError, match="extras"):
+            _build_constraints(NabProjectConfig(constraints=("foo[dev]<2.0",)))
+
 
 class TestResolvePyprojectConflicts:
     """End-to-end: contradictory folded requirements fail loudly."""
@@ -1485,6 +1492,18 @@ def _tuple_for_python(python_version: str) -> MatrixTuple:
             "sys_platform": "linux",
         },
     )
+
+
+class TestBuildMarkerEnvironment:
+    def test_two_part_python_version_expands_full_version(self) -> None:
+        """python_full_version pads to three components, matching the matrix."""
+        env = _build_marker_environment(python_version="3.10", overrides={})
+        assert env["python_version"] == "3.10"
+        assert env["python_full_version"] == "3.10.0"
+
+    def test_full_python_version_preserved(self) -> None:
+        env = _build_marker_environment(python_version="3.11.5", overrides={})
+        assert env["python_full_version"] == "3.11.5"
 
 
 class TestCheckGroupDisjointnessAcrossTuples:

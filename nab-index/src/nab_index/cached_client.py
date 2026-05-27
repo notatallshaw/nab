@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from .cache import CacheBackend, CachePolicy, OfflineError
 from .client import (
+    _HTTP_NOT_FOUND,
     DEFAULT_INDEX,
     SdistFile,
     WheelFile,
@@ -111,6 +112,7 @@ class CachedAsyncSimpleClient:
         Cache hit + offline: cached body is returned regardless of age.
         Cache miss + offline: raises :class:`OfflineError`.
         Cache miss + online: fetches, caches, returns.
+        A 404 from the index yields an empty listing and is not cached.
         """
         cached = self._cache.get_simple(package)
         if cached is not None:
@@ -141,6 +143,8 @@ class CachedAsyncSimpleClient:
             self._cache.refresh_simple_policy(package, new_policy)
             return _parse_files(json.loads(body), self._index_url, package)
 
+        if response.status_code == _HTTP_NOT_FOUND:
+            return []
         response.raise_for_status()
         new_body = response.content
         new_policy = CachePolicy(
@@ -154,6 +158,8 @@ class CachedAsyncSimpleClient:
     async def _fetch_simple(self, package: str) -> list[WheelFile | SdistFile]:
         url = f"{self._index_url}{package}/"
         response = await self._transport.get(url, headers={"Accept": _JSON_ACCEPT})
+        if response.status_code == _HTTP_NOT_FOUND:
+            return []
         response.raise_for_status()
         body = response.content
         policy = CachePolicy(
