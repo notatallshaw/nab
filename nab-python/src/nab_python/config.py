@@ -197,6 +197,7 @@ def _apply_workspace_discovery(
     if not discovered:
         return config
     merged = merge_workspace_local_sources(config.local_sources, discovered)
+    explicit_names = {canonicalize_name(src.name) for src in config.local_sources}
     promoted_policy = auto_promote_build_policy_for_workspace(config.build_policy)
     if promoted_policy is not config.build_policy:
         _logger.info(
@@ -211,7 +212,9 @@ def _apply_workspace_discovery(
         local_sources=merged,
         build_policy=promoted_policy,
         workspace_member_names=frozenset(
-            canonicalize_name(src.name) for src in discovered
+            canonicalize_name(src.name)
+            for src in discovered
+            if canonicalize_name(src.name) not in explicit_names
         ),
     )
 

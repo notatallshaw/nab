@@ -1322,6 +1322,21 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(member)
         assert config.local_sources == (LocalSource(name="alpha", path=str(explicit)),)
 
+    def test_shadowed_member_excluded_from_workspace_member_names(
+        self, tmp_path: Path
+    ) -> None:
+        member = self._ws(tmp_path)
+        explicit = (tmp_path / "explicit-alpha").resolve()
+        member.write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n'
+            "[tool.nab]\n"
+            "[[tool.nab.local-sources]]\n"
+            'name = "alpha"\n'
+            f'path = "{explicit.as_posix()}"\n',
+        )
+        config = read_pyproject_config(member)
+        assert config.workspace_member_names == frozenset()
+
     def test_workspace_promotes_never_to_build_local_and_logs(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
