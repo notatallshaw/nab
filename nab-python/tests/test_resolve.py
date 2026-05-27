@@ -1041,6 +1041,26 @@ class TestBuildResolverInputs:
         with pytest.raises(ResolutionError, match="foo==1.0"):
             _build_resolver_inputs(reqs, NabProjectConfig(), environment={})
 
+    def test_root_extra_marker_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A root requirement gated on ``extra ==`` is dropped with a warning."""
+        reqs = [Requirement('foo ; extra == "test"')]
+        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+            resolver_requirements, _ = _build_resolver_inputs(
+                reqs, NabProjectConfig(), environment={}
+            )
+        assert "foo" not in resolver_requirements
+        assert any("uses an extra marker" in rec.message for rec in caplog.records)
+
+    def test_env_gated_drop_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A requirement dropped by a plain env marker stays silent."""
+        reqs = [Requirement('foo ; python_version < "3.0"')]
+        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+            resolver_requirements, _ = _build_resolver_inputs(
+                reqs, NabProjectConfig(), environment={}
+            )
+        assert "foo" not in resolver_requirements
+        assert not caplog.records
+
 
 class TestBuildConstraints:
     """``_build_constraints`` folds duplicate constraint lines."""

@@ -470,6 +470,13 @@ def _build_resolver_inputs(
     root_extras: set[tuple[str, str]] = set()
     for req in requirements:
         if req.marker is not None and not req.marker.evaluate(environment):
+            if "extra ==" in str(req.marker):
+                _logger.warning(
+                    "Root requirement %r uses an extra marker; the dep is "
+                    "dropped because root has no parent extra. Did you mean "
+                    "pkg[extra] (extras-of-package) instead?",
+                    str(req),
+                )
             continue
         if req.url is not None:
             admit_vcs_url(req.url, config.vcs)
