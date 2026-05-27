@@ -100,6 +100,7 @@ class MatrixConfig:
     platforms: tuple[str, ...]
     python_order: str = "asc"
     python_patches: Mapping[str, str] | None = None
+    implementations: tuple[str, ...] = ("cpython",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -812,7 +813,13 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
     if not isinstance(value, dict):
         msg = f"[tool.nab.matrix] must be a table, got {type(value).__name__}"
         raise ConfigError(msg)
-    allowed = {"python", "platforms", "python-order", "python-patches"}
+    allowed = {
+        "python",
+        "platforms",
+        "python-order",
+        "python-patches",
+        "implementations",
+    }
     unknown = sorted(set(value) - allowed)
     if unknown:
         msg = (
@@ -837,9 +844,31 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
         msg = f"matrix.python-order must be 'asc' or 'desc', got {python_order!r}"
         raise ConfigError(msg)
     patches = _parse_python_patches(value.get("python-patches"))
+    implementations = _parse_implementations(value.get("implementations"))
     return MatrixConfig(
         python=python,
         platforms=platforms,
         python_order=python_order,
         python_patches=patches,
+        implementations=implementations,
     )
+
+
+_KNOWN_IMPLEMENTATIONS = ("cpython", "pypy")
+
+
+def _parse_implementations(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ("cpython",)
+    impls = _parse_string_list("matrix.implementations", value)
+    if not impls:
+        msg = "matrix.implementations must list at least one implementation"
+        raise ConfigError(msg)
+    unknown = sorted(set(impls) - set(_KNOWN_IMPLEMENTATIONS))
+    if unknown:
+        msg = (
+            f"unknown matrix.implementations: {unknown!r}; "
+            f"expected {list(_KNOWN_IMPLEMENTATIONS)!r}"
+        )
+        raise ConfigError(msg)
+    return impls

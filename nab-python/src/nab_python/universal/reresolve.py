@@ -204,6 +204,7 @@ def _resolve_one_tuple_with_overrides(  # noqa: PLR0913
     one_tuple_matrix = _Matrix(
         python=f"=={tup.python_version}",
         platforms=(tup.platform_spec,),
+        implementations=(tup.implementation,),
     )
     with _override_metadata(coordinator, wheel_metadata):
         result = resolve_with_coordinator(

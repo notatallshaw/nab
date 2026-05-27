@@ -386,3 +386,76 @@ class TestUnknownPlatformKindGuard:
         finally:
             del _PLATFORM_ARCH["fake_x"]
             del _PLATFORM_KIND["fake_x"]
+
+
+class TestPyPyTags:
+    """The ``implementation="pypy"`` axis matches PyPy wheels, not CPython."""
+
+    SPEC = PlatformSpec("linux_x86_64")
+
+    def test_pypy_wheel_matches_pypy_tuple(self) -> None:
+        """A real ``ppXY-pypyXY_pp73`` wheel matches its PyPy tuple."""
+        wheel = _wheel("numpy-1.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.whl")
+        assert wheel_compatible_with_tuple(
+            wheel, python_version="3.11", spec=self.SPEC, implementation="pypy"
+        )
+
+    def test_pypy_none_wheel_matches_pypy_tuple(self) -> None:
+        """A ``ppXY-none`` interpreter-specific wheel matches too."""
+        wheel = _wheel("foo-1.0-pp311-none-manylinux_2_17_x86_64.whl")
+        assert wheel_compatible_with_tuple(
+            wheel, python_version="3.11", spec=self.SPEC, implementation="pypy"
+        )
+
+    def test_cpython_wheel_rejected_on_pypy_tuple(self) -> None:
+        """A CPython wheel is not a candidate for a PyPy tuple."""
+        wheel = _wheel("numpy-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        assert not wheel_compatible_with_tuple(
+            wheel, python_version="3.11", spec=self.SPEC, implementation="pypy"
+        )
+
+    def test_pypy_wheel_rejected_on_cpython_tuple(self) -> None:
+        """A PyPy wheel is not a candidate for the default CPython tuple."""
+        wheel = _wheel("numpy-1.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.whl")
+        assert not wheel_compatible_with_tuple(
+            wheel, python_version="3.11", spec=self.SPEC, implementation="cpython"
+        )
+
+    def test_pypy_minor_must_match(self) -> None:
+        """A PyPy 3.10 wheel does not match a PyPy 3.11 tuple."""
+        wheel = _wheel("numpy-1.0-pp310-pypy310_pp73-manylinux_2_17_x86_64.whl")
+        assert not wheel_compatible_with_tuple(
+            wheel, python_version="3.11", spec=self.SPEC, implementation="pypy"
+        )
+
+    def test_pure_python_wheel_matches_either(self) -> None:
+        """A ``py3-none-any`` wheel matches both implementations."""
+        wheel = _wheel("foo-1.0-py3-none-any.whl")
+        assert wheel_compatible_with_tuple(
+            wheel, python_version="3.11", spec=self.SPEC, implementation="pypy"
+        )
+
+    def test_select_prefers_pypy_specific_over_pure_python(self) -> None:
+        """The PyPy-specific wheel outranks the pure-Python fallback."""
+        pure = _wheel("numpy-1.0-py3-none-any.whl")
+        native = _wheel("numpy-1.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.whl")
+        chosen = select_wheel_for_tuple(
+            [pure, native],
+            python_version="3.11",
+            spec=self.SPEC,
+            implementation="pypy",
+        )
+        assert chosen is native
+
+    def test_compat_tag_sets_differ_by_implementation(self) -> None:
+        """The CPython and PyPy tuples accept disjoint native-tag sets."""
+        cp = compatible_tags_for_tuple(python_version="3.11", spec=self.SPEC)
+        pp = compatible_tags_for_tuple(
+            python_version="3.11", spec=self.SPEC, implementation="pypy"
+        )
+        cp_native = {t for t in cp if t.abi.startswith("cp")}
+        pp_native = {t for t in pp if t.abi.startswith("pypy")}
+        assert cp_native
+        assert pp_native
+        assert cp_native.isdisjoint(pp)
+        assert pp_native.isdisjoint(cp)

@@ -1,13 +1,14 @@
-"""Predict which wheel a ``(python_version, platform_id)`` tuple would install.
+"""Predict which wheel a tuple would install.
 
 Universal resolution needs the install-time wheel selection answer
 without a live interpreter, so the tag set is computed from
-:class:`PlatformSpec` directly. CPython tags come from
-``packaging.tags.cpython_tags``, interpreter-agnostic tags from
-``compatible_tags``, macOS from ``mac_platforms``, and manylinux /
-musllinux are expanded from a declared glibc / musl floor. A wheel
-matches the tuple iff its parsed tags share a member with the
-tuple's compatible-tag set.
+:class:`PlatformSpec` and the implementation name directly. CPython
+tags come from ``packaging.tags.cpython_tags``; PyPy tags are emitted
+directly (interpreter ``ppXY``, abi ``pypyXY_pp73``). Both add
+interpreter-agnostic tags from ``compatible_tags``. Platform tags use
+``mac_platforms`` for macOS and expand manylinux / musllinux from the
+declared glibc / musl floor. A wheel matches the tuple iff its parsed
+tags share a member with the tuple's compatible-tag set.
 """
 
 from __future__ import annotations
@@ -181,41 +182,27 @@ def _platform_tags_for_spec(spec: PlatformSpec) -> list[str]:
     raise ValueError(msg)  # pragma: no cover
 
 
+# PyPy 7.3.x soabi, stable across every Python minor PyPy 3 ships
+# (pp36..pp311 all use ``_pp73``); the abi tag is ``pypyXY_pp73``.
+_PYPY_SOABI = "73"
+
+
 @cache
 def compatible_tags_for_tuple(
     *,
     python_version: str,
     spec: PlatformSpec,
+    implementation: str = "cpython",
 ) -> frozenset[Tag]:
-    """Return the full set of tags ``(python_version, spec)`` accepts.
+    """Return the full set of tags ``(python_version, spec, impl)`` accepts.
 
-    Combines:
-
-    1. CPython-specific tags via ``packaging.tags.cpython_tags``
-       (cpXY-cpXY, cpXY-abi3 forward-compat, cpXY-none).
-    2. Interpreter-agnostic tags via ``packaging.tags.compatible_tags``
-       (pyXY-none-any, py3-none-any, etc.).
-
-    The platform list is computed by :func:`_platform_tags_for_spec`.
-    Cached on ``(python_version, spec)``: both inputs are immutable
-    (str, frozen dataclass) and the resulting set is identical across
-    every wheel-compatibility check for the same tuple, so the cache
-    skips rebuilding the same :class:`Tag` set per call.
+    Builds the same ordered tags as :func:`_tags_in_order` and returns
+    them as a frozenset.  Cached on the three immutable inputs (str,
+    frozen dataclass, str): the resulting set is identical across every
+    wheel-compatibility check for the same tuple, so the cache skips
+    rebuilding the same :class:`Tag` set per call.
     """
-    major, minor = (int(p) for p in python_version.split("."))
-    py_version = (major, minor)
-    abi = f"cp{major}{minor}"
-    platforms = _platform_tags_for_spec(spec)
-    out: set[Tag] = set()
-    out.update(
-        ptags.cpython_tags(python_version=py_version, abis=[abi], platforms=platforms)
-    )
-    out.update(
-        ptags.compatible_tags(
-            python_version=py_version, interpreter=abi, platforms=platforms
-        )
-    )
-    return frozenset(out)
+    return frozenset(_tags_in_order(python_version, spec, implementation))
 
 
 @lru_cache(maxsize=4096)
@@ -274,12 +261,15 @@ def wheel_compatible_with_tuple(
     *,
     python_version: str,
     spec: PlatformSpec,
+    implementation: str = "cpython",
 ) -> bool:
     """Return True iff ``wheel`` is a candidate for the given tuple."""
     wheel_tags = wheel_tag_set(wheel.filename)
     if wheel_tags is None:
         return False
-    compat = compatible_tags_for_tuple(python_version=python_version, spec=spec)
+    compat = compatible_tags_for_tuple(
+        python_version=python_version, spec=spec, implementation=implementation
+    )
     # ``frozenset.isdisjoint`` is a C-level builtin that beats the
     # Python ``any(t in compat for t in wheel_tags)`` generator on
     # the per-wheel hot loop.
@@ -291,6 +281,7 @@ def select_wheel_for_tuple(
     *,
     python_version: str,
     spec: PlatformSpec,
+    implementation: str = "cpython",
 ) -> WheelFile | None:
     """Pick the most-specific compatible wheel for the tuple, or None.
 
@@ -299,7 +290,7 @@ def select_wheel_for_tuple(
     those matching later (more-generic) tags.  Within the same tag
     rank, the first wheel in input order wins.
     """
-    compat_list = list(_compatible_tags_in_order(python_version, spec))
+    compat_list = list(_tags_in_order(python_version, spec, implementation))
     rank: dict[Tag, int] = {tag: i for i, tag in enumerate(compat_list)}
 
     best: tuple[int, WheelFile] | None = None
@@ -316,15 +307,32 @@ def select_wheel_for_tuple(
     return best[1] if best is not None else None
 
 
-def _compatible_tags_in_order(python_version: str, spec: PlatformSpec) -> Iterable[Tag]:
-    """Yield compatible tags in install preference order."""
+def _tags_in_order(
+    python_version: str, spec: PlatformSpec, implementation: str = "cpython"
+) -> Iterable[Tag]:
+    """Yield the tags a tuple accepts in install preference order.
+
+    CPython tuples use ``packaging.tags.cpython_tags`` (cpXY-cpXY,
+    cpXY-abi3 forward-compat, cpXY-none).  PyPy tuples cannot reuse that
+    (it forces the ``cp`` interpreter and abi3, which PyPy lacks), so
+    their interpreter/abi/none tags are emitted directly.  Both then add
+    the interpreter-agnostic tags (pyXY-none-any, py3-none-any, ...).
+    """
     major, minor = (int(p) for p in python_version.split("."))
     py_version = (major, minor)
-    abi = f"cp{major}{minor}"
     platforms = _platform_tags_for_spec(spec)
-    yield from ptags.cpython_tags(
-        python_version=py_version, abis=[abi], platforms=platforms
-    )
+    if implementation == "pypy":
+        interpreter = f"pp{major}{minor}"
+        abi = f"pypy{major}{minor}_pp{_PYPY_SOABI}"
+        for platform_ in platforms:
+            yield ptags.Tag(interpreter, abi, platform_)
+        for platform_ in platforms:
+            yield ptags.Tag(interpreter, "none", platform_)
+    else:
+        interpreter = f"cp{major}{minor}"
+        yield from ptags.cpython_tags(
+            python_version=py_version, abis=[interpreter], platforms=platforms
+        )
     yield from ptags.compatible_tags(
-        python_version=py_version, interpreter=abi, platforms=platforms
+        python_version=py_version, interpreter=interpreter, platforms=platforms
     )

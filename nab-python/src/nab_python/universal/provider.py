@@ -136,6 +136,7 @@ class UniversalProvider(Provider):
         }
         self._platform_spec = platform_spec
         self._py_minor = marker_environment.get("python_version")
+        self._implementation = marker_environment.get("implementation_name", "cpython")
         self.excluded_by_wheel_tags = 0
         self.excluded_versions_no_compatible_wheel = 0
 
@@ -191,7 +192,9 @@ class UniversalProvider(Provider):
         # loop and inline the membership check; this loop runs for every
         # wheel of every package on every tuple, so the hoist matters on
         # large workloads.
-        compat = compatible_tags_for_tuple(python_version=py_minor, spec=spec)
+        compat = compatible_tags_for_tuple(
+            python_version=py_minor, spec=spec, implementation=self._implementation
+        )
         kept: list[tuple[Version, DistFile]] = []
         versions_with_wheel: set[Version] = set()
         versions_with_sdist: set[Version] = set()

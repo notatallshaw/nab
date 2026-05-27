@@ -1,10 +1,11 @@
 """Matrix expansion for user-declared universal resolution.
 
-Expands a python version range plus a platform list into a finite
-list of tuples, each a complete PEP 508 marker environment the
-single-environment resolver can run against. Every PEP 508 variable
-appearing in any marker on the dep graph must have a value in every
-tuple. Wheel-tag and ``Requires-Python`` filtering happens elsewhere.
+Expands a python version range, a platform list, and an implementation
+list into a finite list of tuples, each a complete PEP 508 marker
+environment the single-environment resolver can run against. Every PEP
+508 variable appearing in any marker on the dep graph must have a value
+in every tuple. Wheel-tag and ``Requires-Python`` filtering happens
+elsewhere.
 """
 
 from __future__ import annotations
@@ -48,42 +49,50 @@ _PLATFORM_DEFAULTS: dict[str, dict[str, str]] = {
         "platform_system": "Linux",
         "platform_machine": "x86_64",
         "os_name": "posix",
-        "platform_python_implementation": "CPython",
-        "implementation_name": "cpython",
     },
     "linux_aarch64": {
         "sys_platform": "linux",
         "platform_system": "Linux",
         "platform_machine": "aarch64",
         "os_name": "posix",
-        "platform_python_implementation": "CPython",
-        "implementation_name": "cpython",
     },
     "macos_arm64": {
         "sys_platform": "darwin",
         "platform_system": "Darwin",
         "platform_machine": "arm64",
         "os_name": "posix",
-        "platform_python_implementation": "CPython",
-        "implementation_name": "cpython",
     },
     "macos_x86_64": {
         "sys_platform": "darwin",
         "platform_system": "Darwin",
         "platform_machine": "x86_64",
         "os_name": "posix",
-        "platform_python_implementation": "CPython",
-        "implementation_name": "cpython",
     },
     "windows_amd64": {
         "sys_platform": "win32",
         "platform_system": "Windows",
         "platform_machine": "AMD64",
         "os_name": "nt",
+    },
+}
+
+
+# The implementation-axis PEP 508 marker values per known
+# implementation.
+_IMPLEMENTATION_DEFAULTS: dict[str, dict[str, str]] = {
+    "cpython": {
         "platform_python_implementation": "CPython",
         "implementation_name": "cpython",
     },
+    "pypy": {
+        "platform_python_implementation": "PyPy",
+        "implementation_name": "pypy",
+    },
 }
+
+# PEP 425 interpreter short tag per implementation, used in the tuple
+# label so tuples differing only by implementation stay distinct.
+_IMPLEMENTATION_PREFIX: dict[str, str] = {"cpython": "py", "pypy": "pp"}
 
 
 @dataclass(frozen=True)
@@ -98,11 +107,18 @@ class MatrixTuple:
         compare=False,
         default_factory=lambda: PlatformSpec("linux_x86_64"),
     )
+    implementation: str = "cpython"
 
     @property
     def label(self) -> str:
-        """Return a short human-readable id like ``py311-linux_x86_64``."""
-        return f"py{self.python_version.replace('.', '')}-{self.platform_id}"
+        """Return a short human-readable id like ``py311-linux_x86_64``.
+
+        Uses the interpreter prefix (``py`` for CPython, ``pp`` for
+        PyPy) so tuples that differ only by implementation get distinct
+        labels.
+        """
+        prefix = _IMPLEMENTATION_PREFIX[self.implementation]
+        return f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
 
     @property
     def marker_string(self) -> str:
@@ -111,14 +127,20 @@ class MatrixTuple:
         Combines ``python_version``, ``sys_platform``, and
         ``platform_machine`` into a conjunction.  Universal lockfiles
         attach this to each per-tuple ``Package`` entry so an installer
-        on a matching environment picks the right pin.
+        on a matching environment picks the right pin.  A non-CPython
+        tuple also constrains ``implementation_name`` so its entry is
+        distinguishable from the CPython tuple for the same
+        python/platform.
         """
         env = self.environment
-        return (
+        marker = (
             f'python_version == "{self.python_version}"'
             f' and sys_platform == "{env["sys_platform"]}"'
             f' and platform_machine == "{env["platform_machine"]}"'
         )
+        if self.implementation != "cpython":
+            marker += f' and implementation_name == "{env["implementation_name"]}"'
+        return marker
 
 
 @dataclass
@@ -142,19 +164,26 @@ class Matrix:
     ``python_patches={"3.11": "3.11.4", "3.12": "3.12.1"}``.
     See ``universal_open_questions.md`` section 1.1 for the design
     discussion.
+
+    ``implementations``: the interpreter implementations to model
+    (``"cpython"``, ``"pypy"``).  Defaults to ``("cpython",)``.  Each
+    multiplies the tuple count; markers and wheel tags resolve per
+    implementation.
     """
 
     python: str
     platforms: tuple[str | PlatformSpec, ...]
     python_order: str = "asc"
     python_patches: dict[str, str] | None = None
+    implementations: tuple[str, ...] = ("cpython",)
 
     def expand(self) -> list[MatrixTuple]:
         """Expand the matrix into concrete tuples.
 
-        Validates inputs eagerly: unknown platform ids, an empty
-        python range, or an invalid ``python_order`` each raise a
-        ``ValueError`` before any work happens.
+        Validates inputs eagerly: unknown platform ids, unknown
+        implementations, an empty python range, or an invalid
+        ``python_order`` each raise a ``ValueError`` before any work
+        happens.
 
         ``platforms`` accepts either bare platform-id strings (use
         default tag floors) or :class:`PlatformSpec` instances for
@@ -173,6 +202,12 @@ class Matrix:
         if unknown:
             msg = f"Unknown platform ids: {unknown!r}"
             raise ValueError(msg)
+        unknown_impl = [
+            i for i in self.implementations if i not in _IMPLEMENTATION_DEFAULTS
+        ]
+        if unknown_impl:
+            msg = f"Unknown implementations: {unknown_impl!r}"
+            raise ValueError(msg)
         py_versions = list(_pythons_in_range(self.python))
         if not py_versions:
             msg = f"No known Python versions match {self.python!r}"
@@ -184,35 +219,45 @@ class Matrix:
             MatrixTuple(
                 python_version=py,
                 platform_id=spec.platform_id,
-                environment=_build_environment(py, spec, patches.get(py)),
+                environment=_build_environment(py, spec, impl, patches.get(py)),
                 platform_spec=spec,
+                implementation=impl,
             )
             for py in py_versions
             for spec in specs
+            for impl in self.implementations
         ]
 
 
 def _build_environment(
     python_version: str,
     spec: PlatformSpec,
+    implementation: str,
     python_full_version: str | None = None,
 ) -> dict[str, str]:
     """Build a complete PEP 508 marker environment for one tuple.
 
-    Combines the platform's OS/arch defaults with python-axis values
-    derived from ``python_version``.  ``platform_release`` and
-    ``platform_version`` come from the :class:`PlatformSpec`; both
-    default to ``""`` so kernel-conditioned markers evaluate False
-    unless the user declares a target kernel/OS version.
+    Combines the platform's OS/arch defaults and the implementation's
+    interpreter-identity defaults with python-axis values derived from
+    ``python_version``.  ``platform_release`` and ``platform_version``
+    come from the :class:`PlatformSpec`; both default to ``""`` so
+    kernel-conditioned markers evaluate False unless the user declares a
+    target kernel/OS version.
 
     ``python_full_version`` overrides the default ``{minor}.0`` value.
     Used when the matrix declares ``python_patches`` to make
-    patch-bound markers (``python_full_version >= "3.11.4"``)
-    evaluate against the user's actual deployment patch release.
+    patch-bound markers (``python_full_version >= "3.11.4"``) evaluate
+    against the user's actual deployment patch release.
+
+    ``implementation_version`` is set to the Python version for every
+    implementation; for non-CPython this is the interpreter's Python
+    level, not its own release (PyPy 7.3.x), so the rare
+    ``implementation_version`` marker on PyPy may misevaluate.
     """
     full = python_full_version or f"{python_version}.0"
     return {
         **_PLATFORM_DEFAULTS[spec.platform_id],
+        **_IMPLEMENTATION_DEFAULTS[implementation],
         "python_version": python_version,
         "python_full_version": full,
         "implementation_version": full,
