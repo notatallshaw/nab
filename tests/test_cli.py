@@ -585,6 +585,23 @@ class TestLockCommandUniversal:
             lock(pyproject, output=tmp_path / "pylock.toml")
         assert "Cannot lock" in capsys.readouterr().err
 
+    def test_unsupported_vcs_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A direct-URL requirement refused in universal mode exits cleanly."""
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=UnsupportedVcsError("refusing direct-URL requirement"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "refusing direct-URL requirement" in err
+
     def test_per_tuple_pins_to_stdout_by_default(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

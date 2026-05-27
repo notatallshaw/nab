@@ -26,6 +26,7 @@ from nab_python.provider import (
     LocalSource,
     MissingExtraError,
     UnsupportedSdistError,
+    UnsupportedVcsError,
     VcsConfig,
     VcsPolicy,
     VcsSource,
@@ -164,6 +165,9 @@ class TestWarnExtraMarkerAtRoot:
         assert any("extra" in rec.message.lower() for rec in caplog.records)
 
 
+_FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
 class TestParseRequirements:
     """``_parse_requirements`` builds the resolver-input dict per env."""
 
@@ -241,6 +245,43 @@ class TestParseRequirements:
         env = _linux_311().environment
         out = _parse_requirements(["pkg[My_Extra]"], env)
         assert "pkg[my-extra]" in out
+
+    def test_plain_url_requirement_refused(self) -> None:
+        """A plain archive URL is refused as an unsupported scheme."""
+        env = _linux_311().environment
+        with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
+            _parse_requirements(["pkg @ https://example.com/pkg.whl"], env)
+
+    def test_vcs_url_refused_by_default_policy(self) -> None:
+        """A git+https requirement is refused under the default BLOCK policy."""
+        env = _linux_311().environment
+        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+            _parse_requirements(
+                [f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"], env
+            )
+
+    def test_url_constraint_refused(self) -> None:
+        """A direct-URL constraint is refused the same way as a requirement."""
+        env = _linux_311().environment
+        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+            _parse_requirements(
+                [f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"],
+                env,
+                kind="constraint",
+            )
+
+    def test_admitted_vcs_url_raises_not_implemented(self) -> None:
+        """An admitted VCS requirement still has no universal resolve path."""
+        env = _linux_311().environment
+        vcs_config = VcsConfig(
+            policy=VcsPolicy.ALLOW, allowed_schemes=frozenset({"git+https"})
+        )
+        with pytest.raises(NotImplementedError, match="not implemented"):
+            _parse_requirements(
+                [f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"],
+                env,
+                vcs_config=vcs_config,
+            )
 
 
 class TestRootExtras:
@@ -332,9 +373,6 @@ class TestResolveOneTuple:
         assert tr.error is not None
         assert "MissingSdistError" in tr.error
         assert tr.pins == {"pkg": Version("1.0")}
-
-
-_FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
 class TestVcsConfigPlumbing:
