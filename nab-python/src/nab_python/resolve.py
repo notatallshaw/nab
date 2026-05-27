@@ -161,7 +161,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         cache_dir=cache_dir,
         offline=offline,
         index_overrides=list(config.index_overrides),
-        marker_environment=dict(config.marker_environment) or None,
+        marker_environment=marker_environment,
     ) as coordinator:
         provider = Provider(
             coordinator,
