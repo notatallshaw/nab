@@ -181,6 +181,10 @@ class VcsPin:
     ``requested_revision`` is the human-readable ref (tag or branch)
     the user pinned, recorded only when it differs from ``commit_id``;
     informational per PEP 751 ``packages.vcs.requested-revision``.
+
+    ``vcs_type`` is the PEP 751 ``packages.vcs.type`` backend
+    (``git``/``hg``/``svn``/``bzr``), taken from the URL's ``<vcs>+``
+    scheme.
     """
 
     name: str
@@ -189,6 +193,7 @@ class VcsPin:
     commit_id: str
     subdirectory: str | None = None
     requested_revision: str | None = None
+    vcs_type: str = "git"
 
 
 PinShape = IndexPin | LocalPin | VcsPin

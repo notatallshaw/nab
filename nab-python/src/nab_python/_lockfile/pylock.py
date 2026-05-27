@@ -199,7 +199,7 @@ def _pin_to_package(
             version=None,
             marker=marker,
             vcs=PackageVcs(
-                type="git",
+                type=pin.vcs_type,
                 url=pin.repo_url,
                 commit_id=pin.commit_id,
                 subdirectory=pin.subdirectory,
@@ -341,7 +341,13 @@ def _pin_discriminator(pin: PinShape) -> tuple:
     if isinstance(pin, VcsPin):
         # requested_revision is informational; it does not affect the
         # checkout, so it is intentionally left out of the discriminator.
-        return ("vcs", pin.commit_id, pin.repo_url, pin.subdirectory or "")
+        return (
+            "vcs",
+            pin.vcs_type,
+            pin.commit_id,
+            pin.repo_url,
+            pin.subdirectory or "",
+        )
     msg = f"unknown pin shape: {pin!r}"
     raise TypeError(msg)
 

@@ -449,4 +449,5 @@ def _vcs_pin_from_source(
         commit_id=resolved_sha,
         subdirectory=parsed.subdirectory or None,
         requested_revision=requested_revision,
+        vcs_type=parsed.scheme,
     )
