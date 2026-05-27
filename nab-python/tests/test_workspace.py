@@ -112,9 +112,24 @@ class TestReadWorkspaceMembers:
         )
         sources = read_workspace_members(root)
         assert sources == (
-            LocalSource(name="alpha", path=str(tmp_path / "a")),
-            LocalSource(name="beta", path=str(tmp_path / "sub" / "b")),
+            LocalSource(name="alpha", path=str(tmp_path / "a"), editable=True),
+            LocalSource(name="beta", path=str(tmp_path / "sub" / "b"), editable=True),
         )
+
+    def test_members_default_to_editable(self, tmp_path: Path) -> None:
+        # Workspace members install editably by default, matching uv.
+        root = _write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["a"]\n',
+        )
+        _write(
+            tmp_path / "a" / "pyproject.toml",
+            '[project]\nname = "alpha"\nversion = "0"\n',
+        )
+        (source,) = read_workspace_members(root)
+        assert source.editable is True
 
     def test_dot_member_resolves_to_root_directory(self, tmp_path: Path) -> None:
         # ``.`` as a member entry points at the workspace root itself.
@@ -131,8 +146,12 @@ class TestReadWorkspaceMembers:
         )
         sources = read_workspace_members(root)
         assert sources == (
-            LocalSource(name="apache-airflow", path=str(tmp_path)),
-            LocalSource(name="apache-airflow-core", path=str(tmp_path / "core")),
+            LocalSource(name="apache-airflow", path=str(tmp_path), editable=True),
+            LocalSource(
+                name="apache-airflow-core",
+                path=str(tmp_path / "core"),
+                editable=True,
+            ),
         )
 
     def test_glob_in_members_raises(self, tmp_path: Path) -> None:

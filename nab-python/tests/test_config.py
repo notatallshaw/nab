@@ -1202,7 +1202,7 @@ class TestWorkspaceDiscoveryIntegration:
         member = self._ws(tmp_path)
         config = read_pyproject_config(member)
         assert config.local_sources == (
-            LocalSource(name="alpha", path=str(member.parent)),
+            LocalSource(name="alpha", path=str(member.parent), editable=True),
         )
         assert config.build_policy is BuildPolicy.BUILD_LOCAL
 
