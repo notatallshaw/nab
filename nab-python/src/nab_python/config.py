@@ -821,6 +821,16 @@ def _parse_python_patches(value: object) -> dict[str, str] | None:
                 f" string -> string, got {k!r}: {v!r}"
             )
             raise ConfigError(msg)
+        try:
+            minor = Version(k)
+            full = Version(v)
+        except InvalidVersion as exc:
+            msg = f"matrix.python-patches expects version strings, got {k!r}: {v!r}"
+            raise ConfigError(msg) from exc
+
+        if full.release[:2] != minor.release[:2]:
+            msg = f"matrix.python-patches value {v!r} is not a patch release of {k!r}"
+            raise ConfigError(msg)
         out[k] = v
     return out
 
