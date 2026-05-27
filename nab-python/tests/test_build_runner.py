@@ -34,6 +34,7 @@ from nab_python._build.env import (
 from nab_python._build.runner import BuildBackendError, run_build_backend
 from nab_python.config import NabProjectConfig
 from nab_python.download import DownloadResult
+from nab_resolver.resolver import ResolutionError
 
 # A minimal, in-tree PEP 517 backend.  Implements
 # ``prepare_metadata_for_build_wheel`` only, enough to exercise
@@ -320,6 +321,44 @@ class TestRunBuildBackend:
         metadata = run_build_backend(tmp_path, config=config)
         assert metadata.name == "fake-dyn"
         assert str(metadata.version) == "9.9.9"
+
+    def test_build_env_setup_error_wrapped(
+        self, tmp_path: Path, config: NabProjectConfig
+    ) -> None:
+        """BuildEnvError during env setup is wrapped as BuildBackendError."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["setuptools"]\n'
+            'build-backend = "setuptools.build_meta"\n',
+            encoding="utf-8",
+        )
+        env = MagicMock()
+        env.__enter__ = MagicMock(side_effect=BuildEnvError("sdist-only build dep"))
+        env.__exit__ = MagicMock(return_value=None)
+        with (
+            patch("nab_python._build.runner.NabBuildEnv", return_value=env),
+            pytest.raises(BuildBackendError, match="build env setup"),
+        ):
+            run_build_backend(tmp_path, config=config)
+
+    def test_build_env_resolution_error_wrapped(
+        self, tmp_path: Path, config: NabProjectConfig
+    ) -> None:
+        """ResolutionError from build deps is wrapped as BuildBackendError."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["does-not-exist"]\n'
+            'build-backend = "setuptools.build_meta"\n',
+            encoding="utf-8",
+        )
+        env = MagicMock()
+        env.__enter__ = MagicMock(
+            side_effect=ResolutionError("no solution for build deps")
+        )
+        env.__exit__ = MagicMock(return_value=None)
+        with (
+            patch("nab_python._build.runner.NabBuildEnv", return_value=env),
+            pytest.raises(BuildBackendError, match="build env setup"),
+        ):
+            run_build_backend(tmp_path, config=config)
 
 
 class TestShouldSkipPrepare:
