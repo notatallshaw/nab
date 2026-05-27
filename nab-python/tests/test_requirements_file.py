@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python.requirements_file import (
+    InvalidProjectRequirementError,
     expand_self_extras,
     raise_for_unsatisfiable,
     read_pyproject_dependencies,
@@ -21,8 +24,6 @@ from nab_resolver.errors import ResolutionError
 class TestReadPyprojectDependencies:
     def test_reads_dependencies(self, tmp_path: object) -> None:
         """Parse [project].dependencies from a valid pyproject.toml."""
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text(
             '[project]\ndependencies = ["requests>=2.0", "click"]\n',
@@ -34,16 +35,12 @@ class TestReadPyprojectDependencies:
 
     def test_missing_file_raises(self, tmp_path: object) -> None:
         """Raise FileNotFoundError for missing pyproject.toml."""
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "missing.toml"
         with pytest.raises(FileNotFoundError):
             read_pyproject_dependencies(p)
 
     def test_missing_project_section_raises(self, tmp_path: object) -> None:
         """Raise KeyError when [project] section is missing."""
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text("[build-system]\n")
         with pytest.raises(KeyError):
@@ -51,8 +48,6 @@ class TestReadPyprojectDependencies:
 
     def test_missing_dependencies_key_raises(self, tmp_path: object) -> None:
         """Raise KeyError when dependencies key is missing."""
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('[project]\nname = "foo"\n')
         with pytest.raises(KeyError):
@@ -60,18 +55,23 @@ class TestReadPyprojectDependencies:
 
     def test_empty_dependencies(self, tmp_path: object) -> None:
         """Return empty list when dependencies list is empty."""
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text("[project]\ndependencies = []\n")
         assert read_pyproject_dependencies(p) == []
+
+    def test_malformed_dependency_string_raises(self, tmp_path: object) -> None:
+        """A malformed PEP 508 string raises InvalidProjectRequirementError."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('[project]\ndependencies = ["requests >= 2.0 extra junk"]\n')
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"\[project\].dependencies"
+        ):
+            read_pyproject_dependencies(p)
 
 
 class TestReadPyprojectGroups:
     def test_reads_groups_table(self, tmp_path: object) -> None:
         """Parse [dependency-groups] from a valid pyproject.toml."""
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text(
             '[dependency-groups]\ndev = ["pytest", "ruff"]\ndocs = ["sphinx"]\n',
@@ -81,15 +81,11 @@ class TestReadPyprojectGroups:
         assert list(groups["dev"]) == ["pytest", "ruff"]
 
     def test_missing_table_returns_empty(self, tmp_path: object) -> None:
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('[project]\ndependencies = ["foo"]\n')
         assert read_pyproject_groups(p) == {}
 
     def test_non_table_value_raises(self, tmp_path: object) -> None:
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('dependency-groups = "not-a-table"\n')
         with pytest.raises(TypeError, match="must be a table"):
@@ -120,11 +116,15 @@ class TestResolveGroupsToRequirements:
         with pytest.raises(BaseException, match="nope"):
             resolve_groups_to_requirements({"dev": ["pytest"]}, ("nope",))
 
+    def test_malformed_requirement_string_raises(self) -> None:
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"\[dependency-groups\]"
+        ):
+            resolve_groups_to_requirements({"dev": ["pytest >= bad junk"]}, ("dev",))
+
 
 class TestReadPyprojectOptionalDependencies:
     def test_reads_optional_dependencies(self, tmp_path: object) -> None:
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text(
             "[project]\n"
@@ -139,15 +139,11 @@ class TestReadPyprojectOptionalDependencies:
         assert set(opt.keys()) == {"cpu", "gpu"}
 
     def test_missing_table_returns_empty(self, tmp_path: object) -> None:
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('[project]\ndependencies = ["foo"]\n')
         assert read_pyproject_optional_dependencies(p) == {}
 
     def test_non_table_value_raises(self, tmp_path: object) -> None:
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text(
             "[project]\n"
@@ -174,11 +170,13 @@ class TestSelectOptionalDependencies:
         with pytest.raises(LookupError, match="nope"):
             select_optional_dependencies({"cpu": ["torch"]}, ("nope",))
 
+    def test_malformed_requirement_string_raises(self) -> None:
+        with pytest.raises(InvalidProjectRequirementError, match="gpu"):
+            select_optional_dependencies({"gpu": ["torch >= bad junk"]}, ("gpu",))
+
 
 class TestReadPyprojectName:
     def test_reads_name(self, tmp_path: object) -> None:
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('[project]\nname = "mypkg"\nversion = "1.0"\n')
         assert read_pyproject_name(p) == "mypkg"
@@ -189,15 +187,11 @@ class TestReadPyprojectName:
         nab still reads ``[tool.nab]`` and friends from such files, so
         the helper has to tolerate the missing project table.
         """
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('[tool.nab]\nmode = "specific"\n')
         assert read_pyproject_name(p) is None
 
     def test_returns_none_when_name_missing(self, tmp_path: object) -> None:
-        from pathlib import Path
-
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('[project]\nversion = "1.0"\n')
         assert read_pyproject_name(p) is None
