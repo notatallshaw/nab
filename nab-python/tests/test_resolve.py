@@ -973,6 +973,17 @@ class TestLoadExtraRequirements:
         # the project's own extras-proxy.
         assert "pytest" in names
 
+    def test_selected_extra_name_canonicalized(self, tmp_path: Path) -> None:
+        """A --extra spelling differing only by case/separator still resolves."""
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            "[project]\nname = 'x'\n"
+            "[project.optional-dependencies]\n"
+            "my-extra = ['requests']\n"
+        )
+        reqs = _load_extra_requirements(path, ["My_Extra"])
+        assert [r.name for r in reqs] == ["requests"]
+
 
 class TestBuildResolverInputs:
     """``_build_resolver_inputs`` folds duplicate names by intersection."""

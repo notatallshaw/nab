@@ -174,6 +174,17 @@ class TestSelectOptionalDependencies:
         with pytest.raises(InvalidProjectRequirementError, match="gpu"):
             select_optional_dependencies({"gpu": ["torch >= bad junk"]}, ("gpu",))
 
+    def test_selected_extra_name_canonicalized(self) -> None:
+        """PEP 685: a request differing only by case/separator still matches."""
+        opt = {"my-extra": ["requests"]}
+        names = [r.name for r in select_optional_dependencies(opt, ("My_Extra",))]
+        assert names == ["requests"]
+
+    def test_declared_extra_key_canonicalized(self) -> None:
+        opt = {"My_Extra": ["requests"]}
+        names = [r.name for r in select_optional_dependencies(opt, ("my-extra",))]
+        assert names == ["requests"]
+
 
 class TestReadPyprojectName:
     def test_reads_name(self, tmp_path: object) -> None:
@@ -224,6 +235,15 @@ class TestExpandSelfExtras:
         """PEP 503 canonicalisation makes ``my_pkg``/``My.Pkg``/``mypkg`` all match."""
         opt = {"all": ["My.Pkg[a]"], "a": ["depA"]}
         assert expand_self_extras(opt, "my_pkg", ["all"]) == ["all", "a"]
+
+    def test_self_reference_extra_name_canonicalized(self) -> None:
+        """A self-ref naming an extra non-canonically still walks it (PEP 685)."""
+        opt = {
+            "all": ["mypkg[Sub-Extra]"],
+            "sub-extra": ["mypkg[Deep]"],
+            "deep": ["depX"],
+        }
+        assert expand_self_extras(opt, "mypkg", ["all"]) == ["all", "sub-extra", "deep"]
 
     def test_chain_of_self_references(self) -> None:
         opt = {

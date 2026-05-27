@@ -92,20 +92,34 @@ def read_pyproject_optional_dependencies(
     return raw
 
 
+def _canonicalize_optional_deps(
+    optional_deps: Mapping[str, Sequence[str]],
+) -> dict[str, list[str]]:
+    """Map each extra name to its requirements under PEP 685 normalization."""
+    canonical: dict[str, list[str]] = {}
+    for name, reqs in optional_deps.items():
+        canonical.setdefault(canonicalize_name(name), []).extend(reqs)
+    return canonical
+
+
 def select_optional_dependencies(
     optional_deps: Mapping[str, Sequence[str]],
     selected: Sequence[str],
 ) -> list[Requirement]:
     """Return the union of requirement strings for ``selected`` extras.
 
-    Unknown extra names raise ``LookupError``.  Returns an empty
-    list when ``selected`` is empty.
+    Extra names are compared under PEP 685 normalization, so
+    ``My_Extra`` selects a declared ``my-extra``.  Unknown extra names
+    raise ``LookupError``.  Returns an empty list when ``selected`` is
+    empty.
     """
     if not selected:
         return []
+    canonical_deps = _canonicalize_optional_deps(optional_deps)
     out: list[Requirement] = []
     for name in selected:
-        if name not in optional_deps:
+        canonical = canonicalize_name(name)
+        if canonical not in canonical_deps:
             msg = (
                 f"extra {name!r} is not declared in"
                 f" [project.optional-dependencies]; defined: {sorted(optional_deps)!r}"
@@ -113,7 +127,7 @@ def select_optional_dependencies(
             raise LookupError(msg)
         out.extend(
             _parse_requirements(
-                optional_deps[name],
+                canonical_deps[canonical],
                 f"[project.optional-dependencies] extra {name!r}",
             )
         )
@@ -147,23 +161,28 @@ def expand_self_extras(
     if project_name is None:
         return list(selected)
     canonical_project = canonicalize_name(project_name)
+    canonical_deps = _canonicalize_optional_deps(optional_deps)
     out: list[str] = []
     seen: set[str] = set()
-    worklist: list[str] = list(selected)
+    worklist: list[str] = [canonicalize_name(s) for s in selected]
     while worklist:
         extra = worklist.pop(0)
         if extra in seen:
             continue
         seen.add(extra)
         out.append(extra)
-        for req_str in optional_deps.get(extra, ()):
+        for req_str in canonical_deps.get(extra, ()):
             try:
                 req = Requirement(req_str)
             except (ValueError, TypeError):
                 continue
             if canonicalize_name(req.name) != canonical_project:
                 continue
-            worklist.extend(sub for sub in req.extras if sub not in seen)
+            worklist.extend(
+                canonicalize_name(sub)
+                for sub in req.extras
+                if canonicalize_name(sub) not in seen
+            )
     return out
 
 
