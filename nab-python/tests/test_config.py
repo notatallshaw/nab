@@ -53,6 +53,10 @@ class TestDefaults:
         config = read_pyproject_config(path)
         assert config == NabProjectConfig()
 
+    def test_non_table_tool_returns_defaults(self, tmp_path: Path) -> None:
+        path = write(tmp_path, 'tool = "not-a-table"\n')
+        assert read_pyproject_config(path) == NabProjectConfig()
+
 
 class TestMode:
     def test_specific_explicit(self, tmp_path: Path) -> None:
@@ -324,6 +328,10 @@ class TestReadLockAnchor:
 
     def test_non_table_tool_nab_returns_none(self, tmp_path: Path) -> None:
         path = write(tmp_path, 'tool = {nab = "oops"}\n')
+        assert read_pyproject_lock_anchor(path) is None
+
+    def test_non_table_tool_returns_none(self, tmp_path: Path) -> None:
+        path = write(tmp_path, 'tool = "oops"\n')
         assert read_pyproject_lock_anchor(path) is None
 
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:

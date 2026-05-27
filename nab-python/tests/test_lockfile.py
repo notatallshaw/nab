@@ -45,6 +45,7 @@ from nab_python.lockfile import (
     WheelArtifact,
     build_lock_input_from_provider,
     build_pylock,
+    read_lockfile_anchor,
     read_lockfile_packages,
     write_lock,
     write_requirements_with_hashes,
@@ -722,33 +723,23 @@ class TestReadLockfileAnchor:
     """``read_lockfile_anchor`` extracts ``[tool.nab].created-at``."""
 
     def test_returns_none_when_file_missing(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         assert read_lockfile_anchor(tmp_path / "missing.toml") is None
 
     def test_returns_none_when_file_is_directory(self, tmp_path: Path) -> None:
         # ``is_file`` returns False for directories; the helper skips.
-        from nab_python.lockfile import read_lockfile_anchor
-
         assert read_lockfile_anchor(tmp_path) is None
 
     def test_returns_none_when_toml_invalid(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "broken.toml"
         path.write_text("this is not [[[ valid TOML")
         assert read_lockfile_anchor(path) is None
 
     def test_returns_none_when_no_tool_nab(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text('lock-version = "1.0"\n')
         assert read_lockfile_anchor(path) is None
 
     def test_reads_offset_datetime(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text(
             "[tool.nab]\ncreated-at = 2026-05-01T00:00:00+00:00\n",
@@ -756,8 +747,6 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) == datetime(2026, 5, 1, tzinfo=timezone.utc)
 
     def test_reads_iso_string(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         # Some writers may emit the timestamp as a quoted string instead
         # of a TOML offset-date-time; the reader handles both shapes.
@@ -767,8 +756,6 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) == datetime(2026, 5, 1, tzinfo=timezone.utc)
 
     def test_naive_datetime_coerced_to_utc(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text(
             "[tool.nab]\ncreated-at = 2026-05-01T00:00:00\n",
@@ -776,8 +763,6 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) == datetime(2026, 5, 1, tzinfo=timezone.utc)
 
     def test_naive_iso_string_coerced_to_utc(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text(
             '[tool.nab]\ncreated-at = "2026-05-01T00:00:00"\n',
@@ -785,8 +770,6 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) == datetime(2026, 5, 1, tzinfo=timezone.utc)
 
     def test_invalid_iso_string_returns_none(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text(
             '[tool.nab]\ncreated-at = "not-a-date"\n',
@@ -794,10 +777,18 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) is None
 
     def test_non_datetime_value_returns_none(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text("[tool.nab]\ncreated-at = 1234\n")
+        assert read_lockfile_anchor(path) is None
+
+    def test_non_table_tool_returns_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "pylock.toml"
+        path.write_text('tool = "not-a-table"\n')
+        assert read_lockfile_anchor(path) is None
+
+    def test_non_table_tool_nab_returns_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "pylock.toml"
+        path.write_text('tool = {nab = "oops"}\n')
         assert read_lockfile_anchor(path) is None
 
 
