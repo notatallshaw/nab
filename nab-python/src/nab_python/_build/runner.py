@@ -37,8 +37,10 @@ from .._vendor.packaging.requirements import Requirement
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import InvalidVersion, Version
+from nab_resolver.resolver import ResolutionError
+
 from ..metadata import WheelMetadata
-from .env import NabBuildEnv
+from .env import BuildEnvError, NabBuildEnv
 from .errors import BuildBackendError
 
 if TYPE_CHECKING:
@@ -120,6 +122,9 @@ def run_build_backend(
                 return _parse_metadata(metadata_dir / "METADATA")
     except build.BuildBackendException as exc:
         msg = f"build backend {backend!r} failed: {exc}"
+        raise BuildBackendError(msg) from exc
+    except (BuildEnvError, ResolutionError) as exc:
+        msg = f"build env setup for {backend!r} failed: {exc}"
         raise BuildBackendError(msg) from exc
 
 
