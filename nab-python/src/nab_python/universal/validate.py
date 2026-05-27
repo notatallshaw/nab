@@ -344,7 +344,7 @@ def _metadata_is_pep643_static(
     if metadata.metadata_version is None:
         return False
     try:
-        major, minor = (int(p) for p in metadata.metadata_version.split(".", 1))
+        major, minor = (int(p) for p in metadata.metadata_version.split(".")[:2])
     except ValueError:
         return False
     if (major, minor) < _MIN_STATIC_METADATA_VERSION:

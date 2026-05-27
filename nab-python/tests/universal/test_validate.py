@@ -68,6 +68,12 @@ _STATIC_DEPS_METADATA = (
     "\n"
 )
 
+# Same as above but with a micro component on Metadata-Version.
+# 2.2.1 is still >= 2.2, so it qualifies for the static fast path.
+_STATIC_DEPS_METADATA_MICRO = _STATIC_DEPS_METADATA.replace(
+    "Metadata-Version: 2.2", "Metadata-Version: 2.2.1"
+)
+
 
 def _wheel(filename: str) -> WheelFile:
     parts = filename.split("-")
@@ -442,6 +448,15 @@ class TestStaticSdistAuthoritative:
         report = validate_lock(result, coordinator)
         # 2.1 metadata cannot use the fast path.
         assert report.findings[0].status == "ok"
+
+    def test_micro_metadata_version_qualifies(self) -> None:
+        """A Metadata-Version with a micro part (2.2.1) is still >= 2.2."""
+        from nab_python.universal.validate import _baseline_has_static_deps
+
+        wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        coordinator = _make_coordinator({"pkg": [wheel]})
+        coordinator.index.store_metadata("pkg", "1.0", _STATIC_DEPS_METADATA_MICRO)
+        assert _baseline_has_static_deps(coordinator, "pkg", Version("1.0")) is True
 
     def test_malformed_metadata_falls_through(self) -> None:
         """Garbage metadata never enters the fast path."""
