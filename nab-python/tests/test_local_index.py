@@ -197,6 +197,14 @@ class TestPep503Directory:
         assert len(result) == 1
         assert result[0].hashes == (("sha256", digest),)
 
+    def test_pep503_hash_fragment_lowercased(self, tmp_path: Path) -> None:
+        body = f'<a href="foo-1.0-py3-none-any.whl#sha256={"A" * 64}">foo</a>'
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert result[0].hashes == (("sha256", "a" * 64),)
+
     def test_pep503_hash_fragment_on_https_href(self, tmp_path: Path) -> None:
         digest = "b" * 64
         body = (
