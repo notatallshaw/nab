@@ -333,3 +333,19 @@ platforms = ["linux_x86_64"]
 requirements = ["apache-airflow-providers-amazon", "numpy"]
 datetime = "2024-09-01 00:00:00"
 align_across_tuples = true
+
+[numpy-wide-python-diverge]
+reason = "py-minor version-floor divergence; tests matrix divergence path"
+python = ">=3.9, <3.14"
+platforms = ["linux_x86_64"]
+requirements = ["numpy", "scipy", "pandas"]
+datetime = "2025-06-01 00:00:00"
+align_across_tuples = false
+
+[numpy-wide-python-align]
+reason = "same as numpy-wide-python-diverge with alignment; measures alignment cost"
+python = ">=3.9, <3.14"
+platforms = ["linux_x86_64"]
+requirements = ["numpy", "scipy", "pandas"]
+datetime = "2025-06-01 00:00:00"
+align_across_tuples = true
