@@ -156,7 +156,7 @@ def _full_marker_environment(
 _PYTHON_VERSION_PARTS = 2
 
 
-def _scenario_marker_env(
+def scenario_marker_env(
     python_version: str,
     overlay: dict[str, str],
 ) -> dict[str, str]:
@@ -582,7 +582,7 @@ def process_scenario(
 
     print(f"  {scenario_name} ", end="", flush=True)
 
-    requirement_marker_env = _scenario_marker_env(python_version, marker_environment)
+    requirement_marker_env = scenario_marker_env(python_version, marker_environment)
     requirements = parse_requirements(
         requirement_strings,
         vcs_config=vcs_config,
