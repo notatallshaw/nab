@@ -46,6 +46,10 @@ def download(
     download is idempotent: files whose sha256 already matches are
     left alone.  Local and VCS pins are skipped.
     """
+    if max_concurrency < 1:
+        sys.stderr.write("Error: --max-concurrency must be at least 1.\n")
+        sys.exit(1)
+
     config = _cli._load_config(  # noqa: SLF001
         path, discover_workspace=workspace_discovery
     )
