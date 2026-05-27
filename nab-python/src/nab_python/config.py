@@ -30,6 +30,7 @@ from .provider import (
     VcsPolicy,
     VcsSource,
 )
+from .universal.matrix import Matrix
 from .workspace import (
     WorkspaceConfig,
     auto_promote_build_policy_for_workspace,
@@ -869,13 +870,33 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
         raise ConfigError(msg)
     patches = _parse_python_patches(value.get("python-patches"))
     implementations = _parse_implementations(value.get("implementations"))
-    return MatrixConfig(
+    config = MatrixConfig(
         python=python,
         platforms=platforms,
         python_order=python_order,
         python_patches=patches,
         implementations=implementations,
     )
+    _validate_matrix_axes(config)
+    return config
+
+
+def _validate_matrix_axes(config: MatrixConfig) -> None:
+    """Expand the matrix eagerly to catch bad axes at parse time."""
+    matrix = Matrix(
+        python=config.python,
+        platforms=config.platforms,
+        python_order=config.python_order,
+        python_patches=dict(config.python_patches)
+        if config.python_patches is not None
+        else None,
+        implementations=config.implementations,
+    )
+    try:
+        matrix.expand()
+    except ValueError as exc:
+        msg = f"invalid [tool.nab.matrix]: {exc}"
+        raise ConfigError(msg) from exc
 
 
 _KNOWN_IMPLEMENTATIONS = ("cpython", "pypy")
