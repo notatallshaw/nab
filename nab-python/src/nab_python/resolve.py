@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import logging
 import sys
@@ -30,6 +31,7 @@ from .provider import (
     Provider,
     ResolutionStrategy,
     join_extra,
+    python_axis_environment,
     split_extra,
 )
 from .requirements_file import (
@@ -490,9 +492,6 @@ def _build_resolver_inputs(
     return resolver_requirements, root_extras
 
 
-_PYTHON_VERSION_PARTS = 2
-
-
 def _build_marker_environment(
     *,
     python_version: str,
@@ -510,17 +509,8 @@ def _build_marker_environment(
         for key, value in default_environment().items()
         if isinstance(value, str)
     }
-    try:
-        release = Version(python_version).release
-    except InvalidVersion:
-        pass
-    else:
-        env["python_version"] = (
-            f"{release[0]}.{release[1]}"
-            if len(release) >= _PYTHON_VERSION_PARTS
-            else python_version
-        )
-        env["python_full_version"] = python_version
+    with contextlib.suppress(InvalidVersion):
+        env.update(python_axis_environment(python_version))
     env.update(overrides)
     return env
 
