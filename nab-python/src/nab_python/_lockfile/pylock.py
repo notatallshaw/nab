@@ -194,13 +194,15 @@ def _pin_to_package(
         )
     if isinstance(pin, VcsPin):
         # PEP 751: omit version for VCS sources for the same reason.
+        # vcs.url is the bare repository URL; the ref and subdirectory
+        # travel in their own fields below.
         return Package(
             name=canonicalize_name(pin.name),
             version=None,
             marker=marker,
             vcs=PackageVcs(
                 type=pin.vcs_type,
-                url=pin.repo_url,
+                url=pin.bare_repo_url,
                 commit_id=pin.commit_id,
                 subdirectory=pin.subdirectory,
                 requested_revision=pin.requested_revision,

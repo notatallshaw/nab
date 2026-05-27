@@ -133,6 +133,7 @@ class TestIterArtifacts:
                             name="foo",
                             version="1.0",
                             repo_url="git+https://x/y.git",
+                            bare_repo_url="https://x/y.git",
                             commit_id="a" * 40,
                         ),
                     },
