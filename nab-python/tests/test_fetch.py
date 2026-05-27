@@ -228,17 +228,21 @@ class TestFetchCoordinator:
 
     @respx.mock
     def test_request_listing_deduplicates(self) -> None:
+        """A request whose key is already pending reuses that pending.
+
+        Pre-creating the pending makes the dedup path fire without
+        racing the fetcher thread: the listing is not yet cached, so
+        the cached early-return is skipped, but ``get_or_create_pending``
+        reports the key already exists and no fetch is submitted.
+        """
         route = respx.get("https://pypi.org/simple/testpkg/").mock(
             return_value=httpx.Response(200, json=LISTING_JSON)
         )
         with _coord() as coord:
-            e1 = coord.request_listing("testpkg")
-            e2 = coord.request_listing("testpkg")
-            e1.wait(timeout=5)
-            e2.wait(timeout=5)
-            # call_count proves dedup without assuming the fetcher thread
-            # cannot interleave between the two Python calls.
-            assert route.call_count == 1
+            pending, _ = coord.index.get_or_create_pending("listing:testpkg")
+            event = coord.request_listing("testpkg")
+            assert event is pending.event
+            assert route.call_count == 0
 
     @respx.mock
     def test_request_metadata(self) -> None:
@@ -297,31 +301,28 @@ class TestFetchCoordinator:
 
     @respx.mock
     def test_request_wheel_metadata_deduplicates(self) -> None:
-        """A second concurrent per-wheel fetch reuses the in-flight event."""
+        """A per-wheel fetch whose sentinel key is pending reuses it.
 
-        async def slow(request: httpx.Request) -> httpx.Response:
-            # Hold the response so the second call observes the pending
-            # entry instead of a cached result (otherwise Windows wins
-            # the race and exercises the cached early-return path only).
-            await asyncio.sleep(0.2)
-            return httpx.Response(200, text=METADATA_TEXT)
-
+        The sentinel-keyed metadata is not yet stored, so the cached
+        early-return is skipped, but the pre-created pending makes
+        ``get_or_create_pending`` report the key exists, so no fetch
+        is submitted.
+        """
         route = respx.get(
             "https://files.example.com/dup-1.0-py3-none-any.whl.metadata"
-        ).mock(side_effect=slow)
+        ).mock(return_value=httpx.Response(200, text=METADATA_TEXT))
         with _coord() as coord:
-            args = (
+            pending, _ = coord.index.get_or_create_pending(
+                "metadata:dup:1.0#dup-1.0-py3-none-any.whl"
+            )
+            event = coord.request_wheel_metadata(
                 "dup",
                 "1.0",
                 "dup-1.0-py3-none-any.whl",
                 "https://files.example.com/dup-1.0-py3-none-any.whl.metadata",
             )
-            e1 = coord.request_wheel_metadata(*args)
-            e2 = coord.request_wheel_metadata(*args)
-            e1.wait(timeout=5)
-            e2.wait(timeout=5)
-            # See test_request_listing_deduplicates for why ``is`` is not asserted.
-            assert route.call_count == 1
+            assert event is pending.event
+            assert route.call_count == 0
 
     @respx.mock
     def test_request_metadata_none_url(self) -> None:
