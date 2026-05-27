@@ -254,6 +254,13 @@ class TestUploadedPriorTo:
         with pytest.raises(ConfigError, match="must be an ISO 8601 datetime"):
             read_pyproject_config(path)
 
+    def test_duration_overflow_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[tool.nab]\nuploaded-prior-to = "P99999999999999999999D"\n'
+        )
+        with pytest.raises(ConfigError, match="duration is too large"):
+            read_pyproject_config(path)
+
     def test_invalid_string_rejected(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nuploaded-prior-to = "not-a-date"\n')
         with pytest.raises(ConfigError, match="must be an ISO 8601 datetime"):
