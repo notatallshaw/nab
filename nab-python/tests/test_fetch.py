@@ -352,8 +352,8 @@ class TestFetchCoordinator:
         with _coord() as coord:
             results = coord.request_metadata_batch(
                 [
-                    ("pkg-a", "1.0", "https://f.com/a.metadata"),
-                    ("pkg-b", "2.0", "https://f.com/b.metadata"),
+                    ("pkg-a", "1.0", "https://f.com/a.metadata", None),
+                    ("pkg-b", "2.0", "https://f.com/b.metadata", None),
                 ]
             )
             assert len(results) == 2
@@ -368,7 +368,7 @@ class TestFetchCoordinator:
             coord.index.store_metadata("cached", "1.0", "already")
             results = coord.request_metadata_batch(
                 [
-                    ("cached", "1.0", "https://f.com/c.metadata"),
+                    ("cached", "1.0", "https://f.com/c.metadata", None),
                 ]
             )
             assert len(results) == 1
@@ -473,8 +473,8 @@ class TestFetchCoordinator:
             e1 = coord.request_metadata("a", "1", "https://f.com/a")
             results = coord.request_metadata_batch(
                 [
-                    ("b", "1", "https://f.com/b"),
-                    ("c", "1", "https://f.com/c"),
+                    ("b", "1", "https://f.com/b", None),
+                    ("c", "1", "https://f.com/c", None),
                 ]
             )
             e1.wait(timeout=5)
@@ -810,8 +810,8 @@ class TestFetchCoordinator:
             coord.index.get_or_create_pending("metadata:a:1.0")
             results = coord.request_metadata_batch(
                 [
-                    ("a", "1.0", "https://f.com/a"),
-                    ("b", "1.0", "https://f.com/b"),
+                    ("a", "1.0", "https://f.com/a", None),
+                    ("b", "1.0", "https://f.com/b", None),
                 ]
             )
             for _, _, ev in results:

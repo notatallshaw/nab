@@ -7,6 +7,7 @@ Transport-agnostic: any async HTTP client implementing the
 
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 import sys
@@ -32,10 +33,15 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_INDEX",
     "AsyncSimpleClient",
+    "MetadataHashMismatchError",
     "SdistFile",
     "WheelFile",
     "extract_sdist_archive",
 ]
+
+
+class MetadataHashMismatchError(Exception):
+    """Fetched PEP 658 metadata did not match its published hash."""
 
 
 # Mirrors packaging.utils._build_tag_regex: PEP 427 build numbers start with a digit.
@@ -147,6 +153,11 @@ class WheelFile:
     index, and ``None`` for one fetched from a remote index.  It lets
     downstream code use the path directly instead of reversing the
     ``file:`` URL, which is lossy across platforms.
+
+    ``metadata_hash`` is the published ``(algorithm, hex_digest)`` for
+    the PEP 658/714 sidecar, or ``None`` when the index advertised the
+    sidecar without a hash.  The fetcher verifies the sidecar bytes
+    against it.
     """
 
     filename: str
@@ -158,6 +169,7 @@ class WheelFile:
     hashes: tuple[tuple[str, str], ...] = ()
     size: int | None = None
     local_path: Path | None = None
+    metadata_hash: tuple[str, str] | None = None
 
     @property
     def metadata_url(self) -> str | None:
@@ -289,6 +301,7 @@ def _parse_files(
                     upload_time=file_info.get("upload-time"),
                     hashes=hashes,
                     size=size,
+                    metadata_hash=_metadata_hash(file_info),
                 )
             )
             continue
@@ -353,6 +366,31 @@ def _has_metadata(file_info: dict) -> bool:
         if value is True or isinstance(value, dict):
             return True
     return False
+
+
+def _metadata_hash(file_info: dict) -> tuple[str, str] | None:
+    """Return the sidecar's published ``(algo, hex)`` to verify, or None.
+
+    Only sha256 is checked: it is what PyPI publishes for core metadata
+    and what pip verifies.  A bare ``true`` (sidecar exists, no hash)
+    or a table without sha256 yields None, so no check runs.
+    """
+    for key in ("core-metadata", "data-dist-info-metadata"):
+        value = file_info.get(key)
+        if isinstance(value, dict):
+            digest = value.get("sha256")
+            if isinstance(digest, str):
+                return ("sha256", digest.lower())
+    return None
+
+
+def _verify_metadata_hash(content: bytes, metadata_hash: tuple[str, str]) -> None:
+    """Raise :class:`MetadataHashMismatchError` if ``content`` fails the hash."""
+    algo, expected = metadata_hash
+    actual = hashlib.new(algo, content).hexdigest()
+    if actual != expected:
+        msg = f"metadata {algo} mismatch: expected {expected}, got {actual}"
+        raise MetadataHashMismatchError(msg)
 
 
 def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:

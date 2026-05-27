@@ -128,7 +128,7 @@ def prefetch_root_batch(
     # Provider in at the top would create an import cycle.
     from ..provider import Provider as _Provider
 
-    items: list[tuple[str, str, str]] = []
+    items: list[tuple[str, str, str, tuple[str, str] | None]] = []
     for version, dist in versions:
         if len(items) >= _Provider.PREFETCH_BATCH:
             break
@@ -137,7 +137,9 @@ def prefetch_root_batch(
         if (normalized, version) in provider.deps_cache:
             continue
         if isinstance(dist, WheelFile) and dist.metadata_url is not None:
-            items.append((normalized, dist.version, dist.metadata_url))
+            items.append(
+                (normalized, dist.version, dist.metadata_url, dist.metadata_hash)
+            )
     if items:
         provider.coordinator.request_metadata_batch(items)
 
@@ -162,7 +164,7 @@ def prefetch_transitive_best(
         and dist.metadata_url is not None
     ):
         provider.coordinator.request_metadata(
-            normalized, dist.version, dist.metadata_url
+            normalized, dist.version, dist.metadata_url, dist.metadata_hash
         )
 
 
@@ -339,7 +341,7 @@ def prefetch_walk_ahead(
         return
     wheel_for_v = _first_wheel_per_version(versions_list)
     coordinator_index = provider.coordinator.index
-    items: list[tuple[str, str, str]] = []
+    items: list[tuple[str, str, str, tuple[str, str] | None]] = []
     seen_versions: set[Version] = set()
     for version, _ in versions_list:
         if version in seen_versions:
@@ -355,7 +357,7 @@ def prefetch_walk_ahead(
         # ``_first_wheel_per_version`` filters out wheels without metadata_url.
         metadata_url = wheel.metadata_url
         assert metadata_url is not None
-        items.append((normalized, wheel.version, metadata_url))
+        items.append((normalized, wheel.version, metadata_url, wheel.metadata_hash))
     if items:
         provider.coordinator.request_metadata_batch(items)
 
@@ -372,14 +374,16 @@ def prefetch_batch(
     as a single queue item and are processed concurrently.
     Returns list of (version, ver_str, event) for submitted requests.
     """
-    items: list[tuple[str, str, str]] = []
+    items: list[tuple[str, str, str, tuple[str, str] | None]] = []
     version_map: list[tuple[Version, str]] = []
     for v in versions:
         if (package, v) in provider.deps_cache or v not in wheel_by_version_map:
             continue
         wheel = wheel_by_version_map[v]
         if isinstance(wheel, WheelFile) and wheel.metadata_url is not None:
-            items.append((package, wheel.version, wheel.metadata_url))
+            items.append(
+                (package, wheel.version, wheel.metadata_url, wheel.metadata_hash)
+            )
             version_map.append((v, wheel.version))
 
     if not items:

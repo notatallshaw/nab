@@ -62,7 +62,7 @@ def resolve_metadata(
 
     if isinstance(dist, WheelFile) and dist.metadata_url is not None:
         event = provider.coordinator.request_metadata(
-            normalized, ver_str, dist.metadata_url
+            normalized, ver_str, dist.metadata_url, dist.metadata_hash
         )
         event.wait()
         metadata_text = provider.coordinator.index.get_metadata(normalized, ver_str)

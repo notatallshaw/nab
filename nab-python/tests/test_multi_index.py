@@ -48,7 +48,11 @@ class FakeClient:
         return list(self.listing.get(_normalise_name(package), []))
 
     async def get_metadata_text(
-        self, package: str, version: str, metadata_url: str
+        self,
+        package: str,
+        version: str,
+        metadata_url: str,
+        metadata_hash: tuple[str, str] | None = None,
     ) -> str:
         self.metadata_calls.append((package, version, metadata_url))
         return f"meta:{package}:{version}"

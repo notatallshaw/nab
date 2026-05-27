@@ -52,7 +52,11 @@ class IndexClient(Protocol):
         ...
 
     async def get_metadata_text(
-        self, package: str, version: str, metadata_url: str
+        self,
+        package: str,
+        version: str,
+        metadata_url: str,
+        metadata_hash: tuple[str, str] | None = None,
     ) -> str:
         """Return the metadata text for a wheel."""
         ...
@@ -199,10 +203,11 @@ class MultiIndexClient:
         package: str,
         version: str,
         metadata_url: str,
+        metadata_hash: tuple[str, str] | None = None,
     ) -> str:
         """Forward to the routed client; presupposes ``get_files`` was called."""
         return await self._client_for(package).get_metadata_text(
-            package, version, metadata_url
+            package, version, metadata_url, metadata_hash
         )
 
     async def get_sdist_files(

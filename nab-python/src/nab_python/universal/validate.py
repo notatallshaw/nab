@@ -399,7 +399,11 @@ def _fetch_wheel_metadata(
     if wheel.metadata_url is None:
         return None
     event = coordinator.request_wheel_metadata(
-        normalized, str(version), wheel.filename, wheel.metadata_url
+        normalized,
+        str(version),
+        wheel.filename,
+        wheel.metadata_url,
+        wheel.metadata_hash,
     )
     event.wait()
     return coordinator.index.get_metadata(normalized, f"{version}#{wheel.filename}")

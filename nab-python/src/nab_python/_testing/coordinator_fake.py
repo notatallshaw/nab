@@ -108,17 +108,19 @@ def _wire_metadata_side_effects(
     def _request_listing(_pkg: str) -> threading.Event:
         return _done_event()
 
-    def _request_metadata(pkg: str, ver: str, _url: str) -> threading.Event:
+    def _request_metadata(
+        pkg: str, ver: str, _url: str, _hash: tuple[str, str] | None = None
+    ) -> threading.Event:
         text = resolve_metadata(pkg, ver)
         if text is not None:
             index.store_metadata(pkg, ver, text)
         return _done_event()
 
     def _request_metadata_batch(
-        items: list[tuple[str, str, str]],
+        items: list[tuple[str, str, str, tuple[str, str] | None]],
     ) -> list[tuple[str, str, threading.Event]]:
         results: list[tuple[str, str, threading.Event]] = []
-        for pkg, ver, _url in items:
+        for pkg, ver, _url, _hash in items:
             text = resolve_metadata(pkg, ver)
             if text is not None:
                 index.store_metadata(pkg, ver, text)
@@ -150,7 +152,11 @@ def _wire_sdist_side_effects(
         return _done_event()
 
     def _request_wheel_metadata(
-        pkg: str, ver: str, filename: str, _url: str
+        pkg: str,
+        ver: str,
+        filename: str,
+        _url: str,
+        _hash: tuple[str, str] | None = None,
     ) -> threading.Event:
         if filename in failures:
             index.store_metadata(pkg, f"{ver}#{filename}", None)

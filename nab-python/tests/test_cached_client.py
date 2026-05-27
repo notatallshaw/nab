@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import tarfile
@@ -18,7 +19,13 @@ from nab_index.cached_client import (
     _header,
     _parse_max_age,
 )
-from nab_index.client import SdistFile, WheelFile, _parse_files, _parse_sdist_filename
+from nab_index.client import (
+    MetadataHashMismatchError,
+    SdistFile,
+    WheelFile,
+    _parse_files,
+    _parse_sdist_filename,
+)
 
 LISTING = {
     "meta": {"api-version": "1.0"},
@@ -117,6 +124,57 @@ class TestHasMetadataFlag:
         from nab_index.client import _has_metadata
 
         assert not _has_metadata({})
+
+
+class TestMetadataHashParsing:
+    """``_metadata_hash`` carries the published sha256 to verify, or None."""
+
+    def test_sha256_lowercased(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({"core-metadata": {"sha256": "ABCD"}}) == (
+            "sha256",
+            "abcd",
+        )
+
+    def test_legacy_key_used(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({"data-dist-info-metadata": {"sha256": "ab"}}) == (
+            "sha256",
+            "ab",
+        )
+
+    def test_true_value_yields_none(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({"core-metadata": True}) is None
+
+    def test_other_algo_only_yields_none(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({"core-metadata": {"blake2b": "ab"}}) is None
+
+    def test_missing_field_yields_none(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({}) is None
+
+    def test_parse_files_populates_metadata_hash(self) -> None:
+        from nab_index.client import WheelFile, _parse_files
+
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": "https://example.com/foo-1.0-py3-none-any.whl",
+                    "core-metadata": {"sha256": "DEAD"},
+                },
+            ],
+        }
+        (wheel,) = _parse_files(data, "https://example.com/", "foo")
+        assert isinstance(wheel, WheelFile)
+        assert wheel.metadata_hash == ("sha256", "dead")
 
 
 class TestYankedFiltering:
@@ -699,6 +757,44 @@ class TestGetMetadataText:
 
         with pytest.raises(OfflineError, match="pkg==1.0"):
             asyncio.run(go())
+
+    def test_matching_hash_returns_and_caches(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        body = b"Metadata-Version: 2.1\nName: pkg\n"
+        digest = hashlib.sha256(body).hexdigest()
+        transport = _FakeTransport([_FakeResponse(body)])
+
+        async def go() -> str:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_metadata_text(
+                    "pkg", "1.0", "https://x/pkg.metadata", ("sha256", digest)
+                )
+            finally:
+                await client.aclose()
+
+        text = asyncio.run(go())
+        assert text == body.decode()
+        assert cache.get_metadata("pkg", "1.0") == text
+
+    def test_mismatching_hash_raises_and_skips_cache(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        digest = hashlib.sha256(b"Metadata-Version: 2.1\nName: pkg\n").hexdigest()
+        tampered = _FakeResponse(b"Metadata-Version: 2.1\nName: evil\n")
+        transport = _FakeTransport([tampered])
+
+        async def go() -> str:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_metadata_text(
+                    "pkg", "1.0", "https://x/pkg.metadata", ("sha256", digest)
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(MetadataHashMismatchError):
+            asyncio.run(go())
+        assert cache.get_metadata("pkg", "1.0") is None
 
 
 class TestGetSdistFiles:
