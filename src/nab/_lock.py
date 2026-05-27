@@ -35,6 +35,7 @@ from nab_python.lockfile import (
 )
 from nab_python.provider import ResolutionStrategy
 from nab_python.requirements_file import (
+    InvalidProjectRequirementError,
     read_pyproject_groups,
     read_pyproject_optional_dependencies,
 )
@@ -301,6 +302,9 @@ def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproj
         )
     except KeyError:
         sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
+        sys.exit(1)
+    except InvalidProjectRequirementError as e:
+        sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
     except LookupError as e:
         sys.stderr.write(f"Error: {e}\n")

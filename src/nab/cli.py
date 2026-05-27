@@ -35,6 +35,7 @@ from nab_python.lockfile import (
     write_requirements_without_hashes,  # noqa: F401 - re-exported for tests
 )
 from nab_python.provider import UnsupportedVcsError
+from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import (
     resolve_pyproject,
     resolve_universal_pyproject,  # noqa: F401 - re-exported for tests
@@ -176,6 +177,9 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
         sys.exit(1)
     except KeyError:
         sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
+        sys.exit(1)
+    except InvalidProjectRequirementError as e:
+        sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
     except LookupError as e:
         sys.stderr.write(f"Error: {e}\n")

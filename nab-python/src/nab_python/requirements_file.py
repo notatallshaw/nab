@@ -9,7 +9,7 @@ import tomli
 from nab_resolver.errors import ResolutionError
 
 from ._vendor.packaging.dependency_groups import resolve_dependency_groups
-from ._vendor.packaging.requirements import Requirement
+from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 from ._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ._vendor.packaging.ranges import VersionRange
 
 __all__ = [
+    "InvalidProjectRequirementError",
     "expand_self_extras",
     "raise_for_unsatisfiable",
     "read_pyproject_dependencies",
@@ -30,18 +31,32 @@ __all__ = [
 ]
 
 
+class InvalidProjectRequirementError(ValueError):
+    """A requirement string in pyproject.toml is not valid PEP 508."""
+
+
+def _parse_requirements(strings: Sequence[str], source: str) -> list[Requirement]:
+    """Parse PEP 508 strings, naming ``source`` if one is malformed."""
+    try:
+        return [Requirement(s) for s in strings]
+    except InvalidRequirement as exc:
+        msg = f"invalid requirement in {source}: {exc}"
+        raise InvalidProjectRequirementError(msg) from exc
+
+
 def read_pyproject_dependencies(path: Path) -> list[Requirement]:
     """Read [project].dependencies from a pyproject.toml file.
 
     Returns a list of Requirement objects parsed from the dependency
-    strings.  Raises FileNotFoundError if the file doesn't exist, or
-    KeyError if [project] or [project].dependencies is missing.
+    strings.  Raises FileNotFoundError if the file doesn't exist,
+    KeyError if [project] or [project].dependencies is missing, or
+    InvalidProjectRequirementError if a dependency string is malformed.
     """
     with path.open("rb") as f:
         data = tomli.load(f)
 
     dep_strings: list[str] = data["project"]["dependencies"]
-    return [Requirement(s) for s in dep_strings]
+    return _parse_requirements(dep_strings, "[project].dependencies")
 
 
 def read_pyproject_name(path: Path) -> str | None:
@@ -96,7 +111,12 @@ def select_optional_dependencies(
                 f" [project.optional-dependencies]; defined: {sorted(optional_deps)!r}"
             )
             raise LookupError(msg)
-        out.extend(Requirement(req_str) for req_str in optional_deps[name])
+        out.extend(
+            _parse_requirements(
+                optional_deps[name],
+                f"[project.optional-dependencies] extra {name!r}",
+            )
+        )
     return out
 
 
@@ -175,13 +195,18 @@ def resolve_groups_to_requirements(
 
     ``selected`` names the groups whose requirements should be
     expanded.  Unknown group names surface as :class:`LookupError`
-    from the vendored resolver.  Cyclic or malformed groups raise
-    the matching packaging error.  Returns an empty list when
+    from the vendored resolver and a malformed requirement string as
+    :class:`InvalidProjectRequirementError`; a cyclic include raises the
+    vendored resolver's error.  Returns an empty list when
     ``selected`` is empty.
     """
     if not selected:
         return []
-    resolved = resolve_dependency_groups(groups, *selected)
+    try:
+        resolved = resolve_dependency_groups(groups, *selected)
+    except InvalidRequirement as exc:
+        msg = f"invalid requirement in [dependency-groups]: {exc}"
+        raise InvalidProjectRequirementError(msg) from exc
     return [Requirement(s) for s in resolved]
 
 

@@ -46,6 +46,7 @@ from nab_python.lockfile import (
     WheelArtifact,
 )
 from nab_python.provider import ResolutionStrategy, UnsupportedVcsError
+from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import ResolutionResult
 from nab_python.universal.matrix import Matrix, MatrixTuple
 from nab_python.universal.resolve import TupleResult, UniversalResult
@@ -321,6 +322,21 @@ class TestLockCommandSpecific:
             lock(pyproject)
         assert "Cannot lock" in capsys.readouterr().err
 
+    def test_invalid_requirement_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A malformed dependency string exits 1 instead of tracebacking."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                side_effect=InvalidProjectRequirementError("invalid requirement 'x y'"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        assert "invalid requirement" in capsys.readouterr().err
+
     def test_lookup_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -369,6 +385,22 @@ class TestLockCommandSpecific:
 
 class TestLockCommandUniversal:
     """Tests for `nab lock` in universal mode."""
+
+    def test_invalid_requirement_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A malformed dependency string exits 1 instead of tracebacking."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=InvalidProjectRequirementError("invalid requirement 'x y'"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        assert "invalid requirement" in capsys.readouterr().err
 
     def test_pylock_writes_universal_lock(self, tmp_path: Path) -> None:
         """Universal + pylock format runs the real merge + write pipeline."""
