@@ -1008,6 +1008,51 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="matrix.python must be a string"):
             read_pyproject_config(path)
 
+    def _body_with_python(self, python: str) -> str:
+        return (
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            f"python = {python}\n"
+            'platforms = ["linux_x86_64"]\n'
+        )
+
+    def test_python_patch_level_rejected(self, tmp_path: Path) -> None:
+        body = self._body_with_python('">=3.11.5"')
+        with pytest.raises(ConfigError, match="minor \\(language\\) versions only"):
+            read_pyproject_config(write(tmp_path, body))
+
+    def test_python_exact_patch_rejected(self, tmp_path: Path) -> None:
+        body = self._body_with_python('"==3.11.0"')
+        with pytest.raises(ConfigError, match="minor \\(language\\) versions only"):
+            read_pyproject_config(write(tmp_path, body))
+
+    def test_python_minor_wildcard_allowed(self, tmp_path: Path) -> None:
+        matrix = read_pyproject_config(
+            write(tmp_path, self._body_with_python('"==3.11.*"'))
+        ).matrix
+        assert matrix is not None
+        assert matrix.python == "==3.11.*"
+
+    def test_python_not_a_specifier_rejected(self, tmp_path: Path) -> None:
+        body = self._body_with_python('"3.11"')
+        with pytest.raises(ConfigError, match="matrix.python must be a PEP 440"):
+            read_pyproject_config(write(tmp_path, body))
+
+    def test_python_arbitrary_equality_skipped(self, tmp_path: Path) -> None:
+        matrix = read_pyproject_config(
+            write(tmp_path, self._body_with_python('"===nightly"'))
+        ).matrix
+        assert matrix is not None
+        assert matrix.python == "===nightly"
+
+    def test_python_empty_specifier_allowed(self, tmp_path: Path) -> None:
+        matrix = read_pyproject_config(
+            write(tmp_path, self._body_with_python('""'))
+        ).matrix
+        assert matrix is not None
+        assert matrix.python == ""
+
     def test_empty_platforms(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,

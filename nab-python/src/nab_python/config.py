@@ -20,6 +20,7 @@ from nab_index.multi_index import IndexConfig
 
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
+from ._vendor.packaging.version import InvalidVersion, Version
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexOverride
 from .provider import (
     BuildPolicy,
@@ -836,6 +837,26 @@ def _parse_workspace(value: object) -> WorkspaceConfig | None:
     return WorkspaceConfig(members=members)
 
 
+_MINOR_RELEASE_PARTS = 2
+
+
+def _matrix_python_patch_clause(spec_set: SpecifierSet) -> str | None:
+    """Return the first clause pinning a patch (micro) version, else None.
+
+    The matrix python axis is minor-granular, so ``>=3.11.5`` would
+    silently exclude 3.11 entirely. A trailing ``.*`` wildcard targets a
+    minor and is allowed.
+    """
+    for clause in spec_set:
+        try:
+            release = Version(clause.version.removesuffix(".*")).release
+        except InvalidVersion:
+            continue
+        if len(release) > _MINOR_RELEASE_PARTS:
+            return str(clause)
+    return None
+
+
 def _parse_matrix(value: object) -> MatrixConfig | None:
     if value is None:
         return None
@@ -863,6 +884,18 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
         raise ConfigError(msg) from None
     if not isinstance(python, str):
         msg = "matrix.python must be a string PEP 440 specifier"
+        raise ConfigError(msg)
+    try:
+        spec_set = SpecifierSet(python)
+    except InvalidSpecifier as exc:
+        msg = f"matrix.python must be a PEP 440 specifier, got {python!r}"
+        raise ConfigError(msg) from exc
+    patched = _matrix_python_patch_clause(spec_set)
+    if patched is not None:
+        msg = (
+            f"matrix.python takes minor (language) versions only, got {patched!r}."
+            " The python axis is minor-granular; use 3.X, not a patch like 3.X.Y."
+        )
         raise ConfigError(msg)
     platforms = _parse_string_list("matrix.platforms", platforms_raw)
     if not platforms:
