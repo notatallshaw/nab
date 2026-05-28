@@ -143,6 +143,42 @@ class TestResolvePyproject:
         assert forwarded[0].name == "private"
         assert forwarded[0].url == "https://custom.index/simple/"
 
+    def test_coordinator_marker_env_includes_python_version(
+        self, tmp_path: Path
+    ) -> None:
+        """An index-override marker referencing python_version must evaluate.
+
+        The coordinator evaluates index-override markers, so it needs the
+        full environment (defaults plus the effective python), not just the
+        user's [tool.nab.marker-environment] overrides.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\ndependencies = ["baz"]\n'
+            "[[tool.nab.index-overrides]]\n"
+            'name = "baz"\n'
+            'index = "private"\n'
+            "marker = \"python_version >= '3.12'\"\n",
+        )
+
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("1.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+
+            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        env = mock_coord_cls.call_args.kwargs["marker_environment"]
+        assert env is not None
+        assert env.get("python_version") == "3.12"
+
     def test_arbitrary_equality_dep_passed_through(self, tmp_path: Path) -> None:
         """``===`` deps reach the resolver as literal-only ranges.
 
