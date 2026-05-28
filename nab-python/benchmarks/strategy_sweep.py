@@ -59,8 +59,12 @@ WALL_TIMEOUT_S = 60
 MAX_ITERATIONS = 50_000
 
 
-class _Timeout(Exception):
-    pass
+class _Timeout(BaseException):
+    """Raised when a scenario exceeds the per-run wall-clock budget.
+
+    Subclasses BaseException so the resolver's internal ``except Exception``
+    handlers cannot swallow the alarm mid-resolve.
+    """
 
 
 def _on_alarm(_signum: int, _frame: object) -> None:

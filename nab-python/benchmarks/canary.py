@@ -88,8 +88,12 @@ WALL_TIMEOUT_S = 60
 MAX_ITERATIONS = 50_000
 
 
-class _ScenarioTimeoutError(Exception):
-    pass
+class _ScenarioTimeoutError(BaseException):
+    """Raised when a scenario exceeds the per-run wall-clock budget.
+
+    Subclasses BaseException so the resolver's internal ``except Exception``
+    handlers cannot swallow the alarm mid-resolve.
+    """
 
 
 def _alarm_handler(_signum: int, _frame: object) -> None:
@@ -241,7 +245,7 @@ def run_one(
             success = True
             error = None
             packages = len(result)
-        except Exception as exc:
+        except (_ScenarioTimeoutError, Exception) as exc:
             elapsed = time.monotonic() - start
             success = False
             error = f"{type(exc).__name__}: {exc}"

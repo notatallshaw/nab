@@ -44,8 +44,12 @@ CACHE_DIR = BENCHMARKS_DIR / "cache"
 SCENARIO_WALL_TIMEOUT_SECONDS = 300
 
 
-class _ScenarioTimeoutError(Exception):
-    """Raised when a scenario exceeds the per-run wall-clock budget."""
+class _ScenarioTimeoutError(BaseException):
+    """Raised when a scenario exceeds the per-run wall-clock budget.
+
+    Subclasses BaseException so the resolver's internal ``except Exception``
+    handlers cannot swallow the alarm mid-resolve.
+    """
 
 
 def _alarm_handler(_signum: int, _frame: object) -> None:
