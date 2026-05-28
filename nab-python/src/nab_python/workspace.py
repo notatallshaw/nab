@@ -108,6 +108,10 @@ def read_workspace_members(root_pyproject: Path) -> tuple[LocalSource, ...]:
     :class:`WorkspaceDiscoveryError`.  The returned tuple preserves
     declaration order, which makes ``nab lock`` output stable when the
     list of members is itself stable.
+
+    Members are marked ``editable``; a workspace member installs
+    editably by default, matching uv.  Explicit
+    ``[[tool.nab.local-sources]]`` entries default to non-editable.
     """
     with root_pyproject.open("rb") as f:
         root_data = tomli.load(f)
@@ -168,7 +172,7 @@ def read_workspace_members(root_pyproject: Path) -> tuple[LocalSource, ...]:
             )
             raise WorkspaceDiscoveryError(msg)
         seen[canonical] = entry
-        sources.append(LocalSource(name=name, path=str(member_dir)))
+        sources.append(LocalSource(name=name, path=str(member_dir), editable=True))
     return tuple(sources)
 
 
