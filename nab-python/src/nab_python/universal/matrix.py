@@ -108,6 +108,7 @@ class MatrixTuple:
         default_factory=lambda: PlatformSpec("linux_x86_64"),
     )
     implementation: str = "cpython"
+    multi_implementation: bool = field(default=False, hash=False, compare=False)
 
     @property
     def label(self) -> str:
@@ -127,10 +128,11 @@ class MatrixTuple:
         Combines ``python_version``, ``sys_platform``, and
         ``platform_machine`` into a conjunction.  Universal lockfiles
         attach this to each per-tuple ``Package`` entry so an installer
-        on a matching environment picks the right pin.  A non-CPython
-        tuple also constrains ``implementation_name`` so its entry is
-        distinguishable from the CPython tuple for the same
-        python/platform.
+        on a matching environment picks the right pin.  When the matrix
+        models more than one implementation, every tuple constrains
+        ``implementation_name`` so the CPython and PyPy entries for the
+        same python/platform stay mutually exclusive; a sole-CPython
+        matrix omits the clause.
         """
         env = self.environment
         marker = (
@@ -138,7 +140,7 @@ class MatrixTuple:
             f' and sys_platform == "{env["sys_platform"]}"'
             f' and platform_machine == "{env["platform_machine"]}"'
         )
-        if self.implementation != "cpython":
+        if self.multi_implementation or self.implementation != "cpython":
             marker += f' and implementation_name == "{env["implementation_name"]}"'
         return marker
 
@@ -215,6 +217,7 @@ class Matrix:
         if self.python_order == "desc":
             py_versions.reverse()
         patches = self.python_patches or {}
+        multi_impl = len(self.implementations) > 1
         return [
             MatrixTuple(
                 python_version=py,
@@ -222,6 +225,7 @@ class Matrix:
                 environment=_build_environment(py, spec, impl, patches.get(py)),
                 platform_spec=spec,
                 implementation=impl,
+                multi_implementation=multi_impl,
             )
             for py in py_versions
             for spec in specs
