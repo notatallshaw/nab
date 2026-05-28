@@ -379,7 +379,11 @@ def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime | N
     duration_match = _DURATION_PATTERN.match(value)
     if duration_match is not None:
         days = int(duration_match.group(1))
-        return anchor - timedelta(days=days)
+        try:
+            return anchor - timedelta(days=days)
+        except OverflowError:
+            msg = f"uploaded-prior-to duration is too large: {value!r}"
+            raise ConfigError(msg) from None
     # Python 3.10's fromisoformat rejects a trailing 'Z'; 3.11+ accept it.
     iso_value = f"{value[:-1]}+00:00" if value.endswith("Z") else value
     try:
