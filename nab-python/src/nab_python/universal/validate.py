@@ -27,7 +27,7 @@ from .._vendor.packaging.requirements import (
     Requirement,
 )
 from .._vendor.packaging.utils import canonicalize_name
-from ..metadata import DEPENDENCY_FIELDS, load_static_project, parse_metadata
+from ..metadata import load_static_project, metadata_deps_are_static, parse_metadata
 from .wheel_selection import select_wheel_for_tuple
 
 if TYPE_CHECKING:
@@ -53,10 +53,6 @@ _ALWAYS_FATAL_STATUSES = frozenset({"no_compatible_wheel", "no_metadata"})
 # from sdist (BuildPolicy.NEVER).  These pins resolve fine if the
 # user has a build toolchain.
 _BUILD_REQUIRED_STATUSES = frozenset({"sdist_only", "no_compatible_wheel_with_sdist"})
-
-# Metadata-Version 2.2 introduced PEP 643's Dynamic field.  Earlier
-# versions have no static-deps guarantee.
-_MIN_STATIC_METADATA_VERSION = (2, 2)
 
 
 @dataclass(frozen=True)
@@ -341,15 +337,7 @@ def _metadata_is_pep643_static(
         metadata = parse_metadata(text)
     except Exception:  # noqa: BLE001
         return False
-    if metadata.metadata_version is None:
-        return False
-    try:
-        major, minor = (int(p) for p in metadata.metadata_version.split(".")[:2])
-    except ValueError:
-        return False
-    if (major, minor) < _MIN_STATIC_METADATA_VERSION:
-        return False
-    return not (DEPENDENCY_FIELDS & metadata.dynamic)
+    return metadata_deps_are_static(metadata)
 
 
 def _pyproject_is_pep621_static(

@@ -1235,6 +1235,23 @@ class TestBuildPolicyPackage:
         assert "Foo-Bar" not in config.build_policy_overrides
 
 
+class TestTrustUnverifiedSdistDeps:
+    def test_default_is_false(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\n")
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.trust_unverified_sdist_deps is False
+
+    def test_true_round_trip(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\ntrust-unverified-sdist-deps = true\n")
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.trust_unverified_sdist_deps is True
+
+    def test_non_bool_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\ntrust-unverified-sdist-deps = "yes"\n')
+        with pytest.raises(ConfigError, match="must be a boolean"):
+            read_pyproject_config(path, discover_workspace=False)
+
+
 class TestWorkspace:
     """``[tool.nab.workspace]`` parses into a typed :class:`WorkspaceConfig`."""
 

@@ -101,6 +101,11 @@ class UniversalProvider(Provider):
                     f" got {resolution_strategy!r}"
                 )
                 raise ValueError(msg) from exc
+        trust_unverified_sdist_deps = (
+            build_config.trust_unverified_sdist_deps
+            if build_config is not None
+            else False
+        )
         super().__init__(
             coordinator,
             python_version=marker_environment.get("python_version"),
@@ -113,6 +118,7 @@ class UniversalProvider(Provider):
             dist_policy_overrides=dist_policy_overrides,
             build_policy=build_policy,
             build_policy_overrides=build_policy_overrides,
+            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
             vcs_config=vcs_config,
             local_sources=local_sources,
             vcs_sources=vcs_sources,

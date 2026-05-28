@@ -215,6 +215,8 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
     index_overrides: list[IndexOverride] | None = None,
     build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
     resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
+    *,
+    trust_unverified_sdist_deps: bool = False,
 ) -> dict:
     """Resolve requirements and return stats dict."""
     direct_packages = frozenset(
@@ -235,6 +237,7 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             build_policy_overrides=build_policy_overrides,
+            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
             marker_environment=marker_environment,
             resolution_strategy=resolution_strategy,
             direct_packages=direct_packages,
@@ -316,6 +319,8 @@ def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
     index_overrides: list[IndexOverride],
     build_packages: list[str] | None = None,
     resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
+    *,
+    trust_unverified_sdist_deps: bool = False,
 ) -> dict:
     """Build the JSON-serialisable ``input`` block describing the scenario."""
     expected_input: dict = {
@@ -354,6 +359,8 @@ def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
         expected_input["build_packages"] = sorted(build_packages)
     if resolution_strategy is not ResolutionStrategy.HIGHEST:
         expected_input["resolution"] = resolution_strategy.value
+    if trust_unverified_sdist_deps:
+        expected_input["trust_unverified_sdist_deps"] = True
     return expected_input
 
 
@@ -536,6 +543,9 @@ def process_scenario(
             f" got {resolution_raw!r}"
         )
         raise ValueError(msg) from exc
+    trust_unverified_sdist_deps: bool = scenario.get(
+        "trust_unverified_sdist_deps", False
+    )
     optional_dependencies: dict[str, list[str]] = scenario.get(
         "optional_dependencies", {}
     )
@@ -573,6 +583,7 @@ def process_scenario(
         index_overrides,
         build_packages=sorted(build_policy_overrides),
         resolution_strategy=resolution_strategy,
+        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
     )
 
     if output_path.exists() and not force:
@@ -607,6 +618,7 @@ def process_scenario(
         index_overrides=index_overrides or None,
         build_policy_overrides=build_policy_overrides or None,
         resolution_strategy=resolution_strategy,
+        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
     )
     data["input"] = expected_input
 

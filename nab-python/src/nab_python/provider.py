@@ -417,6 +417,8 @@ class Provider:
         build_config: NabProjectConfig | None = None,
         resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
         direct_packages: frozenset[str] | None = None,
+        *,
+        trust_unverified_sdist_deps: bool = False,
     ) -> None:
         """Construct the provider; see the class docstring for parameters."""
         self.coordinator = coordinator
@@ -436,6 +438,9 @@ class Provider:
             dist_policy_overrides, "dist-policy"
         )
         self.build_policy = build_policy
+        # Opt-out: trust a pre-2.2 sdist's PKG-INFO deps as final instead of
+        # routing through the dynamic path. Off by default (strict PEP 643).
+        self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
         self._resolution_strategy = resolution_strategy
         self._direct_packages: frozenset[str] = direct_packages or frozenset()
 

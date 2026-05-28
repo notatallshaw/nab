@@ -18,6 +18,7 @@ from nab_index.client import SdistFile, WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.version import Version
+from nab_python.config import NabProjectConfig
 from nab_python.fetch import InMemoryIndex
 from nab_python.provider import (
     BuildPolicy,
@@ -112,6 +113,24 @@ class TestEnvironmentOverlay:
             marker_environment={"sys_platform": "win32"},
         )
         assert provider.env_with_extra["sys_platform"] == "win32"
+
+
+class TestTrustUnverifiedSdistDeps:
+    """The trust-unverified flag is taken from ``build_config``."""
+
+    def test_defaults_false_without_build_config(self) -> None:
+        coordinator = _make_coordinator([])
+        provider = UniversalProvider(coordinator, marker_environment=_LINUX_ENV)
+        assert provider.trust_unverified_sdist_deps is False
+
+    def test_taken_from_build_config(self) -> None:
+        coordinator = _make_coordinator([])
+        provider = UniversalProvider(
+            coordinator,
+            marker_environment=_LINUX_ENV,
+            build_config=NabProjectConfig(trust_unverified_sdist_deps=True),
+        )
+        assert provider.trust_unverified_sdist_deps is True
 
 
 class TestStrategyValidation:

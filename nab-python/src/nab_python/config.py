@@ -65,6 +65,7 @@ _TOP_LEVEL_KEYS = frozenset(
         "dist-policy-package",
         "build-policy",
         "build-policy-package",
+        "trust-unverified-sdist-deps",
         "marker-environment",
         "indexes",
         "index-overrides",
@@ -121,6 +122,7 @@ class NabProjectConfig:
     dist_policy_overrides: Mapping[str, DistPolicy] = field(default_factory=dict)
     build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL
     build_policy_overrides: Mapping[str, BuildPolicy] = field(default_factory=dict)
+    trust_unverified_sdist_deps: bool = False
     marker_environment: Mapping[str, str] = field(default_factory=dict)
     indexes: tuple[IndexConfig, ...] = (
         IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
@@ -284,6 +286,11 @@ def _parse_nab_table(
         ),
         build_policy_overrides=_parse_build_policy_package(
             raw.get("build-policy-package")
+        ),
+        trust_unverified_sdist_deps=_parse_bool(
+            "trust-unverified-sdist-deps",
+            raw.get("trust-unverified-sdist-deps"),
+            default=False,
         ),
         marker_environment=_parse_marker_environment(raw.get("marker-environment", {})),
         indexes=_parse_indexes(raw.get("indexes")),
@@ -555,6 +562,15 @@ def _parse_dist_policy_package(value: object) -> Mapping[str, DistPolicy]:
         seen[canonical] = raw_key
         out[canonical] = policy
     return out
+
+
+def _parse_bool(key: str, value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        msg = f"{key} must be a boolean, got {type(value).__name__}"
+        raise ConfigError(msg)
+    return value
 
 
 def _parse_enum(
