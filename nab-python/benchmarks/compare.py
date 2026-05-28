@@ -21,6 +21,8 @@ STAT_LABELS = {
     "backjumps": "Backjumps",
     "restarts": "Restarts",
     "incompatibilities_learned": "Incompatibilities learned",
+    "conflict_threshold_crossings": "Conflict threshold crossings",
+    "culprit_threshold_crossings": "Culprit threshold crossings",
     "listings_fetched": "Listings fetched",
     "metadata_fetched": "Metadata fetched",
     "sdist_pkg_info_fetched": "Sdist PKG-INFO fetched",

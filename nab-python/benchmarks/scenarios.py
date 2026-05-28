@@ -280,6 +280,12 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
                 "backjumps": rstats.backjumps,
                 "restarts": rstats.restarts,
                 "incompatibilities_learned": rstats.incompatibilities_learned,
+                "conflict_threshold_crossings": rstats.conflict_threshold_crossings,
+                "culprit_threshold_crossings": rstats.culprit_threshold_crossings,
+                "learned_clause_term_counts": dict(
+                    sorted(rstats.learned_clause_term_counts.items())
+                ),
+                "backjump_distances": dict(sorted(rstats.backjump_distances.items())),
                 "listings_fetched": pstats.listings_fetched,
                 "metadata_fetched": pstats.metadata_fetched,
                 "sdist_pkg_info_fetched": pstats.sdist_pkg_info_fetched,
