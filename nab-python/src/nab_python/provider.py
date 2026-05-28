@@ -13,7 +13,7 @@ import logging
 import re
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from nab_index.client import SdistFile, WheelFile
 
@@ -70,6 +70,22 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _EXTRA_RE = re.compile(r"^(?P<base>[^\[]+)\[(?P<extra>[^\]]+)\]$")
+
+_OverrideValue = TypeVar("_OverrideValue")
+
+
+def _canonical_override_map(
+    overrides: Mapping[str, _OverrideValue] | None, label: str
+) -> dict[str, _OverrideValue]:
+    """Return a copy of *overrides* with each key canonicalized; raise on duplicates."""
+    out: dict[str, _OverrideValue] = {}
+    for raw_name, value in (overrides or {}).items():
+        canonical = canonicalize_name(raw_name)
+        if canonical in out:
+            msg = f"duplicate {label} override for {raw_name!r}"
+            raise ValueError(msg)
+        out[canonical] = value
+    return out
 
 
 # PEP 508 ``python_version`` is the ``major.minor`` pair;
@@ -380,7 +396,7 @@ class Provider:
     CONFLICT_THRESHOLD = _priority.CONFLICT_THRESHOLD
     CULPRIT_DEMOTE_THRESHOLD = _priority.CULPRIT_DEMOTE_THRESHOLD
 
-    def __init__(  # noqa: PLR0913, PLR0915, PLR0912, C901 - resolver config is wide; bundling all flags into one bag is worse for callers
+    def __init__(  # noqa: PLR0913, PLR0915, C901 - resolver config is wide; bundling all flags into one bag is worse for callers
         self,
         coordinator: FetchCoordinator,
         python_version: str | None = None,
@@ -406,8 +422,8 @@ class Provider:
         self.coordinator = coordinator
         self.python_version = python_version
         self.uploaded_prior_to = uploaded_prior_to
-        self.uploaded_prior_to_overrides: dict[str, datetime | None] = dict(
-            uploaded_prior_to_overrides or {}
+        self.uploaded_prior_to_overrides = _canonical_override_map(
+            uploaded_prior_to_overrides, "uploaded-prior-to"
         )
 
         # Passed through to the build env when extract_source_metadata
@@ -416,20 +432,16 @@ class Provider:
         self.extras_mode = extras_mode
         self.root_extras = root_extras or set()
         self._dist_policy = dist_policy
-        self._dist_policy_overrides: dict[str, DistPolicy] = dict(
-            dist_policy_overrides or {}
+        self._dist_policy_overrides = _canonical_override_map(
+            dist_policy_overrides, "dist-policy"
         )
         self.build_policy = build_policy
         self._resolution_strategy = resolution_strategy
         self._direct_packages: frozenset[str] = direct_packages or frozenset()
 
-        self._build_policy_overrides: dict[str, BuildPolicy] = {}
-        for raw_name, policy in (build_policy_overrides or {}).items():
-            canonical = canonicalize_name(raw_name)
-            if canonical in self._build_policy_overrides:
-                msg = f"duplicate build-policy override for {raw_name!r}"
-                raise ValueError(msg)
-            self._build_policy_overrides[canonical] = policy
+        self._build_policy_overrides = _canonical_override_map(
+            build_policy_overrides, "build-policy"
+        )
 
         # Backends run on the host, so invoking one under a marker overlay
         # would produce metadata that does not match the impersonated target.

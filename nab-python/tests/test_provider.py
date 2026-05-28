@@ -2164,6 +2164,31 @@ class TestUploadedPriorToOverrides:
         versions = [v for v, _ in provider.fetch_versions("foo")]
         assert versions == [V("1.0")]
 
+    def test_override_canonicalises_name(self) -> None:
+        """An override declared as ``Foo_Bar`` applies to ``foo-bar``."""
+        wheels = [
+            make_wheel("2.0", upload_time="2024-06-01T00:00:00Z"),
+            make_wheel("1.0", upload_time="2024-01-01T00:00:00Z"),
+        ]
+        coordinator = make_coordinator(wheels, package="foo-bar")
+        package_cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        provider = Provider(
+            coordinator,
+            uploaded_prior_to=None,
+            uploaded_prior_to_overrides={"Foo_Bar": package_cutoff},
+        )
+        versions = [v for v, _ in provider.fetch_versions("foo-bar")]
+        assert versions == [V("1.0")]
+
+    def test_duplicate_override_raises(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        with pytest.raises(ValueError, match="duplicate uploaded-prior-to override"):
+            Provider(
+                coordinator,
+                uploaded_prior_to_overrides={"foo": cutoff, "Foo": None},
+            )
+
 
 def _make_sdist(version: str, package: str = "foo") -> SdistFile:
     """Build a minimal :class:`SdistFile`."""
@@ -2249,6 +2274,26 @@ class TestDistPolicyOverrides:
         )
         assert provider.effective_dist_policy("lxml") is DistPolicy.SDIST_ONLY
         assert provider.effective_dist_policy("foo") is DistPolicy.WHEEL_OR_SDIST
+
+    def test_override_canonicalises_name(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            dist_policy_overrides={"L_XML": DistPolicy.SDIST_ONLY},
+        )
+        assert provider.effective_dist_policy("l-xml") is DistPolicy.SDIST_ONLY
+
+    def test_duplicate_override_raises(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        with pytest.raises(ValueError, match="duplicate dist-policy override"):
+            Provider(
+                coordinator,
+                dist_policy_overrides={
+                    "lxml": DistPolicy.SDIST_ONLY,
+                    "LXML": DistPolicy.NO_SDIST,
+                },
+            )
 
 
 EXTRA_METADATA = (
