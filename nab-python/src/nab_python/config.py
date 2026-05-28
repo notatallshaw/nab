@@ -243,6 +243,20 @@ def _parse_nab_table(
         )
         raise ConfigError(msg)
 
+    index_overrides = _parse_index_overrides(raw.get("index-overrides", []))
+    if mode is ResolveMode.UNIVERSAL:
+        marker_gated = sorted(o.name for o in index_overrides if o.marker)
+        if marker_gated:
+            joined = ", ".join(marker_gated)
+            msg = (
+                "mode = 'universal' does not support marker-gated"
+                f" [[tool.nab.index-overrides]] ({joined}): a universal lock"
+                " fetches each package once and cannot route it to a"
+                " different index per environment. Drop the marker or use"
+                " mode = 'specific'."
+            )
+            raise ConfigError(msg)
+
     return NabProjectConfig(
         mode=mode,
         constraints=_parse_string_list("constraints", raw.get("constraints", [])),
@@ -273,7 +287,7 @@ def _parse_nab_table(
         ),
         marker_environment=_parse_marker_environment(raw.get("marker-environment", {})),
         indexes=_parse_indexes(raw.get("indexes")),
-        index_overrides=_parse_index_overrides(raw.get("index-overrides", [])),
+        index_overrides=index_overrides,
         vcs=_parse_vcs(raw.get("vcs", {})),
         local_sources=_parse_local_sources(
             raw.get("local-sources", []), pyproject_dir=pyproject_dir

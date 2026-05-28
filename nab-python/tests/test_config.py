@@ -737,6 +737,35 @@ class TestIndexOverrides:
         with pytest.raises(ConfigError, match="marker must be a string"):
             read_pyproject_config(path)
 
+    def test_marker_gated_rejected_in_universal_mode(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[[tool.nab.index-overrides]]\n"
+            'name = "torch"\n'
+            'index = "torch-cpu"\n'
+            "marker = \"sys_platform == 'linux'\"\n",
+        )
+        with pytest.raises(ConfigError, match="does not support marker-gated"):
+            read_pyproject_config(path)
+
+    def test_unconditional_allowed_in_universal_mode(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[[tool.nab.index-overrides]]\n"
+            'name = "torch"\n'
+            'index = "torch-cpu"\n',
+        )
+        ovr = read_pyproject_config(path).index_overrides
+        assert ovr == (IndexOverride(name="torch", index="torch-cpu", marker=None),)
+
 
 class TestVcs:
     def test_full_round_trip(self, tmp_path: Path) -> None:
