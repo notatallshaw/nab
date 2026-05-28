@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "MissingHashError",
+    "MissingSdistError",
     "MissingVcsCommitError",
     "build_lock_input_from_provider",
     "read_lockfile_anchor",
@@ -109,6 +110,17 @@ class MissingHashError(ValueError):
     spec-compliant entry.  Surface the failure with the offending
     package and filename so the user can either add a hash to their
     local index or exclude the package.
+    """
+
+
+class MissingSdistError(ValueError):
+    """A version pinned under sdist-install has no source distribution.
+
+    ``DistPolicy.SDIST_INSTALL`` drops every wheel from the lock so the
+    installer builds from source.  When the version has no sdist (it was
+    published wheel-only, or its sdist fell outside an ``uploaded-prior-to``
+    cooldown while a wheel survived), emitting the pin would write a package
+    entry with no artefacts, an uninstallable lock.  Surface it loudly.
     """
 
 
@@ -285,6 +297,14 @@ def _index_pin_from_listing(
     files = list(provider.dist_files_for(canonical, version))
     if provider.effective_dist_policy(canonical) is DistPolicy.SDIST_INSTALL:
         files = [f for f in files if not isinstance(f, WheelFile)]
+        if not files:
+            msg = (
+                f"{canonical} {version}: dist-policy 'sdist-install' requires a "
+                "source distribution, but none is available for this version "
+                "(it may be wheel-only, or its sdist was excluded by an "
+                "'uploaded-prior-to' cooldown)"
+            )
+            raise MissingSdistError(msg)
 
     wheels = tuple(
         _build_artifact(canonical, f, WheelArtifact)

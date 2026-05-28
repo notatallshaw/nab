@@ -31,6 +31,7 @@ from nab_python.config import (
 from nab_python.download import download_lock  # noqa: F401 - re-exported for tests
 from nab_python.lockfile import (
     MissingHashError,
+    MissingSdistError,
     write_lock,  # noqa: F401 - re-exported for tests
     write_requirements_with_hashes,  # noqa: F401 - re-exported for tests
     write_requirements_without_hashes,  # noqa: F401 - re-exported for tests
@@ -188,7 +189,7 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
     except LookupError as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
-    except MissingHashError as e:
+    except (MissingHashError, MissingSdistError) as e:
         sys.stderr.write(f"{failure_prefix}: {e}\n")
         sys.exit(1)
 
