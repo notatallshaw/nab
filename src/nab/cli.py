@@ -192,6 +192,12 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
     except (MissingHashError, MissingSdistError) as e:
         sys.stderr.write(f"{failure_prefix}: {e}\n")
         sys.exit(1)
+    except NotImplementedError as e:
+        sys.stderr.write(f"{failure_prefix}: {e}\n")
+        sys.exit(1)
+    except ConfigError as e:
+        sys.stderr.write(f"Error in [tool.nab]: {e}\n")
+        sys.exit(1)
 
 
 # Side-effect imports: each module's @app.command decorators register the
