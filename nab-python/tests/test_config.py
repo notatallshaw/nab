@@ -1035,6 +1035,24 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="python-order must be 'asc' or 'desc'"):
             read_pyproject_config(path)
 
+    def test_unknown_platform_rejected(self, tmp_path: Path) -> None:
+        body = self._matrix_body()
+        body = body.replace('["linux_x86_64", "macos_arm64"]', '["frobnicate"]')
+        with pytest.raises(ConfigError, match="Unknown platform ids"):
+            read_pyproject_config(write(tmp_path, body))
+
+    def test_empty_python_range_rejected(self, tmp_path: Path) -> None:
+        body = self._matrix_body()
+        body = body.replace('">=3.11,<3.14"', '"==3.99"')
+        with pytest.raises(ConfigError, match="No known Python versions match"):
+            read_pyproject_config(write(tmp_path, body))
+
+    def test_malformed_python_specifier_rejected(self, tmp_path: Path) -> None:
+        body = self._matrix_body()
+        body = body.replace('">=3.11,<3.14"', '"not a specifier"')
+        with pytest.raises(ConfigError, match="Invalid specifier"):
+            read_pyproject_config(write(tmp_path, body))
+
     def test_python_patches_must_be_table(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
