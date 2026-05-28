@@ -119,6 +119,7 @@ class FetchRequest:
     package: str
     version: str | None = None
     url: str | None = None
+    metadata_hash: tuple[str, str] | None = None
 
 
 @dataclass
@@ -475,7 +476,13 @@ class FetchCoordinator:
             self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
         return pending.event
 
-    def request_metadata(self, package: str, version: str, url: str) -> threading.Event:
+    def request_metadata(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        metadata_hash: tuple[str, str] | None = None,
+    ) -> threading.Event:
         """Request a wheel-metadata fetch for ``(package, version)``."""
         self._check_alive()
         if self.index.has_metadata(package, version):
@@ -491,12 +498,18 @@ class FetchCoordinator:
                     package=package,
                     version=version,
                     url=url,
+                    metadata_hash=metadata_hash,
                 )
             )
         return pending.event
 
     def request_wheel_metadata(
-        self, package: str, version: str, wheel_filename: str, url: str
+        self,
+        package: str,
+        version: str,
+        wheel_filename: str,
+        url: str,
+        metadata_hash: tuple[str, str] | None = None,
     ) -> threading.Event:
         """Request metadata for one specific wheel of ``(package, version)``.
 
@@ -522,6 +535,7 @@ class FetchCoordinator:
                     package=package,
                     version=sentinel_version,
                     url=url,
+                    metadata_hash=metadata_hash,
                 )
             )
         return pending.event
@@ -572,17 +586,18 @@ class FetchCoordinator:
         return pending.event
 
     def request_metadata_batch(
-        self, items: list[tuple[str, str, str]]
+        self, items: list[tuple[str, str, str, tuple[str, str] | None]]
     ) -> list[tuple[str, str, threading.Event]]:
         """Submit a batch of metadata requests as a single queue item.
 
-        All requests in the batch reach the fetcher together so they
-        are processed concurrently.
+        Each item is ``(package, version, url, metadata_hash)``.  All
+        requests in the batch reach the fetcher together so they are
+        processed concurrently.
         """
         self._check_alive()
         results: list[tuple[str, str, threading.Event]] = []
         batch: list[FetchRequest] = []
-        for package, version, url in items:
+        for package, version, url, metadata_hash in items:
             if self.index.has_metadata(package, version):
                 done = threading.Event()
                 done.set()
@@ -597,6 +612,7 @@ class FetchCoordinator:
                         package=package,
                         version=version,
                         url=url,
+                        metadata_hash=metadata_hash,
                     )
                 )
             results.append((package, version, pending.event))
@@ -766,7 +782,7 @@ class FetchCoordinator:
             if isinstance(f, WheelFile) and f.metadata_url is not None
         ]
         for w, metadata_url in wheels_with_meta[-self.PREFETCH_METADATA_COUNT :]:
-            self.request_metadata(req.package, w.version, metadata_url)
+            self.request_metadata(req.package, w.version, metadata_url, w.metadata_hash)
 
     def _record_serving_index(
         self,
@@ -798,7 +814,9 @@ class FetchCoordinator:
         if req.url is None:
             self.index.store_metadata(req.package, req.version, None)
             return
-        text = await client.get_metadata_text(req.package, req.version, req.url)
+        text = await client.get_metadata_text(
+            req.package, req.version, req.url, req.metadata_hash
+        )
         self.index.store_metadata(req.package, req.version, text)
 
     async def _fetch_sdist(

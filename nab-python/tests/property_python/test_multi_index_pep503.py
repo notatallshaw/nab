@@ -73,9 +73,13 @@ class _Stub:
         return []
 
     async def get_metadata_text(
-        self, package: str, version: str, metadata_url: str
+        self,
+        package: str,
+        version: str,
+        metadata_url: str,
+        metadata_hash: tuple[str, str] | None = None,
     ) -> str:
-        del package, version, metadata_url
+        del package, version, metadata_url, metadata_hash
         return ""
 
     async def get_sdist_files(

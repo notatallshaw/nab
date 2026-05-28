@@ -1413,7 +1413,9 @@ class TestLookAhead:
 
         call_count = [0]
 
-        def _request_metadata(pkg: str, ver: str, url: str) -> threading.Event:
+        def _request_metadata(
+            pkg: str, ver: str, url: str, metadata_hash: tuple[str, str] | None = None
+        ) -> threading.Event:
             call_count[0] += 1
             text = (
                 f"Metadata-Version: 2.1\nName: foo\nVersion: {ver}\n"
@@ -1427,10 +1429,10 @@ class TestLookAhead:
         coordinator.request_metadata.side_effect = _request_metadata
 
         def _request_metadata_batch(
-            items: list[tuple[str, str, str]],
+            items: list[tuple[str, str, str, tuple[str, str] | None]],
         ) -> list[tuple[str, str, threading.Event]]:
             results: list[tuple[str, str, threading.Event]] = []
-            for pkg, ver, url in items:
+            for pkg, ver, url, _hash in items:
                 call_count[0] += 1
                 # On second batch call, inject cache for v1.0
                 if call_count[0] == 2:
@@ -3066,9 +3068,9 @@ class TestFetchVersionsNotInIndex:
             return _done_event()
 
         coordinator.request_listing.side_effect = _request_listing
-        coordinator.request_metadata.side_effect = lambda p, v, u: _done_event()
+        coordinator.request_metadata.side_effect = lambda p, v, u, h=None: _done_event()
         coordinator.request_metadata_batch.side_effect = lambda items: [
-            (p, v, _done_event()) for p, v, u in items
+            (p, v, _done_event()) for p, v, u, h in items
         ]
 
         provider = Provider(coordinator)
@@ -3119,7 +3121,7 @@ class TestSpeculativePrefetchBatchLimit:
         call_args = coordinator.request_metadata_batch.call_args
         assert call_args is not None
         items = call_args[0][0]
-        assert all(ver == "1.0" for _, ver, _ in items)
+        assert all(ver == "1.0" for _, ver, _, _ in items)
 
 
 class TestPrefetchWalkAhead:
@@ -3159,7 +3161,7 @@ class TestPrefetchWalkAhead:
         coordinator.reset_mock()
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
-        versions = [ver for _, ver, _ in items]
+        versions = [ver for _, ver, _, _ in items]
         assert "2.0" not in versions
         assert "3.0" in versions
         assert "1.0" in versions
@@ -3177,7 +3179,7 @@ class TestPrefetchWalkAhead:
         coordinator.reset_mock()
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
-        versions = [ver for _, ver, _ in items]
+        versions = [ver for _, ver, _, _ in items]
         assert versions == ["3.0", "2.0"]
 
     def test_picks_wheel_when_both_present(self) -> None:
@@ -3193,7 +3195,7 @@ class TestPrefetchWalkAhead:
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
         assert any(
-            ver == "1.0" and url.endswith(".whl.metadata") for _, ver, url in items
+            ver == "1.0" and url.endswith(".whl.metadata") for _, ver, url, _ in items
         )
 
     def test_skips_sdist_only_versions(self) -> None:
@@ -3208,7 +3210,7 @@ class TestPrefetchWalkAhead:
         coordinator.reset_mock()
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
-        versions = [ver for _, ver, _ in items]
+        versions = [ver for _, ver, _, _ in items]
         assert versions == ["2.0"]
 
     def test_skips_wheels_without_metadata_url(self) -> None:
@@ -3223,7 +3225,7 @@ class TestPrefetchWalkAhead:
         coordinator.reset_mock()
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
-        versions = [ver for _, ver, _ in items]
+        versions = [ver for _, ver, _, _ in items]
         assert versions == ["1.0"]
 
     def test_no_batch_when_all_filtered(self) -> None:
@@ -3461,7 +3463,7 @@ class TestSpeculativePrefetchSkipsNonWheelDists:
         # Batch should only contain the wheel v1.0, not the sdist v2.0.
         if coordinator.request_metadata_batch.called:
             items = coordinator.request_metadata_batch.call_args[0][0]
-            for _, ver, _ in items:
+            for _, ver, _, _ in items:
                 assert ver != "2.0"
 
 

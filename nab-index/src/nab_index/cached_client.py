@@ -25,6 +25,7 @@ from .client import (
     WheelFile,
     _extract_sdist_files,
     _parse_files,
+    _verify_metadata_hash,
 )
 
 if TYPE_CHECKING:
@@ -171,12 +172,20 @@ class CachedAsyncSimpleClient:
         return _parse_files(json.loads(body), self._index_url, package)
 
     async def get_metadata_text(
-        self, package: str, version: str, metadata_url: str
+        self,
+        package: str,
+        version: str,
+        metadata_url: str,
+        metadata_hash: tuple[str, str] | None = None,
     ) -> str:
         """Return PEP 658 metadata text for ``(package, version)``.
 
-        Treated as immutable: cached forever, never revalidated.
-        Cache miss + offline raises :class:`OfflineError`.
+        Treated as immutable: cached forever, never revalidated.  A
+        cache hit is returned without re-checking, since it was
+        verified before being stored.  Cache miss + offline raises
+        :class:`OfflineError`.  When ``metadata_hash`` is given, the
+        fetched bytes are verified against it and a mismatch raises
+        :class:`MetadataHashMismatchError` before anything is cached.
         """
         cached = self._cache.get_metadata(package, version)
         if cached is not None:
@@ -188,6 +197,8 @@ class CachedAsyncSimpleClient:
 
         response = await self._transport.get(metadata_url)
         response.raise_for_status()
+        if metadata_hash is not None:
+            _verify_metadata_hash(response.content, metadata_hash)
         text = response.text
         self._cache.put_metadata(package, version, text)
         return text

@@ -267,8 +267,13 @@ class LocalIndexClient:
         package: str,  # noqa: ARG002 - matches CachedAsyncSimpleClient signature
         version: str,  # noqa: ARG002
         metadata_url: str,
+        metadata_hash: tuple[str, str] | None = None,  # noqa: ARG002
     ) -> str:
-        """Return PEP 658 metadata text for a wheel sitting on disk."""
+        """Return PEP 658 metadata text for a wheel sitting on disk.
+
+        Local wheels never advertise a sidecar hash, so ``metadata_hash``
+        is accepted only to match the remote client signature.
+        """
         path = _parse_file_url(metadata_url)
         return path.read_text(encoding="utf-8")
 
