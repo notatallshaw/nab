@@ -140,6 +140,7 @@ def expand_self_extras(
     optional_deps: Mapping[str, Sequence[str]],
     project_name: str | None,
     selected: Sequence[str],
+    environment: dict[str, str] | None = None,
 ) -> list[str]:
     """Return ``selected`` plus every extra reachable through self-references.
 
@@ -151,6 +152,12 @@ def expand_self_extras(
     (graphviz, opentelemetry-api, etc.) out of the resolver's root
     requirements and look-ahead loses the ability to predict
     candidates.
+
+    A self-reference carrying a PEP 508 marker (``{name}[fast];
+    python_version < "3.10"``) activates its extra only when the marker
+    evaluates true under ``environment``.  ``environment`` ``None`` skips
+    that check and walks every self-reference, which is what the
+    universal path wants (it defers marker evaluation to each tuple).
 
     The original ``selected`` order is preserved at the front of the
     result; reachable extras are appended in BFS order without
@@ -179,6 +186,12 @@ def expand_self_extras(
             except (ValueError, TypeError):
                 continue
             if canonicalize_name(req.name) != canonical_project:
+                continue
+            if (
+                environment is not None
+                and req.marker is not None
+                and not req.marker.evaluate(environment)
+            ):
                 continue
             worklist.extend(
                 canonicalize_name(sub)

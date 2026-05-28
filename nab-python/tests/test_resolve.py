@@ -1716,6 +1716,21 @@ class TestLoadExtraRequirements:
         reqs = _load_extra_requirements(path, ["My_Extra"])
         assert [r.name for r in reqs] == ["requests"]
 
+    def test_self_ref_marker_excludes_dep_in_wrong_environment(
+        self, tmp_path: Path
+    ) -> None:
+        """A marker-false self-ref does not flatten its extra's deps into roots."""
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            "[project]\nname = 'x'\n"
+            "[project.optional-dependencies]\n"
+            "fast = ['some-dep']\n"
+            "all = [\"x[fast]; python_version < '3.10'\"]\n"
+        )
+        env = {"python_version": "3.12", "python_full_version": "3.12.0"}
+        reqs = _load_extra_requirements(path, ["all"], env)
+        assert "some-dep" not in [r.name for r in reqs]
+
 
 class TestBuildResolverInputs:
     """``_build_resolver_inputs`` folds duplicate names by intersection."""

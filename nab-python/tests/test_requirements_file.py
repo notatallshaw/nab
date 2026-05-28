@@ -287,6 +287,30 @@ class TestExpandSelfExtras:
         opt = {"a": ["depA"]}
         assert expand_self_extras(opt, "mypkg", ["a", "a", "a"]) == ["a"]
 
+    def test_self_reference_marker_false_skipped(self) -> None:
+        """A self-ref whose marker is false does not activate its extra."""
+        opt = {
+            "all": ["mypkg[fast]; python_version < '3.10'"],
+            "fast": ["some-dep"],
+        }
+        env = {"python_version": "3.12", "python_full_version": "3.12.0"}
+        assert expand_self_extras(opt, "mypkg", ["all"], env) == ["all"]
+
+    def test_self_reference_marker_true_walked(self) -> None:
+        """A self-ref whose marker is true activates its extra."""
+        opt = {
+            "all": ["mypkg[fast]; python_version < '3.10'"],
+            "fast": ["some-dep"],
+        }
+        env = {"python_version": "3.9", "python_full_version": "3.9.0"}
+        assert expand_self_extras(opt, "mypkg", ["all"], env) == ["all", "fast"]
+
+    def test_self_reference_without_marker_walked_with_environment(self) -> None:
+        """An unconditional self-ref is walked even when an environment is given."""
+        opt = {"all": ["mypkg[a]"], "a": ["depA"]}
+        env = {"python_version": "3.12", "python_full_version": "3.12.0"}
+        assert expand_self_extras(opt, "mypkg", ["all"], env) == ["all", "a"]
+
 
 class TestExpandGroupIncludes:
     def test_no_include_returns_input(self) -> None:
