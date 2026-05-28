@@ -1039,12 +1039,13 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="matrix.python must be a PEP 440"):
             read_pyproject_config(write(tmp_path, body))
 
-    def test_python_arbitrary_equality_skipped(self, tmp_path: Path) -> None:
-        matrix = read_pyproject_config(
-            write(tmp_path, self._body_with_python('"===nightly"'))
-        ).matrix
-        assert matrix is not None
-        assert matrix.python == "===nightly"
+    def test_python_arbitrary_equality_rejected(self, tmp_path: Path) -> None:
+        # An arbitrary-equality pin like ===nightly parses as a specifier but
+        # matches no known Python, so the eager matrix expansion rejects it.
+        with pytest.raises(ConfigError, match="No known Python versions match"):
+            read_pyproject_config(
+                write(tmp_path, self._body_with_python('"===nightly"'))
+            )
 
     def test_python_empty_specifier_allowed(self, tmp_path: Path) -> None:
         matrix = read_pyproject_config(
@@ -1095,7 +1096,7 @@ class TestMatrix:
     def test_malformed_python_specifier_rejected(self, tmp_path: Path) -> None:
         body = self._matrix_body()
         body = body.replace('">=3.11,<3.14"', '"not a specifier"')
-        with pytest.raises(ConfigError, match="Invalid specifier"):
+        with pytest.raises(ConfigError, match="must be a PEP 440 specifier"):
             read_pyproject_config(write(tmp_path, body))
 
     def test_python_patches_must_be_table(self, tmp_path: Path) -> None:
