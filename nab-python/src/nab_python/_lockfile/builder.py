@@ -351,19 +351,23 @@ def _build_artifact(
 
 
 def _parse_upload_time(raw: str | None) -> datetime | None:
-    """Parse an index ``upload-time`` string to a ``datetime``.
+    """Parse an index ``upload-time`` string to a UTC ``datetime``.
 
     Accepts the RFC 3339 form the Simple/JSON API serves (``Z`` or an
-    explicit offset).  Returns ``None`` when the field is absent or
-    unparseable; the timestamp is informational, so a bad value is
-    dropped rather than fatal.
+    explicit offset) and normalizes it to UTC (PEP 751 requires UTC for
+    the emitted field). Returns ``None`` when the field is absent,
+    unparseable, or has no timezone; the timestamp is informational, so
+    a bad value is dropped rather than fatal.
     """
     if raw is None:
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _filter_acceptable_hashes(

@@ -1663,6 +1663,42 @@ class TestBuildLockInputFromProvider:
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].upload_time is None
 
+    def test_upload_time_non_utc_offset_normalized_to_utc(self) -> None:
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://pypi.org/simple/foo/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=">=3.10",
+            has_metadata=False,
+            upload_time="2026-05-01T17:00:00+05:00",
+            hashes=(("sha256", "a" * 64),),
+            size=1234,
+        )
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].upload_time == datetime(
+            2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc
+        )
+
+    def test_upload_time_naive_string_is_dropped(self) -> None:
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://pypi.org/simple/foo/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=">=3.10",
+            has_metadata=False,
+            upload_time="2026-05-01T12:00:00",
+            hashes=(("sha256", "a" * 64),),
+            size=1234,
+        )
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].upload_time is None
+
     def test_missing_acceptable_hash_raises(self) -> None:
         wheel = _wheel_file(sha256=None)
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
