@@ -271,6 +271,15 @@ class LockInput:
     this marker so it installs even when no conflicting member is
     selected; with no conflict forks it equals ``tuple_markers``.
 
+    ``env_base_names`` maps an environment signature
+    (``tuple(sorted(env.items()))``) to the canonical names that the
+    base (no-member) resolve produced for that environment.  A package
+    present in every conflict fork only counts as a base dependency
+    (and so drops its membership clause) when its name is listed here;
+    a dependency required by every member but not by the base keeps the
+    membership clause, so it does not install when no member is
+    selected.  Empty when no conflict fork ran.
+
     ``environments`` is the lockfile-level set of permitted
     environments (PEP 751 ``environments``).  Independent from
     ``tuple_markers``; intended for declaring the universe.
@@ -285,6 +294,9 @@ class LockInput:
     tuple_markers: Mapping[str, Marker] = field(default_factory=dict)
     tuple_env_markers: Mapping[str, Marker] = field(default_factory=dict)
     tuple_environments: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]] = field(
+        default_factory=dict
+    )
     environments: list[Marker] = field(default_factory=list)
     requires_python: str | None = None
     created_by: str = "nab"

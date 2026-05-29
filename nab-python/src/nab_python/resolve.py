@@ -33,6 +33,7 @@ from .config import (
     ResolveMode,
     conflict_forks,
     read_pyproject_config,
+    validate_conflict_exclusions,
     validate_conflict_minimums,
     validate_conflict_selection,
 )
@@ -46,6 +47,7 @@ from .provider import (
     split_extra,
 )
 from .requirements_file import (
+    expand_group_includes,
     expand_self_extras,
     raise_for_unsatisfiable,
     read_pyproject_dependencies,
@@ -138,8 +140,18 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         )
         raise UnsupportedModeError(msg)
 
-    _validate_conflict_members_exist(path, config.conflicts)
-    validate_conflict_selection(config.conflicts, extras, groups)
+    if config.conflicts:
+        # Read each table once and reuse it across the existence check
+        # and the umbrella expansion, so a conflict the selection only
+        # reaches transitively is still caught without re-parsing the
+        # file.
+        optional = read_pyproject_optional_dependencies(path)
+        groups_table = read_pyproject_groups(path)
+        project_name = read_pyproject_name(path)
+        _validate_conflict_members_exist(config.conflicts, optional, groups_table)
+        active_extras = expand_self_extras(optional, project_name, extras)
+        active_groups = expand_group_includes(groups_table, groups)
+        validate_conflict_selection(config.conflicts, active_extras, active_groups)
 
     if python_version is not None:
         effective_python = python_version
@@ -464,21 +476,20 @@ def _extra_requirements_from_table(
 
 
 def _validate_conflict_members_exist(
-    path: Path, conflicts: Sequence[ConflictSet]
+    conflicts: Sequence[ConflictSet],
+    optional: Mapping[str, Sequence[str]],
+    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
 ) -> None:
     """Raise when a declared conflict names an extra/group the project lacks.
 
     A member naming an undeclared extra or group can never match, so
     the conflict would be silently inert.  Names compare under
-    canonicalisation, matching the loaders.  A no-op when no conflicts
-    are declared.
+    canonicalisation, matching the loaders.  The caller passes the
+    already-read ``optional`` and ``groups`` tables so this does not
+    re-parse pyproject.toml.
     """
-    if not conflicts:
-        return
-    known_extras = {
-        canonicalize_name(name) for name in read_pyproject_optional_dependencies(path)
-    }
-    known_groups = {canonicalize_name(name) for name in read_pyproject_groups(path)}
+    known_extras = {canonicalize_name(name) for name in optional}
+    known_groups = {canonicalize_name(name) for name in groups}
     unknown: list[str] = []
     for conflict_set in conflicts:
         for member in conflict_set.members:
@@ -527,6 +538,30 @@ def _fork_requirement_strings(
         )
     )
     return [str(r) for r in requirements]
+
+
+def _base_fork(reference: ConflictFork) -> ConflictFork:
+    """Return the no-member fork: a reference fork minus its chosen members.
+
+    Every fork shares the same non-conflicting base selection, so any
+    fork's active sets with its own chosen members removed recover that
+    base.  Resolving it names the deps that install regardless of which
+    member is selected.
+    """
+    chosen = set(reference.selection)
+    rest_extras = tuple(
+        e
+        for e in reference.active_extras
+        if (ConflictKind.EXTRA.value, e) not in chosen
+    )
+    rest_groups = tuple(
+        g
+        for g in reference.active_groups
+        if (ConflictKind.GROUP.value, g) not in chosen
+    )
+    return ConflictFork(
+        selection=(), active_extras=rest_extras, active_groups=rest_groups
+    )
 
 
 def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
@@ -682,9 +717,6 @@ def resolve_universal_pyproject(
         msg = "mode = 'universal' requires a [tool.nab.matrix] table"
         raise UnsupportedModeError(msg)
 
-    _validate_conflict_members_exist(path, config.conflicts)
-    validate_conflict_minimums(config.conflicts, extras, groups)
-
     base_dependencies = read_pyproject_dependencies(path)
     matrix = Matrix(
         python=config.matrix.python,
@@ -704,9 +736,43 @@ def resolve_universal_pyproject(
         optional=read_pyproject_optional_dependencies(path),
         project_name=read_pyproject_name(path),
     )
+
+    if config.conflicts:
+        # Reuse the already-read tables for every conflict check, and
+        # expand the selection so an umbrella extra or include-group
+        # counts toward both the existence and the require-one checks.
+        _validate_conflict_members_exist(
+            config.conflicts, tables.optional, tables.groups
+        )
+        validate_conflict_minimums(
+            config.conflicts,
+            expand_self_extras(tables.optional, tables.project_name, extras),
+            expand_group_includes(tables.groups, groups),
+        )
+
+    conflict_fork_list = conflict_forks(extras, groups, config.conflicts)
     forks: list[ResolveFork] = []
-    for fork in conflict_forks(extras, groups, config.conflicts):
-        if len(fork.active_groups) > 1:
+    # Forks of an extra-based conflict share the same group selection,
+    # so dedupe to skip the (group, group)->tuple scan once it has run
+    # for an active_groups tuple.
+    seen_group_selections: set[tuple[str, ...]] = set()
+    for fork in conflict_fork_list:
+        if config.conflicts:
+            # A fork that still reaches two members of one exclusive set
+            # (for example through an umbrella extra) has no disjoint
+            # resolution, so refuse rather than silently merge them.
+            validate_conflict_exclusions(
+                config.conflicts,
+                expand_self_extras(
+                    tables.optional, tables.project_name, fork.active_extras
+                ),
+                expand_group_includes(tables.groups, fork.active_groups),
+            )
+        if (
+            len(fork.active_groups) > 1
+            and fork.active_groups not in seen_group_selections
+        ):
+            seen_group_selections.add(fork.active_groups)
             _check_group_disjointness_across_tuples(
                 _group_requirements_by_group_from_table(
                     group_table, fork.active_groups, path=path
@@ -721,12 +787,23 @@ def resolve_universal_pyproject(
                 ),
             )
         )
+
+    # With more than one fork the lock writer needs to tell a base
+    # dependency from one required by every member, so resolve the
+    # no-member requirements too.
+    base_requirements = None
+    if len(conflict_fork_list) > 1:
+        base_requirements = _fork_requirement_strings(
+            path, base_dependencies, _base_fork(conflict_fork_list[0]), tables
+        )
+
     effective_strategy = (
         resolution_strategy if resolution_strategy is not None else config.resolution
     )
     return resolve_universal(
         matrix=matrix,
         forks=forks,
+        base_requirements=base_requirements,
         transport=transport,
         offline=offline,
         constraints=list(config.constraints) or None,

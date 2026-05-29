@@ -2,20 +2,23 @@
 
 PEP 751 forbids two ``[[packages]]`` entries with the same name from
 firing under one install context.  This module owns the validator
-that enumerates the install-context universe (environments x extras
-powerset x dependency-groups powerset) and reports any pair that
-collide, plus the bookkeeping helpers that prune the powerset axes
-to the marker variables a same-name candidate actually references.
+that enumerates the install-context universe (environments x valid
+extras/groups combinations) and reports any pair that collide, plus
+the bookkeeping helpers that prune the axes to the marker variables a
+same-name candidate actually references.  Declared conflicts shrink
+the combination space directly: a set with N mutually-exclusive
+members contributes only N+1 outcomes (none, or each member alone),
+not the 2^N raw powerset.
 """
 
 from __future__ import annotations
 
 import functools
-import itertools
 import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from .._conflict_kind import KIND_EXTRA, KIND_GROUP
 from .._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
@@ -59,11 +62,12 @@ def validate_marker_disjointness(
     """Confirm same-name ``[[packages]]`` entries are pairwise disjoint.
 
     Builds the universe of install contexts as the cartesian product
-    of declared environments, the powerset of declared ``extras``,
-    and the powerset of declared ``dependency_groups``.  For every
-    point in that universe and every package name, evaluates each
-    candidate entry's marker.  When two or more entries hold for the
-    same point, raises :class:`DisjointnessError` with the witness.
+    of declared environments and the conflict-respecting combinations
+    of declared ``extras`` and ``dependency_groups`` (see
+    :func:`_enumerate_valid_points`).  For every point in that
+    universe and every package name, evaluates each candidate entry's
+    marker.  When two or more entries hold for the same point, raises
+    :class:`DisjointnessError` with the witness.
 
     The empty-environments path skips validation: a producer that
     does not declare a universe cannot specify what "all envs" means
@@ -105,12 +109,9 @@ def validate_marker_disjointness(
     relevant_groups = _restrict_to_referenced(
         groups, candidate_markers, "dependency_groups"
     )
-    points = [
-        (extra_subset, group_subset)
-        for extra_subset in _powerset(relevant_extras)
-        for group_subset in _powerset(relevant_groups)
-        if not _point_violates_exclusions(extra_subset, group_subset, exclusive_groups)
-    ]
+    points = list(
+        _enumerate_valid_points(relevant_extras, relevant_groups, exclusive_groups)
+    )
     distinct_environments = _distinct_environments(environments)
     for entries in same_name_entries:
         name = str(entries[0].name)
@@ -159,30 +160,75 @@ def _distinct_environments(
     return distinct
 
 
-def _point_violates_exclusions(
-    extra_subset: Sequence[str],
-    group_subset: Sequence[str],
+def _enumerate_valid_points(
+    relevant_extras: Sequence[str],
+    relevant_groups: Sequence[str],
     exclusive_groups: Sequence[AbstractSet[tuple[str, str]]],
-) -> bool:
-    """Return True when this context activates 2+ members of a conflict set.
+) -> Iterable[tuple[tuple[str, ...], tuple[str, ...]]]:
+    """Yield every (extras_subset, groups_subset) the conflicts allow.
 
-    Members are compared under canonicalisation so a marker literal
-    spelled differently from the declared conflict name still matches.
+    The full powerset is ``2^(E+G)`` and overwhelmingly dominated by
+    points a declared conflict already forbids (any subset that picks
+    two members of one mutually-exclusive set).  Generating then
+    filtering wastes the exponent: a set with N members keeps only
+    N+1 of its 2^N subsets.  This enumerates by backtracking: at each
+    item, the include branch is skipped as soon as one of its
+    exclusion sets already has an active member, so the search visits
+    exactly the surviving subsets.
+
+    Names are compared under :func:`canonicalize_name` against the
+    declared conflict members; subsets are emitted as sorted tuples
+    drawn from the input order so the downstream collision check sees
+    them in a stable shape.
     """
-    if not exclusive_groups:
-        return False
-    active_extras = {canonicalize_name(name) for name in extra_subset}
-    active_groups = {canonicalize_name(name) for name in group_subset}
-    for members in exclusive_groups:
-        active = sum(
-            1
-            for kind, name in members
-            if (kind == "extra" and name in active_extras)
-            or (kind == "group" and name in active_groups)
-        )
-        if active >= _MUTUALLY_EXCLUSIVE_LIMIT:
-            return True
-    return False
+    extras = sorted(set(relevant_extras))
+    groups = sorted(set(relevant_groups))
+    items: list[tuple[str, str]] = [(KIND_EXTRA, e) for e in extras] + [
+        (KIND_GROUP, g) for g in groups
+    ]
+
+    # Per item, the indices of every exclusion set whose membership it
+    # belongs to.  Names compare canonicalised on both sides.
+    item_sets: list[list[int]] = []
+    for kind, name in items:
+        canonical = canonicalize_name(name)
+        sets_for_item: list[int] = []
+        for i, members in enumerate(exclusive_groups):
+            for member_kind, member_name in members:
+                if member_kind == kind and canonicalize_name(member_name) == canonical:
+                    sets_for_item.append(i)
+                    break
+        item_sets.append(sets_for_item)
+
+    active_per_set = [0] * len(exclusive_groups)
+    extras_buf: list[str] = []
+    groups_buf: list[str] = []
+
+    def recurse(idx: int) -> Iterable[tuple[tuple[str, ...], tuple[str, ...]]]:
+        if idx == len(items):
+            yield (tuple(extras_buf), tuple(groups_buf))
+            return
+
+        # Exclude branch is always valid.
+        yield from recurse(idx + 1)
+
+        # Include branch is pruned as soon as a set has its single
+        # allowed member already active.
+        if any(
+            active_per_set[i] >= _MUTUALLY_EXCLUSIVE_LIMIT - 1 for i in item_sets[idx]
+        ):
+            return
+        kind, name = items[idx]
+        target = extras_buf if kind == KIND_EXTRA else groups_buf
+        target.append(name)
+        for i in item_sets[idx]:
+            active_per_set[i] += 1
+        yield from recurse(idx + 1)
+        for i in item_sets[idx]:
+            active_per_set[i] -= 1
+        target.pop()
+
+    yield from recurse(0)
 
 
 def _conflict_hint(
@@ -316,10 +362,3 @@ def _marker_holds(
     if marker is None:
         return True
     return bool(marker.evaluate(dict(context)))
-
-
-def _powerset(items: Sequence[str]) -> Iterable[tuple[str, ...]]:
-    """Yield every subset of ``items`` as a sorted tuple, including ``()``."""
-    seen = sorted(set(items))
-    for r in range(len(seen) + 1):
-        yield from itertools.combinations(seen, r)

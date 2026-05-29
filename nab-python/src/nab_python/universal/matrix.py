@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.version import Version
 from .wheel_selection import PlatformSpec
@@ -187,7 +188,7 @@ class MatrixTuple:
         """
         marker = self.environment_marker_string
         for kind, name in sorted(self.selection):
-            variable = "extras" if kind == "extra" else "dependency_groups"
+            variable = MARKER_VARIABLE_FOR_KIND[kind]
             marker += f' and "{name}" in {variable}'
         return marker
 

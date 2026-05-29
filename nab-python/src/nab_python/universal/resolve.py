@@ -99,6 +99,14 @@ class UniversalResult:
 
     matrix: Matrix
     tuple_results: list[TupleResult] = field(default_factory=list)
+    # Per environment signature (``tuple(sorted(env.items()))``), the
+    # canonical names a base (no-member) resolve produced.  Populated
+    # only when conflict forks ran; lets the lock writer tell a base
+    # dependency from one required by every member, so a member-only
+    # dep keeps its membership clause.
+    env_base_names: dict[tuple[tuple[str, str], ...], frozenset[str]] = field(
+        default_factory=dict
+    )
 
     @property
     def success(self) -> bool:
@@ -196,6 +204,7 @@ def merge_universal_lock_inputs(
         tuple_markers=tuple_markers,
         tuple_env_markers=tuple_env_markers,
         tuple_environments=tuple_environments,
+        env_base_names=dict(result.env_base_names),
         environments=environments,
         requires_python=requires_python,
         created_by=created_by,
@@ -231,6 +240,7 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
     align_across_tuples: bool = True,
     preferences: dict[str, Version] | None = None,
     forks: Sequence[ResolveFork] | None = None,
+    base_requirements: Sequence[str] | None = None,
 ) -> UniversalResult:
     """Run a universal resolve for ``matrix``.
 
@@ -284,6 +294,7 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
             align_across_tuples=align_across_tuples,
             preferences=preferences,
             forks=forks,
+            base_requirements=base_requirements,
         )
 
 
@@ -308,6 +319,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     align_across_tuples: bool = True,
     preferences: dict[str, Version] | None = None,
     forks: Sequence[ResolveFork] | None = None,
+    base_requirements: Sequence[str] | None = None,
 ) -> UniversalResult:
     """Run a universal resolve against an already-open coordinator.
 
@@ -321,6 +333,12 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     concatenated; ``requirements`` is used only for the single unforked
     resolve.  Pins flow forward across forks, aligning a shared
     package's version where possible.
+
+    ``base_requirements`` are the no-member requirements (the project
+    deps plus any non-conflicting selection).  When given, a final
+    base pass resolves them per environment so the lock writer can tell
+    a true base dependency from one required by every member; pass it
+    only when conflict forks ran.
     """
     base_tuples = matrix.expand()
     fork_list = (
@@ -333,18 +351,14 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
         sorted({r for fork in fork_list for r in fork.requirements})
     )
 
-    accumulated: dict[str, Version] = dict(preferences or {})
-    out: list[TupleResult] = []
-    for fork in fork_list:
-        tuples = (
-            base_tuples
-            if not fork.selection
-            else [replace(t, selection=fork.selection) for t in base_tuples]
-        )
-        direct_packages = frozenset(_direct_package_names(fork.requirements))
-        results = _run_pass(
+    def run_pass(
+        reqs: list[str],
+        tuples: list[MatrixTuple],
+        prefs: dict[str, Version],
+    ) -> list[TupleResult]:
+        return _run_pass(
             tuples,
-            fork.requirements,
+            reqs,
             constraints,
             coordinator=coordinator,
             uploaded_prior_to=uploaded_prior_to,
@@ -359,16 +373,44 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
             vcs_cache_dir=vcs_cache_dir,
             build_config=build_config,
             resolution_strategy=resolution_strategy,
-            direct_packages=direct_packages,
-            preferences=accumulated,
+            direct_packages=frozenset(_direct_package_names(reqs)),
+            preferences=prefs,
             align_serial=align_across_tuples,
         )
+
+    accumulated: dict[str, Version] = dict(preferences or {})
+    out: list[TupleResult] = []
+    for fork in fork_list:
+        tuples = (
+            base_tuples
+            if not fork.selection
+            else [replace(t, selection=fork.selection) for t in base_tuples]
+        )
+        results = run_pass(list(fork.requirements), tuples, accumulated)
         out.extend(results)
         if align_across_tuples:
             for tr in results:
                 if tr.success:
                     accumulated.update(tr.pins)
-    return UniversalResult(matrix=matrix, tuple_results=out)
+
+    # A base (no-member) pass names the deps that install regardless of
+    # which member is chosen, so the writer keeps the membership clause
+    # on a dep required only by members.
+    env_base_names: dict[tuple[tuple[str, str], ...], frozenset[str]] = {}
+    if base_requirements is not None:
+        base_results = run_pass(
+            list(base_requirements), base_tuples, dict(preferences or {})
+        )
+        for tr in base_results:
+            if tr.success:
+                signature = tuple(sorted(tr.tuple_.environment.items()))
+                env_base_names[signature] = frozenset(
+                    canonicalize_name(name) for name in tr.pins
+                )
+
+    return UniversalResult(
+        matrix=matrix, tuple_results=out, env_base_names=env_base_names
+    )
 
 
 def _run_pass(  # noqa: PLR0913

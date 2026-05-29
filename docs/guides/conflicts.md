@@ -57,7 +57,7 @@ A single-environment resolve cannot serve two exclusive members at
 once. Selecting both is rejected before any network work:
 
 ```console
-$ nab lock --extras cpu --extras gpu
+$ nab lock --extras cpu gpu
 Error in [tool.nab]: extra 'cpu', extra 'gpu' cannot be selected
 together: declared mutually exclusive (at_most_one) in
 [tool.nab].conflicts
@@ -91,10 +91,27 @@ product across them (one member chosen per set), so `black{22,23,24}`
 crossed with `isort{5,6,7}` is nine forks. Non-conflicting selections
 stay active in every fork.
 
+Forking needs one member per fork. If a single selection forces two
+members of one set together, no fork can separate them, so the resolve
+is refused. This happens when an umbrella extra self-references both
+members (`all = ["proj[cpu]", "proj[gpu]"]`) or an umbrella group
+includes both member groups. Co-selecting the members directly still
+forks; only the all-in-one umbrella, which cannot resolve disjointly,
+is rejected.
+
 The require-one check is not skipped in universal mode. Declaring
 `exactly_one` or `at_least_one` and selecting none of its members still
 raises before the resolve, the same as in specific mode. Only the
 co-selection case differs: universal mode forks instead of rejecting.
+
+A dependency required by every member of a set but not by the base
+keeps its membership marker, so it does not install when no member is
+selected (relevant under `at_most_one`, which permits selecting none).
+A base resolve names the deps that install regardless of the
+selection, which is how the writer tells the two apart. When a single
+dependency is required by every member of two or more engaged sets at
+once, its marker is the conjunction across those sets; this stays
+correct for one set, the common case.
 
 The lockfile stays within PEP 751: the membership markers use the
 standard `extras` and `dependency_groups` variables, and the install

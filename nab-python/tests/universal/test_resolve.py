@@ -387,6 +387,85 @@ class TestConflictForkResolve:
         assert seen[1].get("black") == Version("22.1")
 
 
+class TestConflictForkBaseNames:
+    """A base (no-member) pass names the deps that install unconditionally,
+    so a dep required by every member but not the base keeps its
+    membership marker (the at_most_one over-install fix)."""
+
+    def _coordinator(self) -> MagicMock:
+        return _make_coordinator(
+            {
+                "base": [_make_wheel("1.0", package="base")],
+                "accel": [_make_wheel("5.0", package="accel")],
+            }
+        )
+
+    def _matrix(self) -> Matrix:
+        return Matrix(python="==3.11", platforms=("linux_x86_64",))
+
+    def _forks(self) -> list[ResolveFork]:
+        # cpu and gpu both pull in accel; the base has only ``base``.
+        return [
+            ResolveFork((("extra", "cpu"),), ["base", "accel"]),
+            ResolveFork((("extra", "gpu"),), ["base", "accel"]),
+        ]
+
+    def test_env_base_names_excludes_member_only_dep(self) -> None:
+        result = resolve_with_coordinator(
+            self._coordinator(),
+            self._matrix(),
+            forks=self._forks(),
+            base_requirements=["base"],
+            build_policy=BuildPolicy.NEVER,
+        )
+        assert result.success
+        (names,) = result.env_base_names.values()
+        assert "base" in names
+        assert "accel" not in names
+
+    def test_member_only_dep_keeps_membership_marker(self) -> None:
+        result = resolve_with_coordinator(
+            self._coordinator(),
+            self._matrix(),
+            forks=self._forks(),
+            base_requirements=["base"],
+            build_policy=BuildPolicy.NEVER,
+        )
+        lock_input = merge_universal_lock_inputs(
+            result,
+            extras=("cpu", "gpu"),
+            conflicts=(_extra_set("cpu", "gpu"),),
+        )
+        pylock = build_pylock(lock_input)
+        by_name = {str(p.name): p for p in pylock.packages}
+        env = dict(result.tuple_results[0].tuple_.environment)
+        neither = {**env, "extras": frozenset()}
+        cpu = {**env, "extras": frozenset({"cpu"})}
+
+        accel = by_name["accel"]
+        assert accel.marker is not None
+        assert not accel.marker.evaluate(neither)
+        assert accel.marker.evaluate(cpu)
+
+        # ``base`` is a true base dep, so it installs unconditionally.
+        base = by_name["base"]
+        assert base.marker is None or base.marker.evaluate(neither)
+
+    def test_base_pass_failure_leaves_env_base_names_empty(self) -> None:
+        # The base requirement cannot resolve (no such version), so its
+        # environment contributes no base names and the lock falls back
+        # to the present-in-all collapse for that environment.
+        result = resolve_with_coordinator(
+            self._coordinator(),
+            self._matrix(),
+            forks=self._forks(),
+            base_requirements=["base==9.9"],
+            build_policy=BuildPolicy.NEVER,
+        )
+        assert result.success
+        assert result.env_base_names == {}
+
+
 class TestDirectPackageNames:
     """``_direct_package_names`` extracts canonical names from req strings."""
 

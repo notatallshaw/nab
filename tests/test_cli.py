@@ -479,6 +479,27 @@ class TestLockCommandUniversal:
             lock(pyproject, output=out)
         assert "invalid requirement" in capsys.readouterr().err
 
+    def test_config_error_during_resolve_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A ConfigError raised by the universal resolve exits 1 cleanly."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=ConfigError(
+                    "[tool.nab].conflicts names extra 'gpuu', which the project"
+                    " does not declare in [project.optional-dependencies]"
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        err = capsys.readouterr().err
+        assert "Error in [tool.nab]:" in err
+        assert "gpuu" in err
+
     def test_pylock_writes_universal_lock(self, tmp_path: Path) -> None:
         """Universal + pylock format runs the real merge + write pipeline."""
         pyproject = _universal_pyproject(tmp_path)
@@ -610,9 +631,11 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
+        # The full hint is asserted above; the validator's own hint
+        # text is covered against the real implementation in
+        # nab-python/tests/test_lockfile.py.
         err = capsys.readouterr().err
         assert f"Error: {hint}\n" in err
-        assert "[tool.nab].conflicts" in err
 
     def test_unsupported_vcs_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2063,6 +2086,25 @@ class TestDownloadCommand:
             "py311-linux_x86_64",
             "py312-linux_x86_64",
         }
+
+    def test_universal_config_error_during_resolve_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A ConfigError out of the universal download path exits 1 cleanly."""
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=ConfigError(
+                    "exactly one of [extra 'cpu', extra 'gpu'] must be selected"
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            download(pyproject)
+        err = capsys.readouterr().err
+        assert "Error in [tool.nab]:" in err
+        assert "exactly one" in err
 
     @pytest.mark.parametrize("bad", [0, -1])
     def test_non_positive_max_concurrency_exits(

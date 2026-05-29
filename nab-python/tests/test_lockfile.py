@@ -1483,12 +1483,13 @@ class TestMarkerDisjointness:
 
     def test_repeated_environments_still_raise_on_collision(self) -> None:
         # A conflict-forked lock repeats one physical env under several
-        # selection labels.  Dedup must not hide a genuine collision.
+        # selection labels.  Dedup must not hide a genuine collision and
+        # must keep the first-seen label so the message stays stable.
         envs = {
             "linux-cpu": dict(self._LINUX["linux"]),
             "linux-gpu": dict(self._LINUX["linux"]),
         }
-        with pytest.raises(DisjointnessError):
+        with pytest.raises(DisjointnessError, match="linux-cpu"):
             validate_marker_disjointness(
                 [self._pkg("foo", "1.0"), self._pkg("foo", "2.0")],
                 environments=envs,
@@ -1512,6 +1513,31 @@ class TestMarkerDisjointness:
             extras=("cpu",),
             groups=(),
         )
+
+    def test_distinct_environments_kept_when_collision_only_in_second(
+        self,
+    ) -> None:
+        # Dedup collapses identical env dicts only; two genuinely
+        # different envs must each get evaluated.  Collision shows
+        # under darwin only, and the error must name darwin.
+        envs = {
+            "linux": dict(self._LINUX["linux"]),
+            "darwin": {
+                "python_version": "3.11",
+                "sys_platform": "darwin",
+                "platform_machine": "arm64",
+            },
+        }
+        with pytest.raises(DisjointnessError, match="darwin"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", "1.0", "sys_platform == 'darwin'"),
+                    self._pkg("foo", "2.0", "sys_platform == 'darwin'"),
+                ],
+                environments=envs,
+                extras=(),
+                groups=(),
+            )
 
 
 class _FakeIndex:

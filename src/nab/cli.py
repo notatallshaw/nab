@@ -243,6 +243,9 @@ def _resolve_universal(
     except LookupError as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
+    except ConfigError as e:
+        sys.stderr.write(f"Error in [tool.nab]: {e}\n")
+        sys.exit(1)
     except HttpError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)

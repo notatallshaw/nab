@@ -284,7 +284,11 @@ def _build_per_tuple_packages(lock_input: LockInput, lock_dir: Path) -> list[Pac
     A base dependency present in every fork of an environment must
     install regardless of which member is selected, so for that
     environment it contributes the membership-free env-only marker
-    rather than the OR of the per-fork membership markers.
+    rather than the OR of the per-fork membership markers.  A package
+    is recognised as a base dependency through
+    ``lock_input.env_base_names``: a dep required by every member but
+    not by the base is absent from that set, so it keeps the
+    membership clause and does not install when no member is selected.
     """
     out: list[Package] = []
     by_name = _group_by_name(lock_input.per_tuple_pins)
@@ -295,15 +299,17 @@ def _build_per_tuple_packages(lock_input: LockInput, lock_dir: Path) -> list[Pac
     env_fork_counts = _count(
         env_signatures[label] for label in lock_input.tuple_markers
     )
-    for per_tuple in by_name.values():
+    for canonical_name, per_tuple in by_name.items():
         groups = _group_pins_by_pin(per_tuple)
         for pins, tuple_labels in groups:
             marker = _build_marker(
+                canonical_name,
                 tuple_labels,
                 lock_input.tuple_markers,
                 lock_input.tuple_env_markers,
                 env_signatures,
                 env_fork_counts,
+                lock_input.env_base_names,
                 total_tuples,
             )
             out.append(
@@ -418,11 +424,13 @@ def _merge_pins_in_group(pins: list[PinShape]) -> PinShape:
 
 
 def _build_marker(
+    name: str,
     tuple_labels: Sequence[str],
     tuple_markers: Mapping[str, Marker],
     tuple_env_markers: Mapping[str, Marker],
     env_signatures: Mapping[str, tuple[tuple[str, str], ...]],
     env_fork_counts: Mapping[tuple[tuple[str, str], ...], int],
+    env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]],
     total_tuples: int,
 ) -> Marker | None:
     """Return the marker selecting ``tuple_labels``, or ``None`` if unconditional.
@@ -437,12 +445,15 @@ def _build_marker(
     empty the caller has not declared a tuple universe and we omit the
     marker.
 
-    With no conflict forks there is one fork per environment, so a
-    present package always covers its whole environment and the env-only
-    marker equals the per-tuple marker: the emitted markers match the
-    no-conflict path byte for byte.
+    Dropping the membership clause is gated on ``env_base_names``: only
+    a package the base (no-member) resolve produced for that environment
+    may collapse to the env-only marker.  A dep required by every member
+    but not the base is absent from that set, so it keeps the membership
+    OR and does not install when no member is selected.  When an
+    environment has no base-name set (no conflict fork ran) the gate is
+    open, so the no-conflict path emits markers byte for byte as before.
     """
-    if total_tuples == 0 or len(tuple_labels) >= total_tuples:
+    if total_tuples == 0:
         return None
     present = [label for label in tuple_labels if label in tuple_markers]
     if not present:
@@ -450,14 +461,26 @@ def _build_marker(
     by_env: defaultdict[tuple[tuple[str, str], ...], list[str]] = defaultdict(list)
     for label in present:
         by_env[env_signatures[label]].append(label)
+
+    # The package is unconditional only when it covers every declared
+    # tuple AND every environment collapsed to its env-only marker. A
+    # member-only dep present in all forks of an env keeps the
+    # membership OR, so it is not unconditional even at full coverage.
     contributions: list[Marker] = []
+    unconditional = len(present) >= total_tuples
     for signature, labels in by_env.items():
-        if len(labels) >= env_fork_counts[signature]:
+        base_names = env_base_names.get(signature)
+        is_base = base_names is None or name in base_names
+        if len(labels) >= env_fork_counts[signature] and is_base:
             contributions.append(
                 tuple_env_markers.get(labels[0], tuple_markers[labels[0]])
             )
         else:
             contributions.extend(tuple_markers[label] for label in labels)
+            unconditional = False
+
+    if unconditional:
+        return None
     return _or_markers(contributions)
 
 

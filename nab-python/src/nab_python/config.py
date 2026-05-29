@@ -20,9 +20,10 @@ from typing_extensions import override
 
 from nab_index.multi_index import IndexConfig
 
+from ._conflict_kind import KIND_EXTRA, KIND_GROUP
 from ._toml import tool_nab_section
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
-from ._vendor.packaging.utils import canonicalize_name
+from ._vendor.packaging.utils import InvalidName, canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexOverride
 from .provider import (
@@ -62,6 +63,7 @@ __all__ = [
     "conflict_exclusion_groups",
     "conflict_forks",
     "read_pyproject_config",
+    "validate_conflict_exclusions",
     "validate_conflict_minimums",
     "validate_conflict_selection",
 ]
@@ -141,8 +143,8 @@ class ConflictPolicy(enum.Enum):
 class ConflictKind(enum.Enum):
     """Whether a :class:`ConflictMember` names an extra or a group."""
 
-    EXTRA = "extra"
-    GROUP = "group"
+    EXTRA = KIND_EXTRA
+    GROUP = KIND_GROUP
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +216,9 @@ class ConflictFork:
     active_groups: tuple[str, ...]
 
 
+# Two active selections engage the set's exclusivity, forcing a fork.
+# Distinct from ``_MIN_CONFLICT_MEMBERS`` (a structural check on the
+# declaration), which happens to be the same number for unrelated reasons.
 _MIN_ENGAGED_MEMBERS = 2
 
 
@@ -370,19 +375,18 @@ def validate_conflict_minimums(
             raise ConflictSelectionError(msg)
 
 
-def validate_conflict_selection(
+def validate_conflict_exclusions(
     conflicts: Sequence[ConflictSet],
     selected_extras: Sequence[str],
     selected_groups: Sequence[str],
 ) -> None:
-    """Raise when a selection breaks a declared conflict's policy.
+    """Raise when a selection co-activates two members of an exclusive set.
 
-    For a single-environment resolve, two members of an at-most-one or
-    exactly-one set cannot both be active, an exactly-one set must have
-    one active member, and an at-least-one set must have at least one.
-    Names compare under canonicalisation.  Universal mode does not call
-    this for the co-selection case: it forks the matrix so each member
-    resolves on its own.
+    An at-most-one or exactly-one set cannot have two active members at
+    once.  Names compare under canonicalisation.  Universal mode applies
+    this per fork, against the self-reference- and include-expanded
+    active set, to catch members an umbrella selection reaches only
+    transitively (one fork cannot serve two of them disjointly).
     """
     active_extras = {canonicalize_name(e) for e in selected_extras}
     active_groups = {canonicalize_name(g) for g in selected_groups}
@@ -400,6 +404,23 @@ def validate_conflict_selection(
                 f" exclusive ({conflict_set.policy.value}) in [tool.nab].conflicts"
             )
             raise ConflictSelectionError(msg)
+
+
+def validate_conflict_selection(
+    conflicts: Sequence[ConflictSet],
+    selected_extras: Sequence[str],
+    selected_groups: Sequence[str],
+) -> None:
+    """Raise when a selection breaks a declared conflict's policy.
+
+    For a single-environment resolve, two members of an at-most-one or
+    exactly-one set cannot both be active, an exactly-one set must have
+    one active member, and an at-least-one set must have at least one.
+    Names compare under canonicalisation.  Universal mode does not call
+    this for the co-selection case: it forks the matrix so each member
+    resolves on its own.
+    """
+    validate_conflict_exclusions(conflicts, selected_extras, selected_groups)
     validate_conflict_minimums(conflicts, selected_extras, selected_groups)
 
 
@@ -1141,9 +1162,11 @@ def _parse_workspace(value: object) -> WorkspaceConfig | None:
     return WorkspaceConfig(members=members)
 
 
+# A declared conflict set must list at least this many members to mean
+# anything.  Distinct from ``_MIN_ENGAGED_MEMBERS`` (a runtime engagement
+# threshold), which happens to be the same number for unrelated reasons.
 _MIN_CONFLICT_MEMBERS = 2
 _CONFLICT_POLICY_KEYS = {p.value: p for p in ConflictPolicy}
-_CANONICAL_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 
 def _parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
@@ -1277,13 +1300,15 @@ def _parse_conflict_member(item: object, where: str) -> ConflictMember:
     if not isinstance(name, str) or not name:
         msg = f"{where}.{kind.value} must be a non-empty string, got {name!r}"
         raise ConfigError(msg)
-    canonical = canonicalize_name(name)
-    if _CANONICAL_NAME_PATTERN.match(canonical) is None:
+    try:
+        canonical = canonicalize_name(name, validate=True)
+    except InvalidName:
+        canonical = canonicalize_name(name)
         msg = (
             f"{where}.{kind.value} is not a valid extra/group name: {name!r}"
             f" (canonicalises to {canonical!r})"
         )
-        raise ConfigError(msg)
+        raise ConfigError(msg) from None
     return ConflictMember(kind=kind, name=canonical)
 
 
