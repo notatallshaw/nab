@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 import truststore
 import urllib3
 
+from .transport import HttpError
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -78,7 +80,7 @@ class _Urllib3Response:
         status = self._response.status
         if status >= _HTTP_BAD_REQUEST:
             msg = f"HTTP {status} for {self._response.geturl() or '<unknown>'}"
-            raise urllib3.exceptions.HTTPError(msg)
+            raise HttpError(msg)
 
 
 class Urllib3AsyncTransport:
@@ -131,7 +133,11 @@ class Urllib3AsyncTransport:
         request_headers = {"Accept-Encoding": "gzip"}
         if headers is not None:
             request_headers.update(headers)
-        response = await asyncio.to_thread(self._request, url, request_headers)
+        try:
+            response = await asyncio.to_thread(self._request, url, request_headers)
+        except urllib3.exceptions.HTTPError as exc:
+            msg = f"GET {url} failed: {exc}"
+            raise HttpError(msg) from exc
         return _Urllib3Response(response)
 
     async def aclose(self) -> None:

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nab_index.client import AsyncSimpleClient
+from nab_index.transport import HttpError
 
 from .lockfile import IndexPin, LockInput
 
@@ -160,7 +161,15 @@ async def _run_downloads(
                 skipped.append(target)
                 logger.info("skip %s (%s matches)", entry.filename, entry.hash_algo)
                 return
-            data = await client.download(entry.url)
+            try:
+                data = await client.download(entry.url)
+            except HttpError as exc:
+                msg = (
+                    f"{entry.package}=={entry.version}: failed to fetch"
+                    f" {entry.filename}: {exc}"
+                )
+                raise DownloadError(msg) from exc
+
             actual = hashlib.new(entry.hash_algo, data).hexdigest()
             if actual != entry.digest:
                 msg = (

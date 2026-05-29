@@ -18,7 +18,8 @@ import truststore
 import urllib3
 
 from nab_index.client import AsyncSimpleClient, _extract_sdist_files
-from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_index.httpx_async_transport import HttpxAsyncTransport, _HttpxResponse
+from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import (
     Urllib3AsyncTransport,
     _SSLContext,
@@ -54,21 +55,56 @@ class TestFetchCoordinatorTransport:
 
 class TestHttpxAsyncTransport:
     @respx.mock
-    def test_get_returns_httpx_response(self) -> None:
+    def test_get_returns_response_adapter(self) -> None:
         respx.get("https://example.com/").mock(
-            return_value=httpx.Response(200, text="hello")
+            return_value=httpx.Response(200, json={"a": 1}, headers={"etag": "abc"})
         )
 
-        async def go() -> str:
+        async def go() -> _HttpxResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 resp = await transport.get("https://example.com/")
                 resp.raise_for_status()
-                return resp.text
+                return resp
             finally:
                 await transport.aclose()
 
-        assert asyncio.run(go()) == "hello"
+        resp = asyncio.run(go())
+        assert isinstance(resp, _HttpxResponse)
+        assert resp.status_code == 200
+        assert resp.headers["etag"] == "abc"
+        assert resp.json() == {"a": 1}
+        assert resp.content == b'{"a":1}'
+        assert resp.text == '{"a":1}'
+
+    @respx.mock
+    def test_raise_for_status_converts_status_error(self) -> None:
+        respx.get("https://example.com/missing").mock(return_value=httpx.Response(404))
+
+        async def go() -> None:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                resp = await transport.get("https://example.com/missing")
+                resp.raise_for_status()
+            finally:
+                await transport.aclose()
+
+        with pytest.raises(HttpError):
+            asyncio.run(go())
+
+    @respx.mock
+    def test_get_wraps_connection_error(self) -> None:
+        respx.get("https://example.com/").mock(side_effect=httpx.ConnectError("boom"))
+
+        async def go() -> None:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                await transport.get("https://example.com/")
+            finally:
+                await transport.aclose()
+
+        with pytest.raises(HttpError, match="GET https://example.com/ failed"):
+            asyncio.run(go())
 
     def test_uses_truststore_ssl_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """AsyncClient gets a truststore SSLContext via verify=."""
@@ -114,6 +150,25 @@ class TestUrllib3AsyncTransport:
             "GET", "https://example.com/", headers={"Accept-Encoding": "gzip", "k": "v"}
         )
         pool.clear.assert_called_once()
+
+    def test_get_wraps_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A urllib3 transport error surfaces as the transport-contract HttpError."""
+        pool = MagicMock(spec=urllib3.PoolManager)
+        pool.request.side_effect = urllib3.exceptions.MaxRetryError(pool, "https://x/")
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager",
+            lambda **kw: pool,
+        )
+
+        async def go() -> None:
+            transport = Urllib3AsyncTransport()
+            try:
+                await transport.get("https://x/")
+            finally:
+                await transport.aclose()
+
+        with pytest.raises(HttpError, match="GET https://x/ failed"):
+            asyncio.run(go())
 
     def test_get_requests_gzip_without_caller_headers(
         self, monkeypatch: pytest.MonkeyPatch
@@ -177,7 +232,7 @@ class TestUrllib3AsyncTransport:
         fake.data = b""
         fake.status = 404
         fake.geturl.return_value = "https://example.com/missing"
-        with pytest.raises(urllib3.exceptions.HTTPError, match="404"):
+        with pytest.raises(HttpError, match="404"):
             _Urllib3Response(fake).raise_for_status()
 
     def test_response_raise_for_status_no_url(self) -> None:
@@ -186,7 +241,7 @@ class TestUrllib3AsyncTransport:
         fake.data = b""
         fake.status = 500
         fake.geturl.return_value = None
-        with pytest.raises(urllib3.exceptions.HTTPError, match="<unknown>"):
+        with pytest.raises(HttpError, match="<unknown>"):
             _Urllib3Response(fake).raise_for_status()
 
     def test_response_raise_for_status_ok(self) -> None:
