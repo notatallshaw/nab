@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urljoin
 
 from packaging.utils import (
     InvalidSdistFilename,
@@ -262,6 +263,8 @@ def _parse_files(
     PEP 592 ``yanked`` files are dropped unconditionally.
     """
     expected = canonicalize_name(package)
+    # PEP 691: relative URLs resolve against the package page, not the index root.
+    base_url = f"{index_url}{package}/"
     files: list[WheelFile | SdistFile] = []
     for file_info in data.get("files", []):
         # PEP 592: ``true`` or a non-empty reason string means yanked.
@@ -269,9 +272,7 @@ def _parse_files(
             continue
         filename = file_info["filename"]
 
-        file_url = file_info["url"]
-        if not file_url.startswith("http"):
-            file_url = index_url + file_url
+        file_url = urljoin(base_url, file_info["url"])
 
         hashes = _parse_hashes(file_info.get("hashes"))
         size = _parse_size(file_info.get("size"))
