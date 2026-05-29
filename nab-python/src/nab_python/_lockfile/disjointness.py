@@ -58,6 +58,7 @@ def validate_marker_disjointness(
     extras: Sequence[str],
     groups: Sequence[str],
     exclusive_groups: Sequence[AbstractSet[tuple[str, str]]] = (),
+    declared_groups: Sequence[AbstractSet[tuple[str, str]]] = (),
 ) -> None:
     """Confirm same-name ``[[packages]]`` entries are pairwise disjoint.
 
@@ -95,6 +96,11 @@ def validate_marker_disjointness(
     ``'name' in extras`` markers.  A collision outside every pruned
     point still raises, hinting at the ``conflicts`` key when extras or
     groups drive the colliding markers.
+
+    ``declared_groups`` carries every conflict set regardless of policy
+    so the hint can distinguish an undeclared collision (suggest adding
+    a declaration) from one already declared under ``at_least_one``
+    (suggest tightening to ``at_most_one`` or ``exactly_one``).
     """
     if not environments:
         return
@@ -127,7 +133,10 @@ def validate_marker_disjointness(
                     continue
                 versions = sorted(str(p.version) if p.version else "" for p in matching)
                 hint = _conflict_hint(
-                    [p.marker for p in matching], extra_subset, group_subset
+                    [p.marker for p in matching],
+                    extra_subset,
+                    group_subset,
+                    declared_groups,
                 )
                 msg = (
                     f"{name}: {len(matching)} entries fire under"
@@ -235,6 +244,7 @@ def _conflict_hint(
     markers: Sequence[Marker | None],
     extra_subset: Sequence[str],
     group_subset: Sequence[str],
+    declared_groups: Sequence[AbstractSet[tuple[str, str]]] = (),
 ) -> str:
     """Return a one-line hint about declaring a conflict, when relevant.
 
@@ -245,15 +255,34 @@ def _conflict_hint(
     environment-driven collision (no membership variable referenced, or
     the witness selects none of the referenced ones) gets no hint
     because a conflict declaration would not help.
+
+    When ``declared_groups`` already covers the active members, the
+    hint instead suggests tightening the policy: an ``at_least_one``
+    declaration permits co-selection, so the validator still raises and
+    the user has to switch to an exclusive policy to prune the point.
     """
-    if _membership_drives_point(markers, "extras", extra_subset) or (
-        _membership_drives_point(markers, "dependency_groups", group_subset)
-    ):
+    extras_driven = _membership_drives_point(markers, "extras", extra_subset)
+    groups_driven = _membership_drives_point(markers, "dependency_groups", group_subset)
+    if not (extras_driven or groups_driven):
+        return ""
+
+    active = {(KIND_EXTRA, canonicalize_name(n)) for n in extra_subset} | {
+        (KIND_GROUP, canonicalize_name(n)) for n in group_subset
+    }
+    already_declared = any(
+        sum(1 for kind, name in declared if (kind, name) in active) >= 2  # noqa: PLR2004
+        for declared in declared_groups
+    )
+    if already_declared:
         return (
-            ". If these are intentionally mutually exclusive, declare them in"
-            " [tool.nab].conflicts so the colliding context is pruned"
+            ". These members are declared in [tool.nab].conflicts under a"
+            " policy that permits co-selection; switch to at_most_one or"
+            " exactly_one to prune the colliding context"
         )
-    return ""
+    return (
+        ". If these are intentionally mutually exclusive, declare them in"
+        " [tool.nab].conflicts so the colliding context is pruned"
+    )
 
 
 def _membership_drives_point(

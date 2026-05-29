@@ -62,6 +62,7 @@ __all__ = [
     "ResolveMode",
     "conflict_exclusion_groups",
     "conflict_forks",
+    "conflict_member_groups",
     "read_pyproject_config",
     "validate_conflict_exclusions",
     "validate_conflict_minimums",
@@ -197,6 +198,22 @@ def conflict_exclusion_groups(
         frozenset((m.kind.value, m.name) for m in cs.members)
         for cs in conflicts
         if cs.policy is not ConflictPolicy.AT_LEAST_ONE
+    )
+
+
+def conflict_member_groups(
+    conflicts: Sequence[ConflictSet],
+) -> tuple[frozenset[tuple[str, str]], ...]:
+    """Project every conflict set (any policy) to ``(kind, name)`` member sets.
+
+    Distinct from :func:`conflict_exclusion_groups`, which drops
+    :attr:`ConflictPolicy.AT_LEAST_ONE` because that policy permits
+    co-selection.  The disjointness validator uses this projection to
+    tell already-declared collisions from undeclared ones when shaping
+    the hint.
+    """
+    return tuple(
+        frozenset((m.kind.value, m.name) for m in cs.members) for cs in conflicts
     )
 
 
@@ -367,12 +384,19 @@ def validate_conflict_minimums(
         )
         if any_active:
             continue
-        if conflict_set.policy is ConflictPolicy.EXACTLY_ONE:
-            msg = f"exactly one of {conflict_set} must be selected"
-            raise ConflictSelectionError(msg)
-        if conflict_set.policy is ConflictPolicy.AT_LEAST_ONE:
-            msg = f"at least one of {conflict_set} must be selected"
-            raise ConflictSelectionError(msg)
+        if conflict_set.policy is ConflictPolicy.AT_MOST_ONE:
+            continue
+        members = ", ".join(str(m) for m in conflict_set.members)
+        quantifier = (
+            "exactly one"
+            if conflict_set.policy is ConflictPolicy.EXACTLY_ONE
+            else "at least one"
+        )
+        msg = (
+            f"{quantifier} of {members} must be selected: declared"
+            f" {conflict_set.policy.value} in [tool.nab].conflicts"
+        )
+        raise ConflictSelectionError(msg)
 
 
 def validate_conflict_exclusions(

@@ -36,6 +36,7 @@ from nab_python.config import (
     ConflictPolicy,
     ConflictSet,
     conflict_exclusion_groups,
+    conflict_member_groups,
 )
 from nab_python.lockfile import (
     LOCK_VERSION,
@@ -1393,6 +1394,35 @@ class TestMarkerDisjointness:
                 groups=("a", "b"),
                 exclusive_groups=conflict_exclusion_groups(conflicts),
             )
+
+    def test_already_declared_at_least_one_hint_recommends_tightening(self) -> None:
+        # The colliding members are already declared, just under a policy
+        # that permits co-selection; the hint must point at tightening
+        # rather than suggesting the user declare them again.
+        conflicts = [
+            ConflictSet(
+                members=(
+                    ConflictMember(kind=ConflictKind.GROUP, name="a"),
+                    ConflictMember(kind=ConflictKind.GROUP, name="b"),
+                ),
+                policy=ConflictPolicy.AT_LEAST_ONE,
+            )
+        ]
+        with pytest.raises(DisjointnessError) as info:
+            validate_marker_disjointness(
+                [
+                    self._pkg("black", "1.0", "'a' in dependency_groups"),
+                    self._pkg("black", "2.0", "'b' in dependency_groups"),
+                ],
+                environments=self._LINUX,
+                extras=(),
+                groups=("a", "b"),
+                exclusive_groups=conflict_exclusion_groups(conflicts),
+                declared_groups=conflict_member_groups(conflicts),
+            )
+        message = str(info.value)
+        assert "switch to at_most_one or exactly_one" in message
+        assert "If these are intentionally mutually exclusive" not in message
 
     def test_at_most_one_prunes_same_collision(self) -> None:
         # The same collision under an at_most_one exclusion is pruned.

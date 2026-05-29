@@ -417,6 +417,28 @@ class TestValidateConflictMinimums:
             (),
         )
 
+    def test_at_least_one_message_lists_members_not_policy(self) -> None:
+        # The message renders the members and cites the policy and key
+        # once; no duplicate ``at_least_one`` prefix from ConflictSet.__str__.
+        with pytest.raises(ConflictSelectionError) as info:
+            validate_conflict_minimums(
+                (self._set(ConflictPolicy.AT_LEAST_ONE, "cpu", "gpu"),), (), ()
+            )
+        message = str(info.value)
+        assert "at least one of extra 'cpu', extra 'gpu' must be selected" in message
+        assert "declared at_least_one in [tool.nab].conflicts" in message
+        # No double policy word.
+        assert message.count("at_least_one") == 1
+
+    def test_exactly_one_message_lists_members_not_policy(self) -> None:
+        with pytest.raises(ConflictSelectionError) as info:
+            validate_conflict_minimums(
+                (self._set(ConflictPolicy.EXACTLY_ONE, "cpu", "gpu"),), (), ()
+            )
+        message = str(info.value)
+        assert "exactly one of extra 'cpu', extra 'gpu' must be selected" in message
+        assert "declared exactly_one in [tool.nab].conflicts" in message
+
 
 class TestValidateConflictSelection:
     def _set(self, policy: ConflictPolicy, *names: str) -> ConflictSet:
