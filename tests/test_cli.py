@@ -44,6 +44,7 @@ from nab_python.lockfile import (
     IndexPin,
     LockInput,
     MissingHashError,
+    MissingSdistError,
     SdistArtifact,
     WheelArtifact,
 )
@@ -385,6 +386,21 @@ class TestLockCommandSpecific:
         err = capsys.readouterr().err
         assert "Cannot lock" in err
         assert "503" in err
+
+    def test_missing_sdist_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """MissingSdistError exits 1 with the message instead of a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                side_effect=MissingSdistError("foo==1.0 has no sdist"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        assert "Cannot lock" in capsys.readouterr().err
 
     def test_lookup_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

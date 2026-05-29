@@ -115,13 +115,14 @@ class MissingHashError(ValueError):
 
 
 class MissingSdistError(ValueError):
-    """A version pinned under sdist-install has no source distribution.
+    """A ``sdist-install`` package's pinned version has no sdist.
 
-    ``DistPolicy.SDIST_INSTALL`` drops every wheel from the lock so the
-    installer builds from source.  When the version has no sdist (it was
-    published wheel-only, or its sdist fell outside an ``uploaded-prior-to``
-    cooldown while a wheel survived), emitting the pin would write a package
-    entry with no artefacts, an uninstallable lock.  Surface it loudly.
+    Under :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` the
+    resolver may read a wheel's metadata but the lock must pin only the
+    sdist.  When the pinned version publishes wheels but no sdist, the
+    wheels are dropped and nothing is left to pin.  Surface the package
+    and version so the user can pick a version with an sdist or relax
+    the policy, rather than emitting an empty package the spec rejects.
     """
 
 
@@ -299,12 +300,11 @@ def _index_pin_from_listing(
     files = list(provider.dist_files_for(canonical, version))
     if provider.effective_dist_policy(canonical) is DistPolicy.SDIST_INSTALL:
         files = [f for f in files if not isinstance(f, WheelFile)]
-        if not files:
+        if not any(isinstance(f, SdistFile) for f in files):
             msg = (
-                f"{canonical} {version}: dist-policy 'sdist-install' requires a "
-                "source distribution, but none is available for this version "
-                "(it may be wheel-only, or its sdist was excluded by an "
-                "'uploaded-prior-to' cooldown)"
+                f"{canonical}=={version} has no sdist, but its dist-policy is "
+                f"'sdist-install'; pick a version that publishes an sdist or "
+                f"change dist-policy for {canonical}"
             )
             raise MissingSdistError(msg)
 

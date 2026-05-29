@@ -315,6 +315,23 @@ class TestResolveOneTuple:
         assert "MissingHashError" in tr.error
         assert tr.pins == {"pkg": Version("1.0")}
 
+    def test_sdist_install_without_sdist_reports_failed_tuple(self) -> None:
+        """A wheel-only version under sdist-install fails the tuple."""
+        coordinator = _make_coordinator({"pkg": [_make_wheel("1.0", package="pkg")]})
+        tr = _resolve_one_tuple(
+            coordinator,
+            _linux_311(),
+            requirements={"pkg": VersionRange.full()},
+            constraints=None,
+            uploaded_prior_to=None,
+            dist_policy=DistPolicy.SDIST_INSTALL,
+            build_policy=BuildPolicy.NEVER,
+        )
+        assert not tr.success
+        assert tr.error is not None
+        assert "MissingSdistError" in tr.error
+        assert tr.pins == {"pkg": Version("1.0")}
+
 
 _FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
 

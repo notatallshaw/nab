@@ -1272,12 +1272,12 @@ class TestBuildLockInputFromProvider:
         assert pin.sdist.hashes == (("sha256", "b" * 64),)
 
     def test_index_pin_sdist_install_without_sdist_raises(self) -> None:
-        """sdist-install with no sdist available raises MissingSdistError."""
+        """A wheel-only version under sdist-install has nothing to pin."""
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file())]},
             dist_policy_overrides={"foo": DistPolicy.SDIST_INSTALL},
         )
-        with pytest.raises(MissingSdistError, match="sdist-install"):
+        with pytest.raises(MissingSdistError, match="foo==1.0 has no sdist"):
             build_lock_input_from_provider(provider, {"foo": Version("1.0")})
 
     def test_index_pin_records_serving_index(self) -> None:
