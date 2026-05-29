@@ -72,6 +72,20 @@ def _make_coordinator(listings: dict[str, list[WheelFile]]) -> MagicMock:
     return make_coordinator(listings=listings, auto_metadata=True)
 
 
+class _RecordingProgress:
+    """Records every progress event for assertions."""
+
+    def __init__(self) -> None:
+        self.fetched: list[str] = []
+        self.pinned: list[str] = []
+
+    def listing_fetched(self, package: str) -> None:
+        self.fetched.append(package)
+
+    def package_pinned(self, package: str) -> None:
+        self.pinned.append(package)
+
+
 def _linux_311() -> MatrixTuple:
     return MatrixTuple(
         python_version="3.11",
@@ -646,6 +660,17 @@ class TestResolveWithCoordinator:
         assert result.success
         assert result.tuple_results[0].pins == {"pkg": Version("1.0")}
 
+    def test_progress_observes_per_tuple_pins(self) -> None:
+        """A progress reporter sees each tuple's base-package pins."""
+        coordinator = _make_coordinator({"pkg": [_make_wheel("1.0", package="pkg")]})
+        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        progress = _RecordingProgress()
+        result = resolve_with_coordinator(
+            coordinator, matrix, ["pkg"], progress=progress
+        )
+        assert result.success
+        assert "pkg" in progress.pinned
+
 
 class TestResolveUniversalWrapper:
     """``resolve_universal`` wraps ``resolve_with_coordinator`` with a transport."""
@@ -710,6 +735,30 @@ class TestResolveUniversalWrapper:
             )
         # FetchCoordinator received the same list (not the default).
         assert fetch_cls.call_args.kwargs["indexes"] is custom
+
+    def test_progress_passed_to_coordinator(self) -> None:
+        """The shared coordinator receives the progress reporter."""
+        progress = _RecordingProgress()
+        sentinel = MagicMock()
+        sentinel.success = True
+        sentinel.tuple_results = []
+        with (
+            patch.object(resolve_mod, "FetchCoordinator") as fetch_cls,
+            patch.object(
+                resolve_mod, "Urllib3AsyncTransport", return_value=MagicMock()
+            ),
+            patch.object(
+                resolve_mod, "resolve_with_coordinator", return_value=sentinel
+            ),
+        ):
+            fetch_cls.return_value.__enter__.return_value = "COORD"
+            fetch_cls.return_value.__exit__.return_value = False
+            resolve_mod.resolve_universal(
+                matrix=Matrix(python="==3.11", platforms=("linux_x86_64",)),
+                requirements=["pkg"],
+                progress=progress,
+            )
+        assert fetch_cls.call_args.kwargs["progress"] is progress
 
 
 class TestLocalVcsRequiresPython:

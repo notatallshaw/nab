@@ -38,6 +38,7 @@ from ..lockfile import (
     PinShape,
     build_lock_input_from_provider,
 )
+from ..progress import PinObserver
 from ..provider import (
     BuildPolicy,
     DistPolicy,
@@ -74,6 +75,7 @@ if TYPE_CHECKING:
     from nab_index.transport import AsyncHttpTransport
 
     from ..config import NabProjectConfig
+    from ..progress import ProgressReporter
     from .matrix import Matrix, MatrixTuple
 
 
@@ -196,6 +198,7 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
     resolution_strategy: str = "highest",
     align_across_tuples: bool = True,
     preferences: dict[str, Version] | None = None,
+    progress: ProgressReporter | None = None,
 ) -> UniversalResult:
     """Run a universal resolve for ``matrix``.
 
@@ -210,6 +213,10 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
 
     ``preferences``: a starting set of preferred ``{name: Version}``,
     e.g. read from a previous lock.
+
+    ``progress`` receives fetch and pin events for a live status line;
+    the single shared coordinator makes fetch counts aggregate across
+    tuples.
     """
     if indexes is None:
         indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
@@ -222,6 +229,7 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
         cache_dir=cache_dir,
         offline=offline,
         index_overrides=index_overrides,
+        progress=progress,
     ) as coordinator:
         return resolve_with_coordinator(
             coordinator,
@@ -242,6 +250,7 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
             resolution_strategy=resolution_strategy,
             align_across_tuples=align_across_tuples,
             preferences=preferences,
+            progress=progress,
         )
 
 
@@ -265,6 +274,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     resolution_strategy: str = "highest",
     align_across_tuples: bool = True,
     preferences: dict[str, Version] | None = None,
+    progress: ProgressReporter | None = None,
 ) -> UniversalResult:
     """Run a universal resolve against an already-open coordinator.
 
@@ -300,6 +310,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
             direct_packages=direct_packages,
             preferences=initial_preferences,
             align_serial=align_across_tuples,
+            progress=progress,
         ),
     )
 
@@ -325,6 +336,7 @@ def _run_pass(  # noqa: PLR0913
     direct_packages: frozenset[str],
     preferences: dict[str, Version],
     align_serial: bool,
+    progress: ProgressReporter | None = None,
 ) -> list[TupleResult]:
     """Run one serial pass of resolution across ``tuples``.
 
@@ -363,6 +375,7 @@ def _run_pass(  # noqa: PLR0913
             resolution_strategy=resolution_strategy,
             preferences=dict(current_prefs),
             direct_packages=direct_packages,
+            progress=progress,
         )
 
     out: list[TupleResult] = []
@@ -533,6 +546,7 @@ def _resolve_one_tuple(  # noqa: PLR0913
     resolution_strategy: str = "highest",
     preferences: dict[str, Version] | None = None,
     direct_packages: frozenset[str] = frozenset(),
+    progress: ProgressReporter | None = None,
 ) -> TupleResult:
     """Run one single-environment resolve for ``t``."""
     provider = UniversalProvider(
@@ -558,6 +572,7 @@ def _resolve_one_tuple(  # noqa: PLR0913
     )
     resolver: Resolver[str, Version] = Resolver(
         provider,
+        observer=PinObserver(progress) if progress is not None else None,
         range_type=VersionRange,
         root_version="0",
         max_iterations=50_000,

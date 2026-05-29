@@ -27,6 +27,7 @@ from ._vendor.packaging.version import InvalidVersion, Version
 from .config import ConfigError, NabProjectConfig, ResolveMode, read_pyproject_config
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, build_lock_input_from_provider
+from .progress import PinObserver
 from .provider import (
     Provider,
     ResolutionStrategy,
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
+    from .progress import ProgressReporter
     from .universal.matrix import MatrixTuple
 
 
@@ -96,6 +98,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     resolution_strategy: ResolutionStrategy | None = None,
+    progress: ProgressReporter | None = None,
 ) -> ResolutionResult:
     """Resolve a project's dependencies for a single environment.
 
@@ -107,6 +110,9 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     ``groups`` and ``extras`` name PEP 735 groups and
     ``[project.optional-dependencies]`` keys to fold in.
     ``resolution_strategy`` overrides ``config.resolution`` when set.
+
+    ``progress`` receives a listing-fetched event per package fetched
+    and a pin event per base package decided, for a live status line.
 
     Use :func:`resolve_universal_pyproject` when
     ``config.mode is ResolveMode.UNIVERSAL``. Returns a
@@ -162,6 +168,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         offline=offline,
         index_overrides=list(config.index_overrides),
         marker_environment=marker_environment,
+        progress=progress,
     ) as coordinator:
         provider = Provider(
             coordinator,
@@ -185,7 +192,10 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         )
 
         resolver: Resolver[str, Version] = Resolver(
-            provider, range_type=VersionRange, root_version="0"
+            provider,
+            observer=PinObserver(progress) if progress is not None else None,
+            range_type=VersionRange,
+            root_version="0",
         )
         try:
             raw = resolver.resolve(
@@ -515,7 +525,7 @@ def _build_marker_environment(
     return env
 
 
-def resolve_universal_pyproject(
+def resolve_universal_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling into a config object would hide it
     path: Path,
     *,
     config: NabProjectConfig | None = None,
@@ -525,6 +535,7 @@ def resolve_universal_pyproject(
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     resolution_strategy: ResolutionStrategy | None = None,
+    progress: ProgressReporter | None = None,
 ) -> UniversalResult:
     """Run a universal resolve for the project at ``path``.
 
@@ -537,6 +548,10 @@ def resolve_universal_pyproject(
     folded into every per-tuple resolve.  The CLI passes the
     selections through to ``merge_universal_lock_inputs`` so the
     lockfile records what produced the pin set.
+
+    ``progress`` receives an aggregate listing-fetched event per
+    package (the coordinator is shared across tuples) and a pin event
+    per base package decided in each tuple, for a live status line.
     """
     if config is None:
         config = read_pyproject_config(path)
@@ -594,6 +609,7 @@ def resolve_universal_pyproject(
         indexes=list(config.indexes),
         index_overrides=list(config.index_overrides) or None,
         resolution_strategy=effective_strategy.value,
+        progress=progress,
     )
 
 

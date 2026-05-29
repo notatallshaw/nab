@@ -51,6 +51,7 @@ from nab_resolver.resolver import ResolutionError
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from nab._progress import StderrProgressReporter
     from nab_index.transport import AsyncHttpTransport
     from nab_python.provider import ResolutionStrategy
     from nab_python.resolve import ResolutionResult
@@ -161,19 +162,24 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
     groups: tuple[str, ...] = (),
     extras: tuple[str, ...] = (),
     resolution_strategy: ResolutionStrategy | None = None,
+    progress: StderrProgressReporter,
 ) -> ResolutionResult:
     """Run the single-environment resolver and translate errors to exits."""
     try:
-        return resolve_pyproject(
-            path,
-            transport,
-            config=config,
-            cache_dir=cache_dir,
-            offline=offline,
-            groups=groups,
-            extras=extras,
-            resolution_strategy=resolution_strategy,
-        )
+        try:
+            return resolve_pyproject(
+                path,
+                transport,
+                config=config,
+                cache_dir=cache_dir,
+                offline=offline,
+                groups=groups,
+                extras=extras,
+                resolution_strategy=resolution_strategy,
+                progress=progress,
+            )
+        finally:
+            progress.finish()
     except ResolutionError as e:
         sys.stderr.write(f"Resolution failed: {e}\n")
         sys.exit(1)

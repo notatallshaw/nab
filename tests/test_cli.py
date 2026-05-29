@@ -27,6 +27,7 @@ from nab._lock import (
     _resolve_group_selection,
     lock,
 )
+from nab._progress import StderrProgressReporter
 from nab.cli import (
     _default_cache_dir,
     _make_transport,
@@ -1874,3 +1875,36 @@ class TestDownloadCommand:
         ):
             download(pyproject)
         assert "Download failed" in capsys.readouterr().err
+
+
+class TestProgressWiring:
+    """Each resolve path hands a progress reporter to the resolver."""
+
+    def test_lock_specific_threads_reporter(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with patch(
+            "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+        ) as mock:
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        assert isinstance(mock.call_args.kwargs["progress"], StderrProgressReporter)
+
+    def test_download_threads_reporter(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            ) as mock,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, output=tmp_path / "vendor")
+        assert isinstance(mock.call_args.kwargs["progress"], StderrProgressReporter)
+
+    def test_lock_universal_threads_reporter(self, tmp_path: Path) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        with patch(
+            "nab.cli.resolve_universal_pyproject",
+            return_value=_universal_result(success=True),
+        ) as mock:
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        assert isinstance(mock.call_args.kwargs["progress"], StderrProgressReporter)

@@ -41,6 +41,7 @@ from nab_python.requirements_file import (
 )
 
 from . import cli as _cli
+from ._progress import StderrProgressReporter
 from .cli import (
     HttpBackend,
     LockFormat,
@@ -129,6 +130,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     )
 
     transport = _cli._make_transport(http_backend)  # noqa: SLF001
+    progress = StderrProgressReporter()
     if config.mode is ResolveMode.UNIVERSAL:
         _emit_universal(
             path,
@@ -143,6 +145,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
             extras=selected_extras,
             resolution_strategy=strategy_override,
             workspace_to_drop=workspace_to_drop,
+            progress=progress,
         )
         return
 
@@ -156,6 +159,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         groups=selected_groups,
         extras=selected_extras,
         resolution_strategy=strategy_override,
+        progress=progress,
     )
     _emit_specific(
         result,
@@ -282,6 +286,7 @@ def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproj
     extras: tuple[str, ...] = (),
     resolution_strategy: ResolutionStrategy | None = None,
     workspace_to_drop: frozenset[str] = frozenset(),
+    progress: StderrProgressReporter,
 ) -> None:
     """Run the universal resolver and emit the requested artefact."""
     sys.stderr.write(
@@ -290,16 +295,20 @@ def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproj
     )
 
     try:
-        result = _cli.resolve_universal_pyproject(
-            path,
-            config=config,
-            cache_dir=cache_dir,
-            transport=transport,
-            offline=offline,
-            groups=groups,
-            extras=extras,
-            resolution_strategy=resolution_strategy,
-        )
+        try:
+            result = _cli.resolve_universal_pyproject(
+                path,
+                config=config,
+                cache_dir=cache_dir,
+                transport=transport,
+                offline=offline,
+                groups=groups,
+                extras=extras,
+                resolution_strategy=resolution_strategy,
+                progress=progress,
+            )
+        finally:
+            progress.finish()
     except KeyError:
         sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
         sys.exit(1)

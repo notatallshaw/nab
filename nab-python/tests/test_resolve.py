@@ -15,6 +15,7 @@ from nab_python.config import (
     NabProjectConfig,
     ResolveMode,
 )
+from nab_python.progress import PinObserver
 from nab_python.provider import ResolutionStrategy, UnsupportedVcsError
 from nab_python.resolve import (
     ResolutionResult,
@@ -50,6 +51,61 @@ V = Version
 _FAKE_TRANSPORT = MagicMock(name="FakeTransport")
 
 _FORTY = "0123456789abcdef0123456789abcdef01234567"
+
+
+class _RecordingProgress:
+    """Records every progress event for assertions."""
+
+    def __init__(self) -> None:
+        self.fetched: list[str] = []
+        self.pinned: list[str] = []
+
+    def listing_fetched(self, package: str) -> None:
+        self.fetched.append(package)
+
+    def package_pinned(self, package: str) -> None:
+        self.pinned.append(package)
+
+
+class TestProgressReporting:
+    def test_observer_reports_base_packages_only(self) -> None:
+        """The bridge skips extras-proxy keys and reports base pins."""
+        progress = _RecordingProgress()
+        observer = PinObserver(progress)
+
+        observer.on_decision("foo", V("1.0"), 1)
+        observer.on_decision("foo[async]", V("1.0"), 2)
+
+        assert progress.pinned == ["foo"]
+
+    def test_progress_threaded_through_resolve(self, tmp_path: Path) -> None:
+        """resolve_pyproject hands progress to the coordinator and observer."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\ndependencies = ["foo>=1.0"]\n')
+        progress = _RecordingProgress()
+
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("2.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+
+            result = resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                progress=progress,
+            )
+
+        assert result.pins == {"foo": V("2.0")}
+        assert progress.pinned == ["foo"]
+        assert mock_coord_cls.call_args.kwargs["progress"] is progress
 
 
 class TestResolvePyproject:
@@ -741,6 +797,26 @@ class TestResolveUniversalPyproject:
         resolve_universal_pyproject(pyproject)
         kwargs = mock_resolve_universal.call_args.kwargs
         assert kwargs["matrix"].python_patches == {"3.11": "3.11.4"}
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_progress_forwarded_to_universal_resolver(
+        self,
+        mock_resolve_universal: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A progress reporter reaches resolve_universal unchanged."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\ndependencies = ["foo"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        progress = _RecordingProgress()
+        resolve_universal_pyproject(pyproject, progress=progress)
+        assert mock_resolve_universal.call_args.kwargs["progress"] is progress
 
     @patch("nab_python.resolve.resolve_universal")
     def test_explicit_config_arg(

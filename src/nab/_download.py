@@ -21,6 +21,7 @@ from nab_python.config import ResolveMode
 from nab_python.download import DownloadError
 
 from . import cli as _cli
+from ._progress import StderrProgressReporter
 from .cli import (
     HttpBackend,
     PathArg,
@@ -68,6 +69,7 @@ def download(
         offline=offline,
         transport=transport,
         failure_prefix="Cannot download",
+        progress=StderrProgressReporter(),
     )
 
     download_transport = _cli._make_transport(http_backend)  # noqa: SLF001

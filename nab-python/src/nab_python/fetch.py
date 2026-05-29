@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
     from typing_extensions import Self
 
+    from .progress import ProgressReporter
+
 __all__ = [
     "DEFAULT_INDEX_NAME",
     "DEFAULT_INDEX_URL",
@@ -350,7 +352,7 @@ class FetchCoordinator:
 
     PREFETCH_METADATA_COUNT = 10
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - independent fetch/cache/index config knobs
         self,
         transport: AsyncHttpTransport,
         *,
@@ -361,6 +363,7 @@ class FetchCoordinator:
         offline: bool = False,
         index_overrides: list[IndexOverride] | None = None,
         marker_environment: dict[str, str] | None = None,
+        progress: ProgressReporter | None = None,
     ) -> None:
         """Create a coordinator that wraps ``transport``.
 
@@ -411,6 +414,7 @@ class FetchCoordinator:
         self._marker_environment = (
             dict(marker_environment) if marker_environment is not None else None
         )
+        self._progress = progress
         self.index = InMemoryIndex()
         self._thread: threading.Thread | None = None
         self._started = False
@@ -772,6 +776,8 @@ class FetchCoordinator:
         req: FetchRequest,
     ) -> None:
         files = await client.get_files(req.package)
+        if self._progress is not None:
+            self._progress.listing_fetched(req.package)
         self.index.store_listing(req.package, files)
         self._record_serving_index(client, req.package)
 

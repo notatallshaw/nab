@@ -45,6 +45,16 @@ def _make_wheel(name: str = "foo", version: str = "1.0") -> WheelFile:
     )
 
 
+class _RecordingProgress:
+    """Records the package name of every reported listing fetch."""
+
+    def __init__(self) -> None:
+        self.fetched: list[str] = []
+
+    def listing_fetched(self, package: str) -> None:
+        self.fetched.append(package)
+
+
 class TestInMemoryIndex:
     def test_listing_roundtrip(self) -> None:
         idx = InMemoryIndex()
@@ -218,6 +228,16 @@ class TestFetchCoordinator:
             listing = coord.index.get_listing("testpkg")
             assert listing is not None
             assert len(listing) >= 2
+
+    @respx.mock
+    def test_listing_fetch_reports_progress(self) -> None:
+        respx.get("https://pypi.org/simple/testpkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+        progress = _RecordingProgress()
+        with _coord(progress=progress) as coord:
+            coord.request_listing("testpkg").wait(timeout=5)
+        assert progress.fetched == ["testpkg"]
 
     @respx.mock
     def test_request_listing_cached(self) -> None:
