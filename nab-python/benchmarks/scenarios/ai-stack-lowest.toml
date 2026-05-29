@@ -395,7 +395,7 @@ requirements = [
 resolution = "lowest"
 python_version = "3.11"
 platform_system = "Linux"
-datetime = "2025-08-04 12:00:00"
+datetime = "2025-08-05 20:00:00"
 requirements = [
     "openai==1.99.1",
     "llama-index~=0.12.52",
@@ -473,7 +473,7 @@ requirements = ["llama-index-readers-docling"]
 resolution = "lowest"
 python_version = "3.11"
 platform_system = "Linux"
-datetime = "2025-08-13 06:32:08"
+datetime = "2025-08-13 22:00:00"
 requirements = [
     "llama-index-embeddings-openai-like==0.2.1",
     "llama-index-core>=0.12.0",
