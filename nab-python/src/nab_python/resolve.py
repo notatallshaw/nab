@@ -35,7 +35,6 @@ from .config import (
     read_pyproject_config,
     validate_conflict_exclusions,
     validate_conflict_minimums,
-    validate_conflict_selection,
 )
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, build_lock_input_from_provider
@@ -156,7 +155,8 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         _validate_conflict_members_exist(config.conflicts, optional, groups_table)
         active_extras = expand_self_extras(optional, project_name, extras)
         active_groups = expand_group_includes(groups_table, effective_groups)
-        validate_conflict_selection(config.conflicts, active_extras, active_groups)
+        validate_conflict_exclusions(config.conflicts, active_extras, active_groups)
+        validate_conflict_minimums(config.conflicts, active_extras, active_groups)
 
     if python_version is not None:
         effective_python = python_version

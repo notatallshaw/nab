@@ -66,7 +66,6 @@ __all__ = [
     "read_pyproject_config",
     "validate_conflict_exclusions",
     "validate_conflict_minimums",
-    "validate_conflict_selection",
 ]
 
 
@@ -428,24 +427,6 @@ def validate_conflict_exclusions(
                 f" exclusive ({conflict_set.policy.value}) in [tool.nab].conflicts"
             )
             raise ConflictSelectionError(msg)
-
-
-def validate_conflict_selection(
-    conflicts: Sequence[ConflictSet],
-    selected_extras: Sequence[str],
-    selected_groups: Sequence[str],
-) -> None:
-    """Raise when a selection breaks a declared conflict's policy.
-
-    For a single-environment resolve, two members of an at-most-one or
-    exactly-one set cannot both be active, an exactly-one set must have
-    one active member, and an at-least-one set must have at least one.
-    Names compare under canonicalisation.  Universal mode does not call
-    this for the co-selection case: it forks the matrix so each member
-    resolves on its own.
-    """
-    validate_conflict_exclusions(conflicts, selected_extras, selected_groups)
-    validate_conflict_minimums(conflicts, selected_extras, selected_groups)
 
 
 def read_pyproject_config(
@@ -1240,7 +1221,7 @@ def _validate_default_groups_against_conflicts(
             for kind, name in group
             if kind == ConflictKind.GROUP.value and name in active
         )
-        if len(co_active) >= _MIN_CONFLICT_MEMBERS:
+        if len(co_active) >= _MIN_ENGAGED_MEMBERS:
             joined = ", ".join(repr(name) for name in co_active)
             msg = (
                 f"default-groups activates {joined}, which are declared"

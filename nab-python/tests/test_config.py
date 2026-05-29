@@ -22,7 +22,6 @@ from nab_python.config import (
     read_pyproject_config,
     read_pyproject_lock_anchor,
     validate_conflict_minimums,
-    validate_conflict_selection,
 )
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexOverride
 from nab_python.provider import (
@@ -379,19 +378,21 @@ class TestConflicts:
         assert config.default_groups == ("a", "b")
 
 
-class TestConflictExclusionGroups:
-    def _set(self, policy: ConflictPolicy, *names: str) -> ConflictSet:
-        return ConflictSet(
-            members=tuple(ConflictMember(ConflictKind.EXTRA, n) for n in names),
-            policy=policy,
-        )
+def _extras_set(policy: ConflictPolicy, *names: str) -> ConflictSet:
+    """Build an extras-only ConflictSet for tests."""
+    return ConflictSet(
+        members=tuple(ConflictMember(ConflictKind.EXTRA, n) for n in names),
+        policy=policy,
+    )
 
+
+class TestConflictExclusionGroups:
     def test_drops_at_least_one_keeps_others(self) -> None:
         groups = conflict_exclusion_groups(
             (
-                self._set(ConflictPolicy.AT_MOST_ONE, "a", "b"),
-                self._set(ConflictPolicy.AT_LEAST_ONE, "c", "d"),
-                self._set(ConflictPolicy.EXACTLY_ONE, "e", "f"),
+                _extras_set(ConflictPolicy.AT_MOST_ONE, "a", "b"),
+                _extras_set(ConflictPolicy.AT_LEAST_ONE, "c", "d"),
+                _extras_set(ConflictPolicy.EXACTLY_ONE, "e", "f"),
             )
         )
         assert groups == (
@@ -404,11 +405,7 @@ class TestConflictExclusionGroups:
 
 
 class TestValidateConflictMinimums:
-    def _set(self, policy: ConflictPolicy, *names: str) -> ConflictSet:
-        return ConflictSet(
-            members=tuple(ConflictMember(ConflictKind.EXTRA, n) for n in names),
-            policy=policy,
-        )
+    _set = staticmethod(_extras_set)
 
     def test_exactly_one_empty_raises(self) -> None:
         with pytest.raises(ConflictSelectionError, match="exactly one"):
@@ -464,82 +461,6 @@ class TestValidateConflictMinimums:
         message = str(info.value)
         assert "exactly one of extra 'cpu', extra 'gpu' must be selected" in message
         assert "declared exactly_one in [tool.nab].conflicts" in message
-
-
-class TestValidateConflictSelection:
-    def _set(self, policy: ConflictPolicy, *names: str) -> ConflictSet:
-        return ConflictSet(
-            members=tuple(ConflictMember(ConflictKind.EXTRA, n) for n in names),
-            policy=policy,
-        )
-
-    def test_no_conflicts_passes(self) -> None:
-        validate_conflict_selection((), ("cpu", "gpu"), ())
-
-    def test_single_member_selected_passes(self) -> None:
-        validate_conflict_selection(
-            (self._set(ConflictPolicy.AT_MOST_ONE, "cpu", "gpu"),), ("cpu",), ()
-        )
-
-    def test_at_most_one_co_selection_raises(self) -> None:
-        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            validate_conflict_selection(
-                (self._set(ConflictPolicy.AT_MOST_ONE, "cpu", "gpu"),),
-                ("cpu", "gpu"),
-                (),
-            )
-
-    def test_at_most_one_none_selected_passes(self) -> None:
-        validate_conflict_selection(
-            (self._set(ConflictPolicy.AT_MOST_ONE, "cpu", "gpu"),), (), ()
-        )
-
-    def test_exactly_one_co_selection_raises(self) -> None:
-        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            validate_conflict_selection(
-                (self._set(ConflictPolicy.EXACTLY_ONE, "cpu", "gpu"),),
-                ("cpu", "gpu"),
-                (),
-            )
-
-    def test_exactly_one_none_selected_raises(self) -> None:
-        with pytest.raises(ConflictSelectionError, match="exactly one"):
-            validate_conflict_selection(
-                (self._set(ConflictPolicy.EXACTLY_ONE, "cpu", "gpu"),), (), ()
-            )
-
-    def test_at_least_one_none_selected_raises(self) -> None:
-        with pytest.raises(ConflictSelectionError, match="at least one"):
-            validate_conflict_selection(
-                (self._set(ConflictPolicy.AT_LEAST_ONE, "cpu", "gpu"),), (), ()
-            )
-
-    def test_at_least_one_co_selection_allowed(self) -> None:
-        # at-least-one does not forbid co-selection.
-        validate_conflict_selection(
-            (self._set(ConflictPolicy.AT_LEAST_ONE, "cpu", "gpu"),),
-            ("cpu", "gpu"),
-            (),
-        )
-
-    def test_group_members_checked_against_selected_groups(self) -> None:
-        cs = ConflictSet(
-            members=(
-                ConflictMember(ConflictKind.GROUP, "black22"),
-                ConflictMember(ConflictKind.GROUP, "black23"),
-            ),
-            policy=ConflictPolicy.AT_MOST_ONE,
-        )
-        with pytest.raises(ConflictSelectionError, match="black"):
-            validate_conflict_selection((cs,), (), ("black22", "black23"))
-
-    def test_selection_canonicalised(self) -> None:
-        with pytest.raises(ConflictSelectionError):
-            validate_conflict_selection(
-                (self._set(ConflictPolicy.AT_MOST_ONE, "cpu", "fast-io"),),
-                ("CPU", "fast_io"),
-                (),
-            )
 
 
 class TestConflictForks:
