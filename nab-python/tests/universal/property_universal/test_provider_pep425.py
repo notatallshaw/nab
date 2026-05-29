@@ -181,13 +181,9 @@ class TestOnlyCompatibleWheelsKept:
 
 class TestVersionAdmissionPolicy:
     """A version survives the wheel-tag filter iff at least one usable
-    artifact remains.  Under ``BuildPolicy.BUILD_REMOTE`` an sdist
-    (per `PEP 517`_'s build-from-sdist contract) counts as usable;
-    under ``BuildPolicy.NEVER`` only a tag-compatible wheel counts.
-
-    The two parameter combinations correspond to "wheel-only" and
-    "wheel-or-sdist" install modes; the filter must distinguish
-    between them.
+    artifact remains.  A compatible wheel OR an sdist keeps the version
+    alive at every ``BuildPolicy`` level; look-ahead, not this filter,
+    rejects an unreadable sdist under ``BuildPolicy.NEVER``.
 
     .. _PEP 517: https://peps.python.org/pep-0517/
     """
@@ -224,10 +220,12 @@ class TestVersionAdmissionPolicy:
 
     @given(files=listing())
     @PROPERTY_SETTINGS
-    def test_never_policy_drops_sdist_only_versions(
+    def test_never_policy_keeps_sdist_only_versions(
         self, files: list[WheelFile | SdistFile]
     ) -> None:
-        """Under NEVER, a version is admitted iff a compatible wheel exists."""
+        """Under NEVER, a version is admitted if a compatible wheel OR an sdist
+        exists; the look-ahead gate, not filter_distributions, rejects an
+        unbuildable sdist, so sdist-only versions stay available here."""
         spec = PlatformSpec("linux_x86_64")
         provider = UniversalProvider(
             coordinator(files),
@@ -246,5 +244,5 @@ class TestVersionAdmissionPolicy:
             for v, d in super_out
             if isinstance(d, WheelFile)
             and wheel_compatible_with_tuple(d, python_version="3.11", spec=spec)
-        }
+        } | {v for v, d in super_out if isinstance(d, SdistFile)}
         assert out_versions == expected

@@ -52,6 +52,7 @@ from nab_python.lockfile import (
     WheelArtifact,
     build_lock_input_from_provider,
     build_pylock,
+    read_lockfile_anchor,
     read_lockfile_packages,
     write_lock,
     write_requirements_with_hashes,
@@ -833,33 +834,23 @@ class TestReadLockfileAnchor:
     """``read_lockfile_anchor`` extracts ``[tool.nab].created-at``."""
 
     def test_returns_none_when_file_missing(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         assert read_lockfile_anchor(tmp_path / "missing.toml") is None
 
     def test_returns_none_when_file_is_directory(self, tmp_path: Path) -> None:
         # ``is_file`` returns False for directories; the helper skips.
-        from nab_python.lockfile import read_lockfile_anchor
-
         assert read_lockfile_anchor(tmp_path) is None
 
     def test_returns_none_when_toml_invalid(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "broken.toml"
         path.write_text("this is not [[[ valid TOML")
         assert read_lockfile_anchor(path) is None
 
     def test_returns_none_when_no_tool_nab(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text('lock-version = "1.0"\n')
         assert read_lockfile_anchor(path) is None
 
     def test_reads_offset_datetime(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text(
             "[tool.nab]\ncreated-at = 2026-05-01T00:00:00+00:00\n",
@@ -867,8 +858,6 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) == datetime(2026, 5, 1, tzinfo=timezone.utc)
 
     def test_reads_iso_string(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         # Some writers may emit the timestamp as a quoted string instead
         # of a TOML offset-date-time; the reader handles both shapes.
@@ -878,8 +867,6 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) == datetime(2026, 5, 1, tzinfo=timezone.utc)
 
     def test_naive_datetime_coerced_to_utc(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text(
             "[tool.nab]\ncreated-at = 2026-05-01T00:00:00\n",
@@ -887,8 +874,6 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) == datetime(2026, 5, 1, tzinfo=timezone.utc)
 
     def test_naive_iso_string_coerced_to_utc(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text(
             '[tool.nab]\ncreated-at = "2026-05-01T00:00:00"\n',
@@ -896,8 +881,6 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) == datetime(2026, 5, 1, tzinfo=timezone.utc)
 
     def test_invalid_iso_string_returns_none(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text(
             '[tool.nab]\ncreated-at = "not-a-date"\n',
@@ -905,10 +888,18 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(path) is None
 
     def test_non_datetime_value_returns_none(self, tmp_path: Path) -> None:
-        from nab_python.lockfile import read_lockfile_anchor
-
         path = tmp_path / "pylock.toml"
         path.write_text("[tool.nab]\ncreated-at = 1234\n")
+        assert read_lockfile_anchor(path) is None
+
+    def test_non_table_tool_returns_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "pylock.toml"
+        path.write_text('tool = "not-a-table"\n')
+        assert read_lockfile_anchor(path) is None
+
+    def test_non_table_tool_nab_returns_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "pylock.toml"
+        path.write_text('tool = {nab = "oops"}\n')
         assert read_lockfile_anchor(path) is None
 
 
@@ -1672,12 +1663,12 @@ class TestBuildLockInputFromProvider:
         assert pin.sdist.hashes == (("sha256", "b" * 64),)
 
     def test_index_pin_sdist_install_without_sdist_raises(self) -> None:
-        """sdist-install with no sdist available raises MissingSdistError."""
+        """A wheel-only version under sdist-install has nothing to pin."""
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file())]},
             dist_policy_overrides={"foo": DistPolicy.SDIST_INSTALL},
         )
-        with pytest.raises(MissingSdistError, match="sdist-install"):
+        with pytest.raises(MissingSdistError, match="foo==1.0 has no sdist"):
             build_lock_input_from_provider(provider, {"foo": Version("1.0")})
 
     def test_index_pin_records_serving_index(self) -> None:
@@ -1815,10 +1806,9 @@ class TestBuildLockInputFromProvider:
     def test_vcs_pin_carries_bare_repo_url(self) -> None:
         """The bare repo URL is carried through from the parsed source.
 
-        ``repo_url`` keeps the full installable form for the
-        requirements.txt path; ``bare_repo_url`` holds the plain
-        repository URL with no ``git+`` prefix, ``@<ref>``, or
-        ``#subdirectory`` fragment.
+        ``repo_url`` is the installable form re-pinned to ``commit_id``;
+        ``bare_repo_url`` holds the plain repository URL with no ``git+``
+        prefix, ``@<ref>``, or ``#subdirectory`` fragment.
         """
         sha = "a" * 40
         provider = _FakeProvider(
@@ -1835,9 +1825,32 @@ class TestBuildLockInputFromProvider:
         )
         pin = lock_input.pins["foo"]
         assert isinstance(pin, VcsPin)
-        full_url = "git+https://example.com/r.git@release/1.0#subdirectory=pkg/sub"
-        assert pin.repo_url == full_url
+        assert (
+            pin.repo_url == f"git+https://example.com/r.git@{sha}#subdirectory=pkg/sub"
+        )
         assert pin.bare_repo_url == "https://example.com/r.git"
+
+    def test_vcs_requirements_line_pins_to_commit(self) -> None:
+        """A branch/tag-pinned VCS source renders the resolved commit.
+
+        lockfile.md documents the requirements.txt VCS line as
+        ``git+<repo>@<sha>``, and the pylock writer pins to the
+        resolved ``commit-id``.  The requirements emitter must match,
+        not echo the moving ``@<ref>`` the user supplied.
+        """
+        sha = "a" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(name="foo", url="git+https://example.com/r.git@main"),
+            },
+            vcs_pins={"foo": sha},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        text = write_requirements_with_hashes(lock_input)
+        assert f"foo @ git+https://example.com/r.git@{sha}" in text
+        assert "@main" not in text
 
     def test_vcs_pin_pylock_url_is_bare_repo(self) -> None:
         """vcs.url is the bare repository URL; ref and subdirectory are separate fields."""
@@ -1929,7 +1942,7 @@ class TestBuildLockInputFromProvider:
         )
         pin = lock_input.pins["foo"]
         assert isinstance(pin, VcsPin)
-        assert pin.repo_url == "git+https://GitHub.com/org/repo.git"
+        assert pin.repo_url == "git+https://GitHub.com/org/repo.git@" + "a" * 40
 
     def test_vcs_source_keeps_url_without_credentials(self) -> None:
         provider = _FakeProvider(
@@ -1943,7 +1956,7 @@ class TestBuildLockInputFromProvider:
         )
         pin = lock_input.pins["foo"]
         assert isinstance(pin, VcsPin)
-        assert pin.repo_url == "git+https://github.com/org/repo.git"
+        assert pin.repo_url == "git+https://github.com/org/repo.git@" + "a" * 40
 
     def test_vcs_source_records_requested_revision_for_floating_ref(self) -> None:
         """A named ``@<ref>`` resolved to a different SHA is recorded."""

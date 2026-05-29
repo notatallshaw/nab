@@ -415,6 +415,23 @@ class TestMatrixTuple:
         assert "in extras" not in t.marker_string
         assert "in dependency_groups" not in t.marker_string
 
+    def test_duplicate_platform_id_specs_get_distinct_labels(self) -> None:
+        """Two specs sharing a platform_id but differing in a floor stay distinct.
+
+        The default-floor spec keeps the bare label; a non-default floor
+        gets a discriminator suffix so the tuples do not collapse.
+        """
+        matrix = Matrix(
+            python="==3.11",
+            platforms=(
+                PlatformSpec("linux_x86_64", manylinux_floor=(2, 17)),
+                PlatformSpec("linux_x86_64", manylinux_floor=(2, 34)),
+            ),
+        )
+        labels = [t.label for t in matrix.expand()]
+        assert len(set(labels)) == 2
+        assert "py311-linux_x86_64" in labels
+
     def test_cpython_marker_omits_implementation(self) -> None:
         """The default CPython marker keeps its three-clause form."""
         t = MatrixTuple(

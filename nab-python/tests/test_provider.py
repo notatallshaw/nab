@@ -2868,6 +2868,14 @@ class TestExtras:
 
 
 SDIST_PKG_INFO = (
+    "Metadata-Version: 2.2\n"
+    "Name: pkg\n"
+    "Version: 1.0\n"
+    "Requires-Dist: dep-a>=1.0\n"
+    "Requires-Dist: dep-b\n"
+)
+
+PRE_22_SDIST_PKG_INFO = (
     "Metadata-Version: 2.1\n"
     "Name: pkg\n"
     "Version: 1.0\n"
@@ -2969,6 +2977,61 @@ class TestDistPolicy:
         deps = provider.get_dependencies("pkg", V("1.0"))
         assert "dep-a" in deps
         assert "dep-b" in deps
+
+    def test_pre_22_sdist_deps_not_trusted(self) -> None:
+        """A pre-2.2 sdist PKG-INFO is not PEP 643 static, so under NEVER
+        its Requires-Dist surfaces UnsupportedSdistError instead of
+        resolving against unverified declared deps.
+        """
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PRE_22_SDIST_PKG_INFO,
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+        )
+        with pytest.raises(UnsupportedSdistError):
+            provider.get_dependencies("pkg", V("1.0"))
+
+    def test_pre_22_sdist_deps_trusted_with_opt_out(self) -> None:
+        """The trust-unverified opt-out restores trusting a pre-2.2
+        sdist's PKG-INFO Requires-Dist as final.
+        """
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PRE_22_SDIST_PKG_INFO,
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+            trust_unverified_sdist_deps=True,
+        )
+        deps = provider.get_dependencies("pkg", V("1.0"))
+        assert "dep-a" in deps
+        assert "dep-b" in deps
+
+    def test_opt_out_still_routes_explicit_dynamic_deps(self) -> None:
+        """Even with the opt-out, an explicit PEP 643 Dynamic dependency
+        field still forces the dynamic path; under NEVER it raises.
+        """
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+            trust_unverified_sdist_deps=True,
+        )
+        with pytest.raises(UnsupportedSdistError):
+            provider.get_dependencies("pkg", V("1.0"))
 
     def test_sdist_no_pkg_info_raises(self) -> None:
         """Raise MetadataError when PKG-INFO cannot be extracted."""
@@ -3078,6 +3141,14 @@ class TestFetchVersionsNotInIndex:
         assert len(result) == 1
         assert result[0][0] == V("1.0")
         coordinator.request_listing.assert_called_with("pkg")
+
+    def test_listing_fetch_error_reraised(self) -> None:
+        """A recorded listing fetch error surfaces, not an empty listing."""
+        coordinator = make_coordinator(package="bad")
+        coordinator.index.store_listing_error("bad", RuntimeError("index 500"))
+        provider = Provider(coordinator)
+        with pytest.raises(RuntimeError, match="index 500"):
+            provider.fetch_versions("bad")
 
 
 class TestSpeculativePrefetchBatchLimit:

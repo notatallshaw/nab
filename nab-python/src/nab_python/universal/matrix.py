@@ -126,9 +126,11 @@ class MatrixTuple:
 
         Uses the interpreter prefix (``py`` for CPython, ``pp`` for
         PyPy) so tuples that differ only by implementation get distinct
-        labels.  A conflict-fork ``selection`` appends each active
-        member as ``kind-name``, joined by ``.``, in sorted order so the
-        forks of one python/platform stay distinct, e.g.
+        labels, and appends the platform spec's floor discriminator so
+        two specs sharing a ``platform_id`` do not collapse.  A
+        conflict-fork ``selection`` then appends each active member as
+        ``kind-name``, joined by ``.``, in sorted order so the forks of
+        one python/platform stay distinct, e.g.
         ``py311-linux_x86_64-group-black22.group-isort5``.  The ``.``
         separator and the ``kind`` prefix keep the label unambiguous:
         canonical member names are ``[a-z0-9-]`` only, so a name can
@@ -139,7 +141,10 @@ class MatrixTuple:
         key.
         """
         prefix = _IMPLEMENTATION_PREFIX[self.implementation]
-        base = f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
+        base = (
+            f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
+            + self.platform_spec.label_suffix()
+        )
         if not self.selection:
             return base
         suffix = ".".join(f"{kind}-{name}" for kind, name in sorted(self.selection))

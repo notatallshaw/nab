@@ -18,7 +18,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from nab_index.cache import CacheBackend, NullCache, OnDiskCache
+from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import SdistFile, WheelFile
 from nab_index.local_index import LocalIndexClient
@@ -138,6 +138,7 @@ class InMemoryIndex:
         """Create an empty index."""
         self._lock = threading.Lock()
         self._listings: dict[str, list[WheelFile | SdistFile]] = {}
+        self._listing_errors: dict[str, BaseException] = {}
         self._listing_indexes: dict[str, str] = {}
         self._metadata: dict[tuple[str, str], str | None] = {}
         self._sdist_pyproject: dict[tuple[str, str], str | None] = {}
@@ -177,6 +178,26 @@ class InMemoryIndex:
         if pending is not None:
             pending.result = materialised
             pending.event.set()
+
+    def store_listing_error(self, package: str, error: BaseException) -> None:
+        """Record a failed listing fetch and unblock any waiter.
+
+        Distinct from ``store_listing([])``: an empty listing means the
+        index served no files (a 404), while an error means the fetch
+        itself failed. ``fetch_versions`` re-raises the error instead of
+        reporting the package as having no candidates.
+        """
+        key = f"listing:{package}"
+        with self._lock:
+            self._listing_errors[package] = error
+            pending = self._pending.get(key)
+        if pending is not None:
+            pending.event.set()
+
+    def get_listing_error(self, package: str) -> BaseException | None:
+        """Return the recorded listing fetch error for ``package``, or ``None``."""
+        with self._lock:
+            return self._listing_errors.get(package)
 
     def store_listing_index(self, package: str, index_name: str) -> None:
         """Record which configured index served ``package``."""
@@ -749,14 +770,20 @@ class FetchCoordinator:
                     await self._fetch_sdist(client, req)
                 else:
                     await self._fetch_sdist_archive(client, req)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Fetch failed: %s %s", req.kind.value, req.package)
-                # Record an empty result so any waiter unblocks. Without
-                # this, the resolver deadlocks on event.wait() when a
-                # transitive dep 404s or fails any other way.
+                # Record a result so any waiter unblocks; without it the
+                # resolver deadlocks on event.wait().
                 if req.kind is FetchKind.LISTING:
-                    self.index.store_listing(req.package, [])
-                    self._record_serving_index(client, req.package)
+                    # Offline + cold cache is a deliberate empty listing
+                    # (the resolver proceeds with no candidates); any other
+                    # failure is stored as an error so fetch_versions can
+                    # surface it instead of reporting no candidates.
+                    if isinstance(exc, OfflineError):
+                        self.index.store_listing(req.package, [])
+                        self._record_serving_index(client, req.package)
+                    else:
+                        self.index.store_listing_error(req.package, exc)
                 else:
                     assert req.version is not None
                     if req.kind is FetchKind.METADATA:

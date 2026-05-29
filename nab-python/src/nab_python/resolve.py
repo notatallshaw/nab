@@ -192,6 +192,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             dist_policy_overrides=config.dist_policy_overrides or None,
             build_policy=config.build_policy,
             build_policy_overrides=dict(config.build_policy_overrides) or None,
+            trust_unverified_sdist_deps=config.trust_unverified_sdist_deps,
             vcs_config=config.vcs,
             marker_environment=dict(config.marker_environment) or None,
             local_sources=list(config.local_sources) or None,

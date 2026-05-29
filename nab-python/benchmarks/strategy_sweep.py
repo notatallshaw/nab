@@ -188,7 +188,7 @@ def _scenario_inputs(scenario: dict) -> dict | None:
     uploaded_prior_to = (
         _scenarios.parse_datetime(datetime_str) if datetime_str else None
     )
-    requirement_marker_env = _scenarios._scenario_marker_env(python_version, marker_env)
+    requirement_marker_env = _scenarios.scenario_marker_env(python_version, marker_env)
     requirements = _scenarios.parse_requirements(
         requirement_strings,
         vcs_config=vcs_config,

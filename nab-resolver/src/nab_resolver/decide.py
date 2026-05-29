@@ -21,7 +21,6 @@ __all__ = [
     "absorb_pending_clauses",
     "choose_package_to_decide",
     "choose_version",
-    "inject_constraint",
     "record_no_versions",
 ]
 
@@ -65,35 +64,17 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
     return min(undecided, key=sort_key)
 
 
-def inject_constraint(resolver: Resolver[Any, Any], package: Any) -> bool:
-    """Inject a CONSTRAINT incompatibility for a package, if applicable.
-
-    Lazy: only fires the first time the package is about to be decided.
-    Returns True if an incompatibility was injected (caller re-propagates).
-    """
-    if package not in resolver.constraints:
-        return False
-    if package in resolver.injected_constraints:
-        return False
-
-    resolver.injected_constraints.add(package)
-    complement = ~resolver.constraints[package]
-    if complement.is_empty:
-        return False
-
-    add_incompatibility(
-        resolver,
-        Incompatibility(
-            [Term(package, complement, positive=True)],
-            cause=IncompatibilityCause.CONSTRAINT,
-        ),
-    )
-    return True
-
-
 def choose_version(resolver: Resolver[Any, Any], package: Any) -> Any | None:
-    """Ask the provider to pick a version within the allowed range."""
+    """Ask the provider to pick a version within the allowed range.
+
+    A user constraint narrows the acceptable range here rather than acting
+    as an incompatibility: it restricts which version is picked but never
+    forces the package into the solution.
+    """
     current_range = resolver.solution.get(package) or resolver.range_type.full()
+    constraint = resolver.constraints.get(package)
+    if constraint is not None:
+        current_range = current_range & constraint
     resolver.provider.receive_partial_solution_hint(
         resolver.solution.positive_ranges(),
         resolver.solution.decisions(),
@@ -129,10 +110,23 @@ def record_no_versions(
 
     current_range = resolver.solution.get(package) or resolver.range_type.full()
     resolver.observer.on_no_versions(package, current_range)
+
+    # When a constraint narrowed the searched range it is the reason no
+    # acceptable version was found, so attribute the clause to it.
+    constraint = resolver.constraints.get(package)
+    constrained = (
+        constraint is not None and (current_range & constraint) != current_range
+    )
+    cause = (
+        IncompatibilityCause.CONSTRAINT
+        if constrained
+        else IncompatibilityCause.NO_VERSIONS
+    )
+
     add_incompatibility(
         resolver,
         Incompatibility(
             [Term(package, current_range, positive=True)],
-            cause=IncompatibilityCause.NO_VERSIONS,
+            cause=cause,
         ),
     )

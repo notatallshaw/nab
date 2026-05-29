@@ -62,6 +62,10 @@ class TestDefaults:
         config = read_pyproject_config(path)
         assert config == NabProjectConfig()
 
+    def test_non_table_tool_returns_defaults(self, tmp_path: Path) -> None:
+        path = write(tmp_path, 'tool = "not-a-table"\n')
+        assert read_pyproject_config(path) == NabProjectConfig()
+
 
 class TestMode:
     def test_specific_explicit(self, tmp_path: Path) -> None:
@@ -736,6 +740,10 @@ class TestReadLockAnchor:
 
     def test_non_table_tool_nab_returns_none(self, tmp_path: Path) -> None:
         path = write(tmp_path, 'tool = {nab = "oops"}\n')
+        assert read_pyproject_lock_anchor(path) is None
+
+    def test_non_table_tool_returns_none(self, tmp_path: Path) -> None:
+        path = write(tmp_path, 'tool = "oops"\n')
         assert read_pyproject_lock_anchor(path) is None
 
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:
@@ -1449,51 +1457,41 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="matrix.python must be a string"):
             read_pyproject_config(path)
 
-    def _body_with_python(self, python: str) -> str:
+    def _python_axis_body(self, python: str) -> str:
         return (
             "[tool.nab]\n"
             'mode = "universal"\n'
             "[tool.nab.matrix]\n"
-            f"python = {python}\n"
+            f"python = {python!r}\n"
             'platforms = ["linux_x86_64"]\n'
         )
 
-    def test_python_patch_level_rejected(self, tmp_path: Path) -> None:
-        body = self._body_with_python('">=3.11.5"')
-        with pytest.raises(ConfigError, match="minor \\(language\\) versions only"):
-            read_pyproject_config(write(tmp_path, body))
-
-    def test_python_exact_patch_rejected(self, tmp_path: Path) -> None:
-        body = self._body_with_python('"==3.11.0"')
-        with pytest.raises(ConfigError, match="minor \\(language\\) versions only"):
-            read_pyproject_config(write(tmp_path, body))
-
-    def test_python_minor_wildcard_allowed(self, tmp_path: Path) -> None:
-        matrix = read_pyproject_config(
-            write(tmp_path, self._body_with_python('"==3.11.*"'))
-        ).matrix
+    @pytest.mark.parametrize(
+        "python",
+        [">=3.11", "==3.12", "<3.13", "~=3.11", ">=3.11,<3.14", "==3.11.*", ">=3", ""],
+    )
+    def test_python_minor_axis_accepted(self, tmp_path: Path, python: str) -> None:
+        path = write(tmp_path, self._python_axis_body(python))
+        matrix = read_pyproject_config(path).matrix
         assert matrix is not None
-        assert matrix.python == "==3.11.*"
+        assert matrix.python == python
 
-    def test_python_not_a_specifier_rejected(self, tmp_path: Path) -> None:
-        body = self._body_with_python('"3.11"')
-        with pytest.raises(ConfigError, match="matrix.python must be a PEP 440"):
-            read_pyproject_config(write(tmp_path, body))
+    @pytest.mark.parametrize(
+        "python",
+        [">=3.11.5", "==3.10.2", "~=3.11.5", "==3.11.0", "==3.11a1", "!=3.11.5"],
+    )
+    def test_python_finer_than_minor_rejected(
+        self, tmp_path: Path, python: str
+    ) -> None:
+        path = write(tmp_path, self._python_axis_body(python))
+        with pytest.raises(ConfigError, match=r"language \(minor\) version"):
+            read_pyproject_config(path)
 
-    def test_python_arbitrary_equality_rejected(self, tmp_path: Path) -> None:
-        # An arbitrary-equality pin like ===nightly parses as a specifier but
-        # matches no known Python, so the eager matrix expansion rejects it.
-        with pytest.raises(ConfigError, match="No known Python versions match"):
-            read_pyproject_config(
-                write(tmp_path, self._body_with_python('"===nightly"'))
-            )
-
-    def test_python_empty_specifier_allowed(self, tmp_path: Path) -> None:
-        matrix = read_pyproject_config(
-            write(tmp_path, self._body_with_python('""'))
-        ).matrix
-        assert matrix is not None
-        assert matrix.python == ""
+    @pytest.mark.parametrize("python", ["3.11", "garbage", "===foo"])
+    def test_python_unparseable_rejected(self, tmp_path: Path, python: str) -> None:
+        path = write(tmp_path, self._python_axis_body(python))
+        with pytest.raises(ConfigError):
+            read_pyproject_config(path)
 
     def test_empty_platforms(self, tmp_path: Path) -> None:
         path = write(
@@ -1565,6 +1563,34 @@ class TestMatrix:
             '"3.11" = 1\n',
         )
         with pytest.raises(ConfigError, match="python-patches entries must be string"):
+            read_pyproject_config(path)
+
+    def test_python_patches_minor_mismatch_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[tool.nab.matrix.python-patches]\n"
+            '"3.11" = "3.12.1"\n',
+        )
+        with pytest.raises(ConfigError, match="not a patch release of '3.11'"):
+            read_pyproject_config(path)
+
+    def test_python_patches_unparseable_version_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[tool.nab.matrix.python-patches]\n"
+            '"3.11" = "not-a-version"\n',
+        )
+        with pytest.raises(ConfigError, match="python-patches expects version"):
             read_pyproject_config(path)
 
 
@@ -1645,6 +1671,23 @@ class TestBuildPolicyPackage:
         config = read_pyproject_config(path, discover_workspace=False)
         assert "foo-bar" in config.build_policy_overrides
         assert "Foo-Bar" not in config.build_policy_overrides
+
+
+class TestTrustUnverifiedSdistDeps:
+    def test_default_is_false(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\n")
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.trust_unverified_sdist_deps is False
+
+    def test_true_round_trip(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\ntrust-unverified-sdist-deps = true\n")
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.trust_unverified_sdist_deps is True
+
+    def test_non_bool_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\ntrust-unverified-sdist-deps = "yes"\n')
+        with pytest.raises(ConfigError, match="must be a boolean"):
+            read_pyproject_config(path, discover_workspace=False)
 
 
 class TestWorkspace:
@@ -1733,6 +1776,21 @@ class TestWorkspaceDiscoveryIntegration:
         )
         config = read_pyproject_config(member)
         assert config.local_sources == (LocalSource(name="alpha", path=str(explicit)),)
+
+    def test_shadowed_member_excluded_from_workspace_member_names(
+        self, tmp_path: Path
+    ) -> None:
+        member = self._ws(tmp_path)
+        explicit = (tmp_path / "explicit-alpha").resolve()
+        member.write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n'
+            "[tool.nab]\n"
+            "[[tool.nab.local-sources]]\n"
+            'name = "alpha"\n'
+            f'path = "{explicit.as_posix()}"\n',
+        )
+        config = read_pyproject_config(member)
+        assert config.workspace_member_names == frozenset()
 
     def test_workspace_promotes_never_to_build_local_and_logs(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

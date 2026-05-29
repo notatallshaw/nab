@@ -20,6 +20,7 @@ from typing_extensions import override
 
 from nab_index.multi_index import IndexConfig
 
+from ._toml import tool_nab_section
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
@@ -78,6 +79,7 @@ _TOP_LEVEL_KEYS = frozenset(
         "dist-policy-package",
         "build-policy",
         "build-policy-package",
+        "trust-unverified-sdist-deps",
         "marker-environment",
         "indexes",
         "index-overrides",
@@ -294,6 +296,7 @@ class NabProjectConfig:
     dist_policy_overrides: Mapping[str, DistPolicy] = field(default_factory=dict)
     build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL
     build_policy_overrides: Mapping[str, BuildPolicy] = field(default_factory=dict)
+    trust_unverified_sdist_deps: bool = False
     marker_environment: Mapping[str, str] = field(default_factory=dict)
     indexes: tuple[IndexConfig, ...] = (
         IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
@@ -431,7 +434,7 @@ def read_pyproject_config(
         anchor = datetime.now(timezone.utc)
     with path.open("rb") as f:
         data = tomli.load(f)
-    raw = data.get("tool", {}).get("nab", {})
+    raw = tool_nab_section(data)
     if not isinstance(raw, dict):
         msg = f"[tool.nab] must be a table, got {type(raw).__name__}"
         raise ConfigError(msg)
@@ -454,6 +457,7 @@ def _apply_workspace_discovery(
     if not discovered:
         return config
     merged = merge_workspace_local_sources(config.local_sources, discovered)
+    explicit_names = {canonicalize_name(src.name) for src in config.local_sources}
     promoted_policy = auto_promote_build_policy_for_workspace(config.build_policy)
     if promoted_policy is not config.build_policy:
         _logger.info(
@@ -468,7 +472,9 @@ def _apply_workspace_discovery(
         local_sources=merged,
         build_policy=promoted_policy,
         workspace_member_names=frozenset(
-            canonicalize_name(src.name) for src in discovered
+            canonicalize_name(src.name)
+            for src in discovered
+            if canonicalize_name(src.name) not in explicit_names
         ),
     )
 
@@ -543,6 +549,11 @@ def _parse_nab_table(
         ),
         build_policy_overrides=_parse_build_policy_package(
             raw.get("build-policy-package")
+        ),
+        trust_unverified_sdist_deps=_parse_bool(
+            "trust-unverified-sdist-deps",
+            raw.get("trust-unverified-sdist-deps"),
+            default=False,
         ),
         marker_environment=_parse_marker_environment(raw.get("marker-environment", {})),
         indexes=_parse_indexes(raw.get("indexes")),
@@ -695,7 +706,7 @@ def read_pyproject_lock_anchor(path: Path) -> datetime | None:
             data = tomli.load(f)
     except (FileNotFoundError, tomli.TOMLDecodeError):
         return None
-    raw = data.get("tool", {}).get("nab", {})
+    raw = tool_nab_section(data)
     value = raw.get("uploaded-prior-to") if isinstance(raw, dict) else None
     if isinstance(value, str) and _DURATION_PATTERN.match(value):
         return None
@@ -815,6 +826,15 @@ def _parse_dist_policy_package(value: object) -> Mapping[str, DistPolicy]:
         seen[canonical] = raw_key
         out[canonical] = policy
     return out
+
+
+def _parse_bool(key: str, value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        msg = f"{key} must be a boolean, got {type(value).__name__}"
+        raise ConfigError(msg)
+    return value
 
 
 def _parse_enum(
@@ -1081,6 +1101,16 @@ def _parse_python_patches(value: object) -> dict[str, str] | None:
                 f" string -> string, got {k!r}: {v!r}"
             )
             raise ConfigError(msg)
+        try:
+            minor = Version(k)
+            full = Version(v)
+        except InvalidVersion as exc:
+            msg = f"matrix.python-patches expects version strings, got {k!r}: {v!r}"
+            raise ConfigError(msg) from exc
+
+        if full.release[:2] != minor.release[:2]:
+            msg = f"matrix.python-patches value {v!r} is not a patch release of {k!r}"
+            raise ConfigError(msg)
         out[k] = v
     return out
 
@@ -1260,21 +1290,39 @@ def _parse_conflict_member(item: object, where: str) -> ConflictMember:
 _MINOR_RELEASE_PARTS = 2
 
 
-def _matrix_python_patch_clause(spec_set: SpecifierSet) -> str | None:
-    """Return the first clause pinning a patch (micro) version, else None.
+def _validate_matrix_python(spec: str) -> None:
+    """Reject a matrix.python axis finer than major.minor.
 
-    The matrix python axis is minor-granular, so ``>=3.11.5`` would
-    silently exclude 3.11 entirely. A trailing ``.*`` wildcard targets a
-    minor and is allowed.
+    The axis lists language (minor) Python versions; patch pins belong in
+    [tool.nab.matrix.python-patches].
     """
-    for clause in spec_set:
+    try:
+        specifier_set = SpecifierSet(spec)
+    except InvalidSpecifier as exc:
+        msg = f"matrix.python must be a PEP 440 specifier, got {spec!r}"
+        raise ConfigError(msg) from exc
+    for clause in specifier_set:
         try:
-            release = Version(clause.version.removesuffix(".*")).release
-        except InvalidVersion:
-            continue
-        if len(release) > _MINOR_RELEASE_PARTS:
-            return str(clause)
-    return None
+            version = Version(clause.version.removesuffix(".*"))
+        except InvalidVersion as exc:
+            msg = f"matrix.python clause {clause} is not a valid version"
+            raise ConfigError(msg) from exc
+
+        # Reject pre/post/dev/local qualifiers and patch-level release tuples.
+        finer = (
+            version.epoch != 0,
+            version.pre is not None,
+            version.post is not None,
+            version.dev is not None,
+            version.local is not None,
+        )
+        if len(version.release) > _MINOR_RELEASE_PARTS or any(finer):
+            msg = (
+                "matrix.python axis is a language (minor) version only; "
+                f"{clause} is finer than major.minor. Put patch versions in "
+                "[tool.nab.matrix.python-patches]."
+            )
+            raise ConfigError(msg)
 
 
 def _parse_matrix(value: object) -> MatrixConfig | None:
@@ -1305,18 +1353,7 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
     if not isinstance(python, str):
         msg = "matrix.python must be a string PEP 440 specifier"
         raise ConfigError(msg)
-    try:
-        spec_set = SpecifierSet(python)
-    except InvalidSpecifier as exc:
-        msg = f"matrix.python must be a PEP 440 specifier, got {python!r}"
-        raise ConfigError(msg) from exc
-    patched = _matrix_python_patch_clause(spec_set)
-    if patched is not None:
-        msg = (
-            f"matrix.python takes minor (language) versions only, got {patched!r}."
-            " The python axis is minor-granular; use 3.X, not a patch like 3.X.Y."
-        )
-        raise ConfigError(msg)
+    _validate_matrix_python(python)
     platforms = _parse_string_list("matrix.platforms", platforms_raw)
     if not platforms:
         msg = "matrix.platforms must list at least one platform id"

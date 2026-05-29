@@ -17,6 +17,7 @@ import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from string import Formatter
 from typing import TYPE_CHECKING
 
 from nab._version import __version__
@@ -27,6 +28,7 @@ from nab_python.config import (
     read_pyproject_lock_anchor,
 )
 from nab_python.lockfile import (
+    IndexPin,
     LockInput,
     Provenance,
     is_valid_pylock_path,
@@ -205,7 +207,7 @@ def _emit_specific(
     if provenance is not None:
         lock_input.provenance = provenance
 
-    if _cli._is_stdout(output):  # noqa: SLF001
+    if _cli.is_stdout(output):
         if format == "pylock":
             sys.stdout.write(_cli.write_lock(lock_input))
         elif format == "requirements":
@@ -222,7 +224,15 @@ def _emit_specific(
         # Read the prior pins before write_lock overwrites the file.
         prior = read_lockfile_packages(target)
         _cli.write_lock(lock_input, output_path=target)
-        diff = _diff_summary(prior, emitted_pins)
+        # Only index pins record a version; local and VCS pins emit
+        # version=None, so read_lockfile_packages never returns them.
+        # Diff against the same set or they read as added every relock.
+        versioned = {
+            name: version
+            for name, version in emitted_pins.items()
+            if isinstance(lock_input.pins[name], IndexPin)
+        }
+        diff = _diff_summary(prior, versioned)
     elif format == "requirements":
         _cli.write_requirements_with_hashes(lock_input, output_path=target)
         diff = ""
@@ -349,7 +359,7 @@ def _emit_universal_pylock(
         lock_input.provenance = provenance
 
     target: Path | None
-    if _cli._is_stdout(output):  # noqa: SLF001
+    if _cli.is_stdout(output):
         target = None
     else:
         target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
@@ -369,6 +379,32 @@ def _emit_universal_pylock(
         sys.stdout.write(text)
         return
     sys.stderr.write(f"Wrote {target} ({len(result.tuple_results)} tuples)\n")
+
+
+def _check_output_template(output: Path, template: str) -> None:
+    """Reject unknown placeholders in --output before str.format is called."""
+    allowed_vars = _cli.TUPLE_TEMPLATE_VARS
+    allowed = {
+        name
+        for v in allowed_vars
+        for _, name, _, _ in Formatter().parse(v)
+        if name is not None
+    }
+    try:
+        fields = {
+            name for _, name, _, _ in Formatter().parse(template) if name is not None
+        }
+    except ValueError as e:
+        sys.stderr.write(f"Error: --output {output} is not a valid template: {e}\n")
+        sys.exit(1)
+    unknown = sorted(f"{{{name}}}" for name in fields if name not in allowed)
+    if unknown:
+        supported = " and ".join(allowed_vars)
+        sys.stderr.write(
+            f"Error: --output {output} has unknown template placeholder(s)"
+            f" {', '.join(unknown)}; only {supported} are supported.\n"
+        )
+        sys.exit(1)
 
 
 def _emit_universal_requirements(
@@ -395,7 +431,7 @@ def _emit_universal_requirements(
     A plain path with multiple tuples errors clearly: there is no
     one-file shape that pip can install from across all tuples.
     """
-    if output is None or _cli._is_stdout(output):  # noqa: SLF001
+    if output is None or _cli.is_stdout(output):
         _emit_universal_requirements_stdout(
             result, with_hashes=with_hashes, workspace_to_drop=workspace_to_drop
         )
@@ -403,7 +439,7 @@ def _emit_universal_requirements(
 
     template = str(output)
     successful = [tr for tr in result.tuple_results if tr.success]
-    if not any(var in template for var in _cli._TUPLE_TEMPLATE_VARS):  # noqa: SLF001
+    if not any(var in template for var in _cli.TUPLE_TEMPLATE_VARS):
         if len(successful) > 1:
             sys.stderr.write(
                 "Error: universal mode produced multiple tuples but"
@@ -422,6 +458,7 @@ def _emit_universal_requirements(
         )
         return
 
+    _check_output_template(output, template)
     substituted_paths: dict[str, str] = {}
     for tr in successful:
         substituted = template.format(
@@ -518,15 +555,18 @@ def _resolve_group_selection(
     if all_groups and groups:
         sys.stderr.write("Error: --all-groups and --groups are mutually exclusive\n")
         sys.exit(1)
-    if not all_groups:
-        return tuple(dict.fromkeys(groups))
+    if not (all_groups or groups):
+        return ()
 
     try:
         defined = read_pyproject_groups(path)
     except FileNotFoundError:
         sys.stderr.write(f"Error: {path} not found\n")
         sys.exit(1)
-    return tuple(defined.keys())
+    except TypeError as e:
+        sys.stderr.write(f"Error in {path}: {e}\n")
+        sys.exit(1)
+    return tuple(defined.keys()) if all_groups else tuple(dict.fromkeys(groups))
 
 
 def _resolve_extra_selection(
@@ -539,15 +579,18 @@ def _resolve_extra_selection(
     if all_extras and extras:
         sys.stderr.write("Error: --all-extras and --extras are mutually exclusive\n")
         sys.exit(1)
-    if not all_extras:
-        return tuple(dict.fromkeys(extras))
+    if not (all_extras or extras):
+        return ()
 
     try:
         defined = read_pyproject_optional_dependencies(path)
     except FileNotFoundError:
         sys.stderr.write(f"Error: {path} not found\n")
         sys.exit(1)
-    return tuple(defined.keys())
+    except TypeError as e:
+        sys.stderr.write(f"Error in {path}: {e}\n")
+        sys.exit(1)
+    return tuple(defined.keys()) if all_extras else tuple(dict.fromkeys(extras))
 
 
 def _build_provenance(
@@ -616,7 +659,7 @@ def _determine_lock_anchor(
     absolute = read_pyproject_lock_anchor(path)
     if absolute is not None:
         return absolute
-    if _cli._is_stdout(output):  # noqa: SLF001
+    if _cli.is_stdout(output):
         return fresh
     if format != "pylock":
         return fresh
@@ -637,7 +680,7 @@ def _validate_pylock_output_name(
     requirements formats are exempt; exits 1 on a bad name with a
     suggested correction.
     """
-    if format != "pylock" or output is None or _cli._is_stdout(output):  # noqa: SLF001
+    if format != "pylock" or output is None or _cli.is_stdout(output):
         return
     if is_valid_pylock_path(output):
         return

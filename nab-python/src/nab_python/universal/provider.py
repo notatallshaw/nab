@@ -18,7 +18,8 @@ When ``platform_spec`` is supplied, the provider also filters wheel
 candidates by tag compatibility at resolve time (hole 2 in
 ``universal_open_questions.md``).  Versions whose only wheels are
 above the spec's manylinux/musllinux/macOS floor become unavailable
-unless an sdist is present and ``build_policy`` allows building.
+unless an sdist is present, which keeps the version alive at every
+``build_policy`` level (look-ahead rejects an unreadable sdist).
 """
 
 from __future__ import annotations
@@ -101,6 +102,11 @@ class UniversalProvider(Provider):
                     f" got {resolution_strategy!r}"
                 )
                 raise ValueError(msg) from exc
+        trust_unverified_sdist_deps = (
+            build_config.trust_unverified_sdist_deps
+            if build_config is not None
+            else False
+        )
         super().__init__(
             coordinator,
             python_version=marker_environment.get("python_version"),
@@ -113,6 +119,7 @@ class UniversalProvider(Provider):
             dist_policy_overrides=dist_policy_overrides,
             build_policy=build_policy,
             build_policy_overrides=build_policy_overrides,
+            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
             vcs_config=vcs_config,
             local_sources=local_sources,
             vcs_sources=vcs_sources,
@@ -210,8 +217,7 @@ class UniversalProvider(Provider):
                 kept.append((version, dist))
                 versions_with_sdist.add(version)
 
-        build_allowed = self.build_policy != BuildPolicy.NEVER
-        usable = versions_with_wheel | (versions_with_sdist if build_allowed else set())
+        usable = versions_with_wheel | versions_with_sdist
         all_versions = {v for v, _ in base}
         self.excluded_versions_no_compatible_wheel += len(all_versions) - len(usable)
         return [pair for pair in kept if pair[0] in usable]

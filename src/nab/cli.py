@@ -22,6 +22,7 @@ import tyro
 from tyro.extras import SubcommandApp
 
 from nab._version import __version__
+from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python.config import (
     ConfigError,
@@ -77,7 +78,7 @@ _DEFAULT_OUTPUT: dict[str, str] = {
     "requirements-without-hashes": "requirements.txt",
 }
 
-_TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}")
+TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}")
 
 # Conventional KeyboardInterrupt exit code: 128 + SIGINT(2).
 _SIGINT_EXIT_CODE = 130
@@ -148,7 +149,7 @@ def _load_config(
         sys.exit(1)
 
 
-def _is_stdout(output: Path | None) -> bool:
+def is_stdout(output: Path | None) -> bool:
     return output is not None and str(output) == "-"
 
 
@@ -200,6 +201,9 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
     except ConfigError as e:
         sys.stderr.write(f"Error in [tool.nab]: {e}\n")
         sys.exit(1)
+    except HttpError as e:
+        sys.stderr.write(f"{failure_prefix}: {e}\n")
+        sys.exit(1)
 
 
 def _resolve_universal(
@@ -238,6 +242,12 @@ def _resolve_universal(
         sys.exit(1)
     except LookupError as e:
         sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
+    except HttpError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
+    except UnsupportedVcsError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)
 
     if not result.success:

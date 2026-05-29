@@ -34,6 +34,7 @@ from nab.cli import (
     main,
 )
 from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.version import Version
@@ -42,8 +43,10 @@ from nab_python.download import DownloadError
 from nab_python.lockfile import (
     DisjointnessError,
     IndexPin,
+    LocalPin,
     LockInput,
     MissingHashError,
+    MissingSdistError,
     SdistArtifact,
     WheelArtifact,
 )
@@ -369,6 +372,38 @@ class TestLockCommandSpecific:
             lock(pyproject)
         assert "invalid requirement" in capsys.readouterr().err
 
+    def test_http_error_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An index HTTP failure during resolve exits 1, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                side_effect=HttpError("GET https://pypi.org/simple/foo/ failed: 503"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "503" in err
+
+    def test_missing_sdist_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """MissingSdistError exits 1 with the message instead of a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                side_effect=MissingSdistError("foo==1.0 has no sdist"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        assert "Cannot lock" in capsys.readouterr().err
+
     def test_lookup_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -579,6 +614,23 @@ class TestLockCommandUniversal:
         assert f"Error: {hint}\n" in err
         assert "[tool.nab].conflicts" in err
 
+    def test_unsupported_vcs_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A direct-URL requirement refused in universal mode exits cleanly."""
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=UnsupportedVcsError("refusing direct-URL requirement"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "refusing direct-URL requirement" in err
+
     def test_per_tuple_pins_to_stdout_by_default(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -716,6 +768,23 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements-without-hashes")
         assert "unknown group" in capsys.readouterr().err
+
+    def test_http_error_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An index HTTP failure during a tuple resolve exits 1, not a traceback."""
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=HttpError("GET https://pypi.org/simple/foo/ failed: 503"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes")
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "503" in err
 
     def test_requirements_missing_hash_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -884,6 +953,40 @@ class TestLockCommandUniversal:
         assert "both map to" in err
         assert "{platform_id}" in err
         assert not (tmp_path / "constraints-3.11.txt").exists()
+
+    def test_template_unknown_placeholder_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A stray placeholder in --output exits 1 instead of a traceback."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}-{foo}.txt"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_universal_result(success=True),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "unknown template placeholder" in err
+        assert "{foo}" in err
+
+    def test_template_malformed_braces_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An unbalanced brace in --output exits 1 instead of a traceback."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}-{.txt"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_universal_result(success=True),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        assert "not a valid template" in capsys.readouterr().err
 
     def test_template_with_one_tuple_writes_one_file(self, tmp_path: Path) -> None:
         """A template with a single-tuple matrix still works."""
@@ -1204,6 +1307,31 @@ class TestRelockDiffSummary:
                 provenance=None,
             )
         assert capsys.readouterr().err.strip().endswith("(1 packages)")
+
+    def test_relock_unchanged_with_local_pin_prints_plain_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A local pin has no recorded version, so an unchanged relock
+        must not count it as added."""
+        out = tmp_path / "pylock.toml"
+        src = tmp_path / "alpha"
+        src.mkdir()
+        lock_input = LockInput(
+            pins={
+                "foo": _foo_index_pin("1.0", "foo"),
+                "alpha": LocalPin(name="alpha", version="0", path=str(src)),
+            }
+        )
+        for _ in range(2):
+            _emit_specific(
+                ResolutionResult(
+                    pins={"foo": V("1.0"), "alpha": V("0")}, lock_input=lock_input
+                ),
+                format="pylock",
+                output=out,
+                provenance=None,
+            )
+        assert capsys.readouterr().err.strip().endswith("(2 packages)")
 
     def test_unparseable_prior_falls_back_to_plain_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1582,6 +1710,79 @@ class TestGroupAndExtraSelection:
         )
         result = _resolve_extra_selection(pyproject, extras=(), all_extras=True)
         assert sorted(result) == ["ci", "test"]
+
+    def test_no_group_selection_skips_read(self, tmp_path: Path) -> None:
+        result = _resolve_group_selection(
+            tmp_path / "missing.toml", groups=(), all_groups=False
+        )
+        assert result == ()
+
+    def test_no_extra_selection_skips_read(self, tmp_path: Path) -> None:
+        result = _resolve_extra_selection(
+            tmp_path / "missing.toml", extras=(), all_extras=False
+        )
+        assert result == ()
+
+    def test_explicit_groups_returns_deduplicated(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[project]\nname = 'x'\n[dependency-groups]\ndev = []\nlint = []\n",
+        )
+        result = _resolve_group_selection(
+            pyproject, groups=("dev", "lint", "dev"), all_groups=False
+        )
+        assert result == ("dev", "lint")
+
+    def test_explicit_extras_returns_deduplicated(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[project]\nname = 'x'\n"
+            "[project.optional-dependencies]\ntest = []\nci = []\n",
+        )
+        result = _resolve_extra_selection(
+            pyproject, extras=("test", "ci", "test"), all_extras=False
+        )
+        assert result == ("test", "ci")
+
+    def test_all_groups_non_table_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("dependency-groups = 'oops'\n[project]\nname = 'x'\n")
+        with pytest.raises(SystemExit, match="1"):
+            _resolve_group_selection(pyproject, groups=(), all_groups=True)
+        assert "[dependency-groups] must be a table" in capsys.readouterr().err
+
+    def test_explicit_groups_non_table_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("dependency-groups = 'oops'\n[project]\nname = 'x'\n")
+        with pytest.raises(SystemExit, match="1"):
+            _resolve_group_selection(pyproject, groups=("dev",), all_groups=False)
+        assert "[dependency-groups] must be a table" in capsys.readouterr().err
+
+    def test_all_extras_non_table_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname = 'x'\noptional-dependencies = 'oops'\n")
+        with pytest.raises(SystemExit, match="1"):
+            _resolve_extra_selection(pyproject, extras=(), all_extras=True)
+        assert "[project.optional-dependencies] must be a table" in (
+            capsys.readouterr().err
+        )
+
+    def test_explicit_extras_non_table_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname = 'x'\noptional-dependencies = 'oops'\n")
+        with pytest.raises(SystemExit, match="1"):
+            _resolve_extra_selection(pyproject, extras=("foo",), all_extras=False)
+        assert "[project.optional-dependencies] must be a table" in (
+            capsys.readouterr().err
+        )
 
 
 class TestEmitHelpers:

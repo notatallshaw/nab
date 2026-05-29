@@ -33,6 +33,7 @@ from nab_python.provider import (
     LocalSource,
     MissingExtraError,
     UnsupportedSdistError,
+    UnsupportedVcsError,
     VcsConfig,
     VcsPolicy,
     VcsSource,
@@ -52,6 +53,7 @@ from nab_python.universal.resolve import (
     merge_universal_lock_inputs,
     resolve_with_coordinator,
 )
+from nab_python.universal.wheel_selection import PlatformSpec
 from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:
@@ -436,6 +438,9 @@ class TestWarnExtraMarkerAtRoot:
         assert any("extra" in rec.message.lower() for rec in caplog.records)
 
 
+_FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
 class TestParseRequirements:
     """``_parse_requirements`` builds the resolver-input dict per env."""
 
@@ -514,6 +519,43 @@ class TestParseRequirements:
         out = _parse_requirements(["pkg[My_Extra]"], env)
         assert "pkg[my-extra]" in out
 
+    def test_plain_url_requirement_refused(self) -> None:
+        """A plain archive URL is refused as an unsupported scheme."""
+        env = _linux_311().environment
+        with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
+            _parse_requirements(["pkg @ https://example.com/pkg.whl"], env)
+
+    def test_vcs_url_refused_by_default_policy(self) -> None:
+        """A git+https requirement is refused under the default BLOCK policy."""
+        env = _linux_311().environment
+        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+            _parse_requirements(
+                [f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"], env
+            )
+
+    def test_url_constraint_refused(self) -> None:
+        """A direct-URL constraint is refused the same way as a requirement."""
+        env = _linux_311().environment
+        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+            _parse_requirements(
+                [f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"],
+                env,
+                kind="constraint",
+            )
+
+    def test_admitted_vcs_url_raises_not_implemented(self) -> None:
+        """An admitted VCS requirement still has no universal resolve path."""
+        env = _linux_311().environment
+        vcs_config = VcsConfig(
+            policy=VcsPolicy.ALLOW, allowed_schemes=frozenset({"git+https"})
+        )
+        with pytest.raises(NotImplementedError, match="not implemented"):
+            _parse_requirements(
+                [f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"],
+                env,
+                vcs_config=vcs_config,
+            )
+
 
 class TestRootExtras:
     """``_root_extras`` recovers requested extras from the proxy keys."""
@@ -588,8 +630,22 @@ class TestResolveOneTuple:
         assert "MissingHashError" in tr.error
         assert tr.pins == {"pkg": Version("1.0")}
 
-
-_FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
+    def test_sdist_install_without_sdist_reports_failed_tuple(self) -> None:
+        """A wheel-only version under sdist-install fails the tuple."""
+        coordinator = _make_coordinator({"pkg": [_make_wheel("1.0", package="pkg")]})
+        tr = _resolve_one_tuple(
+            coordinator,
+            _linux_311(),
+            requirements={"pkg": VersionRange.full()},
+            constraints=None,
+            uploaded_prior_to=None,
+            dist_policy=DistPolicy.SDIST_INSTALL,
+            build_policy=BuildPolicy.NEVER,
+        )
+        assert not tr.success
+        assert tr.error is not None
+        assert "MissingSdistError" in tr.error
+        assert tr.pins == {"pkg": Version("1.0")}
 
 
 class TestVcsConfigPlumbing:
@@ -870,6 +926,48 @@ class TestMergeUniversalLockInputs:
         # Only the linux tuple survives; windows had no lock_input.
         assert set(merged.per_tuple_pins) == {"py311-linux_x86_64"}
         assert set(merged.tuple_markers) == {"py311-linux_x86_64"}
+
+    def test_distinct_platform_specs_do_not_clobber_pins(self) -> None:
+        """Two specs sharing a platform_id keep separate per-tuple pins.
+
+        Both tuples share python_version and platform_id, so before the
+        label gained a spec discriminator they produced the same label
+        and the second tuple's pins overwrote the first in
+        ``per_tuple_pins``, silently dropping a resolved pin.
+        """
+        matrix = Matrix(
+            python="==3.11",
+            platforms=(
+                PlatformSpec("linux_x86_64", manylinux_floor=(2, 17)),
+                PlatformSpec("linux_x86_64", manylinux_floor=(2, 34)),
+            ),
+        )
+        older, newer = matrix.expand()
+        results = [
+            TupleResult(
+                tuple_=older,
+                success=True,
+                pins={"pkg": Version("1.0")},
+                lock_input=LockInput(
+                    pins={"pkg": IndexPin(name="pkg", version="1.0", index="pypi")},
+                ),
+            ),
+            TupleResult(
+                tuple_=newer,
+                success=True,
+                pins={"pkg": Version("2.0")},
+                lock_input=LockInput(
+                    pins={"pkg": IndexPin(name="pkg", version="2.0", index="pypi")},
+                ),
+            ),
+        ]
+        merged = merge_universal_lock_inputs(
+            UniversalResult(matrix=matrix, tuple_results=results)
+        )
+        assert len(merged.per_tuple_pins) == 2
+        assert len(merged.tuple_markers) == 2
+        versions = {pins["pkg"].version for pins in merged.per_tuple_pins.values()}
+        assert versions == {"1.0", "2.0"}
 
 
 class TestResolveWithCoordinator:

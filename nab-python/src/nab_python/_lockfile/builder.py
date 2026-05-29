@@ -18,6 +18,7 @@ import tomli
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._toml import tool_nab_section
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.utils import canonicalize_name
 
@@ -114,13 +115,14 @@ class MissingHashError(ValueError):
 
 
 class MissingSdistError(ValueError):
-    """A version pinned under sdist-install has no source distribution.
+    """A ``sdist-install`` package's pinned version has no sdist.
 
-    ``DistPolicy.SDIST_INSTALL`` drops every wheel from the lock so the
-    installer builds from source.  When the version has no sdist (it was
-    published wheel-only, or its sdist fell outside an ``uploaded-prior-to``
-    cooldown while a wheel survived), emitting the pin would write a package
-    entry with no artefacts, an uninstallable lock.  Surface it loudly.
+    Under :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` the
+    resolver may read a wheel's metadata but the lock must pin only the
+    sdist.  When the pinned version publishes wheels but no sdist, the
+    wheels are dropped and nothing is left to pin.  Surface the package
+    and version so the user can pick a version with an sdist or relax
+    the policy, rather than emitting an empty package the spec rejects.
     """
 
 
@@ -156,7 +158,8 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
             data = tomli.load(f)
     except (OSError, tomli.TOMLDecodeError):
         return None
-    raw = data.get("tool", {}).get("nab", {}).get("created-at")
+    nab = tool_nab_section(data)
+    raw = nab.get("created-at") if isinstance(nab, dict) else None
     if isinstance(raw, datetime):
         return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
     if isinstance(raw, str):
@@ -297,12 +300,11 @@ def _index_pin_from_listing(
     files = list(provider.dist_files_for(canonical, version))
     if provider.effective_dist_policy(canonical) is DistPolicy.SDIST_INSTALL:
         files = [f for f in files if not isinstance(f, WheelFile)]
-        if not files:
+        if not any(isinstance(f, SdistFile) for f in files):
             msg = (
-                f"{canonical} {version}: dist-policy 'sdist-install' requires a "
-                "source distribution, but none is available for this version "
-                "(it may be wheel-only, or its sdist was excluded by an "
-                "'uploaded-prior-to' cooldown)"
+                f"{canonical}=={version} has no sdist, but its dist-policy is "
+                f"'sdist-install'; pick a version that publishes an sdist or "
+                f"change dist-policy for {canonical}"
             )
             raise MissingSdistError(msg)
 
@@ -452,7 +454,10 @@ def _vcs_pin_from_source(
 
     ``bare_repo_url`` comes from ``parsed.repo_url``, which
     :meth:`VcsRequest.parse` has already separated from the ref and the
-    fragment.
+    fragment.  ``repo_url`` re-pins that bare URL to ``commit_id`` (the
+    ``git+`` prefix, ``@<sha>``, and any ``#subdirectory=`` fragment) so
+    the requirements.txt line installs the locked commit, not the ref
+    the user supplied.
     """
     from nab_index.vcs import VcsRequest
 
@@ -467,14 +472,23 @@ def _vcs_pin_from_source(
         )
         raise MissingVcsCommitError(msg)
     parsed = VcsRequest.parse(source.url)
+    # Keep the named ref only when it differs from the SHA (tag or branch case).
     requested_revision = (
         parsed.ref if parsed.ref and parsed.ref != resolved_sha else None
     )
+
+    # Compose a pinned installable URL from the parsed pieces, not from source.url,
+    # so credentials are stripped and the sha replaces any floating ref.
+    bare_repo_url = _strip_userinfo(parsed.repo_url)
+    repo_url = f"{parsed.scheme}+{bare_repo_url}@{resolved_sha}"
+    if parsed.subdirectory:
+        repo_url += f"#subdirectory={parsed.subdirectory}"
+
     return VcsPin(
         name=canonical,
         version=str(version),
-        repo_url=_strip_userinfo(source.url),
-        bare_repo_url=_strip_userinfo(parsed.repo_url),
+        repo_url=repo_url,
+        bare_repo_url=bare_repo_url,
         commit_id=resolved_sha,
         subdirectory=parsed.subdirectory or None,
         requested_revision=requested_revision,
