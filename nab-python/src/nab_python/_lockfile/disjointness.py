@@ -111,9 +111,10 @@ def validate_marker_disjointness(
         for group_subset in _powerset(relevant_groups)
         if not _point_violates_exclusions(extra_subset, group_subset, exclusive_groups)
     ]
+    distinct_environments = _distinct_environments(environments)
     for entries in same_name_entries:
         name = str(entries[0].name)
-        for env_label, env_dict in environments.items():
+        for env_label, env_dict in distinct_environments:
             for extra_subset, group_subset in points:
                 context: dict[str, str | AbstractSet[str]] = dict(env_dict)
                 context["extras"] = frozenset(extra_subset)
@@ -124,13 +125,38 @@ def validate_marker_disjointness(
                 if len(matching) <= 1:
                     continue
                 versions = sorted(str(p.version) if p.version else "" for p in matching)
+                hint = _conflict_hint(
+                    [p.marker for p in matching], extra_subset, group_subset
+                )
                 msg = (
                     f"{name}: {len(matching)} entries fire under"
                     f" env={env_label!r} extras={sorted(extra_subset)!r}"
                     f" groups={sorted(group_subset)!r}: versions={versions}"
-                    f"{_conflict_hint([p.marker for p in matching])}"
+                    f"{hint}"
                 )
                 raise DisjointnessError(msg)
+
+
+def _distinct_environments(
+    environments: Mapping[str, Mapping[str, str]],
+) -> list[tuple[str, Mapping[str, str]]]:
+    """Collapse the environment axis to one label per distinct env dict.
+
+    A conflict-forked universal lock repeats a python/platform under
+    several selection labels, so identical env dicts would otherwise be
+    re-evaluated once per fork with no added coverage.  The first label
+    seen for each signature is kept so the error message matches the
+    pre-dedup iteration order.
+    """
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    distinct: list[tuple[str, Mapping[str, str]]] = []
+    for label, env_dict in environments.items():
+        signature = tuple(sorted(env_dict.items()))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        distinct.append((label, env_dict))
+    return distinct
 
 
 def _point_violates_exclusions(
@@ -159,23 +185,46 @@ def _point_violates_exclusions(
     return False
 
 
-def _conflict_hint(markers: Sequence[Marker | None]) -> str:
+def _conflict_hint(
+    markers: Sequence[Marker | None],
+    extra_subset: Sequence[str],
+    group_subset: Sequence[str],
+) -> str:
     """Return a one-line hint about declaring a conflict, when relevant.
 
-    Relevant means the colliding markers reference an extra or a
-    dependency group, so declaring the pair mutually exclusive in
-    ``[tool.nab].conflicts`` could prune the offending context.  A
-    purely environment-driven collision (no membership variable) gets
-    no hint because a conflict declaration would not help.
+    Relevant means a membership variable actually drives the witness
+    point: a referenced extra or dependency group is active in the
+    colliding context, so declaring the pair mutually exclusive in
+    ``[tool.nab].conflicts`` could prune that point.  A purely
+    environment-driven collision (no membership variable referenced, or
+    the witness selects none of the referenced ones) gets no hint
+    because a conflict declaration would not help.
     """
-    _, has_extras = _referenced_membership_names(markers, "extras")
-    _, has_groups = _referenced_membership_names(markers, "dependency_groups")
-    if not (has_extras or has_groups):
-        return ""
-    return (
-        ". If these are intentionally mutually exclusive, declare them in"
-        " [tool.nab].conflicts so the colliding context is pruned"
-    )
+    if _membership_drives_point(markers, "extras", extra_subset) or (
+        _membership_drives_point(markers, "dependency_groups", group_subset)
+    ):
+        return (
+            ". If these are intentionally mutually exclusive, declare them in"
+            " [tool.nab].conflicts so the colliding context is pruned"
+        )
+    return ""
+
+
+def _membership_drives_point(
+    markers: Sequence[Marker | None], variable: str, subset: Sequence[str]
+) -> bool:
+    """Return True when a referenced ``variable`` literal is active here.
+
+    A membership variable drives the witness only when the witness
+    ``subset`` is non-empty and intersects the literals the colliding
+    markers test for membership in ``variable`` (compared under
+    canonicalisation, matching the powerset axis restriction).
+    """
+    referenced, _ = _referenced_membership_names(markers, variable)
+    if not referenced:
+        return False
+    active = {canonicalize_name(name) for name in subset}
+    return any(canonicalize_name(name) in active for name in referenced)
 
 
 @functools.cache

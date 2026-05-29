@@ -34,7 +34,7 @@ from ..config import conflict_exclusion_groups
 from .disjointness import validate_marker_disjointness
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from ..lockfile import (
         LockInput,
@@ -278,14 +278,34 @@ def _build_per_tuple_packages(lock_input: LockInput, lock_dir: Path) -> list[Pac
 
     The emitted marker is the raw OR of the per-tuple marker
     expressions; no Boolean minimisation runs.
+
+    A conflict fork injects a membership clause into every tuple's
+    ``tuple_markers`` entry, including the forks' base dependencies.
+    A base dependency present in every fork of an environment must
+    install regardless of which member is selected, so for that
+    environment it contributes the membership-free env-only marker
+    rather than the OR of the per-fork membership markers.
     """
     out: list[Package] = []
     by_name = _group_by_name(lock_input.per_tuple_pins)
     total_tuples = len(lock_input.tuple_markers)
+    env_signatures = _env_signatures(
+        lock_input.tuple_markers, lock_input.tuple_environments
+    )
+    env_fork_counts = _count(
+        env_signatures[label] for label in lock_input.tuple_markers
+    )
     for per_tuple in by_name.values():
         groups = _group_pins_by_pin(per_tuple)
         for pins, tuple_labels in groups:
-            marker = _build_marker(tuple_labels, lock_input.tuple_markers, total_tuples)
+            marker = _build_marker(
+                tuple_labels,
+                lock_input.tuple_markers,
+                lock_input.tuple_env_markers,
+                env_signatures,
+                env_fork_counts,
+                total_tuples,
+            )
             out.append(
                 _pin_to_package(_merge_pins_in_group(pins), marker, lock_dir=lock_dir)
             )
@@ -400,21 +420,77 @@ def _merge_pins_in_group(pins: list[PinShape]) -> PinShape:
 def _build_marker(
     tuple_labels: Sequence[str],
     tuple_markers: Mapping[str, Marker],
+    tuple_env_markers: Mapping[str, Marker],
+    env_signatures: Mapping[str, tuple[tuple[str, str], ...]],
+    env_fork_counts: Mapping[tuple[tuple[str, str], ...], int],
     total_tuples: int,
 ) -> Marker | None:
     """Return the marker selecting ``tuple_labels``, or ``None`` if unconditional.
 
     The package is unconditional when ``tuple_labels`` covers every
     declared tuple in ``tuple_markers``.  Otherwise the marker is the
-    OR of the per-tuple markers.  When ``tuple_markers`` is empty the
-    caller has not declared a tuple universe and we omit the marker.
+    OR of one contribution per environment the package appears in:
+    when the package is present in every fork of an environment it
+    contributes that environment's membership-free env-only marker, and
+    when present in only some forks it contributes the OR of the
+    membership-carrying per-fork markers.  When ``tuple_markers`` is
+    empty the caller has not declared a tuple universe and we omit the
+    marker.
+
+    With no conflict forks there is one fork per environment, so a
+    present package always covers its whole environment and the env-only
+    marker equals the per-tuple marker: the emitted markers match the
+    no-conflict path byte for byte.
     """
     if total_tuples == 0 or len(tuple_labels) >= total_tuples:
         return None
-    markers = [tuple_markers[label] for label in tuple_labels if label in tuple_markers]
-    if not markers:
+    present = [label for label in tuple_labels if label in tuple_markers]
+    if not present:
         return None
-    return _or_markers(markers)
+    by_env: defaultdict[tuple[tuple[str, str], ...], list[str]] = defaultdict(list)
+    for label in present:
+        by_env[env_signatures[label]].append(label)
+    contributions: list[Marker] = []
+    for signature, labels in by_env.items():
+        if len(labels) >= env_fork_counts[signature]:
+            contributions.append(
+                tuple_env_markers.get(labels[0], tuple_markers[labels[0]])
+            )
+        else:
+            contributions.extend(tuple_markers[label] for label in labels)
+    return _or_markers(contributions)
+
+
+def _env_signatures(
+    tuple_markers: Mapping[str, Marker],
+    tuple_environments: Mapping[str, Mapping[str, str]],
+) -> dict[str, tuple[tuple[str, str], ...]]:
+    """Map each tuple label to a hashable signature of its environment.
+
+    Two labels share an environment (differ only by conflict-fork
+    selection) when their environment dicts are equal, so the sorted
+    items form a stable, hashable key.  A label without a declared
+    environment falls back to a signature unique to itself, so it
+    never groups with another label: the env-only marker collapses to
+    the per-tuple marker and the no-conflict behaviour is preserved.
+    """
+    signatures: dict[str, tuple[tuple[str, str], ...]] = {}
+    for label in tuple_markers:
+        env = tuple_environments.get(label)
+        signatures[label] = (
+            tuple(sorted(env.items())) if env is not None else (("__label__", label),)
+        )
+    return signatures
+
+
+def _count(
+    signatures: Iterable[tuple[tuple[str, str], ...]],
+) -> dict[tuple[tuple[str, str], ...], int]:
+    """Count how many forks each environment signature spans."""
+    counts: defaultdict[tuple[tuple[str, str], ...], int] = defaultdict(int)
+    for signature in signatures:
+        counts[signature] += 1
+    return counts
 
 
 def _or_markers(markers: Sequence[Marker]) -> Marker:

@@ -27,10 +27,13 @@ from ._vendor.packaging.version import InvalidVersion, Version
 from .config import (
     ConfigError,
     ConflictFork,
+    ConflictKind,
+    ConflictSet,
     NabProjectConfig,
     ResolveMode,
     conflict_forks,
     read_pyproject_config,
+    validate_conflict_minimums,
     validate_conflict_selection,
 )
 from .fetch import FetchCoordinator
@@ -135,6 +138,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         )
         raise UnsupportedModeError(msg)
 
+    _validate_conflict_members_exist(path, config.conflicts)
     validate_conflict_selection(config.conflicts, extras, groups)
 
     if python_version is not None:
@@ -225,7 +229,23 @@ def _load_group_requirements(path: Path, selected: Sequence[str]) -> list[Requir
     """Read [dependency-groups] from ``path`` and expand ``selected``."""
     if not selected:
         return []
-    groups = read_pyproject_groups(path)
+    return _group_requirements_from_table(
+        read_pyproject_groups(path), selected, path=path
+    )
+
+
+def _group_requirements_from_table(
+    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    selected: Sequence[str],
+    *,
+    path: Path,
+) -> list[Requirement]:
+    """Expand ``selected`` from an already-read group table.
+
+    ``path`` is used only for the missing-table error message.
+    """
+    if not selected:
+        return []
     if not groups:
         msg = (
             "groups requested but [dependency-groups] is missing from"
@@ -243,9 +263,20 @@ def _load_group_requirements_by_group(
     Like :func:`_load_group_requirements`, but keeps each group's
     requirements separate so a caller can name the source group.
     """
+    return _group_requirements_by_group_from_table(
+        read_pyproject_groups(path), selected, path=path
+    )
+
+
+def _group_requirements_by_group_from_table(
+    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    selected: Sequence[str],
+    *,
+    path: Path,
+) -> dict[str, list[Requirement]]:
+    """Per-group expansion from an already-read group table."""
     if not selected:
         return {}
-    groups = read_pyproject_groups(path)
     if not groups:
         msg = (
             "groups requested but [dependency-groups] is missing from"
@@ -399,32 +430,101 @@ def _load_extra_requirements(path: Path, selected: Sequence[str]) -> list[Requir
     """
     if not selected:
         return []
-    optional = read_pyproject_optional_dependencies(path)
+    return _extra_requirements_from_table(
+        read_pyproject_optional_dependencies(path),
+        read_pyproject_name(path),
+        selected,
+        path=path,
+    )
+
+
+def _extra_requirements_from_table(
+    optional: Mapping[str, Sequence[str]],
+    project_name: str | None,
+    selected: Sequence[str],
+    *,
+    path: Path,
+) -> list[Requirement]:
+    """Expand ``selected`` extras from an already-read optional-deps table.
+
+    See :func:`_load_extra_requirements` for the self-reference rules;
+    ``path`` is used only for the missing-table error message.
+    """
+    if not selected:
+        return []
     if not optional:
         msg = (
             "extras requested but [project.optional-dependencies] is"
             f" missing from {path}: {sorted(selected)!r}"
         )
         raise LookupError(msg)
-    project_name = read_pyproject_name(path)
     expanded = expand_self_extras(optional, project_name, selected)
     return select_optional_dependencies(optional, expanded)
+
+
+def _validate_conflict_members_exist(
+    path: Path, conflicts: Sequence[ConflictSet]
+) -> None:
+    """Raise when a declared conflict names an extra/group the project lacks.
+
+    A member naming an undeclared extra or group can never match, so
+    the conflict would be silently inert.  Names compare under
+    canonicalisation, matching the loaders.  A no-op when no conflicts
+    are declared.
+    """
+    if not conflicts:
+        return
+    known_extras = {
+        canonicalize_name(name) for name in read_pyproject_optional_dependencies(path)
+    }
+    known_groups = {canonicalize_name(name) for name in read_pyproject_groups(path)}
+    unknown: list[str] = []
+    for conflict_set in conflicts:
+        for member in conflict_set.members:
+            known = known_extras if member.kind is ConflictKind.EXTRA else known_groups
+            if member.name not in known:
+                unknown.append(str(member))
+    if unknown:
+        joined = ", ".join(unknown)
+        msg = (
+            f"[tool.nab].conflicts names {joined}, which the project does not"
+            " declare in [project.optional-dependencies] or [dependency-groups]"
+        )
+        raise ConfigError(msg)
+
+
+@dataclass(frozen=True, slots=True)
+class _ForkTables:
+    """Pyproject tables read once and reused across every conflict fork."""
+
+    groups: Mapping[str, Sequence[str | Mapping[str, str]]]
+    optional: Mapping[str, Sequence[str]]
+    project_name: str | None
 
 
 def _fork_requirement_strings(
     path: Path,
     base_dependencies: Sequence[Requirement],
     fork: ConflictFork,
+    tables: _ForkTables,
 ) -> list[str]:
     """Fold one conflict fork's active groups and extras onto the base deps.
 
     Each fork resolves a different slice of the selection (one member
     per engaged conflict set), so its requirement list is built
-    separately rather than shared across forks.
+    separately rather than shared across forks.  ``tables`` carries the
+    group and optional-dependency tables read once for the whole
+    resolve, so the per-fork loop does not re-read the file.
     """
     requirements = list(base_dependencies)
-    requirements.extend(_load_group_requirements(path, fork.active_groups))
-    requirements.extend(_load_extra_requirements(path, fork.active_extras))
+    requirements.extend(
+        _group_requirements_from_table(tables.groups, fork.active_groups, path=path)
+    )
+    requirements.extend(
+        _extra_requirements_from_table(
+            tables.optional, tables.project_name, fork.active_extras, path=path
+        )
+    )
     return [str(r) for r in requirements]
 
 
@@ -581,6 +681,9 @@ def resolve_universal_pyproject(
         msg = "mode = 'universal' requires a [tool.nab.matrix] table"
         raise UnsupportedModeError(msg)
 
+    _validate_conflict_members_exist(path, config.conflicts)
+    validate_conflict_minimums(config.conflicts, extras, groups)
+
     base_dependencies = read_pyproject_dependencies(path)
     matrix = Matrix(
         python=config.matrix.python,
@@ -593,17 +696,28 @@ def resolve_universal_pyproject(
         ),
         implementations=config.matrix.implementations,
     )
+    expanded_tuples = matrix.expand()
+    group_table = read_pyproject_groups(path)
+    tables = _ForkTables(
+        groups=group_table,
+        optional=read_pyproject_optional_dependencies(path),
+        project_name=read_pyproject_name(path),
+    )
     forks: list[ResolveFork] = []
     for fork in conflict_forks(extras, groups, config.conflicts):
         if len(fork.active_groups) > 1:
             _check_group_disjointness_across_tuples(
-                _load_group_requirements_by_group(path, fork.active_groups),
-                matrix.expand(),
+                _group_requirements_by_group_from_table(
+                    group_table, fork.active_groups, path=path
+                ),
+                expanded_tuples,
             )
         forks.append(
             ResolveFork(
                 selection=fork.selection,
-                requirements=_fork_requirement_strings(path, base_dependencies, fork),
+                requirements=_fork_requirement_strings(
+                    path, base_dependencies, fork, tables
+                ),
             )
         )
     effective_strategy = (

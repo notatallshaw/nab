@@ -273,8 +273,8 @@ class TestConflictForkResolve:
         assert result.success
         by_label = {tr.tuple_.label: tr.pins for tr in result.tuple_results}
         assert by_label == {
-            "py311-linux_x86_64-black22": {"black": Version("22.1")},
-            "py311-linux_x86_64-black23": {"black": Version("23.12")},
+            "py311-linux_x86_64-group-black22": {"black": Version("22.1")},
+            "py311-linux_x86_64-group-black23": {"black": Version("23.12")},
         }
 
     def test_declared_conflict_lock_validates_and_marks_forks(self) -> None:
@@ -338,22 +338,51 @@ class TestConflictForkResolve:
         assert "in dependency_groups" not in env_str
         assert "in extras" not in env_str
 
-    def test_align_across_tuples_false_still_resolves(self) -> None:
-        # With alignment off, pins are not threaded forward, but each
-        # fork still resolves; covers the no-accumulation branch.
-        result = resolve_with_coordinator(
-            self._black_coordinator(),
-            self._one_tuple_matrix(),
-            [],
-            forks=self._black_forks(),
-            build_policy=BuildPolicy.NEVER,
-            align_across_tuples=False,
-        )
+    def _per_fork_preferences(
+        self, *, align_across_tuples: bool
+    ) -> list[dict[str, Version]]:
+        """Run the two black forks, recording each fork's preferences.
+
+        Wraps ``_run_pass`` to snapshot the ``preferences`` dict handed
+        to each fork.  Cross-fork accumulation lives in
+        ``resolve_with_coordinator``, so the second fork's snapshot
+        reveals whether the first fork's pins were threaded forward.
+        """
+        seen: list[dict[str, Version]] = []
+        real_run_pass = resolve_mod._run_pass
+
+        def spy(*args: object, **kwargs: object) -> object:
+            seen.append(dict(kwargs["preferences"]))  # type: ignore[arg-type]
+            return real_run_pass(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(resolve_mod, "_run_pass", spy):
+            result = resolve_with_coordinator(
+                self._black_coordinator(),
+                self._one_tuple_matrix(),
+                [],
+                forks=self._black_forks(),
+                build_policy=BuildPolicy.NEVER,
+                align_across_tuples=align_across_tuples,
+            )
         assert result.success
-        assert {tr.tuple_.label for tr in result.tuple_results} == {
-            "py311-linux_x86_64-black22",
-            "py311-linux_x86_64-black23",
-        }
+        return seen
+
+    def test_align_across_tuples_false_does_not_thread_pins(self) -> None:
+        # With alignment off, the second fork's preferences must not
+        # carry the first fork's black pin: each fork resolves alone.
+        seen = self._per_fork_preferences(align_across_tuples=False)
+        assert len(seen) == 2
+        assert "black" not in seen[0]
+        assert "black" not in seen[1]
+
+    def test_align_across_tuples_true_threads_pins(self) -> None:
+        # The companion case: with alignment on, the first fork's black
+        # pin is accumulated into the second fork's preferences, so the
+        # assertion above genuinely distinguishes the two modes.
+        seen = self._per_fork_preferences(align_across_tuples=True)
+        assert len(seen) == 2
+        assert "black" not in seen[0]
+        assert seen[1].get("black") == Version("22.1")
 
 
 class TestDirectPackageNames:

@@ -104,6 +104,44 @@ class TestSpecificModeConflictValidation:
             )
         assert result.pins == {"foo": V("1.0")}
 
+    def test_unknown_conflict_member_raises(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpuu" }]]\n'
+        )
+        # No FetchCoordinator patch: the existence check raises before
+        # any network work is attempted.
+        with pytest.raises(ConfigError, match="gpuu"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("cpu",),
+                python_version="3.12.0",
+            )
+
+    def test_unknown_group_member_raises(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            'a = ["foo==1.0"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ group = "a" }, { group = "missing" }]]\n'
+        )
+        with pytest.raises(ConfigError, match="missing"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                groups=("a",),
+                python_version="3.12.0",
+            )
+
 
 class TestResolvePyproject:
     def test_resolves_simple_project(self, tmp_path: Path) -> None:
@@ -821,6 +859,146 @@ class TestResolveUniversalPyproject:
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
         with pytest.raises(UnsupportedModeError, match="requires mode = 'universal'"):
             resolve_universal_pyproject(pyproject)
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_co_selected_members_build_multiple_forks(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """Two co-selected conflicting extras fork into two resolves."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject, extras=["cpu", "gpu"])
+        forks = mock_resolve_universal.call_args.kwargs["forks"]
+        assert {f.selection for f in forks} == {
+            (("extra", "cpu"),),
+            (("extra", "gpu"),),
+        }
+        by_selection = {f.selection: f.requirements for f in forks}
+        assert by_selection[(("extra", "cpu"),)] == ["base", "torch==2.0+cpu"]
+        assert by_selection[(("extra", "gpu"),)] == ["base", "torch==2.0+gpu"]
+
+    def test_exactly_one_with_no_member_raises(self, tmp_path: Path) -> None:
+        """A universal exactly-one set with no active member raises."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [{ exactly_one = [{ extra = "cpu" },'
+            ' { extra = "gpu" }] }]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="exactly one"),
+        ):
+            resolve_universal_pyproject(pyproject)
+        mock_universal.assert_not_called()
+
+    def test_at_least_one_with_no_member_raises(self, tmp_path: Path) -> None:
+        """A universal at-least-one set with no active member raises."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [{ at_least_one = [{ extra = "cpu" },'
+            ' { extra = "gpu" }] }]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="at least one"),
+        ):
+            resolve_universal_pyproject(pyproject)
+        mock_universal.assert_not_called()
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_at_most_one_empty_does_not_raise(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """An at-most-one set with no member selected is fine."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject)
+        (fork,) = mock_resolve_universal.call_args.kwargs["forks"]
+        assert fork.selection == ()
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_co_selection_does_not_raise_minimum(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """Co-selecting an exactly-one set forks rather than raising."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [{ exactly_one = [{ extra = "cpu" },'
+            ' { extra = "gpu" }] }]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject, extras=["cpu", "gpu"])
+        forks = mock_resolve_universal.call_args.kwargs["forks"]
+        assert len(forks) == 2
+
+    def test_unknown_conflict_member_raises(self, tmp_path: Path) -> None:
+        """A conflict member naming an undeclared extra raises ConfigError."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpuu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConfigError, match="gpuu"),
+        ):
+            resolve_universal_pyproject(pyproject)
+        mock_universal.assert_not_called()
 
 
 class TestResolvePyprojectVcs:

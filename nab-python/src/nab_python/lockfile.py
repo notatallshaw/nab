@@ -263,6 +263,12 @@ class LockInput:
     ``per_tuple_pins``) to the PEP 508 marker that selects that
     tuple.  The writer uses these to build per-package markers.
 
+    ``tuple_env_markers`` maps each tuple label to its
+    environment-only marker (no conflict-fork membership clause).
+    A base dependency present in every fork of an environment emits
+    this marker so it installs even when no conflicting member is
+    selected; with no conflict forks it equals ``tuple_markers``.
+
     ``environments`` is the lockfile-level set of permitted
     environments (PEP 751 ``environments``).  Independent from
     ``tuple_markers``; intended for declaring the universe.
@@ -275,6 +281,7 @@ class LockInput:
     pins: Mapping[str, PinShape] = field(default_factory=dict)
     per_tuple_pins: Mapping[str, Mapping[str, PinShape]] = field(default_factory=dict)
     tuple_markers: Mapping[str, Marker] = field(default_factory=dict)
+    tuple_env_markers: Mapping[str, Marker] = field(default_factory=dict)
     tuple_environments: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     environments: list[Marker] = field(default_factory=list)
     requires_python: str | None = None

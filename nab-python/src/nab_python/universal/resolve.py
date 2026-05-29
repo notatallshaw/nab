@@ -168,6 +168,7 @@ def merge_universal_lock_inputs(
     """
     per_tuple_pins: dict[str, dict[str, PinShape]] = {}
     tuple_markers: dict[str, Marker] = {}
+    tuple_env_markers: dict[str, Marker] = {}
     tuple_environments: dict[str, dict[str, str]] = {}
 
     # The top-level ``environments`` declares the platform/Python
@@ -185,12 +186,14 @@ def merge_universal_lock_inputs(
         tuple_environments[label] = dict(tr.tuple_.environment)
 
         env_marker = tr.tuple_.environment_marker_string
+        tuple_env_markers[label] = Marker(env_marker)
         if env_marker not in seen_env_markers:
             seen_env_markers.add(env_marker)
             environments.append(Marker(env_marker))
     return LockInput(
         per_tuple_pins=per_tuple_pins,
         tuple_markers=tuple_markers,
+        tuple_env_markers=tuple_env_markers,
         tuple_environments=tuple_environments,
         environments=environments,
         requires_python=requires_python,
