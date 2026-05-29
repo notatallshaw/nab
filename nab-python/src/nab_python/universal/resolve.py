@@ -107,11 +107,19 @@ class UniversalResult:
     env_base_names: dict[tuple[tuple[str, str], ...], frozenset[str]] = field(
         default_factory=dict
     )
+    # One :class:`TupleResult` per environment from the base
+    # (no-member) pass when conflict forks ran with ``base_requirements``.
+    # A failed base pass yields an incomplete ``env_base_names``, so
+    # ``success`` covers these too: the lock writer cannot tell base
+    # deps from member-only deps without them.
+    base_results: list[TupleResult] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
-        """Return True iff every tuple resolved successfully."""
-        return all(tr.success for tr in self.tuple_results)
+        """Return True iff every tuple and every base pass succeeded."""
+        if not all(tr.success for tr in self.tuple_results):
+            return False
+        return all(br.success for br in self.base_results)
 
     def merged_lock(self) -> dict[str, list[tuple[str, str]]]:
         """Collapse per-tuple pins into ``{package: [(version, label), ...]}``.
@@ -397,6 +405,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     # which member is chosen, so the writer keeps the membership clause
     # on a dep required only by members.
     env_base_names: dict[tuple[tuple[str, str], ...], frozenset[str]] = {}
+    base_results: list[TupleResult] = []
     if base_requirements is not None:
         base_results = run_pass(
             list(base_requirements), base_tuples, dict(preferences or {})
@@ -407,9 +416,18 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
                 env_base_names[signature] = frozenset(
                     canonicalize_name(name) for name in tr.pins
                 )
+            else:
+                logger.warning(
+                    "Base attribution skipped for tuple %s: %s",
+                    tr.tuple_.label,
+                    tr.error,
+                )
 
     return UniversalResult(
-        matrix=matrix, tuple_results=out, env_base_names=env_base_names
+        matrix=matrix,
+        tuple_results=out,
+        env_base_names=env_base_names,
+        base_results=base_results,
     )
 
 

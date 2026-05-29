@@ -451,10 +451,10 @@ class TestConflictForkBaseNames:
         base = by_name["base"]
         assert base.marker is None or base.marker.evaluate(neither)
 
-    def test_base_pass_failure_leaves_env_base_names_empty(self) -> None:
-        # The base requirement cannot resolve (no such version), so its
-        # environment contributes no base names and the lock falls back
-        # to the present-in-all collapse for that environment.
+    def test_base_pass_failure_fails_the_result(self) -> None:
+        # The base requirement cannot resolve (no such version), so the
+        # writer would lack the data to tell a base dep from a
+        # member-only dep.  Surface the failure on ``result.success``.
         result = resolve_with_coordinator(
             self._coordinator(),
             self._matrix(),
@@ -462,8 +462,25 @@ class TestConflictForkBaseNames:
             base_requirements=["base==9.9"],
             build_policy=BuildPolicy.NEVER,
         )
-        assert result.success
+        assert not result.success
         assert result.env_base_names == {}
+        assert result.base_results
+        assert all(not br.success for br in result.base_results)
+
+    def test_base_pass_failure_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Each failed base pass is announced on the module logger so a
+        # caller that ignores ``result.success`` still gets a signal.
+        with caplog.at_level(logging.WARNING, logger="nab_python.universal.resolve"):
+            resolve_with_coordinator(
+                self._coordinator(),
+                self._matrix(),
+                forks=self._forks(),
+                base_requirements=["base==9.9"],
+                build_policy=BuildPolicy.NEVER,
+            )
+        assert any("Base attribution skipped" in rec.message for rec in caplog.records)
 
 
 class TestDirectPackageNames:

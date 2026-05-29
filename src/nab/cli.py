@@ -270,6 +270,15 @@ def _print_universal_blocks(result: UniversalResult) -> None:
             continue
         blocks.append(f"# {label}")
         blocks.extend(f"{name}=={tr.pins[name]}" for name in sorted(tr.pins))
+
+    # Surface base-pass failures so a successful tuple set does not
+    # mask a missing base attribution.
+    for br in result.base_results:
+        if br.success:
+            continue
+        blocks.append(f"# base/{br.tuple_.label}: FAILED")
+        blocks.extend(f"#   {raw}" for raw in (br.error or "").splitlines())
+
     sys.stdout.write("\n".join(blocks) + "\n")
 
 
