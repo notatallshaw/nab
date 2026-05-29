@@ -275,13 +275,20 @@ MAX_BRUTE_FORCE_COMBINATIONS = 10_000
 def brute_force_has_solution(
     graph: dict[str, dict[int, dict[str, Range[int]]]],
     requirements: dict[str, Range[int]],
+    constraints: dict[str, Range[int]] | None = None,
 ) -> bool | None:
     """Check whether any version selection satisfies all constraints.
 
     Tries every (package, version) combination over the reachable
     sub-graph.  Returns ``True``/``False``, or ``None`` when the
     search space exceeds :data:`MAX_BRUTE_FORCE_COMBINATIONS`.
+
+    A user constraint restricts the version of a package only when that
+    package is reachable from the root: a constrained package that is
+    never pulled in leaves its constraint vacuous, mirroring the
+    resolver's own constraint semantics.
     """
+    constraints = constraints or {}
     all_packages = sorted(p for p in graph if p != "root" and graph[p])
 
     total_combinations = 1
@@ -324,6 +331,12 @@ def brute_force_has_solution(
                     queue.append(dep_pkg)
             if not valid:
                 break
+
+        if valid and any(
+            pkg in reachable and selection[pkg] not in crange
+            for pkg, crange in constraints.items()
+        ):
+            valid = False
 
         if valid:
             return True

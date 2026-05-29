@@ -1773,6 +1773,46 @@ class TestConstraints:
         )
         assert result["B"] == 2
 
+    def test_constraint_does_not_cause_false_unsat(self) -> None:
+        """A constraint must not block a solution that never uses the package.
+
+        root needs foo<=7. foo==7 pulls in bar; bar's only version needs
+        foo<2, so the foo==7 branch conflicts. foo==4 has no deps, so bar
+        is never used and its constraint is vacuous. The resolver must
+        find {foo: 4} rather than reporting UNSAT.
+        """
+        provider = DictProvider(
+            {
+                "root": {1: {"foo": Range.at_most(7)}},
+                "foo": {7: {"bar": Range.at_least(1)}, 4: {}},
+                "bar": {8: {"foo": Range.less_than(2)}},
+            }
+        )
+        resolver = Resolver(provider)
+        result = resolver.resolve(
+            {"root": Range.singleton(1)},
+            constraints={"bar": Range.singleton(8)},
+        )
+        assert result["foo"] == 4
+        assert "bar" not in result
+
+    def test_no_versions_in_range_is_not_attributed_to_constraint(self) -> None:
+        """A no-versions failure keeps its own provenance when the
+        constraint does not narrow the searched range."""
+        provider = DictProvider(
+            {
+                "root": {1: {"foo": Range.at_least(5)}},
+                "foo": {3: {}, 2: {}},
+            }
+        )
+        resolver = Resolver(provider)
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(
+                {"root": Range.singleton(1)},
+                constraints={"foo": Range.at_least(1)},
+            )
+        assert "the user constrained" not in str(exc_info.value)
+
 
 class TestForceResolutionStep:
     """Direct unit tests for ``try_force_resolution_step``.

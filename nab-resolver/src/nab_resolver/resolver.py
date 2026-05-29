@@ -277,7 +277,6 @@ class Resolver(Generic[PackageType, VersionType]):
         self.stats: ResolverStats[PackageType] = ResolverStats()
 
         self.constraints: Mapping[PackageType, RangeProtocol[VersionType]] = {}
-        self.injected_constraints: set[PackageType] = set()
         self.root_package_order: dict[PackageType, tuple[int, int, str]] = {}
         self.pending_targeted_backtrack: list[PackageType] = []
 
@@ -369,9 +368,6 @@ class Resolver(Generic[PackageType, VersionType]):
 
     def _decide_next(self, next_package: Any) -> Any:
         """Run the decision phase for ``next_package``. Return next changed package."""
-        if decide.inject_constraint(self, next_package):
-            return next_package
-
         chosen_version = decide.choose_version(self, next_package)
         had_pending = decide.absorb_pending_clauses(self)
 
@@ -437,7 +433,6 @@ class Resolver(Generic[PackageType, VersionType]):
         self.stats = ResolverStats()
 
         self.constraints = constraints or {}
-        self.injected_constraints.clear()
         self.root_package_order.clear()
         self.pending_targeted_backtrack.clear()
         self.tiebreak_cache.clear()

@@ -367,6 +367,39 @@ def small_exhaustive_graphs(
 
 
 @st.composite
+def graph_and_constraints(
+    draw: st.DrawFn,
+) -> tuple[dict[str, dict[int, dict[str, Range[int]]]], dict[str, Range[int]]]:
+    """Draw a small graph together with constraints over its packages.
+
+    Constraints lean toward singletons because pinning a package to one
+    version is what forces it to drag in a conflicting dependency, the
+    shape that exposes constraint-driven completeness bugs.
+    """
+    graph = draw(small_exhaustive_graphs())
+    packages = [p for p in graph if p != "root"]
+    num_constraints = draw(st.integers(min_value=0, max_value=min(2, len(packages))))
+    constrained = (
+        draw(
+            st.lists(
+                st.sampled_from(packages),
+                min_size=num_constraints,
+                max_size=num_constraints,
+                unique=True,
+            )
+        )
+        if num_constraints
+        else []
+    )
+    constraint_range = st.one_of(
+        st.builds(Range.singleton, st.integers(min_value=1, max_value=3)),
+        dependency_ranges(),
+    )
+    constraints = {pkg: draw(constraint_range) for pkg in constrained}
+    return graph, constraints
+
+
+@st.composite
 def empty_dep_graphs(
     draw: st.DrawFn,
 ) -> dict[str, dict[int, dict[str, Range[int]]]]:
