@@ -884,21 +884,39 @@ def _parse_workspace(value: object) -> WorkspaceConfig | None:
 _MINOR_RELEASE_PARTS = 2
 
 
-def _matrix_python_patch_clause(spec_set: SpecifierSet) -> str | None:
-    """Return the first clause pinning a patch (micro) version, else None.
+def _validate_matrix_python(spec: str) -> None:
+    """Reject a matrix.python axis finer than major.minor.
 
-    The matrix python axis is minor-granular, so ``>=3.11.5`` would
-    silently exclude 3.11 entirely. A trailing ``.*`` wildcard targets a
-    minor and is allowed.
+    The axis lists language (minor) Python versions; patch pins belong in
+    [tool.nab.matrix.python-patches].
     """
-    for clause in spec_set:
+    try:
+        specifier_set = SpecifierSet(spec)
+    except InvalidSpecifier as exc:
+        msg = f"matrix.python must be a PEP 440 specifier, got {spec!r}"
+        raise ConfigError(msg) from exc
+    for clause in specifier_set:
         try:
-            release = Version(clause.version.removesuffix(".*")).release
-        except InvalidVersion:
-            continue
-        if len(release) > _MINOR_RELEASE_PARTS:
-            return str(clause)
-    return None
+            version = Version(clause.version.removesuffix(".*"))
+        except InvalidVersion as exc:
+            msg = f"matrix.python clause {clause} is not a valid version"
+            raise ConfigError(msg) from exc
+
+        # Reject pre/post/dev/local qualifiers and patch-level release tuples.
+        finer = (
+            version.epoch != 0,
+            version.pre is not None,
+            version.post is not None,
+            version.dev is not None,
+            version.local is not None,
+        )
+        if len(version.release) > _MINOR_RELEASE_PARTS or any(finer):
+            msg = (
+                "matrix.python axis is a language (minor) version only; "
+                f"{clause} is finer than major.minor. Put patch versions in "
+                "[tool.nab.matrix.python-patches]."
+            )
+            raise ConfigError(msg)
 
 
 def _parse_matrix(value: object) -> MatrixConfig | None:
@@ -929,18 +947,7 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
     if not isinstance(python, str):
         msg = "matrix.python must be a string PEP 440 specifier"
         raise ConfigError(msg)
-    try:
-        spec_set = SpecifierSet(python)
-    except InvalidSpecifier as exc:
-        msg = f"matrix.python must be a PEP 440 specifier, got {python!r}"
-        raise ConfigError(msg) from exc
-    patched = _matrix_python_patch_clause(spec_set)
-    if patched is not None:
-        msg = (
-            f"matrix.python takes minor (language) versions only, got {patched!r}."
-            " The python axis is minor-granular; use 3.X, not a patch like 3.X.Y."
-        )
-        raise ConfigError(msg)
+    _validate_matrix_python(python)
     platforms = _parse_string_list("matrix.platforms", platforms_raw)
     if not platforms:
         msg = "matrix.platforms must list at least one platform id"
