@@ -27,6 +27,7 @@ from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
     ExtrasMode,
+    InvalidUploadTimeError,
     LocalSource,
     MetadataError,
     MissingExtraError,
@@ -2090,6 +2091,31 @@ class TestUploadedPriorTo:
         cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
         provider = Provider(coordinator, uploaded_prior_to=cutoff)
         assert provider.fetch_versions("foo") == []
+
+    def test_naive_upload_time_raises_when_cutoff_active(self) -> None:
+        """A timezone-naive upload-time violates PEP 700, so it is a hard error."""
+        wheels = [
+            make_wheel("1.0", upload_time="2024-01-01T00:00:00"),
+        ]
+        coordinator = make_coordinator(wheels, package="foo")
+        cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        provider = Provider(coordinator, uploaded_prior_to=cutoff)
+        with pytest.raises(InvalidUploadTimeError, match="2024-01-01T00:00:00"):
+            provider.fetch_versions("foo")
+
+    def test_naive_upload_time_not_metadata_error(self) -> None:
+        """The error is not a MetadataError, so look-ahead cannot swallow it."""
+        assert not issubclass(InvalidUploadTimeError, MetadataError)
+
+    def test_naive_upload_time_ignored_without_cutoff(self) -> None:
+        """With no cutoff active the naive upload-time is never inspected."""
+        wheels = [
+            make_wheel("1.0", upload_time="2024-01-01T00:00:00"),
+        ]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        versions = [v for v, _ in provider.fetch_versions("foo")]
+        assert versions == [V("1.0")]
 
 
 class TestUploadedPriorToOverrides:

@@ -302,6 +302,19 @@ def excluded_by_time(provider: Provider, normalized: str, dist: DistFile) -> boo
     except ValueError:
         provider.stats.excluded_by_time += 1
         return True
+
+    # PEP 700 mandates timezone-aware UTC upload times; refuse to guess.
+    if upload_dt.tzinfo is None:
+        # Imported lazily: provider.py imports this module.
+        from ..provider import InvalidUploadTimeError
+
+        msg = (
+            f"{normalized} {dist.version} has a timezone-naive upload time "
+            f"{dist.upload_time!r}; the Simple API requires "
+            f"timezone-aware (UTC) upload times"
+        )
+        raise InvalidUploadTimeError(msg)
+
     excluded = upload_dt >= cutoff
     if excluded:
         provider.stats.excluded_by_time += 1
