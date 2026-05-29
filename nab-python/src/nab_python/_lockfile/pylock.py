@@ -435,23 +435,22 @@ def _build_marker(
 ) -> Marker | None:
     """Return the marker selecting ``tuple_labels``, or ``None`` if unconditional.
 
-    The package is unconditional when ``tuple_labels`` covers every
-    declared tuple in ``tuple_markers``.  Otherwise the marker is the
-    OR of one contribution per environment the package appears in:
-    when the package is present in every fork of an environment it
-    contributes that environment's membership-free env-only marker, and
-    when present in only some forks it contributes the OR of the
-    membership-carrying per-fork markers.  When ``tuple_markers`` is
-    empty the caller has not declared a tuple universe and we omit the
-    marker.
+    For each environment the package appears in, the contribution is
+    the membership-free env-only marker when the package is present in
+    every fork of that env AND ``env_base_names`` lists it as a base
+    dep there; otherwise the contribution is the OR of the per-fork
+    membership-carrying markers.  The result is the OR of those
+    contributions, or ``None`` when the package covers every declared
+    tuple AND every env collapsed to its env-only marker.  An empty
+    ``tuple_markers`` means the caller has not declared a tuple
+    universe and the marker is omitted.
 
-    Dropping the membership clause is gated on ``env_base_names``: only
-    a package the base (no-member) resolve produced for that environment
-    may collapse to the env-only marker.  A dep required by every member
-    but not the base is absent from that set, so it keeps the membership
-    OR and does not install when no member is selected.  When an
-    environment has no base-name set (no conflict fork ran) the gate is
-    open, so the no-conflict path emits markers byte for byte as before.
+    A dep required by every member of an ``at_most_one`` set but not
+    by the base is absent from ``env_base_names``, so it keeps the
+    membership OR and does not install when no member is selected.
+    An environment with no base-name set (no conflict fork ran) leaves
+    the gate open, so the no-conflict path emits markers byte for byte
+    as before.
     """
     if total_tuples == 0:
         return None
