@@ -361,6 +361,9 @@ def _emit_universal_pylock(
     except _cli.MissingHashError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)
+    except _cli.DisjointnessError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
 
     if target is None:
         sys.stdout.write(text)

@@ -40,6 +40,7 @@ from nab_python._vendor.packaging.version import Version
 from nab_python.config import ConfigError
 from nab_python.download import DownloadError
 from nab_python.lockfile import (
+    DisjointnessError,
     IndexPin,
     LockInput,
     MissingHashError,
@@ -550,6 +551,33 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
         assert "Cannot lock" in capsys.readouterr().err
+
+    def test_pylock_disjointness_error_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A DisjointnessError during universal pylock surfaces as exit 1.
+
+        The conflict hint carried by the error reaches the user as a
+        clean ``Error: ...`` line instead of a traceback.
+        """
+        pyproject = _universal_pyproject(tmp_path)
+        hint = (
+            "foo: 2 entries fire under env='py311-linux_x86_64'. If these are"
+            " intentionally mutually exclusive, declare them in"
+            " [tool.nab].conflicts so the colliding context is pruned"
+        )
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_universal_result(success=True),
+            ),
+            patch("nab.cli.write_lock", side_effect=DisjointnessError(hint)),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        err = capsys.readouterr().err
+        assert f"Error: {hint}\n" in err
+        assert "[tool.nab].conflicts" in err
 
     def test_per_tuple_pins_to_stdout_by_default(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
