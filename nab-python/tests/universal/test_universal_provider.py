@@ -383,11 +383,12 @@ class TestWheelTagFiltering:
         # is the incompatible win wheel, so the version disappears.
         assert result == []
 
-    def test_incompatible_wheel_with_sdist_under_never_drops_version(self) -> None:
-        """Incompatible wheel + sdist + NEVER -> version is dropped.
+    def test_incompatible_wheel_with_sdist_under_never_kept_via_sdist(self) -> None:
+        """Incompatible wheel + sdist + NEVER -> version stays alive.
 
-        Exercises the elif=False branch in the version-survival loop:
-        sdists alone cannot save a version when builds are forbidden.
+        An sdist keeps the version alive at every build policy level: a
+        PEP 643 static sdist is read without a backend, so look-ahead,
+        not this filter, rejects the dynamic-no-fallback case.
         """
         files: list[WheelFile | SdistFile] = [
             _platform_wheel("2.0", "cp311-cp311-win_amd64"),
@@ -401,11 +402,10 @@ class TestWheelTagFiltering:
             build_policy=BuildPolicy.NEVER,
         )
         result = provider.filter_distributions("pkg", files)
-        # The win wheel is tag-incompatible; only the sdist is kept by
-        # the first pass.  Since build_policy=NEVER, the version is not
-        # admitted (we'd hit UnsupportedSdistError later anyway).
-        assert result == []
-        assert provider.excluded_versions_no_compatible_wheel == 1
+        kept_kinds = {(v, isinstance(d, WheelFile)) for v, d in result}
+        assert (Version("2.0"), False) in kept_kinds
+        assert (Version("2.0"), True) not in kept_kinds
+        assert provider.excluded_versions_no_compatible_wheel == 0
 
     def test_fetch_versions_applies_wheel_tag_filter(self) -> None:
         """Regression: the resolver path must consult the override.
@@ -419,14 +419,12 @@ class TestWheelTagFiltering:
         """
         files: list[WheelFile | SdistFile] = [
             _platform_wheel("2.0", "cp311-cp311-win_amd64"),
-            _sdist("2.0"),
         ]
         provider = UniversalProvider(
             _index_with_files(files),
             marker_environment=_LINUX_ENV,
             platform_spec=PlatformSpec("linux_x86_64"),
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            build_policy=BuildPolicy.NEVER,
         )
         result = provider.fetch_versions("pkg")
         assert result == []
