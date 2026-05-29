@@ -17,6 +17,7 @@ import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from string import Formatter
 from typing import TYPE_CHECKING
 
 from nab._version import __version__
@@ -205,7 +206,7 @@ def _emit_specific(
     if provenance is not None:
         lock_input.provenance = provenance
 
-    if _cli._is_stdout(output):  # noqa: SLF001
+    if _cli.is_stdout(output):
         if format == "pylock":
             sys.stdout.write(_cli.write_lock(lock_input))
         elif format == "requirements":
@@ -347,7 +348,7 @@ def _emit_universal_pylock(
         lock_input.provenance = provenance
 
     target: Path | None
-    if _cli._is_stdout(output):  # noqa: SLF001
+    if _cli.is_stdout(output):
         target = None
     else:
         target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
@@ -364,6 +365,32 @@ def _emit_universal_pylock(
         sys.stdout.write(text)
         return
     sys.stderr.write(f"Wrote {target} ({len(result.tuple_results)} tuples)\n")
+
+
+def _check_output_template(output: Path, template: str) -> None:
+    """Reject unknown placeholders in --output before str.format is called."""
+    allowed_vars = _cli.TUPLE_TEMPLATE_VARS
+    allowed = {
+        name
+        for v in allowed_vars
+        for _, name, _, _ in Formatter().parse(v)
+        if name is not None
+    }
+    try:
+        fields = {
+            name for _, name, _, _ in Formatter().parse(template) if name is not None
+        }
+    except ValueError as e:
+        sys.stderr.write(f"Error: --output {output} is not a valid template: {e}\n")
+        sys.exit(1)
+    unknown = sorted(f"{{{name}}}" for name in fields if name not in allowed)
+    if unknown:
+        supported = " and ".join(allowed_vars)
+        sys.stderr.write(
+            f"Error: --output {output} has unknown template placeholder(s)"
+            f" {', '.join(unknown)}; only {supported} are supported.\n"
+        )
+        sys.exit(1)
 
 
 def _emit_universal_requirements(
@@ -390,7 +417,7 @@ def _emit_universal_requirements(
     A plain path with multiple tuples errors clearly: there is no
     one-file shape that pip can install from across all tuples.
     """
-    if output is None or _cli._is_stdout(output):  # noqa: SLF001
+    if output is None or _cli.is_stdout(output):
         _emit_universal_requirements_stdout(
             result, with_hashes=with_hashes, workspace_to_drop=workspace_to_drop
         )
@@ -398,7 +425,7 @@ def _emit_universal_requirements(
 
     template = str(output)
     successful = [tr for tr in result.tuple_results if tr.success]
-    if not any(var in template for var in _cli._TUPLE_TEMPLATE_VARS):  # noqa: SLF001
+    if not any(var in template for var in _cli.TUPLE_TEMPLATE_VARS):
         if len(successful) > 1:
             sys.stderr.write(
                 "Error: universal mode produced multiple tuples but"
@@ -417,6 +444,7 @@ def _emit_universal_requirements(
         )
         return
 
+    _check_output_template(output, template)
     substituted_paths: dict[str, str] = {}
     for tr in successful:
         substituted = template.format(
@@ -617,7 +645,7 @@ def _determine_lock_anchor(
     absolute = read_pyproject_lock_anchor(path)
     if absolute is not None:
         return absolute
-    if _cli._is_stdout(output):  # noqa: SLF001
+    if _cli.is_stdout(output):
         return fresh
     if format != "pylock":
         return fresh
@@ -638,7 +666,7 @@ def _validate_pylock_output_name(
     requirements formats are exempt; exits 1 on a bad name with a
     suggested correction.
     """
-    if format != "pylock" or output is None or _cli._is_stdout(output):  # noqa: SLF001
+    if format != "pylock" or output is None or _cli.is_stdout(output):
         return
     if is_valid_pylock_path(output):
         return

@@ -908,6 +908,40 @@ class TestLockCommandUniversal:
         assert "{platform_id}" in err
         assert not (tmp_path / "constraints-3.11.txt").exists()
 
+    def test_template_unknown_placeholder_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A stray placeholder in --output exits 1 instead of a traceback."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}-{foo}.txt"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_universal_result(success=True),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "unknown template placeholder" in err
+        assert "{foo}" in err
+
+    def test_template_malformed_braces_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An unbalanced brace in --output exits 1 instead of a traceback."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}-{.txt"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_universal_result(success=True),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        assert "not a valid template" in capsys.readouterr().err
+
     def test_template_with_one_tuple_writes_one_file(self, tmp_path: Path) -> None:
         """A template with a single-tuple matrix still works."""
         pyproject = _universal_pyproject(tmp_path)
