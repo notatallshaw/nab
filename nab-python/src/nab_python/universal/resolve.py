@@ -8,10 +8,11 @@ pin applies.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from nab_index.multi_index import IndexConfig
@@ -24,7 +25,7 @@ from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import Version
-from ..config import ConfigError
+from ..config import ConfigError, ConflictKind, ConflictPolicy
 from ..fetch import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
@@ -73,7 +74,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
-    from ..config import NabProjectConfig
+    from ..config import ConflictMember, ConflictSet, NabProjectConfig
     from .matrix import Matrix, MatrixTuple
 
 
@@ -118,6 +119,106 @@ class UniversalResult:
         return out
 
 
+@dataclass(frozen=True, slots=True)
+class _ConflictFork:
+    """One fork of a conflict-driven universal resolve.
+
+    ``selection`` is the active conflicting members as ``(kind, name)``
+    pairs; it drives the per-tuple label suffix and the ``in extras`` /
+    ``in dependency_groups`` marker clause.  ``active_extras`` and
+    ``active_groups`` are the full extra and group selections this fork
+    resolves with: the non-conflicting selections plus this fork's
+    chosen members.  An unforked resolve is a single fork with an empty
+    ``selection``.
+    """
+
+    selection: tuple[tuple[str, str], ...]
+    active_extras: tuple[str, ...]
+    active_groups: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolveFork:
+    """A fork's resolver input: a marker selection plus folded requirements.
+
+    ``selection`` is the active conflicting members; ``requirements``
+    are the fully folded requirement strings to resolve under it.  The
+    pyproject layer builds these (it owns reading groups/extras);
+    :func:`resolve_with_coordinator` runs the matrix once per fork,
+    injecting ``selection`` into every tuple so the pins land under a
+    distinct label and marker.
+    """
+
+    selection: tuple[tuple[str, str], ...]
+    requirements: list[str]
+
+
+_MIN_ENGAGED_MEMBERS = 2
+
+
+def _conflict_forks(
+    selected_extras: Sequence[str],
+    selected_groups: Sequence[str],
+    conflicts: Sequence[ConflictSet],
+) -> list[_ConflictFork]:
+    """Split a selection into one fork per mutually-exclusive combination.
+
+    A conflict set is *engaged* when the selection activates two or
+    more of its members under an exclusivity policy (at-most-one or
+    exactly-one); only an engaged set forces a fork.  Each engaged set
+    contributes one chosen member per fork, and the forks are the
+    cartesian product across engaged sets.  Members of engaged sets are
+    dropped from the shared base; non-conflicting selections (and the
+    sole selected member of a non-engaged set) stay active in every
+    fork.  With no engaged set the result is a single unforked fork
+    carrying the whole selection, so the caller's non-conflict path is
+    unchanged.
+
+    Names are compared and emitted canonicalised; the extra and group
+    loaders normalise on lookup, so a canonical active set resolves the
+    same requirements the user's spelling would.
+    """
+    base_extras = [canonicalize_name(e) for e in selected_extras]
+    base_groups = [canonicalize_name(g) for g in selected_groups]
+    extra_set = set(base_extras)
+    group_set = set(base_groups)
+
+    def is_selected(member: ConflictMember) -> bool:
+        if member.kind is ConflictKind.EXTRA:
+            return member.name in extra_set
+        return member.name in group_set
+
+    engaged: list[list[ConflictMember]] = []
+    drop_extras: set[str] = set()
+    drop_groups: set[str] = set()
+    for conflict_set in conflicts:
+        if conflict_set.policy is ConflictPolicy.AT_LEAST_ONE:
+            continue
+        members = [m for m in conflict_set.members if is_selected(m)]
+        if len(members) < _MIN_ENGAGED_MEMBERS:
+            continue
+        engaged.append(members)
+        for member in members:
+            target = drop_extras if member.kind is ConflictKind.EXTRA else drop_groups
+            target.add(member.name)
+    if not engaged:
+        return [_ConflictFork((), tuple(base_extras), tuple(base_groups))]
+    rest_extras = [e for e in base_extras if e not in drop_extras]
+    rest_groups = [g for g in base_groups if g not in drop_groups]
+    forks: list[_ConflictFork] = []
+    for combo in itertools.product(*engaged):
+        chosen_extras = [m.name for m in combo if m.kind is ConflictKind.EXTRA]
+        chosen_groups = [m.name for m in combo if m.kind is ConflictKind.GROUP]
+        forks.append(
+            _ConflictFork(
+                selection=tuple(sorted((m.kind.value, m.name) for m in combo)),
+                active_extras=tuple(rest_extras + chosen_extras),
+                active_groups=tuple(rest_groups + chosen_groups),
+            )
+        )
+    return forks
+
+
 def merge_universal_lock_inputs(
     result: UniversalResult,
     *,
@@ -126,6 +227,7 @@ def merge_universal_lock_inputs(
     extras: Sequence[str] = (),
     dependency_groups: Sequence[str] = (),
     default_groups: Sequence[str] = (),
+    conflicts: Sequence[ConflictSet] = (),
 ) -> LockInput:
     """Merge per-tuple :class:`LockInput` objects into one universal lock.
 
@@ -169,6 +271,7 @@ def merge_universal_lock_inputs(
         extras=tuple(extras),
         dependency_groups=tuple(dependency_groups),
         default_groups=tuple(default_groups),
+        conflicts=tuple(conflicts),
     )
 
 
@@ -196,11 +299,13 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
     resolution_strategy: str = "highest",
     align_across_tuples: bool = True,
     preferences: dict[str, Version] | None = None,
+    forks: Sequence[_ResolveFork] | None = None,
 ) -> UniversalResult:
     """Run a universal resolve for ``matrix``.
 
     Returns a :class:`UniversalResult` with one :class:`TupleResult`
-    per (python_version, platform) combination.
+    per (python_version, platform) combination, times the number of
+    conflict ``forks``.
 
     ``resolution_strategy``: ``"highest"`` (default), ``"lowest"``, or
     ``"lowest-direct"``.  Mirrors uv's ``--resolution`` flag.
@@ -210,6 +315,12 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
 
     ``preferences``: a starting set of preferred ``{name: Version}``,
     e.g. read from a previous lock.
+
+    ``forks``: per-conflict-fork resolver inputs.  When ``None`` the
+    resolve runs once with ``requirements`` and no marker selection;
+    when supplied, the matrix runs once per fork and ``requirements``
+    is ignored (the pyproject layer folds each fork's own
+    requirements).
     """
     if indexes is None:
         indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
@@ -242,6 +353,7 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
             resolution_strategy=resolution_strategy,
             align_across_tuples=align_across_tuples,
             preferences=preferences,
+            forks=forks,
         )
 
 
@@ -265,6 +377,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     resolution_strategy: str = "highest",
     align_across_tuples: bool = True,
     preferences: dict[str, Version] | None = None,
+    forks: Sequence[_ResolveFork] | None = None,
 ) -> UniversalResult:
     """Run a universal resolve against an already-open coordinator.
 
@@ -272,17 +385,28 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     :class:`FetchCoordinator` across multiple resolves and avoids
     transport setup in unit tests.  See :func:`resolve_universal` for
     the full parameter documentation.
-    """
-    tuples = matrix.expand()
-    _warn_extra_marker_at_root(requirements)
-    direct_packages = frozenset(_direct_package_names(requirements))
-    initial_preferences: dict[str, Version] = dict(preferences or {})
 
-    return UniversalResult(
-        matrix=matrix,
-        tuple_results=_run_pass(
+    When ``forks`` is supplied the matrix runs once per fork against
+    that fork's own requirements, with the fork's marker ``selection``
+    injected into every tuple; the per-fork results are concatenated.
+    Pins flow forward across forks too (when ``align_across_tuples``),
+    so a package shared by several forks tends to land on one version.
+    """
+    base_tuples = matrix.expand()
+    fork_list = list(forks) if forks is not None else [_ResolveFork((), requirements)]
+    accumulated: dict[str, Version] = dict(preferences or {})
+    out: list[TupleResult] = []
+    for fork in fork_list:
+        _warn_extra_marker_at_root(fork.requirements)
+        tuples = (
+            base_tuples
+            if not fork.selection
+            else [replace(t, selection=fork.selection) for t in base_tuples]
+        )
+        direct_packages = frozenset(_direct_package_names(fork.requirements))
+        results = _run_pass(
             tuples,
-            requirements,
+            fork.requirements,
             constraints,
             coordinator=coordinator,
             uploaded_prior_to=uploaded_prior_to,
@@ -298,10 +422,15 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
             build_config=build_config,
             resolution_strategy=resolution_strategy,
             direct_packages=direct_packages,
-            preferences=initial_preferences,
+            preferences=accumulated,
             align_serial=align_across_tuples,
-        ),
-    )
+        )
+        out.extend(results)
+        if align_across_tuples:
+            for tr in results:
+                if tr.success:
+                    accumulated.update(tr.pins)
+    return UniversalResult(matrix=matrix, tuple_results=out)
 
 
 def _run_pass(  # noqa: PLR0913

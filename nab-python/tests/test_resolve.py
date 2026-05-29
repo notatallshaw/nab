@@ -11,6 +11,7 @@ from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConfigError,
+    ConflictSelectionError,
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
@@ -50,6 +51,58 @@ V = Version
 _FAKE_TRANSPORT = MagicMock(name="FakeTransport")
 
 _FORTY = "0123456789abcdef0123456789abcdef01234567"
+
+
+class TestSpecificModeConflictValidation:
+    """A declared conflict fails fast in specific mode, before any network."""
+
+    def test_co_selecting_conflicting_extras_raises(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["numpy==2.1.2"]\n'
+            'gpu = ["numpy==2.0.0"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+        )
+        # No FetchCoordinator patch: the validation must raise before any
+        # network work is attempted.
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("cpu", "gpu"),
+                python_version="3.12.0",
+            )
+
+    def test_single_extra_under_conflict_resolves(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("1.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            result = resolve_pyproject(
+                pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
+            )
+        assert result.pins == {"foo": V("1.0")}
 
 
 class TestResolvePyproject:

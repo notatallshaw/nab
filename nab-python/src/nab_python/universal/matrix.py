@@ -97,7 +97,16 @@ _IMPLEMENTATION_PREFIX: dict[str, str] = {"cpython": "py", "pypy": "pp"}
 
 @dataclass(frozen=True)
 class MatrixTuple:
-    """A single point in the universal-resolution matrix."""
+    """A single point in the universal-resolution matrix.
+
+    ``selection`` records the conflict-fork this tuple belongs to: a
+    tuple of ``(kind, name)`` members (``kind`` is ``"extra"`` or
+    ``"group"``) that are active in this fork's resolve.  It is empty
+    for an unforked resolve.  When set, it both disambiguates the
+    label and adds an ``'name' in extras`` / ``'name' in
+    dependency_groups`` clause to the marker so the lockfile entry
+    fires only when the user selects that member.
+    """
 
     python_version: str
     platform_id: str
@@ -109,6 +118,7 @@ class MatrixTuple:
     )
     implementation: str = "cpython"
     multi_implementation: bool = field(default=False, hash=False, compare=False)
+    selection: tuple[tuple[str, str], ...] = ()
 
     @property
     def label(self) -> str:
@@ -116,10 +126,16 @@ class MatrixTuple:
 
         Uses the interpreter prefix (``py`` for CPython, ``pp`` for
         PyPy) so tuples that differ only by implementation get distinct
-        labels.
+        labels.  A conflict-fork ``selection`` appends each active
+        member name (sorted) so the forks of one python/platform stay
+        distinct, e.g. ``py311-linux_x86_64-black22``.
         """
         prefix = _IMPLEMENTATION_PREFIX[self.implementation]
-        return f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
+        base = f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
+        if not self.selection:
+            return base
+        suffix = "-".join(name for _kind, name in sorted(self.selection))
+        return f"{base}-{suffix}"
 
     @property
     def marker_string(self) -> str:
@@ -133,6 +149,13 @@ class MatrixTuple:
         ``implementation_name`` so the CPython and PyPy entries for the
         same python/platform stay mutually exclusive; a sole-CPython
         matrix omits the clause.
+
+        A conflict-fork ``selection`` adds a bare membership clause per
+        active member (``'name' in extras`` for an extra, ``'name' in
+        dependency_groups`` for a group).  The emit-time disjointness
+        validator prunes the install contexts that activate two members
+        of one declared conflict, so the bare clause is enough; no
+        ``not in`` negation against the other members is required.
         """
         env = self.environment
         marker = (
@@ -142,6 +165,9 @@ class MatrixTuple:
         )
         if self.multi_implementation or self.implementation != "cpython":
             marker += f' and implementation_name == "{env["implementation_name"]}"'
+        for kind, name in sorted(self.selection):
+            variable = "extras" if kind == "extra" else "dependency_groups"
+            marker += f' and "{name}" in {variable}'
         return marker
 
 

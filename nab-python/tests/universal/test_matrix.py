@@ -290,6 +290,76 @@ class TestMatrixTuple:
         )
         assert t.label == "pp311-linux_x86_64"
 
+    def test_selection_appends_member_suffix_to_label(self) -> None:
+        """A conflict-fork selection appends sorted member names."""
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={},
+            selection=(("group", "isort5"), ("group", "black22")),
+        )
+        assert t.label == "py311-linux_x86_64-black22-isort5"
+
+    def test_extra_selection_adds_extras_marker_clause(self) -> None:
+        """An extra member adds a bare ``in extras`` clause to the marker."""
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "implementation_name": "cpython",
+            },
+            selection=(("extra", "cpu"),),
+        )
+        assert t.marker_string.endswith('and "cpu" in extras')
+
+    def test_group_selection_adds_dependency_groups_clause(self) -> None:
+        """A group member adds a bare ``in dependency_groups`` clause."""
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "implementation_name": "cpython",
+            },
+            selection=(("group", "black22"),),
+        )
+        assert t.marker_string.endswith('and "black22" in dependency_groups')
+
+    def test_selection_clauses_are_sorted(self) -> None:
+        """Selection clauses emit in sorted order for byte-stable output."""
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "implementation_name": "cpython",
+            },
+            selection=(("group", "isort5"), ("extra", "cpu")),
+        )
+        # sorted by (kind, name): ("extra", "cpu") < ("group", "isort5")
+        assert t.marker_string.endswith(
+            'and "cpu" in extras and "isort5" in dependency_groups'
+        )
+
+    def test_empty_selection_leaves_marker_and_label_unchanged(self) -> None:
+        """The default empty selection is a no-op (back-compat)."""
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "implementation_name": "cpython",
+            },
+        )
+        assert t.label == "py311-linux_x86_64"
+        assert "in extras" not in t.marker_string
+        assert "in dependency_groups" not in t.marker_string
+
     def test_cpython_marker_omits_implementation(self) -> None:
         """The default CPython marker keeps its three-clause form."""
         t = MatrixTuple(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 
 import pytest
 
@@ -1130,6 +1130,109 @@ class TestMarkerDisjointness:
                 extras=many_extras,
                 groups=(),
             )
+
+    _LINUX: ClassVar[dict[str, dict[str, str]]] = {
+        "linux": {
+            "python_version": "3.11",
+            "sys_platform": "linux",
+            "platform_machine": "x86_64",
+        },
+    }
+
+    def test_declared_extra_conflict_prunes_collision(self) -> None:
+        # The bare-marker case that collides without a declaration now
+        # passes once cpu and gpu are declared mutually exclusive: the
+        # {cpu, gpu} point is pruned from the universe.
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "'cpu' in extras"),
+                self._pkg("foo", "2.0", "'gpu' in extras"),
+            ],
+            environments=self._LINUX,
+            extras=("cpu", "gpu"),
+            groups=(),
+            exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "gpu")})],
+        )
+
+    def test_declared_group_conflict_prunes_collision(self) -> None:
+        # The datamodel-code-generator case: mutually-exclusive
+        # dependency groups gated by bare ``in dependency_groups``
+        # markers validate once the groups are declared exclusive.
+        validate_marker_disjointness(
+            [
+                self._pkg("black", "22.1", "'black22' in dependency_groups"),
+                self._pkg("black", "23.12", "'black23' in dependency_groups"),
+                self._pkg("black", "24.1", "'black24' in dependency_groups"),
+            ],
+            environments=self._LINUX,
+            extras=(),
+            groups=("black22", "black23", "black24"),
+            exclusive_groups=[
+                frozenset(
+                    {
+                        ("group", "black22"),
+                        ("group", "black23"),
+                        ("group", "black24"),
+                    }
+                )
+            ],
+        )
+
+    def test_conflict_does_not_prune_unrelated_collision(self) -> None:
+        # A collision outside the pruned subspace still raises: cpu/gpu
+        # are declared exclusive, but these two entries collide on the
+        # cpu point itself (both fire when cpu is selected).
+        with pytest.raises(DisjointnessError, match="foo"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", "1.0", "'cpu' in extras"),
+                    self._pkg("foo", "2.0", "'cpu' in extras or 'gpu' in extras"),
+                ],
+                environments=self._LINUX,
+                extras=("cpu", "gpu"),
+                groups=(),
+                exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "gpu")})],
+            )
+
+    def test_collision_hint_points_at_conflicts_key(self) -> None:
+        # A membership-driven collision with no declaration surfaces a
+        # hint pointing at the conflicts key.
+        with pytest.raises(DisjointnessError, match=r"\[tool.nab\].conflicts"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", "1.0", "'cpu' in extras"),
+                    self._pkg("foo", "2.0", "'gpu' in extras"),
+                ],
+                environments=self._LINUX,
+                extras=("cpu", "gpu"),
+                groups=(),
+            )
+
+    def test_environment_only_collision_has_no_conflict_hint(self) -> None:
+        # An environment-driven collision is not helped by a conflict
+        # declaration, so no hint is appended.
+        with pytest.raises(DisjointnessError) as excinfo:
+            validate_marker_disjointness(
+                [self._pkg("foo", "1.0"), self._pkg("foo", "2.0")],
+                environments=self._LINUX,
+                extras=(),
+                groups=(),
+            )
+        assert "[tool.nab].conflicts" not in str(excinfo.value)
+
+    def test_conflict_member_normalization_prunes_collision(self) -> None:
+        # The declared member name and the marker literal differ by
+        # case/separator; canonicalisation must still prune the point.
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "'CPU' in extras"),
+                self._pkg("foo", "2.0", "'fast_io' in extras"),
+            ],
+            environments=self._LINUX,
+            extras=("cpu", "fast-io"),
+            groups=(),
+            exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "fast-io")})],
+        )
 
 
 class _FakeIndex:

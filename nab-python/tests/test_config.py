@@ -9,11 +9,17 @@ import pytest
 
 from nab_python.config import (
     ConfigError,
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSelectionError,
+    ConflictSet,
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
     read_pyproject_config,
     read_pyproject_lock_anchor,
+    validate_conflict_selection,
 )
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexOverride
 from nab_python.provider import (
@@ -93,6 +99,244 @@ class TestTopLevelKeys:
         path = write(tmp_path, '[tool]\nnab = "a string, not a table"\n')
         with pytest.raises(ConfigError, match="\\[tool.nab\\] must be a table"):
             read_pyproject_config(path)
+
+
+class TestConflicts:
+    def test_default_is_empty(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\n")
+        assert read_pyproject_config(path).conflicts == ()
+
+    def test_bare_set_defaults_to_at_most_one(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n',
+        )
+        conflicts = read_pyproject_config(path).conflicts
+        assert conflicts == (
+            ConflictSet(
+                members=(
+                    ConflictMember(ConflictKind.EXTRA, "cpu"),
+                    ConflictMember(ConflictKind.EXTRA, "gpu"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            ),
+        )
+
+    def test_group_members(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = ["
+            '[{ group = "black22" }, { group = "black23" }, { group = "black24" }]]\n',
+        )
+        (conflict_set,) = read_pyproject_config(path).conflicts
+        assert conflict_set.members == (
+            ConflictMember(ConflictKind.GROUP, "black22"),
+            ConflictMember(ConflictKind.GROUP, "black23"),
+            ConflictMember(ConflictKind.GROUP, "black24"),
+        )
+
+    def test_mixed_extra_and_group_in_one_set(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { group = "gpu" }]]\n',
+        )
+        (conflict_set,) = read_pyproject_config(path).conflicts
+        assert conflict_set.members == (
+            ConflictMember(ConflictKind.EXTRA, "cpu"),
+            ConflictMember(ConflictKind.GROUP, "gpu"),
+        )
+
+    def test_names_are_canonicalised(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "My_Extra" }, { extra = "other" }]]\n',
+        )
+        (conflict_set,) = read_pyproject_config(path).conflicts
+        assert conflict_set.members[0] == ConflictMember(ConflictKind.EXTRA, "my-extra")
+
+    def test_policy_table_forms(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [\n"
+            '  { exactly_one = [{ extra = "cpu" }, { extra = "gpu" }] },\n'
+            '  { at_least_one = [{ group = "a" }, { group = "b" }] },\n'
+            "]\n",
+        )
+        conflicts = read_pyproject_config(path).conflicts
+        assert [c.policy for c in conflicts] == [
+            ConflictPolicy.EXACTLY_ONE,
+            ConflictPolicy.AT_LEAST_ONE,
+        ]
+
+    def test_multiple_independent_sets(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [\n"
+            '  [{ extra = "a" }, { extra = "b" }],\n'
+            '  [{ group = "x" }, { group = "y" }],\n'
+            "]\n",
+        )
+        assert len(read_pyproject_config(path).conflicts) == 2
+
+    def test_must_be_array(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nconflicts = "cpu"\n')
+        with pytest.raises(ConfigError, match="conflicts must be an array"):
+            read_pyproject_config(path)
+
+    def test_set_must_be_array_or_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\nconflicts = [1]\n")
+        with pytest.raises(ConfigError, match=r"conflicts\[0\] must be an array"):
+            read_pyproject_config(path)
+
+    def test_fewer_than_two_members_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nconflicts = [[{ extra = "cpu" }]]\n')
+        with pytest.raises(ConfigError, match="at least 2 members"):
+            read_pyproject_config(path)
+
+    def test_duplicate_member_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { extra = "cpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="more than once"):
+            read_pyproject_config(path)
+
+    def test_unknown_policy_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [{ any_two = [{ extra = "a" }, { extra = "b" }] }]\n',
+        )
+        with pytest.raises(ConfigError, match="unknown conflict-set key"):
+            read_pyproject_config(path)
+
+    def test_two_policy_keys_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [{ at_most_one = [{ extra = "
+            '"a" }, { extra = "b" }], exactly_one = [{ extra = "c" }, '
+            '{ extra = "d" }] }]\n',
+        )
+        with pytest.raises(ConfigError, match="exactly one policy"):
+            read_pyproject_config(path)
+
+    def test_member_must_be_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nconflicts = [["cpu", "gpu"]]\n')
+        with pytest.raises(ConfigError, match="must be a table"):
+            read_pyproject_config(path)
+
+    def test_member_unknown_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ feature = "cpu" }, { extra = "gpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="unknown member key"):
+            read_pyproject_config(path)
+
+    def test_member_must_name_exactly_one_kind(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "cpu", group = "g" }, '
+            '{ extra = "gpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="exactly one of"):
+            read_pyproject_config(path)
+
+    def test_member_name_must_be_nonempty_string(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "" }, { extra = "gpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="non-empty string"):
+            read_pyproject_config(path)
+
+    def test_member_name_must_be_string(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [[{ extra = 1 }, { extra = 2 }]]\n",
+        )
+        with pytest.raises(ConfigError, match="non-empty string"):
+            read_pyproject_config(path)
+
+    def test_policy_members_must_be_array(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nconflicts = [{ at_most_one = "cpu" }]\n')
+        with pytest.raises(ConfigError, match="must be an array of members"):
+            read_pyproject_config(path)
+
+
+class TestValidateConflictSelection:
+    def _set(self, policy: ConflictPolicy, *names: str) -> ConflictSet:
+        return ConflictSet(
+            members=tuple(ConflictMember(ConflictKind.EXTRA, n) for n in names),
+            policy=policy,
+        )
+
+    def test_no_conflicts_passes(self) -> None:
+        validate_conflict_selection((), ("cpu", "gpu"), ())
+
+    def test_single_member_selected_passes(self) -> None:
+        validate_conflict_selection(
+            (self._set(ConflictPolicy.AT_MOST_ONE, "cpu", "gpu"),), ("cpu",), ()
+        )
+
+    def test_at_most_one_co_selection_raises(self) -> None:
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            validate_conflict_selection(
+                (self._set(ConflictPolicy.AT_MOST_ONE, "cpu", "gpu"),),
+                ("cpu", "gpu"),
+                (),
+            )
+
+    def test_at_most_one_none_selected_passes(self) -> None:
+        validate_conflict_selection(
+            (self._set(ConflictPolicy.AT_MOST_ONE, "cpu", "gpu"),), (), ()
+        )
+
+    def test_exactly_one_co_selection_raises(self) -> None:
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            validate_conflict_selection(
+                (self._set(ConflictPolicy.EXACTLY_ONE, "cpu", "gpu"),),
+                ("cpu", "gpu"),
+                (),
+            )
+
+    def test_exactly_one_none_selected_raises(self) -> None:
+        with pytest.raises(ConflictSelectionError, match="exactly one"):
+            validate_conflict_selection(
+                (self._set(ConflictPolicy.EXACTLY_ONE, "cpu", "gpu"),), (), ()
+            )
+
+    def test_at_least_one_none_selected_raises(self) -> None:
+        with pytest.raises(ConflictSelectionError, match="at least one"):
+            validate_conflict_selection(
+                (self._set(ConflictPolicy.AT_LEAST_ONE, "cpu", "gpu"),), (), ()
+            )
+
+    def test_at_least_one_co_selection_allowed(self) -> None:
+        # at-least-one does not forbid co-selection.
+        validate_conflict_selection(
+            (self._set(ConflictPolicy.AT_LEAST_ONE, "cpu", "gpu"),),
+            ("cpu", "gpu"),
+            (),
+        )
+
+    def test_group_members_checked_against_selected_groups(self) -> None:
+        cs = ConflictSet(
+            members=(
+                ConflictMember(ConflictKind.GROUP, "black22"),
+                ConflictMember(ConflictKind.GROUP, "black23"),
+            ),
+            policy=ConflictPolicy.AT_MOST_ONE,
+        )
+        with pytest.raises(ConflictSelectionError, match="black"):
+            validate_conflict_selection((cs,), (), ("black22", "black23"))
+
+    def test_selection_canonicalised(self) -> None:
+        with pytest.raises(ConflictSelectionError):
+            validate_conflict_selection(
+                (self._set(ConflictPolicy.AT_MOST_ONE, "cpu", "fast-io"),),
+                ("CPU", "fast_io"),
+                (),
+            )
 
 
 class TestConstraints:

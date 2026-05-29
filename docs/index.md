@@ -21,6 +21,7 @@ guides/vcs
 guides/multi-index
 guides/workspaces
 guides/universal
+guides/conflicts
 ```
 
 ## Status
@@ -33,3 +34,6 @@ guides/universal
 * Universal resolution across a user-declared `(python, platform)`
   matrix.  Opt-in via `[tool.nab].mode = "universal"`; the API and
   output format are still subject to change.
+* Mutually-exclusive extras and dependency groups via
+  `[tool.nab].conflicts`: fail fast in specific mode, fork the resolve
+  in universal mode.  See [conflicts](guides/conflicts.md).

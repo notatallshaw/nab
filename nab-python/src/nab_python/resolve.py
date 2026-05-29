@@ -24,7 +24,13 @@ from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
-from .config import ConfigError, NabProjectConfig, ResolveMode, read_pyproject_config
+from .config import (
+    ConfigError,
+    NabProjectConfig,
+    ResolveMode,
+    read_pyproject_config,
+    validate_conflict_selection,
+)
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, build_lock_input_from_provider
 from .provider import (
@@ -45,7 +51,13 @@ from .requirements_file import (
     select_optional_dependencies,
 )
 from .universal.matrix import Matrix
-from .universal.resolve import UniversalResult, resolve_universal
+from .universal.resolve import (
+    UniversalResult,
+    _conflict_forks,
+    _ConflictFork,
+    _ResolveFork,
+    resolve_universal,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -122,6 +134,8 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             " mode = 'universal'."
         )
         raise UnsupportedModeError(msg)
+
+    validate_conflict_selection(config.conflicts, extras, groups)
 
     if python_version is not None:
         effective_python = python_version
@@ -397,6 +411,23 @@ def _load_extra_requirements(path: Path, selected: Sequence[str]) -> list[Requir
     return select_optional_dependencies(optional, expanded)
 
 
+def _fork_requirement_strings(
+    path: Path,
+    base_dependencies: Sequence[Requirement],
+    fork: _ConflictFork,
+) -> list[str]:
+    """Fold one conflict fork's active groups and extras onto the base deps.
+
+    Each fork resolves a different slice of the selection (one member
+    per engaged conflict set), so its requirement list is built
+    separately rather than shared across forks.
+    """
+    requirements = list(base_dependencies)
+    requirements.extend(_load_group_requirements(path, fork.active_groups))
+    requirements.extend(_load_extra_requirements(path, fork.active_extras))
+    return [str(r) for r in requirements]
+
+
 def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
     """Append per-package NO_VERSIONS diagnostics to ``exc`` in-place.
 
@@ -550,10 +581,7 @@ def resolve_universal_pyproject(
         msg = "mode = 'universal' requires a [tool.nab.matrix] table"
         raise UnsupportedModeError(msg)
 
-    requirements = read_pyproject_dependencies(path)
-    requirements.extend(_load_group_requirements(path, groups))
-    requirements.extend(_load_extra_requirements(path, extras))
-    requirement_strings = [str(r) for r in requirements]
+    base_dependencies = read_pyproject_dependencies(path)
     matrix = Matrix(
         python=config.matrix.python,
         platforms=config.matrix.platforms,
@@ -565,17 +593,26 @@ def resolve_universal_pyproject(
         ),
         implementations=config.matrix.implementations,
     )
-    if len(groups) > 1:
-        _check_group_disjointness_across_tuples(
-            _load_group_requirements_by_group(path, groups),
-            matrix.expand(),
+    forks: list[_ResolveFork] = []
+    for fork in _conflict_forks(extras, groups, config.conflicts):
+        if len(fork.active_groups) > 1:
+            _check_group_disjointness_across_tuples(
+                _load_group_requirements_by_group(path, fork.active_groups),
+                matrix.expand(),
+            )
+        forks.append(
+            _ResolveFork(
+                selection=fork.selection,
+                requirements=_fork_requirement_strings(path, base_dependencies, fork),
+            )
         )
     effective_strategy = (
         resolution_strategy if resolution_strategy is not None else config.resolution
     )
     return resolve_universal(
         matrix=matrix,
-        requirements=requirement_strings,
+        requirements=forks[0].requirements,
+        forks=forks,
         transport=transport,
         offline=offline,
         constraints=list(config.constraints) or None,

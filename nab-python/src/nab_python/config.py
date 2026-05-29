@@ -41,15 +41,22 @@ from .workspace import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
 __all__ = [
     "ConfigError",
+    "ConflictKind",
+    "ConflictMember",
+    "ConflictPolicy",
+    "ConflictSelectionError",
+    "ConflictSet",
     "MatrixConfig",
     "NabProjectConfig",
     "ResolveMode",
+    "conflict_exclusion_groups",
     "read_pyproject_config",
+    "validate_conflict_selection",
 ]
 
 
@@ -74,6 +81,7 @@ _TOP_LEVEL_KEYS = frozenset(
         "matrix",
         "resolution",
         "workspace",
+        "conflicts",
     },
 )
 
@@ -105,6 +113,81 @@ class MatrixConfig:
     implementations: tuple[str, ...] = ("cpython",)
 
 
+class ConflictPolicy(enum.Enum):
+    """How exclusive the members of a :class:`ConflictSet` are.
+
+    Mirrors Gentoo's ``REQUIRED_USE`` group operators.  ``AT_MOST_ONE``
+    (``??``) is the default for a bare uv-style set: the members are
+    mutually exclusive but selecting none is fine, which suits opt-in
+    extras.  ``EXACTLY_ONE`` (``^^``) additionally requires one to be
+    chosen.  ``AT_LEAST_ONE`` (``||``) only forbids the empty
+    selection; it is rarely useful for extras and is included for
+    completeness.
+    """
+
+    AT_MOST_ONE = "at_most_one"
+    EXACTLY_ONE = "exactly_one"
+    AT_LEAST_ONE = "at_least_one"
+
+
+class ConflictKind(enum.Enum):
+    """Whether a :class:`ConflictMember` names an extra or a group."""
+
+    EXTRA = "extra"
+    GROUP = "group"
+
+
+@dataclass(frozen=True, slots=True)
+class ConflictMember:
+    """One side of a conflict: a named extra or dependency group.
+
+    ``name`` is stored canonicalised (PEP 685 for extras, PEP 735 for
+    groups) so a selection compares equal regardless of how the user
+    spelled it.  An extra and a group sharing a name are distinct
+    members, matching uv's package-qualified model.
+    """
+
+    kind: ConflictKind
+    name: str
+
+    def __str__(self) -> str:
+        """Render as ``extra 'cpu'`` / ``group 'black22'`` for messages."""
+        return f"{self.kind.value} {self.name!r}"
+
+
+@dataclass(frozen=True, slots=True)
+class ConflictSet:
+    """A set of mutually-exclusive members with an exclusivity policy."""
+
+    members: tuple[ConflictMember, ...]
+    policy: ConflictPolicy = ConflictPolicy.AT_MOST_ONE
+
+    def __str__(self) -> str:
+        """Render as ``at_most_one (extra 'cpu', extra 'gpu')`` for messages."""
+        joined = ", ".join(str(m) for m in self.members)
+        return f"{self.policy.value} ({joined})"
+
+
+def conflict_exclusion_groups(
+    conflicts: Sequence[ConflictSet],
+) -> tuple[frozenset[tuple[str, str]], ...]:
+    """Project conflict sets to the neutral exclusion form the lockfile uses.
+
+    The disjointness validator consumes a sequence of member sets, of
+    which at most one member may be active in any install context.
+    Only :attr:`ConflictPolicy.AT_MOST_ONE` and
+    :attr:`ConflictPolicy.EXACTLY_ONE` forbid co-selection, so only
+    those contribute; :attr:`ConflictPolicy.AT_LEAST_ONE` constrains the
+    empty selection, not co-selection, and is omitted.  Each member
+    becomes a ``(kind, canonical_name)`` pair.
+    """
+    return tuple(
+        frozenset((m.kind.value, m.name) for m in cs.members)
+        for cs in conflicts
+        if cs.policy is not ConflictPolicy.AT_LEAST_ONE
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class NabProjectConfig:
     """Everything ``[tool.nab]`` says about how to resolve this project."""
@@ -132,6 +215,7 @@ class NabProjectConfig:
     matrix: MatrixConfig | None = None
     resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST
     workspace: WorkspaceConfig | None = None
+    conflicts: tuple[ConflictSet, ...] = ()
     # Canonical names of workspace members. Populated by
     # _apply_workspace_discovery; empty otherwise. Distinct from
     # ``local_sources``, which also carries explicit
@@ -141,6 +225,64 @@ class NabProjectConfig:
 
 class ConfigError(ValueError):
     """Raised when ``[tool.nab]`` is structurally invalid."""
+
+
+class ConflictSelectionError(ConfigError):
+    """A requested extra/group selection violates a declared conflict.
+
+    Raised on the single-environment path, where one resolution cannot
+    serve two mutually-exclusive members at once.  Universal mode forks
+    the resolve instead of raising.
+    """
+
+
+def _member_active(
+    member: ConflictMember,
+    active_extras: set[str],
+    active_groups: set[str],
+) -> bool:
+    if member.kind is ConflictKind.EXTRA:
+        return member.name in active_extras
+    return member.name in active_groups
+
+
+def validate_conflict_selection(
+    conflicts: Sequence[ConflictSet],
+    selected_extras: Sequence[str],
+    selected_groups: Sequence[str],
+) -> None:
+    """Raise when a selection breaks a declared conflict's policy.
+
+    For a single-environment resolve, two members of an at-most-one or
+    exactly-one set cannot both be active, an exactly-one set must have
+    one active member, and an at-least-one set must have at least one.
+    Names compare under canonicalisation.  Universal mode does not call
+    this for the co-selection case: it forks the matrix so each member
+    resolves on its own.
+    """
+    active_extras = {canonicalize_name(e) for e in selected_extras}
+    active_groups = {canonicalize_name(g) for g in selected_groups}
+    for conflict_set in conflicts:
+        active = [
+            m
+            for m in conflict_set.members
+            if _member_active(m, active_extras, active_groups)
+        ]
+        policy = conflict_set.policy
+        exclusive = {ConflictPolicy.AT_MOST_ONE, ConflictPolicy.EXACTLY_ONE}
+        if len(active) > 1 and policy in exclusive:
+            chosen = ", ".join(str(m) for m in active)
+            msg = (
+                f"{chosen} cannot be selected together: declared mutually"
+                f" exclusive ({policy.value}) in [tool.nab].conflicts"
+            )
+            raise ConflictSelectionError(msg)
+        if not active and policy is ConflictPolicy.EXACTLY_ONE:
+            msg = f"exactly one of {conflict_set} must be selected"
+            raise ConflictSelectionError(msg)
+        if not active and policy is ConflictPolicy.AT_LEAST_ONE:
+            msg = f"at least one of {conflict_set} must be selected"
+            raise ConflictSelectionError(msg)
 
 
 def read_pyproject_config(
@@ -301,6 +443,7 @@ def _parse_nab_table(
             ResolutionStrategy.HIGHEST,
         ),
         workspace=_parse_workspace(raw.get("workspace")),
+        conflicts=_parse_conflicts(raw.get("conflicts")),
     )
 
 
@@ -849,6 +992,108 @@ def _parse_workspace(value: object) -> WorkspaceConfig | None:
         raise ConfigError(msg)
     members = _parse_string_list("workspace.members", value.get("members", []))
     return WorkspaceConfig(members=members)
+
+
+_MIN_CONFLICT_MEMBERS = 2
+_CONFLICT_POLICY_KEYS = {p.value: p for p in ConflictPolicy}
+
+
+def _parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
+    """Parse the optional ``[tool.nab].conflicts`` array.
+
+    Each item is either a bare array of members (uv-compatible; the
+    members are mutually exclusive under the default at-most-one
+    policy) or a single-key table naming the policy
+    (``at_most_one``/``exactly_one``/``at_least_one``) whose value is
+    the member array.  A member is ``{ extra = "NAME" }`` or
+    ``{ group = "NAME" }``.  Reference validation (the extra or group
+    actually exists) happens at resolve time, where the project tables
+    are read.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        msg = f"conflicts must be an array of conflict sets, got {type(value).__name__}"
+        raise ConfigError(msg)
+    return tuple(_parse_conflict_set(item, i) for i, item in enumerate(value))
+
+
+def _parse_conflict_set(item: object, index: int) -> ConflictSet:
+    where = f"conflicts[{index}]"
+    if isinstance(item, list):
+        return ConflictSet(
+            members=_parse_conflict_members(item, where),
+            policy=ConflictPolicy.AT_MOST_ONE,
+        )
+    if isinstance(item, dict):
+        keys = set(item)
+        unknown = sorted(keys - _CONFLICT_POLICY_KEYS.keys())
+        if unknown:
+            msg = (
+                f"{where}: unknown conflict-set key(s) {unknown!r}; expected a"
+                f" policy table with one of {sorted(_CONFLICT_POLICY_KEYS)!r}"
+                " or a bare array of members"
+            )
+            raise ConfigError(msg)
+        if len(keys) != 1:
+            msg = (
+                f"{where}: a policy conflict set must name exactly one policy"
+                f" of {sorted(_CONFLICT_POLICY_KEYS)!r}, got {sorted(keys)!r}"
+            )
+            raise ConfigError(msg)
+        policy_key = next(iter(keys))
+        return ConflictSet(
+            members=_parse_conflict_members(item[policy_key], f"{where}.{policy_key}"),
+            policy=_CONFLICT_POLICY_KEYS[policy_key],
+        )
+    msg = (
+        f"{where} must be an array of members or a policy table, got"
+        f" {type(item).__name__}"
+    )
+    raise ConfigError(msg)
+
+
+def _parse_conflict_members(value: object, where: str) -> tuple[ConflictMember, ...]:
+    if not isinstance(value, list):
+        msg = f"{where} must be an array of members, got {type(value).__name__}"
+        raise ConfigError(msg)
+    members = tuple(
+        _parse_conflict_member(item, f"{where}[{i}]") for i, item in enumerate(value)
+    )
+    if len(members) < _MIN_CONFLICT_MEMBERS:
+        msg = (
+            f"{where} must list at least {_MIN_CONFLICT_MEMBERS} members to be"
+            f" a conflict; got {len(members)}"
+        )
+        raise ConfigError(msg)
+    if len(set(members)) != len(members):
+        msg = f"{where} lists a member more than once"
+        raise ConfigError(msg)
+    return members
+
+
+def _parse_conflict_member(item: object, where: str) -> ConflictMember:
+    if not isinstance(item, dict):
+        msg = (
+            f"{where} must be a table {{ extra = ... }} or {{ group = ... }},"
+            f" got {type(item).__name__}"
+        )
+        raise ConfigError(msg)
+    kinds = {k.value for k in ConflictKind}
+    unknown = sorted(set(item) - kinds)
+    if unknown:
+        msg = f"{where}: unknown member key(s) {unknown!r}; expected {sorted(kinds)!r}"
+        raise ConfigError(msg)
+    present = sorted(set(item) & kinds)
+    if len(present) != 1:
+        msg = f"{where} must name exactly one of {sorted(kinds)!r}, got {present!r}"
+        raise ConfigError(msg)
+    kind = ConflictKind(present[0])
+    name = item[present[0]]
+    if not isinstance(name, str) or not name:
+        msg = f"{where}.{kind.value} must be a non-empty string, got {name!r}"
+        raise ConfigError(msg)
+    return ConflictMember(kind=kind, name=canonicalize_name(name))
 
 
 _MINOR_RELEASE_PARTS = 2

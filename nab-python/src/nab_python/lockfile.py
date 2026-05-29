@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ._vendor.packaging.markers import Marker
+    from .config import ConflictSet
 
 
 __all__ = [
@@ -282,3 +283,7 @@ class LockInput:
     dependency_groups: tuple[str, ...] = ()
     default_groups: tuple[str, ...] = ()
     provenance: Provenance | None = None
+    conflicts: tuple[ConflictSet, ...] = ()
+    """Declared ``[tool.nab].conflicts``.  Prunes the disjointness
+    validator's install-context universe so a per-fork lock (one entry
+    per mutually-exclusive extra/group) validates."""

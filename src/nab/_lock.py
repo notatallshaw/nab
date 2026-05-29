@@ -336,11 +336,13 @@ def _emit_universal_pylock(
     policy rather than this run's request.
     """
     default_groups = config.default_groups if config is not None else ()
+    conflicts = config.conflicts if config is not None else ()
     lock_input = _cli.merge_universal_lock_inputs(
         result,
         extras=extras,
         dependency_groups=groups,
         default_groups=default_groups,
+        conflicts=conflicts,
     )
     lock_input = _drop_workspace_pins(lock_input, workspace_to_drop)
     if provenance is not None:

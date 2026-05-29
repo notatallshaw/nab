@@ -30,6 +30,10 @@ __all__ = [
     "DisjointnessError",
 ]
 
+# Two or more active members of a conflict set is the illegitimate case
+# the conflict declaration prunes from the install-context universe.
+_MUTUALLY_EXCLUSIVE_LIMIT = 2
+
 
 class DisjointnessError(ValueError):
     """Two same-name ``[[packages]]`` entries can fire under one context.
@@ -50,6 +54,7 @@ def validate_marker_disjointness(
     environments: Mapping[str, Mapping[str, str]],
     extras: Sequence[str],
     groups: Sequence[str],
+    exclusive_groups: Sequence[AbstractSet[tuple[str, str]]] = (),
 ) -> None:
     """Confirm same-name ``[[packages]]`` entries are pairwise disjoint.
 
@@ -76,6 +81,19 @@ def validate_marker_disjointness(
     actually mentions.  When no marker references a variable, that
     powerset collapses to ``{()}`` and the cartesian explosion
     disappears.
+
+    ``exclusive_groups`` declares mutually-exclusive selections from
+    ``[tool.nab].conflicts``: each entry is a set of ``(kind, name)``
+    members (``kind`` is ``"extra"`` or ``"group"``) of which at most
+    one may be active at once.  Install contexts that activate two or
+    more members of any such set cannot legitimately occur, so they
+    are pruned from the universe before the collision check.  This is
+    what lets a universal lock carry one fork per conflicting
+    extra/group under bare ``'name' in extras`` markers: the
+    both-selected point that would otherwise collide is never
+    enumerated.  A collision that survives outside every pruned point
+    still raises, with a hint pointing at the ``conflicts`` key when
+    extras or groups drive the colliding markers.
     """
     if not environments:
         return
@@ -90,30 +108,77 @@ def validate_marker_disjointness(
     relevant_groups = _restrict_to_referenced(
         groups, candidate_markers, "dependency_groups"
     )
-    extras_subsets = list(_powerset(relevant_extras))
-    group_subsets = list(_powerset(relevant_groups))
+    points = [
+        (extra_subset, group_subset)
+        for extra_subset in _powerset(relevant_extras)
+        for group_subset in _powerset(relevant_groups)
+        if not _point_violates_exclusions(extra_subset, group_subset, exclusive_groups)
+    ]
     for entries in same_name_entries:
         name = str(entries[0].name)
         for env_label, env_dict in environments.items():
-            for extra_subset in extras_subsets:
-                for group_subset in group_subsets:
-                    context: dict[str, str | AbstractSet[str]] = dict(env_dict)
-                    context["extras"] = frozenset(extra_subset)
-                    context["dependency_groups"] = frozenset(group_subset)
-                    matching = [
-                        pkg for pkg in entries if _marker_holds(pkg.marker, context)
-                    ]
-                    if len(matching) <= 1:
-                        continue
-                    versions = sorted(
-                        str(p.version) if p.version else "" for p in matching
-                    )
-                    msg = (
-                        f"{name}: {len(matching)} entries fire under"
-                        f" env={env_label!r} extras={sorted(extra_subset)!r}"
-                        f" groups={sorted(group_subset)!r}: versions={versions}"
-                    )
-                    raise DisjointnessError(msg)
+            for extra_subset, group_subset in points:
+                context: dict[str, str | AbstractSet[str]] = dict(env_dict)
+                context["extras"] = frozenset(extra_subset)
+                context["dependency_groups"] = frozenset(group_subset)
+                matching = [
+                    pkg for pkg in entries if _marker_holds(pkg.marker, context)
+                ]
+                if len(matching) <= 1:
+                    continue
+                versions = sorted(str(p.version) if p.version else "" for p in matching)
+                msg = (
+                    f"{name}: {len(matching)} entries fire under"
+                    f" env={env_label!r} extras={sorted(extra_subset)!r}"
+                    f" groups={sorted(group_subset)!r}: versions={versions}"
+                    f"{_conflict_hint([p.marker for p in matching])}"
+                )
+                raise DisjointnessError(msg)
+
+
+def _point_violates_exclusions(
+    extra_subset: Sequence[str],
+    group_subset: Sequence[str],
+    exclusive_groups: Sequence[AbstractSet[tuple[str, str]]],
+) -> bool:
+    """Return True when this context activates 2+ members of a conflict set.
+
+    Members are compared under canonicalisation so a marker literal
+    spelled differently from the declared conflict name still matches.
+    """
+    if not exclusive_groups:
+        return False
+    active_extras = {canonicalize_name(name) for name in extra_subset}
+    active_groups = {canonicalize_name(name) for name in group_subset}
+    for members in exclusive_groups:
+        active = sum(
+            1
+            for kind, name in members
+            if (kind == "extra" and name in active_extras)
+            or (kind == "group" and name in active_groups)
+        )
+        if active >= _MUTUALLY_EXCLUSIVE_LIMIT:
+            return True
+    return False
+
+
+def _conflict_hint(markers: Sequence[Marker | None]) -> str:
+    """Return a one-line hint about declaring a conflict, when relevant.
+
+    Relevant means the colliding markers reference an extra or a
+    dependency group, so declaring the pair mutually exclusive in
+    ``[tool.nab].conflicts`` could prune the offending context.  A
+    purely environment-driven collision (no membership variable) gets
+    no hint because a conflict declaration would not help.
+    """
+    _, has_extras = _referenced_membership_names(markers, "extras")
+    _, has_groups = _referenced_membership_names(markers, "dependency_groups")
+    if not (has_extras or has_groups):
+        return ""
+    return (
+        ". If these are intentionally mutually exclusive, declare them in"
+        " [tool.nab].conflicts so the colliding context is pruned"
+    )
 
 
 @functools.cache

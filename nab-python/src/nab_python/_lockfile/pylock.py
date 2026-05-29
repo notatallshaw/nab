@@ -30,6 +30,7 @@ from .._vendor.packaging.pylock import (
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import Version
+from ..config import conflict_exclusion_groups
 from .disjointness import validate_marker_disjointness
 
 if TYPE_CHECKING:
@@ -102,6 +103,7 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
         environments=lock_input.tuple_environments,
         extras=lock_input.extras,
         groups=lock_input.dependency_groups,
+        exclusive_groups=conflict_exclusion_groups(lock_input.conflicts),
     )
     tool: dict[str, Any] | None = (
         {"nab": lock_input.provenance.to_block()}
