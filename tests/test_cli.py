@@ -42,6 +42,7 @@ from nab_python.config import ConfigError
 from nab_python.download import DownloadError
 from nab_python.lockfile import (
     IndexPin,
+    LocalPin,
     LockInput,
     MissingHashError,
     MissingSdistError,
@@ -1278,6 +1279,31 @@ class TestRelockDiffSummary:
                 provenance=None,
             )
         assert capsys.readouterr().err.strip().endswith("(1 packages)")
+
+    def test_relock_unchanged_with_local_pin_prints_plain_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A local pin has no recorded version, so an unchanged relock
+        must not count it as added."""
+        out = tmp_path / "pylock.toml"
+        src = tmp_path / "alpha"
+        src.mkdir()
+        lock_input = LockInput(
+            pins={
+                "foo": _foo_index_pin("1.0", "foo"),
+                "alpha": LocalPin(name="alpha", version="0", path=str(src)),
+            }
+        )
+        for _ in range(2):
+            _emit_specific(
+                ResolutionResult(
+                    pins={"foo": V("1.0"), "alpha": V("0")}, lock_input=lock_input
+                ),
+                format="pylock",
+                output=out,
+                provenance=None,
+            )
+        assert capsys.readouterr().err.strip().endswith("(2 packages)")
 
     def test_unparseable_prior_falls_back_to_plain_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
