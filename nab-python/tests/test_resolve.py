@@ -219,6 +219,86 @@ class TestSpecificModeConflictValidation:
         # is pulled in through the self-reference.
         assert result.pins["foo"] == V("1.0")
 
+    def test_default_groups_satisfy_exactly_one(self, tmp_path: Path) -> None:
+        # ``default-groups`` activates ``a`` on every default install, so
+        # the exactly-one minimum is met without any ``--groups`` flag.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            'a = ["foo==1.0"]\n'
+            "b = []\n"
+            "[tool.nab]\n"
+            'default-groups = ["a"]\n'
+            "conflicts = ["
+            '{ exactly_one = [{ group = "a" }, { group = "b" }] }'
+            "]\n"
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("1.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            result = resolve_pyproject(
+                pyproject, _FAKE_TRANSPORT, python_version="3.12.0"
+            )
+        assert result.pins == {"foo": V("1.0")}
+
+    def test_default_groups_deps_are_loaded(self, tmp_path: Path) -> None:
+        # ``default-groups`` deps reach the resolver even without ``--groups``.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            'dev = ["bar==2.0"]\n'
+            "[tool.nab]\n"
+            'default-groups = ["dev"]\n'
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("2.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        root_reqs = mock_provider_cls.call_args.kwargs["root_requirements"]
+        assert "bar" in root_reqs
+
+    def test_default_groups_plus_cli_violate_exclusion(self, tmp_path: Path) -> None:
+        # ``default-groups = ["a"]`` plus ``--groups b`` activates both
+        # members of an at-most-one set, so the exclusion check trips.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            "a = []\n"
+            "b = []\n"
+            "[tool.nab]\n"
+            'default-groups = ["a"]\n'
+            'conflicts = [[{ group = "a" }, { group = "b" }]]\n'
+        )
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                groups=("b",),
+                python_version="3.12.0",
+            )
+
 
 class TestResolvePyproject:
     def test_resolves_simple_project(self, tmp_path: Path) -> None:
@@ -1179,6 +1259,61 @@ class TestResolveUniversalPyproject:
         ):
             resolve_universal_pyproject(pyproject)
         mock_universal.assert_not_called()
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_default_groups_satisfy_exactly_one(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        # ``default-groups`` activates ``a`` on every default install, so
+        # ``nab lock`` without ``--groups`` clears the exactly-one minimum.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'a = ["foo==1.0"]\n'
+            "b = []\n"
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'default-groups = ["a"]\n'
+            "conflicts = ["
+            '{ exactly_one = [{ group = "a" }, { group = "b" }] }'
+            "]\n"
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject)
+        (fork,) = mock_resolve_universal.call_args.kwargs["forks"]
+        assert "foo==1.0" in fork.requirements
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_default_groups_drive_forking_with_cli_groups(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        # ``default-groups = ["b22"]`` plus ``--groups b23`` activates two
+        # members of an at-most-one set: each fork carries one member.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'b22 = ["black==22.0"]\n'
+            'b23 = ["black==23.0"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'default-groups = ["b22"]\n'
+            'conflicts = [[{ group = "b22" }, { group = "b23" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject, groups=["b23"])
+        forks = mock_resolve_universal.call_args.kwargs["forks"]
+        assert len(forks) == 2
+        selections = {f.selection for f in forks}
+        assert selections == {
+            (("group", "b22"),),
+            (("group", "b23"),),
+        }
 
 
 class TestResolvePyprojectVcs:

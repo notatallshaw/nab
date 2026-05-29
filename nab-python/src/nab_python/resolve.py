@@ -140,6 +140,11 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         )
         raise UnsupportedModeError(msg)
 
+    # ``default-groups`` is project policy: every default install
+    # activates them, so the conflict checks and the resolve fold them
+    # into the active group set alongside the CLI selection.
+    effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
+
     if config.conflicts:
         # Read each table once and reuse it across the existence check
         # and the umbrella expansion, so a conflict the selection only
@@ -150,7 +155,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         project_name = read_pyproject_name(path)
         _validate_conflict_members_exist(config.conflicts, optional, groups_table)
         active_extras = expand_self_extras(optional, project_name, extras)
-        active_groups = expand_group_includes(groups_table, groups)
+        active_groups = expand_group_includes(groups_table, effective_groups)
         validate_conflict_selection(config.conflicts, active_extras, active_groups)
 
     if python_version is not None:
@@ -166,15 +171,15 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     )
 
     requirements = read_pyproject_dependencies(path)
-    requirements.extend(_load_group_requirements(path, groups))
+    requirements.extend(_load_group_requirements(path, effective_groups))
     requirements.extend(_load_extra_requirements(path, extras))
     marker_environment = _build_marker_environment(
         python_version=effective_python,
         overrides=config.marker_environment,
     )
-    if len(groups) > 1:
+    if len(effective_groups) > 1:
         _check_group_disjointness(
-            _load_group_requirements_by_group(path, groups),
+            _load_group_requirements_by_group(path, effective_groups),
             environment=marker_environment,
         )
     resolver_requirements, root_extras = _build_resolver_inputs(
@@ -737,6 +742,12 @@ def resolve_universal_pyproject(
         project_name=read_pyproject_name(path),
     )
 
+    # ``default-groups`` is project policy: every default install
+    # activates them, so the conflict checks, the fork plan, and the
+    # per-fork resolves all fold them into the active group set
+    # alongside the CLI selection.
+    effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
+
     if config.conflicts:
         # Reuse the already-read tables for every conflict check, and
         # expand the selection so an umbrella extra or include-group
@@ -747,10 +758,10 @@ def resolve_universal_pyproject(
         validate_conflict_minimums(
             config.conflicts,
             expand_self_extras(tables.optional, tables.project_name, extras),
-            expand_group_includes(tables.groups, groups),
+            expand_group_includes(tables.groups, effective_groups),
         )
 
-    conflict_fork_list = conflict_forks(extras, groups, config.conflicts)
+    conflict_fork_list = conflict_forks(extras, effective_groups, config.conflicts)
     forks: list[ResolveFork] = []
     # Forks of an extra-based conflict share the same group selection,
     # so dedupe to skip the (group, group)->tuple scan once it has run

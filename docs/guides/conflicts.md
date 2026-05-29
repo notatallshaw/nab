@@ -104,6 +104,14 @@ The require-one check is not skipped in universal mode. Declaring
 raises before the resolve, the same as in specific mode. Only the
 co-selection case differs: universal mode forks instead of rejecting.
 
+Groups named in `[tool.nab].default-groups` count as part of the
+selection for every conflict check. A project with
+`default-groups = ["a"]` and `exactly_one = [{ group = "a" }, { group = "b" }]`
+satisfies the minimum without passing `--groups`, and a `--groups b`
+on top of that default activates two members of an exclusive set,
+which the exclusion check then catches (specific mode) or the
+universal resolver forks into two.
+
 A dependency required by every member of a set but not by the base
 keeps its membership marker, so it does not install when no member is
 selected (relevant under `at_most_one`, which permits selecting none).
