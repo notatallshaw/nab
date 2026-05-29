@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 import tomli
+from typing_extensions import override
 
 from nab_index.multi_index import IndexConfig
 
@@ -43,6 +44,7 @@ from .workspace import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from collections.abc import Set as AbstractSet
     from pathlib import Path
 
 __all__ = [
@@ -59,6 +61,7 @@ __all__ = [
     "conflict_exclusion_groups",
     "conflict_forks",
     "read_pyproject_config",
+    "validate_conflict_minimums",
     "validate_conflict_selection",
 ]
 
@@ -153,6 +156,7 @@ class ConflictMember:
     kind: ConflictKind
     name: str
 
+    @override
     def __str__(self) -> str:
         """Render as ``extra 'cpu'`` / ``group 'black22'`` for messages."""
         return f"{self.kind.value} {self.name!r}"
@@ -165,6 +169,7 @@ class ConflictSet:
     members: tuple[ConflictMember, ...]
     policy: ConflictPolicy = ConflictPolicy.AT_MOST_ONE
 
+    @override
     def __str__(self) -> str:
         """Render as ``at_most_one (extra 'cpu', extra 'gpu')`` for messages."""
         joined = ", ".join(str(m) for m in self.members)
@@ -323,13 +328,43 @@ class ConflictSelectionError(ConfigError):
 
 def _member_active(
     member: ConflictMember,
-    active_extras: set[str],
-    active_groups: set[str],
+    active_extras: AbstractSet[str],
+    active_groups: AbstractSet[str],
 ) -> bool:
     """Return True when ``member`` is in the selected extras/groups."""
     if member.kind is ConflictKind.EXTRA:
         return member.name in active_extras
     return member.name in active_groups
+
+
+def validate_conflict_minimums(
+    conflicts: Sequence[ConflictSet],
+    selected_extras: Sequence[str],
+    selected_groups: Sequence[str],
+) -> None:
+    """Raise when a require-one set has no active member.
+
+    Enforces only the "must select one" policies: an exactly-one set
+    and an at-least-one set each require at least one active member.
+    Names compare under canonicalisation.  Universal mode calls this to
+    apply the minimums without the co-selection rejection, which it
+    handles by forking instead.
+    """
+    active_extras = {canonicalize_name(e) for e in selected_extras}
+    active_groups = {canonicalize_name(g) for g in selected_groups}
+    for conflict_set in conflicts:
+        any_active = any(
+            _member_active(m, active_extras, active_groups)
+            for m in conflict_set.members
+        )
+        if any_active:
+            continue
+        if conflict_set.policy is ConflictPolicy.EXACTLY_ONE:
+            msg = f"exactly one of {conflict_set} must be selected"
+            raise ConflictSelectionError(msg)
+        if conflict_set.policy is ConflictPolicy.AT_LEAST_ONE:
+            msg = f"at least one of {conflict_set} must be selected"
+            raise ConflictSelectionError(msg)
 
 
 def validate_conflict_selection(
@@ -348,27 +383,21 @@ def validate_conflict_selection(
     """
     active_extras = {canonicalize_name(e) for e in selected_extras}
     active_groups = {canonicalize_name(g) for g in selected_groups}
+    exclusive = {ConflictPolicy.AT_MOST_ONE, ConflictPolicy.EXACTLY_ONE}
     for conflict_set in conflicts:
         active = [
             m
             for m in conflict_set.members
             if _member_active(m, active_extras, active_groups)
         ]
-        policy = conflict_set.policy
-        exclusive = {ConflictPolicy.AT_MOST_ONE, ConflictPolicy.EXACTLY_ONE}
-        if len(active) > 1 and policy in exclusive:
+        if len(active) > 1 and conflict_set.policy in exclusive:
             chosen = ", ".join(str(m) for m in active)
             msg = (
                 f"{chosen} cannot be selected together: declared mutually"
-                f" exclusive ({policy.value}) in [tool.nab].conflicts"
+                f" exclusive ({conflict_set.policy.value}) in [tool.nab].conflicts"
             )
             raise ConflictSelectionError(msg)
-        if not active and policy is ConflictPolicy.EXACTLY_ONE:
-            msg = f"exactly one of {conflict_set} must be selected"
-            raise ConflictSelectionError(msg)
-        if not active and policy is ConflictPolicy.AT_LEAST_ONE:
-            msg = f"at least one of {conflict_set} must be selected"
-            raise ConflictSelectionError(msg)
+    validate_conflict_minimums(conflicts, selected_extras, selected_groups)
 
 
 def read_pyproject_config(
@@ -485,12 +514,14 @@ def _parse_nab_table(
             )
             raise ConfigError(msg)
 
+    default_groups = _parse_string_list("default-groups", raw.get("default-groups", []))
+    conflicts = _parse_conflicts(raw.get("conflicts"))
+    _validate_default_groups_against_conflicts(default_groups, conflicts)
+
     return NabProjectConfig(
         mode=mode,
         constraints=_parse_string_list("constraints", raw.get("constraints", [])),
-        default_groups=_parse_string_list(
-            "default-groups", raw.get("default-groups", [])
-        ),
+        default_groups=default_groups,
         requires_python=_parse_requires_python(raw.get("requires-python")),
         uploaded_prior_to=_parse_uploaded_prior_to(
             raw.get("uploaded-prior-to"), anchor=anchor
@@ -529,7 +560,7 @@ def _parse_nab_table(
             ResolutionStrategy.HIGHEST,
         ),
         workspace=_parse_workspace(raw.get("workspace")),
-        conflicts=_parse_conflicts(raw.get("conflicts")),
+        conflicts=conflicts,
     )
 
 
@@ -1082,6 +1113,7 @@ def _parse_workspace(value: object) -> WorkspaceConfig | None:
 
 _MIN_CONFLICT_MEMBERS = 2
 _CONFLICT_POLICY_KEYS = {p.value: p for p in ConflictPolicy}
+_CANONICAL_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 
 def _parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
@@ -1099,7 +1131,45 @@ def _parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
     if not isinstance(value, list):
         msg = f"conflicts must be an array of conflict sets, got {type(value).__name__}"
         raise ConfigError(msg)
-    return tuple(_parse_conflict_set(item, i) for i, item in enumerate(value))
+    sets = tuple(_parse_conflict_set(item, i) for i, item in enumerate(value))
+    seen: set[ConflictMember] = set()
+    for conflict_set in sets:
+        for member in conflict_set.members:
+            if member in seen:
+                msg = (
+                    f"conflicts declares {member} in more than one set;"
+                    " a member may belong to at most one conflict set"
+                )
+                raise ConfigError(msg)
+            seen.add(member)
+    return sets
+
+
+def _validate_default_groups_against_conflicts(
+    default_groups: Sequence[str],
+    conflicts: Sequence[ConflictSet],
+) -> None:
+    """Reject default-groups that co-activate an exclusive conflict set.
+
+    A default install activates every default group with no user
+    selection, so the emit-time disjointness validator never sees them.
+    Two default groups in the same at-most-one or exactly-one set would
+    silently violate the declared conflict; catch it at parse time.
+    """
+    active = {canonicalize_name(g) for g in default_groups}
+    for group in conflict_exclusion_groups(conflicts):
+        co_active = sorted(
+            name
+            for kind, name in group
+            if kind == ConflictKind.GROUP.value and name in active
+        )
+        if len(co_active) >= _MIN_CONFLICT_MEMBERS:
+            joined = ", ".join(repr(name) for name in co_active)
+            msg = (
+                f"default-groups activates {joined}, which are declared"
+                " mutually exclusive in [tool.nab].conflicts"
+            )
+            raise ConfigError(msg)
 
 
 def _parse_conflict_set(item: object, index: int) -> ConflictSet:
@@ -1177,7 +1247,14 @@ def _parse_conflict_member(item: object, where: str) -> ConflictMember:
     if not isinstance(name, str) or not name:
         msg = f"{where}.{kind.value} must be a non-empty string, got {name!r}"
         raise ConfigError(msg)
-    return ConflictMember(kind=kind, name=canonicalize_name(name))
+    canonical = canonicalize_name(name)
+    if _CANONICAL_NAME_PATTERN.match(canonical) is None:
+        msg = (
+            f"{where}.{kind.value} is not a valid extra/group name: {name!r}"
+            f" (canonicalises to {canonical!r})"
+        )
+        raise ConfigError(msg)
+    return ConflictMember(kind=kind, name=canonical)
 
 
 _MINOR_RELEASE_PARTS = 2

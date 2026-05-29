@@ -17,8 +17,11 @@ from nab_python.config import (
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
+    conflict_exclusion_groups,
+    conflict_forks,
     read_pyproject_config,
     read_pyproject_lock_anchor,
+    validate_conflict_minimums,
     validate_conflict_selection,
 )
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexOverride
@@ -262,6 +265,154 @@ class TestConflicts:
         with pytest.raises(ConfigError, match="must be an array of members"):
             read_pyproject_config(path)
 
+    def test_member_in_two_sets_rejected(self, tmp_path: Path) -> None:
+        # An overlapping member has no well-defined fork; the cartesian
+        # product would otherwise produce a degenerate (cpu, cpu) combo.
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [\n"
+            '  [{ extra = "cpu" }, { extra = "gpu" }],\n'
+            '  [{ extra = "cpu" }, { extra = "tpu" }],\n'
+            "]\n",
+        )
+        with pytest.raises(ConfigError, match="more than one set"):
+            read_pyproject_config(path)
+
+    def test_same_name_extra_and_group_in_two_sets_allowed(
+        self, tmp_path: Path
+    ) -> None:
+        # An extra and a group sharing a name are distinct members.
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [\n"
+            '  [{ extra = "cpu" }, { extra = "gpu" }],\n'
+            '  [{ group = "cpu" }, { group = "tpu" }],\n'
+            "]\n",
+        )
+        assert len(read_pyproject_config(path).conflicts) == 2
+
+    def test_malformed_member_name_rejected(self, tmp_path: Path) -> None:
+        # ``...`` canonicalises to ``-``, which is not a valid name.
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "..." }, { extra = "gpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="not a valid extra/group name"):
+            read_pyproject_config(path)
+
+    def test_default_groups_conflict_with_at_most_one_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'default-groups = ["black22", "black23"]\n'
+            'conflicts = [[{ group = "black22" }, { group = "black23" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="declared mutually exclusive"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_default_groups_conflict_with_exactly_one_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'default-groups = ["black22", "black23"]\n'
+            "conflicts = [{ exactly_one = "
+            '[{ group = "black22" }, { group = "black23" }] }]\n',
+        )
+        with pytest.raises(ConfigError, match="declared mutually exclusive"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_default_groups_one_member_allowed(self, tmp_path: Path) -> None:
+        # A single default group in an exclusive set is fine.
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'default-groups = ["black22"]\n'
+            'conflicts = [[{ group = "black22" }, { group = "black23" }]]\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.default_groups == ("black22",)
+
+    def test_default_groups_skip_at_least_one(self, tmp_path: Path) -> None:
+        # at-least-one does not forbid co-selection, so two default
+        # groups in such a set are allowed.
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'default-groups = ["a", "b"]\n'
+            'conflicts = [{ at_least_one = [{ group = "a" }, { group = "b" }] }]\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.default_groups == ("a", "b")
+
+
+class TestConflictExclusionGroups:
+    def _set(self, policy: ConflictPolicy, *names: str) -> ConflictSet:
+        return ConflictSet(
+            members=tuple(ConflictMember(ConflictKind.EXTRA, n) for n in names),
+            policy=policy,
+        )
+
+    def test_drops_at_least_one_keeps_others(self) -> None:
+        groups = conflict_exclusion_groups(
+            (
+                self._set(ConflictPolicy.AT_MOST_ONE, "a", "b"),
+                self._set(ConflictPolicy.AT_LEAST_ONE, "c", "d"),
+                self._set(ConflictPolicy.EXACTLY_ONE, "e", "f"),
+            )
+        )
+        assert groups == (
+            frozenset({("extra", "a"), ("extra", "b")}),
+            frozenset({("extra", "e"), ("extra", "f")}),
+        )
+        flat = {member for group in groups for member in group}
+        assert ("extra", "c") not in flat
+        assert ("extra", "d") not in flat
+
+
+class TestValidateConflictMinimums:
+    def _set(self, policy: ConflictPolicy, *names: str) -> ConflictSet:
+        return ConflictSet(
+            members=tuple(ConflictMember(ConflictKind.EXTRA, n) for n in names),
+            policy=policy,
+        )
+
+    def test_exactly_one_empty_raises(self) -> None:
+        with pytest.raises(ConflictSelectionError, match="exactly one"):
+            validate_conflict_minimums(
+                (self._set(ConflictPolicy.EXACTLY_ONE, "cpu", "gpu"),), (), ()
+            )
+
+    def test_at_least_one_empty_raises(self) -> None:
+        with pytest.raises(ConflictSelectionError, match="at least one"):
+            validate_conflict_minimums(
+                (self._set(ConflictPolicy.AT_LEAST_ONE, "cpu", "gpu"),), (), ()
+            )
+
+    def test_at_most_one_empty_does_not_raise(self) -> None:
+        validate_conflict_minimums(
+            (self._set(ConflictPolicy.AT_MOST_ONE, "cpu", "gpu"),), (), ()
+        )
+
+    def test_does_not_reject_co_selection(self) -> None:
+        # The minimum check never forbids two active members.
+        validate_conflict_minimums(
+            (self._set(ConflictPolicy.EXACTLY_ONE, "cpu", "gpu"),),
+            ("cpu", "gpu"),
+            (),
+        )
+
+    def test_selection_canonicalised(self) -> None:
+        # An active member spelled differently still satisfies the minimum.
+        validate_conflict_minimums(
+            (self._set(ConflictPolicy.EXACTLY_ONE, "fast-io", "gpu"),),
+            ("Fast_IO",),
+            (),
+        )
+
 
 class TestValidateConflictSelection:
     def _set(self, policy: ConflictPolicy, *names: str) -> ConflictSet:
@@ -337,6 +488,23 @@ class TestValidateConflictSelection:
                 ("CPU", "fast_io"),
                 (),
             )
+
+
+class TestConflictForks:
+    def test_exactly_one_co_selection_forks_per_member(self) -> None:
+        cs = ConflictSet(
+            members=(
+                ConflictMember(ConflictKind.EXTRA, "cpu"),
+                ConflictMember(ConflictKind.EXTRA, "gpu"),
+            ),
+            policy=ConflictPolicy.EXACTLY_ONE,
+        )
+        forks = conflict_forks(("cpu", "gpu"), (), (cs,))
+        assert [f.selection for f in forks] == [
+            (("extra", "cpu"),),
+            (("extra", "gpu"),),
+        ]
+        assert [f.active_extras for f in forks] == [("cpu",), ("gpu",)]
 
 
 class TestConstraints:
