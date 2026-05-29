@@ -15,7 +15,7 @@ from nab_index.client import SdistFile, WheelFile
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.utils import canonicalize_name
-from ..metadata import DEPENDENCY_FIELDS, parse_metadata
+from ..metadata import DEPENDENCY_FIELDS, metadata_deps_are_static, parse_metadata
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -131,9 +131,20 @@ def pick_dist_for_metadata(
     return wheel_with_meta or wheel_without_meta or sdist
 
 
-def is_dynamic_deps(metadata: WheelMetadata) -> bool:
-    """Return True when dependency fields are :pep:`643` Dynamic."""
-    return bool(DEPENDENCY_FIELDS & metadata.dynamic)
+def _sdist_deps_need_dynamic(
+    metadata: WheelMetadata, *, trust_unverified: bool
+) -> bool:
+    """Whether an sdist's PKG-INFO deps must route through the dynamic path.
+
+    By default deps are trusted only when :pep:`643` static
+    (Metadata-Version 2.2+, no Dynamic dependency field), so a pre-2.2
+    PKG-INFO routes through the dynamic path. With ``trust_unverified``
+    set (the opt-out) a pre-2.2 PKG-INFO is trusted, so only an explicit
+    Dynamic dependency field forces the dynamic path.
+    """
+    if trust_unverified:
+        return bool(DEPENDENCY_FIELDS & metadata.dynamic)
+    return not metadata_deps_are_static(metadata)
 
 
 def resolve_dynamic_sdist(
@@ -364,10 +375,11 @@ def parse_and_cache_metadata(
     deps and a per-extra mapping so that get_extra_dependencies
     can do a dict lookup instead of re-iterating requires_dist.
 
-    When ``from_sdist`` is set and PKG-INFO marks dependency-related
-    fields as :pep:`643` Dynamic, attempts the ``pyproject.toml``
-    fallback before raising :class:`UnsupportedSdistError` under
-    :class:`BuildPolicy.NEVER`.
+    When ``from_sdist`` is set and the PKG-INFO deps are not trusted as
+    final (not :pep:`643` static, or a Dynamic dependency field under
+    the ``trust-unverified-sdist-deps`` opt-out), attempts the
+    ``pyproject.toml`` fallback before raising
+    :class:`UnsupportedSdistError` under :class:`BuildPolicy.NEVER`.
 
     The parsed :class:`WheelMetadata` is shared via the
     :class:`~nab_python.fetch.InMemoryIndex` so that universal-mode
@@ -388,7 +400,9 @@ def parse_and_cache_metadata(
     if metadata is None:
         metadata = parse_metadata(metadata_text)
         provider.coordinator.index.store_parsed_metadata(package, version_str, metadata)
-    if from_sdist and is_dynamic_deps(metadata):
+    if from_sdist and _sdist_deps_need_dynamic(
+        metadata, trust_unverified=provider.trust_unverified_sdist_deps
+    ):
         metadata = resolve_dynamic_sdist(provider, cache_key, metadata)
     cache_deps_from_metadata(provider, cache_key, metadata)
 

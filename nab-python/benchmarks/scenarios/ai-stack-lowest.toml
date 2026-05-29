@@ -565,6 +565,9 @@ resolution = "lowest"
 python_version = "3.11"
 platform_system = "Linux"
 datetime = "2025-06-01 10:00:00"
+# Resolves only by trusting a pre-2.2 sdist's PKG-INFO deps, which the
+# strict PEP 643 default routes to a build (BuildPolicy.NEVER fails).
+trust_unverified_sdist_deps = true
 requirements = [
     "streamlit",
     "langchain",
@@ -586,6 +589,9 @@ resolution = "lowest"
 python_version = "3.10"
 platform_system = "Linux"
 datetime = "2025-01-16 13:37:05"
+# Resolves only by trusting a pre-2.2 sdist's PKG-INFO deps, which the
+# strict PEP 643 default routes to a build (BuildPolicy.NEVER fails).
+trust_unverified_sdist_deps = true
 requirements = [
     "langchain",
     "langchain-community",

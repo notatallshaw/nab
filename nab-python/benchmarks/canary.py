@@ -201,7 +201,7 @@ def get_git_commit() -> str:
     return result.stdout.strip()
 
 
-def run_one(
+def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
     requirements: dict[str, VersionRange],
     python_version: str,
     uploaded_prior_to: datetime | None,
@@ -210,6 +210,8 @@ def run_one(
     indexes: list[IndexConfig] | None = None,
     index_overrides: list[IndexOverride] | None = None,
     build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
+    *,
+    trust_unverified_sdist_deps: bool = False,
 ) -> dict:
     with FetchCoordinator(
         HttpxAsyncTransport(),
@@ -226,6 +228,7 @@ def run_one(
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             build_policy_overrides=build_policy_overrides,
+            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
             marker_environment=marker_environment,
         )
         resolver = Resolver(
@@ -365,6 +368,9 @@ def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
         else None
     )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
+    trust_unverified_sdist_deps = bool(
+        scenario.get("trust_unverified_sdist_deps", False)
+    )
 
     runs_data: list[dict] = [
         run_one(
@@ -376,6 +382,7 @@ def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
             indexes=indexes,
             index_overrides=index_overrides or None,
             build_policy_overrides=build_policy_overrides or None,
+            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
         )
         for _ in range(runs)
     ]

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from nab_python._vendor.packaging.version import Version
-from nab_python.metadata import parse_metadata
+from nab_python.metadata import metadata_deps_are_static, parse_metadata
 
 
 def test_parses_minimal_metadata() -> None:
@@ -70,3 +70,36 @@ def test_provides_extra_kept_as_strings() -> None:
     )
     md = parse_metadata(text)
     assert md.provides_extra == ["dev", "docs"]
+
+
+class TestMetadataDepsAreStatic:
+    def test_2_2_without_dynamic_is_static(self) -> None:
+        md = parse_metadata("Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n")
+        assert metadata_deps_are_static(md) is True
+
+    def test_2_3_is_static(self) -> None:
+        md = parse_metadata("Metadata-Version: 2.3\nName: foo\nVersion: 1.0\n")
+        assert metadata_deps_are_static(md) is True
+
+    def test_2_2_with_dynamic_requires_dist_is_not_static(self) -> None:
+        md = parse_metadata(
+            "Metadata-Version: 2.2\nName: foo\nVersion: 1.0\nDynamic: Requires-Dist\n"
+        )
+        assert metadata_deps_are_static(md) is False
+
+    def test_micro_metadata_version_qualifies(self) -> None:
+        md = parse_metadata("Metadata-Version: 2.2.1\nName: foo\nVersion: 1.0\n")
+        assert metadata_deps_are_static(md) is True
+
+    def test_pre_2_2_is_not_static(self) -> None:
+        md = parse_metadata("Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n")
+        assert metadata_deps_are_static(md) is False
+
+    def test_missing_metadata_version_is_not_static(self) -> None:
+        md = parse_metadata("Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n")
+        md.metadata_version = None
+        assert metadata_deps_are_static(md) is False
+
+    def test_unparseable_metadata_version_is_not_static(self) -> None:
+        md = parse_metadata("Metadata-Version: 2.x\nName: foo\nVersion: 1.0\n")
+        assert metadata_deps_are_static(md) is False
