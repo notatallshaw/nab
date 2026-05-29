@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import enum
 import logging
+import os
 import re
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -489,6 +490,14 @@ class Provider:
                 self.environment[key] = value
 
         self.root_requirements = root_requirements or {}
+
+        # When set, block-loads every undecided listing before ordering so the
+        # MRV count is real rather than the in-flight placeholder, and is_ready
+        # always returns True (dropping the ready_penalty). Off by default.
+        self.materialize_before_order = (
+            os.environ.get("NAB_MATERIALIZE_BEFORE_ORDER") == "1"
+        )
+
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
         self.deps_cache: dict[tuple[str, Version], dict[str, VersionRange]] = {}
         self.metadata_cache: dict[tuple[str, Version], WheelMetadata] = {}
@@ -1225,6 +1234,8 @@ class Provider:
         Used by the resolver to prefer packages with cached data,
         letting it make progress while other listings are in flight.
         """
+        if self.materialize_before_order:
+            return True
         _, extra, normalized = self.split_and_normalize(package)
         if extra is not None:
             return normalized in self.versions_cache

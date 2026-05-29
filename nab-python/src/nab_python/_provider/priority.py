@@ -80,12 +80,15 @@ def compute_matching(
         normalized in provider.local_sources or normalized in provider.vcs_sources
     )
     if normalized not in provider.versions_cache and not has_local_source:
-        files = provider.coordinator.index.get_listing(normalized)
-        if files is not None:
-            versions = provider.filter_distributions(normalized, files)
-            provider.versions_cache[normalized] = versions
-            provider.stats.listings_fetched += 1
-            provider.speculative_prefetch(normalized, versions)
+        if provider.materialize_before_order:
+            provider.fetch_versions(normalized)
+        else:
+            files = provider.coordinator.index.get_listing(normalized)
+            if files is not None:
+                versions = provider.filter_distributions(normalized, files)
+                provider.versions_cache[normalized] = versions
+                provider.stats.listings_fetched += 1
+                provider.speculative_prefetch(normalized, versions)
 
     if normalized in provider.versions_cache:
         versions = provider.versions_cache[normalized]

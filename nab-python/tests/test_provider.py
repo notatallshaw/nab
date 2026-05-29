@@ -4585,6 +4585,42 @@ class TestComputeTier:
         assert tier == TIER_CULPRIT
 
 
+class TestMaterializeBeforeOrder:
+    """Tests for the NAB_MATERIALIZE_BEFORE_ORDER spike flag."""
+
+    def test_flag_defaults_off(self) -> None:
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(coordinator, build_policy=BuildPolicy.NEVER)
+        assert provider.materialize_before_order is False
+
+    def test_block_loads_inflight_listing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under the flag, an in-flight listing is block-loaded so the MRV
+        count is real rather than the ``_NO_LISTING_PRIOR`` placeholder, and
+        ``is_ready`` returns True so ``ready_penalty`` drops out."""
+        from nab_python._provider.priority import _NO_LISTING_PRIOR, compute_matching
+
+        wheels = [make_wheel("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(None)
+
+        def _store(pkg: str) -> threading.Event:
+            coordinator.index.store_listing(pkg, wheels)
+            return _done_event()
+
+        coordinator.request_listing.side_effect = _store
+
+        monkeypatch.setenv("NAB_MATERIALIZE_BEFORE_ORDER", "1")
+        provider = Provider(coordinator, build_policy=BuildPolicy.NEVER)
+        assert provider.materialize_before_order is True
+        assert provider.is_ready("foo") is True
+
+        matching = compute_matching(provider, "foo", VersionRange.full())
+        assert matching == 2
+        assert matching != _NO_LISTING_PRIOR
+        assert "foo" in provider.versions_cache
+
+
 class TestExtrasInvalidMetadata:
     """Cover the invalid-metadata skip paths in extras pick mode."""
 
