@@ -143,6 +143,11 @@ identical inputs are byte-for-byte identical. A relative `P<n>D`
 cutoff is anchored to the wall clock, so `created-at` stays the
 run time; `--upgrade` always re-anchors to now.
 
+To verify a committed lockfile in CI without writing to disk, run
+`nab lock --check`: it re-resolves in memory, exits `0` when the
+result matches `pylock.toml` and `1` with a package-level diff
+when it does not. See [the CLI guide](cli.md) for details.
+
 ## `nab download`
 
 `nab download` walks the same pin set, fetches every wheel and

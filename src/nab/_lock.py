@@ -76,6 +76,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     no_emit_workspace: bool = False,
     resolution: ResolutionFlag | None = None,
     upgrade: bool = False,
+    check: bool = False,
 ) -> None:
     """Resolve dependencies and emit a lockfile or pin list.
 
@@ -104,12 +105,19 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     ``--resolution`` overrides ``[tool.nab].resolution`` for this run.
     ``--upgrade`` re-anchors the ``P<n>D`` cutoff to ``datetime.now(UTC)``
     instead of reusing the timestamp recorded in any existing lockfile.
+
+    ``--check`` resolves in memory and compares the result against the
+    on-disk lockfile without writing: it exits 0 when they match and
+    prints a package-level diff then exits 1 when they differ, for CI
+    drift detection.  Single-environment ``pylock`` only.
     """
     _validate_pylock_output_name(output=output, format=format)
     anchor = _determine_lock_anchor(path, output=output, format=format, upgrade=upgrade)
     config = _cli._load_config(  # noqa: SLF001
         path, discover_workspace=workspace_discovery, anchor=anchor
     )
+    if check:
+        _validate_check_supported(format=format, output=output, mode=config.mode)
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
         cache_dir, cache=cache
     )
@@ -157,6 +165,9 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         extras=selected_extras,
         resolution_strategy=strategy_override,
     )
+    if check:
+        _check_specific(result, output=output, workspace_to_drop=workspace_to_drop)
+        return
     _emit_specific(
         result,
         format=format,
@@ -266,6 +277,99 @@ def _diff_summary(
         if count
     ]
     return f": {', '.join(parts)}" if parts else ""
+
+
+def _validate_check_supported(
+    *,
+    format: str,  # noqa: A002 - shadows builtin by convention
+    output: Path | None,
+    mode: ResolveMode,
+) -> None:
+    """Reject ``--check`` combinations that have no on-disk lockfile to read.
+
+    Only single-environment ``pylock`` is supported: the requirements
+    formats and the universal merged lock have no ``name -> version``
+    reader to diff against, and stdout has no file at all.
+    """
+    if format != "pylock":
+        sys.stderr.write("Error: --check is only supported for the pylock format\n")
+        sys.exit(1)
+    if _cli._is_stdout(output):  # noqa: SLF001
+        sys.stderr.write("Error: --check cannot be combined with --output -\n")
+        sys.exit(1)
+    if mode is ResolveMode.UNIVERSAL:
+        sys.stderr.write("Error: --check is not yet supported for universal mode\n")
+        sys.exit(1)
+
+
+def _check_specific(
+    result: ResolutionResult,
+    *,
+    output: Path | None,
+    workspace_to_drop: frozenset[str] = frozenset(),
+) -> None:
+    """Compare a resolve against the on-disk pylock without writing.
+
+    Exits 0 when the emitted pins match the lockfile and 1 when they
+    differ or the lockfile is missing or unreadable.
+    """
+    lock_input = _drop_workspace_pins(result.lock_input, workspace_to_drop)
+    emitted_pins = {name: result.pins[name] for name in lock_input.pins}
+    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
+
+    if not target.exists():
+        sys.stderr.write(
+            f"Error: {target} does not exist; run `nab lock` to create it\n"
+        )
+        sys.exit(1)
+    prior = read_lockfile_packages(target)
+    if prior is None:
+        sys.stderr.write(
+            f"Error: {target} is not a valid pylock lockfile;"
+            " run `nab lock` to recreate it\n"
+        )
+        sys.exit(1)
+
+    report = _check_diff_report(prior, emitted_pins)
+    if report is None:
+        sys.stderr.write(f"{target} is up to date\n")
+        return
+    sys.stderr.write(
+        f"{target} is out of date:\n{report}\nRun `nab lock` to update it.\n"
+    )
+    sys.exit(1)
+
+
+def _check_diff_report(
+    prior: Mapping[str, Version], current: Mapping[str, Version]
+) -> str | None:
+    """Render the per-package drift between ``prior`` and ``current``.
+
+    Returns ``None`` when the pin sets are identical, otherwise an
+    aligned block of ``added`` / ``upgraded`` / ``downgraded`` /
+    ``removed`` lines.
+    """
+    added = sorted(name for name in current if name not in prior)
+    removed = sorted(name for name in prior if name not in current)
+    upgraded: list[str] = []
+    downgraded: list[str] = []
+    for name in sorted(current):
+        old = prior.get(name)
+        if old is None or old == current[name]:
+            continue
+        (upgraded if current[name] > old else downgraded).append(name)
+
+    lines = [f"  {'added:':<11} {name} {current[name]}" for name in added]
+    lines += [
+        f"  {'upgraded:':<11} {name} {prior[name]} -> {current[name]}"
+        for name in upgraded
+    ]
+    lines += [
+        f"  {'downgraded:':<11} {name} {prior[name]} -> {current[name]}"
+        for name in downgraded
+    ]
+    lines += [f"  {'removed:':<11} {name} {prior[name]}" for name in removed]
+    return "\n".join(lines) if lines else None
 
 
 def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproject kwarg

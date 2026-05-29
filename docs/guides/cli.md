@@ -8,7 +8,7 @@ the CLI itself carries only runtime knobs.
 
 ```
 nab [--version | -V]
-nab lock     [PATH] [RUNTIME OPTIONS] [--output PATH] [--format pylock|requirements|requirements-without-hashes]
+nab lock     [PATH] [RUNTIME OPTIONS] [--output PATH] [--format pylock|requirements|requirements-without-hashes] [--check]
 nab download [PATH] [RUNTIME OPTIONS] [--output DIR] [--max-concurrency N]
 ```
 
@@ -74,6 +74,32 @@ all three formats:
 Failed tuples render as `# {label}: FAILED` followed by the
 indented error and exit `1`.
 
+### Checking for drift (`--check`)
+
+`--check` resolves in memory and compares the result against the
+existing `pylock.toml` without writing anything. It exits `0`
+when the lockfile is up to date and `1` when it is out of date,
+missing, or unreadable, printing a package-level diff so you can
+see what a re-lock would change:
+
+```
+$ nab lock --check
+pylock.toml is out of date:
+  added:      httpx 0.28.1
+  upgraded:   requests 2.31.0 -> 2.32.0
+  downgraded: urllib3 2.3.0 -> 2.2.0
+  removed:    idna 3.6
+Run `nab lock` to update it.
+```
+
+Run it in CI to fail the build when a committed lockfile no
+longer matches the project's dependencies, without the
+write-then-`git diff` dance. The re-resolve reuses the existing
+lockfile's `created-at` anchor, so the comparison uses the same
+resolve window the file was written with. `--check` is
+single-environment `pylock` only; it rejects the requirements
+formats, `--output -`, and universal mode.
+
 ## `nab download`
 
 Resolve and download every wheel and sdist into a local
@@ -120,7 +146,7 @@ matching extra.
 | Code | Meaning |
 | ---- | ------- |
 | `0`  | Success. |
-| `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, or invalid `[tool.nab]` configuration. |
+| `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, invalid `[tool.nab]` configuration, or `--check` found drift. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `Aborted.` and exits. |
 
 [PEP 751]: https://peps.python.org/pep-0751/

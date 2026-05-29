@@ -1216,6 +1216,128 @@ class TestRelockDiffSummary:
         assert capsys.readouterr().err.strip().endswith("(1 packages)")
 
 
+class TestCheckMode:
+    """``nab lock --check`` verifies the lockfile without writing."""
+
+    def _seed(self, pyproject: Path, out: Path, pins: dict[str, Version]) -> None:
+        with patch(
+            "nab.cli.resolve_pyproject",
+            return_value=_stub_resolution_result(pins=pins),
+        ):
+            lock(pyproject, output=out)
+
+    def test_up_to_date_exits_zero(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        self._seed(pyproject, out, {"foo": V("1.0")})
+        before = out.read_bytes()
+        capsys.readouterr()
+        with patch(
+            "nab.cli.resolve_pyproject",
+            return_value=_stub_resolution_result(pins={"foo": V("1.0")}),
+        ):
+            lock(pyproject, output=out, check=True)
+        assert "up to date" in capsys.readouterr().err
+        assert out.read_bytes() == before
+
+    def test_out_of_date_reports_every_change(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        self._seed(
+            pyproject,
+            out,
+            {"foo": V("2.0"), "bar": V("1.0"), "gone": V("1.0"), "same": V("1.0")},
+        )
+        before = out.read_bytes()
+        capsys.readouterr()
+        new_pins = {
+            "foo": V("1.0"),
+            "bar": V("2.0"),
+            "new": V("1.0"),
+            "same": V("1.0"),
+        }
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                return_value=_stub_resolution_result(pins=new_pins),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out, check=True)
+        err = capsys.readouterr().err
+        assert "out of date" in err
+        assert "added:      new 1.0" in err
+        assert "upgraded:   bar 1.0 -> 2.0" in err
+        assert "downgraded: foo 2.0 -> 1.0" in err
+        assert "removed:    gone 1.0" in err
+        assert "same" not in err
+        assert "Run `nab lock` to update it." in err
+        assert out.read_bytes() == before
+
+    def test_missing_file_exits(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                return_value=_stub_resolution_result(pins={"foo": V("1.0")}),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, check=True)
+        assert "does not exist" in capsys.readouterr().err
+
+    def test_unparseable_file_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        out.write_text("not valid toml === {[\n")
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                return_value=_stub_resolution_result(pins={"foo": V("1.0")}),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out, check=True)
+        assert "not a valid" in capsys.readouterr().err
+
+    def test_requirements_format_rejected(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, format="requirements", check=True)
+        assert "only supported for the pylock" in capsys.readouterr().err
+
+    def test_stdout_output_rejected(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=Path("-"), check=True)
+        assert "--output -" in capsys.readouterr().err
+
+    def test_universal_mode_rejected(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=out, check=True)
+        assert "universal" in capsys.readouterr().err
+
+
 class TestPylockOutputNameValidation:
     """``--output`` is validated against the PEP 751 file-name rule."""
 
