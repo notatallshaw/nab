@@ -78,18 +78,23 @@ lockfile. Each fork's pins carry a marker selecting that member:
 [[packages]]
 name = "black"
 version = "22.1.0"
-marker = "... and 'black22' in dependency_groups"
+marker = "... and \"black22\" in dependency_groups"
 
 [[packages]]
 name = "black"
 version = "23.12.0"
-marker = "... and 'black23' in dependency_groups"
+marker = "... and \"black23\" in dependency_groups"
 ```
 
 When several sets are engaged at once, the forks are the cartesian
 product across them (one member chosen per set), so `black{22,23,24}`
 crossed with `isort{5,6,7}` is nine forks. Non-conflicting selections
 stay active in every fork.
+
+The require-one check is not skipped in universal mode. Declaring
+`exactly_one` or `at_least_one` and selecting none of its members still
+raises before the resolve, the same as in specific mode. Only the
+co-selection case differs: universal mode forks instead of rejecting.
 
 The lockfile stays within PEP 751: the membership markers use the
 standard `extras` and `dependency_groups` variables, and the install
@@ -102,10 +107,11 @@ collision that is *not* covered by a declared conflict still raises a
 
 | Property | nab (matrix fork) | uv (conflict markers) |
 | --- | --- | --- |
-| Lockfile encoding | Standard PEP 751 `'x' in extras`. | Bespoke `extra-<n>-<pkg>-<name>` dialect in `uv.lock`. |
+| Lockfile encoding | Standard PEP 751 `"x" in extras`. | Bespoke `extra-<n>-<pkg>-<name>` dialect in `uv.lock`. |
 | Mechanism | Each member is a separate resolution under a marker. | Synthetic activation variables fork the single solve. |
 | Cost | Re-resolves a near-identical universe per fork. | Shared until a fork diverges. |
 
-The cost row is the honest price of the matrix model (see
-[universal resolution](universal.md)); the win is a standards-conformant
-lock with no in-band conflict-marker grammar to grow unbounded.
+The cost row reflects how the matrix model works (see
+[universal resolution](universal.md)): it re-resolves per fork. In
+return the lock stays within PEP 751, with no custom conflict-marker
+grammar.
