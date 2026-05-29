@@ -63,6 +63,23 @@ metadata extraction runs even when the user-set policy is stricter.
 A policy that is already `build-local` or `build-remote` is left
 alone.
 
+## Scope of `[tool.nab]` keys
+
+Workspace discovery flows these from the root into the file being
+locked: the member entries from `[tool.nab.workspace].members`
+(merged into `local-sources`), and the build-policy floor described
+above. Everything else under `[tool.nab]` is scoped to the
+pyproject being locked: `conflicts`, `default-groups`, `constraints`,
+`matrix`, `mode`, `requires-python`, `uploaded-prior-to`,
+`build-policy` itself, `dist-policy`, `vcs`, `indexes`, and
+`marker-environment`. Locking a member with `nab lock
+packages/core/pyproject.toml` reads only that file's keys; the
+root's are ignored.
+
+Declare conflicts and default-groups on each member that needs them.
+The same applies to constraints: a root-level constraint table does
+not constrain a member resolve.
+
 ## Example layout
 
 ```

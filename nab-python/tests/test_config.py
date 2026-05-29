@@ -1850,3 +1850,29 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(member)
         assert config.local_sources == ()
         assert config.build_policy is BuildPolicy.BUILD_LOCAL
+
+    def test_root_conflicts_and_defaults_do_not_flow_to_member(
+        self, tmp_path: Path
+    ) -> None:
+        # Per the documented scope, only workspace members and the
+        # build-policy floor cross the root/member boundary; conflicts,
+        # default-groups, and constraints stay scoped to the file being
+        # locked.
+        ws_pyproject = tmp_path / "pyproject.toml"
+        ws_pyproject.write_text(
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab]\n"
+            'default-groups = ["dev"]\n'
+            'constraints = ["foo<2"]\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n',
+        )
+        member_dir = tmp_path / "pkg"
+        member_dir.mkdir()
+        member = member_dir / "pyproject.toml"
+        member.write_text('[project]\nname = "alpha"\nversion = "0"\n')
+        config = read_pyproject_config(member)
+        assert config.default_groups == ()
+        assert config.constraints == ()
+        assert config.conflicts == ()
