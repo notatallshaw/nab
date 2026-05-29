@@ -1163,6 +1163,34 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="python-patches entries must be string"):
             read_pyproject_config(path)
 
+    def test_python_patches_minor_mismatch_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[tool.nab.matrix.python-patches]\n"
+            '"3.11" = "3.12.1"\n',
+        )
+        with pytest.raises(ConfigError, match="not a patch release of '3.11'"):
+            read_pyproject_config(path)
+
+    def test_python_patches_unparseable_version_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[tool.nab.matrix.python-patches]\n"
+            '"3.11" = "not-a-version"\n',
+        )
+        with pytest.raises(ConfigError, match="python-patches expects version"):
+            read_pyproject_config(path)
+
 
 class TestBuildPolicyPackage:
     """``[tool.nab.build-policy-package]`` parses into a name -> policy mapping."""
