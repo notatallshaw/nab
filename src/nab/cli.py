@@ -40,7 +40,7 @@ from nab_python.provider import UnsupportedVcsError
 from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import (
     resolve_pyproject,
-    resolve_universal_pyproject,  # noqa: F401 - re-exported for tests
+    resolve_universal_pyproject,
 )
 from nab_python.universal.resolve import (
     merge_universal_lock_inputs,  # noqa: F401 - re-exported for tests
@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from nab_index.transport import AsyncHttpTransport
     from nab_python.provider import ResolutionStrategy
     from nab_python.resolve import ResolutionResult
+    from nab_python.universal.resolve import UniversalResult
 
 __all__ = [
     "main",
@@ -198,6 +199,64 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
     except ConfigError as e:
         sys.stderr.write(f"Error in [tool.nab]: {e}\n")
         sys.exit(1)
+
+
+def _resolve_universal(
+    path: Path,
+    *,
+    config: NabProjectConfig,
+    cache_dir: Path | None,
+    offline: bool,
+    transport: AsyncHttpTransport,
+    groups: tuple[str, ...] = (),
+    extras: tuple[str, ...] = (),
+    resolution_strategy: ResolutionStrategy | None = None,
+) -> UniversalResult:
+    """Run the universal resolver, translating errors to exits.
+
+    On a partial failure (any tuple unresolved) the per-tuple blocks
+    are printed and the process exits 1, so a returned result is
+    always fully successful.
+    """
+    try:
+        result = resolve_universal_pyproject(
+            path,
+            config=config,
+            cache_dir=cache_dir,
+            transport=transport,
+            offline=offline,
+            groups=groups,
+            extras=extras,
+            resolution_strategy=resolution_strategy,
+        )
+    except KeyError:
+        sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
+        sys.exit(1)
+    except InvalidProjectRequirementError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
+    except LookupError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
+
+    if not result.success:
+        _print_universal_blocks(result)
+        sys.exit(1)
+    return result
+
+
+def _print_universal_blocks(result: UniversalResult) -> None:
+    """Write per-tuple pin blocks (with FAILED markers) to stdout."""
+    blocks: list[str] = []
+    for tr in result.tuple_results:
+        label = tr.tuple_.label
+        if not tr.success:
+            blocks.append(f"# {label}: FAILED")
+            blocks.extend(f"#   {raw}" for raw in (tr.error or "").splitlines())
+            continue
+        blocks.append(f"# {label}")
+        blocks.extend(f"{name}=={tr.pins[name]}" for name in sorted(tr.pins))
+    sys.stdout.write("\n".join(blocks) + "\n")
 
 
 # Side-effect imports: each module's @app.command decorators register the
