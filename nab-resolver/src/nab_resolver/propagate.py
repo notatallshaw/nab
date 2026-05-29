@@ -26,6 +26,9 @@ __all__ = [
     "unit_propagation",
 ]
 
+# Upper bound on relation_cache size; cleared on overflow to bound memory.
+RELATION_CACHE_MAX = 100_000
+
 
 def unit_propagation(
     resolver: Resolver[Any, Any], changed_package: Any
@@ -119,11 +122,19 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
     if assignment is None:
         return SetRelation.UNDETERMINED
 
-    intersection = assignment & term.constraint
-    result = classify_intersection(term, assignment, intersection)
+    positive = term.is_positive()
+    cache = resolver.relation_cache
+    key = (positive, assignment, term.constraint)
+    result = cache.get(key)
+    if result is None:
+        intersection = assignment & term.constraint
+        result = classify_intersection(term, assignment, intersection)
+        if len(cache) >= RELATION_CACHE_MAX:
+            cache.clear()
+        cache[key] = result
 
-    needs_positive = (term.is_positive() and result is SetRelation.SATISFIED) or (
-        not term.is_positive() and result is SetRelation.CONTRADICTED
+    needs_positive = (positive and result is SetRelation.SATISFIED) or (
+        not positive and result is SetRelation.CONTRADICTED
     )
     if needs_positive and not resolver.solution.has_positive_constraint(term.package):
         return SetRelation.UNDETERMINED

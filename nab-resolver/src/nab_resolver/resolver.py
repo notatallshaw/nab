@@ -284,6 +284,12 @@ class Resolver(Generic[PackageType, VersionType]):
         # Memoises the tiebreak tuple in choose_package_to_decide.
         self.tiebreak_cache: dict[PackageType, tuple[int, int, str]] = {}
 
+        # Memoises term_relation's pre-adjustment SetRelation, keyed by
+        # (positive, assignment, constraint). Cleared on overflow.
+        self.relation_cache: dict[
+            tuple[bool, RangeProtocol[Any], RangeProtocol[Any]], SetRelation
+        ] = {}
+
     def resolve(
         self,
         requirements: Mapping[PackageType, RangeProtocol[VersionType]],
@@ -435,6 +441,7 @@ class Resolver(Generic[PackageType, VersionType]):
         self.root_package_order.clear()
         self.pending_targeted_backtrack.clear()
         self.tiebreak_cache.clear()
+        self.relation_cache.clear()
 
     def _add_root_requirements(
         self, requirements: Mapping[PackageType, RangeProtocol[VersionType]]
