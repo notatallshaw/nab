@@ -23,9 +23,9 @@ from nab._lock import (
     _determine_lock_anchor,
     _emit_specific,
     _emit_universal_pylock,
-    _resolve_extra_selection,
-    _resolve_group_selection,
     lock,
+    resolve_extra_selection,
+    resolve_group_selection,
 )
 from nab.cli import (
     _default_cache_dir,
@@ -1692,7 +1692,7 @@ class TestGroupAndExtraSelection:
         the inner read; the helper guards against the race.
         """
         with pytest.raises(SystemExit, match="1"):
-            _resolve_group_selection(
+            resolve_group_selection(
                 tmp_path / "missing.toml", groups=(), all_groups=True
             )
         assert "not found" in capsys.readouterr().err
@@ -1702,7 +1702,7 @@ class TestGroupAndExtraSelection:
     ) -> None:
         """Symmetric guard for ``--all-extras``."""
         with pytest.raises(SystemExit, match="1"):
-            _resolve_extra_selection(
+            resolve_extra_selection(
                 tmp_path / "missing.toml", extras=(), all_extras=True
             )
         assert "not found" in capsys.readouterr().err
@@ -1717,7 +1717,7 @@ class TestGroupAndExtraSelection:
         pyproject.write_text(
             "[project]\nname = 'x'\n[dependency-groups]\ndev = []\nlint = []\n",
         )
-        result = _resolve_group_selection(pyproject, groups=(), all_groups=True)
+        result = resolve_group_selection(pyproject, groups=(), all_groups=True)
         assert sorted(result) == ["dev", "lint"]
 
     def test_all_extras_reads_defined_extras(self, tmp_path: Path) -> None:
@@ -1731,17 +1731,17 @@ class TestGroupAndExtraSelection:
             "[project]\nname = 'x'\n"
             "[project.optional-dependencies]\ntest = []\nci = []\n",
         )
-        result = _resolve_extra_selection(pyproject, extras=(), all_extras=True)
+        result = resolve_extra_selection(pyproject, extras=(), all_extras=True)
         assert sorted(result) == ["ci", "test"]
 
     def test_no_group_selection_skips_read(self, tmp_path: Path) -> None:
-        result = _resolve_group_selection(
+        result = resolve_group_selection(
             tmp_path / "missing.toml", groups=(), all_groups=False
         )
         assert result == ()
 
     def test_no_extra_selection_skips_read(self, tmp_path: Path) -> None:
-        result = _resolve_extra_selection(
+        result = resolve_extra_selection(
             tmp_path / "missing.toml", extras=(), all_extras=False
         )
         assert result == ()
@@ -1751,7 +1751,7 @@ class TestGroupAndExtraSelection:
         pyproject.write_text(
             "[project]\nname = 'x'\n[dependency-groups]\ndev = []\nlint = []\n",
         )
-        result = _resolve_group_selection(
+        result = resolve_group_selection(
             pyproject, groups=("dev", "lint", "dev"), all_groups=False
         )
         assert result == ("dev", "lint")
@@ -1762,7 +1762,7 @@ class TestGroupAndExtraSelection:
             "[project]\nname = 'x'\n"
             "[project.optional-dependencies]\ntest = []\nci = []\n",
         )
-        result = _resolve_extra_selection(
+        result = resolve_extra_selection(
             pyproject, extras=("test", "ci", "test"), all_extras=False
         )
         assert result == ("test", "ci")
@@ -1773,7 +1773,7 @@ class TestGroupAndExtraSelection:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("dependency-groups = 'oops'\n[project]\nname = 'x'\n")
         with pytest.raises(SystemExit, match="1"):
-            _resolve_group_selection(pyproject, groups=(), all_groups=True)
+            resolve_group_selection(pyproject, groups=(), all_groups=True)
         assert "[dependency-groups] must be a table" in capsys.readouterr().err
 
     def test_explicit_groups_non_table_exits(
@@ -1782,7 +1782,7 @@ class TestGroupAndExtraSelection:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("dependency-groups = 'oops'\n[project]\nname = 'x'\n")
         with pytest.raises(SystemExit, match="1"):
-            _resolve_group_selection(pyproject, groups=("dev",), all_groups=False)
+            resolve_group_selection(pyproject, groups=("dev",), all_groups=False)
         assert "[dependency-groups] must be a table" in capsys.readouterr().err
 
     def test_all_extras_non_table_exits(
@@ -1791,7 +1791,7 @@ class TestGroupAndExtraSelection:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("[project]\nname = 'x'\noptional-dependencies = 'oops'\n")
         with pytest.raises(SystemExit, match="1"):
-            _resolve_extra_selection(pyproject, extras=(), all_extras=True)
+            resolve_extra_selection(pyproject, extras=(), all_extras=True)
         assert "[project.optional-dependencies] must be a table" in (
             capsys.readouterr().err
         )
@@ -1802,7 +1802,7 @@ class TestGroupAndExtraSelection:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("[project]\nname = 'x'\noptional-dependencies = 'oops'\n")
         with pytest.raises(SystemExit, match="1"):
-            _resolve_extra_selection(pyproject, extras=("foo",), all_extras=False)
+            resolve_extra_selection(pyproject, extras=("foo",), all_extras=False)
         assert "[project.optional-dependencies] must be a table" in (
             capsys.readouterr().err
         )
@@ -2159,3 +2159,82 @@ class TestDownloadCommand:
         ):
             download(pyproject)
         assert "Download failed" in capsys.readouterr().err
+
+    def test_extras_flag_forwarded_to_resolver(self, tmp_path: Path) -> None:
+        # ``--extras`` is required for ``exactly_one`` / ``at_least_one``
+        # conflict projects; the resolver must see the selected names.
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
+            "[project.optional-dependencies]\ncpu = []\ngpu = []\n",
+        )
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            ) as mock_resolve,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, extras=("cpu",))
+        assert mock_resolve.call_args.kwargs["extras"] == ("cpu",)
+
+    def test_groups_flag_forwarded_to_resolver(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
+            "[dependency-groups]\ndev = []\n",
+        )
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            ) as mock_resolve,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, groups=("dev",))
+        assert mock_resolve.call_args.kwargs["groups"] == ("dev",)
+
+    def test_all_extras_expands_to_every_extra(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
+            "[project.optional-dependencies]\ncpu = []\ngpu = []\n",
+        )
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            ) as mock_resolve,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, all_extras=True)
+        assert set(mock_resolve.call_args.kwargs["extras"]) == {"cpu", "gpu"}
+
+    def test_all_groups_expands_to_every_group(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
+            "[dependency-groups]\ndev = []\ntest = []\n",
+        )
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            ) as mock_resolve,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, all_groups=True)
+        assert set(mock_resolve.call_args.kwargs["groups"]) == {"dev", "test"}
+
+    def test_universal_forwards_selection(self, tmp_path: Path) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_multi_tuple_universal_result(),
+            ) as mock_resolve,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, extras=("docs",))
+        assert mock_resolve.call_args.kwargs["extras"] == ("docs",)

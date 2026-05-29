@@ -22,6 +22,7 @@ from nab_python.config import ResolveMode
 from nab_python.download import DownloadError
 
 from . import cli as _cli
+from ._lock import resolve_extra_selection, resolve_group_selection
 from .cli import (
     HttpBackend,
     PathArg,
@@ -30,7 +31,7 @@ from .cli import (
 
 
 @app.command
-def download(
+def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config object would hide the user-facing surface
     path: PathArg = Path("pyproject.toml"),
     *,
     output: Path = Path("wheels"),
@@ -40,16 +41,32 @@ def download(
     offline: bool = False,
     max_concurrency: int = 8,
     workspace_discovery: bool = True,
+    groups: tuple[str, ...] = (),
+    all_groups: bool = False,
+    extras: tuple[str, ...] = (),
+    all_extras: bool = False,
 ) -> None:
     """Resolve and download every wheel/sdist into a local directory.
 
     Output files are named after the recorded artefact filename.  The
     download is idempotent: files whose sha256 already matches are
     left alone.  Local and VCS pins are skipped.
+
+    ``--groups`` / ``--all-groups`` and ``--extras`` / ``--all-extras``
+    mirror ``nab lock``: a project declaring an ``exactly_one`` or
+    ``at_least_one`` conflict needs at least one member selected for
+    the resolve to start, so these flags also gate the download.
     """
     if max_concurrency < 1:
         sys.stderr.write("Error: --max-concurrency must be at least 1.\n")
         sys.exit(1)
+
+    selected_groups = resolve_group_selection(
+        path, groups=groups, all_groups=all_groups
+    )
+    selected_extras = resolve_extra_selection(
+        path, extras=extras, all_extras=all_extras
+    )
 
     config = _cli._load_config(  # noqa: SLF001
         path, discover_workspace=workspace_discovery
@@ -65,6 +82,8 @@ def download(
             cache_dir=effective_cache_dir,
             offline=offline,
             transport=transport,
+            groups=selected_groups,
+            extras=selected_extras,
         )
         lock_input = _cli.merge_universal_lock_inputs(universal)
     else:
@@ -75,6 +94,8 @@ def download(
             offline=offline,
             transport=transport,
             failure_prefix="Cannot download",
+            groups=selected_groups,
+            extras=selected_extras,
         )
         lock_input = result.lock_input
 

@@ -115,10 +115,10 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         cache_dir, cache=cache
     )
     provenance = _build_provenance(path, config=config, anchor=anchor)
-    selected_groups = _resolve_group_selection(
+    selected_groups = resolve_group_selection(
         path, groups=groups, all_groups=all_groups
     )
-    selected_extras = _resolve_extra_selection(
+    selected_extras = resolve_extra_selection(
         path, extras=extras, all_extras=all_extras
     )
     strategy_override = (
@@ -537,7 +537,7 @@ def _write_one_tuple_requirements(
     )
 
 
-def _resolve_group_selection(
+def resolve_group_selection(
     path: Path,
     *,
     groups: tuple[str, ...],
@@ -569,7 +569,7 @@ def _resolve_group_selection(
     return tuple(defined.keys()) if all_groups else tuple(dict.fromkeys(groups))
 
 
-def _resolve_extra_selection(
+def resolve_extra_selection(
     path: Path,
     *,
     extras: tuple[str, ...],
