@@ -193,7 +193,7 @@ def merge_universal_lock_inputs(
     # membership clause) and is deduplicated: conflict forks repeat a
     # (python, platform) under different selections.
     environments: list[Marker] = []
-    seen_env_markers: set[str] = set()
+    env_marker_cache: dict[str, Marker] = {}
     for tr in result.tuple_results:
         if not tr.success or tr.lock_input is None:
             continue
@@ -203,10 +203,12 @@ def merge_universal_lock_inputs(
         tuple_environments[label] = dict(tr.tuple_.environment)
 
         env_marker = tr.tuple_.environment_marker_string
-        tuple_env_markers[label] = Marker(env_marker)
-        if env_marker not in seen_env_markers:
-            seen_env_markers.add(env_marker)
-            environments.append(Marker(env_marker))
+        parsed = env_marker_cache.get(env_marker)
+        if parsed is None:
+            parsed = Marker(env_marker)
+            env_marker_cache[env_marker] = parsed
+            environments.append(parsed)
+        tuple_env_markers[label] = parsed
     return LockInput(
         per_tuple_pins=per_tuple_pins,
         tuple_markers=tuple_markers,

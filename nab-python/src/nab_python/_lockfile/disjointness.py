@@ -119,18 +119,23 @@ def validate_marker_disjointness(
         _enumerate_valid_points(relevant_extras, relevant_groups, exclusive_groups)
     )
     distinct_environments = _distinct_environments(environments)
-    for entries in same_name_entries:
-        name = str(entries[0].name)
-        for env_label, env_dict in distinct_environments:
-            for extra_subset, group_subset in points:
-                context: dict[str, str | AbstractSet[str]] = dict(env_dict)
-                context["extras"] = frozenset(extra_subset)
-                context["dependency_groups"] = frozenset(group_subset)
+    # Iterate env x point outermost so the install context dict is built
+    # once per (env, point) and reused across every same-name entry group.
+    # The earlier per-entry-group rebuild scaled M*D*P dicts where M is the
+    # same-name package count; conflict-fork locks make M scale with the
+    # universe size.
+    for env_label, env_dict in distinct_environments:
+        for extra_subset, group_subset in points:
+            context: dict[str, str | AbstractSet[str]] = dict(env_dict)
+            context["extras"] = frozenset(extra_subset)
+            context["dependency_groups"] = frozenset(group_subset)
+            for entries in same_name_entries:
                 matching = [
                     pkg for pkg in entries if _marker_holds(pkg.marker, context)
                 ]
                 if len(matching) <= 1:
                     continue
+                name = str(entries[0].name)
                 versions = sorted(str(p.version) if p.version else "" for p in matching)
                 hint = _conflict_hint(
                     [p.marker for p in matching],
@@ -390,4 +395,6 @@ def _marker_holds(
     """Return True when ``marker`` is absent or evaluates True under ``context``."""
     if marker is None:
         return True
-    return bool(marker.evaluate(dict(context)))
+    # ``Marker.evaluate`` treats the environment as read-only, so no
+    # defensive copy is needed here.
+    return bool(marker.evaluate(context))
