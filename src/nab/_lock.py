@@ -513,15 +513,18 @@ def _resolve_group_selection(
     if all_groups and groups:
         sys.stderr.write("Error: --all-groups and --groups are mutually exclusive\n")
         sys.exit(1)
-    if not all_groups:
-        return tuple(dict.fromkeys(groups))
+    if not (all_groups or groups):
+        return ()
 
     try:
         defined = read_pyproject_groups(path)
     except FileNotFoundError:
         sys.stderr.write(f"Error: {path} not found\n")
         sys.exit(1)
-    return tuple(defined.keys())
+    except TypeError as e:
+        sys.stderr.write(f"Error in {path}: {e}\n")
+        sys.exit(1)
+    return tuple(defined.keys()) if all_groups else tuple(dict.fromkeys(groups))
 
 
 def _resolve_extra_selection(
@@ -534,15 +537,18 @@ def _resolve_extra_selection(
     if all_extras and extras:
         sys.stderr.write("Error: --all-extras and --extras are mutually exclusive\n")
         sys.exit(1)
-    if not all_extras:
-        return tuple(dict.fromkeys(extras))
+    if not (all_extras or extras):
+        return ()
 
     try:
         defined = read_pyproject_optional_dependencies(path)
     except FileNotFoundError:
         sys.stderr.write(f"Error: {path} not found\n")
         sys.exit(1)
-    return tuple(defined.keys())
+    except TypeError as e:
+        sys.stderr.write(f"Error in {path}: {e}\n")
+        sys.exit(1)
+    return tuple(defined.keys()) if all_extras else tuple(dict.fromkeys(extras))
 
 
 def _build_provenance(
