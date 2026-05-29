@@ -663,11 +663,14 @@ requirements = [
 ]
 
 [airflow-october-regression]
-# https://github.com/pypa/pip/issues/13281#issuecomment-3399373356
-# Airflow 3.1.1 from main: ResolutionTooDeep on 3.10 / 3.11 / 3.13 but not 3.12.
+# apache-airflow 3.1.1 with the full provider-extra fan-out, from
+# https://github.com/pypa/pip/issues/13281#issuecomment-3399373356. pip's #13281
+# reports ResolutionTooDeep on 3.10/3.11/3.13 (only 3.12 resolves); nab resolves
+# py3.11, so it does not reproduce that regression. The cutoff is 2025-11-01
+# because 3.1.1 was uploaded 2025-10-27.
 python_version = "3.11"
 platform_system = "Linux"
-datetime = "2025-10-13 23:19:02"
+datetime = "2025-11-01 00:00:00"
 requirements = [
     "apache-airflow[aiobotocore,amazon,async,celery,cncf-kubernetes,common-io,common-messaging,docker,elasticsearch,fab,ftp,git,google,google-auth,graphviz,grpc,hashicorp,http,ldap,microsoft-azure,mysql,odbc,openlineage,pandas,postgres,redis,sendgrid,sftp,slack,snowflake,ssh,statsd,uv]==3.1.1",
 ]
