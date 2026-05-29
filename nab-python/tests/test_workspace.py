@@ -93,6 +93,40 @@ class TestDiscoverWorkspaceRoot:
             tmp_path / "outer" / "pyproject.toml"
         )
 
+    def test_walks_past_non_table_tool(self, tmp_path: Path) -> None:
+        # A non-table top-level ``tool`` must be skipped, not crash the walk.
+        _write(
+            tmp_path / "outer" / "pyproject.toml",
+            '[project]\nname = "outer"\nversion = "0"\n'
+            "[tool.nab.workspace]\nmembers = []\n",
+        )
+        _write(tmp_path / "outer" / "inner" / "pyproject.toml", 'tool = "oops"\n')
+        member = _write(
+            tmp_path / "outer" / "inner" / "pkg" / "pyproject.toml",
+            '[project]\nname = "pkg"\nversion = "0"\n',
+        )
+        assert discover_workspace_root(member) == (
+            tmp_path / "outer" / "pyproject.toml"
+        )
+
+    def test_walks_past_non_table_tool_nab(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path / "outer" / "pyproject.toml",
+            '[project]\nname = "outer"\nversion = "0"\n'
+            "[tool.nab.workspace]\nmembers = []\n",
+        )
+        _write(
+            tmp_path / "outer" / "inner" / "pyproject.toml",
+            '[tool]\nnab = "oops"\n',
+        )
+        member = _write(
+            tmp_path / "outer" / "inner" / "pkg" / "pyproject.toml",
+            '[project]\nname = "pkg"\nversion = "0"\n',
+        )
+        assert discover_workspace_root(member) == (
+            tmp_path / "outer" / "pyproject.toml"
+        )
+
 
 class TestReadWorkspaceMembers:
     def test_literal_members_become_local_sources(self, tmp_path: Path) -> None:

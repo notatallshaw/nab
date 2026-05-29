@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 import tomli
 
+from ._toml import tool_nab_section
 from ._vendor.packaging.utils import canonicalize_name
 from .provider import BuildPolicy, LocalSource
 
@@ -89,7 +90,8 @@ def discover_workspace_root(member_pyproject: Path) -> Path | None:
                 data = tomli.load(f)
         except (OSError, tomli.TOMLDecodeError):
             continue
-        if "workspace" in data.get("tool", {}).get("nab", {}):
+        nab = tool_nab_section(data)
+        if isinstance(nab, dict) and "workspace" in nab:
             return candidate
     return None
 

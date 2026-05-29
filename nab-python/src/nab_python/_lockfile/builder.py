@@ -18,6 +18,7 @@ import tomli
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._toml import tool_nab_section
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.utils import canonicalize_name
 
@@ -156,7 +157,8 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
             data = tomli.load(f)
     except (OSError, tomli.TOMLDecodeError):
         return None
-    raw = data.get("tool", {}).get("nab", {}).get("created-at")
+    nab = tool_nab_section(data)
+    raw = nab.get("created-at") if isinstance(nab, dict) else None
     if isinstance(raw, datetime):
         return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
     if isinstance(raw, str):

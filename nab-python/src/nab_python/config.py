@@ -18,6 +18,7 @@ import tomli
 
 from nab_index.multi_index import IndexConfig
 
+from ._toml import tool_nab_section
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
@@ -174,7 +175,7 @@ def read_pyproject_config(
         anchor = datetime.now(timezone.utc)
     with path.open("rb") as f:
         data = tomli.load(f)
-    raw = data.get("tool", {}).get("nab", {})
+    raw = tool_nab_section(data)
     if not isinstance(raw, dict):
         msg = f"[tool.nab] must be a table, got {type(raw).__name__}"
         raise ConfigError(msg)
@@ -435,7 +436,7 @@ def read_pyproject_lock_anchor(path: Path) -> datetime | None:
             data = tomli.load(f)
     except (FileNotFoundError, tomli.TOMLDecodeError):
         return None
-    raw = data.get("tool", {}).get("nab", {})
+    raw = tool_nab_section(data)
     value = raw.get("uploaded-prior-to") if isinstance(raw, dict) else None
     if isinstance(value, str) and _DURATION_PATTERN.match(value):
         return None
