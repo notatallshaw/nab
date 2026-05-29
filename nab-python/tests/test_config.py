@@ -108,9 +108,35 @@ class TestTopLevelKeys:
             read_pyproject_config(path)
 
 
+class TestConflictRendering:
+    """The ``__str__`` formats are codified in the conflicts guide."""
+
+    def test_member_renders_kind_then_quoted_name(self) -> None:
+        member = ConflictMember(ConflictKind.EXTRA, "cpu")
+        assert str(member) == "extra 'cpu'"
+
+    def test_group_member_renders_kind_then_quoted_name(self) -> None:
+        member = ConflictMember(ConflictKind.GROUP, "black22")
+        assert str(member) == "group 'black22'"
+
+    def test_set_renders_policy_then_parenthesised_members(self) -> None:
+        s = ConflictSet(
+            members=(
+                ConflictMember(ConflictKind.EXTRA, "cpu"),
+                ConflictMember(ConflictKind.EXTRA, "gpu"),
+            ),
+            policy=ConflictPolicy.AT_MOST_ONE,
+        )
+        assert str(s) == "at_most_one (extra 'cpu', extra 'gpu')"
+
+
 class TestConflicts:
     def test_default_is_empty(self, tmp_path: Path) -> None:
         path = write(tmp_path, "[tool.nab]\n")
+        assert read_pyproject_config(path).conflicts == ()
+
+    def test_explicit_empty_list_is_empty(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\nconflicts = []\n")
         assert read_pyproject_config(path).conflicts == ()
 
     def test_bare_set_defaults_to_at_most_one(self, tmp_path: Path) -> None:

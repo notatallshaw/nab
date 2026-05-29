@@ -102,6 +102,12 @@ class TestSpecificModeConflictValidation:
             result = resolve_pyproject(
                 pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
             )
+        # The selected extra's pin reached the Provider as a root
+        # requirement; the unselected extra's contradictory pin did not.
+        root_reqs = mock_provider_cls.call_args.kwargs["root_requirements"]
+        assert "foo" in root_reqs
+        assert V("1.0") in root_reqs["foo"]
+        assert V("2.0") not in root_reqs["foo"]
         assert result.pins == {"foo": V("1.0")}
 
     def test_unknown_conflict_member_raises(self, tmp_path: Path) -> None:
@@ -218,6 +224,78 @@ class TestSpecificModeConflictValidation:
         # Reaching here means the conflict check did not raise; cpu's dep
         # is pulled in through the self-reference.
         assert result.pins["foo"] == V("1.0")
+
+    def test_specific_mode_exactly_one_with_no_member_raises(
+        self, tmp_path: Path
+    ) -> None:
+        # ``exactly_one`` requires at least one member active; with no
+        # ``--extras`` flag the resolve fails fast before any network work.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            "cpu = []\n"
+            "gpu = []\n"
+            "[tool.nab]\n"
+            "conflicts = ["
+            '{ exactly_one = [{ extra = "cpu" }, { extra = "gpu" }] }'
+            "]\n"
+        )
+        with pytest.raises(ConflictSelectionError, match="exactly one"):
+            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+    def test_specific_mode_at_least_one_with_no_member_raises(
+        self, tmp_path: Path
+    ) -> None:
+        # ``at_least_one`` requires at least one member active; with no
+        # ``--extras`` flag the resolve fails fast before any network work.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            "cpu = []\n"
+            "gpu = []\n"
+            "[tool.nab]\n"
+            "conflicts = ["
+            '{ at_least_one = [{ extra = "cpu" }, { extra = "gpu" }] }'
+            "]\n"
+        )
+        with pytest.raises(ConflictSelectionError, match="at least one"):
+            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+    def test_specific_mode_exactly_one_with_one_member_resolves(
+        self, tmp_path: Path
+    ) -> None:
+        # The happy path for exactly_one: one member selected, resolve runs.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "[tool.nab]\n"
+            "conflicts = ["
+            '{ exactly_one = [{ extra = "cpu" }, { extra = "gpu" }] }'
+            "]\n"
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("1.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            result = resolve_pyproject(
+                pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
+            )
+        assert result.pins == {"foo": V("1.0")}
 
     def test_default_groups_satisfy_exactly_one(self, tmp_path: Path) -> None:
         # ``default-groups`` activates ``a`` on every default install, so
