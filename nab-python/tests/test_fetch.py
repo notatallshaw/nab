@@ -429,6 +429,19 @@ class TestFetchCoordinator:
             assert not coord._crashed
 
     @respx.mock
+    def test_listing_transport_error_not_masked_as_empty(self) -> None:
+        """A 5xx on a listing fetch stores an error, not an empty listing.
+        A genuine 404 (no candidates) is distinct and handled inside get_files.
+        """
+        respx.get("https://pypi.org/simple/bad/").mock(return_value=httpx.Response(500))
+        with _coord() as coord:
+            event = coord.request_listing("bad")
+            event.wait(timeout=5)
+            assert not coord._crashed
+            assert coord.index.get_listing("bad") is None
+            assert coord.index.get_listing_error("bad") is not None
+
+    @respx.mock
     def test_sdist_fetch_failure_records_empty(self) -> None:
         """When sdist extraction errors, store_sdist_metadata(None) unblocks
         any waiter and the coordinator does not crash."""

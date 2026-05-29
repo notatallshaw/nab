@@ -3079,6 +3079,14 @@ class TestFetchVersionsNotInIndex:
         assert result[0][0] == V("1.0")
         coordinator.request_listing.assert_called_with("pkg")
 
+    def test_listing_fetch_error_reraised(self) -> None:
+        """A recorded listing fetch error surfaces, not an empty listing."""
+        coordinator = make_coordinator(package="bad")
+        coordinator.index.store_listing_error("bad", RuntimeError("index 500"))
+        provider = Provider(coordinator)
+        with pytest.raises(RuntimeError, match="index 500"):
+            provider.fetch_versions("bad")
+
 
 class TestSpeculativePrefetchBatchLimit:
     def test_batch_limit_stops_at_prefetch_batch(self) -> None:
