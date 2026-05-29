@@ -93,6 +93,26 @@ class PlatformSpec:
         """The architecture suffix used in platform tags."""
         return _PLATFORM_ARCH[self.platform_id]
 
+    def label_suffix(self) -> str:
+        """Return a label discriminator, empty for the platform default.
+
+        Two specs sharing a ``platform_id`` collapse to one matrix-tuple
+        label unless their floors set them apart, which silently merges
+        their per-tuple pins.  The suffix encodes the floors so distinct
+        specs stay distinct; a spec left at the platform default emits no
+        suffix and keeps the plain ``pyXY-platform`` label.
+        """
+        if self == PlatformSpec(self.platform_id):
+            return ""
+        fields = (
+            ("glibc", _floor_tag(self.manylinux_floor)),
+            ("musl", _floor_tag(self.musllinux_floor)),
+            ("macos", _floor_tag(self.macos_min)),
+            ("rel", "_".join(self.platform_release.split())),
+            ("ver", "_".join(self.platform_version.split())),
+        )
+        return "".join(f"-{tag}{value}" for tag, value in fields if value)
+
 
 # Map our matrix platform_ids to (kind, arch).  Kind is one of
 # "linux", "macos", "windows".  Used for tag generation.
@@ -111,6 +131,11 @@ _PLATFORM_KIND: dict[str, str] = {
     "macos_x86_64": "macos",
     "windows_amd64": "windows",
 }
+
+
+def _floor_tag(floor: tuple[int, int] | None) -> str:
+    """Render a ``(major, minor)`` floor as ``major.minor``, or ``""`` if unset."""
+    return f"{floor[0]}.{floor[1]}" if floor is not None else ""
 
 
 def _linux_platform_tags(
