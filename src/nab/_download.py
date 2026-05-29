@@ -1,10 +1,11 @@
 """``nab download`` subcommand.
 
-Resolves a project once with the single-environment resolver and
-fetches every wheel and sdist into a local directory.  Universal
-mode is rejected: the per-tuple lock is the install-time contract,
-so a one-environment download would not represent the resolved
-universe.
+Resolves a project and fetches every wheel and sdist into a local
+directory.  Single-environment mode downloads the one resolved
+environment's artefacts; universal mode re-resolves across the
+matrix and downloads the union of every tuple's artefacts,
+deduplicated by URL, to pre-populate a directory for offline
+deployment across platforms.
 
 External callers (the resolver entry point and the download
 helper) are accessed through :mod:`nab.cli` so the test suite's
@@ -53,27 +54,34 @@ def download(
     config = _cli._load_config(  # noqa: SLF001
         path, discover_workspace=workspace_discovery
     )
-    if config.mode is ResolveMode.UNIVERSAL:
-        sys.stderr.write("Error: `nab download` is single-environment only.\n")
-        sys.exit(1)
-
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
         cache_dir, cache=cache
     )
     transport = _cli._make_transport(http_backend)  # noqa: SLF001
-    result = _cli._resolve_specific(  # noqa: SLF001
-        path,
-        config=config,
-        cache_dir=effective_cache_dir,
-        offline=offline,
-        transport=transport,
-        failure_prefix="Cannot download",
-    )
+    if config.mode is ResolveMode.UNIVERSAL:
+        universal = _cli._resolve_universal(  # noqa: SLF001
+            path,
+            config=config,
+            cache_dir=effective_cache_dir,
+            offline=offline,
+            transport=transport,
+        )
+        lock_input = _cli.merge_universal_lock_inputs(universal)
+    else:
+        result = _cli._resolve_specific(  # noqa: SLF001
+            path,
+            config=config,
+            cache_dir=effective_cache_dir,
+            offline=offline,
+            transport=transport,
+            failure_prefix="Cannot download",
+        )
+        lock_input = result.lock_input
 
     download_transport = _cli._make_transport(http_backend)  # noqa: SLF001
     try:
         outcome = _cli.download_lock(
-            result.lock_input,
+            lock_input,
             download_transport,
             output,
             max_concurrency=max_concurrency,

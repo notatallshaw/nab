@@ -1816,10 +1816,24 @@ class TestDownloadCommand:
             download(pyproject, output=out)
         mock_dl.assert_called_once()
 
-    def test_universal_mode_rejected(self, tmp_path: Path) -> None:
+    def test_universal_mode_downloads_all_tuples(self, tmp_path: Path) -> None:
+        """Universal mode re-resolves the matrix and downloads the union."""
         pyproject = _universal_pyproject(tmp_path)
-        with pytest.raises(SystemExit, match="1"):
-            download(pyproject)
+        out = tmp_path / "vendor"
+        download_result = MagicMock(written=(out / "foo.whl",), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_multi_tuple_universal_result(),
+            ),
+            patch("nab.cli.download_lock", return_value=download_result) as mock_dl,
+        ):
+            download(pyproject, output=out)
+        lock_input = mock_dl.call_args.args[0]
+        assert set(lock_input.per_tuple_pins) == {
+            "py311-linux_x86_64",
+            "py312-linux_x86_64",
+        }
 
     @pytest.mark.parametrize("bad", [0, -1])
     def test_non_positive_max_concurrency_exits(

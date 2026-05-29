@@ -35,7 +35,6 @@ from nab_python.lockfile import (
 )
 from nab_python.provider import ResolutionStrategy
 from nab_python.requirements_file import (
-    InvalidProjectRequirementError,
     read_pyproject_groups,
     read_pyproject_optional_dependencies,
 )
@@ -289,33 +288,16 @@ def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproj
         " change without notice\n"
     )
 
-    try:
-        result = _cli.resolve_universal_pyproject(
-            path,
-            config=config,
-            cache_dir=cache_dir,
-            transport=transport,
-            offline=offline,
-            groups=groups,
-            extras=extras,
-            resolution_strategy=resolution_strategy,
-        )
-    except KeyError:
-        sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
-        sys.exit(1)
-    except InvalidProjectRequirementError as e:
-        sys.stderr.write(f"Error: {e}\n")
-        sys.exit(1)
-    except LookupError as e:
-        sys.stderr.write(f"Error: {e}\n")
-        sys.exit(1)
-
-    if not result.success:
-        # Always print per-tuple blocks on failure so the user sees
-        # which tuple(s) failed and why; the resolved tuples still
-        # appear so partial progress is visible.
-        _print_universal_blocks(result)
-        sys.exit(1)
+    result = _cli._resolve_universal(  # noqa: SLF001
+        path,
+        config=config,
+        cache_dir=cache_dir,
+        offline=offline,
+        transport=transport,
+        groups=groups,
+        extras=extras,
+        resolution_strategy=resolution_strategy,
+    )
 
     if format == "pylock":
         _emit_universal_pylock(
@@ -662,17 +644,3 @@ def _validate_pylock_output_name(
         f" not a hyphen).  Try {suggestion!r}.\n"
     )
     sys.exit(1)
-
-
-def _print_universal_blocks(result: UniversalResult) -> None:
-    """Write per-tuple pin blocks (with FAILED markers) to stdout."""
-    blocks: list[str] = []
-    for tr in result.tuple_results:
-        label = tr.tuple_.label
-        if not tr.success:
-            blocks.append(f"# {label}: FAILED")
-            blocks.extend(f"#   {raw}" for raw in (tr.error or "").splitlines())
-            continue
-        blocks.append(f"# {label}")
-        blocks.extend(f"{name}=={tr.pins[name]}" for name in sorted(tr.pins))
-    sys.stdout.write("\n".join(blocks) + "\n")

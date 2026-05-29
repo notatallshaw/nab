@@ -19,13 +19,15 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import AsyncSimpleClient
 
-from .lockfile import IndexPin, LocalPin, LockInput, VcsPin
+from .lockfile import IndexPin, LockInput
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport
+
+    from .lockfile import PinShape
 
 __all__ = [
     "DownloadEntry",
@@ -70,15 +72,29 @@ class DownloadResult:
 
 
 def iter_artifacts(lock_input: LockInput) -> Iterable[DownloadEntry]:
-    """Yield every wheel/sdist artefact referenced by ``lock_input``."""
+    """Yield every wheel/sdist artefact referenced by ``lock_input``.
+
+    A universal lock (``per_tuple_pins`` populated) yields the union of
+    every tuple's artefacts, deduplicated by URL so a wheel shared
+    across platform tuples is downloaded once.
+    """
+    if lock_input.per_tuple_pins:
+        seen: set[str] = set()
+        for label in sorted(lock_input.per_tuple_pins):
+            for canonical, pin in sorted(lock_input.per_tuple_pins[label].items()):
+                for entry in _entries_for_pin(canonical, pin):
+                    if entry.url not in seen:
+                        seen.add(entry.url)
+                        yield entry
+        return
     for canonical, pin in sorted(lock_input.pins.items()):
-        if isinstance(pin, IndexPin):
-            yield from _iter_index_pin(canonical, pin)
-        elif isinstance(pin, (LocalPin, VcsPin)):
-            continue
-        else:  # pragma: no cover - exhaustive
-            msg = f"unknown pin shape: {pin!r}"
-            raise TypeError(msg)
+        yield from _entries_for_pin(canonical, pin)
+
+
+def _entries_for_pin(canonical: str, pin: PinShape) -> Iterable[DownloadEntry]:
+    # Only index pins have downloadable artefacts; local and VCS pins are skipped.
+    if isinstance(pin, IndexPin):
+        yield from _iter_index_pin(canonical, pin)
 
 
 def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:

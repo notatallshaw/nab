@@ -147,6 +147,65 @@ class TestIterArtifacts:
         entries = list(iter_artifacts(LockInput(pins={"foo": pin})))
         assert entries == []
 
+    def test_universal_unions_every_tuple(self) -> None:
+        linux = _index_pin(name="foo", version="1.0", wheel_sha="a" * 64)
+        windows = _index_pin(name="bar", version="2.0", wheel_sha="b" * 64)
+        lock = LockInput(
+            per_tuple_pins={
+                "py3.12-linux": {"foo": linux},
+                "py3.12-windows": {"bar": windows},
+            }
+        )
+        assert sorted(e.filename for e in iter_artifacts(lock)) == [
+            "bar-2.0-py3-none-any.whl",
+            "foo-1.0-py3-none-any.whl",
+        ]
+
+    def test_universal_dedups_shared_artefact_by_url(self) -> None:
+        shared = _index_pin(name="foo", version="1.0", wheel_sha="a" * 64)
+        lock = LockInput(
+            per_tuple_pins={
+                "py3.12-linux": {"foo": shared},
+                "py3.12-windows": {"foo": shared},
+            }
+        )
+        assert [e.filename for e in iter_artifacts(lock)] == [
+            "foo-1.0-py3-none-any.whl"
+        ]
+
+    def test_universal_skips_local_and_vcs_pins(self, tmp_path: Path) -> None:
+        lock = LockInput(
+            per_tuple_pins={
+                "py3.12-linux": {
+                    "loc": LocalPin(name="loc", version="1.0", path=str(tmp_path)),
+                    "vcs": VcsPin(
+                        name="vcs",
+                        version="1.0",
+                        repo_url="git+https://x/y.git",
+                        bare_repo_url="https://x/y.git",
+                        commit_id="a" * 40,
+                    ),
+                    "idx": _index_pin(name="idx", version="1.0", wheel_sha="c" * 64),
+                }
+            }
+        )
+        assert [e.filename for e in iter_artifacts(lock)] == [
+            "idx-1.0-py3-none-any.whl"
+        ]
+
+    def test_per_tuple_pins_take_precedence_over_pins(self) -> None:
+        lock = LockInput(
+            pins={"foo": _index_pin(name="foo", version="1.0", wheel_sha="a" * 64)},
+            per_tuple_pins={
+                "py3.12-linux": {
+                    "bar": _index_pin(name="bar", version="2.0", wheel_sha="b" * 64)
+                }
+            },
+        )
+        assert [e.filename for e in iter_artifacts(lock)] == [
+            "bar-2.0-py3-none-any.whl"
+        ]
+
 
 class TestDownloadLock:
     def test_writes_files_and_verifies_hashes(self, tmp_path: Path) -> None:
