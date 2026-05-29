@@ -291,14 +291,52 @@ class TestMatrixTuple:
         assert t.label == "pp311-linux_x86_64"
 
     def test_selection_appends_member_suffix_to_label(self) -> None:
-        """A conflict-fork selection appends sorted member names."""
+        """A conflict-fork selection appends sorted ``kind-name`` members."""
         t = MatrixTuple(
             python_version="3.11",
             platform_id="linux_x86_64",
             environment={},
             selection=(("group", "isort5"), ("group", "black22")),
         )
-        assert t.label == "py311-linux_x86_64-black22-isort5"
+        assert t.label == "py311-linux_x86_64-group-black22.group-isort5"
+
+    def test_label_distinguishes_selections_that_split_on_hyphen(self) -> None:
+        """Names containing ``-`` cannot collide two selections into one label.
+
+        Canonical names collapse ``[-_.]`` runs to a single ``-``, so a
+        ``-`` joiner is ambiguous: ``a-b`` plus ``c`` and ``a`` plus
+        ``b-c`` would both read as ``a-b-c``.  The ``.`` separator keeps
+        the two selections on distinct labels.
+        """
+        first = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={},
+            selection=(("extra", "a-b"), ("extra", "c")),
+        )
+        second = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={},
+            selection=(("extra", "a"), ("extra", "b-c")),
+        )
+        assert first.label != second.label
+
+    def test_label_distinguishes_extra_from_group_of_same_name(self) -> None:
+        """An extra and a group of the same name get distinct labels."""
+        as_extra = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={},
+            selection=(("extra", "cpu"),),
+        )
+        as_group = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={},
+            selection=(("group", "cpu"),),
+        )
+        assert as_extra.label != as_group.label
 
     def test_extra_selection_adds_extras_marker_clause(self) -> None:
         """An extra member adds a bare ``in extras`` clause to the marker."""
