@@ -85,15 +85,12 @@ def validate_marker_disjointness(
     ``exclusive_groups`` declares mutually-exclusive selections from
     ``[tool.nab].conflicts``: each entry is a set of ``(kind, name)``
     members (``kind`` is ``"extra"`` or ``"group"``) of which at most
-    one may be active at once.  Install contexts that activate two or
-    more members of any such set cannot legitimately occur, so they
-    are pruned from the universe before the collision check.  This is
-    what lets a universal lock carry one fork per conflicting
-    extra/group under bare ``'name' in extras`` markers: the
-    both-selected point that would otherwise collide is never
-    enumerated.  A collision that survives outside every pruned point
-    still raises, with a hint pointing at the ``conflicts`` key when
-    extras or groups drive the colliding markers.
+    one may be active.  Contexts activating two or more members of a
+    set are pruned before the collision check, so a universal lock can
+    carry one fork per conflicting extra/group under bare
+    ``'name' in extras`` markers.  A collision outside every pruned
+    point still raises, hinting at the ``conflicts`` key when extras or
+    groups drive the colliding markers.
     """
     if not environments:
         return

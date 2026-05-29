@@ -8,6 +8,7 @@ lives on the CLI.  This module owns the project side.
 from __future__ import annotations
 
 import enum
+import itertools
 import logging
 import re
 from dataclasses import dataclass, field, replace
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ConfigError",
+    "ConflictFork",
     "ConflictKind",
     "ConflictMember",
     "ConflictPolicy",
@@ -55,6 +57,7 @@ __all__ = [
     "NabProjectConfig",
     "ResolveMode",
     "conflict_exclusion_groups",
+    "conflict_forks",
     "read_pyproject_config",
     "validate_conflict_selection",
 ]
@@ -189,6 +192,88 @@ def conflict_exclusion_groups(
 
 
 @dataclass(frozen=True, slots=True)
+class ConflictFork:
+    """One fork of a conflict-driven universal resolve.
+
+    ``selection`` is the active conflicting members as ``(kind, name)``
+    pairs.  ``active_extras`` and ``active_groups`` are the full extra
+    and group selections this fork resolves with: the non-conflicting
+    selections plus this fork's chosen members.  An unforked resolve is
+    a single fork with an empty ``selection``.
+    """
+
+    selection: tuple[tuple[str, str], ...]
+    active_extras: tuple[str, ...]
+    active_groups: tuple[str, ...]
+
+
+_MIN_ENGAGED_MEMBERS = 2
+
+
+def conflict_forks(
+    selected_extras: Sequence[str],
+    selected_groups: Sequence[str],
+    conflicts: Sequence[ConflictSet],
+) -> list[ConflictFork]:
+    """Split a selection into one fork per mutually-exclusive combination.
+
+    A conflict set is *engaged* when the selection activates two or more
+    of its members under an exclusivity policy (at-most-one or
+    exactly-one); only an engaged set forces a fork.  Each engaged set
+    contributes one chosen member per fork, and the forks are the
+    cartesian product across engaged sets.  Members of engaged sets are
+    dropped from the shared base; non-conflicting selections stay active
+    in every fork.  With no engaged set the result is a single unforked
+    fork carrying the whole selection.
+
+    Names compare and emit canonicalised; the extra and group loaders
+    normalise on lookup, so a canonical active set resolves the same
+    requirements the user's spelling would.
+    """
+    base_extras = [canonicalize_name(e) for e in selected_extras]
+    base_groups = [canonicalize_name(g) for g in selected_groups]
+    extra_set = set(base_extras)
+    group_set = set(base_groups)
+
+    # Collect the engaged sets (2+ selected members) and the members to
+    # drop from the shared base; each engaged set becomes a fork axis.
+    engaged: list[list[ConflictMember]] = []
+    drop_extras: set[str] = set()
+    drop_groups: set[str] = set()
+    for conflict_set in conflicts:
+        if conflict_set.policy is ConflictPolicy.AT_LEAST_ONE:
+            continue
+        members = [
+            m for m in conflict_set.members if _member_active(m, extra_set, group_set)
+        ]
+        if len(members) < _MIN_ENGAGED_MEMBERS:
+            continue
+        engaged.append(members)
+        for member in members:
+            target = drop_extras if member.kind is ConflictKind.EXTRA else drop_groups
+            target.add(member.name)
+
+    if not engaged:
+        return [ConflictFork((), tuple(base_extras), tuple(base_groups))]
+
+    # One fork per choice of a single member from each engaged set.
+    rest_extras = [e for e in base_extras if e not in drop_extras]
+    rest_groups = [g for g in base_groups if g not in drop_groups]
+    forks: list[ConflictFork] = []
+    for combo in itertools.product(*engaged):
+        chosen_extras = [m.name for m in combo if m.kind is ConflictKind.EXTRA]
+        chosen_groups = [m.name for m in combo if m.kind is ConflictKind.GROUP]
+        forks.append(
+            ConflictFork(
+                selection=tuple(sorted((m.kind.value, m.name) for m in combo)),
+                active_extras=tuple(rest_extras + chosen_extras),
+                active_groups=tuple(rest_groups + chosen_groups),
+            )
+        )
+    return forks
+
+
+@dataclass(frozen=True, slots=True)
 class NabProjectConfig:
     """Everything ``[tool.nab]`` says about how to resolve this project."""
 
@@ -241,6 +326,7 @@ def _member_active(
     active_extras: set[str],
     active_groups: set[str],
 ) -> bool:
+    """Return True when ``member`` is in the selected extras/groups."""
     if member.kind is ConflictKind.EXTRA:
         return member.name in active_extras
     return member.name in active_groups
@@ -1006,9 +1092,7 @@ def _parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
     policy) or a single-key table naming the policy
     (``at_most_one``/``exactly_one``/``at_least_one``) whose value is
     the member array.  A member is ``{ extra = "NAME" }`` or
-    ``{ group = "NAME" }``.  Reference validation (the extra or group
-    actually exists) happens at resolve time, where the project tables
-    are read.
+    ``{ group = "NAME" }``.
     """
     if value is None:
         return ()

@@ -345,6 +345,23 @@ class TestMatrixTuple:
             'and "cpu" in extras and "isort5" in dependency_groups'
         )
 
+    def test_environment_marker_string_omits_selection(self) -> None:
+        """The env-only marker drops the conflict membership clause."""
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "implementation_name": "cpython",
+            },
+            selection=(("group", "black22"),),
+        )
+        assert "in dependency_groups" not in t.environment_marker_string
+        assert t.environment_marker_string.endswith('platform_machine == "x86_64"')
+        # The full per-package marker still carries the membership clause.
+        assert '"black22" in dependency_groups' in t.marker_string
+
     def test_empty_selection_leaves_marker_and_label_unchanged(self) -> None:
         """The default empty selection is a no-op (back-compat)."""
         t = MatrixTuple(

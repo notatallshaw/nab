@@ -24,6 +24,7 @@ from nab_python.config import (
     ConflictMember,
     ConflictPolicy,
     ConflictSet,
+    conflict_forks,
 )
 from nab_python.lockfile import DisjointnessError, IndexPin, LockInput, build_pylock
 from nab_python.provider import (
@@ -39,13 +40,12 @@ from nab_python.provider import (
 from nab_python.universal import resolve as resolve_mod
 from nab_python.universal.matrix import Matrix, MatrixTuple
 from nab_python.universal.resolve import (
+    ResolveFork,
     TupleResult,
     UniversalResult,
-    _conflict_forks,
     _direct_package_names,
     _parse_requirements,
     _resolve_one_tuple,
-    _ResolveFork,
     _root_extras,
     _run_pass,
     _warn_extra_marker_at_root,
@@ -135,10 +135,10 @@ def _group_set(*names: str) -> ConflictSet:
 
 
 class TestConflictForks:
-    """``_conflict_forks`` splits a selection into per-fork resolves."""
+    """``conflict_forks`` splits a selection into per-fork resolves."""
 
     def test_no_conflicts_is_one_unforked_fork(self) -> None:
-        forks = _conflict_forks(("docs",), ("dev",), ())
+        forks = conflict_forks(("docs",), ("dev",), ())
         assert len(forks) == 1
         assert forks[0].selection == ()
         assert forks[0].active_extras == ("docs",)
@@ -146,13 +146,13 @@ class TestConflictForks:
 
     def test_single_selected_member_does_not_engage(self) -> None:
         # Only cpu selected, gpu absent: no conflict, no fork.
-        forks = _conflict_forks(("cpu",), (), (_extra_set("cpu", "gpu"),))
+        forks = conflict_forks(("cpu",), (), (_extra_set("cpu", "gpu"),))
         assert len(forks) == 1
         assert forks[0].selection == ()
         assert forks[0].active_extras == ("cpu",)
 
     def test_two_selected_extras_fork_into_two(self) -> None:
-        forks = _conflict_forks(("cpu", "gpu"), (), (_extra_set("cpu", "gpu"),))
+        forks = conflict_forks(("cpu", "gpu"), (), (_extra_set("cpu", "gpu"),))
         assert [f.selection for f in forks] == [
             (("extra", "cpu"),),
             (("extra", "gpu"),),
@@ -160,7 +160,7 @@ class TestConflictForks:
         assert [f.active_extras for f in forks] == [("cpu",), ("gpu",)]
 
     def test_three_selected_groups_fork_into_three(self) -> None:
-        forks = _conflict_forks(
+        forks = conflict_forks(
             (),
             ("black22", "black23", "black24"),
             (_group_set("black22", "black23", "black24"),),
@@ -173,7 +173,7 @@ class TestConflictForks:
 
     def test_two_engaged_sets_cartesian_product(self) -> None:
         # datamodel-code-generator: black {22,23,24} x isort {5,6} = 6 forks.
-        forks = _conflict_forks(
+        forks = conflict_forks(
             (),
             ("black22", "black23", "black24", "isort5", "isort6"),
             (
@@ -193,7 +193,7 @@ class TestConflictForks:
         assert all(list(s) == sorted(s) for s in selections)
 
     def test_non_conflicting_selection_present_in_every_fork(self) -> None:
-        forks = _conflict_forks(
+        forks = conflict_forks(
             ("docs", "cpu", "gpu"), ("dev",), (_extra_set("cpu", "gpu"),)
         )
         assert len(forks) == 2
@@ -209,7 +209,7 @@ class TestConflictForks:
             ConflictMember(ConflictKind.GROUP, "gpu"),
         )
         cs = ConflictSet(members=members, policy=ConflictPolicy.AT_MOST_ONE)
-        forks = _conflict_forks(("cpu",), ("gpu",), (cs,))
+        forks = conflict_forks(("cpu",), ("gpu",), (cs,))
         assert [f.selection for f in forks] == [
             (("extra", "cpu"),),
             (("group", "gpu"),),
@@ -227,14 +227,14 @@ class TestConflictForks:
             ),
             policy=ConflictPolicy.AT_LEAST_ONE,
         )
-        forks = _conflict_forks(("a", "b"), (), (cs,))
+        forks = conflict_forks(("a", "b"), (), (cs,))
         assert len(forks) == 1
         assert forks[0].selection == ()
         assert forks[0].active_extras == ("a", "b")
 
     def test_names_canonicalised_before_engagement(self) -> None:
         # Selection spelled differently still engages the conflict.
-        forks = _conflict_forks(("CPU", "Gpu"), (), (_extra_set("cpu", "gpu"),))
+        forks = conflict_forks(("CPU", "Gpu"), (), (_extra_set("cpu", "gpu"),))
         assert len(forks) == 2
         assert {m for f in forks for _k, m in f.selection} == {"cpu", "gpu"}
 
@@ -258,8 +258,8 @@ class TestConflictForkResolve:
 
     def _black_forks(self) -> list:
         return [
-            _ResolveFork((("group", "black22"),), ["black==22.1"]),
-            _ResolveFork((("group", "black23"),), ["black==23.12"]),
+            ResolveFork((("group", "black22"),), ["black==22.1"]),
+            ResolveFork((("group", "black23"),), ["black==23.12"]),
         ]
 
     def test_forks_produce_separate_per_label_pins(self) -> None:
@@ -317,6 +317,26 @@ class TestConflictForkResolve:
         )
         with pytest.raises(DisjointnessError, match="black"):
             build_pylock(lock_input)
+
+    def test_top_level_environments_drop_membership_and_dedupe(self) -> None:
+        # Two forks of the one (python, platform) tuple must collapse to
+        # a single top-level environment with no membership clause: that
+        # field declares the platform universe, not the group selection.
+        result = resolve_with_coordinator(
+            self._black_coordinator(),
+            self._one_tuple_matrix(),
+            forks=self._black_forks(),
+            build_policy=BuildPolicy.NEVER,
+        )
+        lock_input = merge_universal_lock_inputs(
+            result,
+            dependency_groups=("black22", "black23"),
+            conflicts=(_group_set("black22", "black23"),),
+        )
+        assert len(lock_input.environments) == 1
+        env_str = str(lock_input.environments[0])
+        assert "in dependency_groups" not in env_str
+        assert "in extras" not in env_str
 
     def test_align_across_tuples_false_still_resolves(self) -> None:
         # With alignment off, pins are not threaded forward, but each

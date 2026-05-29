@@ -8,7 +8,6 @@ pin applies.
 
 from __future__ import annotations
 
-import itertools
 import logging
 import time
 from collections import defaultdict
@@ -25,7 +24,7 @@ from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import Version
-from ..config import ConfigError, ConflictKind, ConflictPolicy
+from ..config import ConfigError
 from ..fetch import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
@@ -52,6 +51,7 @@ from ..requirements_file import raise_for_unsatisfiable
 from .provider import UniversalProvider
 
 __all__ = [
+    "ResolveFork",
     "TupleResult",
     "UniversalResult",
     "merge_universal_lock_inputs",
@@ -74,7 +74,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
-    from ..config import ConflictMember, ConflictSet, NabProjectConfig
+    from ..config import ConflictSet, NabProjectConfig
     from .matrix import Matrix, MatrixTuple
 
 
@@ -120,25 +120,7 @@ class UniversalResult:
 
 
 @dataclass(frozen=True, slots=True)
-class _ConflictFork:
-    """One fork of a conflict-driven universal resolve.
-
-    ``selection`` is the active conflicting members as ``(kind, name)``
-    pairs; it drives the per-tuple label suffix and the ``in extras`` /
-    ``in dependency_groups`` marker clause.  ``active_extras`` and
-    ``active_groups`` are the full extra and group selections this fork
-    resolves with: the non-conflicting selections plus this fork's
-    chosen members.  An unforked resolve is a single fork with an empty
-    ``selection``.
-    """
-
-    selection: tuple[tuple[str, str], ...]
-    active_extras: tuple[str, ...]
-    active_groups: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _ResolveFork:
+class ResolveFork:
     """A fork's resolver input: a marker selection plus folded requirements.
 
     ``selection`` is the active conflicting members; ``requirements``
@@ -151,72 +133,6 @@ class _ResolveFork:
 
     selection: tuple[tuple[str, str], ...]
     requirements: list[str]
-
-
-_MIN_ENGAGED_MEMBERS = 2
-
-
-def _conflict_forks(
-    selected_extras: Sequence[str],
-    selected_groups: Sequence[str],
-    conflicts: Sequence[ConflictSet],
-) -> list[_ConflictFork]:
-    """Split a selection into one fork per mutually-exclusive combination.
-
-    A conflict set is *engaged* when the selection activates two or
-    more of its members under an exclusivity policy (at-most-one or
-    exactly-one); only an engaged set forces a fork.  Each engaged set
-    contributes one chosen member per fork, and the forks are the
-    cartesian product across engaged sets.  Members of engaged sets are
-    dropped from the shared base; non-conflicting selections (and the
-    sole selected member of a non-engaged set) stay active in every
-    fork.  With no engaged set the result is a single unforked fork
-    carrying the whole selection, so the caller's non-conflict path is
-    unchanged.
-
-    Names are compared and emitted canonicalised; the extra and group
-    loaders normalise on lookup, so a canonical active set resolves the
-    same requirements the user's spelling would.
-    """
-    base_extras = [canonicalize_name(e) for e in selected_extras]
-    base_groups = [canonicalize_name(g) for g in selected_groups]
-    extra_set = set(base_extras)
-    group_set = set(base_groups)
-
-    def is_selected(member: ConflictMember) -> bool:
-        if member.kind is ConflictKind.EXTRA:
-            return member.name in extra_set
-        return member.name in group_set
-
-    engaged: list[list[ConflictMember]] = []
-    drop_extras: set[str] = set()
-    drop_groups: set[str] = set()
-    for conflict_set in conflicts:
-        if conflict_set.policy is ConflictPolicy.AT_LEAST_ONE:
-            continue
-        members = [m for m in conflict_set.members if is_selected(m)]
-        if len(members) < _MIN_ENGAGED_MEMBERS:
-            continue
-        engaged.append(members)
-        for member in members:
-            target = drop_extras if member.kind is ConflictKind.EXTRA else drop_groups
-            target.add(member.name)
-    if not engaged:
-        return [_ConflictFork((), tuple(base_extras), tuple(base_groups))]
-    rest_extras = [e for e in base_extras if e not in drop_extras]
-    rest_groups = [g for g in base_groups if g not in drop_groups]
-    forks: list[_ConflictFork] = []
-    for combo in itertools.product(*engaged):
-        chosen_extras = [m.name for m in combo if m.kind is ConflictKind.EXTRA]
-        chosen_groups = [m.name for m in combo if m.kind is ConflictKind.GROUP]
-        forks.append(
-            _ConflictFork(
-                selection=tuple(sorted((m.kind.value, m.name) for m in combo)),
-                active_extras=tuple(rest_extras + chosen_extras),
-                active_groups=tuple(rest_groups + chosen_groups),
-            )
-        )
-    return forks
 
 
 def merge_universal_lock_inputs(
@@ -244,23 +160,34 @@ def merge_universal_lock_inputs(
     before calling.
 
     ``dependency_groups`` and ``default_groups`` are recorded at the
-    lockfile top level for PEP 735 multi-use locks.  Per-package
-    group attribution (markers gated by
-    ``'group-x' in dependency_groups``) is not emitted.
+    lockfile top level for PEP 735 multi-use locks.  ``conflicts`` rides
+    along on the :class:`LockInput` so the emit-time disjointness check
+    can prune the install contexts a declared conflict forbids; a
+    conflict fork's membership clause reaches each package through its
+    tuple's ``marker_string``.
     """
     per_tuple_pins: dict[str, dict[str, PinShape]] = {}
     tuple_markers: dict[str, Marker] = {}
     tuple_environments: dict[str, dict[str, str]] = {}
+
+    # The top-level ``environments`` declares the platform/Python
+    # universe, so it carries the env-only marker (no conflict-fork
+    # membership clause) and is deduplicated: conflict forks repeat a
+    # (python, platform) under different selections.
     environments: list[Marker] = []
+    seen_env_markers: set[str] = set()
     for tr in result.tuple_results:
         if not tr.success or tr.lock_input is None:
             continue
         label = tr.tuple_.label
         per_tuple_pins[label] = dict(tr.lock_input.pins)
-        marker = Marker(tr.tuple_.marker_string)
-        tuple_markers[label] = marker
+        tuple_markers[label] = Marker(tr.tuple_.marker_string)
         tuple_environments[label] = dict(tr.tuple_.environment)
-        environments.append(marker)
+
+        env_marker = tr.tuple_.environment_marker_string
+        if env_marker not in seen_env_markers:
+            seen_env_markers.add(env_marker)
+            environments.append(Marker(env_marker))
     return LockInput(
         per_tuple_pins=per_tuple_pins,
         tuple_markers=tuple_markers,
@@ -277,7 +204,7 @@ def merge_universal_lock_inputs(
 
 def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution knobs; bundling all flags into a config object hides the call-site documentation
     matrix: Matrix,
-    requirements: list[str],
+    requirements: Sequence[str] = (),
     *,
     transport: AsyncHttpTransport | None = None,
     offline: bool = False,
@@ -299,7 +226,7 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
     resolution_strategy: str = "highest",
     align_across_tuples: bool = True,
     preferences: dict[str, Version] | None = None,
-    forks: Sequence[_ResolveFork] | None = None,
+    forks: Sequence[ResolveFork] | None = None,
 ) -> UniversalResult:
     """Run a universal resolve for ``matrix``.
 
@@ -316,11 +243,10 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
     ``preferences``: a starting set of preferred ``{name: Version}``,
     e.g. read from a previous lock.
 
-    ``forks``: per-conflict-fork resolver inputs.  When ``None`` the
-    resolve runs once with ``requirements`` and no marker selection;
-    when supplied, the matrix runs once per fork and ``requirements``
-    is ignored (the pyproject layer folds each fork's own
-    requirements).
+    ``forks``: per-conflict-fork resolver inputs from the pyproject
+    layer.  When ``None`` the resolve runs once with ``requirements``
+    and no marker selection; otherwise the matrix runs once per fork,
+    each folding its own requirements.
     """
     if indexes is None:
         indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
@@ -360,7 +286,7 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
 def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's surface
     coordinator: FetchCoordinator,
     matrix: Matrix,
-    requirements: list[str],
+    requirements: Sequence[str] = (),
     *,
     constraints: list[str] | None = None,
     uploaded_prior_to: datetime | None = None,
@@ -377,7 +303,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     resolution_strategy: str = "highest",
     align_across_tuples: bool = True,
     preferences: dict[str, Version] | None = None,
-    forks: Sequence[_ResolveFork] | None = None,
+    forks: Sequence[ResolveFork] | None = None,
 ) -> UniversalResult:
     """Run a universal resolve against an already-open coordinator.
 
@@ -386,18 +312,26 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     transport setup in unit tests.  See :func:`resolve_universal` for
     the full parameter documentation.
 
-    When ``forks`` is supplied the matrix runs once per fork against
-    that fork's own requirements, with the fork's marker ``selection``
-    injected into every tuple; the per-fork results are concatenated.
-    Pins flow forward across forks too (when ``align_across_tuples``),
-    so a package shared by several forks tends to land on one version.
+    With ``forks`` the matrix runs once per fork, each fork's marker
+    ``selection`` injected into every tuple and its results
+    concatenated; ``requirements`` is used only for the single unforked
+    resolve.  Pins flow forward across forks, aligning a shared
+    package's version where possible.
     """
     base_tuples = matrix.expand()
-    fork_list = list(forks) if forks is not None else [_ResolveFork((), requirements)]
+    fork_list = (
+        list(forks) if forks is not None else [ResolveFork((), list(requirements))]
+    )
+
+    # Warn once across all forks: forks share the base dependencies, so
+    # a root ``extra ==`` marker would otherwise be flagged per fork.
+    _warn_extra_marker_at_root(
+        sorted({r for fork in fork_list for r in fork.requirements})
+    )
+
     accumulated: dict[str, Version] = dict(preferences or {})
     out: list[TupleResult] = []
     for fork in fork_list:
-        _warn_extra_marker_at_root(fork.requirements)
         tuples = (
             base_tuples
             if not fork.selection

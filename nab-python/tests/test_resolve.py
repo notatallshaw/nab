@@ -772,7 +772,10 @@ class TestResolveUniversalPyproject:
         kwargs = mock_resolve_universal.call_args.kwargs
         assert kwargs["matrix"].python == ">=3.11,<3.13"
         assert kwargs["matrix"].platforms == ("linux_x86_64", "macos_arm64")
-        assert kwargs["requirements"] == ["foo"]
+        # No conflicts: a single unforked fork carrying the base deps.
+        (fork,) = kwargs["forks"]
+        assert fork.selection == ()
+        assert fork.requirements == ["foo"]
 
     @patch("nab_python.resolve.resolve_universal")
     def test_passes_python_patches_when_set(

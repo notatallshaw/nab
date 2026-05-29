@@ -138,24 +138,18 @@ class MatrixTuple:
         return f"{base}-{suffix}"
 
     @property
-    def marker_string(self) -> str:
-        """Return a PEP 508 marker that selects this tuple.
+    def environment_marker_string(self) -> str:
+        """Return the PEP 508 marker for this tuple's environment only.
 
         Combines ``python_version``, ``sys_platform``, and
-        ``platform_machine`` into a conjunction.  Universal lockfiles
-        attach this to each per-tuple ``Package`` entry so an installer
-        on a matching environment picks the right pin.  When the matrix
-        models more than one implementation, every tuple constrains
-        ``implementation_name`` so the CPython and PyPy entries for the
-        same python/platform stay mutually exclusive; a sole-CPython
-        matrix omits the clause.
+        ``platform_machine``.  In a multi-implementation matrix every
+        tuple also constrains ``implementation_name`` so the CPython and
+        PyPy entries for the same python/platform stay mutually
+        exclusive; a sole-CPython matrix omits the clause.
 
-        A conflict-fork ``selection`` adds a bare membership clause per
-        active member (``'name' in extras`` for an extra, ``'name' in
-        dependency_groups`` for a group).  The emit-time disjointness
-        validator prunes the install contexts that activate two members
-        of one declared conflict, so the bare clause is enough; no
-        ``not in`` negation against the other members is required.
+        This carries no conflict-fork ``selection``, so it is what the
+        lockfile's top-level ``environments`` list declares: the
+        platform/Python universe, not which extras or groups are active.
         """
         env = self.environment
         marker = (
@@ -165,6 +159,20 @@ class MatrixTuple:
         )
         if self.multi_implementation or self.implementation != "cpython":
             marker += f' and implementation_name == "{env["implementation_name"]}"'
+        return marker
+
+    @property
+    def marker_string(self) -> str:
+        """Return the per-package PEP 508 marker that selects this tuple.
+
+        This is :attr:`environment_marker_string` plus a bare membership
+        clause per active conflict-fork member (``'name' in extras`` for
+        an extra, ``'name' in dependency_groups`` for a group).  The
+        emit-time disjointness validator prunes the install contexts
+        that activate two members of one declared conflict, so the bare
+        clause needs no ``not in`` negation against the other members.
+        """
+        marker = self.environment_marker_string
         for kind, name in sorted(self.selection):
             variable = "extras" if kind == "extra" else "dependency_groups"
             marker += f' and "{name}" in {variable}'

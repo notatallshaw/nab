@@ -26,8 +26,10 @@ from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
 from .config import (
     ConfigError,
+    ConflictFork,
     NabProjectConfig,
     ResolveMode,
+    conflict_forks,
     read_pyproject_config,
     validate_conflict_selection,
 )
@@ -52,10 +54,8 @@ from .requirements_file import (
 )
 from .universal.matrix import Matrix
 from .universal.resolve import (
+    ResolveFork,
     UniversalResult,
-    _conflict_forks,
-    _ConflictFork,
-    _ResolveFork,
     resolve_universal,
 )
 
@@ -414,7 +414,7 @@ def _load_extra_requirements(path: Path, selected: Sequence[str]) -> list[Requir
 def _fork_requirement_strings(
     path: Path,
     base_dependencies: Sequence[Requirement],
-    fork: _ConflictFork,
+    fork: ConflictFork,
 ) -> list[str]:
     """Fold one conflict fork's active groups and extras onto the base deps.
 
@@ -593,15 +593,15 @@ def resolve_universal_pyproject(
         ),
         implementations=config.matrix.implementations,
     )
-    forks: list[_ResolveFork] = []
-    for fork in _conflict_forks(extras, groups, config.conflicts):
+    forks: list[ResolveFork] = []
+    for fork in conflict_forks(extras, groups, config.conflicts):
         if len(fork.active_groups) > 1:
             _check_group_disjointness_across_tuples(
                 _load_group_requirements_by_group(path, fork.active_groups),
                 matrix.expand(),
             )
         forks.append(
-            _ResolveFork(
+            ResolveFork(
                 selection=fork.selection,
                 requirements=_fork_requirement_strings(path, base_dependencies, fork),
             )
@@ -611,7 +611,6 @@ def resolve_universal_pyproject(
     )
     return resolve_universal(
         matrix=matrix,
-        requirements=forks[0].requirements,
         forks=forks,
         transport=transport,
         offline=offline,
