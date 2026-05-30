@@ -290,6 +290,8 @@ def _build_per_tuple_packages(lock_input: LockInput, lock_dir: Path) -> list[Pac
     ``lock_input.env_base_names``: a dep required by every member but
     not by the base is absent from that set, so it keeps the
     membership clause and does not install when no member is selected.
+    See :class:`LockInput.env_base_names` for the missing-signature
+    contract.
     """
     out: list[Package] = []
     by_name = _group_by_name(lock_input.per_tuple_pins)
@@ -470,7 +472,16 @@ def _build_marker(
     unconditional = len(present) >= total_tuples
     for signature, labels in by_env.items():
         base_names = env_base_names.get(signature)
-        is_base = base_names is None or name in base_names
+
+        # When no base pass ran for an env (``base_names is None``),
+        # treat the dep as base only if no fork ran either; with forks
+        # but no base attribution, base status is unknowable and the
+        # safe answer is to keep the membership OR.
+        is_base = (
+            (name in base_names)
+            if base_names is not None
+            else (env_fork_counts[signature] == 1)
+        )
         if len(labels) >= env_fork_counts[signature] and is_base:
             contributions.append(
                 tuple_env_markers.get(labels[0], tuple_markers[labels[0]])

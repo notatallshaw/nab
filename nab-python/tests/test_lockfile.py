@@ -627,14 +627,22 @@ class TestConflictForkBaseDepMarkers:
     def _lock_input(self) -> LockInput:
         linux_env_marker = Marker('sys_platform == "linux"')
         win_env_marker = Marker('sys_platform == "win32"')
+
+        # ``tensorrt`` is a member-only dep: required by every fork but
+        # absent from the base resolve, so its membership clause must
+        # survive even though it appears in both linux forks at the same
+        # version.  Without ``env_base_names`` the writer cannot tell
+        # this case apart from a true base dep.
         per_tuple = {
             "linux-cpu": {
                 "basepkg": _index_pin(name="basepkg", version="1.0"),
+                "tensorrt": _index_pin(name="tensorrt", version="1.0"),
                 "torch": _index_pin(name="torch", version="2.0+cpu"),
                 "universal": _index_pin(name="universal", version="9.0"),
             },
             "linux-gpu": {
                 "basepkg": _index_pin(name="basepkg", version="1.0"),
+                "tensorrt": _index_pin(name="tensorrt", version="1.0"),
                 "torch": _index_pin(name="torch", version="2.0+gpu"),
                 "universal": _index_pin(name="universal", version="9.0"),
             },
@@ -665,6 +673,17 @@ class TestConflictForkBaseDepMarkers:
             "win-cpu": self._WIN_ENV,
             "win-gpu": self._WIN_ENV,
         }
+
+        # Mirror the resolver shape: a base pass ran for both envs and
+        # told the writer which deps install regardless of which member
+        # is selected.  ``tensorrt`` is intentionally absent.
+        linux_sig = tuple(sorted(self._LINUX_ENV.items()))
+        win_sig = tuple(sorted(self._WIN_ENV.items()))
+        env_base_names = {
+            linux_sig: frozenset({"basepkg", "universal"}),
+            win_sig: frozenset({"universal"}),
+        }
+
         conflicts = (
             ConflictSet(
                 members=(
@@ -679,6 +698,7 @@ class TestConflictForkBaseDepMarkers:
             tuple_markers=tuple_markers,
             tuple_env_markers=tuple_env_markers,
             tuple_environments=tuple_environments,
+            env_base_names=env_base_names,
             extras=("cpu", "gpu"),
             conflicts=conflicts,
         )
@@ -708,10 +728,185 @@ class TestConflictForkBaseDepMarkers:
         assert '"cpu" in extras' in str(cpu.marker)
         assert '"gpu" in extras' in str(gpu.marker)
 
+    def test_member_only_dep_present_in_every_fork_keeps_membership(self) -> None:
+        """A dep required by every fork but absent from the base resolve
+        keeps its membership OR, so it does not install when no member
+        is selected (at_most_one permits zero)."""
+        pylock = build_pylock(self._lock_input())
+        tensorrt = next(p for p in pylock.packages if str(p.name) == "tensorrt")
+        marker = tensorrt.marker
+        assert marker is not None
+        assert '"cpu" in extras' in str(marker)
+        assert '"gpu" in extras' in str(marker)
+        assert not marker.evaluate({"sys_platform": "linux", "extras": frozenset()})
+        assert marker.evaluate({"sys_platform": "linux", "extras": frozenset({"cpu"})})
+
     def test_fully_universal_dep_has_no_marker(self) -> None:
         pylock = build_pylock(self._lock_input())
         universal = next(p for p in pylock.packages if str(p.name) == "universal")
         assert universal.marker is None
+
+
+class TestConflictForksWithoutBaseAttribution:
+    """When conflict forks ran but the caller did not supply base
+    requirements, ``env_base_names`` is empty.  Base status is unknowable,
+    so a dep present in every fork at the same version must keep its
+    membership OR rather than collapse to an env-only marker."""
+
+    _ENV: ClassVar[dict[str, str]] = {"sys_platform": "linux"}
+
+    def _lock_input(self) -> LockInput:
+        per_tuple = {
+            "cpu": {"shared": _index_pin(name="shared", version="1.0")},
+            "gpu": {"shared": _index_pin(name="shared", version="1.0")},
+        }
+        env_marker = Marker('sys_platform == "linux"')
+        tuple_markers = {
+            "cpu": Marker('sys_platform == "linux" and "cpu" in extras'),
+            "gpu": Marker('sys_platform == "linux" and "gpu" in extras'),
+        }
+        conflicts = (
+            ConflictSet(
+                members=(
+                    ConflictMember(ConflictKind.EXTRA, "cpu"),
+                    ConflictMember(ConflictKind.EXTRA, "gpu"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            ),
+        )
+        return LockInput(
+            per_tuple_pins=per_tuple,
+            tuple_markers=tuple_markers,
+            tuple_env_markers={"cpu": env_marker, "gpu": env_marker},
+            tuple_environments={"cpu": self._ENV, "gpu": self._ENV},
+            extras=("cpu", "gpu"),
+            conflicts=conflicts,
+        )
+
+    def test_shared_pin_keeps_membership_or(self) -> None:
+        pylock = build_pylock(self._lock_input())
+        shared = next(p for p in pylock.packages if str(p.name) == "shared")
+        marker = shared.marker
+        assert marker is not None
+        assert '"cpu" in extras' in str(marker)
+        assert '"gpu" in extras' in str(marker)
+        assert not marker.evaluate({"sys_platform": "linux", "extras": frozenset()})
+
+
+class TestConflictForkRequiresPythonMerge:
+    """Same-(name, version, index) pins from different conflict forks
+    collapse to one entry; ``requires_python`` survives only when every
+    fork agreed, matching :func:`_common_requires_python`'s rule."""
+
+    _ENV: ClassVar[dict[str, str]] = {"sys_platform": "linux"}
+
+    @staticmethod
+    def _pin(requires_python: str | None) -> IndexPin:
+        return IndexPin(
+            name="foo",
+            version="1.0",
+            index="pypi",
+            sdist=_sdist("foo", "1.0"),
+            wheels=(_wheel("foo", "1.0"),),
+            requires_python=requires_python,
+        )
+
+    def _build(self, cpu_req: str | None, gpu_req: str | None) -> LockInput:
+        return LockInput(
+            per_tuple_pins={
+                "cpu": {"foo": self._pin(cpu_req)},
+                "gpu": {"foo": self._pin(gpu_req)},
+            },
+            tuple_markers={
+                "cpu": Marker('"cpu" in extras'),
+                "gpu": Marker('"gpu" in extras'),
+            },
+            tuple_environments={"cpu": self._ENV, "gpu": self._ENV},
+            extras=("cpu", "gpu"),
+            conflicts=(
+                ConflictSet(
+                    members=(
+                        ConflictMember(ConflictKind.EXTRA, "cpu"),
+                        ConflictMember(ConflictKind.EXTRA, "gpu"),
+                    ),
+                    policy=ConflictPolicy.AT_MOST_ONE,
+                ),
+            ),
+        )
+
+    def test_disagreeing_requires_python_drops_to_none(self) -> None:
+        pylock = build_pylock(self._build(">=3.10", ">=3.11"))
+        foo = next(p for p in pylock.packages if str(p.name) == "foo")
+        assert foo.requires_python is None
+
+    def test_agreeing_requires_python_survives_the_merge(self) -> None:
+        pylock = build_pylock(self._build(">=3.10", ">=3.10"))
+        foo = next(p for p in pylock.packages if str(p.name) == "foo")
+        assert foo.requires_python is not None
+        assert str(foo.requires_python) == ">=3.10"
+
+
+class TestConflictForkByteStability:
+    """``write_lock`` is deterministic across multiple conflict forks.
+
+    Every per-tuple grouping, marker disjunction, and wheel listing must
+    pivot through sorted iteration so two calls on the same
+    :class:`LockInput` produce byte-identical TOML.  Without this, a
+    re-resolve that only re-orders dict insertion would write a
+    spurious diff."""
+
+    _LINUX: ClassVar[dict[str, str]] = {
+        "sys_platform": "linux",
+        "platform_machine": "x86_64",
+    }
+    _DARWIN: ClassVar[dict[str, str]] = {
+        "sys_platform": "darwin",
+        "platform_machine": "arm64",
+    }
+
+    def _two_by_two(self) -> LockInput:
+        # Two pythons (linux, darwin) x two conflict members (cpu, gpu).
+        per_tuple: dict[str, dict[str, IndexPin]] = {}
+        tuple_markers: dict[str, Marker] = {}
+        tuple_env_markers: dict[str, Marker] = {}
+        tuple_environments: dict[str, dict[str, str]] = {}
+        env_marker = {
+            "linux": Marker('sys_platform == "linux"'),
+            "darwin": Marker('sys_platform == "darwin"'),
+        }
+        env_dict = {"linux": self._LINUX, "darwin": self._DARWIN}
+        for sys_plat in ("darwin", "linux"):
+            for member in ("gpu", "cpu"):
+                label = f"{sys_plat}-{member}"
+                per_tuple[label] = {
+                    "torch": _index_pin(name="torch", version=f"2.0+{member}"),
+                    "universal": _index_pin(name="universal", version="9.0"),
+                }
+                tuple_markers[label] = Marker(
+                    f'sys_platform == "{sys_plat}" and "{member}" in extras'
+                )
+                tuple_env_markers[label] = env_marker[sys_plat]
+                tuple_environments[label] = env_dict[sys_plat]
+        return LockInput(
+            per_tuple_pins=per_tuple,
+            tuple_markers=tuple_markers,
+            tuple_env_markers=tuple_env_markers,
+            tuple_environments=tuple_environments,
+            extras=("cpu", "gpu"),
+            conflicts=(
+                ConflictSet(
+                    members=(
+                        ConflictMember(ConflictKind.EXTRA, "cpu"),
+                        ConflictMember(ConflictKind.EXTRA, "gpu"),
+                    ),
+                    policy=ConflictPolicy.AT_MOST_ONE,
+                ),
+            ),
+        )
+
+    def test_pylock_byte_stable_across_two_writes(self) -> None:
+        lock_input = self._two_by_two()
+        assert write_lock(lock_input) == write_lock(lock_input)
 
 
 class TestBuildPylockReturnsValidPylock:
@@ -1322,6 +1517,35 @@ class TestMarkerDisjointness:
                 groups=(),
             )
         assert "[tool.nab].conflicts" not in str(excinfo.value)
+
+    def test_membership_markers_do_not_collide_at_empty_extras(self) -> None:
+        """``'cpu' in frozenset()`` must evaluate False through
+        :class:`Marker`, so the empty-extras point in
+        :func:`_enumerate_valid_points` never makes two membership-gated
+        entries collide.  Asserts the marker-eval primitive in isolation
+        so a later switch to a different Marker library cannot regress
+        this without breaking a focused test."""
+        empty_context = {
+            "sys_platform": "linux",
+            "extras": frozenset(),
+            "dependency_groups": frozenset(),
+        }
+        assert not Marker("'cpu' in extras").evaluate(empty_context)
+        assert not Marker("'gpu' in extras").evaluate(empty_context)
+
+        # End-to-end: two membership-gated entries are not a collision at
+        # the empty-extras witness even without a declared conflict, so
+        # the validator stays silent on that point.
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "'cpu' in extras"),
+                self._pkg("foo", "2.0", "'gpu' in extras"),
+            ],
+            environments=self._LINUX,
+            extras=("cpu", "gpu"),
+            groups=(),
+            exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "gpu")})],
+        )
 
     def test_conflict_member_normalization_prunes_collision(self) -> None:
         # The declared member name and the marker literal differ by

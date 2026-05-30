@@ -278,7 +278,14 @@ class LockInput:
     (and so drops its membership clause) when its name is listed here;
     a dependency required by every member but not by the base keeps the
     membership clause, so it does not install when no member is
-    selected.  Empty when no conflict fork ran.
+    selected.
+
+    The missing-key vs empty-frozenset distinction is load-bearing:
+    a missing signature means no base pass ran for that env (with no
+    forks: the no-conflict path; with forks: base status unknowable,
+    so the membership OR is kept).  An empty frozenset means the base
+    pass ran and produced zero pins, so every dep is member-only.
+    Empty when no conflict fork ran.
 
     ``environments`` is the lockfile-level set of permitted
     environments (PEP 751 ``environments``).  Independent from
