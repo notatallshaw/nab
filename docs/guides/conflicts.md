@@ -146,17 +146,3 @@ The cost row reflects how the matrix model works (see
 [universal resolution](universal.md)): it re-resolves per fork. In
 return the lock stays within PEP 751, with no custom conflict-marker
 grammar.
-
-## Re-resolving from a previous lock
-
-A conflict-forked lock records, per environment, which deps came from
-the base resolve. That attribution is what tells the writer which
-pins keep their membership marker. If a future re-resolve feeds the
-old lock back as preferences while the member selection changes, the
-recorded attribution becomes stale: a dep that was member-only in the
-old lock may be base-required under the new selection (or vice
-versa), and the membership markers in the new emit would mis-shape.
-nab does not feed lock output back as preferences today, so the trap
-is latent. Any future seed-pins path that does should refuse a
-forked input lock until the attribution is re-derived from the new
-resolve rather than reused.
