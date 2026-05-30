@@ -191,6 +191,60 @@ class TestSpecificModeConflictValidation:
                 python_version="3.12.0",
             )
 
+    def test_umbrella_extra_transitively_co_selecting_conflict_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """A two-hop umbrella reaches both members through an intermediate
+        extra.  ``expand_self_extras`` walks the closure, so the
+        co-selection check must trip even though ``all`` does not
+        directly name cpu or gpu."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["numpy==2.1.2"]\n'
+            'gpu = ["numpy==2.0.0"]\n'
+            'middle = ["x[cpu]", "x[gpu]"]\n'
+            'all = ["x[middle]"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+        )
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("all",),
+                python_version="3.12.0",
+            )
+
+    def test_umbrella_group_transitively_co_selecting_conflict_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """A two-hop ``include-group`` chain reaches both members.
+        ``expand_group_includes`` must follow the chain so the
+        co-selection check fires for the umbrella alone."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            'b22 = ["black==22.0"]\n'
+            'b23 = ["black==23.0"]\n'
+            'middle = [{ include-group = "b22" },'
+            ' { include-group = "b23" }]\n'
+            'all-tools = [{ include-group = "middle" }]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ group = "b22" }, { group = "b23" }]]\n'
+        )
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                groups=("all-tools",),
+                python_version="3.12.0",
+            )
+
     def test_umbrella_extra_reaching_one_member_resolves(self, tmp_path: Path) -> None:
         """An umbrella reaching only one member stays satisfiable."""
         pyproject = tmp_path / "pyproject.toml"
@@ -1290,6 +1344,34 @@ class TestResolveUniversalPyproject:
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
             resolve_universal_pyproject(pyproject, groups=["all-tools"])
+        mock_universal.assert_not_called()
+
+    def test_universal_umbrella_extra_transitively_co_selects_conflict_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """The two-hop transitive case in universal mode.  No fork can
+        separate cpu and gpu when both flow from one umbrella, so the
+        resolve is refused before any tuple runs."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            'middle = ["x[cpu]", "x[gpu]"]\n'
+            'all = ["x[middle]"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="cannot be selected together"),
+        ):
+            resolve_universal_pyproject(pyproject, extras=["all"])
         mock_universal.assert_not_called()
 
     @patch("nab_python.resolve.resolve_universal")

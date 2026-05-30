@@ -194,6 +194,31 @@ class TestConflictForks:
         assert len(set(selections)) == 6
         assert all(list(s) == sorted(s) for s in selections)
 
+    def test_three_by_three_cartesian_product_is_nine(self) -> None:
+        """Three sets-of-three is the headline conflicts.md example: nine forks
+        with one member chosen from each set."""
+        forks = conflict_forks(
+            (),
+            (
+                "black22",
+                "black23",
+                "black24",
+                "isort5",
+                "isort6",
+                "isort7",
+            ),
+            (
+                _group_set("black22", "black23", "black24"),
+                _group_set("isort5", "isort6", "isort7"),
+            ),
+        )
+        assert len(forks) == 9
+        for fork in forks:
+            chosen = {name for _kind, name in fork.selection}
+            assert len(chosen & {"black22", "black23", "black24"}) == 1
+            assert len(chosen & {"isort5", "isort6", "isort7"}) == 1
+        assert len({f.selection for f in forks}) == 9
+
     def test_non_conflicting_selection_present_in_every_fork(self) -> None:
         forks = conflict_forks(
             ("docs", "cpu", "gpu"), ("dev",), (_extra_set("cpu", "gpu"),)
@@ -450,6 +475,73 @@ class TestConflictForkBaseNames:
         # ``base`` is a true base dep, so it installs unconditionally.
         base = by_name["base"]
         assert base.marker is None or base.marker.evaluate(neither)
+
+    def test_member_only_dep_across_two_sets_keeps_membership_or(self) -> None:
+        """Two engaged sets x one member-only dep present in all four forks.
+
+        Tests the conflicts.md claim that "When a single dependency is
+        required by every member of two or more engaged sets at once, its
+        marker is the conjunction across those sets" by checking the
+        emitted marker references every one of the four memberships.
+        """
+        coordinator = _make_coordinator(
+            {
+                "base": [_make_wheel("1.0", package="base")],
+                "crossdep": [_make_wheel("5.0", package="crossdep")],
+            }
+        )
+
+        # cpu x mon, cpu x debug, gpu x mon, gpu x debug = 4 forks, each
+        # pulling crossdep; base is the only true base-pass dep.
+        forks = [
+            ResolveFork((("extra", "cpu"), ("group", "mon")), ["base", "crossdep"]),
+            ResolveFork((("extra", "cpu"), ("group", "debug")), ["base", "crossdep"]),
+            ResolveFork((("extra", "gpu"), ("group", "mon")), ["base", "crossdep"]),
+            ResolveFork((("extra", "gpu"), ("group", "debug")), ["base", "crossdep"]),
+        ]
+        result = resolve_with_coordinator(
+            coordinator,
+            self._matrix(),
+            forks=forks,
+            base_requirements=["base"],
+            build_policy=BuildPolicy.NEVER,
+        )
+        assert result.success
+
+        lock_input = merge_universal_lock_inputs(
+            result,
+            extras=("cpu", "gpu"),
+            dependency_groups=("mon", "debug"),
+            conflicts=(
+                _extra_set("cpu", "gpu"),
+                _group_set("mon", "debug"),
+            ),
+        )
+        pylock = build_pylock(lock_input)
+        crossdep = next(p for p in pylock.packages if str(p.name) == "crossdep")
+
+        # The marker must reference every membership clause; the empty
+        # selection must not install, but any single (extra, group) pair
+        # in the cartesian product must.
+        marker_text = str(crossdep.marker)
+        for clause in (
+            '"cpu" in extras',
+            '"gpu" in extras',
+            '"mon" in dependency_groups',
+            '"debug" in dependency_groups',
+        ):
+            assert clause in marker_text
+
+        env = dict(result.tuple_results[0].tuple_.environment)
+        none = {**env, "extras": frozenset(), "dependency_groups": frozenset()}
+        assert crossdep.marker is not None
+        assert not crossdep.marker.evaluate(none)
+        for extras, groups in (
+            (frozenset({"cpu"}), frozenset({"mon"})),
+            (frozenset({"gpu"}), frozenset({"debug"})),
+        ):
+            ctx = {**env, "extras": extras, "dependency_groups": groups}
+            assert crossdep.marker.evaluate(ctx)
 
     def test_base_pass_failure_fails_the_result(self) -> None:
         # The base requirement cannot resolve (no such version), so the

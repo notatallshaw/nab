@@ -637,6 +637,61 @@ class TestLockCommandUniversal:
         err = capsys.readouterr().err
         assert f"Error: {hint}\n" in err
 
+    def test_universal_lock_collision_without_conflict_shows_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """End-to-end: two conflict-fork pins for the same package with no
+        ``[tool.nab].conflicts`` declared.  The real validator fires
+        :class:`DisjointnessError` and the hint reaches stderr, so a
+        rename of the hint text breaks this test."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+
+        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        results: list[TupleResult] = []
+        for member, version in (("cpu", "1.0"), ("gpu", "2.0")):
+            tup = MatrixTuple(
+                python_version="3.11",
+                platform_id="linux_x86_64",
+                environment=dict(_LINUX_311_ENV),
+                platform_spec=PlatformSpec("linux_x86_64"),
+                selection=(("extra", member),),
+            )
+            results.append(
+                TupleResult(
+                    tuple_=tup,
+                    success=True,
+                    pins={"foo": V(version)},
+                    error=None,
+                    lock_input=LockInput(pins={"foo": _foo_index_pin(version)}),
+                )
+            )
+        result = UniversalResult(matrix=matrix, tuple_results=results)
+
+        with (
+            patch("nab.cli.resolve_universal_pyproject", return_value=result),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(
+                pyproject,
+                output=tmp_path / "pylock.toml",
+                extras=("cpu", "gpu"),
+            )
+        err = capsys.readouterr().err
+        assert "Error:" in err
+        assert "foo" in err
+        assert "[tool.nab].conflicts" in err
+
     def test_unsupported_vcs_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

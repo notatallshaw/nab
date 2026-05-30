@@ -233,6 +233,19 @@ class TestConflicts:
         with pytest.raises(ConfigError, match="more than once"):
             read_pyproject_config(path)
 
+    def test_duplicate_member_after_canonicalisation_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """``{extra="CPU"}`` and ``{extra="cpu"}`` canonicalise to one name,
+        so the dedup check relies on :class:`ConflictMember` comparing under
+        canonical form rather than raw text."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "CPU" }, { extra = "cpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="more than once"):
+            read_pyproject_config(path)
+
     def test_unknown_policy_key_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
