@@ -880,6 +880,65 @@ class TestLockCommandUniversal:
         assert "foo==1.0" in out
         assert "# py311-windows_amd64: FAILED" in out
 
+    def test_print_blocks_surfaces_base_pass_failure(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # All per-tuple pins succeeded, the first env's base pass
+        # succeeded, and the second env's base pass failed: only the
+        # failed one renders a ``base/<label>: FAILED`` block.  One
+        # tuple has to fail so ``_print_universal_blocks`` runs at all.
+        pyproject = _universal_pyproject(tmp_path)
+        env_a = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment=dict(_LINUX_311_ENV),
+            platform_spec=PlatformSpec("linux_x86_64"),
+        )
+        env_b = MatrixTuple(
+            python_version="3.12",
+            platform_id="linux_x86_64",
+            environment={**_LINUX_311_ENV, "python_version": "3.12"},
+            platform_spec=PlatformSpec("linux_x86_64"),
+        )
+        bad_tr = TupleResult(
+            tuple_=env_b,
+            success=False,
+            pins={},
+            error="conflict",
+            lock_input=None,
+        )
+        ok_tr = TupleResult(
+            tuple_=env_a,
+            success=True,
+            pins={"foo": V("1.0")},
+            lock_input=LockInput(pins={"foo": _foo_index_pin()}),
+        )
+        ok_base = TupleResult(tuple_=env_a, success=True, pins={"foo": V("1.0")})
+        bad_base = TupleResult(
+            tuple_=env_b,
+            success=False,
+            pins={},
+            error="ResolutionError: base unresolvable\nDiagnostics: missing",
+        )
+        mixed = UniversalResult(
+            matrix=Matrix(python=">=3.11,<3.13", platforms=("linux_x86_64",)),
+            tuple_results=[ok_tr, bad_tr],
+            base_results=[ok_base, bad_base],
+        )
+        with (
+            patch("nab.cli.resolve_universal_pyproject", return_value=mixed),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes")
+        out = capsys.readouterr().out
+        assert "foo==1.0" in out
+        # The succeeded base pass contributes no block: only the failed
+        # one renders, and the per-tuple labels stay distinct.
+        assert "# base/py311-linux_x86_64: FAILED" not in out
+        assert "# base/py312-linux_x86_64: FAILED" in out
+        assert "#   ResolutionError: base unresolvable" in out
+        assert "#   Diagnostics: missing" in out
+
     def test_template_writes_one_file_per_tuple(self, tmp_path: Path) -> None:
         """``{python_version}`` in --output expands to one file per tuple."""
         pyproject = _universal_pyproject(tmp_path)
