@@ -18,7 +18,7 @@ import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from .._conflict_kind import KIND_EXTRA, KIND_GROUP
+from .._conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
@@ -111,14 +111,17 @@ def validate_marker_disjointness(
     if not same_name_entries:
         return
     candidate_markers = [pkg.marker for entries in same_name_entries for pkg in entries]
-    relevant_extras = _restrict_to_referenced(extras, candidate_markers, "extras")
-    relevant_groups = _restrict_to_referenced(
-        groups, candidate_markers, "dependency_groups"
-    )
+
+    extras_var = MARKER_VARIABLE_FOR_KIND[KIND_EXTRA]
+    groups_var = MARKER_VARIABLE_FOR_KIND[KIND_GROUP]
+
+    relevant_extras = _restrict_to_referenced(extras, candidate_markers, extras_var)
+    relevant_groups = _restrict_to_referenced(groups, candidate_markers, groups_var)
     points = list(
         _enumerate_valid_points(relevant_extras, relevant_groups, exclusive_groups)
     )
     distinct_environments = _distinct_environments(environments)
+
     # Iterate env x point outermost so the install context dict is built
     # once per (env, point) and reused across every same-name entry group.
     # The earlier per-entry-group rebuild scaled M*D*P dicts where M is the
@@ -127,8 +130,8 @@ def validate_marker_disjointness(
     for env_label, env_dict in distinct_environments:
         for extra_subset, group_subset in points:
             context: dict[str, str | AbstractSet[str]] = dict(env_dict)
-            context["extras"] = frozenset(extra_subset)
-            context["dependency_groups"] = frozenset(group_subset)
+            context[extras_var] = frozenset(extra_subset)
+            context[groups_var] = frozenset(group_subset)
             for entries in same_name_entries:
                 matching = [
                     pkg for pkg in entries if _marker_holds(pkg.marker, context)
@@ -266,8 +269,12 @@ def _conflict_hint(
     declaration permits co-selection, so the validator still raises and
     the user has to switch to an exclusive policy to prune the point.
     """
-    extras_driven = _membership_drives_point(markers, "extras", extra_subset)
-    groups_driven = _membership_drives_point(markers, "dependency_groups", group_subset)
+    extras_driven = _membership_drives_point(
+        markers, MARKER_VARIABLE_FOR_KIND[KIND_EXTRA], extra_subset
+    )
+    groups_driven = _membership_drives_point(
+        markers, MARKER_VARIABLE_FOR_KIND[KIND_GROUP], group_subset
+    )
     if not (extras_driven or groups_driven):
         return ""
 

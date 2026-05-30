@@ -300,6 +300,21 @@ class TestMatrixTuple:
         )
         assert t.label == "py311-linux_x86_64-group-black22.group-isort5"
 
+    def test_mixed_extra_and_group_selection_label_format(self) -> None:
+        """Mixed selections sort ``extra-`` before ``group-`` lexically.
+
+        Pins the exact byte-stable label shape so renaming
+        :data:`KIND_EXTRA` / :data:`KIND_GROUP` cannot silently flip the
+        sort order and rewrite every label dict key.
+        """
+        t = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment={},
+            selection=(("group", "isort5"), ("extra", "cpu")),
+        )
+        assert t.label == "py311-linux_x86_64-extra-cpu.group-isort5"
+
     def test_label_distinguishes_selections_that_split_on_hyphen(self) -> None:
         """Names containing ``-`` cannot collide two selections into one label.
 
