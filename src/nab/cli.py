@@ -22,6 +22,7 @@ import tyro
 from tyro.extras import SubcommandApp
 
 from nab._version import __version__
+from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python.config import (
     ConfigError,
@@ -30,6 +31,7 @@ from nab_python.config import (
 )
 from nab_python.download import download_lock  # noqa: F401 - re-exported for tests
 from nab_python.lockfile import (
+    DisjointnessError,  # noqa: F401 - referenced as _cli.DisjointnessError in _lock
     MissingHashError,
     MissingSdistError,
     write_lock,  # noqa: F401 - re-exported for tests
@@ -76,7 +78,7 @@ _DEFAULT_OUTPUT: dict[str, str] = {
     "requirements-without-hashes": "requirements.txt",
 }
 
-_TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}")
+TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}")
 
 # Conventional KeyboardInterrupt exit code: 128 + SIGINT(2).
 _SIGINT_EXIT_CODE = 130
@@ -147,7 +149,7 @@ def _load_config(
         sys.exit(1)
 
 
-def _is_stdout(output: Path | None) -> bool:
+def is_stdout(output: Path | None) -> bool:
     return output is not None and str(output) == "-"
 
 
@@ -202,6 +204,9 @@ def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwar
     except ConfigError as e:
         sys.stderr.write(f"Error in [tool.nab]: {e}\n")
         sys.exit(1)
+    except HttpError as e:
+        sys.stderr.write(f"{failure_prefix}: {e}\n")
+        sys.exit(1)
 
 
 def _resolve_universal(
@@ -244,6 +249,15 @@ def _resolve_universal(
     except LookupError as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
+    except ConfigError as e:
+        sys.stderr.write(f"Error in [tool.nab]: {e}\n")
+        sys.exit(1)
+    except HttpError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
+    except UnsupportedVcsError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
 
     if not result.success:
         _print_universal_blocks(result)
@@ -262,6 +276,15 @@ def _print_universal_blocks(result: UniversalResult) -> None:
             continue
         blocks.append(f"# {label}")
         blocks.extend(f"{name}=={tr.pins[name]}" for name in sorted(tr.pins))
+
+    # Surface base-pass failures so a successful tuple set does not
+    # mask a missing base attribution.
+    for br in result.base_results:
+        if br.success:
+            continue
+        blocks.append(f"# base/{br.tuple_.label}: FAILED")
+        blocks.extend(f"#   {raw}" for raw in (br.error or "").splitlines())
+
     sys.stdout.write("\n".join(blocks) + "\n")
 
 

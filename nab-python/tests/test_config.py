@@ -9,11 +9,19 @@ import pytest
 
 from nab_python.config import (
     ConfigError,
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSelectionError,
+    ConflictSet,
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
+    conflict_exclusion_groups,
+    conflict_forks,
     read_pyproject_config,
     read_pyproject_lock_anchor,
+    validate_conflict_minimums,
 )
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexOverride
 from nab_python.provider import (
@@ -52,6 +60,10 @@ class TestDefaults:
         path = write(tmp_path, "[tool.nab]\n")
         config = read_pyproject_config(path)
         assert config == NabProjectConfig()
+
+    def test_non_table_tool_returns_defaults(self, tmp_path: Path) -> None:
+        path = write(tmp_path, 'tool = "not-a-table"\n')
+        assert read_pyproject_config(path) == NabProjectConfig()
 
 
 class TestMode:
@@ -93,6 +105,392 @@ class TestTopLevelKeys:
         path = write(tmp_path, '[tool]\nnab = "a string, not a table"\n')
         with pytest.raises(ConfigError, match="\\[tool.nab\\] must be a table"):
             read_pyproject_config(path)
+
+
+class TestConflictRendering:
+    """The ``__str__`` formats are codified in the conflicts guide."""
+
+    def test_member_renders_kind_then_quoted_name(self) -> None:
+        member = ConflictMember(ConflictKind.EXTRA, "cpu")
+        assert str(member) == "extra 'cpu'"
+
+    def test_group_member_renders_kind_then_quoted_name(self) -> None:
+        member = ConflictMember(ConflictKind.GROUP, "black22")
+        assert str(member) == "group 'black22'"
+
+    def test_set_renders_policy_then_parenthesised_members(self) -> None:
+        s = ConflictSet(
+            members=(
+                ConflictMember(ConflictKind.EXTRA, "cpu"),
+                ConflictMember(ConflictKind.EXTRA, "gpu"),
+            ),
+            policy=ConflictPolicy.AT_MOST_ONE,
+        )
+        assert str(s) == "at_most_one (extra 'cpu', extra 'gpu')"
+
+
+class TestConflicts:
+    def test_default_is_empty(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\n")
+        assert read_pyproject_config(path).conflicts == ()
+
+    def test_explicit_empty_list_is_empty(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\nconflicts = []\n")
+        assert read_pyproject_config(path).conflicts == ()
+
+    def test_bare_set_defaults_to_at_most_one(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n',
+        )
+        conflicts = read_pyproject_config(path).conflicts
+        assert conflicts == (
+            ConflictSet(
+                members=(
+                    ConflictMember(ConflictKind.EXTRA, "cpu"),
+                    ConflictMember(ConflictKind.EXTRA, "gpu"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            ),
+        )
+
+    def test_group_members(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = ["
+            '[{ group = "black22" }, { group = "black23" }, { group = "black24" }]]\n',
+        )
+        (conflict_set,) = read_pyproject_config(path).conflicts
+        assert conflict_set.members == (
+            ConflictMember(ConflictKind.GROUP, "black22"),
+            ConflictMember(ConflictKind.GROUP, "black23"),
+            ConflictMember(ConflictKind.GROUP, "black24"),
+        )
+
+    def test_mixed_extra_and_group_in_one_set(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { group = "gpu" }]]\n',
+        )
+        (conflict_set,) = read_pyproject_config(path).conflicts
+        assert conflict_set.members == (
+            ConflictMember(ConflictKind.EXTRA, "cpu"),
+            ConflictMember(ConflictKind.GROUP, "gpu"),
+        )
+
+    def test_names_are_canonicalised(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "My_Extra" }, { extra = "other" }]]\n',
+        )
+        (conflict_set,) = read_pyproject_config(path).conflicts
+        assert conflict_set.members[0] == ConflictMember(ConflictKind.EXTRA, "my-extra")
+
+    def test_policy_table_forms(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [\n"
+            '  { exactly_one = [{ extra = "cpu" }, { extra = "gpu" }] },\n'
+            '  { at_least_one = [{ group = "a" }, { group = "b" }] },\n'
+            "]\n",
+        )
+        conflicts = read_pyproject_config(path).conflicts
+        assert [c.policy for c in conflicts] == [
+            ConflictPolicy.EXACTLY_ONE,
+            ConflictPolicy.AT_LEAST_ONE,
+        ]
+
+    def test_multiple_independent_sets(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [\n"
+            '  [{ extra = "a" }, { extra = "b" }],\n'
+            '  [{ group = "x" }, { group = "y" }],\n'
+            "]\n",
+        )
+        assert len(read_pyproject_config(path).conflicts) == 2
+
+    def test_must_be_array(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nconflicts = "cpu"\n')
+        with pytest.raises(ConfigError, match="conflicts must be an array"):
+            read_pyproject_config(path)
+
+    def test_set_must_be_array_or_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\nconflicts = [1]\n")
+        with pytest.raises(ConfigError, match=r"conflicts\[0\] must be an array"):
+            read_pyproject_config(path)
+
+    def test_fewer_than_two_members_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nconflicts = [[{ extra = "cpu" }]]\n')
+        with pytest.raises(ConfigError, match="at least 2 members"):
+            read_pyproject_config(path)
+
+    def test_duplicate_member_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { extra = "cpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="more than once"):
+            read_pyproject_config(path)
+
+    def test_duplicate_member_after_canonicalisation_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """``{extra="CPU"}`` and ``{extra="cpu"}`` canonicalise to one name,
+        so the dedup check relies on :class:`ConflictMember` comparing under
+        canonical form rather than raw text."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "CPU" }, { extra = "cpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="more than once"):
+            read_pyproject_config(path)
+
+    def test_unknown_policy_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [{ any_two = [{ extra = "a" }, { extra = "b" }] }]\n',
+        )
+        with pytest.raises(ConfigError, match="unknown conflict-set key"):
+            read_pyproject_config(path)
+
+    def test_two_policy_keys_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [{ at_most_one = [{ extra = "
+            '"a" }, { extra = "b" }], exactly_one = [{ extra = "c" }, '
+            '{ extra = "d" }] }]\n',
+        )
+        with pytest.raises(ConfigError, match="exactly one policy"):
+            read_pyproject_config(path)
+
+    def test_member_must_be_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nconflicts = [["cpu", "gpu"]]\n')
+        with pytest.raises(ConfigError, match="must be a table"):
+            read_pyproject_config(path)
+
+    def test_member_unknown_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ feature = "cpu" }, { extra = "gpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="unknown member key"):
+            read_pyproject_config(path)
+
+    def test_member_must_name_exactly_one_kind(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "cpu", group = "g" }, '
+            '{ extra = "gpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="exactly one of"):
+            read_pyproject_config(path)
+
+    def test_member_name_must_be_nonempty_string(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "" }, { extra = "gpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="non-empty string"):
+            read_pyproject_config(path)
+
+    def test_member_name_must_be_string(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [[{ extra = 1 }, { extra = 2 }]]\n",
+        )
+        with pytest.raises(ConfigError, match="non-empty string"):
+            read_pyproject_config(path)
+
+    def test_policy_members_must_be_array(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nconflicts = [{ at_most_one = "cpu" }]\n')
+        with pytest.raises(ConfigError, match="must be an array of members"):
+            read_pyproject_config(path)
+
+    def test_member_in_two_sets_rejected(self, tmp_path: Path) -> None:
+        # An overlapping member has no well-defined fork; the cartesian
+        # product would otherwise produce a degenerate (cpu, cpu) combo.
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [\n"
+            '  [{ extra = "cpu" }, { extra = "gpu" }],\n'
+            '  [{ extra = "cpu" }, { extra = "tpu" }],\n'
+            "]\n",
+        )
+        with pytest.raises(ConfigError, match="more than one set"):
+            read_pyproject_config(path)
+
+    def test_same_name_extra_and_group_in_two_sets_allowed(
+        self, tmp_path: Path
+    ) -> None:
+        # An extra and a group sharing a name are distinct members.
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconflicts = [\n"
+            '  [{ extra = "cpu" }, { extra = "gpu" }],\n'
+            '  [{ group = "cpu" }, { group = "tpu" }],\n'
+            "]\n",
+        )
+        assert len(read_pyproject_config(path).conflicts) == 2
+
+    def test_malformed_member_name_rejected(self, tmp_path: Path) -> None:
+        # ``...`` canonicalises to ``-``, which is not a valid name.
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconflicts = [[{ extra = "..." }, { extra = "gpu" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="not a valid extra/group name"):
+            read_pyproject_config(path)
+
+    def test_default_groups_conflict_with_at_most_one_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'default-groups = ["black22", "black23"]\n'
+            'conflicts = [[{ group = "black22" }, { group = "black23" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="declared mutually exclusive"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_default_groups_conflict_with_exactly_one_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'default-groups = ["black22", "black23"]\n'
+            "conflicts = [{ exactly_one = "
+            '[{ group = "black22" }, { group = "black23" }] }]\n',
+        )
+        with pytest.raises(ConfigError, match="declared mutually exclusive"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_default_groups_one_member_allowed(self, tmp_path: Path) -> None:
+        # A single default group in an exclusive set is fine.
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'default-groups = ["black22"]\n'
+            'conflicts = [[{ group = "black22" }, { group = "black23" }]]\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.default_groups == ("black22",)
+
+    def test_default_groups_skip_at_least_one(self, tmp_path: Path) -> None:
+        # at-least-one does not forbid co-selection, so two default
+        # groups in such a set are allowed.
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'default-groups = ["a", "b"]\n'
+            'conflicts = [{ at_least_one = [{ group = "a" }, { group = "b" }] }]\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.default_groups == ("a", "b")
+
+
+def _extras_set(policy: ConflictPolicy, *names: str) -> ConflictSet:
+    """Build an extras-only ConflictSet for tests."""
+    return ConflictSet(
+        members=tuple(ConflictMember(ConflictKind.EXTRA, n) for n in names),
+        policy=policy,
+    )
+
+
+class TestConflictExclusionGroups:
+    def test_drops_at_least_one_keeps_others(self) -> None:
+        groups = conflict_exclusion_groups(
+            (
+                _extras_set(ConflictPolicy.AT_MOST_ONE, "a", "b"),
+                _extras_set(ConflictPolicy.AT_LEAST_ONE, "c", "d"),
+                _extras_set(ConflictPolicy.EXACTLY_ONE, "e", "f"),
+            )
+        )
+        assert groups == (
+            frozenset({("extra", "a"), ("extra", "b")}),
+            frozenset({("extra", "e"), ("extra", "f")}),
+        )
+        flat = {member for group in groups for member in group}
+        assert ("extra", "c") not in flat
+        assert ("extra", "d") not in flat
+
+
+class TestValidateConflictMinimums:
+    _set = staticmethod(_extras_set)
+
+    def test_exactly_one_empty_raises(self) -> None:
+        with pytest.raises(ConflictSelectionError, match="exactly one"):
+            validate_conflict_minimums(
+                (self._set(ConflictPolicy.EXACTLY_ONE, "cpu", "gpu"),), (), ()
+            )
+
+    def test_at_least_one_empty_raises(self) -> None:
+        with pytest.raises(ConflictSelectionError, match="at least one"):
+            validate_conflict_minimums(
+                (self._set(ConflictPolicy.AT_LEAST_ONE, "cpu", "gpu"),), (), ()
+            )
+
+    def test_at_most_one_empty_does_not_raise(self) -> None:
+        validate_conflict_minimums(
+            (self._set(ConflictPolicy.AT_MOST_ONE, "cpu", "gpu"),), (), ()
+        )
+
+    def test_does_not_reject_co_selection(self) -> None:
+        # The minimum check never forbids two active members.
+        validate_conflict_minimums(
+            (self._set(ConflictPolicy.EXACTLY_ONE, "cpu", "gpu"),),
+            ("cpu", "gpu"),
+            (),
+        )
+
+    def test_selection_canonicalised(self) -> None:
+        # An active member spelled differently still satisfies the minimum.
+        validate_conflict_minimums(
+            (self._set(ConflictPolicy.EXACTLY_ONE, "fast-io", "gpu"),),
+            ("Fast_IO",),
+            (),
+        )
+
+    def test_at_least_one_message_lists_members_not_policy(self) -> None:
+        # The message renders the members and cites the policy and key
+        # once; no duplicate ``at_least_one`` prefix from ConflictSet.__str__.
+        with pytest.raises(ConflictSelectionError) as info:
+            validate_conflict_minimums(
+                (self._set(ConflictPolicy.AT_LEAST_ONE, "cpu", "gpu"),), (), ()
+            )
+        message = str(info.value)
+        assert "at least one of extra 'cpu', extra 'gpu' must be selected" in message
+        assert "declared at_least_one in [tool.nab].conflicts" in message
+        # No double policy word.
+        assert message.count("at_least_one") == 1
+
+    def test_exactly_one_message_lists_members_not_policy(self) -> None:
+        with pytest.raises(ConflictSelectionError) as info:
+            validate_conflict_minimums(
+                (self._set(ConflictPolicy.EXACTLY_ONE, "cpu", "gpu"),), (), ()
+            )
+        message = str(info.value)
+        assert "exactly one of extra 'cpu', extra 'gpu' must be selected" in message
+        assert "declared exactly_one in [tool.nab].conflicts" in message
+
+
+class TestConflictForks:
+    def test_exactly_one_co_selection_forks_per_member(self) -> None:
+        cs = ConflictSet(
+            members=(
+                ConflictMember(ConflictKind.EXTRA, "cpu"),
+                ConflictMember(ConflictKind.EXTRA, "gpu"),
+            ),
+            policy=ConflictPolicy.EXACTLY_ONE,
+        )
+        forks = conflict_forks(("cpu", "gpu"), (), (cs,))
+        assert [f.selection for f in forks] == [
+            (("extra", "cpu"),),
+            (("extra", "gpu"),),
+        ]
+        assert [f.active_extras for f in forks] == [("cpu",), ("gpu",)]
 
 
 class TestConstraints:
@@ -324,6 +722,10 @@ class TestReadLockAnchor:
 
     def test_non_table_tool_nab_returns_none(self, tmp_path: Path) -> None:
         path = write(tmp_path, 'tool = {nab = "oops"}\n')
+        assert read_pyproject_lock_anchor(path) is None
+
+    def test_non_table_tool_returns_none(self, tmp_path: Path) -> None:
+        path = write(tmp_path, 'tool = "oops"\n')
         assert read_pyproject_lock_anchor(path) is None
 
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:
@@ -1037,51 +1439,41 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="matrix.python must be a string"):
             read_pyproject_config(path)
 
-    def _body_with_python(self, python: str) -> str:
+    def _python_axis_body(self, python: str) -> str:
         return (
             "[tool.nab]\n"
             'mode = "universal"\n'
             "[tool.nab.matrix]\n"
-            f"python = {python}\n"
+            f"python = {python!r}\n"
             'platforms = ["linux_x86_64"]\n'
         )
 
-    def test_python_patch_level_rejected(self, tmp_path: Path) -> None:
-        body = self._body_with_python('">=3.11.5"')
-        with pytest.raises(ConfigError, match="minor \\(language\\) versions only"):
-            read_pyproject_config(write(tmp_path, body))
-
-    def test_python_exact_patch_rejected(self, tmp_path: Path) -> None:
-        body = self._body_with_python('"==3.11.0"')
-        with pytest.raises(ConfigError, match="minor \\(language\\) versions only"):
-            read_pyproject_config(write(tmp_path, body))
-
-    def test_python_minor_wildcard_allowed(self, tmp_path: Path) -> None:
-        matrix = read_pyproject_config(
-            write(tmp_path, self._body_with_python('"==3.11.*"'))
-        ).matrix
+    @pytest.mark.parametrize(
+        "python",
+        [">=3.11", "==3.12", "<3.13", "~=3.11", ">=3.11,<3.14", "==3.11.*", ">=3", ""],
+    )
+    def test_python_minor_axis_accepted(self, tmp_path: Path, python: str) -> None:
+        path = write(tmp_path, self._python_axis_body(python))
+        matrix = read_pyproject_config(path).matrix
         assert matrix is not None
-        assert matrix.python == "==3.11.*"
+        assert matrix.python == python
 
-    def test_python_not_a_specifier_rejected(self, tmp_path: Path) -> None:
-        body = self._body_with_python('"3.11"')
-        with pytest.raises(ConfigError, match="matrix.python must be a PEP 440"):
-            read_pyproject_config(write(tmp_path, body))
+    @pytest.mark.parametrize(
+        "python",
+        [">=3.11.5", "==3.10.2", "~=3.11.5", "==3.11.0", "==3.11a1", "!=3.11.5"],
+    )
+    def test_python_finer_than_minor_rejected(
+        self, tmp_path: Path, python: str
+    ) -> None:
+        path = write(tmp_path, self._python_axis_body(python))
+        with pytest.raises(ConfigError, match=r"language \(minor\) version"):
+            read_pyproject_config(path)
 
-    def test_python_arbitrary_equality_rejected(self, tmp_path: Path) -> None:
-        # An arbitrary-equality pin like ===nightly parses as a specifier but
-        # matches no known Python, so the eager matrix expansion rejects it.
-        with pytest.raises(ConfigError, match="No known Python versions match"):
-            read_pyproject_config(
-                write(tmp_path, self._body_with_python('"===nightly"'))
-            )
-
-    def test_python_empty_specifier_allowed(self, tmp_path: Path) -> None:
-        matrix = read_pyproject_config(
-            write(tmp_path, self._body_with_python('""'))
-        ).matrix
-        assert matrix is not None
-        assert matrix.python == ""
+    @pytest.mark.parametrize("python", ["3.11", "garbage", "===foo"])
+    def test_python_unparseable_rejected(self, tmp_path: Path, python: str) -> None:
+        path = write(tmp_path, self._python_axis_body(python))
+        with pytest.raises(ConfigError):
+            read_pyproject_config(path)
 
     def test_empty_platforms(self, tmp_path: Path) -> None:
         path = write(
@@ -1153,6 +1545,34 @@ class TestMatrix:
             '"3.11" = 1\n',
         )
         with pytest.raises(ConfigError, match="python-patches entries must be string"):
+            read_pyproject_config(path)
+
+    def test_python_patches_minor_mismatch_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[tool.nab.matrix.python-patches]\n"
+            '"3.11" = "3.12.1"\n',
+        )
+        with pytest.raises(ConfigError, match="not a patch release of '3.11'"):
+            read_pyproject_config(path)
+
+    def test_python_patches_unparseable_version_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[tool.nab.matrix.python-patches]\n"
+            '"3.11" = "not-a-version"\n',
+        )
+        with pytest.raises(ConfigError, match="python-patches expects version"):
             read_pyproject_config(path)
 
 
@@ -1233,6 +1653,23 @@ class TestBuildPolicyPackage:
         config = read_pyproject_config(path, discover_workspace=False)
         assert "foo-bar" in config.build_policy_overrides
         assert "Foo-Bar" not in config.build_policy_overrides
+
+
+class TestTrustUnverifiedSdistDeps:
+    def test_default_is_false(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\n")
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.trust_unverified_sdist_deps is False
+
+    def test_true_round_trip(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\ntrust-unverified-sdist-deps = true\n")
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.trust_unverified_sdist_deps is True
+
+    def test_non_bool_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\ntrust-unverified-sdist-deps = "yes"\n')
+        with pytest.raises(ConfigError, match="must be a boolean"):
+            read_pyproject_config(path, discover_workspace=False)
 
 
 class TestWorkspace:
@@ -1322,6 +1759,21 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(member)
         assert config.local_sources == (LocalSource(name="alpha", path=str(explicit)),)
 
+    def test_shadowed_member_excluded_from_workspace_member_names(
+        self, tmp_path: Path
+    ) -> None:
+        member = self._ws(tmp_path)
+        explicit = (tmp_path / "explicit-alpha").resolve()
+        member.write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n'
+            "[tool.nab]\n"
+            "[[tool.nab.local-sources]]\n"
+            'name = "alpha"\n'
+            f'path = "{explicit.as_posix()}"\n',
+        )
+        config = read_pyproject_config(member)
+        assert config.workspace_member_names == frozenset()
+
     def test_workspace_promotes_never_to_build_local_and_logs(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -1380,3 +1832,29 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(member)
         assert config.local_sources == ()
         assert config.build_policy is BuildPolicy.BUILD_LOCAL
+
+    def test_root_conflicts_and_defaults_do_not_flow_to_member(
+        self, tmp_path: Path
+    ) -> None:
+        # Per the documented scope, only workspace members and the
+        # build-policy floor cross the root/member boundary; conflicts,
+        # default-groups, and constraints stay scoped to the file being
+        # locked.
+        ws_pyproject = tmp_path / "pyproject.toml"
+        ws_pyproject.write_text(
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab]\n"
+            'default-groups = ["dev"]\n'
+            'constraints = ["foo<2"]\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n',
+        )
+        member_dir = tmp_path / "pkg"
+        member_dir.mkdir()
+        member = member_dir / "pyproject.toml"
+        member.write_text('[project]\nname = "alpha"\nversion = "0"\n')
+        config = read_pyproject_config(member)
+        assert config.default_groups == ()
+        assert config.constraints == ()
+        assert config.conflicts == ()

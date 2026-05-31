@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.version import Version
 from .wheel_selection import PlatformSpec
@@ -97,7 +98,16 @@ _IMPLEMENTATION_PREFIX: dict[str, str] = {"cpython": "py", "pypy": "pp"}
 
 @dataclass(frozen=True)
 class MatrixTuple:
-    """A single point in the universal-resolution matrix."""
+    """A single point in the universal-resolution matrix.
+
+    ``selection`` records the conflict-fork this tuple belongs to: a
+    tuple of ``(kind, name)`` members (``kind`` is ``"extra"`` or
+    ``"group"``) that are active in this fork's resolve.  It is empty
+    for an unforked resolve.  When set, it both disambiguates the
+    label and adds an ``'name' in extras`` / ``'name' in
+    dependency_groups`` clause to the marker so the lockfile entry
+    fires only when the user selects that member.
+    """
 
     python_version: str
     platform_id: str
@@ -109,6 +119,7 @@ class MatrixTuple:
     )
     implementation: str = "cpython"
     multi_implementation: bool = field(default=False, hash=False, compare=False)
+    selection: tuple[tuple[str, str], ...] = ()
 
     @property
     def label(self) -> str:
@@ -116,23 +127,43 @@ class MatrixTuple:
 
         Uses the interpreter prefix (``py`` for CPython, ``pp`` for
         PyPy) so tuples that differ only by implementation get distinct
-        labels.
+        labels, and appends the platform spec's floor discriminator so
+        two specs sharing a ``platform_id`` do not collapse.  A
+        conflict-fork ``selection`` then appends each active member as
+        ``kind-name``, joined by ``.``, in sorted order so the forks of
+        one python/platform stay distinct, e.g.
+        ``py311-linux_x86_64-group-black22.group-isort5``.  The ``.``
+        separator and the ``kind`` prefix keep the label unambiguous:
+        canonical member names are ``[a-z0-9-]`` only, so a name can
+        never introduce a ``.``, and two selections that differ only in
+        how their names split on ``-`` (or an extra versus a group of
+        the same name) cannot collide into one label and silently
+        overwrite each other's pins when the label is used as a dict
+        key.
         """
         prefix = _IMPLEMENTATION_PREFIX[self.implementation]
-        return f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
+        base = (
+            f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
+            + self.platform_spec.label_suffix()
+        )
+        if not self.selection:
+            return base
+        suffix = ".".join(f"{kind}-{name}" for kind, name in sorted(self.selection))
+        return f"{base}-{suffix}"
 
     @property
-    def marker_string(self) -> str:
-        """Return a PEP 508 marker that selects this tuple.
+    def environment_marker_string(self) -> str:
+        """Return the PEP 508 marker for this tuple's environment only.
 
         Combines ``python_version``, ``sys_platform``, and
-        ``platform_machine`` into a conjunction.  Universal lockfiles
-        attach this to each per-tuple ``Package`` entry so an installer
-        on a matching environment picks the right pin.  When the matrix
-        models more than one implementation, every tuple constrains
-        ``implementation_name`` so the CPython and PyPy entries for the
-        same python/platform stay mutually exclusive; a sole-CPython
-        matrix omits the clause.
+        ``platform_machine``.  In a multi-implementation matrix every
+        tuple also constrains ``implementation_name`` so the CPython and
+        PyPy entries for the same python/platform stay mutually
+        exclusive; a sole-CPython matrix omits the clause.
+
+        This carries no conflict-fork ``selection``, so it is what the
+        lockfile's top-level ``environments`` list declares: the
+        platform/Python universe, not which extras or groups are active.
         """
         env = self.environment
         marker = (
@@ -142,6 +173,23 @@ class MatrixTuple:
         )
         if self.multi_implementation or self.implementation != "cpython":
             marker += f' and implementation_name == "{env["implementation_name"]}"'
+        return marker
+
+    @property
+    def marker_string(self) -> str:
+        """Return the per-package PEP 508 marker that selects this tuple.
+
+        This is :attr:`environment_marker_string` plus a bare membership
+        clause per active conflict-fork member (``'name' in extras`` for
+        an extra, ``'name' in dependency_groups`` for a group).  The
+        emit-time disjointness validator prunes the install contexts
+        that activate two members of one declared conflict, so the bare
+        clause needs no ``not in`` negation against the other members.
+        """
+        marker = self.environment_marker_string
+        for kind, name in sorted(self.selection):
+            variable = MARKER_VARIABLE_FOR_KIND[kind]
+            marker += f' and "{name}" in {variable}'
         return marker
 
 

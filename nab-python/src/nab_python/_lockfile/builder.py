@@ -9,6 +9,7 @@ be read directly without a second fetch.  This module also owns the
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, overload
@@ -18,6 +19,7 @@ import tomli
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._toml import tool_nab_section
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.utils import canonicalize_name
 
@@ -73,6 +75,12 @@ class LockInputProvider(Protocol):
     may supply a stub without inheriting the full Provider class.
     """
 
+    deps_cache: Mapping[tuple[str, Version], Mapping[str, object]]
+    """Direct dependencies per ``(canonical name, version)``."""
+
+    extra_deps_map: Mapping[tuple[str, Version], Mapping[str, Mapping[str, object]]]
+    """Per-extra dependencies per ``(canonical name, version)``."""
+
     @property
     def coordinator(self) -> _LockInputCoordinator:
         """Coordinator used to look up the index that served a listing."""
@@ -114,13 +122,14 @@ class MissingHashError(ValueError):
 
 
 class MissingSdistError(ValueError):
-    """A version pinned under sdist-install has no source distribution.
+    """A ``sdist-install`` package's pinned version has no sdist.
 
-    ``DistPolicy.SDIST_INSTALL`` drops every wheel from the lock so the
-    installer builds from source.  When the version has no sdist (it was
-    published wheel-only, or its sdist fell outside an ``uploaded-prior-to``
-    cooldown while a wheel survived), emitting the pin would write a package
-    entry with no artefacts, an uninstallable lock.  Surface it loudly.
+    Under :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` the
+    resolver may read a wheel's metadata but the lock must pin only the
+    sdist.  When the pinned version publishes wheels but no sdist, the
+    wheels are dropped and nothing is left to pin.  Surface the package
+    and version so the user can pick a version with an sdist or relax
+    the policy, rather than emitting an empty package the spec rejects.
     """
 
 
@@ -156,7 +165,8 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
             data = tomli.load(f)
     except (OSError, tomli.TOMLDecodeError):
         return None
-    raw = data.get("tool", {}).get("nab", {}).get("created-at")
+    nab = tool_nab_section(data)
+    raw = nab.get("created-at") if isinstance(nab, dict) else None
     if isinstance(raw, datetime):
         return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
     if isinstance(raw, str):
@@ -208,7 +218,7 @@ def _strip_userinfo(url: str) -> str:
     return urlunsplit(parts._replace(netloc=netloc))
 
 
-def build_lock_input_from_provider(
+def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a distinct lockfile field
     provider: LockInputProvider,
     pins: Mapping[str, Version],
     *,
@@ -218,6 +228,7 @@ def build_lock_input_from_provider(
     default_groups: Sequence[str] = (),
     created_by: str = "nab",
     indexes: Sequence[IndexConfig] = (),
+    resolved_keys: Iterable[str] = (),
 ) -> LockInput:
     """Build a :class:`LockInput` from a finished resolve.
 
@@ -229,6 +240,10 @@ def build_lock_input_from_provider(
     ``dependency_groups`` lists the PEP 735 groups whose requirements
     were folded into this resolve; ``default_groups`` is the subset
     that a default install (no ``--group`` flag) should apply.
+
+    ``resolved_keys`` is the full set of resolver result keys, including
+    ``name[extra]`` proxies; it is read to find which extras activated
+    so their edges join the forward dependency graph.
 
     All wheels and the sdist for each pinned version are recorded so
     the lockfile is portable across architectures of the same Python.
@@ -267,7 +282,51 @@ def build_lock_input_from_provider(
         extras=tuple(extras),
         dependency_groups=tuple(dependency_groups),
         default_groups=tuple(default_groups),
+        dependencies=_forward_dependency_graph(provider, pins, resolved_keys),
     )
+
+
+def _forward_dependency_graph(
+    provider: LockInputProvider,
+    pins: Mapping[str, Version],
+    resolved_keys: Iterable[str],
+) -> dict[str, tuple[str, ...]]:
+    """Build the forward dependency graph among the locked packages.
+
+    Each pinned package maps to the canonical names of its direct
+    dependencies that are themselves pinned.  Base dependencies come
+    from ``deps_cache``; an activated extra (a ``name[extra]`` key in
+    ``resolved_keys``) folds that extra's dependencies in too.  Names
+    not in ``pins`` are dropped so every edge points at a real
+    ``[[packages]]`` entry.
+    """
+    from ..provider import split_extra
+
+    activated_extras: defaultdict[str, set[str]] = defaultdict(set)
+    for key in resolved_keys:
+        base, extra = split_extra(key)
+        if extra is not None:
+            activated_extras[canonicalize_name(base)].add(extra)
+
+    pinned = {canonicalize_name(name) for name in pins}
+    graph: dict[str, tuple[str, ...]] = {}
+    for raw_name, version in pins.items():
+        canonical = canonicalize_name(raw_name)
+        cache_key = (canonical, version)
+        dep_names = {
+            canonicalize_name(split_extra(dep)[0])
+            for dep in provider.deps_cache.get(cache_key, {})
+        }
+        extra_map = provider.extra_deps_map.get(cache_key, {})
+        for extra in activated_extras.get(canonical, ()):
+            dep_names.update(
+                canonicalize_name(split_extra(dep)[0])
+                for dep in extra_map.get(extra, {})
+            )
+        dep_names &= pinned
+        if dep_names:
+            graph[canonical] = tuple(sorted(dep_names))
+    return graph
 
 
 def _index_pin_from_listing(
@@ -297,12 +356,11 @@ def _index_pin_from_listing(
     files = list(provider.dist_files_for(canonical, version))
     if provider.effective_dist_policy(canonical) is DistPolicy.SDIST_INSTALL:
         files = [f for f in files if not isinstance(f, WheelFile)]
-        if not files:
+        if not any(isinstance(f, SdistFile) for f in files):
             msg = (
-                f"{canonical} {version}: dist-policy 'sdist-install' requires a "
-                "source distribution, but none is available for this version "
-                "(it may be wheel-only, or its sdist was excluded by an "
-                "'uploaded-prior-to' cooldown)"
+                f"{canonical}=={version} has no sdist, but its dist-policy is "
+                f"'sdist-install'; pick a version that publishes an sdist or "
+                f"change dist-policy for {canonical}"
             )
             raise MissingSdistError(msg)
 
@@ -452,7 +510,10 @@ def _vcs_pin_from_source(
 
     ``bare_repo_url`` comes from ``parsed.repo_url``, which
     :meth:`VcsRequest.parse` has already separated from the ref and the
-    fragment.
+    fragment.  ``repo_url`` re-pins that bare URL to ``commit_id`` (the
+    ``git+`` prefix, ``@<sha>``, and any ``#subdirectory=`` fragment) so
+    the requirements.txt line installs the locked commit, not the ref
+    the user supplied.
     """
     from nab_index.vcs import VcsRequest
 
@@ -467,14 +528,23 @@ def _vcs_pin_from_source(
         )
         raise MissingVcsCommitError(msg)
     parsed = VcsRequest.parse(source.url)
+    # Keep the named ref only when it differs from the SHA (tag or branch case).
     requested_revision = (
         parsed.ref if parsed.ref and parsed.ref != resolved_sha else None
     )
+
+    # Compose a pinned installable URL from the parsed pieces, not from source.url,
+    # so credentials are stripped and the sha replaces any floating ref.
+    bare_repo_url = _strip_userinfo(parsed.repo_url)
+    repo_url = f"{parsed.scheme}+{bare_repo_url}@{resolved_sha}"
+    if parsed.subdirectory:
+        repo_url += f"#subdirectory={parsed.subdirectory}"
+
     return VcsPin(
         name=canonical,
         version=str(version),
-        repo_url=_strip_userinfo(source.url),
-        bare_repo_url=_strip_userinfo(parsed.repo_url),
+        repo_url=repo_url,
+        bare_repo_url=bare_repo_url,
         commit_id=resolved_sha,
         subdirectory=parsed.subdirectory or None,
         requested_revision=requested_revision,

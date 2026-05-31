@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from nab_index.transport import HttpError
 from nab_python.download import (
     DownloadEntry,
     DownloadError,
@@ -82,13 +83,15 @@ class _FakeResponse:
         return None
 
     def raise_for_status(self) -> None:
-        if self.status_code >= 400:  # pragma: no cover - happy path only
-            raise RuntimeError("HTTP error")
+        if self.status_code >= 400:
+            msg = f"HTTP {self.status_code}"
+            raise HttpError(msg)
 
 
 class _FakeTransport:
-    def __init__(self, responses: dict[str, bytes]) -> None:
+    def __init__(self, responses: dict[str, bytes], *, status_code: int = 200) -> None:
         self._responses = responses
+        self._status_code = status_code
         self.requested: list[str] = []
         self.closed = False
 
@@ -97,7 +100,9 @@ class _FakeTransport:
     ) -> _FakeResponse:
         del headers
         self.requested.append(url)
-        return _FakeResponse(content=self._responses[url])
+        return _FakeResponse(
+            content=self._responses[url], status_code=self._status_code
+        )
 
     async def aclose(self) -> None:
         self.closed = True
@@ -267,6 +272,18 @@ class TestDownloadLock:
         pin = _index_pin(wheel_sha="0" * 64)  # advertised sha is wrong
         transport = _FakeTransport({"https://example.com/foo-1.0.whl": wheel_bytes})
         with pytest.raises(DownloadError, match="sha256 mismatch"):
+            download_lock(
+                LockInput(pins={"foo": pin}),
+                transport,  # type: ignore[arg-type]
+                tmp_path,
+            )
+
+    def test_http_error_becomes_download_error(self, tmp_path: Path) -> None:
+        pin = _index_pin(wheel_sha="a" * 64)
+        transport = _FakeTransport(
+            {"https://example.com/foo-1.0.whl": b"x"}, status_code=503
+        )
+        with pytest.raises(DownloadError, match="failed to fetch foo-1.0-py3-none-any"):
             download_lock(
                 LockInput(pins={"foo": pin}),
                 transport,  # type: ignore[arg-type]

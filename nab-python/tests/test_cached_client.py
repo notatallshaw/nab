@@ -300,6 +300,48 @@ class TestZipSdistDropped:
         assert all(isinstance(f, WheelFile) for f in files)
 
 
+class TestRelativeUrlResolution:
+    """PEP 691: relative file URLs resolve against the package page."""
+
+    def test_relative_filename_resolves_against_package_page(self) -> None:
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": "foo-1.0-py3-none-any.whl",
+                },
+            ],
+        }
+        files = _parse_files(data, "https://example.com/simple/", "foo")
+        expected = "https://example.com/simple/foo/foo-1.0-py3-none-any.whl"
+        assert files[0].url == expected
+
+    def test_dot_dot_relative_url_is_normalised(self) -> None:
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": "../../packages/foo/foo-1.0-py3-none-any.whl",
+                },
+            ],
+        }
+        files = _parse_files(data, "https://example.com/simple/", "foo")
+        expected = "https://example.com/packages/foo/foo-1.0-py3-none-any.whl"
+        assert files[0].url == expected
+
+    def test_absolute_url_unchanged(self) -> None:
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": "https://files.example.com/foo-1.0-py3-none-any.whl",
+                },
+            ],
+        }
+        files = _parse_files(data, "https://example.com/simple/", "foo")
+        assert files[0].url == "https://files.example.com/foo-1.0-py3-none-any.whl"
+
+
 class TestParseHashes:
     def test_single_entry(self) -> None:
         from nab_index.client import _parse_hashes

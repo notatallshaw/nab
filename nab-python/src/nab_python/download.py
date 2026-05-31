@@ -18,8 +18,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nab_index.client import AsyncSimpleClient
+from nab_index.transport import HttpError
 
-from .lockfile import IndexPin, LockInput
+from .lockfile import IndexPin, LocalPin, LockInput, VcsPin
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -95,6 +96,11 @@ def _entries_for_pin(canonical: str, pin: PinShape) -> Iterable[DownloadEntry]:
     # Only index pins have downloadable artefacts; local and VCS pins are skipped.
     if isinstance(pin, IndexPin):
         yield from _iter_index_pin(canonical, pin)
+    elif isinstance(pin, (LocalPin, VcsPin)):
+        return
+    else:  # pragma: no cover - exhaustive
+        msg = f"unknown pin shape: {pin!r}"
+        raise TypeError(msg)
 
 
 def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:
@@ -160,7 +166,15 @@ async def _run_downloads(
                 skipped.append(target)
                 logger.info("skip %s (%s matches)", entry.filename, entry.hash_algo)
                 return
-            data = await client.download(entry.url)
+            try:
+                data = await client.download(entry.url)
+            except HttpError as exc:
+                msg = (
+                    f"{entry.package}=={entry.version}: failed to fetch"
+                    f" {entry.filename}: {exc}"
+                )
+                raise DownloadError(msg) from exc
+
             actual = hashlib.new(entry.hash_algo, data).hexdigest()
             if actual != entry.digest:
                 msg = (

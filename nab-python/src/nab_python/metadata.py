@@ -25,6 +25,7 @@ __all__ = [
     "WheelMetadata",
     "intern_version",
     "load_static_project",
+    "metadata_deps_are_static",
     "parse_metadata",
 ]
 
@@ -63,6 +64,28 @@ def load_static_project(text: str) -> dict[str, Any] | None:
 # Intersect with WheelMetadata.dynamic to detect wheels whose dep
 # declarations may change at build time.
 DEPENDENCY_FIELDS = frozenset({"requires-dist", "provides-extra"})
+
+# Metadata-Version 2.2 introduced PEP 643's Dynamic field. Earlier
+# formats give no static-deps guarantee.
+_MIN_STATIC_METADATA_VERSION = (2, 2)
+
+
+def metadata_deps_are_static(metadata: WheelMetadata) -> bool:
+    """Return True when a distribution's dependency fields are final.
+
+    Per :pep:`643` the values are trustworthy only at Metadata-Version
+    2.2 or later with no dependency field marked ``Dynamic``. Below 2.2
+    an sdist's declared dependencies may change when it is built.
+    """
+    if metadata.metadata_version is None:
+        return False
+    try:
+        major, minor = (int(p) for p in metadata.metadata_version.split(".")[:2])
+    except ValueError:
+        return False
+    if (major, minor) < _MIN_STATIC_METADATA_VERSION:
+        return False
+    return not (DEPENDENCY_FIELDS & metadata.dynamic)
 
 
 @lru_cache(maxsize=16384)

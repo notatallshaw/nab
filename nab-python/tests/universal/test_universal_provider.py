@@ -18,6 +18,7 @@ from nab_index.client import SdistFile, WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.version import Version
+from nab_python.config import NabProjectConfig
 from nab_python.fetch import InMemoryIndex
 from nab_python.provider import (
     BuildPolicy,
@@ -112,6 +113,24 @@ class TestEnvironmentOverlay:
             marker_environment={"sys_platform": "win32"},
         )
         assert provider.env_with_extra["sys_platform"] == "win32"
+
+
+class TestTrustUnverifiedSdistDeps:
+    """The trust-unverified flag is taken from ``build_config``."""
+
+    def test_defaults_false_without_build_config(self) -> None:
+        coordinator = _make_coordinator([])
+        provider = UniversalProvider(coordinator, marker_environment=_LINUX_ENV)
+        assert provider.trust_unverified_sdist_deps is False
+
+    def test_taken_from_build_config(self) -> None:
+        coordinator = _make_coordinator([])
+        provider = UniversalProvider(
+            coordinator,
+            marker_environment=_LINUX_ENV,
+            build_config=NabProjectConfig(trust_unverified_sdist_deps=True),
+        )
+        assert provider.trust_unverified_sdist_deps is True
 
 
 class TestStrategyValidation:
@@ -383,11 +402,12 @@ class TestWheelTagFiltering:
         # is the incompatible win wheel, so the version disappears.
         assert result == []
 
-    def test_incompatible_wheel_with_sdist_under_never_drops_version(self) -> None:
-        """Incompatible wheel + sdist + NEVER -> version is dropped.
+    def test_incompatible_wheel_with_sdist_under_never_kept_via_sdist(self) -> None:
+        """Incompatible wheel + sdist + NEVER -> version stays alive.
 
-        Exercises the elif=False branch in the version-survival loop:
-        sdists alone cannot save a version when builds are forbidden.
+        An sdist keeps the version alive at every build policy level: a
+        PEP 643 static sdist is read without a backend, so look-ahead,
+        not this filter, rejects the dynamic-no-fallback case.
         """
         files: list[WheelFile | SdistFile] = [
             _platform_wheel("2.0", "cp311-cp311-win_amd64"),
@@ -401,11 +421,10 @@ class TestWheelTagFiltering:
             build_policy=BuildPolicy.NEVER,
         )
         result = provider.filter_distributions("pkg", files)
-        # The win wheel is tag-incompatible; only the sdist is kept by
-        # the first pass.  Since build_policy=NEVER, the version is not
-        # admitted (we'd hit UnsupportedSdistError later anyway).
-        assert result == []
-        assert provider.excluded_versions_no_compatible_wheel == 1
+        kept_kinds = {(v, isinstance(d, WheelFile)) for v, d in result}
+        assert (Version("2.0"), False) in kept_kinds
+        assert (Version("2.0"), True) not in kept_kinds
+        assert provider.excluded_versions_no_compatible_wheel == 0
 
     def test_fetch_versions_applies_wheel_tag_filter(self) -> None:
         """Regression: the resolver path must consult the override.
@@ -419,18 +438,39 @@ class TestWheelTagFiltering:
         """
         files: list[WheelFile | SdistFile] = [
             _platform_wheel("2.0", "cp311-cp311-win_amd64"),
-            _sdist("2.0"),
         ]
         provider = UniversalProvider(
             _index_with_files(files),
             marker_environment=_LINUX_ENV,
             platform_spec=PlatformSpec("linux_x86_64"),
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            build_policy=BuildPolicy.NEVER,
         )
         result = provider.fetch_versions("pkg")
         assert result == []
         assert provider.excluded_versions_no_compatible_wheel == 1
+
+
+class TestRequiresPythonPatch:
+    """Requires-Python is evaluated against the tuple's full patch version."""
+
+    def test_dist_kept_when_patch_satisfies_requires_python(self) -> None:
+        """python_full_version 3.13.4 keeps a dist that requires >=3.13.1."""
+        env = {**_LINUX_ENV, "python_version": "3.13", "python_full_version": "3.13.4"}
+        provider = UniversalProvider(
+            _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
+            marker_environment=env,
+        )
+        result = provider.fetch_versions("pkg")
+        assert [v for v, _ in result] == [Version("1.0")]
+
+    def test_dist_excluded_when_patch_below_requires_python(self) -> None:
+        """A tuple targeting 3.13.0 excludes a >=3.13.1 dist."""
+        env = {**_LINUX_ENV, "python_version": "3.13", "python_full_version": "3.13.0"}
+        provider = UniversalProvider(
+            _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
+            marker_environment=env,
+        )
+        assert provider.fetch_versions("pkg") == []
 
 
 _FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"

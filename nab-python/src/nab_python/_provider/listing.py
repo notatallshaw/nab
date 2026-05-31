@@ -54,9 +54,12 @@ def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, Dist
     if files is None:
         event = provider.coordinator.request_listing(normalized)
         event.wait()
+        error = provider.coordinator.index.get_listing_error(normalized)
+        if error is not None:
+            raise error
         files = provider.coordinator.index.get_listing(normalized)
-    # request_listing always stores at least an empty list on completion;
-    # ``files`` is therefore non-None on the second read.
+    # A successful fetch stores at least an empty list; a failed fetch
+    # stores an error, re-raised above, so ``files`` is non-None here.
     assert files is not None
 
     # Routed through the method (not the module function) so subclass
