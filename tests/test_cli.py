@@ -23,9 +23,9 @@ from nab._lock import (
     _determine_lock_anchor,
     _emit_specific,
     _emit_universal_pylock,
-    _resolve_extra_selection,
-    _resolve_group_selection,
     lock,
+    resolve_extra_selection,
+    resolve_group_selection,
 )
 from nab.cli import (
     _default_cache_dir,
@@ -41,6 +41,7 @@ from nab_python._vendor.packaging.version import Version
 from nab_python.config import ConfigError
 from nab_python.download import DownloadError
 from nab_python.lockfile import (
+    DisjointnessError,
     IndexPin,
     LocalPin,
     LockInput,
@@ -478,6 +479,27 @@ class TestLockCommandUniversal:
             lock(pyproject, output=out)
         assert "invalid requirement" in capsys.readouterr().err
 
+    def test_config_error_during_resolve_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A ConfigError raised by the universal resolve exits 1 cleanly."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=ConfigError(
+                    "[tool.nab].conflicts names extra 'gpuu', which the project"
+                    " does not declare in [project.optional-dependencies]"
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        err = capsys.readouterr().err
+        assert "Error in [tool.nab]:" in err
+        assert "gpuu" in err
+
     def test_pylock_writes_universal_lock(self, tmp_path: Path) -> None:
         """Universal + pylock format runs the real merge + write pipeline."""
         pyproject = _universal_pyproject(tmp_path)
@@ -585,6 +607,90 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
         assert "Cannot lock" in capsys.readouterr().err
+
+    def test_pylock_disjointness_error_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A DisjointnessError during universal pylock surfaces as exit 1.
+
+        The conflict hint carried by the error reaches the user as a
+        clean ``Error: ...`` line instead of a traceback.
+        """
+        pyproject = _universal_pyproject(tmp_path)
+        hint = (
+            "foo: 2 entries fire under env='py311-linux_x86_64'. If these are"
+            " intentionally mutually exclusive, declare them in"
+            " [tool.nab].conflicts so the colliding context is pruned"
+        )
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_universal_result(success=True),
+            ),
+            patch("nab.cli.write_lock", side_effect=DisjointnessError(hint)),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        # The full hint is asserted above; the validator's own hint
+        # text is covered against the real implementation in
+        # nab-python/tests/test_lockfile.py.
+        err = capsys.readouterr().err
+        assert f"Error: {hint}\n" in err
+
+    def test_universal_lock_collision_without_conflict_shows_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """End-to-end: two conflict-fork pins for the same package with no
+        ``[tool.nab].conflicts`` declared.  The real validator fires
+        :class:`DisjointnessError` and the hint reaches stderr, so a
+        rename of the hint text breaks this test."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+
+        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        results: list[TupleResult] = []
+        for member, version in (("cpu", "1.0"), ("gpu", "2.0")):
+            tup = MatrixTuple(
+                python_version="3.11",
+                platform_id="linux_x86_64",
+                environment=dict(_LINUX_311_ENV),
+                platform_spec=PlatformSpec("linux_x86_64"),
+                selection=(("extra", member),),
+            )
+            results.append(
+                TupleResult(
+                    tuple_=tup,
+                    success=True,
+                    pins={"foo": V(version)},
+                    error=None,
+                    lock_input=LockInput(pins={"foo": _foo_index_pin(version)}),
+                )
+            )
+        result = UniversalResult(matrix=matrix, tuple_results=results)
+
+        with (
+            patch("nab.cli.resolve_universal_pyproject", return_value=result),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(
+                pyproject,
+                output=tmp_path / "pylock.toml",
+                extras=("cpu", "gpu"),
+            )
+        err = capsys.readouterr().err
+        assert "Error:" in err
+        assert "foo" in err
+        assert "[tool.nab].conflicts" in err
 
     def test_unsupported_vcs_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -828,6 +934,65 @@ class TestLockCommandUniversal:
         assert "# py311-linux_x86_64" in out
         assert "foo==1.0" in out
         assert "# py311-windows_amd64: FAILED" in out
+
+    def test_print_blocks_surfaces_base_pass_failure(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # All per-tuple pins succeeded, the first env's base pass
+        # succeeded, and the second env's base pass failed: only the
+        # failed one renders a ``base/<label>: FAILED`` block.  One
+        # tuple has to fail so ``_print_universal_blocks`` runs at all.
+        pyproject = _universal_pyproject(tmp_path)
+        env_a = MatrixTuple(
+            python_version="3.11",
+            platform_id="linux_x86_64",
+            environment=dict(_LINUX_311_ENV),
+            platform_spec=PlatformSpec("linux_x86_64"),
+        )
+        env_b = MatrixTuple(
+            python_version="3.12",
+            platform_id="linux_x86_64",
+            environment={**_LINUX_311_ENV, "python_version": "3.12"},
+            platform_spec=PlatformSpec("linux_x86_64"),
+        )
+        bad_tr = TupleResult(
+            tuple_=env_b,
+            success=False,
+            pins={},
+            error="conflict",
+            lock_input=None,
+        )
+        ok_tr = TupleResult(
+            tuple_=env_a,
+            success=True,
+            pins={"foo": V("1.0")},
+            lock_input=LockInput(pins={"foo": _foo_index_pin()}),
+        )
+        ok_base = TupleResult(tuple_=env_a, success=True, pins={"foo": V("1.0")})
+        bad_base = TupleResult(
+            tuple_=env_b,
+            success=False,
+            pins={},
+            error="ResolutionError: base unresolvable\nDiagnostics: missing",
+        )
+        mixed = UniversalResult(
+            matrix=Matrix(python=">=3.11,<3.13", platforms=("linux_x86_64",)),
+            tuple_results=[ok_tr, bad_tr],
+            base_results=[ok_base, bad_base],
+        )
+        with (
+            patch("nab.cli.resolve_universal_pyproject", return_value=mixed),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes")
+        out = capsys.readouterr().out
+        assert "foo==1.0" in out
+        # The succeeded base pass contributes no block: only the failed
+        # one renders, and the per-tuple labels stay distinct.
+        assert "# base/py311-linux_x86_64: FAILED" not in out
+        assert "# base/py312-linux_x86_64: FAILED" in out
+        assert "#   ResolutionError: base unresolvable" in out
+        assert "#   Diagnostics: missing" in out
 
     def test_template_writes_one_file_per_tuple(self, tmp_path: Path) -> None:
         """``{python_version}`` in --output expands to one file per tuple."""
@@ -1641,7 +1806,7 @@ class TestGroupAndExtraSelection:
         the inner read; the helper guards against the race.
         """
         with pytest.raises(SystemExit, match="1"):
-            _resolve_group_selection(
+            resolve_group_selection(
                 tmp_path / "missing.toml", groups=(), all_groups=True
             )
         assert "not found" in capsys.readouterr().err
@@ -1651,7 +1816,7 @@ class TestGroupAndExtraSelection:
     ) -> None:
         """Symmetric guard for ``--all-extras``."""
         with pytest.raises(SystemExit, match="1"):
-            _resolve_extra_selection(
+            resolve_extra_selection(
                 tmp_path / "missing.toml", extras=(), all_extras=True
             )
         assert "not found" in capsys.readouterr().err
@@ -1666,7 +1831,7 @@ class TestGroupAndExtraSelection:
         pyproject.write_text(
             "[project]\nname = 'x'\n[dependency-groups]\ndev = []\nlint = []\n",
         )
-        result = _resolve_group_selection(pyproject, groups=(), all_groups=True)
+        result = resolve_group_selection(pyproject, groups=(), all_groups=True)
         assert sorted(result) == ["dev", "lint"]
 
     def test_all_extras_reads_defined_extras(self, tmp_path: Path) -> None:
@@ -1680,17 +1845,17 @@ class TestGroupAndExtraSelection:
             "[project]\nname = 'x'\n"
             "[project.optional-dependencies]\ntest = []\nci = []\n",
         )
-        result = _resolve_extra_selection(pyproject, extras=(), all_extras=True)
+        result = resolve_extra_selection(pyproject, extras=(), all_extras=True)
         assert sorted(result) == ["ci", "test"]
 
     def test_no_group_selection_skips_read(self, tmp_path: Path) -> None:
-        result = _resolve_group_selection(
+        result = resolve_group_selection(
             tmp_path / "missing.toml", groups=(), all_groups=False
         )
         assert result == ()
 
     def test_no_extra_selection_skips_read(self, tmp_path: Path) -> None:
-        result = _resolve_extra_selection(
+        result = resolve_extra_selection(
             tmp_path / "missing.toml", extras=(), all_extras=False
         )
         assert result == ()
@@ -1700,7 +1865,7 @@ class TestGroupAndExtraSelection:
         pyproject.write_text(
             "[project]\nname = 'x'\n[dependency-groups]\ndev = []\nlint = []\n",
         )
-        result = _resolve_group_selection(
+        result = resolve_group_selection(
             pyproject, groups=("dev", "lint", "dev"), all_groups=False
         )
         assert result == ("dev", "lint")
@@ -1711,7 +1876,7 @@ class TestGroupAndExtraSelection:
             "[project]\nname = 'x'\n"
             "[project.optional-dependencies]\ntest = []\nci = []\n",
         )
-        result = _resolve_extra_selection(
+        result = resolve_extra_selection(
             pyproject, extras=("test", "ci", "test"), all_extras=False
         )
         assert result == ("test", "ci")
@@ -1722,7 +1887,7 @@ class TestGroupAndExtraSelection:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("dependency-groups = 'oops'\n[project]\nname = 'x'\n")
         with pytest.raises(SystemExit, match="1"):
-            _resolve_group_selection(pyproject, groups=(), all_groups=True)
+            resolve_group_selection(pyproject, groups=(), all_groups=True)
         assert "[dependency-groups] must be a table" in capsys.readouterr().err
 
     def test_explicit_groups_non_table_exits(
@@ -1731,7 +1896,7 @@ class TestGroupAndExtraSelection:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("dependency-groups = 'oops'\n[project]\nname = 'x'\n")
         with pytest.raises(SystemExit, match="1"):
-            _resolve_group_selection(pyproject, groups=("dev",), all_groups=False)
+            resolve_group_selection(pyproject, groups=("dev",), all_groups=False)
         assert "[dependency-groups] must be a table" in capsys.readouterr().err
 
     def test_all_extras_non_table_exits(
@@ -1740,7 +1905,7 @@ class TestGroupAndExtraSelection:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("[project]\nname = 'x'\noptional-dependencies = 'oops'\n")
         with pytest.raises(SystemExit, match="1"):
-            _resolve_extra_selection(pyproject, extras=(), all_extras=True)
+            resolve_extra_selection(pyproject, extras=(), all_extras=True)
         assert "[project.optional-dependencies] must be a table" in (
             capsys.readouterr().err
         )
@@ -1751,7 +1916,7 @@ class TestGroupAndExtraSelection:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text("[project]\nname = 'x'\noptional-dependencies = 'oops'\n")
         with pytest.raises(SystemExit, match="1"):
-            _resolve_extra_selection(pyproject, extras=("foo",), all_extras=False)
+            resolve_extra_selection(pyproject, extras=("foo",), all_extras=False)
         assert "[project.optional-dependencies] must be a table" in (
             capsys.readouterr().err
         )
@@ -2036,6 +2201,25 @@ class TestDownloadCommand:
             "py312-linux_x86_64",
         }
 
+    def test_universal_config_error_during_resolve_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A ConfigError out of the universal download path exits 1 cleanly."""
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=ConfigError(
+                    "exactly one of [extra 'cpu', extra 'gpu'] must be selected"
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            download(pyproject)
+        err = capsys.readouterr().err
+        assert "Error in [tool.nab]:" in err
+        assert "exactly one" in err
+
     @pytest.mark.parametrize("bad", [0, -1])
     def test_non_positive_max_concurrency_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], bad: int
@@ -2089,3 +2273,82 @@ class TestDownloadCommand:
         ):
             download(pyproject)
         assert "Download failed" in capsys.readouterr().err
+
+    def test_extras_flag_forwarded_to_resolver(self, tmp_path: Path) -> None:
+        # ``--extras`` is required for ``exactly_one`` / ``at_least_one``
+        # conflict projects; the resolver must see the selected names.
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
+            "[project.optional-dependencies]\ncpu = []\ngpu = []\n",
+        )
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            ) as mock_resolve,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, extras=("cpu",))
+        assert mock_resolve.call_args.kwargs["extras"] == ("cpu",)
+
+    def test_groups_flag_forwarded_to_resolver(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
+            "[dependency-groups]\ndev = []\n",
+        )
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            ) as mock_resolve,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, groups=("dev",))
+        assert mock_resolve.call_args.kwargs["groups"] == ("dev",)
+
+    def test_all_extras_expands_to_every_extra(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
+            "[project.optional-dependencies]\ncpu = []\ngpu = []\n",
+        )
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            ) as mock_resolve,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, all_extras=True)
+        assert set(mock_resolve.call_args.kwargs["extras"]) == {"cpu", "gpu"}
+
+    def test_all_groups_expands_to_every_group(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
+            "[dependency-groups]\ndev = []\ntest = []\n",
+        )
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            ) as mock_resolve,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, all_groups=True)
+        assert set(mock_resolve.call_args.kwargs["groups"]) == {"dev", "test"}
+
+    def test_universal_forwards_selection(self, tmp_path: Path) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_multi_tuple_universal_result(),
+            ) as mock_resolve,
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, extras=("docs",))
+        assert mock_resolve.call_args.kwargs["extras"] == ("docs",)

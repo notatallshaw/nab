@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import tomli
@@ -13,13 +14,14 @@ from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 from ._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
     from pathlib import Path
 
     from ._vendor.packaging.ranges import VersionRange
 
 __all__ = [
     "InvalidProjectRequirementError",
+    "expand_group_includes",
     "expand_self_extras",
     "raise_for_unsatisfiable",
     "read_pyproject_dependencies",
@@ -183,6 +185,45 @@ def expand_self_extras(
                 for sub in req.extras
                 if canonicalize_name(sub) not in seen
             )
+    return out
+
+
+def expand_group_includes(
+    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    selected: Sequence[str],
+) -> list[str]:
+    """Return ``selected`` plus every group reached through ``include-group``.
+
+    PEP 735 lets one group pull in another with
+    ``{include-group = "other"}``.  A conflict declared on a group must
+    see the groups an umbrella group includes, so the membership test
+    runs over the transitive closure rather than the literal selection.
+    Group names compare canonicalised (PEP 503), matching the loaders.
+
+    Unknown or cyclic includes are tolerated here;
+    :func:`resolve_groups_to_requirements` raises on them when the
+    requirements themselves are loaded.
+    """
+    canonical_groups: dict[str, list[str | Mapping[str, str]]] = {}
+    for name, entries in groups.items():
+        canonical_groups.setdefault(canonicalize_name(name), []).extend(entries)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    worklist = [canonicalize_name(s) for s in selected]
+    while worklist:
+        group = worklist.pop(0)
+        if group in seen:
+            continue
+        seen.add(group)
+        out.append(group)
+        for entry in canonical_groups.get(group, ()):
+            if isinstance(entry, Mapping):
+                include = entry.get("include-group")
+                # A malformed (non-string) include is left for the group
+                # loader to report when the requirements are read.
+                if isinstance(include, str):
+                    worklist.append(canonicalize_name(include))
     return out
 
 

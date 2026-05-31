@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ._vendor.packaging.markers import Marker
+    from .config import ConflictSet
 
 
 __all__ = [
@@ -264,6 +265,28 @@ class LockInput:
     ``per_tuple_pins``) to the PEP 508 marker that selects that
     tuple.  The writer uses these to build per-package markers.
 
+    ``tuple_env_markers`` maps each tuple label to its
+    environment-only marker (no conflict-fork membership clause).
+    A base dependency present in every fork of an environment emits
+    this marker so it installs even when no conflicting member is
+    selected; with no conflict forks it equals ``tuple_markers``.
+
+    ``env_base_names`` maps an environment signature
+    (``tuple(sorted(env.items()))``) to the canonical names that the
+    base (no-member) resolve produced for that environment.  A package
+    present in every conflict fork only counts as a base dependency
+    (and so drops its membership clause) when its name is listed here;
+    a dependency required by every member but not by the base keeps the
+    membership clause, so it does not install when no member is
+    selected.
+
+    The missing-key vs empty-frozenset distinction is load-bearing:
+    a missing signature means no base pass ran for that env (with no
+    forks: the no-conflict path; with forks: base status unknowable,
+    so the membership OR is kept).  An empty frozenset means the base
+    pass ran and produced zero pins, so every dep is member-only.
+    Empty when no conflict fork ran.
+
     ``environments`` is the lockfile-level set of permitted
     environments (PEP 751 ``environments``).  Independent from
     ``tuple_markers``; intended for declaring the universe.
@@ -276,7 +299,11 @@ class LockInput:
     pins: Mapping[str, PinShape] = field(default_factory=dict)
     per_tuple_pins: Mapping[str, Mapping[str, PinShape]] = field(default_factory=dict)
     tuple_markers: Mapping[str, Marker] = field(default_factory=dict)
+    tuple_env_markers: Mapping[str, Marker] = field(default_factory=dict)
     tuple_environments: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]] = field(
+        default_factory=dict
+    )
     environments: list[Marker] = field(default_factory=list)
     requires_python: str | None = None
     created_by: str = "nab"
@@ -284,3 +311,7 @@ class LockInput:
     dependency_groups: tuple[str, ...] = ()
     default_groups: tuple[str, ...] = ()
     provenance: Provenance | None = None
+    conflicts: tuple[ConflictSet, ...] = ()
+    """Declared ``[tool.nab].conflicts``.  Prunes the disjointness
+    validator's install-context universe so a per-fork lock (one entry
+    per mutually-exclusive extra/group) validates."""

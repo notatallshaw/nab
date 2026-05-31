@@ -11,6 +11,7 @@ from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConfigError,
+    ConflictSelectionError,
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
@@ -50,6 +51,385 @@ V = Version
 _FAKE_TRANSPORT = MagicMock(name="FakeTransport")
 
 _FORTY = "0123456789abcdef0123456789abcdef01234567"
+
+
+class TestSpecificModeConflictValidation:
+    """A declared conflict fails fast in specific mode, before any network."""
+
+    def test_co_selecting_conflicting_extras_raises(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["numpy==2.1.2"]\n'
+            'gpu = ["numpy==2.0.0"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+        )
+        # No FetchCoordinator patch: the validation must raise before any
+        # network work is attempted.
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("cpu", "gpu"),
+                python_version="3.12.0",
+            )
+
+    def test_single_extra_under_conflict_resolves(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("1.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            result = resolve_pyproject(
+                pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
+            )
+        # The selected extra's pin reached the Provider as a root
+        # requirement; the unselected extra's contradictory pin did not.
+        root_reqs = mock_provider_cls.call_args.kwargs["root_requirements"]
+        assert "foo" in root_reqs
+        assert V("1.0") in root_reqs["foo"]
+        assert V("2.0") not in root_reqs["foo"]
+        assert result.pins == {"foo": V("1.0")}
+
+    def test_unknown_conflict_member_raises(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpuu" }]]\n'
+        )
+        # No FetchCoordinator patch: the existence check raises before
+        # any network work is attempted.
+        with pytest.raises(ConfigError, match="gpuu"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("cpu",),
+                python_version="3.12.0",
+            )
+
+    def test_unknown_group_member_raises(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            'a = ["foo==1.0"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ group = "a" }, { group = "missing" }]]\n'
+        )
+        with pytest.raises(ConfigError, match="missing"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                groups=("a",),
+                python_version="3.12.0",
+            )
+
+    def test_umbrella_extra_co_selecting_conflict_raises(self, tmp_path: Path) -> None:
+        """An umbrella extra self-referencing both members fails fast."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["numpy==2.1.2"]\n'
+            'gpu = ["numpy==2.0.0"]\n'
+            'all = ["x[cpu]", "x[gpu]"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+        )
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("all",),
+                python_version="3.12.0",
+            )
+
+    def test_umbrella_group_co_selecting_conflict_raises(self, tmp_path: Path) -> None:
+        """A group whose include-group reaches both members fails fast."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            'b22 = ["black==22.0"]\n'
+            'b23 = ["black==23.0"]\n'
+            'all-tools = [{ include-group = "b22" },'
+            ' { include-group = "b23" }]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ group = "b22" }, { group = "b23" }]]\n'
+        )
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                groups=("all-tools",),
+                python_version="3.12.0",
+            )
+
+    def test_umbrella_extra_transitively_co_selecting_conflict_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """A two-hop umbrella reaches both members through an intermediate
+        extra.  ``expand_self_extras`` walks the closure, so the
+        co-selection check must trip even though ``all`` does not
+        directly name cpu or gpu."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["numpy==2.1.2"]\n'
+            'gpu = ["numpy==2.0.0"]\n'
+            'middle = ["x[cpu]", "x[gpu]"]\n'
+            'all = ["x[middle]"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+        )
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("all",),
+                python_version="3.12.0",
+            )
+
+    def test_umbrella_group_transitively_co_selecting_conflict_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """A two-hop ``include-group`` chain reaches both members.
+        ``expand_group_includes`` must follow the chain so the
+        co-selection check fires for the umbrella alone."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            'b22 = ["black==22.0"]\n'
+            'b23 = ["black==23.0"]\n'
+            'middle = [{ include-group = "b22" },'
+            ' { include-group = "b23" }]\n'
+            'all-tools = [{ include-group = "middle" }]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ group = "b22" }, { group = "b23" }]]\n'
+        )
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                groups=("all-tools",),
+                python_version="3.12.0",
+            )
+
+    def test_umbrella_extra_reaching_one_member_resolves(self, tmp_path: Path) -> None:
+        """An umbrella reaching only one member stays satisfiable."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            'accel = ["x[cpu]"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("1.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            result = resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("accel",),
+                python_version="3.12.0",
+            )
+        # Reaching here means the conflict check did not raise; cpu's dep
+        # is pulled in through the self-reference.
+        assert result.pins["foo"] == V("1.0")
+
+    def test_specific_mode_exactly_one_with_no_member_raises(
+        self, tmp_path: Path
+    ) -> None:
+        # ``exactly_one`` requires at least one member active; with no
+        # ``--extras`` flag the resolve fails fast before any network work.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            "cpu = []\n"
+            "gpu = []\n"
+            "[tool.nab]\n"
+            "conflicts = ["
+            '{ exactly_one = [{ extra = "cpu" }, { extra = "gpu" }] }'
+            "]\n"
+        )
+        with pytest.raises(ConflictSelectionError, match="exactly one"):
+            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+    def test_specific_mode_at_least_one_with_no_member_raises(
+        self, tmp_path: Path
+    ) -> None:
+        # ``at_least_one`` requires at least one member active; with no
+        # ``--extras`` flag the resolve fails fast before any network work.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            "cpu = []\n"
+            "gpu = []\n"
+            "[tool.nab]\n"
+            "conflicts = ["
+            '{ at_least_one = [{ extra = "cpu" }, { extra = "gpu" }] }'
+            "]\n"
+        )
+        with pytest.raises(ConflictSelectionError, match="at least one"):
+            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+    def test_specific_mode_exactly_one_with_one_member_resolves(
+        self, tmp_path: Path
+    ) -> None:
+        # The happy path for exactly_one: one member selected, resolve runs.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "[tool.nab]\n"
+            "conflicts = ["
+            '{ exactly_one = [{ extra = "cpu" }, { extra = "gpu" }] }'
+            "]\n"
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("1.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            result = resolve_pyproject(
+                pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
+            )
+        assert result.pins == {"foo": V("1.0")}
+
+    def test_default_groups_satisfy_exactly_one(self, tmp_path: Path) -> None:
+        # ``default-groups`` activates ``a`` on every default install, so
+        # the exactly-one minimum is met without any ``--groups`` flag.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            'a = ["foo==1.0"]\n'
+            "b = []\n"
+            "[tool.nab]\n"
+            'default-groups = ["a"]\n'
+            "conflicts = ["
+            '{ exactly_one = [{ group = "a" }, { group = "b" }] }'
+            "]\n"
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("1.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            result = resolve_pyproject(
+                pyproject, _FAKE_TRANSPORT, python_version="3.12.0"
+            )
+        assert result.pins == {"foo": V("1.0")}
+
+    def test_default_groups_deps_are_loaded(self, tmp_path: Path) -> None:
+        # ``default-groups`` deps reach the resolver even without ``--groups``.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            'dev = ["bar==2.0"]\n'
+            "[tool.nab]\n"
+            'default-groups = ["dev"]\n'
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("2.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        root_reqs = mock_provider_cls.call_args.kwargs["root_requirements"]
+        assert "bar" in root_reqs
+
+    def test_default_groups_plus_cli_violate_exclusion(self, tmp_path: Path) -> None:
+        # ``default-groups = ["a"]`` plus ``--groups b`` activates both
+        # members of an at-most-one set, so the exclusion check trips.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[dependency-groups]\n"
+            "a = []\n"
+            "b = []\n"
+            "[tool.nab]\n"
+            'default-groups = ["a"]\n'
+            'conflicts = [[{ group = "a" }, { group = "b" }]]\n'
+        )
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                groups=("b",),
+                python_version="3.12.0",
+            )
 
 
 class TestResolvePyproject:
@@ -719,7 +1099,10 @@ class TestResolveUniversalPyproject:
         kwargs = mock_resolve_universal.call_args.kwargs
         assert kwargs["matrix"].python == ">=3.11,<3.13"
         assert kwargs["matrix"].platforms == ("linux_x86_64", "macos_arm64")
-        assert kwargs["requirements"] == ["foo"]
+        # No conflicts: a single unforked fork carrying the base deps.
+        (fork,) = kwargs["forks"]
+        assert fork.selection == ()
+        assert fork.requirements == ["foo"]
 
     @patch("nab_python.resolve.resolve_universal")
     def test_passes_python_patches_when_set(
@@ -765,6 +1148,332 @@ class TestResolveUniversalPyproject:
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
         with pytest.raises(UnsupportedModeError, match="requires mode = 'universal'"):
             resolve_universal_pyproject(pyproject)
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_co_selected_members_build_multiple_forks(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """Two co-selected conflicting extras fork into two resolves."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject, extras=["cpu", "gpu"])
+        forks = mock_resolve_universal.call_args.kwargs["forks"]
+        assert {f.selection for f in forks} == {
+            (("extra", "cpu"),),
+            (("extra", "gpu"),),
+        }
+        by_selection = {f.selection: f.requirements for f in forks}
+        assert by_selection[(("extra", "cpu"),)] == ["base", "torch==2.0+cpu"]
+        assert by_selection[(("extra", "gpu"),)] == ["base", "torch==2.0+gpu"]
+
+    def test_exactly_one_with_no_member_raises(self, tmp_path: Path) -> None:
+        """A universal exactly-one set with no active member raises."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [{ exactly_one = [{ extra = "cpu" },'
+            ' { extra = "gpu" }] }]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="exactly one"),
+        ):
+            resolve_universal_pyproject(pyproject)
+        mock_universal.assert_not_called()
+
+    def test_at_least_one_with_no_member_raises(self, tmp_path: Path) -> None:
+        """A universal at-least-one set with no active member raises."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [{ at_least_one = [{ extra = "cpu" },'
+            ' { extra = "gpu" }] }]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="at least one"),
+        ):
+            resolve_universal_pyproject(pyproject)
+        mock_universal.assert_not_called()
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_at_most_one_empty_does_not_raise(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """An at-most-one set with no member selected is fine."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject)
+        (fork,) = mock_resolve_universal.call_args.kwargs["forks"]
+        assert fork.selection == ()
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_co_selection_does_not_raise_minimum(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """Co-selecting an exactly-one set forks rather than raising."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [{ exactly_one = [{ extra = "cpu" },'
+            ' { extra = "gpu" }] }]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject, extras=["cpu", "gpu"])
+        forks = mock_resolve_universal.call_args.kwargs["forks"]
+        assert len(forks) == 2
+
+    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve._check_group_disjointness_across_tuples")
+    def test_repeated_active_groups_check_once(
+        self,
+        mock_check: MagicMock,
+        mock_resolve_universal: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Forks sharing the same multi-group active set check disjointness once."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[dependency-groups]\n"
+            'dev = ["pytest"]\n'
+            'lint = ["ruff"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(
+            pyproject, extras=["cpu", "gpu"], groups=["dev", "lint"]
+        )
+        # Two forks, both with active_groups=("dev", "lint"): scan once.
+        assert mock_check.call_count == 1
+
+    def test_umbrella_extra_co_selecting_conflict_raises(self, tmp_path: Path) -> None:
+        """An umbrella extra forcing both members cannot fork, so it raises."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            'all = ["x[cpu]", "x[gpu]"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="cannot be selected together"),
+        ):
+            resolve_universal_pyproject(pyproject, extras=["all"])
+        mock_universal.assert_not_called()
+
+    def test_umbrella_group_co_selecting_conflict_raises(self, tmp_path: Path) -> None:
+        """A group whose includes force both members raises, never forks."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'b22 = ["black==22.0"]\n'
+            'b23 = ["black==23.0"]\n'
+            'all-tools = [{ include-group = "b22" },'
+            ' { include-group = "b23" }]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ group = "b22" }, { group = "b23" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="cannot be selected together"),
+        ):
+            resolve_universal_pyproject(pyproject, groups=["all-tools"])
+        mock_universal.assert_not_called()
+
+    def test_universal_umbrella_extra_transitively_co_selects_conflict_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """The two-hop transitive case in universal mode.  No fork can
+        separate cpu and gpu when both flow from one umbrella, so the
+        resolve is refused before any tuple runs."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            'middle = ["x[cpu]", "x[gpu]"]\n'
+            'all = ["x[middle]"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="cannot be selected together"),
+        ):
+            resolve_universal_pyproject(pyproject, extras=["all"])
+        mock_universal.assert_not_called()
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_umbrella_extra_reaching_one_member_single_fork(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """An umbrella reaching one member yields one fork with its deps."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            'accel = ["x[cpu]"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject, extras=["accel"])
+        (fork,) = mock_resolve_universal.call_args.kwargs["forks"]
+        assert fork.selection == ()
+        assert "torch==2.0+cpu" in fork.requirements
+        assert "torch==2.0+gpu" not in fork.requirements
+
+    def test_unknown_conflict_member_raises(self, tmp_path: Path) -> None:
+        """A conflict member naming an undeclared extra raises ConfigError."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch==2.0+cpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpuu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConfigError, match="gpuu"),
+        ):
+            resolve_universal_pyproject(pyproject)
+        mock_universal.assert_not_called()
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_default_groups_satisfy_exactly_one(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        # ``default-groups`` activates ``a`` on every default install, so
+        # ``nab lock`` without ``--groups`` clears the exactly-one minimum.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'a = ["foo==1.0"]\n'
+            "b = []\n"
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'default-groups = ["a"]\n'
+            "conflicts = ["
+            '{ exactly_one = [{ group = "a" }, { group = "b" }] }'
+            "]\n"
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject)
+        (fork,) = mock_resolve_universal.call_args.kwargs["forks"]
+        assert "foo==1.0" in fork.requirements
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_default_groups_drive_forking_with_cli_groups(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        # ``default-groups = ["b22"]`` plus ``--groups b23`` activates two
+        # members of an at-most-one set: each fork carries one member.
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'b22 = ["black==22.0"]\n'
+            'b23 = ["black==23.0"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'default-groups = ["b22"]\n'
+            'conflicts = [[{ group = "b22" }, { group = "b23" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject, groups=["b23"])
+        forks = mock_resolve_universal.call_args.kwargs["forks"]
+        assert len(forks) == 2
+        selections = {f.selection for f in forks}
+        assert selections == {
+            (("group", "b22"),),
+            (("group", "b23"),),
+        }
 
 
 class TestResolvePyprojectVcs:

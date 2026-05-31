@@ -115,10 +115,10 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         cache_dir, cache=cache
     )
     provenance = _build_provenance(path, config=config, anchor=anchor)
-    selected_groups = _resolve_group_selection(
+    selected_groups = resolve_group_selection(
         path, groups=groups, all_groups=all_groups
     )
-    selected_extras = _resolve_extra_selection(
+    selected_extras = resolve_extra_selection(
         path, extras=extras, all_extras=all_extras
     )
     strategy_override = (
@@ -346,11 +346,13 @@ def _emit_universal_pylock(
     policy rather than this run's request.
     """
     default_groups = config.default_groups if config is not None else ()
+    conflicts = config.conflicts if config is not None else ()
     lock_input = _cli.merge_universal_lock_inputs(
         result,
         extras=extras,
         dependency_groups=groups,
         default_groups=default_groups,
+        conflicts=conflicts,
     )
     lock_input = _drop_workspace_pins(lock_input, workspace_to_drop)
     if provenance is not None:
@@ -368,6 +370,9 @@ def _emit_universal_pylock(
         text = _cli.write_lock(lock_input, output_path=target)
     except _cli.MissingHashError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
+    except _cli.DisjointnessError as e:
+        sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
 
     if target is None:
@@ -532,7 +537,7 @@ def _write_one_tuple_requirements(
     )
 
 
-def _resolve_group_selection(
+def resolve_group_selection(
     path: Path,
     *,
     groups: tuple[str, ...],
@@ -564,7 +569,7 @@ def _resolve_group_selection(
     return tuple(defined.keys()) if all_groups else tuple(dict.fromkeys(groups))
 
 
-def _resolve_extra_selection(
+def resolve_extra_selection(
     path: Path,
     *,
     extras: tuple[str, ...],

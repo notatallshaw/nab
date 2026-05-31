@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from nab_index.multi_index import IndexConfig
@@ -52,6 +52,7 @@ from ..requirements_file import raise_for_unsatisfiable
 from .provider import UniversalProvider
 
 __all__ = [
+    "ResolveFork",
     "TupleResult",
     "UniversalResult",
     "merge_universal_lock_inputs",
@@ -74,7 +75,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
-    from ..config import NabProjectConfig
+    from ..config import ConflictSet, NabProjectConfig
     from .matrix import Matrix, MatrixTuple
 
 
@@ -98,11 +99,27 @@ class UniversalResult:
 
     matrix: Matrix
     tuple_results: list[TupleResult] = field(default_factory=list)
+    # Per environment signature (``tuple(sorted(env.items()))``), the
+    # canonical names a base (no-member) resolve produced.  Populated
+    # only when conflict forks ran; lets the lock writer tell a base
+    # dependency from one required by every member, so a member-only
+    # dep keeps its membership clause.
+    env_base_names: dict[tuple[tuple[str, str], ...], frozenset[str]] = field(
+        default_factory=dict
+    )
+    # One :class:`TupleResult` per environment from the base
+    # (no-member) pass when conflict forks ran with ``base_requirements``.
+    # A failed base pass yields an incomplete ``env_base_names``, so
+    # ``success`` covers these too: the lock writer cannot tell base
+    # deps from member-only deps without them.
+    base_results: list[TupleResult] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
-        """Return True iff every tuple resolved successfully."""
-        return all(tr.success for tr in self.tuple_results)
+        """Return True iff every tuple and every base pass succeeded."""
+        if not all(tr.success for tr in self.tuple_results):
+            return False
+        return all(br.success for br in self.base_results)
 
     def merged_lock(self) -> dict[str, list[tuple[str, str]]]:
         """Collapse per-tuple pins into ``{package: [(version, label), ...]}``.
@@ -119,6 +136,22 @@ class UniversalResult:
         return out
 
 
+@dataclass(frozen=True, slots=True)
+class ResolveFork:
+    """A fork's resolver input: a marker selection plus folded requirements.
+
+    ``selection`` is the active conflicting members; ``requirements``
+    are the fully folded requirement strings to resolve under it.  The
+    pyproject layer builds these (it owns reading groups/extras);
+    :func:`resolve_with_coordinator` runs the matrix once per fork,
+    injecting ``selection`` into every tuple so the pins land under a
+    distinct label and marker.
+    """
+
+    selection: tuple[tuple[str, str], ...]
+    requirements: list[str]
+
+
 def merge_universal_lock_inputs(
     result: UniversalResult,
     *,
@@ -127,6 +160,7 @@ def merge_universal_lock_inputs(
     extras: Sequence[str] = (),
     dependency_groups: Sequence[str] = (),
     default_groups: Sequence[str] = (),
+    conflicts: Sequence[ConflictSet] = (),
 ) -> LockInput:
     """Merge per-tuple :class:`LockInput` objects into one universal lock.
 
@@ -143,39 +177,57 @@ def merge_universal_lock_inputs(
     before calling.
 
     ``dependency_groups`` and ``default_groups`` are recorded at the
-    lockfile top level for PEP 735 multi-use locks.  Per-package
-    group attribution (markers gated by
-    ``'group-x' in dependency_groups``) is not emitted.
+    lockfile top level for PEP 735 multi-use locks.  ``conflicts`` rides
+    along on the :class:`LockInput` so the emit-time disjointness check
+    can prune the install contexts a declared conflict forbids; a
+    conflict fork's membership clause reaches each package through its
+    tuple's ``marker_string``.
     """
     per_tuple_pins: dict[str, dict[str, PinShape]] = {}
     tuple_markers: dict[str, Marker] = {}
+    tuple_env_markers: dict[str, Marker] = {}
     tuple_environments: dict[str, dict[str, str]] = {}
+
+    # The top-level ``environments`` declares the platform/Python
+    # universe, so it carries the env-only marker (no conflict-fork
+    # membership clause) and is deduplicated: conflict forks repeat a
+    # (python, platform) under different selections.
     environments: list[Marker] = []
+    env_marker_cache: dict[str, Marker] = {}
     for tr in result.tuple_results:
         if not tr.success or tr.lock_input is None:
             continue
         label = tr.tuple_.label
         per_tuple_pins[label] = dict(tr.lock_input.pins)
-        marker = Marker(tr.tuple_.marker_string)
-        tuple_markers[label] = marker
+        tuple_markers[label] = Marker(tr.tuple_.marker_string)
         tuple_environments[label] = dict(tr.tuple_.environment)
-        environments.append(marker)
+
+        env_marker = tr.tuple_.environment_marker_string
+        parsed = env_marker_cache.get(env_marker)
+        if parsed is None:
+            parsed = Marker(env_marker)
+            env_marker_cache[env_marker] = parsed
+            environments.append(parsed)
+        tuple_env_markers[label] = parsed
     return LockInput(
         per_tuple_pins=per_tuple_pins,
         tuple_markers=tuple_markers,
+        tuple_env_markers=tuple_env_markers,
         tuple_environments=tuple_environments,
+        env_base_names=dict(result.env_base_names),
         environments=environments,
         requires_python=requires_python,
         created_by=created_by,
         extras=tuple(extras),
         dependency_groups=tuple(dependency_groups),
         default_groups=tuple(default_groups),
+        conflicts=tuple(conflicts),
     )
 
 
 def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution knobs; bundling all flags into a config object hides the call-site documentation
     matrix: Matrix,
-    requirements: list[str],
+    requirements: Sequence[str] = (),
     *,
     transport: AsyncHttpTransport | None = None,
     offline: bool = False,
@@ -197,11 +249,14 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
     resolution_strategy: str = "highest",
     align_across_tuples: bool = True,
     preferences: dict[str, Version] | None = None,
+    forks: Sequence[ResolveFork] | None = None,
+    base_requirements: Sequence[str] | None = None,
 ) -> UniversalResult:
     """Run a universal resolve for ``matrix``.
 
     Returns a :class:`UniversalResult` with one :class:`TupleResult`
-    per (python_version, platform) combination.
+    per (python_version, platform) combination, times the number of
+    conflict ``forks``.
 
     ``resolution_strategy``: ``"highest"`` (default), ``"lowest"``, or
     ``"lowest-direct"``.  Mirrors uv's ``--resolution`` flag.
@@ -211,6 +266,11 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
 
     ``preferences``: a starting set of preferred ``{name: Version}``,
     e.g. read from a previous lock.
+
+    ``forks``: per-conflict-fork resolver inputs from the pyproject
+    layer.  When ``None`` the resolve runs once with ``requirements``
+    and no marker selection; otherwise the matrix runs once per fork,
+    each folding its own requirements.
     """
     if indexes is None:
         indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
@@ -243,13 +303,15 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
             resolution_strategy=resolution_strategy,
             align_across_tuples=align_across_tuples,
             preferences=preferences,
+            forks=forks,
+            base_requirements=base_requirements,
         )
 
 
 def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's surface
     coordinator: FetchCoordinator,
     matrix: Matrix,
-    requirements: list[str],
+    requirements: Sequence[str] = (),
     *,
     constraints: list[str] | None = None,
     uploaded_prior_to: datetime | None = None,
@@ -266,6 +328,8 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     resolution_strategy: str = "highest",
     align_across_tuples: bool = True,
     preferences: dict[str, Version] | None = None,
+    forks: Sequence[ResolveFork] | None = None,
+    base_requirements: Sequence[str] | None = None,
 ) -> UniversalResult:
     """Run a universal resolve against an already-open coordinator.
 
@@ -273,17 +337,38 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     :class:`FetchCoordinator` across multiple resolves and avoids
     transport setup in unit tests.  See :func:`resolve_universal` for
     the full parameter documentation.
-    """
-    tuples = matrix.expand()
-    _warn_extra_marker_at_root(requirements)
-    direct_packages = frozenset(_direct_package_names(requirements))
-    initial_preferences: dict[str, Version] = dict(preferences or {})
 
-    return UniversalResult(
-        matrix=matrix,
-        tuple_results=_run_pass(
+    With ``forks`` the matrix runs once per fork, each fork's marker
+    ``selection`` injected into every tuple and its results
+    concatenated; ``requirements`` is used only for the single unforked
+    resolve.  Pins flow forward across forks, aligning a shared
+    package's version where possible.
+
+    ``base_requirements`` are the no-member requirements (the project
+    deps plus any non-conflicting selection).  When given, a final
+    base pass resolves them per environment so the lock writer can tell
+    a true base dependency from one required by every member; pass it
+    only when conflict forks ran.
+    """
+    base_tuples = matrix.expand()
+    fork_list = (
+        list(forks) if forks is not None else [ResolveFork((), list(requirements))]
+    )
+
+    # Warn once across all forks: forks share the base dependencies, so
+    # a root ``extra ==`` marker would otherwise be flagged per fork.
+    _warn_extra_marker_at_root(
+        sorted({r for fork in fork_list for r in fork.requirements})
+    )
+
+    def run_pass(
+        reqs: list[str],
+        tuples: list[MatrixTuple],
+        prefs: dict[str, Version],
+    ) -> list[TupleResult]:
+        return _run_pass(
             tuples,
-            requirements,
+            reqs,
             constraints,
             coordinator=coordinator,
             uploaded_prior_to=uploaded_prior_to,
@@ -298,10 +383,53 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
             vcs_cache_dir=vcs_cache_dir,
             build_config=build_config,
             resolution_strategy=resolution_strategy,
-            direct_packages=direct_packages,
-            preferences=initial_preferences,
+            direct_packages=frozenset(_direct_package_names(reqs)),
+            preferences=prefs,
             align_serial=align_across_tuples,
-        ),
+        )
+
+    accumulated: dict[str, Version] = dict(preferences or {})
+    out: list[TupleResult] = []
+    for fork in fork_list:
+        tuples = (
+            base_tuples
+            if not fork.selection
+            else [replace(t, selection=fork.selection) for t in base_tuples]
+        )
+        results = run_pass(list(fork.requirements), tuples, accumulated)
+        out.extend(results)
+        if align_across_tuples:
+            for tr in results:
+                if tr.success:
+                    accumulated.update(tr.pins)
+
+    # A base (no-member) pass names the deps that install regardless of
+    # which member is chosen, so the writer keeps the membership clause
+    # on a dep required only by members.
+    env_base_names: dict[tuple[tuple[str, str], ...], frozenset[str]] = {}
+    base_results: list[TupleResult] = []
+    if base_requirements is not None:
+        base_results = run_pass(
+            list(base_requirements), base_tuples, dict(preferences or {})
+        )
+        for tr in base_results:
+            if tr.success:
+                signature = tuple(sorted(tr.tuple_.environment.items()))
+                env_base_names[signature] = frozenset(
+                    canonicalize_name(name) for name in tr.pins
+                )
+            else:
+                logger.warning(
+                    "Base attribution skipped for tuple %s: %s",
+                    tr.tuple_.label,
+                    tr.error,
+                )
+
+    return UniversalResult(
+        matrix=matrix,
+        tuple_results=out,
+        env_base_names=env_base_names,
+        base_results=base_results,
     )
 
 

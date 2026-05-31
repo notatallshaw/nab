@@ -18,8 +18,15 @@ from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.version import Version
-from nab_python.config import ConfigError
-from nab_python.lockfile import IndexPin, LockInput
+from nab_python.config import (
+    ConfigError,
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSet,
+    conflict_forks,
+)
+from nab_python.lockfile import DisjointnessError, IndexPin, LockInput, build_pylock
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
@@ -34,6 +41,7 @@ from nab_python.provider import (
 from nab_python.universal import resolve as resolve_mod
 from nab_python.universal.matrix import Matrix, MatrixTuple
 from nab_python.universal.resolve import (
+    ResolveFork,
     TupleResult,
     UniversalResult,
     _direct_package_names,
@@ -112,6 +120,459 @@ def _windows_311() -> MatrixTuple:
             "sys_platform": "win32",
         },
     )
+
+
+def _extra_set(*names: str) -> ConflictSet:
+    return ConflictSet(
+        members=tuple(ConflictMember(ConflictKind.EXTRA, n) for n in names),
+        policy=ConflictPolicy.AT_MOST_ONE,
+    )
+
+
+def _group_set(*names: str) -> ConflictSet:
+    return ConflictSet(
+        members=tuple(ConflictMember(ConflictKind.GROUP, n) for n in names),
+        policy=ConflictPolicy.AT_MOST_ONE,
+    )
+
+
+class TestConflictForks:
+    """``conflict_forks`` splits a selection into per-fork resolves."""
+
+    def test_no_conflicts_is_one_unforked_fork(self) -> None:
+        forks = conflict_forks(("docs",), ("dev",), ())
+        assert len(forks) == 1
+        assert forks[0].selection == ()
+        assert forks[0].active_extras == ("docs",)
+        assert forks[0].active_groups == ("dev",)
+
+    def test_single_selected_member_does_not_engage(self) -> None:
+        # Only cpu selected, gpu absent: no conflict, no fork.
+        forks = conflict_forks(("cpu",), (), (_extra_set("cpu", "gpu"),))
+        assert len(forks) == 1
+        assert forks[0].selection == ()
+        assert forks[0].active_extras == ("cpu",)
+
+    def test_two_selected_extras_fork_into_two(self) -> None:
+        forks = conflict_forks(("cpu", "gpu"), (), (_extra_set("cpu", "gpu"),))
+        assert [f.selection for f in forks] == [
+            (("extra", "cpu"),),
+            (("extra", "gpu"),),
+        ]
+        assert [f.active_extras for f in forks] == [("cpu",), ("gpu",)]
+
+    def test_three_selected_groups_fork_into_three(self) -> None:
+        forks = conflict_forks(
+            (),
+            ("black22", "black23", "black24"),
+            (_group_set("black22", "black23", "black24"),),
+        )
+        assert [f.selection for f in forks] == [
+            (("group", "black22"),),
+            (("group", "black23"),),
+            (("group", "black24"),),
+        ]
+
+    def test_two_engaged_sets_cartesian_product(self) -> None:
+        # datamodel-code-generator: black {22,23,24} x isort {5,6} = 6 forks.
+        forks = conflict_forks(
+            (),
+            ("black22", "black23", "black24", "isort5", "isort6"),
+            (
+                _group_set("black22", "black23", "black24"),
+                _group_set("isort5", "isort6"),
+            ),
+        )
+        assert len(forks) == 6
+        # Each fork picks exactly one black and one isort.
+        for fork in forks:
+            chosen = {name for _kind, name in fork.selection}
+            assert len(chosen & {"black22", "black23", "black24"}) == 1
+            assert len(chosen & {"isort5", "isort6"}) == 1
+        # Selections are sorted and unique across forks.
+        selections = [f.selection for f in forks]
+        assert len(set(selections)) == 6
+        assert all(list(s) == sorted(s) for s in selections)
+
+    def test_three_by_three_cartesian_product_is_nine(self) -> None:
+        """Three sets-of-three is the headline conflicts.md example: nine forks
+        with one member chosen from each set."""
+        forks = conflict_forks(
+            (),
+            (
+                "black22",
+                "black23",
+                "black24",
+                "isort5",
+                "isort6",
+                "isort7",
+            ),
+            (
+                _group_set("black22", "black23", "black24"),
+                _group_set("isort5", "isort6", "isort7"),
+            ),
+        )
+        assert len(forks) == 9
+        for fork in forks:
+            chosen = {name for _kind, name in fork.selection}
+            assert len(chosen & {"black22", "black23", "black24"}) == 1
+            assert len(chosen & {"isort5", "isort6", "isort7"}) == 1
+        assert len({f.selection for f in forks}) == 9
+
+    def test_non_conflicting_selection_present_in_every_fork(self) -> None:
+        forks = conflict_forks(
+            ("docs", "cpu", "gpu"), ("dev",), (_extra_set("cpu", "gpu"),)
+        )
+        assert len(forks) == 2
+        for fork in forks:
+            assert "docs" in fork.active_extras
+            assert fork.active_groups == ("dev",)
+            # exactly one of cpu/gpu active per fork
+            assert len({"cpu", "gpu"} & set(fork.active_extras)) == 1
+
+    def test_mixed_extra_and_group_set(self) -> None:
+        members = (
+            ConflictMember(ConflictKind.EXTRA, "cpu"),
+            ConflictMember(ConflictKind.GROUP, "gpu"),
+        )
+        cs = ConflictSet(members=members, policy=ConflictPolicy.AT_MOST_ONE)
+        forks = conflict_forks(("cpu",), ("gpu",), (cs,))
+        assert [f.selection for f in forks] == [
+            (("extra", "cpu"),),
+            (("group", "gpu"),),
+        ]
+        assert forks[0].active_extras == ("cpu",)
+        assert forks[0].active_groups == ()
+        assert forks[1].active_extras == ()
+        assert forks[1].active_groups == ("gpu",)
+
+    def test_at_least_one_policy_never_forks(self) -> None:
+        cs = ConflictSet(
+            members=(
+                ConflictMember(ConflictKind.EXTRA, "a"),
+                ConflictMember(ConflictKind.EXTRA, "b"),
+            ),
+            policy=ConflictPolicy.AT_LEAST_ONE,
+        )
+        forks = conflict_forks(("a", "b"), (), (cs,))
+        assert len(forks) == 1
+        assert forks[0].selection == ()
+        assert forks[0].active_extras == ("a", "b")
+
+    def test_names_canonicalised_before_engagement(self) -> None:
+        # Selection spelled differently still engages the conflict.
+        forks = conflict_forks(("CPU", "Gpu"), (), (_extra_set("cpu", "gpu"),))
+        assert len(forks) == 2
+        assert {m for f in forks for _k, m in f.selection} == {"cpu", "gpu"}
+
+
+class TestConflictForkResolve:
+    """End-to-end: forked resolves produce a lock that validates only
+    once the conflict is declared (the datamodel-code-generator shape)."""
+
+    def _black_coordinator(self) -> MagicMock:
+        return _make_coordinator(
+            {
+                "black": [
+                    _make_wheel("22.1", package="black"),
+                    _make_wheel("23.12", package="black"),
+                ],
+            }
+        )
+
+    def _one_tuple_matrix(self) -> Matrix:
+        return Matrix(python="==3.11", platforms=("linux_x86_64",))
+
+    def _black_forks(self) -> list:
+        return [
+            ResolveFork((("group", "black22"),), ["black==22.1"]),
+            ResolveFork((("group", "black23"),), ["black==23.12"]),
+        ]
+
+    def test_forks_produce_separate_per_label_pins(self) -> None:
+        result = resolve_with_coordinator(
+            self._black_coordinator(),
+            self._one_tuple_matrix(),
+            [],
+            forks=self._black_forks(),
+            build_policy=BuildPolicy.NEVER,
+        )
+        assert result.success
+        by_label = {tr.tuple_.label: tr.pins for tr in result.tuple_results}
+        assert by_label == {
+            "py311-linux_x86_64-group-black22": {"black": Version("22.1")},
+            "py311-linux_x86_64-group-black23": {"black": Version("23.12")},
+        }
+
+    def test_declared_conflict_lock_validates_and_marks_forks(self) -> None:
+        result = resolve_with_coordinator(
+            self._black_coordinator(),
+            self._one_tuple_matrix(),
+            [],
+            forks=self._black_forks(),
+            build_policy=BuildPolicy.NEVER,
+        )
+        lock_input = merge_universal_lock_inputs(
+            result,
+            dependency_groups=("black22", "black23"),
+            conflicts=(_group_set("black22", "black23"),),
+        )
+        # Must not raise DisjointnessError: the conflict prunes the
+        # both-groups-selected context where the two entries collide.
+        pylock = build_pylock(lock_input)
+        black = sorted(
+            (p for p in pylock.packages if str(p.name) == "black"),
+            key=lambda p: str(p.version),
+        )
+        assert [str(p.version) for p in black] == ["22.1", "23.12"]
+        assert '"black22" in dependency_groups' in str(black[0].marker)
+        assert '"black23" in dependency_groups' in str(black[1].marker)
+
+    def test_same_lock_without_conflict_declaration_is_ambiguous(self) -> None:
+        # Identical fork pins, but no conflict declared: the installer
+        # could select both groups, so the two black entries collide.
+        result = resolve_with_coordinator(
+            self._black_coordinator(),
+            self._one_tuple_matrix(),
+            [],
+            forks=self._black_forks(),
+            build_policy=BuildPolicy.NEVER,
+        )
+        lock_input = merge_universal_lock_inputs(
+            result,
+            dependency_groups=("black22", "black23"),
+        )
+        with pytest.raises(DisjointnessError, match="black"):
+            build_pylock(lock_input)
+
+    def test_top_level_environments_drop_membership_and_dedupe(self) -> None:
+        # Two forks of the one (python, platform) tuple must collapse to
+        # a single top-level environment with no membership clause: that
+        # field declares the platform universe, not the group selection.
+        result = resolve_with_coordinator(
+            self._black_coordinator(),
+            self._one_tuple_matrix(),
+            forks=self._black_forks(),
+            build_policy=BuildPolicy.NEVER,
+        )
+        lock_input = merge_universal_lock_inputs(
+            result,
+            dependency_groups=("black22", "black23"),
+            conflicts=(_group_set("black22", "black23"),),
+        )
+        assert len(lock_input.environments) == 1
+        env_str = str(lock_input.environments[0])
+        assert "in dependency_groups" not in env_str
+        assert "in extras" not in env_str
+
+    def _per_fork_preferences(
+        self, *, align_across_tuples: bool
+    ) -> list[dict[str, Version]]:
+        """Run the two black forks, recording each fork's preferences.
+
+        Wraps ``_run_pass`` to snapshot the ``preferences`` dict handed
+        to each fork.  Cross-fork accumulation lives in
+        ``resolve_with_coordinator``, so the second fork's snapshot
+        reveals whether the first fork's pins were threaded forward.
+        """
+        seen: list[dict[str, Version]] = []
+        real_run_pass = resolve_mod._run_pass
+
+        def spy(*args: object, **kwargs: object) -> object:
+            seen.append(dict(kwargs["preferences"]))  # type: ignore[arg-type]
+            return real_run_pass(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(resolve_mod, "_run_pass", spy):
+            result = resolve_with_coordinator(
+                self._black_coordinator(),
+                self._one_tuple_matrix(),
+                [],
+                forks=self._black_forks(),
+                build_policy=BuildPolicy.NEVER,
+                align_across_tuples=align_across_tuples,
+            )
+        assert result.success
+        return seen
+
+    def test_align_across_tuples_false_does_not_thread_pins(self) -> None:
+        # With alignment off, the second fork's preferences must not
+        # carry the first fork's black pin: each fork resolves alone.
+        seen = self._per_fork_preferences(align_across_tuples=False)
+        assert len(seen) == 2
+        assert "black" not in seen[0]
+        assert "black" not in seen[1]
+
+    def test_align_across_tuples_true_threads_pins(self) -> None:
+        # The companion case: with alignment on, the first fork's black
+        # pin is accumulated into the second fork's preferences, so the
+        # assertion above genuinely distinguishes the two modes.
+        seen = self._per_fork_preferences(align_across_tuples=True)
+        assert len(seen) == 2
+        assert "black" not in seen[0]
+        assert seen[1].get("black") == Version("22.1")
+
+
+class TestConflictForkBaseNames:
+    """A base (no-member) pass names the deps that install unconditionally,
+    so a dep required by every member but not the base keeps its
+    membership marker (the at_most_one over-install fix)."""
+
+    def _coordinator(self) -> MagicMock:
+        return _make_coordinator(
+            {
+                "base": [_make_wheel("1.0", package="base")],
+                "accel": [_make_wheel("5.0", package="accel")],
+            }
+        )
+
+    def _matrix(self) -> Matrix:
+        return Matrix(python="==3.11", platforms=("linux_x86_64",))
+
+    def _forks(self) -> list[ResolveFork]:
+        # cpu and gpu both pull in accel; the base has only ``base``.
+        return [
+            ResolveFork((("extra", "cpu"),), ["base", "accel"]),
+            ResolveFork((("extra", "gpu"),), ["base", "accel"]),
+        ]
+
+    def test_env_base_names_excludes_member_only_dep(self) -> None:
+        result = resolve_with_coordinator(
+            self._coordinator(),
+            self._matrix(),
+            forks=self._forks(),
+            base_requirements=["base"],
+            build_policy=BuildPolicy.NEVER,
+        )
+        assert result.success
+        (names,) = result.env_base_names.values()
+        assert "base" in names
+        assert "accel" not in names
+
+    def test_member_only_dep_keeps_membership_marker(self) -> None:
+        result = resolve_with_coordinator(
+            self._coordinator(),
+            self._matrix(),
+            forks=self._forks(),
+            base_requirements=["base"],
+            build_policy=BuildPolicy.NEVER,
+        )
+        lock_input = merge_universal_lock_inputs(
+            result,
+            extras=("cpu", "gpu"),
+            conflicts=(_extra_set("cpu", "gpu"),),
+        )
+        pylock = build_pylock(lock_input)
+        by_name = {str(p.name): p for p in pylock.packages}
+        env = dict(result.tuple_results[0].tuple_.environment)
+        neither = {**env, "extras": frozenset()}
+        cpu = {**env, "extras": frozenset({"cpu"})}
+
+        accel = by_name["accel"]
+        assert accel.marker is not None
+        assert not accel.marker.evaluate(neither)
+        assert accel.marker.evaluate(cpu)
+
+        # ``base`` is a true base dep, so it installs unconditionally.
+        base = by_name["base"]
+        assert base.marker is None or base.marker.evaluate(neither)
+
+    def test_member_only_dep_across_two_sets_keeps_membership_or(self) -> None:
+        """Two engaged sets x one member-only dep present in all four forks.
+
+        Tests the conflicts.md claim that "When a single dependency is
+        required by every member of two or more engaged sets at once, its
+        marker is the conjunction across those sets" by checking the
+        emitted marker references every one of the four memberships.
+        """
+        coordinator = _make_coordinator(
+            {
+                "base": [_make_wheel("1.0", package="base")],
+                "crossdep": [_make_wheel("5.0", package="crossdep")],
+            }
+        )
+
+        # cpu x mon, cpu x debug, gpu x mon, gpu x debug = 4 forks, each
+        # pulling crossdep; base is the only true base-pass dep.
+        forks = [
+            ResolveFork((("extra", "cpu"), ("group", "mon")), ["base", "crossdep"]),
+            ResolveFork((("extra", "cpu"), ("group", "debug")), ["base", "crossdep"]),
+            ResolveFork((("extra", "gpu"), ("group", "mon")), ["base", "crossdep"]),
+            ResolveFork((("extra", "gpu"), ("group", "debug")), ["base", "crossdep"]),
+        ]
+        result = resolve_with_coordinator(
+            coordinator,
+            self._matrix(),
+            forks=forks,
+            base_requirements=["base"],
+            build_policy=BuildPolicy.NEVER,
+        )
+        assert result.success
+
+        lock_input = merge_universal_lock_inputs(
+            result,
+            extras=("cpu", "gpu"),
+            dependency_groups=("mon", "debug"),
+            conflicts=(
+                _extra_set("cpu", "gpu"),
+                _group_set("mon", "debug"),
+            ),
+        )
+        pylock = build_pylock(lock_input)
+        crossdep = next(p for p in pylock.packages if str(p.name) == "crossdep")
+
+        # The marker must reference every membership clause; the empty
+        # selection must not install, but any single (extra, group) pair
+        # in the cartesian product must.
+        marker_text = str(crossdep.marker)
+        for clause in (
+            '"cpu" in extras',
+            '"gpu" in extras',
+            '"mon" in dependency_groups',
+            '"debug" in dependency_groups',
+        ):
+            assert clause in marker_text
+
+        env = dict(result.tuple_results[0].tuple_.environment)
+        none = {**env, "extras": frozenset(), "dependency_groups": frozenset()}
+        assert crossdep.marker is not None
+        assert not crossdep.marker.evaluate(none)
+        for extras, groups in (
+            (frozenset({"cpu"}), frozenset({"mon"})),
+            (frozenset({"gpu"}), frozenset({"debug"})),
+        ):
+            ctx = {**env, "extras": extras, "dependency_groups": groups}
+            assert crossdep.marker.evaluate(ctx)
+
+    def test_base_pass_failure_fails_the_result(self) -> None:
+        # The base requirement cannot resolve (no such version), so the
+        # writer would lack the data to tell a base dep from a
+        # member-only dep.  Surface the failure on ``result.success``.
+        result = resolve_with_coordinator(
+            self._coordinator(),
+            self._matrix(),
+            forks=self._forks(),
+            base_requirements=["base==9.9"],
+            build_policy=BuildPolicy.NEVER,
+        )
+        assert not result.success
+        assert result.env_base_names == {}
+        assert result.base_results
+        assert all(not br.success for br in result.base_results)
+
+    def test_base_pass_failure_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Each failed base pass is announced on the module logger so a
+        # caller that ignores ``result.success`` still gets a signal.
+        with caplog.at_level(logging.WARNING, logger="nab_python.universal.resolve"):
+            resolve_with_coordinator(
+                self._coordinator(),
+                self._matrix(),
+                forks=self._forks(),
+                base_requirements=["base==9.9"],
+                build_policy=BuildPolicy.NEVER,
+            )
+        assert any("Base attribution skipped" in rec.message for rec in caplog.records)
 
 
 class TestDirectPackageNames:

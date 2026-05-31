@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 
 import pytest
 
@@ -30,6 +30,14 @@ from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.pylock import Package, PackageWheel, Pylock
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
+from nab_python.config import (
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSet,
+    conflict_exclusion_groups,
+    conflict_member_groups,
+)
 from nab_python.lockfile import (
     LOCK_VERSION,
     DisjointnessError,
@@ -602,6 +610,305 @@ class TestPerTupleMarkerSimplification:
         assert 'python_version == "3.13"' not in v2_marker
 
 
+class TestConflictForkBaseDepMarkers:
+    """A base dep present in every fork of an environment drops the
+    conflict-fork membership clause, so it installs even when no member
+    is selected (the env-conditional-base-dep regression)."""
+
+    _LINUX_ENV: ClassVar[dict[str, str]] = {
+        "sys_platform": "linux",
+        "platform_machine": "x86_64",
+    }
+    _WIN_ENV: ClassVar[dict[str, str]] = {
+        "sys_platform": "win32",
+        "platform_machine": "AMD64",
+    }
+
+    def _lock_input(self) -> LockInput:
+        linux_env_marker = Marker('sys_platform == "linux"')
+        win_env_marker = Marker('sys_platform == "win32"')
+
+        # ``tensorrt`` is a member-only dep: required by every fork but
+        # absent from the base resolve, so its membership clause must
+        # survive even though it appears in both linux forks at the same
+        # version.  Without ``env_base_names`` the writer cannot tell
+        # this case apart from a true base dep.
+        per_tuple = {
+            "linux-cpu": {
+                "basepkg": _index_pin(name="basepkg", version="1.0"),
+                "tensorrt": _index_pin(name="tensorrt", version="1.0"),
+                "torch": _index_pin(name="torch", version="2.0+cpu"),
+                "universal": _index_pin(name="universal", version="9.0"),
+            },
+            "linux-gpu": {
+                "basepkg": _index_pin(name="basepkg", version="1.0"),
+                "tensorrt": _index_pin(name="tensorrt", version="1.0"),
+                "torch": _index_pin(name="torch", version="2.0+gpu"),
+                "universal": _index_pin(name="universal", version="9.0"),
+            },
+            "win-cpu": {
+                "torch": _index_pin(name="torch", version="2.0+cpu"),
+                "universal": _index_pin(name="universal", version="9.0"),
+            },
+            "win-gpu": {
+                "torch": _index_pin(name="torch", version="2.0+gpu"),
+                "universal": _index_pin(name="universal", version="9.0"),
+            },
+        }
+        tuple_markers = {
+            "linux-cpu": Marker('sys_platform == "linux" and "cpu" in extras'),
+            "linux-gpu": Marker('sys_platform == "linux" and "gpu" in extras'),
+            "win-cpu": Marker('sys_platform == "win32" and "cpu" in extras'),
+            "win-gpu": Marker('sys_platform == "win32" and "gpu" in extras'),
+        }
+        tuple_env_markers = {
+            "linux-cpu": linux_env_marker,
+            "linux-gpu": linux_env_marker,
+            "win-cpu": win_env_marker,
+            "win-gpu": win_env_marker,
+        }
+        tuple_environments = {
+            "linux-cpu": self._LINUX_ENV,
+            "linux-gpu": self._LINUX_ENV,
+            "win-cpu": self._WIN_ENV,
+            "win-gpu": self._WIN_ENV,
+        }
+
+        # Mirror the resolver shape: a base pass ran for both envs and
+        # told the writer which deps install regardless of which member
+        # is selected.  ``tensorrt`` is intentionally absent.
+        linux_sig = tuple(sorted(self._LINUX_ENV.items()))
+        win_sig = tuple(sorted(self._WIN_ENV.items()))
+        env_base_names = {
+            linux_sig: frozenset({"basepkg", "universal"}),
+            win_sig: frozenset({"universal"}),
+        }
+
+        conflicts = (
+            ConflictSet(
+                members=(
+                    ConflictMember(ConflictKind.EXTRA, "cpu"),
+                    ConflictMember(ConflictKind.EXTRA, "gpu"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            ),
+        )
+        return LockInput(
+            per_tuple_pins=per_tuple,
+            tuple_markers=tuple_markers,
+            tuple_env_markers=tuple_env_markers,
+            tuple_environments=tuple_environments,
+            env_base_names=env_base_names,
+            extras=("cpu", "gpu"),
+            conflicts=conflicts,
+        )
+
+    def test_base_dep_drops_membership_clause(self) -> None:
+        pylock = build_pylock(self._lock_input())
+        by_name = {str(p.name): p for p in pylock.packages}
+
+        base_marker = by_name["basepkg"].marker
+        assert base_marker is not None
+        # The bug ORs the per-fork membership markers, which is False on
+        # linux with no extras.  The fix emits the env-only marker.
+        assert base_marker.evaluate({"sys_platform": "linux", "extras": frozenset()})
+        assert not base_marker.evaluate(
+            {"sys_platform": "win32", "extras": frozenset()}
+        )
+        assert "in extras" not in str(base_marker)
+
+    def test_conflicting_dep_keeps_membership_markers(self) -> None:
+        pylock = build_pylock(self._lock_input())
+        torch = sorted(
+            (p for p in pylock.packages if str(p.name) == "torch"),
+            key=lambda p: str(p.version),
+        )
+        cpu = next(p for p in torch if str(p.version) == "2.0+cpu")
+        gpu = next(p for p in torch if str(p.version) == "2.0+gpu")
+        assert '"cpu" in extras' in str(cpu.marker)
+        assert '"gpu" in extras' in str(gpu.marker)
+
+    def test_member_only_dep_present_in_every_fork_keeps_membership(self) -> None:
+        """A dep required by every fork but absent from the base resolve
+        keeps its membership OR, so it does not install when no member
+        is selected (at_most_one permits zero)."""
+        pylock = build_pylock(self._lock_input())
+        tensorrt = next(p for p in pylock.packages if str(p.name) == "tensorrt")
+        marker = tensorrt.marker
+        assert marker is not None
+        assert '"cpu" in extras' in str(marker)
+        assert '"gpu" in extras' in str(marker)
+        assert not marker.evaluate({"sys_platform": "linux", "extras": frozenset()})
+        assert marker.evaluate({"sys_platform": "linux", "extras": frozenset({"cpu"})})
+
+    def test_fully_universal_dep_has_no_marker(self) -> None:
+        pylock = build_pylock(self._lock_input())
+        universal = next(p for p in pylock.packages if str(p.name) == "universal")
+        assert universal.marker is None
+
+
+class TestConflictForksWithoutBaseAttribution:
+    """When conflict forks ran but the caller did not supply base
+    requirements, ``env_base_names`` is empty.  Base status is unknowable,
+    so a dep present in every fork at the same version must keep its
+    membership OR rather than collapse to an env-only marker."""
+
+    _ENV: ClassVar[dict[str, str]] = {"sys_platform": "linux"}
+
+    def _lock_input(self) -> LockInput:
+        per_tuple = {
+            "cpu": {"shared": _index_pin(name="shared", version="1.0")},
+            "gpu": {"shared": _index_pin(name="shared", version="1.0")},
+        }
+        env_marker = Marker('sys_platform == "linux"')
+        tuple_markers = {
+            "cpu": Marker('sys_platform == "linux" and "cpu" in extras'),
+            "gpu": Marker('sys_platform == "linux" and "gpu" in extras'),
+        }
+        conflicts = (
+            ConflictSet(
+                members=(
+                    ConflictMember(ConflictKind.EXTRA, "cpu"),
+                    ConflictMember(ConflictKind.EXTRA, "gpu"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            ),
+        )
+        return LockInput(
+            per_tuple_pins=per_tuple,
+            tuple_markers=tuple_markers,
+            tuple_env_markers={"cpu": env_marker, "gpu": env_marker},
+            tuple_environments={"cpu": self._ENV, "gpu": self._ENV},
+            extras=("cpu", "gpu"),
+            conflicts=conflicts,
+        )
+
+    def test_shared_pin_keeps_membership_or(self) -> None:
+        pylock = build_pylock(self._lock_input())
+        shared = next(p for p in pylock.packages if str(p.name) == "shared")
+        marker = shared.marker
+        assert marker is not None
+        assert '"cpu" in extras' in str(marker)
+        assert '"gpu" in extras' in str(marker)
+        assert not marker.evaluate({"sys_platform": "linux", "extras": frozenset()})
+
+
+class TestConflictForkRequiresPythonMerge:
+    """Same-(name, version, index) pins from different conflict forks
+    collapse to one entry; ``requires_python`` survives only when every
+    fork agreed, matching :func:`_common_requires_python`'s rule."""
+
+    _ENV: ClassVar[dict[str, str]] = {"sys_platform": "linux"}
+
+    @staticmethod
+    def _pin(requires_python: str | None) -> IndexPin:
+        return IndexPin(
+            name="foo",
+            version="1.0",
+            index="pypi",
+            sdist=_sdist("foo", "1.0"),
+            wheels=(_wheel("foo", "1.0"),),
+            requires_python=requires_python,
+        )
+
+    def _build(self, cpu_req: str | None, gpu_req: str | None) -> LockInput:
+        return LockInput(
+            per_tuple_pins={
+                "cpu": {"foo": self._pin(cpu_req)},
+                "gpu": {"foo": self._pin(gpu_req)},
+            },
+            tuple_markers={
+                "cpu": Marker('"cpu" in extras'),
+                "gpu": Marker('"gpu" in extras'),
+            },
+            tuple_environments={"cpu": self._ENV, "gpu": self._ENV},
+            extras=("cpu", "gpu"),
+            conflicts=(
+                ConflictSet(
+                    members=(
+                        ConflictMember(ConflictKind.EXTRA, "cpu"),
+                        ConflictMember(ConflictKind.EXTRA, "gpu"),
+                    ),
+                    policy=ConflictPolicy.AT_MOST_ONE,
+                ),
+            ),
+        )
+
+    def test_disagreeing_requires_python_drops_to_none(self) -> None:
+        pylock = build_pylock(self._build(">=3.10", ">=3.11"))
+        foo = next(p for p in pylock.packages if str(p.name) == "foo")
+        assert foo.requires_python is None
+
+    def test_agreeing_requires_python_survives_the_merge(self) -> None:
+        pylock = build_pylock(self._build(">=3.10", ">=3.10"))
+        foo = next(p for p in pylock.packages if str(p.name) == "foo")
+        assert foo.requires_python is not None
+        assert str(foo.requires_python) == ">=3.10"
+
+
+class TestConflictForkByteStability:
+    """``write_lock`` is deterministic across multiple conflict forks.
+
+    Every per-tuple grouping, marker disjunction, and wheel listing must
+    pivot through sorted iteration so two calls on the same
+    :class:`LockInput` produce byte-identical TOML.  Without this, a
+    re-resolve that only re-orders dict insertion would write a
+    spurious diff."""
+
+    _LINUX: ClassVar[dict[str, str]] = {
+        "sys_platform": "linux",
+        "platform_machine": "x86_64",
+    }
+    _DARWIN: ClassVar[dict[str, str]] = {
+        "sys_platform": "darwin",
+        "platform_machine": "arm64",
+    }
+
+    def _two_by_two(self) -> LockInput:
+        # Two pythons (linux, darwin) x two conflict members (cpu, gpu).
+        per_tuple: dict[str, dict[str, IndexPin]] = {}
+        tuple_markers: dict[str, Marker] = {}
+        tuple_env_markers: dict[str, Marker] = {}
+        tuple_environments: dict[str, dict[str, str]] = {}
+        env_marker = {
+            "linux": Marker('sys_platform == "linux"'),
+            "darwin": Marker('sys_platform == "darwin"'),
+        }
+        env_dict = {"linux": self._LINUX, "darwin": self._DARWIN}
+        for sys_plat in ("darwin", "linux"):
+            for member in ("gpu", "cpu"):
+                label = f"{sys_plat}-{member}"
+                per_tuple[label] = {
+                    "torch": _index_pin(name="torch", version=f"2.0+{member}"),
+                    "universal": _index_pin(name="universal", version="9.0"),
+                }
+                tuple_markers[label] = Marker(
+                    f'sys_platform == "{sys_plat}" and "{member}" in extras'
+                )
+                tuple_env_markers[label] = env_marker[sys_plat]
+                tuple_environments[label] = env_dict[sys_plat]
+        return LockInput(
+            per_tuple_pins=per_tuple,
+            tuple_markers=tuple_markers,
+            tuple_env_markers=tuple_env_markers,
+            tuple_environments=tuple_environments,
+            extras=("cpu", "gpu"),
+            conflicts=(
+                ConflictSet(
+                    members=(
+                        ConflictMember(ConflictKind.EXTRA, "cpu"),
+                        ConflictMember(ConflictKind.EXTRA, "gpu"),
+                    ),
+                    policy=ConflictPolicy.AT_MOST_ONE,
+                ),
+            ),
+        )
+
+    def test_pylock_byte_stable_across_two_writes(self) -> None:
+        lock_input = self._two_by_two()
+        assert write_lock(lock_input) == write_lock(lock_input)
+
+
 class TestBuildPylockReturnsValidPylock:
     def test_can_be_validated(self) -> None:
         pylock = build_pylock(LockInput(pins={"foo": _index_pin()}))
@@ -1119,6 +1426,370 @@ class TestMarkerDisjointness:
                 ],
                 environments=envs,
                 extras=many_extras,
+                groups=(),
+            )
+
+    _LINUX: ClassVar[dict[str, dict[str, str]]] = {
+        "linux": {
+            "python_version": "3.11",
+            "sys_platform": "linux",
+            "platform_machine": "x86_64",
+        },
+    }
+
+    def test_declared_extra_conflict_prunes_collision(self) -> None:
+        # The bare-marker case that collides without a declaration now
+        # passes once cpu and gpu are declared mutually exclusive: the
+        # {cpu, gpu} point is pruned from the universe.
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "'cpu' in extras"),
+                self._pkg("foo", "2.0", "'gpu' in extras"),
+            ],
+            environments=self._LINUX,
+            extras=("cpu", "gpu"),
+            groups=(),
+            exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "gpu")})],
+        )
+
+    def test_declared_group_conflict_prunes_collision(self) -> None:
+        # The datamodel-code-generator case: mutually-exclusive
+        # dependency groups gated by bare ``in dependency_groups``
+        # markers validate once the groups are declared exclusive.
+        validate_marker_disjointness(
+            [
+                self._pkg("black", "22.1", "'black22' in dependency_groups"),
+                self._pkg("black", "23.12", "'black23' in dependency_groups"),
+                self._pkg("black", "24.1", "'black24' in dependency_groups"),
+            ],
+            environments=self._LINUX,
+            extras=(),
+            groups=("black22", "black23", "black24"),
+            exclusive_groups=[
+                frozenset(
+                    {
+                        ("group", "black22"),
+                        ("group", "black23"),
+                        ("group", "black24"),
+                    }
+                )
+            ],
+        )
+
+    def test_conflict_does_not_prune_unrelated_collision(self) -> None:
+        # A collision outside the pruned subspace still raises: cpu/gpu
+        # are declared exclusive, but these two entries collide on the
+        # cpu point itself (both fire when cpu is selected).
+        with pytest.raises(DisjointnessError, match="foo"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", "1.0", "'cpu' in extras"),
+                    self._pkg("foo", "2.0", "'cpu' in extras or 'gpu' in extras"),
+                ],
+                environments=self._LINUX,
+                extras=("cpu", "gpu"),
+                groups=(),
+                exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "gpu")})],
+            )
+
+    def test_collision_hint_points_at_conflicts_key(self) -> None:
+        # A membership-driven collision with no declaration surfaces a
+        # hint pointing at the conflicts key.
+        with pytest.raises(DisjointnessError, match=r"\[tool.nab\].conflicts"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", "1.0", "'cpu' in extras"),
+                    self._pkg("foo", "2.0", "'gpu' in extras"),
+                ],
+                environments=self._LINUX,
+                extras=("cpu", "gpu"),
+                groups=(),
+            )
+
+    def test_environment_only_collision_has_no_conflict_hint(self) -> None:
+        # An environment-driven collision is not helped by a conflict
+        # declaration, so no hint is appended.
+        with pytest.raises(DisjointnessError) as excinfo:
+            validate_marker_disjointness(
+                [self._pkg("foo", "1.0"), self._pkg("foo", "2.0")],
+                environments=self._LINUX,
+                extras=(),
+                groups=(),
+            )
+        assert "[tool.nab].conflicts" not in str(excinfo.value)
+
+    def test_membership_markers_do_not_collide_at_empty_extras(self) -> None:
+        """``'cpu' in frozenset()`` must evaluate False through
+        :class:`Marker`, so the empty-extras point in
+        :func:`_enumerate_valid_points` never makes two membership-gated
+        entries collide.  Asserts the marker-eval primitive in isolation
+        so a later switch to a different Marker library cannot regress
+        this without breaking a focused test."""
+        empty_context = {
+            "sys_platform": "linux",
+            "extras": frozenset(),
+            "dependency_groups": frozenset(),
+        }
+        assert not Marker("'cpu' in extras").evaluate(empty_context)
+        assert not Marker("'gpu' in extras").evaluate(empty_context)
+
+        # End-to-end: two membership-gated entries are not a collision at
+        # the empty-extras witness even without a declared conflict, so
+        # the validator stays silent on that point.
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "'cpu' in extras"),
+                self._pkg("foo", "2.0", "'gpu' in extras"),
+            ],
+            environments=self._LINUX,
+            extras=("cpu", "gpu"),
+            groups=(),
+            exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "gpu")})],
+        )
+
+    def test_conflict_member_normalization_prunes_collision(self) -> None:
+        # The declared member name and the marker literal differ by
+        # case/separator; canonicalisation must still prune the point.
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "'CPU' in extras"),
+                self._pkg("foo", "2.0", "'fast_io' in extras"),
+            ],
+            environments=self._LINUX,
+            extras=("cpu", "fast-io"),
+            groups=(),
+            exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "fast-io")})],
+        )
+
+    def test_group_membership_drives_conflict_hint(self) -> None:
+        # The collision fires at a witness where a referenced group is
+        # active (extras play no part), so the groups branch of the hint
+        # gate must trigger.
+        with pytest.raises(DisjointnessError, match=r"\[tool.nab\].conflicts"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("black", "22.1", "'black22' in dependency_groups"),
+                    self._pkg("black", "23.12", "'black23' in dependency_groups"),
+                ],
+                environments=self._LINUX,
+                extras=(),
+                groups=("black22", "black23"),
+            )
+
+    def test_env_collision_with_membership_marker_has_no_hint(self) -> None:
+        # One marker mentions an extra, but the collision fires at the
+        # empty-extras witness driven purely by the environment.  A
+        # conflict declaration cannot prune that point, so no hint.
+        with pytest.raises(DisjointnessError) as excinfo:
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", "1.0", "sys_platform == 'linux'"),
+                    self._pkg(
+                        "foo", "2.0", "sys_platform == 'linux' or 'cpu' in extras"
+                    ),
+                ],
+                environments=self._LINUX,
+                extras=("cpu",),
+                groups=(),
+            )
+        assert "[tool.nab].conflicts" not in str(excinfo.value)
+
+    def test_at_least_one_does_not_prune_collision(self) -> None:
+        # conflict_exclusion_groups DROPS at_least_one, so the projection
+        # passed for an at_least_one-only declaration is empty: the
+        # colliding context survives and the validator still raises.
+        conflicts = [
+            ConflictSet(
+                members=(
+                    ConflictMember(kind=ConflictKind.GROUP, name="a"),
+                    ConflictMember(kind=ConflictKind.GROUP, name="b"),
+                ),
+                policy=ConflictPolicy.AT_LEAST_ONE,
+            )
+        ]
+        with pytest.raises(DisjointnessError, match="black"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("black", "1.0", "'a' in dependency_groups"),
+                    self._pkg("black", "2.0", "'b' in dependency_groups"),
+                ],
+                environments=self._LINUX,
+                extras=(),
+                groups=("a", "b"),
+                exclusive_groups=conflict_exclusion_groups(conflicts),
+            )
+
+    def test_already_declared_at_least_one_hint_recommends_tightening(self) -> None:
+        # The colliding members are already declared, just under a policy
+        # that permits co-selection; the hint must point at tightening
+        # rather than suggesting the user declare them again.
+        conflicts = [
+            ConflictSet(
+                members=(
+                    ConflictMember(kind=ConflictKind.GROUP, name="a"),
+                    ConflictMember(kind=ConflictKind.GROUP, name="b"),
+                ),
+                policy=ConflictPolicy.AT_LEAST_ONE,
+            )
+        ]
+        with pytest.raises(DisjointnessError) as info:
+            validate_marker_disjointness(
+                [
+                    self._pkg("black", "1.0", "'a' in dependency_groups"),
+                    self._pkg("black", "2.0", "'b' in dependency_groups"),
+                ],
+                environments=self._LINUX,
+                extras=(),
+                groups=("a", "b"),
+                exclusive_groups=conflict_exclusion_groups(conflicts),
+                declared_groups=conflict_member_groups(conflicts),
+            )
+        message = str(info.value)
+        assert "switch to at_most_one or exactly_one" in message
+        assert "If these are intentionally mutually exclusive" not in message
+
+    def test_at_most_one_prunes_same_collision(self) -> None:
+        # The same collision under an at_most_one exclusion is pruned.
+        conflicts = [
+            ConflictSet(
+                members=(
+                    ConflictMember(kind=ConflictKind.GROUP, name="a"),
+                    ConflictMember(kind=ConflictKind.GROUP, name="b"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            )
+        ]
+        validate_marker_disjointness(
+            [
+                self._pkg("black", "1.0", "'a' in dependency_groups"),
+                self._pkg("black", "2.0", "'b' in dependency_groups"),
+            ],
+            environments=self._LINUX,
+            extras=(),
+            groups=("a", "b"),
+            exclusive_groups=conflict_exclusion_groups(conflicts),
+        )
+
+    def test_exactly_one_prunes_collision(self) -> None:
+        # exactly_one forbids co-selection like at_most_one, so its
+        # member set is projected as an exclusive group and the colliding
+        # context is pruned.
+        conflicts = [
+            ConflictSet(
+                members=(
+                    ConflictMember(kind=ConflictKind.GROUP, name="a"),
+                    ConflictMember(kind=ConflictKind.GROUP, name="b"),
+                ),
+                policy=ConflictPolicy.EXACTLY_ONE,
+            )
+        ]
+        validate_marker_disjointness(
+            [
+                self._pkg("black", "1.0", "'a' in dependency_groups"),
+                self._pkg("black", "2.0", "'b' in dependency_groups"),
+            ],
+            environments=self._LINUX,
+            extras=(),
+            groups=("a", "b"),
+            exclusive_groups=conflict_exclusion_groups(conflicts),
+        )
+
+    def test_two_exclusion_sets_second_prunes_point(self) -> None:
+        # Two independent exclusive sets: the {cpu, gpu} extras set does
+        # not cover this point, so the exclusion check must iterate past
+        # it to the {black22, black23} groups set that does prune it.
+        validate_marker_disjointness(
+            [
+                self._pkg("black", "22.1", "'black22' in dependency_groups"),
+                self._pkg("black", "23.12", "'black23' in dependency_groups"),
+            ],
+            environments=self._LINUX,
+            extras=("cpu", "gpu"),
+            groups=("black22", "black23"),
+            exclusive_groups=[
+                frozenset({("extra", "cpu"), ("extra", "gpu")}),
+                frozenset({("group", "black22"), ("group", "black23")}),
+            ],
+        )
+
+    def test_two_exclusion_sets_point_outside_both_raises(self) -> None:
+        # A collision outside both exclusive sets still raises even when
+        # two independent sets are declared.
+        with pytest.raises(DisjointnessError, match="black"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("black", "1.0", "'black22' in dependency_groups"),
+                    self._pkg(
+                        "black",
+                        "2.0",
+                        "'black22' in dependency_groups"
+                        " or 'black23' in dependency_groups",
+                    ),
+                ],
+                environments=self._LINUX,
+                extras=("cpu", "gpu"),
+                groups=("black22", "black23"),
+                exclusive_groups=[
+                    frozenset({("extra", "cpu"), ("extra", "gpu")}),
+                    frozenset({("group", "black22"), ("group", "black23")}),
+                ],
+            )
+
+    def test_repeated_environments_still_raise_on_collision(self) -> None:
+        # A conflict-forked lock repeats one physical env under several
+        # selection labels.  Dedup must not hide a genuine collision and
+        # must keep the first-seen label so the message stays stable.
+        envs = {
+            "linux-cpu": dict(self._LINUX["linux"]),
+            "linux-gpu": dict(self._LINUX["linux"]),
+        }
+        with pytest.raises(DisjointnessError, match="linux-cpu"):
+            validate_marker_disjointness(
+                [self._pkg("foo", "1.0"), self._pkg("foo", "2.0")],
+                environments=envs,
+                extras=(),
+                groups=(),
+            )
+
+    def test_repeated_environments_pass_when_disjoint(self) -> None:
+        # The same repeated-env lock passes when the entries partition
+        # the install context, matching the pre-dedup behaviour.
+        envs = {
+            "linux-cpu": dict(self._LINUX["linux"]),
+            "linux-gpu": dict(self._LINUX["linux"]),
+        }
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "'cpu' in extras"),
+                self._pkg("foo", "2.0", "'cpu' not in extras"),
+            ],
+            environments=envs,
+            extras=("cpu",),
+            groups=(),
+        )
+
+    def test_distinct_environments_kept_when_collision_only_in_second(
+        self,
+    ) -> None:
+        # Dedup collapses identical env dicts only; two genuinely
+        # different envs must each get evaluated.  Collision shows
+        # under darwin only, and the error must name darwin.
+        envs = {
+            "linux": dict(self._LINUX["linux"]),
+            "darwin": {
+                "python_version": "3.11",
+                "sys_platform": "darwin",
+                "platform_machine": "arm64",
+            },
+        }
+        with pytest.raises(DisjointnessError, match="darwin"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", "1.0", "sys_platform == 'darwin'"),
+                    self._pkg("foo", "2.0", "sys_platform == 'darwin'"),
+                ],
+                environments=envs,
+                extras=(),
                 groups=(),
             )
 

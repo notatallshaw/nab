@@ -9,6 +9,7 @@ import pytest
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
+    expand_group_includes,
     expand_self_extras,
     raise_for_unsatisfiable,
     read_pyproject_dependencies,
@@ -285,6 +286,78 @@ class TestExpandSelfExtras:
         """Duplicates in the user-supplied selection are deduped."""
         opt = {"a": ["depA"]}
         assert expand_self_extras(opt, "mypkg", ["a", "a", "a"]) == ["a"]
+
+
+class TestExpandGroupIncludes:
+    def test_no_include_returns_input(self) -> None:
+        groups = {"a": ["depA"], "b": ["depB"]}
+        assert expand_group_includes(groups, ["a"]) == ["a"]
+
+    def test_include_group_expanded(self) -> None:
+        groups = {
+            "all-tools": [{"include-group": "b22"}, {"include-group": "b23"}],
+            "b22": ["black==22.0"],
+            "b23": ["black==23.0"],
+        }
+        assert expand_group_includes(groups, ["all-tools"]) == [
+            "all-tools",
+            "b22",
+            "b23",
+        ]
+
+    def test_chain_of_includes(self) -> None:
+        groups = {
+            "all": [{"include-group": "mid"}],
+            "mid": [{"include-group": "leaf"}],
+            "leaf": ["depA"],
+        }
+        assert expand_group_includes(groups, ["all"]) == ["all", "mid", "leaf"]
+
+    def test_diamond_include_visited_once(self) -> None:
+        """A group reached through two paths is emitted a single time."""
+        groups = {
+            "all": [{"include-group": "left"}, {"include-group": "right"}],
+            "left": [{"include-group": "shared"}],
+            "right": [{"include-group": "shared"}],
+            "shared": ["depShared"],
+        }
+        assert expand_group_includes(groups, ["all"]) == [
+            "all",
+            "left",
+            "right",
+            "shared",
+        ]
+
+    def test_include_name_canonicalized(self) -> None:
+        """An include naming a group non-canonically still walks it."""
+        groups = {"all": [{"include-group": "Sub_Group"}], "sub-group": ["depA"]}
+        assert expand_group_includes(groups, ["all"]) == ["all", "sub-group"]
+
+    def test_table_entry_without_include_group_ignored(self) -> None:
+        """A table entry that is not an include record is skipped."""
+        groups = {"a": [{"not-an-include": "x"}, "depA"]}
+        assert expand_group_includes(groups, ["a"]) == ["a"]
+
+    def test_non_string_include_tolerated(self) -> None:
+        """A malformed (non-string) include is skipped, not crashed on."""
+        groups = {"a": [{"include-group": 123}]}
+        assert expand_group_includes(groups, ["a"]) == ["a"]
+
+    def test_cycle_terminates(self) -> None:
+        groups = {
+            "a": [{"include-group": "b"}],
+            "b": [{"include-group": "a"}],
+        }
+        assert sorted(expand_group_includes(groups, ["a"])) == ["a", "b"]
+
+    def test_unknown_include_tolerated(self) -> None:
+        """An include naming a missing group does not raise here."""
+        groups = {"a": [{"include-group": "missing"}]}
+        assert expand_group_includes(groups, ["a"]) == ["a", "missing"]
+
+    def test_duplicate_input_groups_collapsed(self) -> None:
+        groups = {"a": ["depA"]}
+        assert expand_group_includes(groups, ["a", "a"]) == ["a"]
 
 
 class TestRaiseForUnsatisfiable:

@@ -31,6 +31,7 @@ from nab_python.config import (
 )
 from nab_python.download import download_lock  # noqa: F401 - re-exported for tests
 from nab_python.lockfile import (
+    DisjointnessError,  # noqa: F401 - referenced as _cli.DisjointnessError in _lock
     MissingHashError,
     MissingSdistError,
     write_lock,  # noqa: F401 - re-exported for tests
@@ -242,6 +243,9 @@ def _resolve_universal(
     except LookupError as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
+    except ConfigError as e:
+        sys.stderr.write(f"Error in [tool.nab]: {e}\n")
+        sys.exit(1)
     except HttpError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)
@@ -266,6 +270,15 @@ def _print_universal_blocks(result: UniversalResult) -> None:
             continue
         blocks.append(f"# {label}")
         blocks.extend(f"{name}=={tr.pins[name]}" for name in sorted(tr.pins))
+
+    # Surface base-pass failures so a successful tuple set does not
+    # mask a missing base attribution.
+    for br in result.base_results:
+        if br.success:
+            continue
+        blocks.append(f"# base/{br.tuple_.label}: FAILED")
+        blocks.extend(f"#   {raw}" for raw in (br.error or "").splitlines())
+
     sys.stdout.write("\n".join(blocks) + "\n")
 
 
