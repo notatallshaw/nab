@@ -174,7 +174,9 @@ def _drop_workspace_pins(
 
     ``workspace_to_drop`` holds canonical workspace member names; pin
     keys are already canonical.  An empty set returns ``lock_input``
-    unchanged.  Both ``pins`` and ``per_tuple_pins`` are filtered.
+    unchanged.  ``pins`` and ``per_tuple_pins`` are filtered, and the
+    forward dependency graph is filtered too so no edge points at a
+    dropped member with no ``[[packages]]`` entry.
     """
     if not workspace_to_drop:
         return lock_input
@@ -187,10 +189,16 @@ def _drop_workspace_pins(
         label: {name: pin for name, pin in tuple_pins.items() if keep(name)}
         for label, tuple_pins in lock_input.per_tuple_pins.items()
     }
+    filtered_dependencies = {
+        name: kept
+        for name, deps in lock_input.dependencies.items()
+        if keep(name) and (kept := tuple(dep for dep in deps if keep(dep)))
+    }
     return replace(
         lock_input,
         pins=filtered_pins,
         per_tuple_pins=filtered_per_tuple,
+        dependencies=filtered_dependencies,
     )
 
 

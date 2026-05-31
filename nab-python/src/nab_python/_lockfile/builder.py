@@ -9,6 +9,7 @@ be read directly without a second fetch.  This module also owns the
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, overload
@@ -73,6 +74,12 @@ class LockInputProvider(Protocol):
     exposes that :func:`build_lock_input_from_provider` consumes; tests
     may supply a stub without inheriting the full Provider class.
     """
+
+    deps_cache: Mapping[tuple[str, Version], Mapping[str, object]]
+    """Direct dependencies per ``(canonical name, version)``."""
+
+    extra_deps_map: Mapping[tuple[str, Version], Mapping[str, Mapping[str, object]]]
+    """Per-extra dependencies per ``(canonical name, version)``."""
 
     @property
     def coordinator(self) -> _LockInputCoordinator:
@@ -211,7 +218,7 @@ def _strip_userinfo(url: str) -> str:
     return urlunsplit(parts._replace(netloc=netloc))
 
 
-def build_lock_input_from_provider(
+def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a distinct lockfile field
     provider: LockInputProvider,
     pins: Mapping[str, Version],
     *,
@@ -221,6 +228,7 @@ def build_lock_input_from_provider(
     default_groups: Sequence[str] = (),
     created_by: str = "nab",
     indexes: Sequence[IndexConfig] = (),
+    resolved_keys: Iterable[str] = (),
 ) -> LockInput:
     """Build a :class:`LockInput` from a finished resolve.
 
@@ -232,6 +240,10 @@ def build_lock_input_from_provider(
     ``dependency_groups`` lists the PEP 735 groups whose requirements
     were folded into this resolve; ``default_groups`` is the subset
     that a default install (no ``--group`` flag) should apply.
+
+    ``resolved_keys`` is the full set of resolver result keys, including
+    ``name[extra]`` proxies; it is read to find which extras activated
+    so their edges join the forward dependency graph.
 
     All wheels and the sdist for each pinned version are recorded so
     the lockfile is portable across architectures of the same Python.
@@ -270,7 +282,51 @@ def build_lock_input_from_provider(
         extras=tuple(extras),
         dependency_groups=tuple(dependency_groups),
         default_groups=tuple(default_groups),
+        dependencies=_forward_dependency_graph(provider, pins, resolved_keys),
     )
+
+
+def _forward_dependency_graph(
+    provider: LockInputProvider,
+    pins: Mapping[str, Version],
+    resolved_keys: Iterable[str],
+) -> dict[str, tuple[str, ...]]:
+    """Build the forward dependency graph among the locked packages.
+
+    Each pinned package maps to the canonical names of its direct
+    dependencies that are themselves pinned.  Base dependencies come
+    from ``deps_cache``; an activated extra (a ``name[extra]`` key in
+    ``resolved_keys``) folds that extra's dependencies in too.  Names
+    not in ``pins`` are dropped so every edge points at a real
+    ``[[packages]]`` entry.
+    """
+    from ..provider import split_extra
+
+    activated_extras: defaultdict[str, set[str]] = defaultdict(set)
+    for key in resolved_keys:
+        base, extra = split_extra(key)
+        if extra is not None:
+            activated_extras[canonicalize_name(base)].add(extra)
+
+    pinned = {canonicalize_name(name) for name in pins}
+    graph: dict[str, tuple[str, ...]] = {}
+    for raw_name, version in pins.items():
+        canonical = canonicalize_name(raw_name)
+        cache_key = (canonical, version)
+        dep_names = {
+            canonicalize_name(split_extra(dep)[0])
+            for dep in provider.deps_cache.get(cache_key, {})
+        }
+        extra_map = provider.extra_deps_map.get(cache_key, {})
+        for extra in activated_extras.get(canonical, ()):
+            dep_names.update(
+                canonicalize_name(split_extra(dep)[0])
+                for dep in extra_map.get(extra, {})
+            )
+        dep_names &= pinned
+        if dep_names:
+            graph[canonical] = tuple(sorted(dep_names))
+    return graph
 
 
 def _index_pin_from_listing(

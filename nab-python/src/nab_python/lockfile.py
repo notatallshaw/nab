@@ -294,6 +294,12 @@ class LockInput:
     ``provenance`` is optional metadata about the inputs that
     produced this lock.  When present, it lands in the ``[tool.nab]``
     block of the emitted ``pylock.toml``.
+
+    ``dependencies`` is the forward dependency graph, keyed by
+    canonical package name; each value lists the canonical names of
+    that package's direct dependencies that are themselves locked.
+    The writer emits it as PEP 751 ``packages.dependencies``.  Empty
+    in universal mode, which does not track per-tuple edges.
     """
 
     pins: Mapping[str, PinShape] = field(default_factory=dict)
@@ -310,6 +316,7 @@ class LockInput:
     extras: tuple[str, ...] = ()
     dependency_groups: tuple[str, ...] = ()
     default_groups: tuple[str, ...] = ()
+    dependencies: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     provenance: Provenance | None = None
     conflicts: tuple[ConflictSet, ...] = ()
     """Declared ``[tool.nab].conflicts``.  Prunes the disjointness
