@@ -645,7 +645,7 @@ def _raise_for_local_vcs_python(
     managed = provider.local_sources.keys() | provider.vcs_sources.keys()
     if not managed:
         return
-    target = Version(t.python_version)
+    target = Version(t.environment["python_full_version"])
     for name, version in pins.items():
         normalized = canonicalize_name(name)
         if normalized not in managed:
@@ -654,7 +654,7 @@ def _raise_for_local_vcs_python(
         if spec is not None and target not in spec:
             msg = (
                 f"{normalized} {version} requires Python {spec} but tuple "
-                f"{t.label} targets Python {t.python_version}"
+                f"{t.label} targets Python {target}"
             )
             raise ResolutionError(msg)
 
