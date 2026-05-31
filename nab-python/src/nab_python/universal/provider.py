@@ -109,7 +109,13 @@ class UniversalProvider(Provider):
         )
         super().__init__(
             coordinator,
-            python_version=marker_environment.get("python_version"),
+            # Use the full patch version for Requires-Python evaluation;
+            # python_version only carries major.minor, so patch-level
+            # specifiers (e.g. >=3.13.1) require python_full_version.
+            python_version=(
+                marker_environment.get("python_full_version")
+                or marker_environment.get("python_version")
+            ),
             root_requirements=root_requirements,
             uploaded_prior_to=uploaded_prior_to,
             uploaded_prior_to_overrides=uploaded_prior_to_overrides,

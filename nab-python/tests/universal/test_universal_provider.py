@@ -450,6 +450,29 @@ class TestWheelTagFiltering:
         assert provider.excluded_versions_no_compatible_wheel == 1
 
 
+class TestRequiresPythonPatch:
+    """Requires-Python is evaluated against the tuple's full patch version."""
+
+    def test_dist_kept_when_patch_satisfies_requires_python(self) -> None:
+        """python_full_version 3.13.4 keeps a dist that requires >=3.13.1."""
+        env = {**_LINUX_ENV, "python_version": "3.13", "python_full_version": "3.13.4"}
+        provider = UniversalProvider(
+            _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
+            marker_environment=env,
+        )
+        result = provider.fetch_versions("pkg")
+        assert [v for v, _ in result] == [Version("1.0")]
+
+    def test_dist_excluded_when_patch_below_requires_python(self) -> None:
+        """A tuple targeting 3.13.0 excludes a >=3.13.1 dist."""
+        env = {**_LINUX_ENV, "python_version": "3.13", "python_full_version": "3.13.0"}
+        provider = UniversalProvider(
+            _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
+            marker_environment=env,
+        )
+        assert provider.fetch_versions("pkg") == []
+
+
 _FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
