@@ -153,7 +153,7 @@ def is_stdout(output: Path | None) -> bool:
     return output is not None and str(output) == "-"
 
 
-def _resolve_specific(  # noqa: PLR0913 - one wrapper per resolve_pyproject kwarg
+def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyproject kwarg / exit-mapped error
     path: Path,
     *,
     config: NabProjectConfig,
