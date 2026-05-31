@@ -51,7 +51,11 @@ from nab_python.lockfile import (
     SdistArtifact,
     WheelArtifact,
 )
-from nab_python.provider import ResolutionStrategy, UnsupportedVcsError
+from nab_python.provider import (
+    InvalidUploadTimeError,
+    ResolutionStrategy,
+    UnsupportedVcsError,
+)
 from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import ResolutionResult
 from nab_python.universal.matrix import Matrix, MatrixTuple
@@ -306,6 +310,21 @@ class TestLockCommandSpecific:
             lock(pyproject)
         assert "refusing direct-URL requirement" in capsys.readouterr().err
 
+    def test_invalid_upload_time_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A naive index upload-time exits 1 with a clean message, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                side_effect=InvalidUploadTimeError("foo 1.0 has a naive upload time"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        assert "naive upload time" in capsys.readouterr().err
+
     def test_not_implemented_vcs_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -479,6 +498,22 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, output=out)
         assert "invalid requirement" in capsys.readouterr().err
+
+    def test_invalid_upload_time_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A naive index upload-time exits 1 with a clean message, not a traceback."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=InvalidUploadTimeError("foo 1.0 has a naive upload time"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        assert "naive upload time" in capsys.readouterr().err
 
     def test_config_error_during_resolve_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

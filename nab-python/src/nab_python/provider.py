@@ -50,6 +50,7 @@ __all__ = [
     "DistFile",
     "DistPolicy",
     "ExtrasMode",
+    "InvalidUploadTimeError",
     "LocalSource",
     "MetadataError",
     "MissingExtraError",
@@ -289,6 +290,12 @@ class UnsupportedSdistError(MetadataError):
     :meth:`Provider._look_ahead_ok` so the resolver skips the
     version instead of failing.
     """
+
+
+# Deliberately not a MetadataError: _look_ahead_ok catches MetadataError
+# and would silently reject the version; a naive upload-time is a hard error.
+class InvalidUploadTimeError(Exception):
+    """Raised when an index upload-time is not the timezone-aware UTC PEP 700 needs."""
 
 
 def _add_extra_marker(dep_str: str, extra_name: str) -> str:
