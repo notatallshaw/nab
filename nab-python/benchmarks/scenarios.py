@@ -543,8 +543,13 @@ def process_scenario(
             f" got {resolution_raw!r}"
         )
         raise ValueError(msg) from exc
+    # Trust a pre-2.2 sdist's PKG-INFO deps by default. The benchmark measures
+    # resolver search, and under BuildPolicy.NEVER the strict PEP 643 product
+    # default rejects every sdist-only pre-2.2 pin (UnsupportedSdistError),
+    # dropping in-window versions uv resolves by building. A scenario sets this
+    # false to exercise strict behavior.
     trust_unverified_sdist_deps: bool = scenario.get(
-        "trust_unverified_sdist_deps", False
+        "trust_unverified_sdist_deps", True
     )
     optional_dependencies: dict[str, list[str]] = scenario.get(
         "optional_dependencies", {}

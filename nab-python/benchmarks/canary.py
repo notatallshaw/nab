@@ -368,8 +368,10 @@ def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
         else None
     )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
+    # See scenarios.py: trust pre-2.2 sdist PKG-INFO deps by default so the
+    # benchmark measures search, not strict PEP 643 sdist rejection.
     trust_unverified_sdist_deps = bool(
-        scenario.get("trust_unverified_sdist_deps", False)
+        scenario.get("trust_unverified_sdist_deps", True)
     )
 
     runs_data: list[dict] = [
