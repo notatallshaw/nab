@@ -519,3 +519,58 @@ class TestBruteForceRegression:
         assert result["pkg0"] in (V("1.0"), V("2.0"))
         assert "pkg1" not in result
         assert "pkg2" not in result
+
+
+class _FilterProvider(PackagingProvider):
+    """PackagingProvider that selects via ``version_range.filter``.
+
+    The real PyPI provider picks with ``Provider.choose_version``, which
+    calls ``version_range.filter(all_versions)`` rather than a plain
+    membership test. ``filter`` is prerelease-aware, so it exposes the
+    constraint prerelease behavior that membership selection hides.
+    """
+
+    def choose_version(
+        self, package: str, version_range: VersionRange
+    ) -> Version | None:
+        return next(iter(version_range.filter(self._get_versions(package))), None)
+
+
+class TestConstraintPrereleases:
+    """A constraint that names a prerelease must enable that prerelease."""
+
+    def test_constraint_capping_at_prerelease_keeps_it(self) -> None:
+        """``foo<=2.0b1`` must pick 2.0b1, not the older 1.5.
+
+        PEP 440 enables prereleases for a specifier that names one. A
+        constraint is injected and read back through a double complement;
+        the old vendored packaging dropped the prerelease policy there, so
+        ``filter`` excluded 2.0b1 and the resolver fell back to 1.5.
+        """
+        provider = _FilterProvider(
+            {
+                "root": {V("1.0"): {"foo": SpecifierSet(">=1.0")}},
+                "foo": {V("2.0b1"): {}, V("1.5"): {}, V("1.0"): {}},
+            },
+        )
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {"root": VersionRange.singleton(V("1.0"))},
+            constraints={"foo": SpecifierSet("<=2.0b1").to_range()},
+        )
+        assert result["foo"] == V("2.0b1")
+
+
+class TestComplementPrereleases:
+    """``VersionRange.complement`` preserves the prerelease policy."""
+
+    def test_double_complement_keeps_prerelease_filtering(self) -> None:
+        """``~~r`` filters a named prerelease in, just as ``r`` does.
+
+        Resetting the policy on complement made the double complement
+        that constraint injection performs buffer 2.0b1 out under the
+        PEP 440 default.
+        """
+        r = SpecifierSet("<=2.0b1").to_range()
+        versions = [V("2.0b1"), V("1.5"), V("1.0")]
+        assert list(r.filter(versions)) == versions
+        assert list(r.complement().complement().filter(versions)) == versions
