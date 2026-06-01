@@ -2646,6 +2646,32 @@ class TestMatrix:
             read_pyproject_config(path)
 
 
+class TestTrustUnverifiedSdistDeps:
+    def test_rejected_in_universal_mode(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            'dist-policy = { policy = "wheel-or-sdist", trust-unverified-deps = true }\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        with pytest.raises(
+            ConfigError, match="does not support dist-policy.trust-unverified-deps"
+        ):
+            read_pyproject_config(path)
+
+    def test_default_allowed_in_universal_mode(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        assert read_pyproject_config(path).trust_unverified_sdist_deps is False
+
+
 class TestWorkspace:
     """``[tool.nab.workspace]`` parses into a typed :class:`WorkspaceConfig`."""
 

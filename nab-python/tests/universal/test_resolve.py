@@ -24,6 +24,7 @@ from nab_python.config import (
     ConflictMember,
     ConflictPolicy,
     ConflictSet,
+    NabProjectConfig,
     conflict_forks,
 )
 from nab_python.lockfile import (
@@ -1498,3 +1499,24 @@ class TestLocalVcsRequiresPython:
         error = result.tuple_results[0].error
         assert error is not None
         assert "foo 1.0 requires Python" in error
+
+
+class TestRejectTrustUnverifiedInUniversal:
+    """A universal resolve refuses to trust unverified sdist deps.
+
+    The per-tuple wheel-tag filter can drop every wheel for a version,
+    leaving only its sdist; trusting that sdist's unverified deps can omit
+    real ones and produce an invalid lock.
+    """
+
+    def test_build_config_trust_rejected(self) -> None:
+        coordinator = _make_coordinator({"pkg": [_make_wheel("1.0", package="pkg")]})
+        with pytest.raises(
+            ConfigError, match="does not support dist-policy.trust-unverified-deps"
+        ):
+            resolve_with_coordinator(
+                coordinator,
+                Matrix(python="==3.11", platforms=("linux_x86_64",)),
+                ["pkg"],
+                build_config=NabProjectConfig(trust_unverified_sdist_deps=True),
+            )

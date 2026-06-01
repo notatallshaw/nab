@@ -430,6 +430,20 @@ class OverrideConflictError(ConfigError):
     """
 
 
+def reject_universal_trust_unverified(*, trust_unverified_sdist_deps: bool) -> None:
+    """Refuse trusting unverified sdist deps under universal mode."""
+    if not trust_unverified_sdist_deps:
+        return
+    msg = (
+        "mode = 'universal' does not support dist-policy.trust-unverified-deps"
+        " = true: a universal lock filters wheels per target environment, so a"
+        " version whose wheels are all filtered out leaves only its sdist, and"
+        " trusting that sdist's unverified dependencies can omit real ones and"
+        " produce an invalid lock. Use mode = 'specific' to trust them."
+    )
+    raise ConfigError(msg)
+
+
 def _member_active(
     member: ConflictMember,
     active_extras: AbstractSet[str],
@@ -650,6 +664,7 @@ def _config_from_effective(
                 " per-tuple values. Drop it or use mode = 'specific'."
             )
             raise ConfigError(msg)
+        reject_universal_trust_unverified(trust_unverified_sdist_deps=trust_unverified)
 
     default_groups = effective["default-groups"].value
     conflicts = effective["conflicts"].value

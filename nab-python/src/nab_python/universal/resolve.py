@@ -26,7 +26,12 @@ from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import Version
-from ..config import ConfigError, IndexOverride, PackageOverride
+from ..config import (
+    ConfigError,
+    IndexOverride,
+    PackageOverride,
+    reject_universal_trust_unverified,
+)
 from ..fetch import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
@@ -351,6 +356,11 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     a true base dependency from one required by every member; pass it
     only when conflict forks ran.
     """
+    if build_config is not None:
+        reject_universal_trust_unverified(
+            trust_unverified_sdist_deps=build_config.trust_unverified_sdist_deps
+        )
+
     base_tuples = matrix.expand()
     fork_list = (
         list(forks) if forks is not None else [ResolveFork((), list(requirements))]
