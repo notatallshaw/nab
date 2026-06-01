@@ -62,6 +62,28 @@ def test_requires_dist_parsed() -> None:
     assert [str(r) for r in md.requires_dist] == ["bar>=1.0", "baz<2"]
 
 
+def test_equal_markers_are_interned() -> None:
+    """The same marker text across different dep strings shares one object."""
+    text = (
+        "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+        'Requires-Dist: pytest; extra == "test"\n'
+        'Requires-Dist: coverage; extra == "test"\n'
+        'Requires-Dist: ruff; extra == "lint"\n'
+    )
+    md = parse_metadata(text)
+    pytest_marker, coverage_marker, ruff_marker = (r.marker for r in md.requires_dist)
+    assert pytest_marker is coverage_marker
+    assert ruff_marker is not pytest_marker
+
+
+def test_markerless_requirement_keeps_none_marker() -> None:
+    """A dep without a marker is unaffected by interning."""
+    md = parse_metadata(
+        "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar>=1.0\n"
+    )
+    assert md.requires_dist[0].marker is None
+
+
 def test_provides_extra_kept_as_strings() -> None:
     """``Provides-Extra`` values are retained as raw strings."""
     text = (
