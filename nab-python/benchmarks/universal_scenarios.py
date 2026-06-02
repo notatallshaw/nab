@@ -31,8 +31,14 @@ else:
     # nab pins py>=3.10 but the import fallback matches scenarios.py
     import tomli as tomllib  # type: ignore[no-redef] # pragma: no cover
 
+from nab_python._lockfile.pylock import build_pylock
+from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python.universal.matrix import Matrix
-from nab_python.universal.resolve import resolve_universal
+from nab_python.universal.resolve import (
+    UniversalResult,
+    merge_universal_lock_inputs,
+    resolve_universal,
+)
 
 BENCHMARKS_DIR = Path(__file__).parent
 SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
@@ -78,6 +84,53 @@ def parse_datetime(value: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+def check_lock_consistency(result: UniversalResult) -> tuple[bool, list[str]]:
+    """Verify the marker-gated lock reproduces each tuple's solution.
+
+    Builds the real PEP 751 lock and, for each tuple, projects every
+    package marker onto that tuple's environment. The packages whose
+    markers admit the environment must be exactly that tuple's pins; a
+    missing one is an under-firing marker (a silently dropped dep), an
+    extra one an over-firing marker. The corpus declares no conflict
+    forks, so the markers are pure environment markers and the
+    projection is a plain ``marker.evaluate``.
+
+    Call only when ``result.success`` so the lock covers every tuple.
+    """
+    lock_input = merge_universal_lock_inputs(result)
+    try:
+        pylock = build_pylock(lock_input)
+    except Exception as exc:
+        return False, [f"build_pylock raised {type(exc).__name__}: {exc}"[:200]]
+
+    problems: list[str] = []
+    for tr in result.tuple_results:
+        expected = {canonicalize_name(n): str(v) for n, v in tr.pins.items()}
+        selected: dict[str, str | None] = {}
+        duplicates: set[str] = set()
+        for pkg in pylock.packages:
+            marker = pkg.marker
+            if marker is not None and not marker.evaluate(tr.tuple_.environment):
+                continue
+            name = canonicalize_name(str(pkg.name))
+            if name in selected:
+                duplicates.add(name)
+            selected[name] = str(pkg.version) if pkg.version is not None else None
+        if selected != expected or duplicates:
+            missing = sorted(expected.keys() - selected.keys())
+            extra = sorted(selected.keys() - expected.keys())
+            mismatch = sorted(
+                k
+                for k in expected.keys() & selected.keys()
+                if expected[k] != selected[k]
+            )
+            problems.append(
+                f"{tr.tuple_.label}: missing={missing} extra={extra} "
+                f"mismatch={mismatch} duplicate={sorted(duplicates)}"
+            )
+    return not problems, problems
 
 
 def process_scenario(
@@ -164,6 +217,10 @@ def process_scenario(
             1 for pins in merged.values() if len({version for version, _ in pins}) > 1
         )
         success = result.success
+        if success:
+            lock_consistent, lock_inconsistencies = check_lock_consistency(result)
+        else:
+            lock_consistent, lock_inconsistencies = None, []
     except _ScenarioTimeoutError:
         elapsed = time.monotonic() - start
         timed_out = True
@@ -171,6 +228,7 @@ def process_scenario(
         merged = {}
         diverging_packages = 0
         success = False
+        lock_consistent, lock_inconsistencies = None, []
     except Exception as exc:
         elapsed = time.monotonic() - start
         per_tuple = [
@@ -193,6 +251,7 @@ def process_scenario(
         merged = {}
         diverging_packages = 0
         success = False
+        lock_consistent, lock_inconsistencies = None, []
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous_handler)
@@ -204,6 +263,8 @@ def process_scenario(
             "success": success,
             "timed_out": timed_out,
             "skip_on_fail": skip_on_fail,
+            "lock_consistent": lock_consistent,
+            "lock_inconsistencies": lock_inconsistencies,
         },
         "stats": {
             "wall_time_seconds": round(elapsed, 3),
@@ -229,12 +290,13 @@ def process_scenario(
     if timed_out:
         print(f"TIMEOUT after {elapsed:.1f}s ({stats['tuples_total']} tuples)")
     elif success:
+        lock_note = "" if lock_consistent else " LOCK-INCONSISTENT"
         print(
             f"ok ({stats['tuples_total']} tuples, "
             f"{stats['merged_packages']} pkgs, "
             f"{stats['diverging_packages']} diverging, "
             f"{stats['decisions_total']} decisions, "
-            f"{stats['wall_time_seconds']}s)"
+            f"{stats['wall_time_seconds']}s){lock_note}"
         )
     else:
         failures = [t for t in per_tuple if not t["success"]]
