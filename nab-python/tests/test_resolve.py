@@ -1803,6 +1803,21 @@ class TestBuildConstraints:
                 NabProjectConfig(constraints=("foo[dev]<2.0",)), environment={}
             )
 
+    def test_constraint_with_extras_rejected_under_false_marker(self) -> None:
+        """Extras on a constraint are rejected even when its marker is False.
+
+        pip rejects constraint extras at parse, before evaluating the marker,
+        and the universal path does the same. The extras guard must run before
+        the marker drop so a marker-false constraint is not silently accepted.
+        """
+        with pytest.raises(ConfigError, match="extras"):
+            _build_constraints(
+                NabProjectConfig(
+                    constraints=('foo[dev]<2.0 ; python_version < "3.0"',)
+                ),
+                environment={"python_version": "3.12"},
+            )
+
 
 class TestResolvePyprojectConflicts:
     """End-to-end: contradictory folded requirements fail loudly."""
