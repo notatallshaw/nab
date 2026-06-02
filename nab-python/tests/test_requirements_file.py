@@ -9,6 +9,7 @@ import pytest
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
+    expand_extra_requirements,
     expand_group_includes,
     expand_self_extras,
     raise_for_unsatisfiable,
@@ -286,6 +287,112 @@ class TestExpandSelfExtras:
         """Duplicates in the user-supplied selection are deduped."""
         opt = {"a": ["depA"]}
         assert expand_self_extras(opt, "mypkg", ["a", "a", "a"]) == ["a"]
+
+
+class TestExpandExtraRequirements:
+    def test_empty_selection_returns_empty(self) -> None:
+        assert expand_extra_requirements({"a": ["depA"]}, "mypkg", []) == []
+
+    def test_no_project_name_flattens_without_self_ref(self) -> None:
+        """Without a project name a self-ref cannot be walked, so only the
+        selected extra's own requirements come back."""
+        opt = {"all": ["mypkg[fast]", "plain"], "fast": ["some-dep"]}
+        out = expand_extra_requirements(opt, None, ["all"])
+        assert sorted(r.name for r in out) == ["mypkg", "plain"]
+
+    def test_plain_extra_requirements_keep_their_markers(self) -> None:
+        opt = {"cpu": ["torch", "numpy; python_version < '3.10'"]}
+        by_name = {r.name: r for r in expand_extra_requirements(opt, "mypkg", ["cpu"])}
+        assert by_name["torch"].marker is None
+        assert by_name["numpy"].marker is not None
+        assert by_name["numpy"].marker.evaluate({"python_version": "3.9"})
+
+    def test_self_ref_marker_propagates_to_flattened_dep(self) -> None:
+        """The reported bug: a marker-gated self-ref's dep carries the marker."""
+        opt = {
+            "fast": ["some-dep"],
+            "all": ["mypkg[fast]; python_version < '3.10'"],
+        }
+        out = expand_extra_requirements(opt, "mypkg", ["all"])
+        dep = next(r for r in out if r.name == "some-dep")
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"python_version": "3.9"})
+        assert not dep.marker.evaluate({"python_version": "3.11"})
+
+    def test_self_ref_without_marker_leaves_dep_unmarked(self) -> None:
+        opt = {"all": ["mypkg[fast]"], "fast": ["some-dep"]}
+        out = expand_extra_requirements(opt, "mypkg", ["all"])
+        dep = next(r for r in out if r.name == "some-dep")
+        assert dep.marker is None
+
+    def test_dep_own_marker_anded_with_activation(self) -> None:
+        opt = {
+            "fast": ["some-dep; sys_platform == 'linux'"],
+            "all": ["mypkg[fast]; python_version < '3.10'"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker.evaluate({"sys_platform": "linux", "python_version": "3.9"})
+        assert not dep.marker.evaluate(
+            {"sys_platform": "linux", "python_version": "3.11"}
+        )
+        assert not dep.marker.evaluate(
+            {"sys_platform": "win32", "python_version": "3.9"}
+        )
+
+    def test_chain_of_self_refs_combines_markers(self) -> None:
+        opt = {
+            "all": ["mypkg[mid]; python_version < '3.12'"],
+            "mid": ["mypkg[leaf]; sys_platform == 'linux'"],
+            "leaf": ["dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "dep"
+        )
+        assert dep.marker.evaluate({"python_version": "3.11", "sys_platform": "linux"})
+        assert not dep.marker.evaluate(
+            {"python_version": "3.12", "sys_platform": "linux"}
+        )
+        assert not dep.marker.evaluate(
+            {"python_version": "3.11", "sys_platform": "win32"}
+        )
+
+    def test_multi_path_emits_dep_under_each_activation(self) -> None:
+        """A dep reachable through two markers is required under their OR:
+        each activation path is emitted separately."""
+        opt = {
+            "all": [
+                "mypkg[fast]; python_version < '3.10'",
+                "mypkg[fast]; sys_platform == 'win32'",
+            ],
+            "fast": ["some-dep"],
+        }
+        deps = [
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        ]
+        assert len(deps) == 2
+        py_only = {"python_version": "3.9", "sys_platform": "linux"}
+        win_only = {"python_version": "3.11", "sys_platform": "win32"}
+        neither = {"python_version": "3.11", "sys_platform": "linux"}
+        assert any(d.marker.evaluate(py_only) for d in deps)
+        assert any(d.marker.evaluate(win_only) for d in deps)
+        assert not any(d.marker.evaluate(neither) for d in deps)
+
+    def test_unknown_extra_raises(self) -> None:
+        with pytest.raises(LookupError, match="not declared"):
+            expand_extra_requirements({"a": ["depA"]}, "mypkg", ["missing"])
+
+    def test_self_ref_cycle_terminates(self) -> None:
+        opt = {"a": ["mypkg[b]", "depA"], "b": ["mypkg[a]", "depB"]}
+        names = {r.name for r in expand_extra_requirements(opt, "mypkg", ["a"])}
+        assert {"depA", "depB"} <= names
 
 
 class TestExpandGroupIncludes:

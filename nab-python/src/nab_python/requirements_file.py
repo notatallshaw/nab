@@ -10,6 +10,7 @@ import tomli
 from nab_resolver.errors import ResolutionError
 
 from ._vendor.packaging.dependency_groups import resolve_dependency_groups
+from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 from ._vendor.packaging.utils import canonicalize_name
 
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "InvalidProjectRequirementError",
+    "expand_extra_requirements",
     "expand_group_includes",
     "expand_self_extras",
     "raise_for_unsatisfiable",
@@ -185,6 +187,69 @@ def expand_self_extras(
                 for sub in req.extras
                 if canonicalize_name(sub) not in seen
             )
+    return out
+
+
+def _and_markers(marker: Marker | None, gates: frozenset[str]) -> Marker:
+    """AND a non-empty set of marker strings onto ``marker``."""
+    parts = [str(marker)] if marker is not None else []
+    parts.extend(sorted(gates))
+    return Marker(" and ".join(f"({p})" for p in parts))
+
+
+def expand_extra_requirements(
+    optional_deps: Mapping[str, Sequence[str]],
+    project_name: str | None,
+    selected: Sequence[str],
+) -> list[Requirement]:
+    """Flatten ``selected`` extras to requirements, propagating self-ref markers.
+
+    This is :func:`select_optional_dependencies` over the self-reference
+    closure :func:`expand_self_extras` walks, except a self-reference's
+    PEP 508 marker is carried onto the requirements it pulls in.  With
+    ``all = ["pkg[fast]; python_version < '3.10'"]`` and ``fast =
+    ["dep"]``, selecting ``all`` yields ``dep; python_version < '3.10'``
+    rather than a bare ``dep`` that survives on every environment, so the
+    per-tuple universal parser drops the dep on the tuples it excludes.
+
+    Each activation path is walked separately, so a dep reachable through
+    two markers is required under their disjunction.  Unknown extras
+    raise ``LookupError``.
+    """
+    if not selected:
+        return []
+    canonical_project = (
+        canonicalize_name(project_name) if project_name is not None else None
+    )
+    canonical_deps = _canonicalize_optional_deps(optional_deps)
+    out: list[Requirement] = []
+    visited: set[tuple[str, frozenset[str]]] = set()
+    worklist: list[tuple[str, frozenset[str]]] = [
+        (canonicalize_name(s), frozenset()) for s in selected
+    ]
+    while worklist:
+        extra, gates = worklist.pop(0)
+        if (extra, gates) in visited:
+            continue
+        visited.add((extra, gates))
+        if extra not in canonical_deps:
+            msg = (
+                f"extra {extra!r} is not declared in"
+                f" [project.optional-dependencies]; defined: {sorted(canonical_deps)!r}"
+            )
+            raise LookupError(msg)
+        for req in _parse_requirements(
+            canonical_deps[extra],
+            f"[project.optional-dependencies] extra {extra!r}",
+        ):
+            if canonical_project is not None and (
+                canonicalize_name(req.name) == canonical_project
+            ):
+                edge = gates if req.marker is None else gates | {str(req.marker)}
+                worklist.extend((canonicalize_name(sub), edge) for sub in req.extras)
+            if gates:
+                req.marker = _and_markers(req.marker, gates)
+            out.append(req)
     return out
 
 
