@@ -1768,7 +1768,31 @@ class TestBuildResolverInputs:
                 reqs, NabProjectConfig(), environment={}
             )
         assert "foo" not in resolver_requirements
-        assert any("uses an extra marker" in rec.message for rec in caplog.records)
+        assert any("membership marker" in rec.message for rec in caplog.records)
+
+    def test_root_extras_set_marker_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A root ``"x" in extras`` marker is dropped with a warning, not a crash."""
+        reqs = [Requirement('foo ; "x" in extras')]
+        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+            resolver_requirements, _ = _build_resolver_inputs(
+                reqs, NabProjectConfig(), environment={}
+            )
+        assert "foo" not in resolver_requirements
+        assert any("membership marker" in rec.message for rec in caplog.records)
+
+    def test_root_dependency_groups_marker_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A root ``in dependency_groups`` marker is dropped with a warning."""
+        reqs = [Requirement('foo ; "dev" in dependency_groups')]
+        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+            resolver_requirements, _ = _build_resolver_inputs(
+                reqs, NabProjectConfig(), environment={}
+            )
+        assert "foo" not in resolver_requirements
+        assert any("membership marker" in rec.message for rec in caplog.records)
 
     def test_env_gated_drop_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
         """A requirement dropped by a plain env marker stays silent."""
@@ -1840,6 +1864,13 @@ class TestBuildConstraints:
                 ),
                 environment={"python_version": "3.12"},
             )
+
+    def test_set_marker_constraint_dropped(self) -> None:
+        """A constraint gated on a lockfile-only set marker drops, not crashes."""
+        out = _build_constraints(
+            NabProjectConfig(constraints=('foo<2.0 ; "x" in extras',)), environment={}
+        )
+        assert "foo" not in out
 
 
 class TestResolvePyprojectConflicts:
