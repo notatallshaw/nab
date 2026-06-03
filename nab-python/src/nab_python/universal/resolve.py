@@ -89,6 +89,10 @@ class TupleResult:
     error: str | None = None
     decisions: int = 0
     rounds: int = 0
+    conflicts: int = 0
+    backjumps: int = 0
+    metadata_fetched: int = 0
+    distributions_seen: int = 0
     wall_time: float = 0.0
     lock_input: LockInput | None = None
 
@@ -659,6 +663,20 @@ def _raise_for_local_vcs_python(
             raise ResolutionError(msg)
 
 
+def _tuple_stats(
+    resolver: Resolver[str, Version], provider: UniversalProvider
+) -> dict[str, int]:
+    """Return the resolver and provider counters for a TupleResult."""
+    return {
+        "rounds": resolver.stats.rounds,
+        "decisions": resolver.stats.decisions,
+        "conflicts": resolver.stats.conflicts,
+        "backjumps": resolver.stats.backjumps,
+        "metadata_fetched": provider.stats.metadata_fetched,
+        "distributions_seen": provider.stats.distributions_seen,
+    }
+
+
 def _resolve_one_tuple(  # noqa: PLR0913
     coordinator: FetchCoordinator,
     t: MatrixTuple,
@@ -719,8 +737,7 @@ def _resolve_one_tuple(  # noqa: PLR0913
             success=False,
             error=f"{type(exc).__name__}: {exc}"[:_ERROR_MESSAGE_LIMIT],
             wall_time=time.monotonic() - start,
-            rounds=resolver.stats.rounds,
-            decisions=resolver.stats.decisions,
+            **_tuple_stats(resolver, provider),
         )
     elapsed = time.monotonic() - start
     try:
@@ -734,15 +751,13 @@ def _resolve_one_tuple(  # noqa: PLR0913
             pins=pins,
             error=f"{type(exc).__name__}: {exc}"[:_ERROR_MESSAGE_LIMIT],
             wall_time=elapsed,
-            rounds=resolver.stats.rounds,
-            decisions=resolver.stats.decisions,
+            **_tuple_stats(resolver, provider),
         )
     return TupleResult(
         tuple_=t,
         success=True,
         pins=pins,
         wall_time=elapsed,
-        rounds=resolver.stats.rounds,
-        decisions=resolver.stats.decisions,
+        **_tuple_stats(resolver, provider),
         lock_input=lock_input,
     )

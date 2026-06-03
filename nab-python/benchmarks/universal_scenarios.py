@@ -150,6 +150,10 @@ def process_scenario(
                 "error": tr.error,
                 "decisions": tr.decisions,
                 "rounds": tr.rounds,
+                "conflicts": tr.conflicts,
+                "backjumps": tr.backjumps,
+                "metadata_fetched": tr.metadata_fetched,
+                "distributions_seen": tr.distributions_seen,
                 "wall_time_seconds": round(tr.wall_time, 3),
                 "package_count": len(tr.pins),
             }
@@ -178,6 +182,10 @@ def process_scenario(
                 "error": f"{type(exc).__name__}: {exc}"[:200],
                 "decisions": 0,
                 "rounds": 0,
+                "conflicts": 0,
+                "backjumps": 0,
+                "metadata_fetched": 0,
+                "distributions_seen": 0,
                 "wall_time_seconds": 0.0,
                 "package_count": 0,
             }
@@ -206,6 +214,10 @@ def process_scenario(
             "diverging_packages": diverging_packages,
             "decisions_total": sum(t["decisions"] for t in per_tuple),
             "rounds_total": sum(t["rounds"] for t in per_tuple),
+            "conflicts_total": sum(t["conflicts"] for t in per_tuple),
+            "backjumps_total": sum(t["backjumps"] for t in per_tuple),
+            "metadata_fetched_total": sum(t["metadata_fetched"] for t in per_tuple),
+            "distributions_seen_total": sum(t["distributions_seen"] for t in per_tuple),
         },
         "per_tuple": per_tuple,
     }
