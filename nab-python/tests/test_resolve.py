@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import InvalidVersion, Version
@@ -2633,3 +2634,141 @@ class TestLocalVcsRequiresPython:
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             with pytest.raises(ResolutionError, match="foo 1.0 requires Python"):
                 resolve_pyproject(root, _FAKE_TRANSPORT, python_version="3.10.0")
+
+
+def _index_wheels(name: str, *versions: str) -> list[WheelFile]:
+    """One pure-python wheel per version, dependency-free in minimal METADATA."""
+    return [
+        WheelFile(
+            filename=f"{name}-{v}-py3-none-any.whl",
+            url=f"https://example.com/{name}-{v}-py3-none-any.whl",
+            version=v,
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+        )
+        for v in versions
+    ]
+
+
+class TestLocalSourceExtrasMarkers:
+    """Extras and markers on a local-source package resolve like an index one.
+
+    A local source is materialised into a synthetic single-version listing
+    from its pyproject metadata, then flows through the same extras-proxy and
+    marker machinery as an index package. These end-to-end checks pin that
+    parity, plus the invariant that the single synthetic version is still
+    subject to the requirement's range (no short-circuit past an unsatisfying
+    pin).
+    """
+
+    @staticmethod
+    def _resolve(
+        tmp_path: Path,
+        root_body: str,
+        members: dict[str, str],
+        coordinator: MagicMock,
+        python_version: str,
+    ) -> ResolutionResult:
+        (tmp_path / "pyproject.toml").write_text(root_body, encoding="utf-8")
+        for name, body in members.items():
+            member = tmp_path / name
+            member.mkdir()
+            (member / "pyproject.toml").write_text(body, encoding="utf-8")
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            return resolve_pyproject(
+                tmp_path / "pyproject.toml",
+                _FAKE_TRANSPORT,
+                python_version=python_version,
+            )
+
+    _ROOT_FOO_GPU = (
+        '[project]\nname = "proj"\ndependencies = ["foo[gpu]"]\n'
+        '[[tool.nab.local-sources]]\nname = "foo"\npath = "foo"\n'
+    )
+
+    def test_extra_pulls_its_dependency(self, tmp_path: Path) -> None:
+        coordinator = make_coordinator(
+            listings={"bar": _index_wheels("bar", "2.0", "3.0")},
+            auto_metadata=True,
+        )
+        result = self._resolve(
+            tmp_path,
+            self._ROOT_FOO_GPU,
+            {
+                "foo": '[project]\nname = "foo"\nversion = "1.0"\n'
+                '[project.optional-dependencies]\ngpu = ["bar>=2"]\n',
+            },
+            coordinator,
+            "3.12.0",
+        )
+        assert result.pins == {"foo": V("1.0"), "bar": V("3.0")}
+
+    @pytest.mark.parametrize(
+        ("python_version", "expects_bar"),
+        [("3.12.0", True), ("3.9.0", False)],
+    )
+    def test_extra_dependency_marker_gated_by_target(
+        self, tmp_path: Path, python_version: str, expects_bar: bool
+    ) -> None:
+        coordinator = make_coordinator(
+            listings={"bar": _index_wheels("bar", "2.0")}, auto_metadata=True
+        )
+        result = self._resolve(
+            tmp_path,
+            self._ROOT_FOO_GPU,
+            {
+                "foo": '[project]\nname = "foo"\nversion = "1.0"\n'
+                "[project.optional-dependencies]\n"
+                "gpu = [\"bar ; python_version >= '3.11'\"]\n",
+            },
+            coordinator,
+            python_version,
+        )
+        expected = {"foo": V("1.0")}
+        if expects_bar:
+            expected["bar"] = V("2.0")
+        assert result.pins == expected
+
+    @pytest.mark.parametrize(
+        ("python_version", "expects_bar"),
+        [("3.9.0", True), ("3.12.0", False)],
+    )
+    def test_local_dependency_marker_gated_by_target(
+        self, tmp_path: Path, python_version: str, expects_bar: bool
+    ) -> None:
+        coordinator = make_coordinator(
+            listings={"bar": _index_wheels("bar", "1.0")}, auto_metadata=True
+        )
+        result = self._resolve(
+            tmp_path,
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[[tool.nab.local-sources]]\nname = "foo"\npath = "foo"\n',
+            {
+                "foo": '[project]\nname = "foo"\nversion = "1.0"\n'
+                "dependencies = [\"bar ; python_version < '3.10'\"]\n",
+            },
+            coordinator,
+            python_version,
+        )
+        expected = {"foo": V("1.0")}
+        if expects_bar:
+            expected["bar"] = V("1.0")
+        assert result.pins == expected
+
+    def test_version_mismatch_is_unsat_not_a_wrong_pin(self, tmp_path: Path) -> None:
+        coordinator = make_coordinator(listings={})
+        with pytest.raises(ResolutionError):
+            self._resolve(
+                tmp_path,
+                '[project]\nname = "proj"\ndependencies = ["foo>=2.0"]\n'
+                '[[tool.nab.local-sources]]\nname = "foo"\npath = "foo"\n',
+                {"foo": '[project]\nname = "foo"\nversion = "1.0"\n'},
+                coordinator,
+                "3.12.0",
+            )
