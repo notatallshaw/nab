@@ -230,6 +230,8 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             _augment_resolution_error(exc, provider)
             raise
         pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
+        if config.local_sources or config.vcs_sources:
+            _raise_for_local_vcs_python(provider, pins, Version(effective_python))
         lock_input = build_lock_input_from_provider(
             provider,
             pins,
@@ -691,6 +693,32 @@ def _build_marker_environment(
     env.update(python_axis_environment(python_version))
     env.update(overrides)
     return env
+
+
+def _raise_for_local_vcs_python(
+    provider: Provider,
+    pins: Mapping[str, Version],
+    target: Version,
+) -> None:
+    """Reject a local or VCS pin whose Requires-Python excludes ``target``.
+
+    Index candidates are filtered by Requires-Python while listing; local
+    and VCS sources skip that filter, so a source that rejects the resolve
+    target could otherwise reach the lock. Mirrors the per-tuple check in
+    :mod:`nab_python.universal.resolve`.
+    """
+    managed = provider.local_sources.keys() | provider.vcs_sources.keys()
+    for name, version in pins.items():
+        normalized = canonicalize_name(name)
+        if normalized not in managed:
+            continue
+        spec = provider.metadata_cache[(normalized, version)].requires_python
+        if spec is not None and target not in spec:
+            msg = (
+                f"{normalized} {version} requires Python {spec} but the resolve"
+                f" targets Python {target}"
+            )
+            raise ResolutionError(msg)
 
 
 def resolve_universal_pyproject(

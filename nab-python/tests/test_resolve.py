@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import InvalidVersion, Version
 from nab_python.config import (
@@ -16,7 +17,13 @@ from nab_python.config import (
     NabProjectConfig,
     ResolveMode,
 )
-from nab_python.provider import ResolutionStrategy, UnsupportedVcsError
+from nab_python.provider import (
+    BuildPolicy,
+    LocalSource,
+    Provider,
+    ResolutionStrategy,
+    UnsupportedVcsError,
+)
 from nab_python.resolve import (
     ResolutionResult,
     UnsupportedModeError,
@@ -30,6 +37,7 @@ from nab_python.resolve import (
     _load_extra_requirements,
     _load_group_requirements,
     _load_group_requirements_by_group,
+    _raise_for_local_vcs_python,
     _resolve_target_python,
     _walk_no_versions_packages,
     resolve_pyproject,
@@ -2519,3 +2527,79 @@ class TestResolveUniversalPyprojectGroupConflict:
         mock_universal.return_value = sentinel
         result = resolve_universal_pyproject(pyproject)
         assert result is sentinel
+
+
+class TestLocalVcsRequiresPython:
+    """A local or VCS pin must satisfy the resolve's target Python.
+
+    Index candidates are filtered by Requires-Python while listing;
+    local-path and VCS sources skip that filter, so the single-env
+    resolve checks them after resolving, mirroring the universal path.
+    """
+
+    def _provider_with_local(
+        self, tmp_path: Path, body: str, *, python_version: str = "3.10.0"
+    ) -> Provider:
+        (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            local_sources=[LocalSource("foo", str(tmp_path))],
+            python_version=python_version,
+            build_policy=BuildPolicy.NEVER,
+        )
+        provider.fetch_versions("foo")
+        return provider
+
+    def test_excluding_python_raises(self, tmp_path: Path) -> None:
+        provider = self._provider_with_local(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n',
+        )
+        with pytest.raises(ResolutionError, match="foo 1.0 requires Python"):
+            _raise_for_local_vcs_python(provider, {"foo": V("1.0")}, V("3.10.0"))
+
+    def test_compatible_python_does_not_raise(self, tmp_path: Path) -> None:
+        provider = self._provider_with_local(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.10"\n',
+        )
+        _raise_for_local_vcs_python(provider, {"foo": V("1.0")}, V("3.10.0"))
+
+    def test_no_requires_python_does_not_raise(self, tmp_path: Path) -> None:
+        provider = self._provider_with_local(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\n',
+        )
+        _raise_for_local_vcs_python(provider, {"foo": V("1.0")}, V("3.10.0"))
+
+    def test_non_managed_pin_is_skipped(self, tmp_path: Path) -> None:
+        provider = self._provider_with_local(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n',
+        )
+        _raise_for_local_vcs_python(provider, {"bar": V("9.0")}, V("3.10.0"))
+
+    def test_resolve_pyproject_excluding_python_raises(self, tmp_path: Path) -> None:
+        member = tmp_path / "foo"
+        member.mkdir()
+        (member / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n',
+            encoding="utf-8",
+        )
+        root = tmp_path / "pyproject.toml"
+        root.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            "[[tool.nab.local-sources]]\n"
+            'name = "foo"\npath = "foo"\n',
+            encoding="utf-8",
+        )
+        fake = make_coordinator([], package="foo")
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda _self: fake
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError, match="foo 1.0 requires Python"):
+                resolve_pyproject(root, _FAKE_TRANSPORT, python_version="3.10.0")
