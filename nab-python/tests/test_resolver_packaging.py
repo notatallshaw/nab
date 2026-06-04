@@ -181,6 +181,76 @@ class TestSpecifierToRange:
         assert V("1.9.9") in r
         assert V("2.0.dev0") not in r
 
+    def test_wildcard_includes_prerelease(self) -> None:
+        """==1.2.* admits pre-releases in the 1.2 family."""
+        r = SpecifierSet("==1.2.*").to_range()
+        assert V("1.2.0a1") in r
+        assert V("1.2.0") in r
+        assert V("1.2.9") in r
+        assert V("1.3.dev0") not in r
+        assert V("1.1.9") not in r
+
+    def test_compatible_release_post(self) -> None:
+        """~=2.2.post3 drops the last release component for the prefix.
+
+        The compatible bound is ==2.* so the upper edge is 3.dev0; the
+        lower edge keeps the post-release.
+        """
+        r = SpecifierSet("~=2.2.post3").to_range()
+        assert V("2.2.post2") not in r
+        assert V("2.2.post3") in r
+        assert V("2.2.5") in r
+        assert V("2.3") in r
+        assert V("3.0") not in r
+
+    def test_gt_pre_release(self) -> None:
+        """>1.0a1 carves out only 1.0a1 and its own pre/post/local family.
+
+        The specifier is a pre-release, so PEP 440 excludes 1.0a1
+        itself, 1.0a1+local, and 1.0a1.postN.  The final release 1.0 and
+        its post-releases are higher versions and stay in.
+        """
+        r = SpecifierSet(">1.0a1").to_range()
+        assert V("1.0a1") not in r
+        assert V("1.0a1.post1") not in r
+        assert V("1.0a2") in r
+        assert V("1.0") in r
+        assert V("1.0.post1") in r
+        assert V("1.1") in r
+
+    def test_epoch_ordering(self) -> None:
+        """An epoch sorts above every lower-epoch release."""
+        r = SpecifierSet(">=1!1.0").to_range()
+        assert V("1!1.0") in r
+        assert V("1!2.0") in r
+        assert V("1.0") not in r
+        assert V("999") not in r
+
+    def test_epoch_wildcard(self) -> None:
+        """==1!2.* keeps the epoch and stays within the 1!2 family."""
+        r = SpecifierSet("==1!2.*").to_range()
+        assert V("1!2.0") in r
+        assert V("1!2.0.dev0") in r
+        assert V("1!2.9") in r
+        assert V("1!3.0") not in r
+        assert V("2.0") not in r
+
+    def test_epoch_compatible_release(self) -> None:
+        """~=1!2.2 carries the epoch into both bounds."""
+        r = SpecifierSet("~=1!2.2").to_range()
+        assert V("1!2.2") in r
+        assert V("1!2.9") in r
+        assert V("1!3.0") not in r
+        assert V("2.2") not in r
+
+    def test_epoch_not_equal_excludes_local(self) -> None:
+        """!=1!1.5 excludes the local family but keeps post-releases."""
+        r = SpecifierSet("!=1!1.5").to_range()
+        assert V("1!1.4") in r
+        assert V("1!1.5") not in r
+        assert V("1!1.5+local") not in r
+        assert V("1!1.5.post1") in r
+
 
 class TestTrivialResolution:
     """Resolve simple graphs with PEP 440 versions."""
