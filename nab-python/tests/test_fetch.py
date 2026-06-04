@@ -1187,6 +1187,98 @@ class TestMultiIndexCoordinator:
             assert listing is not None
             assert len(listing) == 1
 
+    @respx.mock
+    def test_serving_index_recorded_per_package(self) -> None:
+        """Each package records the index that actually served it.
+
+        numpy is served by the first index and torch by the second
+        after a first-index miss, so the recorded serving index differs
+        per package. The lockfile reads this to attribute each pin's
+        ``index`` URL.
+        """
+        respx.get("https://pypi.org/simple/numpy/").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "meta": {"api-version": "1.0"},
+                    "name": "numpy",
+                    "files": [
+                        {
+                            "filename": "numpy-1.0-py3-none-any.whl",
+                            "url": "https://pypi.org/numpy-1.0.whl",
+                        },
+                    ],
+                },
+            )
+        )
+        respx.get("https://pypi.org/simple/torch/").mock(
+            return_value=httpx.Response(
+                200,
+                json={"meta": {"api-version": "1.0"}, "name": "torch", "files": []},
+            )
+        )
+        respx.get("https://torch.example/cpu/torch/").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "meta": {"api-version": "1.0"},
+                    "name": "torch",
+                    "files": [
+                        {
+                            "filename": "torch-2.0-py3-none-any.whl",
+                            "url": "https://torch.example/cpu/torch-2.0.whl",
+                        },
+                    ],
+                },
+            )
+        )
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            _coord(
+                cache_dir=Path(tmp),
+                indexes=[
+                    IndexConfig("pypi", "https://pypi.org/simple/"),
+                    IndexConfig("torch-cpu", "https://torch.example/cpu/"),
+                ],
+            ) as coord,
+        ):
+            for pkg in ("numpy", "torch"):
+                coord.request_listing(pkg).wait(timeout=5)
+            assert coord.index.get_listing_index("numpy") == "pypi"
+            assert coord.index.get_listing_index("torch") == "torch-cpu"
+
+    @respx.mock
+    def test_override_serving_index_recorded(self) -> None:
+        """An overridden package records its override index, not the first."""
+        respx.get("https://torch.example/cpu/torch/").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "meta": {"api-version": "1.0"},
+                    "name": "torch",
+                    "files": [
+                        {
+                            "filename": "torch-2.0-py3-none-any.whl",
+                            "url": "https://torch.example/cpu/torch-2.0.whl",
+                        },
+                    ],
+                },
+            )
+        )
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            _coord(
+                cache_dir=Path(tmp),
+                indexes=[
+                    IndexConfig("pypi", "https://pypi.org/simple/"),
+                    IndexConfig("torch-cpu", "https://torch.example/cpu/"),
+                ],
+                index_overrides=[IndexOverride("torch", "torch-cpu")],
+            ) as coord,
+        ):
+            coord.request_listing("torch").wait(timeout=5)
+            assert coord.index.get_listing_index("torch") == "torch-cpu"
+
     def test_explicit_cache_backend_with_multi_index_raises(self) -> None:
         """cache_backend + multi-index is a config error."""
         with pytest.raises(ValueError, match="more than one"):
