@@ -1,9 +1,9 @@
 """Quick canary benchmark for fast iteration.
 
 Runs a curated subset of scenarios (canaries + hard cases) N times each
-and reports median decisions, conflicts, and wall time. The set is
-small enough to finish in a few minutes so it can be re-run after each
-algorithm change.
+and reports median decisions, distributions seen (search breadth), and
+wall time. The set is small enough to finish in a few minutes so it can
+be re-run after each algorithm change.
 
 Usage:
     python nab-python/benchmarks/canary.py [--commit LABEL] [--runs N]
@@ -272,6 +272,7 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
             "restarts": rs.restarts,
             "incompatibilities_learned": rs.incompatibilities_learned,
             "metadata_fetched": ps.metadata_fetched,
+            "distributions_seen": ps.distributions_seen,
             "look_ahead_rejections": ps.look_ahead_rejections,
             "packages": packages,
             "wall_time_seconds": round(elapsed, 3),
@@ -427,6 +428,9 @@ def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
     summary = {
         "success_runs": f"{successes}/{len(runs_data)}",
         "median_decisions": int(med("decisions")),
+        "median_distributions_seen": int(med("distributions_seen")),
+        "median_metadata_fetched": int(med("metadata_fetched")),
+        "median_packages": int(med("packages")),
         "median_conflicts": int(med("conflicts")),
         "median_backjumps": int(med("backjumps")),
         "median_wall": round(med("wall_time_seconds"), 2),
@@ -465,11 +469,12 @@ def main() -> None:
         f"{'scenario':<45} "
         f"{'success':>9} "
         f"{'med_dec':>8} "
+        f"{'med_dist':>10} "
         f"{'med_wall':>10} "
         f"{'min_dec':>8} "
         f"{'max_dec':>8}"
     )
-    print("-" * 100)
+    print("-" * 110)
 
     summary_all: dict[str, dict] = {}
     for name in scenarios_to_run:
@@ -489,6 +494,7 @@ def main() -> None:
             f"{label:<45} "
             f"{summary['success_runs']:>9} "
             f"{summary['median_decisions']:>8} "
+            f"{summary['median_distributions_seen']:>10} "
             f"{summary['median_wall']:>10} "
             f"{summary['min_decisions']:>8} "
             f"{summary['max_decisions']:>8}"
