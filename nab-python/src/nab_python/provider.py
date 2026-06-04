@@ -502,6 +502,10 @@ class Provider:
         self.root_requirements = root_requirements or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
         self.deps_cache: dict[tuple[str, Version], dict[str, VersionRange]] = {}
+        # Unbounded by design and never evicted mid-resolve: it keeps every
+        # parsed Requirement (hence every Marker) alive for the whole resolve,
+        # which is what makes the id(marker)-keyed marker caches below safe
+        # against id reuse. Do not bound it without re-keying those caches.
         self.metadata_cache: dict[tuple[str, Version], WheelMetadata] = {}
         self.extra_deps_map: dict[
             tuple[str, Version], dict[str, dict[str, VersionRange]]
@@ -524,7 +528,9 @@ class Provider:
         self.requires_python_cache: dict[str, bool] = {}
 
         # Marker evaluation caches keyed by id(marker); requirement parsing is
-        # cached upstream so each distinct marker text shares one Marker.
+        # cached upstream so each distinct marker text shares one Marker. The
+        # id keying is safe because metadata_cache keeps every evaluated marker
+        # alive (see its note above).
         self.marker_base_cache: dict[int, bool] = {}
         self.marker_extra_cache: dict[int, dict[str, bool]] = {}
         # Memoised str(marker) for the cheap "extra" in marker_text gate.
