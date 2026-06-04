@@ -972,6 +972,34 @@ class TestAddClassifiedDep:
         assert V("1.0") not in extra_map["x"]["bar"]
         assert V("9.0") not in extra_map["x"]["bar"]
 
+    def test_base_multi_extra_splits_into_one_proxy_each(self) -> None:
+        """``bar[a,b]`` as a base dep records ``bar`` plus a proxy per extra."""
+        base: dict[str, VersionRange] = {}
+        extra_map: dict[str, dict[str, VersionRange]] = {}
+        add_classified_dep(Requirement("bar[a,b]>=1.0"), set(), base, extra_map)
+        assert V("2.0") in base["bar"]
+        assert V("0.5") not in base["bar"]
+        assert base["bar[a]"] == VersionRange.full()
+        assert base["bar[b]"] == VersionRange.full()
+
+    def test_extra_gated_multi_extra_splits_into_one_proxy_each(self) -> None:
+        """``bar[a,b]`` under extra ``x`` records both proxies in that bucket."""
+        base: dict[str, VersionRange] = {}
+        extra_map: dict[str, dict[str, VersionRange]] = {"x": {}}
+        add_classified_dep(Requirement("bar[a,b]>=1.0"), {"x"}, base, extra_map)
+        assert V("2.0") in extra_map["x"]["bar"]
+        assert extra_map["x"]["bar[a]"] == VersionRange.full()
+        assert extra_map["x"]["bar[b]"] == VersionRange.full()
+        assert "bar" not in base
+
+    def test_multi_extra_proxy_names_normalized(self) -> None:
+        """Proxy keys for the dep's extras are PEP 685 normalized."""
+        base: dict[str, VersionRange] = {}
+        extra_map: dict[str, dict[str, VersionRange]] = {}
+        add_classified_dep(Requirement("bar[A_x,B.y]"), set(), base, extra_map)
+        assert "bar[a-x]" in base
+        assert "bar[b-y]" in base
+
 
 class TestLocalSources:
     def _write_local(
@@ -2875,6 +2903,46 @@ class TestExtras:
         assert "bar[http]" not in base_deps  # base doesn't have the extra
         extra_deps = provider.get_dependencies("foo[all]", V("1.0"))
         assert "bar[http]" in extra_deps  # extra adds the proxy
+
+    def test_base_multi_extra_dep_creates_all_proxies(self) -> None:
+        """A base ``bar[http,socks]`` dep yields both proxies and the base."""
+        metadata = (
+            "Metadata-Version: 2.1\n"
+            "Name: foo\n"
+            "Version: 1.0\n"
+            "Requires-Dist: bar[http,socks]>=1.0\n"
+        )
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=metadata,
+            package="foo",
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "bar" in deps
+        assert "bar[http]" in deps
+        assert "bar[socks]" in deps
+
+    def test_extra_gated_multi_extra_dep_creates_all_proxies(self) -> None:
+        """An extra-gated ``bar[http,socks]`` dep yields both proxies."""
+        metadata = (
+            "Metadata-Version: 2.1\n"
+            "Name: foo\n"
+            "Version: 1.0\n"
+            "Provides-Extra: all\n"
+            'Requires-Dist: bar[http,socks]>=1.0; extra == "all"\n'
+        )
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=metadata,
+            package="foo",
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        deps = provider.get_dependencies("foo[all]", V("1.0"))
+        assert "bar" in deps
+        assert "bar[http]" in deps
+        assert "bar[socks]" in deps
+        assert "foo" in deps
 
     def test_warn_mode_missing_extra(self) -> None:
         """WARN mode logs and returns only the base pin for missing extra."""
