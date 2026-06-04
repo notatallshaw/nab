@@ -3330,6 +3330,24 @@ class TestDistPolicy:
         with pytest.raises(UnsupportedSdistError):
             provider.get_dependencies("pkg", V("1.0"))
 
+    def test_opt_out_still_routes_dynamic_provides_extra(self) -> None:
+        """A Dynamic Provides-Extra also forces the dynamic path under the
+        opt-out: the other DEPENDENCY_FIELDS member, so under NEVER it raises.
+        """
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PKG_INFO_DYNAMIC_PROVIDES_EXTRA,
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+            trust_unverified_sdist_deps=True,
+        )
+        with pytest.raises(UnsupportedSdistError):
+            provider.get_dependencies("pkg", V("1.0"))
+
     def test_sdist_no_pkg_info_raises(self) -> None:
         """Raise MetadataError when PKG-INFO cannot be extracted."""
         coordinator = make_coordinator(
@@ -4054,6 +4072,11 @@ PKG_INFO_DYNAMIC_DEPS = (
 
 PKG_INFO_PRE_PEP643_DEPS = (
     "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: hidden-dep\n"
+)
+
+PKG_INFO_DYNAMIC_PROVIDES_EXTRA = (
+    "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n"
+    "Requires-Dist: dep-a\nDynamic: Provides-Extra\n"
 )
 
 
