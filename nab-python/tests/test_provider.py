@@ -434,6 +434,115 @@ class TestResolutionStrategy:
         assert provider.choose_version("foo", VersionRange.full()) == V("2.0")
 
 
+class TestPrereleaseAdmission:
+    """The real Provider applies PEP 440 pre-release admission end to end.
+
+    The toy ``PackagingProvider`` used by the resolver tests picks by plain
+    membership, so it cannot catch a regression in the real provider's
+    ``version_range.filter`` buffering. These exercise that path directly.
+    """
+
+    @staticmethod
+    def _provider(
+        versions: list[str],
+        strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
+    ) -> Provider:
+        wheels = [make_wheel(v) for v in versions]
+        coordinator = make_coordinator(wheels, package="foo")
+        return Provider(coordinator, resolution_strategy=strategy)
+
+    def test_final_preferred_over_newer_prerelease(self) -> None:
+        """A bare requirement buffers a newer pre-release behind the final."""
+        provider = self._provider(["1.0", "2.0rc1"])
+        assert provider.choose_version("foo", VersionRange.full()) == V("1.0")
+
+    def test_only_prerelease_admitted(self) -> None:
+        """With no final in range the buffered pre-release is admitted."""
+        provider = self._provider(["2.0rc1"])
+        assert provider.choose_version("foo", VersionRange.full()) == V("2.0rc1")
+
+    def test_dev_release_buffered_then_admitted(self) -> None:
+        """Developmental releases follow the same buffer-unless-only rule."""
+        assert self._provider(["1.0.dev1", "1.0"]).choose_version(
+            "foo", VersionRange.full()
+        ) == V("1.0")
+        assert self._provider(["1.0.dev1"]).choose_version(
+            "foo", VersionRange.full()
+        ) == V("1.0.dev1")
+
+    def test_explicit_prerelease_spec_admits(self) -> None:
+        """A spec naming a pre-release admits it (auto-detected policy)."""
+        provider = self._provider(["1.0", "2.0rc1"])
+        chosen = provider.choose_version("foo", SpecifierSet(">=2.0rc1").to_range())
+        assert chosen == V("2.0rc1")
+
+    def test_prerelease_in_range_but_final_wins(self) -> None:
+        """A higher in-range pre-release stays buffered while finals exist."""
+        provider = self._provider(["1.0", "1.5", "2.0rc1"])
+        chosen = provider.choose_version("foo", SpecifierSet(">=1.0").to_range())
+        assert chosen == V("1.5")
+
+    def test_exact_prerelease_pin(self) -> None:
+        """An exact ``==`` pin to a pre-release selects it."""
+        provider = self._provider(["1.0", "2.0rc1"])
+        chosen = provider.choose_version("foo", SpecifierSet("==2.0rc1").to_range())
+        assert chosen == V("2.0rc1")
+
+    def test_lowest_skips_lower_prerelease(self) -> None:
+        """LOWEST picks the lowest final, not a lower pre-release."""
+        provider = self._provider(["1.0rc1", "1.0", "2.0"], ResolutionStrategy.LOWEST)
+        assert provider.choose_version("foo", VersionRange.full()) == V("1.0")
+
+    def test_lowest_all_prerelease(self) -> None:
+        """With only pre-releases LOWEST picks the lowest pre-release."""
+        provider = self._provider(["1.0rc1", "1.0rc2"], ResolutionStrategy.LOWEST)
+        assert provider.choose_version("foo", VersionRange.full()) == V("1.0rc1")
+
+    def test_dependency_prerelease_admits_via_intersection(self) -> None:
+        """A dep naming a pre-release propagates admission through ``&``."""
+        provider = self._provider(["1.0", "2.0rc1"])
+        accumulated = VersionRange.full() & SpecifierSet(">=2.0rc1").to_range()
+        assert provider.choose_version("foo", accumulated) == V("2.0rc1")
+
+    def test_plain_dependency_constraint_keeps_final(self) -> None:
+        """A plain dep constraint leaves the final-preferring default intact."""
+        provider = self._provider(["1.0", "2.0rc1"])
+        accumulated = VersionRange.full() & SpecifierSet(">=1.0").to_range()
+        assert provider.choose_version("foo", accumulated) == V("1.0")
+
+    def test_only_candidate_in_derived_range_is_prerelease(self) -> None:
+        """A derived range leaving only a pre-release admits it (PEP 440)."""
+        provider = self._provider(["1.0", "2.5rc1"])
+        accumulated = VersionRange.full() & SpecifierSet(">=2.0").to_range()
+        assert provider.choose_version("foo", accumulated) == V("2.5rc1")
+
+    def test_full_resolve_propagates_dependency_prerelease(self) -> None:
+        """End to end: a transitive dep naming a pre-release pins it."""
+        listings = {
+            "foo": [make_wheel("1.0"), make_wheel("2.0rc1")],
+            "bar": [make_wheel("5.0")],
+        }
+        metadata = {
+            "1.0": "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n\n",
+            "2.0rc1": "Metadata-Version: 2.1\nName: foo\nVersion: 2.0rc1\n\n",
+            "5.0": (
+                "Metadata-Version: 2.1\nName: bar\nVersion: 5.0\n"
+                "Requires-Dist: foo>=2.0rc1\n\n"
+            ),
+        }
+        coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
+        root_reqs = {
+            "foo": VersionRange.full(),
+            "bar": SpecifierSet("==5.0").to_range(),
+        }
+        provider = Provider(
+            coordinator, python_version="3.12.0", root_requirements=root_reqs
+        )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        pins = resolver.resolve(root_reqs)
+        assert pins["foo"] == V("2.0rc1")
+
+
 class TestNoVersionsReasons:
     """``_record_no_versions_reason`` captures provider-side hints."""
 
