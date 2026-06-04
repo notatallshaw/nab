@@ -52,8 +52,8 @@ class DownloadEntry:
 
     ``hash_algo`` is one of ``sha256``, ``sha384``, ``sha512`` and
     ``digest`` is the recorded hex digest under that algorithm.
-    The downloader picks the strongest acceptable algorithm the
-    index published; it does not re-hash with a weaker one.
+    The downloader verifies against the first acceptable algorithm the
+    index published, preferring sha256 over sha384 over sha512.
     """
 
     package: str
