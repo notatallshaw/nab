@@ -52,6 +52,16 @@ def test_dynamic_field_lowercased() -> None:
     assert md.dynamic == frozenset({"requires-dist", "provides-extra"})
 
 
+def test_dynamic_field_whitespace_stripped() -> None:
+    """Surrounding whitespace on a ``Dynamic`` value is insignificant."""
+    text = (
+        "Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n"
+        "Dynamic: Requires-Dist \nDynamic: Provides-Extra\t\n"
+    )
+    md = parse_metadata(text)
+    assert md.dynamic == frozenset({"requires-dist", "provides-extra"})
+
+
 def test_requires_dist_parsed() -> None:
     """Each ``Requires-Dist`` entry yields a parsed ``Requirement``."""
     text = (
@@ -106,6 +116,12 @@ class TestMetadataDepsAreStatic:
     def test_2_2_with_dynamic_requires_dist_is_not_static(self) -> None:
         md = parse_metadata(
             "Metadata-Version: 2.2\nName: foo\nVersion: 1.0\nDynamic: Requires-Dist\n"
+        )
+        assert metadata_deps_are_static(md) is False
+
+    def test_2_2_with_whitespace_dynamic_requires_dist_is_not_static(self) -> None:
+        md = parse_metadata(
+            "Metadata-Version: 2.2\nName: foo\nVersion: 1.0\nDynamic: Requires-Dist \n"
         )
         assert metadata_deps_are_static(md) is False
 

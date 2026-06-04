@@ -175,9 +175,10 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
     provides_extra = list(msg.get_all("Provides-Extra") or [])
 
     metadata_version = msg.get("Metadata-Version")
-    # PEP 643 field names are case-insensitive per RFC 822; normalise so
-    # downstream lookups don't depend on the producer's capitalisation.
-    dynamic = frozenset(d.lower() for d in msg.get_all("Dynamic") or [])
+    # PEP 643 field names are case-insensitive and, per RFC 822, surrounding
+    # whitespace is insignificant; normalise both so downstream membership
+    # tests don't depend on the producer's capitalisation or stray spacing.
+    dynamic = frozenset(d.strip().lower() for d in msg.get_all("Dynamic") or [])
 
     return WheelMetadata(
         name=name,
