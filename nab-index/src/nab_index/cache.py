@@ -105,6 +105,24 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
+def _require_single_segment(component: str) -> str:
+    """Return ``component`` if it names exactly one path segment.
+
+    Each cache key component becomes one file or directory name under
+    the cache root, so it must be a single path segment. A value with
+    an embedded separator expands to a nested path, and ``.`` or ``..``
+    names a parent, so either would read or write a different file than
+    the key describes and return the wrong cache entry. The
+    universal-validation sentinel ``f"{version}#{filename}"`` puts an
+    index-supplied filename in the version slot, the one component that
+    is not already a canonical name or a PEP 440 version.
+    """
+    if component in ("", ".", "..") or component != Path(component).name:
+        msg = f"cache key component is not a single path segment: {component!r}"
+        raise ValueError(msg)
+    return component
+
+
 class OnDiskCache:
     """File-per-key cache for Simple API and wheel metadata."""
 
@@ -120,9 +138,15 @@ class OnDiskCache:
         )
 
     def _simple_paths(self, package: str) -> tuple[Path, Path]:
-        body = self._simple_dir / f"{package}.json"
-        policy = self._simple_dir / f"{package}.policy"
+        segment = _require_single_segment(package)
+        body = self._simple_dir / f"{segment}.json"
+        policy = self._simple_dir / f"{segment}.policy"
         return (body, policy)
+
+    def _entry_path(self, base: Path, package: str, version: str, suffix: str) -> Path:
+        package_segment = _require_single_segment(package)
+        version_segment = _require_single_segment(version)
+        return base / package_segment / f"{version_segment}{suffix}"
 
     def get_simple(self, package: str) -> tuple[bytes, CachePolicy] | None:
         """Return ``(body_bytes, policy)`` if cached, else ``None``."""
@@ -160,33 +184,38 @@ class OnDiskCache:
 
     def get_metadata(self, package: str, version: str) -> str | None:
         """Return cached PEP 658 metadata text, or ``None`` on miss."""
-        return _read_text(self._metadata_dir / package / f"{version}.metadata")
+        return _read_text(
+            self._entry_path(self._metadata_dir, package, version, ".metadata")
+        )
 
     def put_metadata(self, package: str, version: str, text: str) -> None:
         """Write PEP 658 metadata text. Treated as immutable."""
         _atomic_write(
-            self._metadata_dir / package / f"{version}.metadata",
+            self._entry_path(self._metadata_dir, package, version, ".metadata"),
             text.encode("utf-8"),
         )
 
     def get_sdist_pkginfo(self, package: str, version: str) -> str | None:
         """Return cached sdist PKG-INFO text, or ``None`` on miss."""
-        return _read_text(self._sdist_dir / package / f"{version}.txt")
+        return _read_text(self._entry_path(self._sdist_dir, package, version, ".txt"))
 
     def put_sdist_pkginfo(self, package: str, version: str, text: str) -> None:
         """Write sdist PKG-INFO text. Treated as immutable."""
         _atomic_write(
-            self._sdist_dir / package / f"{version}.txt", text.encode("utf-8")
+            self._entry_path(self._sdist_dir, package, version, ".txt"),
+            text.encode("utf-8"),
         )
 
     def get_sdist_pyproject(self, package: str, version: str) -> str | None:
         """Return cached sdist pyproject.toml text, or ``None`` on miss."""
-        return _read_text(self._sdist_pyproject_dir / package / f"{version}.toml")
+        return _read_text(
+            self._entry_path(self._sdist_pyproject_dir, package, version, ".toml")
+        )
 
     def put_sdist_pyproject(self, package: str, version: str, text: str) -> None:
         """Write sdist pyproject.toml text. Treated as immutable."""
         _atomic_write(
-            self._sdist_pyproject_dir / package / f"{version}.toml",
+            self._entry_path(self._sdist_pyproject_dir, package, version, ".toml"),
             text.encode("utf-8"),
         )
 

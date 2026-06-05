@@ -231,6 +231,19 @@ class TestOnDiskCache:
         cache = self._make(tmp_path)
         assert cache.get_sdist_pkginfo("foo", "1.0") is None
 
+    def test_put_metadata_rejects_multi_segment_sentinel(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        sentinel = "1.0#foo-1.0-py3-none-any/../../elsewhere.whl"
+        with pytest.raises(ValueError, match="not a single path segment"):
+            cache.put_metadata("foo", sentinel, "text")
+        assert list(tmp_path.rglob("elsewhere.whl.metadata")) == []
+
+    def test_sentinel_version_round_trips(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        sentinel = "1.0#foo-1.0-py3-none-any.whl"
+        cache.put_metadata("foo", sentinel, "META")
+        assert cache.get_metadata("foo", sentinel) == "META"
+
 
 class TestNullCache:
     def test_get_returns_none_and_put_is_noop(self) -> None:
