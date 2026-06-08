@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
 from nab_python.metadata import metadata_deps_are_static, parse_metadata
 
@@ -39,6 +40,29 @@ def test_missing_version_raises() -> None:
     """Absent ``Version`` is a parser error, not a silent default."""
     text = "Metadata-Version: 2.1\nName: foo\n"
     with pytest.raises(ValueError, match="Version"):
+        parse_metadata(text)
+
+
+def test_valid_requires_python_parsed() -> None:
+    """A well-formed Requires-Python becomes a ``SpecifierSet``."""
+    text = "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Python: >=3.8\n"
+    md = parse_metadata(text)
+    assert md.requires_python == SpecifierSet(">=3.8")
+
+
+def test_malformed_requires_python_raises() -> None:
+    """A malformed Requires-Python is invalid metadata, so parsing raises.
+
+    ``!=3.3*`` is not a valid PEP 440 specifier (the wildcard needs ``.*``).
+    The resolve boundary turns this into a ``MetadataError`` so the candidate
+    is dropped rather than pinned with an unread Python constraint.
+    """
+    text = (
+        "Metadata-Version: 2.1\nName: azure-iot-hub\nVersion: 2.4.0\n"
+        "Requires-Python: >=2.7, !=3.0.*, !=3.3*, <4\n"
+        "Requires-Dist: msrest\n"
+    )
+    with pytest.raises(ValueError, match="invalid Requires-Python"):
         parse_metadata(text)
 
 

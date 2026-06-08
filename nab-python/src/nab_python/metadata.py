@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 import tomli
 
 from ._vendor.packaging.requirements import Requirement
-from ._vendor.packaging.specifiers import SpecifierSet
+from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
@@ -166,7 +166,19 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
         raise ValueError(err)
 
     requires_python_str = msg.get("Requires-Python")
-    requires_python = SpecifierSet(requires_python_str) if requires_python_str else None
+    requires_python = None
+    if requires_python_str:
+        try:
+            requires_python = SpecifierSet(requires_python_str)
+        except InvalidSpecifier as exc:
+            # A malformed Requires-Python is invalid metadata; raise rather
+            # than silently drop the field, matching the Name/Version checks
+            # above. The resolve boundary turns this into a rejected candidate.
+            err = (
+                f"METADATA for {name}=={version_str} has an invalid "
+                f"Requires-Python: {requires_python_str!r}"
+            )
+            raise ValueError(err) from exc
 
     requires_dist = [
         _parse_requirement_cached(r) for r in msg.get_all("Requires-Dist") or []
