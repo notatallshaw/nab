@@ -12,13 +12,16 @@ from __future__ import annotations
 import email.parser
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import tomli
 
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.version import Version
+
+if TYPE_CHECKING:
+    from ._vendor.packaging.markers import Marker
 
 __all__ = [
     "DEPENDENCY_FIELDS",
@@ -88,6 +91,22 @@ def metadata_deps_are_static(metadata: WheelMetadata) -> bool:
     return not (DEPENDENCY_FIELDS & metadata.dynamic)
 
 
+@lru_cache(maxsize=8192)
+def _intern_marker(marker: Marker) -> Marker:
+    """Return a shared :class:`Marker` for an equal marker expression.
+
+    ``Marker`` hashes and compares by its text, so a single marker like
+    ``extra == "test"`` recurs across hundreds of distinct dep strings
+    (``pytest; extra == "test"``, ``coverage; extra == "test"``, ...),
+    each parsing to its own object.  The provider caches marker
+    evaluation by ``id(marker)``, so sharing one object per distinct
+    expression lets that cache hit across every candidate instead of
+    re-evaluating the same expression per dep.  Markers are read-only,
+    so sharing is safe.
+    """
+    return marker
+
+
 @lru_cache(maxsize=16384)
 def _parse_requirement_cached(req_str: str) -> Requirement:
     """Cache ``Requirement(req_str)`` parsing across wheel metadata.
@@ -97,7 +116,10 @@ def _parse_requirement_cached(req_str: str) -> Requirement:
     only read operations (specifier, marker, extras, name) so sharing
     parsed objects is safe.
     """
-    return Requirement(req_str)
+    req = Requirement(req_str)
+    if req.marker is not None:
+        req.marker = _intern_marker(req.marker)
+    return req
 
 
 @lru_cache(maxsize=65536)
