@@ -65,6 +65,15 @@ class Assignment(Generic[PackageType, VersionType]):
     positive: bool = True
     """Whether this constrains the package positively or negatively."""
 
+    cum_positive: RangeProtocol[VersionType] | None = None
+    """Latest positive accumulated range for the package as of this entry."""
+
+    cum_negative: RangeProtocol[VersionType] | None = None
+    """Latest negative accumulated range for the package as of this entry."""
+
+    package_index: int = 0
+    """Position in the package's own assignment trail."""
+
 
 class PartialSolution(Generic[PackageType, VersionType]):
     """Tracks the resolver's current partial solution as a decision trail.
@@ -147,6 +156,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
         self._effective_range_cache.pop(package, None)
         self._undecided.discard(package)
 
+        package_entries = self._assignments_by_package[package]
         assignment = Assignment(
             package=package,
             accumulated_range=exact_range,
@@ -155,9 +165,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
             trail_index=len(self._assignments),
             version=version,
             positive=True,
+            cum_positive=exact_range,
+            cum_negative=self._negative_ranges.get(package),
+            package_index=len(package_entries),
         )
         self._assignments.append(assignment)
-        self._assignments_by_package[package].append(assignment)
+        package_entries.append(assignment)
 
     def derive(
         self,
@@ -190,6 +203,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
 
         self._effective_range_cache.pop(package, None)
 
+        package_entries = self._assignments_by_package[package]
         assignment = Assignment(
             package=package,
             accumulated_range=new_range,
@@ -198,9 +212,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
             trail_index=len(self._assignments),
             cause=cause,
             positive=positive,
+            cum_positive=self._positive_ranges.get(package),
+            cum_negative=self._negative_ranges.get(package),
+            package_index=len(package_entries),
         )
         self._assignments.append(assignment)
-        self._assignments_by_package[package].append(assignment)
+        package_entries.append(assignment)
 
     def backtrack(self, target_level: int) -> None:
         """Remove all assignments above target_level.
@@ -325,70 +342,67 @@ class PartialSolution(Generic[PackageType, VersionType]):
         self, stop_at: Assignment[PackageType, VersionType], package: PackageType
     ) -> RangeProtocol[VersionType] | None:
         """Return what earlier trail entries imply about this package."""
-        cumulative_positive: RangeProtocol[VersionType] | None = None
-        cumulative_negative: RangeProtocol[VersionType] | None = None
-
-        # Each accumulated_range is already cumulative, so the latest entry
-        # of each sign is enough; no need to re-intersect.
-        package_entries = self._assignments_by_package.get(package, ())
-        for assignment in package_entries:
-            if assignment is stop_at:
-                break
-            if assignment.is_decision or assignment.positive:
-                cumulative_positive = assignment.accumulated_range
-            else:
-                cumulative_negative = assignment.accumulated_range
-        else:  # pragma: no cover
-            unreachable = f"Bug: stop_at assignment not found in trail for {package!r}"
-            raise RuntimeError(unreachable)
-
-        if cumulative_positive is None and cumulative_negative is None:
+        if stop_at.package_index == 0:
             return None
 
-        if cumulative_positive is not None:
-            effective = cumulative_positive
-            if cumulative_negative is not None:
-                effective = effective & ~cumulative_negative
-            return effective
+        prev = self._assignments_by_package[package][stop_at.package_index - 1]
+        if prev.cum_positive is None:
+            assert prev.cum_negative is not None
+            return ~prev.cum_negative
+        if prev.cum_negative is None:
+            return prev.cum_positive
+        return prev.cum_positive & ~prev.cum_negative
 
-        assert cumulative_negative is not None
-        return ~cumulative_negative
+    def _satisfied_at(
+        self,
+        assignment: Assignment[PackageType, VersionType],
+        term: Term[PackageType, VersionType],
+        *,
+        is_positive: bool,
+    ) -> bool:
+        """Whether the trail up to and including ``assignment`` satisfies term.
+
+        Positive terms need a positive assignment first; negatives alone
+        only exclude versions.
+        """
+        cum_positive = assignment.cum_positive
+        if is_positive and cum_positive is None:
+            return False
+
+        if cum_positive is None:
+            assert assignment.cum_negative is not None
+            effective = ~assignment.cum_negative
+        elif assignment.cum_negative is None:
+            effective = cum_positive
+        else:
+            effective = cum_positive & ~assignment.cum_negative
+
+        return term.satisfies(effective)
 
     def satisfier(
         self, term: Term[PackageType, VersionType]
     ) -> Assignment[PackageType, VersionType] | None:
         """Find the earliest assignment that causes the term to be satisfied.
 
-        Used during conflict resolution to identify which assignment caused
-        each term in an incompatibility to become satisfied.
+        The effective range only narrows along the trail, so ``term.satisfies``
+        is monotonic: once an entry satisfies the term, every later one does
+        too.  That lets a binary search replace the linear scan.
         See: https://github.com/dart-lang/pub/blob/master/doc/solver.md#conflict-resolution
         """
-        cumulative_positive: RangeProtocol[VersionType] | None = None
-        cumulative_negative: RangeProtocol[VersionType] | None = None
+        entries = self._assignments_by_package.get(term.package, ())
+        count = len(entries)
+        if count == 0:
+            return None
+
         is_positive = term.is_positive()
+        if not self._satisfied_at(entries[count - 1], term, is_positive=is_positive):
+            return None
 
-        package_entries = self._assignments_by_package.get(term.package, ())
-        for assignment in package_entries:
-            if assignment.is_decision or assignment.positive:
-                cumulative_positive = assignment.accumulated_range
+        low, high = 0, count - 1
+        while low < high:
+            mid = (low + high) // 2
+            if self._satisfied_at(entries[mid], term, is_positive=is_positive):
+                high = mid
             else:
-                cumulative_negative = assignment.accumulated_range
-
-            if cumulative_positive is not None:
-                effective_range = (
-                    cumulative_positive
-                    if cumulative_negative is None
-                    else cumulative_positive & ~cumulative_negative
-                )
-            else:
-                assert cumulative_negative is not None
-                effective_range = ~cumulative_negative
-
-            # Positive terms need a positive assignment before they can
-            # be satisfied; negatives alone only exclude versions.
-            if (not is_positive or cumulative_positive is not None) and term.satisfies(
-                effective_range
-            ):
-                return assignment
-
-        return None
+                low = mid + 1
+        return entries[low]

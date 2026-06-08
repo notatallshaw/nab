@@ -207,6 +207,144 @@ class TestMultipleDerivations:
         assert s is not None
 
 
+def _linear_satisfier(ps: PartialSolution, term: Term) -> object:
+    """Reference linear scan, independent of the binary-search satisfier."""
+    cum_pos = cum_neg = None
+    is_positive = term.is_positive()
+    for a in ps._assignments_by_package.get(term.package, ()):
+        if a.is_decision or a.positive:
+            cum_pos = a.accumulated_range
+        else:
+            cum_neg = a.accumulated_range
+        if cum_pos is not None:
+            eff = cum_pos if cum_neg is None else cum_pos & ~cum_neg
+        else:
+            assert cum_neg is not None
+            eff = ~cum_neg
+        if (not is_positive or cum_pos is not None) and term.satisfies(eff):
+            return a
+    return None
+
+
+class TestSatisfierBinarySearch:
+    """The earliest-satisfier search and its O(1) effective-range support."""
+
+    def _root(self) -> Incompatibility:
+        return Incompatibility([], cause=IncompatibilityCause.ROOT)
+
+    def test_satisfier_unknown_package(self) -> None:
+        ps = PartialSolution()
+        assert ps.satisfier(Term("missing", Range.full())) is None
+
+    def test_satisfier_positive_only_trail(self) -> None:
+        ps = PartialSolution()
+        for upper in (100, 50, 20, 10):
+            ps.derive("foo", Range.less_than(upper), positive=True, cause=self._root())
+        # foo is now [.., 10); "foo < 30" first holds once it narrows under 30.
+        s = ps.satisfier(Term("foo", Range.less_than(30)))
+        assert s is not None
+        assert s is _linear_satisfier(ps, Term("foo", Range.less_than(30)))
+
+    def test_satisfier_negative_only_trail(self) -> None:
+        ps = PartialSolution()
+        ps.derive("foo", Range.at_least(5), positive=False, cause=self._root())
+        ps.derive("foo", Range.at_least(3), positive=False, cause=self._root())
+        term = Term("foo", Range.at_least(3), positive=False)
+        s = ps.satisfier(term)
+        assert s is not None
+        assert s is _linear_satisfier(ps, term)
+
+    def test_satisfier_positive_term_negative_only_trail_is_none(self) -> None:
+        ps = PartialSolution()
+        ps.derive("foo", Range.at_least(5), positive=False, cause=self._root())
+        assert ps.satisfier(Term("foo", Range.less_than(5))) is None
+
+    def test_satisfier_mixed_trail(self) -> None:
+        ps = PartialSolution()
+        ps.derive("foo", Range.at_least(1), positive=True, cause=self._root())
+        ps.derive("foo", Range.less_than(100), positive=True, cause=self._root())
+        ps.derive("foo", Range.less_than(10), positive=False, cause=self._root())
+        term = Term("foo", Range.at_least(10))
+        s = ps.satisfier(term)
+        assert s is not None
+        assert s is _linear_satisfier(ps, term)
+
+    def test_satisfier_matches_linear_over_mixed_trail(self) -> None:
+        ps = PartialSolution()
+        ps.decide("foo", 50)
+        ps.backtrack(0)
+        for kind, version in [
+            (True, 1),
+            (False, 5),
+            (True, 2),
+            (False, 90),
+            (True, 3),
+            (False, 40),
+        ]:
+            rng = Range.at_least(version) if kind else Range.greater_than(version)
+            ps.derive("foo", rng, positive=kind, cause=self._root())
+        for lo in range(0, 95, 7):
+            for positive in (True, False):
+                term = Term("foo", Range.at_least(lo), positive=positive)
+                assert ps.satisfier(term) is _linear_satisfier(ps, term)
+
+    def test_effective_range_before_first_entry_is_none(self) -> None:
+        ps = PartialSolution()
+        ps.derive("foo", Range.at_least(1), positive=True, cause=self._root())
+        first = ps._assignments_by_package["foo"][0]
+        assert ps._effective_range_before(first, "foo") is None
+
+    def test_effective_range_before_positive_prefix(self) -> None:
+        ps = PartialSolution()
+        ps.derive("foo", Range.at_least(1), positive=True, cause=self._root())
+        ps.derive("foo", Range.less_than(20), positive=False, cause=self._root())
+        second = ps._assignments_by_package["foo"][1]
+        before = ps._effective_range_before(second, "foo")
+        assert before is not None
+        assert 5 in before
+
+    def test_effective_range_before_negative_prefix(self) -> None:
+        ps = PartialSolution()
+        ps.derive("foo", Range.at_least(50), positive=False, cause=self._root())
+        ps.derive("foo", Range.at_least(60), positive=False, cause=self._root())
+        second = ps._assignments_by_package["foo"][1]
+        before = ps._effective_range_before(second, "foo")
+        assert before is not None
+        assert 10 in before
+        assert 50 not in before
+
+    def test_effective_range_before_mixed_prefix(self) -> None:
+        ps = PartialSolution()
+        ps.derive("foo", Range.at_least(1), positive=True, cause=self._root())
+        ps.derive("foo", Range.at_least(90), positive=False, cause=self._root())
+        ps.derive("foo", Range.at_least(2), positive=True, cause=self._root())
+        third = ps._assignments_by_package["foo"][2]
+        before = ps._effective_range_before(third, "foo")
+        assert before is not None
+        assert 5 in before
+        assert 90 not in before
+
+    def test_satisfier_is_sole_decision(self) -> None:
+        ps = PartialSolution()
+        ps.decide("foo", 5)
+        decision = ps._assignments_by_package["foo"][0]
+        assert ps.satisfier_is_sole(decision, Term("foo", Range.at_least(1)))
+
+    def test_satisfier_is_sole_first_derivation(self) -> None:
+        ps = PartialSolution()
+        ps.derive("foo", Range.at_least(5), positive=True, cause=self._root())
+        first = ps._assignments_by_package["foo"][0]
+        assert ps.satisfier_is_sole(first, Term("foo", Range.at_least(5)))
+
+    def test_satisfier_is_sole_false_when_earlier_satisfies(self) -> None:
+        ps = PartialSolution()
+        ps.derive("foo", Range.at_least(10), positive=True, cause=self._root())
+        ps.derive("foo", Range.at_least(12), positive=True, cause=self._root())
+        second = ps._assignments_by_package["foo"][1]
+        # "foo >= 5" was already satisfied by the first entry.
+        assert not ps.satisfier_is_sole(second, Term("foo", Range.at_least(5)))
+
+
 class TestDecisionMap:
     def test_decisions(self) -> None:
         ps = PartialSolution()
