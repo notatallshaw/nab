@@ -3450,8 +3450,14 @@ class TestAwaitMetadataBatchEdgeCases:
         )
         assert provider.deps_cache[("foo", V("1.0"))] == {"bar": VersionRange.full()}
 
-    def test_batch_invalid_metadata_stores_empty_deps(self) -> None:
-        """Invalid metadata in _await_metadata_batch stores empty deps."""
+    def test_batch_invalid_metadata_refuses_version(self) -> None:
+        """Malformed metadata in the batch path refuses the version.
+
+        v2.0 really depends on pytz but its metadata is unparseable.
+        Caching it as dependency-free would pin an under-constrained
+        lock, so the batch path leaves it un-cached and look-ahead's
+        get_dependencies refuses it. The scan falls through to v1.0.
+        """
         # v3.0: valid metadata, conflicts with root (look-ahead fails).
         # v2.0: garbage metadata, hit via batch processing.
         # v1.0: valid, clean, passes look-ahead.
@@ -3471,14 +3477,17 @@ class TestAwaitMetadataBatchEdgeCases:
         )
         spec = SpecifierSet("")
         result = provider.choose_version("foo", spec.to_range())
-        # v3.0 fails look-ahead (bar>=5.0 vs bar<2.0).
-        # v2.0 has invalid metadata; _await_metadata_batch catches the
-        # exception and stores empty deps. Empty deps pass look-ahead.
-        assert result == V("2.0")
-        assert provider.deps_cache[("foo", V("2.0"))] == {}
+        assert result == V("1.0")
+        assert ("foo", V("2.0")) not in provider.deps_cache
+        assert provider.has_invalid_metadata("foo", V("2.0"))
 
-    def test_batch_none_metadata_stores_empty_deps(self) -> None:
-        """None metadata text in _await_metadata_batch stores empty deps."""
+    def test_batch_none_metadata_refuses_version(self) -> None:
+        """Missing metadata text in the batch path refuses the version.
+
+        A failed PEP 658 fetch (text is None) must not pin the version as
+        dependency-free; the batch leaves it un-cached and get_dependencies
+        refuses it after the sdist fallback finds nothing.
+        """
         # v3.0: valid, conflicts with root (look-ahead fails).
         # v2.0: metadata not provided (None), hit via batch processing.
         # v1.0: valid, clean.
@@ -3498,10 +3507,8 @@ class TestAwaitMetadataBatchEdgeCases:
         )
         spec = SpecifierSet("")
         result = provider.choose_version("foo", spec.to_range())
-        # v3.0 fails look-ahead. v2.0 has None text, stored as empty
-        # deps. Empty deps pass look-ahead.
-        assert result == V("2.0")
-        assert provider.deps_cache[("foo", V("2.0"))] == {}
+        assert result == V("1.0")
+        assert ("foo", V("2.0")) not in provider.deps_cache
 
 
 class TestIsReady:

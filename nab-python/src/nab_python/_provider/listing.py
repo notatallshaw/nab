@@ -425,14 +425,16 @@ def await_metadata_batch(
         event.wait()
         text = provider.coordinator.index.get_metadata(package, ver_str)
         if text is None:
-            provider.deps_cache[cache_key] = {}
-        else:
-            try:
-                provider.parse_and_cache_metadata(cache_key, text)
-            except (ValueError, InvalidVersion, InvalidSpecifier):
-                # Malformed metadata: cache empty deps so the candidate
-                # acts as if it had no deps rather than bubbling.
-                provider.deps_cache[cache_key] = {}
+            # No PEP 658 text arrived: leave the version un-cached so
+            # look-ahead's get_dependencies runs the sdist fallback (or
+            # refuses it) rather than pinning it as dependency-free.
+            continue
+        try:
+            provider.parse_and_cache_metadata(cache_key, text)
+        except (ValueError, InvalidVersion, InvalidSpecifier):
+            # Malformed metadata: same reason, refuse via get_dependencies
+            # (_invalid_metadata) instead of caching empty deps.
+            continue
 
 
 def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> None:
