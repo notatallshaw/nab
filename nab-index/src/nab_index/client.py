@@ -272,7 +272,14 @@ def _parse_files(
             continue
         filename = file_info["filename"]
 
-        file_url = urljoin(base_url, file_info["url"])
+        # PyPI and most indexes emit absolute file URLs; urljoin then re-parses
+        # both sides only to return the URL unchanged. Skip it for the common
+        # absolute case; relative URLs still resolve against the page below.
+        raw_url = file_info["url"]
+        if raw_url.startswith(("https://", "http://")):
+            file_url = raw_url
+        else:
+            file_url = urljoin(base_url, raw_url)
 
         hashes = _parse_hashes(file_info.get("hashes"))
         size = _parse_size(file_info.get("size"))

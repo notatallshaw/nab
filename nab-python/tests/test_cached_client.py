@@ -10,6 +10,7 @@ import tarfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 import pytest
 
@@ -340,6 +341,13 @@ class TestRelativeUrlResolution:
         }
         files = _parse_files(data, "https://example.com/simple/", "foo")
         assert files[0].url == "https://files.example.com/foo-1.0-py3-none-any.whl"
+
+    def test_absolute_url_matches_urljoin(self) -> None:
+        raw = "https://files.pythonhosted.org/packages/ab/cd/foo-1.0-py3-none-any.whl"
+        base = "https://pypi.org/simple/foo/"
+        data = {"files": [{"filename": "foo-1.0-py3-none-any.whl", "url": raw}]}
+        files = _parse_files(data, "https://pypi.org/simple/", "foo")
+        assert files[0].url == urljoin(base, raw) == raw
 
 
 class TestParseHashes:
