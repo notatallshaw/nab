@@ -201,9 +201,12 @@ def _resolve_one_tuple_with_overrides(  # noqa: PLR0913
     resolution_strategy: str,
 ) -> dict[str, str]:
     """Re-resolve ``tup`` with the given metadata overrides; return pins."""
+    # Carry the original tuple's patch release so markers gated on
+    # python_full_version evaluate the same in both passes.
     one_tuple_matrix = _Matrix(
         python=f"=={tup.python_version}",
         platforms=(tup.platform_spec,),
+        python_patches={tup.python_version: tup.environment["python_full_version"]},
         implementations=(tup.implementation,),
     )
     with _override_metadata(coordinator, wheel_metadata):
