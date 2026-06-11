@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import itertools
 import logging
 import sys
@@ -23,7 +22,7 @@ from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
-from ._vendor.packaging.version import InvalidVersion, Version
+from ._vendor.packaging.version import Version
 from .config import (
     ConfigError,
     ConflictFork,
@@ -689,8 +688,7 @@ def _build_marker_environment(
         for key, value in default_environment().items()
         if isinstance(value, str)
     }
-    with contextlib.suppress(InvalidVersion):
-        env.update(python_axis_environment(python_version))
+    env.update(python_axis_environment(python_version))
     env.update(overrides)
     return env
 

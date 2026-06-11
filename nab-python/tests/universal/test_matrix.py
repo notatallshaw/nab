@@ -160,6 +160,16 @@ class TestMatrixExpand:
         assert py311.environment["python_full_version"] == "3.11.4"
         assert py312.environment["python_full_version"] == "3.12.0"
 
+    def test_python_patches_unknown_minor_key_raises(self) -> None:
+        """A patches key that is not a known ``major.minor`` is a user error."""
+        matrix = Matrix(
+            python="==3.11",
+            platforms=("linux_x86_64",),
+            python_patches={"3.11.0": "3.11.9"},
+        )
+        with pytest.raises(ValueError, match="python_patches"):
+            matrix.expand()
+
     def test_patch_level_marker_evaluation(self) -> None:
         """Patch-bound markers evaluate against the declared full version."""
         from nab_python._vendor.packaging.markers import Marker

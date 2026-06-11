@@ -231,9 +231,9 @@ class Matrix:
         """Expand the matrix into concrete tuples.
 
         Validates inputs eagerly: unknown platform ids, unknown
-        implementations, an empty python range, or an invalid
-        ``python_order`` each raise a ``ValueError`` before any work
-        happens.
+        implementations, ``python_patches`` keys that are not known
+        minors, an empty python range, or an invalid ``python_order``
+        each raise a ``ValueError`` before any work happens.
 
         ``platforms`` accepts either bare platform-id strings (use
         default tag floors) or :class:`PlatformSpec` instances for
@@ -258,13 +258,20 @@ class Matrix:
         if unknown_impl:
             msg = f"Unknown implementations: {unknown_impl!r}"
             raise ValueError(msg)
+        patches = self.python_patches or {}
+        unknown_patches = [m for m in patches if m not in _KNOWN_PYTHON_MINORS]
+        if unknown_patches:
+            msg = (
+                f"Unknown python_patches minors: {unknown_patches!r};"
+                " keys must be major.minor like '3.11'"
+            )
+            raise ValueError(msg)
         py_versions = list(_pythons_in_range(self.python))
         if not py_versions:
             msg = f"No known Python versions match {self.python!r}"
             raise ValueError(msg)
         if self.python_order == "desc":
             py_versions.reverse()
-        patches = self.python_patches or {}
         multi_impl = len(self.implementations) > 1
         return [
             MatrixTuple(

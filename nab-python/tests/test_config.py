@@ -1575,6 +1575,20 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="python-patches expects version"):
             read_pyproject_config(path)
 
+    def test_python_patches_non_minor_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[tool.nab.matrix.python-patches]\n"
+            '"3.11.0" = "3.11.9"\n',
+        )
+        with pytest.raises(ConfigError, match="python_patches"):
+            read_pyproject_config(path)
+
 
 class TestBuildPolicyPackage:
     """``[tool.nab.build-policy-package]`` parses into a name -> policy mapping."""
