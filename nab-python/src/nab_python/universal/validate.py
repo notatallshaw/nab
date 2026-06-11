@@ -26,7 +26,7 @@ from .._vendor.packaging.requirements import (
     InvalidRequirement,
     Requirement,
 )
-from .._vendor.packaging.utils import canonicalize_name
+from .._vendor.packaging.utils import canonicalize_name, canonicalize_version
 from ..metadata import load_static_project, metadata_deps_are_static, parse_metadata
 from .wheel_selection import select_wheel_for_tuple
 
@@ -408,7 +408,9 @@ def _evaluate_metadata_deps_by_extra(
     references go to the base bucket; markers with ``extra ==
     "name"`` go to that named bucket.  This lets the validator catch
     per-extra divergence between the resolver's listing baseline and
-    the chosen wheel, even when base deps match.
+    the chosen wheel, even when base deps match.  Bucket members are
+    :func:`_requirement_key` strings, so two wheels that agree on dep
+    names but disagree on specifiers still diverge.
     """
     metadata = parse_metadata(metadata_text)
     extras = {canonicalize_name(e) for e in metadata.provides_extra}
@@ -421,12 +423,35 @@ def _evaluate_metadata_deps_by_extra(
             req = Requirement(str(req_text))
         except InvalidRequirement:  # pragma: no cover
             continue
-        name = canonicalize_name(req.name)
+        key = _requirement_key(req)
         marker = req.marker
         if marker is None or marker.evaluate(base_env):
-            out[None].add(name)
+            out[None].add(key)
             continue
         for e in extras:
             if marker.evaluate({**environment, "extra": e}):
-                out[e].add(name)
+                out[e].add(key)
     return out
+
+
+def _requirement_key(req: Requirement) -> str:
+    """Render a requirement's name, extras and constraint canonically.
+
+    Versions are canonicalized per specifier so equivalent spellings
+    (``>=2.0`` vs ``>=2``) compare equal across wheels; the marker is
+    omitted because bucketing by extra already accounts for it.
+    """
+    name: str = canonicalize_name(req.name)
+    if req.extras:
+        name += "[" + ",".join(sorted(canonicalize_name(e) for e in req.extras)) + "]"
+    if req.url is not None:
+        return f"{name} @ {req.url}"
+    return name + ",".join(
+        sorted(
+            spec.operator
+            + canonicalize_version(
+                spec.version, strip_trailing_zero=spec.operator != "~="
+            )
+            for spec in req.specifier
+        )
+    )

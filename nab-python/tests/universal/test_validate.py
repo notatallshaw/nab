@@ -212,8 +212,8 @@ class TestValidateLock:
             f for f in report.findings if f.tuple_label.startswith("py311-windows")
         )
         assert win_finding.status == "divergent"
-        assert "ipywidgets" in win_finding.extra_deps
-        assert "numpy" in win_finding.missing_deps
+        assert "ipywidgets>=8" in win_finding.extra_deps
+        assert "numpy>=1" in win_finding.missing_deps
 
     def test_sdist_only_reported(self) -> None:
         """A version with no wheels reports ``sdist_only``."""
@@ -311,7 +311,7 @@ class TestValidateLock:
         finding = report.findings[0]
         assert finding.status == "divergent"
         assert finding.missing_deps == ()
-        assert set(finding.extra_deps) == {"requests", "numpy"}
+        assert set(finding.extra_deps) == {"requests>=2", "numpy>=1"}
 
 
 class TestFetchWheelMetadata:
@@ -812,9 +812,9 @@ class TestPerExtraDivergence:
 
         env = _linux_311().environment
         out = _evaluate_metadata_deps_by_extra(_BASE_EXTRA_METADATA, env)
-        assert out[None] == {"requests"}
-        assert out["redis"] == {"redis"}
-        assert out["postgres"] == {"psycopg2"}
+        assert out[None] == {"requests>=2"}
+        assert out["redis"] == {"redis>=5"}
+        assert out["postgres"] == {"psycopg2>=2.9"}
 
     def test_extras_divergent_status_when_only_extra_differs(self) -> None:
         """Base deps match but the redis extra differs -> ``divergent_in_extra``."""
@@ -840,7 +840,7 @@ class TestPerExtraDivergence:
         assert len(finding.extras_divergent) == 1
         diff = finding.extras_divergent[0]
         assert diff.extra == "redis"
-        assert diff.extra_deps == ("hiredis",)
+        assert diff.extra_deps == ("hiredis>=2",)
         assert diff.missing_deps == ()
 
     def test_base_diff_keeps_divergent_status_with_extras_attached(self) -> None:
@@ -886,7 +886,7 @@ class TestPerExtraDivergence:
         report = validate_lock(result, coordinator)
         finding = report.findings[0]
         assert finding.status == "divergent"
-        assert "redis" in finding.missing_deps
+        assert "redis>=5" in finding.missing_deps
         assert finding.extras_divergent  # also reports extra divergence
 
     def test_consistent_extras_dont_emit_finding(self) -> None:
@@ -948,4 +948,108 @@ class TestPerExtraDivergence:
         finding = report.findings[0]
         assert finding.status == "divergent_in_extra"
         diff = next(d for d in finding.extras_divergent if d.extra == "pgsql")
-        assert diff.extra_deps == ("psycopg2",)
+        assert diff.extra_deps == ("psycopg2>=2.9",)
+
+
+# Same dep names as _BASE_METADATA but numpy's constraint is flipped.
+_SPECIFIER_DIVERGENT_METADATA = (
+    "Metadata-Version: 2.1\n"
+    "Name: pkg\n"
+    "Version: 1.0\n"
+    "Requires-Dist: requests>=2.0\n"
+    "Requires-Dist: numpy<1.0\n"
+    "\n"
+)
+
+
+class TestSpecifierDivergence:
+    """Wheels agreeing on dep names but not constraints must not be ok."""
+
+    def _validate_single(self, baseline: str, chosen: str) -> PinValidation:
+        wheel = _wheel("pkg-1.0-cp311-cp311-linux_x86_64.whl")
+        coordinator = _make_coordinator(
+            {"pkg": [wheel]},
+            baseline_metadata={"pkg": baseline},
+            per_wheel_metadata={wheel.filename: chosen},
+        )
+        result = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[
+                TupleResult(
+                    tuple_=_linux_311(),
+                    success=True,
+                    pins={"pkg": Version("1.0")},
+                ),
+            ],
+        )
+        report = validate_lock(result, coordinator)
+        return report.findings[0]
+
+    def test_specifier_divergence_flagged(self) -> None:
+        """A chosen wheel that flips a dep's constraint is ``divergent``."""
+        finding = self._validate_single(_BASE_METADATA, _SPECIFIER_DIVERGENT_METADATA)
+        assert finding.status == "divergent"
+        assert "numpy<1" in finding.extra_deps
+        assert "numpy>=1" in finding.missing_deps
+
+    def test_requirement_extras_divergence_flagged(self) -> None:
+        """A dep dropping its extras is divergence, not a name match."""
+        baseline = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Dist: requests[socks]>=2.0\n\n"
+        )
+        chosen = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Dist: requests>=2.0\n\n"
+        )
+        finding = self._validate_single(baseline, chosen)
+        assert finding.status == "divergent"
+        assert finding.extra_deps == ("requests>=2",)
+        assert finding.missing_deps == ("requests[socks]>=2",)
+
+    def test_equivalent_spellings_validate_ok(self) -> None:
+        """Cosmetic spelling differences are not divergence."""
+        baseline = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Dist: NumPy>=1.0\n"
+            "Requires-Dist: requests[socks,security]>=2.0\n\n"
+        )
+        chosen = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Dist: numpy>=1\n"
+            "Requires-Dist: requests[security,socks]>=2\n\n"
+        )
+        finding = self._validate_single(baseline, chosen)
+        assert finding.status == "ok"
+
+    def test_specifier_divergence_within_extra(self) -> None:
+        """Constraint drift inside an extra is ``divergent_in_extra``."""
+        baseline = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Provides-Extra: redis\n"
+            'Requires-Dist: redis>=5.0; extra == "redis"\n\n'
+        )
+        chosen = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Provides-Extra: redis\n"
+            'Requires-Dist: redis>=6.0; extra == "redis"\n\n'
+        )
+        finding = self._validate_single(baseline, chosen)
+        assert finding.status == "divergent_in_extra"
+        diff = finding.extras_divergent[0]
+        assert diff.extra == "redis"
+        assert diff.extra_deps == ("redis>=6",)
+        assert diff.missing_deps == ("redis>=5",)
+
+    def test_direct_url_divergence_flagged(self) -> None:
+        """Direct-URL deps compare by URL, not name alone."""
+        baseline = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Dist: dep @ https://example.com/dep-1.0-py3-none-any.whl\n\n"
+        )
+        chosen = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Dist: dep @ https://example.com/dep-2.0-py3-none-any.whl\n\n"
+        )
+        finding = self._validate_single(baseline, chosen)
+        assert finding.status == "divergent"
