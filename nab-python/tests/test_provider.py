@@ -3786,6 +3786,26 @@ class TestPrioritizeMatchingFromIndex:
         result = provider.prioritize("foo", spec.to_range(), {})
         assert result == (Provider.TIER_NORMAL, 1000, True)
 
+    def test_matching_recomputed_after_listing_arrives(self) -> None:
+        """The in-flight placeholder is not cached; arrival recomputes."""
+        coordinator = make_coordinator(None, package="foo")
+        provider = Provider(coordinator)
+        rng = SpecifierSet(">=1.0").to_range()
+        assert provider.prioritize("foo", rng, {}) == (
+            Provider.TIER_NORMAL,
+            1000,
+            True,
+        )
+        wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
+        # Store directly into the index, as the fetcher thread would.
+        coordinator.index.store_listing("foo", wheels)
+        assert provider.prioritize("foo", rng, {}) == (
+            Provider.TIER_NORMAL,
+            3,
+            True,
+        )
+        assert "foo" in provider.versions_cache
+
     def test_prioritize_uses_versions_cache(self) -> None:
         """prioritize skips index check when versions cache is populated."""
         wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
