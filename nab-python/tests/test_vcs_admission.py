@@ -109,6 +109,15 @@ class TestHasFullCommitSha:
         url = f"git+https://github.com/foo/bar.git@{upper}"
         assert not has_full_commit_sha(url)
 
+    def test_sha_in_authority_without_path_rejected(self) -> None:
+        """An ``@<sha>`` in the authority is userinfo, not a ref."""
+        url = f"git+https://github.com@{_FORTY}"
+        assert not has_full_commit_sha(url)
+
+    def test_sha_as_userinfo_with_unpinned_path_rejected(self) -> None:
+        url = f"git+https://{_FORTY}@github.com/foo/bar.git"
+        assert not has_full_commit_sha(url)
+
 
 class TestAdmitVcsUrlBlock:
     def test_block_default_refuses_vcs(self) -> None:
@@ -225,6 +234,14 @@ class TestAdmitVcsUrlRequirePin:
         with pytest.raises(UnsupportedVcsError, match="vcs_require_pin"):
             admit_vcs_url(
                 "git+https://github.com/foo/bar.git@v1.0",
+                _allow_https(),
+            )
+
+    def test_sha_in_authority_refused_when_pin_required(self) -> None:
+        """The clone parser sees no ref here, so admission must refuse."""
+        with pytest.raises(UnsupportedVcsError, match="vcs_require_pin"):
+            admit_vcs_url(
+                f"git+https://github.com@{_FORTY}",
                 _allow_https(),
             )
 

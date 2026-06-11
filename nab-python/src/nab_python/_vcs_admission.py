@@ -103,15 +103,16 @@ def split_vcs_scheme(url: str) -> tuple[str | None, str]:
 def has_full_commit_sha(url: str) -> bool:
     """Return True if the URL pins to a 40-char hex commit hash.
 
-    Looks for ``@<sha>`` after the scheme://host portion; ignores any
-    ``#`` fragment.  Tolerates ``user@host`` syntax by taking the last
-    ``@`` in the path/ref portion.
+    Looks for ``@<sha>`` in the path component (after the authority);
+    ignores any ``#`` fragment.  A ``user@host`` in the authority is
+    left alone, matching the ref parsing in :mod:`nab_index.vcs`.
     """
     fragmentless = url.split("#", 1)[0]
-    after_authority = fragmentless.split("://", 1)[-1]
-    if "@" not in after_authority:
+    after_scheme = fragmentless.split("://", 1)[-1]
+    path = after_scheme.partition("/")[2]
+    if "@" not in path:
         return False
-    ref = after_authority.rsplit("@", 1)[1]
+    ref = path.rsplit("@", 1)[1]
     return bool(FULL_GIT_SHA_RE.match(ref))
 
 
