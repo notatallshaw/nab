@@ -104,6 +104,8 @@ def _entries_for_pin(canonical: str, pin: PinShape) -> Iterable[DownloadEntry]:
 
 
 def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:
+    # Recorded digests are lowercased to match hashlib.hexdigest() output:
+    # index-fed flows already lowercase, but a caller-built LockInput may not.
     if pin.sdist is not None:
         algo, digest = pin.sdist.primary_digest
         yield DownloadEntry(
@@ -112,7 +114,7 @@ def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:
             filename=pin.sdist.filename,
             url=pin.sdist.url,
             hash_algo=algo,
-            digest=digest,
+            digest=digest.lower(),
         )
     for wheel in pin.wheels:
         algo, digest = wheel.primary_digest
@@ -122,7 +124,7 @@ def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:
             filename=wheel.filename,
             url=wheel.url,
             hash_algo=algo,
-            digest=digest,
+            digest=digest.lower(),
         )
 
 
