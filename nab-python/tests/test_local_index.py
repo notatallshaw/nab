@@ -294,6 +294,29 @@ class TestPep503Directory:
         result = run(client.get_files("foo"))
         assert result == []
 
+    def test_pep503_build_tag_sdist_dropped(self, tmp_path: Path) -> None:
+        # cffi-1.0.2-2.tar.gz parses as project cffi-1-0-2 at version 2;
+        # without the name check it surfaces as a phantom cffi==2.
+        package_dir = tmp_path / "cffi"
+        package_dir.mkdir()
+        body = '<a href="cffi-1.0.2-2.tar.gz">cffi-1.0.2-2.tar.gz</a>'
+        (package_dir / "index.html").write_text(body, encoding="utf-8")
+        (package_dir / "cffi-1.0.2-2.tar.gz").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert run(client.get_files("cffi")) == []
+
+    def test_pep503_foreign_wheel_dropped(self, tmp_path: Path) -> None:
+        body = (
+            '<a href="bar-1.0-py3-none-any.whl">bar</a>'
+            '<a href="foo-1.0-py3-none-any.whl">foo</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "bar-1.0-py3-none-any.whl").write_bytes(b"")
+        (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert [r.filename for r in result] == ["foo-1.0-py3-none-any.whl"]
+
 
 class TestMetadataAndSdist:
     def test_get_metadata_text(self, tmp_path: Path) -> None:
@@ -335,6 +358,7 @@ class TestMakeRecord:
                 Path("/tmp/README.txt"),
                 None,
                 (),
+                "readme",
             )
             is None
         )

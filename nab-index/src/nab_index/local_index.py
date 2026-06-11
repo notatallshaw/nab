@@ -99,6 +99,7 @@ _FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
 
 def _scan_pep503_directory(
     package_dir: Path,
+    canonical: str,
 ) -> list[WheelFile | SdistFile]:
     """Parse ``<package>/index.html`` and return file records."""
     index_html = package_dir / "index.html"
@@ -111,7 +112,9 @@ def _scan_pep503_directory(
         filename, file_url, local_path, hashes = _resolve_local_link(href, package_dir)
         if filename is None:
             continue
-        record = _make_record(filename, file_url, local_path, requires_python, hashes)
+        record = _make_record(
+            filename, file_url, local_path, requires_python, hashes, canonical
+        )
         if record is not None:
             files.append(record)
     return files
@@ -173,23 +176,10 @@ def _scan_flat_wheelhouse(
             continue
         if _FLAT_EXTS.search(entry.name) is None:
             continue
-        parsed_name = _parsed_dist_name(entry.name)
-        if parsed_name is None or _canonical(parsed_name) != canonical:
-            continue
-        record = _make_record(entry.name, entry.as_uri(), entry, None, ())
+        record = _make_record(entry.name, entry.as_uri(), entry, None, (), canonical)
         if record is not None:
             files.append(record)
     return files
-
-
-def _parsed_dist_name(filename: str) -> str | None:
-    parsed = _parse_wheel_filename(filename)
-    if parsed is not None:
-        return parsed[0]
-    parsed = _parse_sdist_filename(filename)
-    if parsed is not None:
-        return parsed[0]
-    return None
 
 
 def _make_record(
@@ -198,10 +188,19 @@ def _make_record(
     local_path: Path | None,
     requires_python: str | None,
     hashes: tuple[tuple[str, str], ...],
+    expected: str,
 ) -> WheelFile | SdistFile | None:
+    """Build a file record, or ``None`` for unusable filenames.
+
+    Files whose parsed canonical name does not match ``expected`` are
+    dropped; see :func:`nab_index.client._parse_files` for the
+    phantom-version failure this prevents.
+    """
     parsed = _parse_wheel_filename(filename)
     if parsed is not None:
-        _, version = parsed
+        parsed_name, version = parsed
+        if parsed_name != expected:
+            return None
         return WheelFile(
             filename=filename,
             url=file_url,
@@ -214,7 +213,9 @@ def _make_record(
         )
     parsed = _parse_sdist_filename(filename)
     if parsed is not None:
-        _, version = parsed
+        parsed_name, version = parsed
+        if parsed_name != expected:
+            return None
         return SdistFile(
             filename=filename,
             url=file_url,
@@ -256,7 +257,7 @@ class LocalIndexClient:
         canonical = _canonical(package)
         package_dir = self._root / canonical
         if (package_dir / "index.html").is_file():
-            return _scan_pep503_directory(package_dir)
+            return _scan_pep503_directory(package_dir, canonical)
 
         if not self._root.is_dir():
             return []
