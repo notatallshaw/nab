@@ -13,10 +13,12 @@ from unittest.mock import MagicMock, patch
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.version import Version
+from nab_python.provider import BuildPolicy, DistPolicy
 from nab_python.universal import reresolve as reresolve_module
 from nab_python.universal.matrix import MatrixTuple
 from nab_python.universal.reresolve import (
     _diff_pins,
+    _resolve_one_tuple_with_overrides,
     reresolve_divergent_tuples,
 )
 from nab_python.universal.resolve import TupleResult, UniversalResult
@@ -49,15 +51,15 @@ def _make_coordinator(
     )
 
 
-def _linux_311() -> MatrixTuple:
+def _linux_311(full_version: str = "3.11.0") -> MatrixTuple:
     return MatrixTuple(
         python_version="3.11",
         platform_id="linux_x86_64",
         environment={
             "python_version": "3.11",
-            "python_full_version": "3.11.0",
+            "python_full_version": full_version,
             "implementation_name": "cpython",
-            "implementation_version": "3.11.0",
+            "implementation_version": full_version,
             "os_name": "posix",
             "platform_machine": "x86_64",
             "platform_python_implementation": "CPython",
@@ -392,6 +394,41 @@ class TestResolveOneTupleWithOverrides:
                 resolution_strategy="highest",
             )
         assert pins == {"pkg": "1.0", "dep": "2.0"}
+
+    def test_one_tuple_matrix_keeps_python_patch_release(self) -> None:
+        """The re-resolve matrix carries the original tuple's patch release.
+
+        A tuple resolved with ``python_patches`` must re-resolve under
+        the same ``python_full_version``, otherwise markers gated on
+        the patch release flip between the two passes and pollute the
+        diff.
+        """
+        tup = _linux_311(full_version="3.11.9")
+        coordinator = _make_coordinator({})
+        ok = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[TupleResult(tuple_=tup, success=True, pins={})],
+        )
+        with patch.object(
+            reresolve_module,
+            "resolve_with_coordinator",
+            return_value=ok,
+        ) as inner:
+            _resolve_one_tuple_with_overrides(
+                coordinator,
+                tup,
+                ["pkg"],
+                {("pkg", "1.0"): "Name: pkg\nVersion: 1.0\n\n"},
+                constraints=None,
+                uploaded_prior_to=None,
+                dist_policy=DistPolicy.WHEEL_OR_SDIST,
+                build_policy=BuildPolicy.NEVER,
+                resolution_strategy="highest",
+            )
+        matrix = inner.call_args.args[1]
+        env = matrix.expand()[0].environment
+        assert env["python_full_version"] == "3.11.9"
+        assert env["implementation_version"] == "3.11.9"
 
 
 _DIVERGENT_BASELINE_METADATA = (
