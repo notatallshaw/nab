@@ -294,17 +294,24 @@ def _override_metadata(
     overridden raw text rather than serving the prior tuple's view.
     """
     text_snapshot: dict[tuple[str, str], str | None] = {}
+    from_sdist_snapshot: dict[tuple[str, str], bool] = {}
     parsed_snapshot: dict[tuple[str, str], object | None] = {}
     for key in overrides:
         text_snapshot[key] = coordinator.index.get_metadata(*key)
+        from_sdist_snapshot[key] = coordinator.index.metadata_from_sdist(*key)
         parsed_snapshot[key] = coordinator.index.pop_parsed_metadata(*key)
     try:
         for key, text in overrides.items():
             coordinator.index.store_metadata(*key, text)
         yield
     finally:
+        # Restore through the matching store call so the slot's sdist
+        # provenance survives the override cycle.
         for key, prior in text_snapshot.items():
-            coordinator.index.store_metadata(*key, prior)
+            if from_sdist_snapshot[key]:
+                coordinator.index.store_sdist_metadata(*key, prior)
+            else:
+                coordinator.index.store_metadata(*key, prior)
         for key, parsed in parsed_snapshot.items():
             coordinator.index.pop_parsed_metadata(*key)
             if parsed is not None:

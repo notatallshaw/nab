@@ -314,6 +314,17 @@ class TestOverrideMetadata:
             coordinator.index.store_parsed_metadata("pkg", "1.0", object())
         assert coordinator.index.get_parsed_metadata("pkg", "1.0") is None
 
+    def test_restore_preserves_sdist_provenance(self) -> None:
+        """An sdist-origin baseline is still sdist-origin after restore."""
+        from nab_python.universal.reresolve import _override_metadata
+
+        coordinator = _make_coordinator({})
+        coordinator.index.store_sdist_metadata("pkg", "1.0", "PKG-INFO")
+        with _override_metadata(coordinator, {("pkg", "1.0"): "OVERRIDE"}):
+            assert not coordinator.index.metadata_from_sdist("pkg", "1.0")
+        assert coordinator.index.get_metadata("pkg", "1.0") == "PKG-INFO"
+        assert coordinator.index.metadata_from_sdist("pkg", "1.0")
+
 
 class TestResolveOneTupleWithOverrides:
     """``_resolve_one_tuple_with_overrides`` builds a one-tuple matrix."""

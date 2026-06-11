@@ -141,6 +141,10 @@ class InMemoryIndex:
         self._listing_errors: dict[str, BaseException] = {}
         self._listing_indexes: dict[str, str] = {}
         self._metadata: dict[tuple[str, str], str | None] = {}
+        # Keys whose ``_metadata`` slot was last written from an sdist
+        # PKG-INFO rather than a wheel METADATA; readers need the
+        # origin because only sdist deps go through the PEP 643 gate.
+        self._metadata_from_sdist: set[tuple[str, str]] = set()
         self._sdist_pyproject: dict[tuple[str, str], str | None] = {}
         self._sdist_archives: dict[tuple[str, str], bytes | None] = {}
         self._pending: dict[str, _Pending] = {}
@@ -227,6 +231,7 @@ class InMemoryIndex:
         key = f"metadata:{package}:{version}"
         with self._lock:
             self._metadata[(package, version)] = data
+            self._metadata_from_sdist.discard((package, version))
             pending = self._pending.get(key)
         if pending is not None:
             pending.result = data
@@ -241,14 +246,26 @@ class InMemoryIndex:
         because PKG-INFO is core-metadata-equivalent. The pending
         keys differ so a sdist request can run in parallel with (or
         after) a failed wheel metadata request.
+        :meth:`metadata_from_sdist` reports which kind the slot holds.
         """
         key = f"sdist:{package}:{version}"
         with self._lock:
             self._metadata[(package, version)] = data
+            self._metadata_from_sdist.add((package, version))
             pending = self._pending.get(key)
         if pending is not None:
             pending.result = data
             pending.event.set()
+
+    def metadata_from_sdist(self, package: str, version: str) -> bool:
+        """Return ``True`` when the metadata slot was last written from an sdist.
+
+        The slot itself cannot distinguish wheel METADATA from sdist
+        PKG-INFO; readers that apply the :pep:`643` dynamic-deps gate
+        only to sdist values ask here for the current text's origin.
+        """
+        with self._lock:
+            return (package, version) in self._metadata_from_sdist
 
     def store_sdist_pyproject(self, package: str, version: str, data: str) -> None:
         """Store sdist-derived pyproject.toml text for static-metadata fallback.
