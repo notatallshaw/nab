@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import tarfile
 import tempfile
 import threading
 from pathlib import Path
@@ -727,6 +729,47 @@ class TestFetchCoordinator:
             )
             event.wait(timeout=5)
             assert coord.index.get_sdist_pyproject("pkg", "1.0") is not None
+
+    @respx.mock
+    def test_request_sdist_pyproject_stored_before_event(self) -> None:
+        """The coupled pyproject.toml is visible before the sdist event fires.
+
+        A waiter released by the sdist event reads the pyproject slot
+        with no further synchronisation, so both artifacts from the one
+        download must be stored before the event is set.
+        """
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for name, data in (
+                (
+                    "pkg-1.0/PKG-INFO",
+                    b"Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
+                ),
+                ("pkg-1.0/pyproject.toml", b'[project]\nname = "pkg"\n'),
+            ):
+                info = tarfile.TarInfo(name=name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        respx.get("https://files.example.com/pkg-1.0.tar.gz").mock(
+            return_value=httpx.Response(200, content=buf.getvalue())
+        )
+
+        pyproject_at_event: list[str | None] = []
+
+        class RecordingIndex(InMemoryIndex):
+            def store_sdist_metadata(
+                self, package: str, version: str, data: str | None
+            ) -> None:
+                pyproject_at_event.append(self.get_sdist_pyproject(package, version))
+                super().store_sdist_metadata(package, version, data)
+
+        with _coord() as coord:
+            coord.index = RecordingIndex()
+            event = coord.request_sdist(
+                "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+            )
+            event.wait(timeout=5)
+        assert pyproject_at_event == ['[project]\nname = "pkg"\n']
 
     @respx.mock
     def test_request_sdist_deduplicates(self) -> None:

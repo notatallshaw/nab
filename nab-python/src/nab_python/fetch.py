@@ -856,9 +856,12 @@ class FetchCoordinator:
         pkg_info, pyproject = await client.get_sdist_files(
             req.package, req.version, req.url
         )
-        self.index.store_sdist_metadata(req.package, req.version, pkg_info)
+        # Store pyproject.toml first: store_sdist_metadata fires the
+        # pending event, and a released waiter reads the pyproject slot
+        # with no further synchronisation.
         if pyproject is not None:
             self.index.store_sdist_pyproject(req.package, req.version, pyproject)
+        self.index.store_sdist_metadata(req.package, req.version, pkg_info)
 
     async def _fetch_sdist_archive(
         self,
