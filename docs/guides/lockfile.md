@@ -114,10 +114,12 @@ first; wheel hashes follow. The continuation backslashes match
 what pip-compile emits.
 
 Local and VCS pins are rendered without hashes, mirroring pip's
-behaviour:
+behaviour. An editable local pin becomes a `-e` line and a
+`subdirectory` a `#subdirectory=` fragment:
 
 ```
 my-fork @ file:///abs/path/to/checkout
+-e file:///abs/path/to/monorepo#subdirectory=packages/foo
 some-pkg @ git+https://github.com/me/x.git@<sha>
 ```
 

@@ -2979,6 +2979,51 @@ class TestWriteRequirementsWithHashes:
         )
         assert "foo @ file://" in text
 
+    def test_local_pin_editable_renders_dash_e(self, tmp_path: Path) -> None:
+        text = write_requirements_with_hashes(
+            LockInput(
+                pins={
+                    "foo": LocalPin(
+                        name="foo", version="1.0", path=str(tmp_path), editable=True
+                    )
+                }
+            )
+        )
+        assert text.strip() == f"-e {tmp_path.resolve().as_uri()}"
+
+    def test_local_pin_subdirectory_renders_fragment(self, tmp_path: Path) -> None:
+        text = write_requirements_without_hashes(
+            LockInput(
+                pins={
+                    "foo": LocalPin(
+                        name="foo",
+                        version="1.0",
+                        path=str(tmp_path),
+                        subdirectory="packages/foo",
+                    )
+                }
+            )
+        )
+        url = tmp_path.resolve().as_uri()
+        assert text.strip() == f"foo @ {url}#subdirectory=packages/foo"
+
+    def test_local_pin_editable_with_subdirectory(self, tmp_path: Path) -> None:
+        text = write_requirements_with_hashes(
+            LockInput(
+                pins={
+                    "foo": LocalPin(
+                        name="foo",
+                        version="1.0",
+                        path=str(tmp_path),
+                        editable=True,
+                        subdirectory="packages/foo",
+                    )
+                }
+            )
+        )
+        url = tmp_path.resolve().as_uri()
+        assert text.strip() == f"-e {url}#subdirectory=packages/foo"
+
     def test_vcs_pin_round_trips_url(self) -> None:
         text = write_requirements_with_hashes(
             LockInput(
