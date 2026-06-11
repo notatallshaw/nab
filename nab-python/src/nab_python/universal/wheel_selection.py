@@ -108,8 +108,8 @@ class PlatformSpec:
             ("glibc", _floor_tag(self.manylinux_floor)),
             ("musl", _floor_tag(self.musllinux_floor)),
             ("macos", _floor_tag(self.macos_min)),
-            ("rel", "_".join(self.platform_release.split())),
-            ("ver", "_".join(self.platform_version.split())),
+            ("rel", _escape_label_value(self.platform_release)),
+            ("ver", _escape_label_value(self.platform_version)),
         )
         return "".join(f"-{tag}{value}" for tag, value in fields if value)
 
@@ -136,6 +136,26 @@ _PLATFORM_KIND: dict[str, str] = {
 def _floor_tag(floor: tuple[int, int] | None) -> str:
     """Render a ``(major, minor)`` floor as ``major.minor``, or ``""`` if unset."""
     return f"{floor[0]}.{floor[1]}" if floor is not None else ""
+
+
+def _escape_label_value(value: str) -> str:
+    """Escape a free-form marker value for a label suffix field.
+
+    Alphanumerics and ``.`` pass through, ``_`` doubles itself, and any
+    other character becomes ``_<hex codepoint>_``.  This keeps the
+    encoding injective and the output free of ``-``, so a value can
+    never forge a field boundary and collapse two distinct specs onto
+    one label.
+    """
+    out: list[str] = []
+    for ch in value:
+        if ch == "_":
+            out.append("__")
+        elif ch.isalnum() or ch == ".":
+            out.append(ch)
+        else:
+            out.append(f"_{ord(ch):x}_")
+    return "".join(out)
 
 
 def _linux_platform_tags(
