@@ -15,13 +15,14 @@ from nab_resolver.conflict import (
     is_terminal_incompatibility,
     recompute_previous_level,
     try_force_resolution_step,
+    update_culprit_counts,
 )
 from nab_resolver.incompat_index import (
     add_incompatibility,
     dependency_merge_key,
     maybe_merge_dependency,
 )
-from nab_resolver.partial_solution import PartialSolution
+from nab_resolver.partial_solution import Assignment, PartialSolution
 from nab_resolver.propagate import term_relation
 from nab_resolver.ranges import Range
 from nab_resolver.report import explain_incompatibility, prior_cause, union_terms
@@ -1934,6 +1935,75 @@ class TestRegressions:
         resolver = Resolver(provider)
         with pytest.raises(ResolutionError):
             resolver.resolve({"root": Range.singleton(1)})
+
+
+class _SeededPackage:
+    """Package key with an explicit hash, standing in for one str hash seed."""
+
+    def __init__(self, name: str, hash_value: int) -> None:
+        self.name = name
+        self.hash_value = hash_value
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _SeededPackage) and self.name == other.name
+
+    def __hash__(self) -> int:
+        return self.hash_value
+
+
+class TestHashOrderIndependence:
+    """The conflict path must not depend on the per-process str hash seed."""
+
+    _NAMES = tuple(f"pkg{i}" for i in range(8))
+
+    def _prior_cause_order(self, hashes: list[int]) -> list[str]:
+        packages = [
+            _SeededPackage(n, h) for n, h in zip(self._NAMES, hashes, strict=True)
+        ]
+        shared = _SeededPackage("shared", 100)
+        incompatibility = Incompatibility(
+            [Term(p, Range.singleton(1)) for p in [shared, *packages[:4]]],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        cause = Incompatibility(
+            [Term(p, Range.singleton(1)) for p in [shared, *packages[4:]]],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        terms = prior_cause(incompatibility, cause, shared)
+        return [term.package.name for term in terms]
+
+    def test_prior_cause_term_order_ignores_package_hashes(self) -> None:
+        forward = self._prior_cause_order(list(range(8)))
+        backward = self._prior_cause_order(list(range(7, -1, -1)))
+        assert forward == backward
+
+    def _culprit_queue_order(self, hashes: list[int]) -> list[str]:
+        resolver: Resolver[Any, int] = Resolver(DictProvider({}))
+        packages = [
+            _SeededPackage(n, h) for n, h in zip(self._NAMES, hashes, strict=True)
+        ]
+        affected = _SeededPackage("affected", 100)
+        incompatibility = Incompatibility(
+            [Term(p, Range.singleton(1)) for p in [affected, *packages]],
+            cause=IncompatibilityCause.DERIVED,
+        )
+        for package in packages:
+            resolver.stats.package_culprit_counts[package] = (
+                resolver.CULPRIT_THRESHOLD - 1
+            )
+        satisfier = Assignment(
+            package=affected,
+            accumulated_range=Range.singleton(1),
+            decision_level=1,
+            is_decision=True,
+        )
+        update_culprit_counts(resolver, incompatibility, affected, satisfier)
+        return [package.name for package in resolver.pending_targeted_backtrack]
+
+    def test_culprit_queue_order_ignores_package_hashes(self) -> None:
+        forward = self._culprit_queue_order(list(range(8)))
+        backward = self._culprit_queue_order(list(range(7, -1, -1)))
+        assert forward == backward
 
 
 class TestRelationCache:

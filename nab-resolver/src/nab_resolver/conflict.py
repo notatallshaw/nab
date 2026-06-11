@@ -184,12 +184,14 @@ def update_culprit_counts(
     clauses we walk the satisfier's cause chain instead.  When a culprit
     crosses ``CULPRIT_THRESHOLD`` it gets queued for targeted backtrack.
     """
-    culprit_packages: set[Any] = set()
+    # Dict-as-ordered-set: hash-ordered iteration would make the
+    # targeted-backtrack queue order vary across processes.
+    culprit_packages: dict[Any, None] = {}
     for term in incompatibility.terms:
         package = term.package
         if package is ROOT or package == affected_package:
             continue
-        culprit_packages.add(package)
+        culprit_packages[package] = None
 
     # Single-term NO_VERSIONS clauses carry the antecedent decisions only
     # via the satisfier's cause; without this, those decisions go uncredited.
@@ -198,7 +200,7 @@ def update_culprit_counts(
             package = term.package
             if package is ROOT or package == affected_package:
                 continue
-            culprit_packages.add(package)
+            culprit_packages[package] = None
 
     threshold = resolver.CULPRIT_THRESHOLD
     for package in culprit_packages:
