@@ -63,8 +63,9 @@ _DYNAMIC_DEPS_METADATA = (
     "\n"
 )
 
-# Metadata 2.2 with no Dynamic header.  Per PEP 643, every wheel
-# must share these deps; per-wheel fetches are skipped.
+# Metadata 2.2 with no Dynamic header.  Per PEP 643, when this text
+# comes from an sdist's PKG-INFO, every wheel must share these deps
+# and per-wheel fetches are skipped.
 _STATIC_DEPS_METADATA = (
     "Metadata-Version: 2.2\n"
     "Name: pkg\n"
@@ -72,6 +73,12 @@ _STATIC_DEPS_METADATA = (
     "Requires-Dist: requests>=2.0\n"
     "Requires-Dist: numpy>=1.0\n"
     "\n"
+)
+
+# Also 2.2 with no Dynamic, but missing numpy: a wheel whose deps
+# genuinely diverge from a sibling wheel carrying the metadata above.
+_STATIC_DEPS_DIVERGENT_METADATA = (
+    "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\nRequires-Dist: requests>=2.0\n\n"
 )
 
 # Same as above but with a micro component on Metadata-Version.
@@ -139,6 +146,7 @@ def _make_coordinator(
     listings: Mapping[str, Sequence[WheelFile | SdistFile]],
     *,
     baseline_metadata: Mapping[str, str] | None = None,
+    sdist_baseline_metadata: Mapping[str, str] | None = None,
     per_wheel_metadata: Mapping[str, str] | None = None,
     sdist_pyproject: Mapping[str, str] | None = None,
     fetch_failures: set[str] | None = None,
@@ -148,14 +156,23 @@ def _make_coordinator(
     Thin wrapper around :func:`make_coordinator` so the call sites keep
     the validate-specific names ``baseline_metadata``,
     ``per_wheel_metadata``, ``sdist_pyproject``, and ``fetch_failures``.
+    ``sdist_baseline_metadata`` stores through
+    ``store_sdist_metadata`` so the slot records sdist provenance,
+    which the PEP 643 fast path requires.
     """
-    return make_coordinator(
+    coordinator = make_coordinator(
         listings=listings,
         baseline_metadata=baseline_metadata,
         per_wheel_metadata=per_wheel_metadata,
         sdist_pyproject=sdist_pyproject,
         fetch_failures=fetch_failures,
     )
+    if sdist_baseline_metadata is not None:
+        for pkg, text in sdist_baseline_metadata.items():
+            for f in listings[pkg]:
+                coordinator.index.store_sdist_metadata(pkg, f.version, text)
+                break
+    return coordinator
 
 
 class TestValidateLock:
@@ -471,11 +488,13 @@ class TestStaticSdistAuthoritative:
     """When metadata is fully static, per-wheel fetches are skipped."""
 
     def test_pep643_static_skips_per_wheel_fetch(self) -> None:
-        """Metadata 2.2 with no Dynamic header trusts the baseline."""
+        """Sdist-origin Metadata 2.2 with no Dynamic header trusts the baseline."""
+        # The baseline slot holds the sdist's PKG-INFO; the index
+        # records that provenance at store time.
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         coordinator = _make_coordinator(
-            {"pkg": [wheel]},
-            baseline_metadata={"pkg": _STATIC_DEPS_METADATA},
+            {"pkg": [wheel, _sdist("pkg-1.0.tar.gz")]},
+            sdist_baseline_metadata={"pkg": _STATIC_DEPS_METADATA},
         )
         # Note: no per_wheel_metadata pre-population.  Skipping the
         # fetch is what the test asserts.
@@ -494,12 +513,45 @@ class TestStaticSdistAuthoritative:
         # Coordinator's request_wheel_metadata should NOT have been called.
         assert not coordinator.request_wheel_metadata.called
 
+    def test_wheel_origin_static_baseline_runs_per_wheel_check(self) -> None:
+        """A no-Dynamic baseline from a wheel sidecar must not skip validation.
+
+        ``Dynamic`` only ever appears in sdist metadata; its absence in
+        wheel METADATA says nothing about sibling wheels.  Here the
+        baseline slot was populated from the linux wheel's PEP 658
+        sidecar and the windows wheel genuinely omits numpy (the
+        apache-beam case), so the divergence must still be caught.
+        """
+        linux_wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        win_wheel = _wheel("pkg-1.0-cp311-cp311-win_amd64.whl")
+        coordinator = _make_coordinator(
+            {"pkg": [linux_wheel, win_wheel]},
+            baseline_metadata={"pkg": _STATIC_DEPS_METADATA},
+            per_wheel_metadata={
+                win_wheel.filename: _STATIC_DEPS_DIVERGENT_METADATA,
+            },
+        )
+        result = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[
+                TupleResult(
+                    tuple_=_windows_311(),
+                    success=True,
+                    pins={"pkg": Version("1.0")},
+                ),
+            ],
+        )
+        report = validate_lock(result, coordinator)
+        finding = report.findings[0]
+        assert finding.status == "divergent"
+        assert finding.missing_deps == ("numpy>=1",)
+
     def test_dynamic_deps_metadata_falls_through(self) -> None:
         """Metadata 2.2 with ``Dynamic: Requires-Dist`` runs full validation."""
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         coordinator = _make_coordinator(
             {"pkg": [wheel]},
-            baseline_metadata={"pkg": _DYNAMIC_DEPS_METADATA},
+            sdist_baseline_metadata={"pkg": _DYNAMIC_DEPS_METADATA},
             per_wheel_metadata={wheel.filename: _DYNAMIC_DEPS_METADATA},
         )
         result = UniversalResult(
@@ -521,7 +573,7 @@ class TestStaticSdistAuthoritative:
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         coordinator = _make_coordinator(
             {"pkg": [wheel]},
-            baseline_metadata={"pkg": _BASE_METADATA},  # 2.1
+            sdist_baseline_metadata={"pkg": _BASE_METADATA},  # 2.1
             per_wheel_metadata={wheel.filename: _BASE_METADATA},
         )
         result = UniversalResult(
@@ -544,7 +596,9 @@ class TestStaticSdistAuthoritative:
 
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         coordinator = _make_coordinator({"pkg": [wheel]})
-        coordinator.index.store_metadata("pkg", "1.0", _STATIC_DEPS_METADATA_MICRO)
+        coordinator.index.store_sdist_metadata(
+            "pkg", "1.0", _STATIC_DEPS_METADATA_MICRO
+        )
         assert _baseline_has_static_deps(coordinator, "pkg", Version("1.0")) is True
 
     def test_malformed_metadata_falls_through(self) -> None:
@@ -555,7 +609,18 @@ class TestStaticSdistAuthoritative:
         # _make_coordinator's wheel-iteration path.
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         coordinator = _make_coordinator({"pkg": [wheel]})
-        coordinator.index.store_metadata("pkg", "1.0", "this isn't valid metadata")
+        coordinator.index.store_sdist_metadata(
+            "pkg", "1.0", "this isn't valid metadata"
+        )
+        assert _baseline_has_static_deps(coordinator, "pkg", Version("1.0")) is False
+
+    def test_missing_baseline_metadata_falls_through(self) -> None:
+        """A from-sdist slot with no text (failed fetch) disqualifies PEP 643."""
+        from nab_python.universal.validate import _baseline_has_static_deps
+
+        wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        coordinator = _make_coordinator({"pkg": [wheel]})
+        coordinator.index.store_sdist_metadata("pkg", "1.0", None)
         assert _baseline_has_static_deps(coordinator, "pkg", Version("1.0")) is False
 
     def test_missing_metadata_version_falls_through(self) -> None:
@@ -564,7 +629,7 @@ class TestStaticSdistAuthoritative:
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         coordinator = _make_coordinator(
             {"pkg": [wheel]},
-            baseline_metadata={"pkg": text},
+            sdist_baseline_metadata={"pkg": text},
             per_wheel_metadata={wheel.filename: text},
         )
         result = UniversalResult(
@@ -588,7 +653,7 @@ class TestStaticSdistAuthoritative:
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         coordinator = _make_coordinator(
             {"pkg": [wheel]},
-            baseline_metadata={"pkg": text},
+            sdist_baseline_metadata={"pkg": text},
             per_wheel_metadata={wheel.filename: text},
         )
         result = UniversalResult(
@@ -630,7 +695,7 @@ class TestPyprojectStaticDepsFastPath:
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         coordinator = _make_coordinator(
             {"pkg": [wheel]},
-            baseline_metadata={"pkg": _DYNAMIC_DEPS_METADATA},
+            sdist_baseline_metadata={"pkg": _DYNAMIC_DEPS_METADATA},
             sdist_pyproject={"pkg": self._PYPROJECT_STATIC},
         )
         result = UniversalResult(
@@ -652,7 +717,7 @@ class TestPyprojectStaticDepsFastPath:
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         coordinator = _make_coordinator(
             {"pkg": [wheel]},
-            baseline_metadata={"pkg": _DYNAMIC_DEPS_METADATA},
+            sdist_baseline_metadata={"pkg": _DYNAMIC_DEPS_METADATA},
             per_wheel_metadata={wheel.filename: _DYNAMIC_DEPS_METADATA},
             sdist_pyproject={"pkg": self._PYPROJECT_DYNAMIC_DEPS},
         )
@@ -675,7 +740,7 @@ class TestPyprojectStaticDepsFastPath:
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         coordinator = _make_coordinator(
             {"pkg": [wheel]},
-            baseline_metadata={"pkg": _DYNAMIC_DEPS_METADATA},
+            sdist_baseline_metadata={"pkg": _DYNAMIC_DEPS_METADATA},
             per_wheel_metadata={wheel.filename: _DYNAMIC_DEPS_METADATA},
             sdist_pyproject={"pkg": self._PYPROJECT_DYNAMIC_OPTIONAL},
         )
