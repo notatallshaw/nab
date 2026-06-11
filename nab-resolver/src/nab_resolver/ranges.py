@@ -204,7 +204,11 @@ class Range(Generic[VersionType]):
 
     @classmethod
     def between(cls, lower: VersionType, upper: VersionType) -> Range[VersionType]:
-        """Create ``[lower, upper)``."""
+        """Create ``[lower, upper)``, or the empty range if ``lower >= upper``."""
+        if _interval_is_empty(
+            lower, lower_inclusive=True, upper=upper, upper_inclusive=False
+        ):
+            return cls(())
         return cls(((lower, True, upper, False),))
 
     @property

@@ -46,6 +46,18 @@ class TestRangeConstruction:
         assert 5 not in r
         assert 1 not in r
 
+    def test_between_equal_bounds_is_empty(self) -> None:
+        r = Range.between(3, 3)
+        assert r.is_empty
+        assert 3 not in r
+        assert r == Range.empty()
+
+    def test_between_inverted_bounds_is_empty(self) -> None:
+        r = Range.between(5, 3)
+        assert r.is_empty
+        assert r == Range.empty()
+        assert ~~r == r
+
 
 class TestRangeOperations:
     def test_intersection_overlapping(self) -> None:
