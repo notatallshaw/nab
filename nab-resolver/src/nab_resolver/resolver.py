@@ -392,19 +392,27 @@ class Resolver(Generic[PackageType, VersionType]):
 
         dependencies = self.provider.get_dependencies(next_package, chosen_version)
         for dependency_package, dependency_range in dependencies.items():
+            package_term = Term(
+                next_package,
+                self.range_type.singleton(chosen_version),
+                positive=True,
+            )
+            if dependency_package == next_package:
+                # An incompatibility holds at most one term per package,
+                # so self-dependency terms merge to {v} & ~range: empty
+                # (a vacuous clause) when the range contains the chosen
+                # version, else exactly {v}.
+                if chosen_version in dependency_range:
+                    continue
+                terms = [package_term]
+            else:
+                terms = [
+                    package_term,
+                    Term(dependency_package, dependency_range, positive=False),
+                ]
             incompat_index.add_incompatibility(
                 self,
-                Incompatibility(
-                    [
-                        Term(
-                            next_package,
-                            self.range_type.singleton(chosen_version),
-                            positive=True,
-                        ),
-                        Term(dependency_package, dependency_range, positive=False),
-                    ],
-                    cause=IncompatibilityCause.DEPENDENCY,
-                ),
+                Incompatibility(terms, cause=IncompatibilityCause.DEPENDENCY),
             )
         return next_package
 
