@@ -79,6 +79,8 @@ def check_leaf_against_universe(
     ROOT: matches a stated requirement.
     DEPENDENCY: for every real version of the parent inside the parent
     term, the universe dep range is a subset of the clause's dep range.
+    A single-term clause is a merged self-dependency ({v} & ~range);
+    it is true when the version's declared self-range excludes it.
     NO_VERSIONS: no real version of the package lies in the claimed range.
     CONSTRAINT: no real version lies in claimed-range & user-constraint.
     """
@@ -98,6 +100,25 @@ def check_leaf_against_universe(
         return
 
     if leaf.cause is IncompatibilityCause.DEPENDENCY:
+        if len(leaf.terms) == 1:
+            (term,) = leaf.terms
+            assert term.is_positive(), f"self-dep term should be positive: {leaf!r}"
+            parent = term.package
+            real_versions = [v for v in graph.get(parent, {}) if v in term.constraint]
+            assert real_versions, (
+                f"DEPENDENCY clause for {parent!r} covers no real version: {leaf!r}"
+            )
+            for v in real_versions:
+                actual = graph[parent][v].get(parent)
+                assert actual is not None, (
+                    f"{parent!r}@{v} has no self-dep but proof claims it: {leaf!r}"
+                )
+                assert v not in actual, (
+                    f"{parent!r}@{v} self-range {actual} contains {v}, the "
+                    f"clause should have been vacuous: {leaf!r}"
+                )
+            return
+
         assert len(leaf.terms) == 2, f"DEPENDENCY clause shape: {leaf!r}"
         parent_term, dep_term = leaf.terms
         assert parent_term.is_positive()
