@@ -14,7 +14,6 @@ from nab_index.client import SdistFile, WheelFile
 from nab_python._provider.metadata_resolver import (
     add_classified_dep,
     classify_requirement,
-    has_wheel_metadata_at,
     pick_dist_for_metadata,
 )
 from nab_python._testing.coordinator_fake import make_coordinator
@@ -3593,6 +3592,31 @@ class TestAwaitMetadataBatchEdgeCases:
         assert result == V("1.0")
         assert ("foo", V("2.0")) not in provider.deps_cache
 
+    def test_batch_does_not_parse_sdist_pkg_info_as_wheel_metadata(self) -> None:
+        """Sdist PKG-INFO in the shared slot is not cached by the batch path.
+
+        When a wheel's PEP 658 fetch yields nothing, get_dependencies
+        falls back to the sdist, stores its PKG-INFO in the shared
+        metadata slot, and rejects the version under the strict PEP 643
+        default. A later batch await reads the same slot; caching that
+        text as wheel METADATA would bypass the gate and resurrect the
+        rejected version with unverified deps.
+        """
+        dists = [make_sdist("1.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(dists, sdist_pkg_info=PKG_INFO_PRE_PEP643_DEPS)
+        provider = Provider(coordinator, python_version="3.12.0")
+        with pytest.raises(UnsupportedSdistError):
+            provider.get_dependencies("pkg", V("1.0"))
+
+        version_list = provider.fetch_versions("pkg")
+        wheel_map = provider._wheel_by_version("pkg", version_list)
+        submitted = provider._prefetch_batch("pkg", [V("1.0")], wheel_map)
+        provider._await_metadata_batch("pkg", submitted)
+
+        assert ("pkg", V("1.0")) not in provider.deps_cache
+        with pytest.raises(UnsupportedSdistError):
+            provider.get_dependencies("pkg", V("1.0"))
+
 
 class TestIsReady:
     def test_extras_cached_base(self) -> None:
@@ -3819,6 +3843,10 @@ PKG_INFO_DYNAMIC_DEPS = (
     "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\nDynamic: Requires-Dist\n"
 )
 
+PKG_INFO_PRE_PEP643_DEPS = (
+    "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: hidden-dep\n"
+)
+
 
 class TestAddExtraMarker:
     def test_no_existing_marker(self) -> None:
@@ -3832,24 +3860,50 @@ class TestAddExtraMarker:
         assert out == ("numpy>=1.0 ; (python_version >= '3.10') and extra == \"foo\"")
 
 
-class TestHasWheelMetadataAt:
-    def test_returns_true_for_wheel_with_metadata(self) -> None:
-        """A wheel with a metadata_url is detected."""
-        versions = [(V("1.0"), make_wheel("1.0"))]
-        assert has_wheel_metadata_at(versions, V("1.0")) is True
+class TestSharedSlotProvenance:
+    def test_pkg_info_stays_gated_for_provider_with_wheel_in_view(self) -> None:
+        """PKG-INFO stored by one provider stays sdist-gated for another.
 
-    def test_returns_false_for_wheel_without_metadata(self) -> None:
-        """A wheel with has_metadata=False is not counted."""
-        versions = [(V("1.0"), make_wheel("1.0", has_metadata=False))]
-        assert has_wheel_metadata_at(versions, V("1.0")) is False
+        Universal mode shares one coordinator index across tuple
+        providers. A tuple whose filtered view is sdist-only stores
+        PKG-INFO in the shared slot; a second tuple with the wheel in
+        view must not relabel that text as wheel METADATA and trust
+        the pre-PEP-643 deps.
+        """
+        coordinator = make_coordinator(None, sdist_pkg_info=PKG_INFO_PRE_PEP643_DEPS)
+        first = Provider(coordinator, python_version="3.12.0")
+        first.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
+        with pytest.raises(UnsupportedSdistError):
+            first.get_dependencies("pkg", V("1.0"))
 
-    def test_skips_other_versions(self) -> None:
-        """Other-version wheels with metadata don't count for this version."""
-        versions = [
-            (V("2.0"), make_wheel("2.0")),
+        second = Provider(coordinator, python_version="3.12.0")
+        second.versions_cache["pkg"] = [
+            (V("1.0"), make_wheel("1.0")),
             (V("1.0"), make_sdist("1.0")),
         ]
-        assert has_wheel_metadata_at(versions, V("1.0")) is False
+        with pytest.raises(UnsupportedSdistError):
+            second.get_dependencies("pkg", V("1.0"))
+
+    def test_wheel_metadata_stays_trusted_for_sdist_only_view(self) -> None:
+        """Wheel METADATA in the slot is trusted whatever the reader's view.
+
+        The reverse ordering: a provider with the wheel in view stores
+        METADATA text, then a provider whose view is sdist-only reads
+        it. Inferring the origin from the reader's listing would
+        mislabel the text as PKG-INFO and spuriously reject the
+        version under the PEP 643 gate.
+        """
+        metadata = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: dep-a\n"
+        )
+        coordinator = make_coordinator(None, metadata_text=metadata)
+        first = Provider(coordinator, python_version="3.12.0")
+        first.versions_cache["pkg"] = [(V("1.0"), make_wheel("1.0"))]
+        assert "dep-a" in first.get_dependencies("pkg", V("1.0"))
+
+        second = Provider(coordinator, python_version="3.12.0")
+        second.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
+        assert "dep-a" in second.get_dependencies("pkg", V("1.0"))
 
 
 class TestPickDistForMetadata:

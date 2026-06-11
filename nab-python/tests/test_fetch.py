@@ -107,6 +107,14 @@ class TestInMemoryIndex:
         assert idx.has_metadata("foo", "1.0")
         assert idx.get_metadata("foo", "1.0") is None
 
+    def test_metadata_from_sdist_tracks_last_write(self) -> None:
+        idx = InMemoryIndex()
+        assert not idx.metadata_from_sdist("foo", "1.0")
+        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
+        assert idx.metadata_from_sdist("foo", "1.0")
+        idx.store_metadata("foo", "1.0", "METADATA\n")
+        assert not idx.metadata_from_sdist("foo", "1.0")
+
     def test_sdist_archive_pending_event_fires(self) -> None:
         idx = InMemoryIndex()
         pending, _ = idx.get_or_create_pending("sdist-archive:foo:1.0")

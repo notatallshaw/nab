@@ -429,6 +429,11 @@ def await_metadata_batch(
             # look-ahead's get_dependencies runs the sdist fallback (or
             # refuses it) rather than pinning it as dependency-free.
             continue
+        if provider.coordinator.index.metadata_from_sdist(package, ver_str):
+            # The shared slot holds sdist PKG-INFO from an earlier
+            # fallback; caching it here would skip the PEP 643 gate
+            # that get_dependencies applies on the from_sdist path.
+            continue
         try:
             provider.parse_and_cache_metadata(cache_key, text)
         except (ValueError, InvalidVersion, InvalidSpecifier):

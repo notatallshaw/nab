@@ -48,11 +48,11 @@ def resolve_metadata(
 
     text = provider.coordinator.index.get_metadata(normalized, ver_str)
     if text is not None:
-        # Decide source from listing: a wheel-with-metadata-url at this
-        # version means the text was wheel METADATA; otherwise sdist
-        # PKG-INFO.  ``_metadata`` and ``_sdist`` write to the same
-        # slot, so we can't tell from the index alone.
-        from_sdist = not has_wheel_metadata_at(versions, version)
+        # Wheel METADATA and sdist PKG-INFO share the slot; the index
+        # records which kind the last write was.  Inferring from the
+        # listing instead would mislabel the text whenever this
+        # provider's view differs from the one that stored it.
+        from_sdist = provider.coordinator.index.metadata_from_sdist(normalized, ver_str)
         return (text, from_sdist)
 
     dist = pick_dist_for_metadata(versions, version)
@@ -83,18 +83,6 @@ def resolve_metadata(
         f"no PEP 658 metadata and no sdist available"
     )
     raise MetadataError(msg)
-
-
-def has_wheel_metadata_at(
-    versions: Sequence[tuple[Version, DistFile]], version: Version
-) -> bool:
-    """Report whether the listing has a wheel with PEP 658 metadata."""
-    for v, d in versions:
-        if v != version:
-            continue
-        if isinstance(d, WheelFile) and d.metadata_url is not None:
-            return True
-    return False
 
 
 def pick_dist_for_metadata(
