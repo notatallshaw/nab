@@ -39,6 +39,7 @@ from nab_python.provider import (
     VcsSource,
     _add_extra_marker,
 )
+from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 V = Version
@@ -2692,6 +2693,47 @@ class TestExtras:
         assert V("1.5") not in extra_deps["bar"]
         assert V("2.5") in extra_deps["bar"]
 
+    def test_extra_self_constraint_intersects_proxy_pin(self) -> None:
+        """An extra-gated bound on the base intersects with the proxy pin.
+
+        ``foo>=2; extra == "bar"`` in foo 1.0's metadata makes
+        foo[bar]==1.0 unsatisfiable, so the recorded range for foo must
+        be empty, not the bare pin.
+        """
+        metadata = (
+            "Metadata-Version: 2.1\n"
+            "Name: foo\n"
+            "Version: 1.0\n"
+            "Provides-Extra: bar\n"
+            'Requires-Dist: foo>=2; extra == "bar"\n'
+        )
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=metadata,
+            package="foo",
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        deps = provider.get_dependencies("foo[bar]", V("1.0"))
+        assert deps["foo"].is_empty
+
+    def test_extra_self_constraint_compatible_keeps_pin(self) -> None:
+        """A satisfiable extra-gated self bound leaves the proxy pin intact."""
+        metadata = (
+            "Metadata-Version: 2.1\n"
+            "Name: foo\n"
+            "Version: 1.0\n"
+            "Provides-Extra: bar\n"
+            'Requires-Dist: foo>=1; extra == "bar"\n'
+        )
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=metadata,
+            package="foo",
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        deps = provider.get_dependencies("foo[bar]", V("1.0"))
+        assert deps["foo"] == VersionRange.singleton(V("1.0"))
+
     def test_extra_adds_proxy_for_existing_base_dep(self) -> None:
         """Extra adds proxy when base dep exists but doesn't have the extra."""
         metadata = (
@@ -2715,7 +2757,7 @@ class TestExtras:
         assert "bar[http]" in extra_deps  # extra adds the proxy
 
     def test_warn_mode_missing_extra(self) -> None:
-        """WARN mode logs and returns empty deps for missing extra."""
+        """WARN mode logs and returns only the base pin for missing extra."""
         coordinator = make_coordinator(
             [make_wheel("1.0")],
             metadata_text=NO_EXTRA_METADATA,
@@ -2725,7 +2767,7 @@ class TestExtras:
             coordinator, python_version="3.12.0", extras_mode=ExtrasMode.WARN
         )
         deps = provider.get_dependencies("foo[nonexistent]", V("1.0"))
-        assert deps == {}
+        assert deps == {"foo": VersionRange.singleton(V("1.0"))}
 
     def test_error_user_mode_raises_for_root_extra(self) -> None:
         """ERROR_USER raises for user-provided missing extra."""
@@ -2756,7 +2798,48 @@ class TestExtras:
             extras_mode=ExtrasMode.ERROR_USER,
         )
         deps = provider.get_dependencies("foo[nonexistent]", V("1.0"))
-        assert deps == {}
+        assert deps == {"foo": VersionRange.singleton(V("1.0"))}
+
+    def test_missing_extra_proxy_and_base_converge(self) -> None:
+        """A warn-and-drop extra still keeps proxy and base in lockstep.
+
+        alpha 2.0 provides ext-one, whose dependency beta has no
+        versions; alpha 1.0 does not provide it.  The proxy backtracks
+        to 1.0 and must drag the base along, otherwise the resolution
+        pins alpha 2.0 while silently dropping ext-one's dependencies.
+        """
+        listings = {
+            "alpha": [make_wheel("2.0"), make_wheel("1.0")],
+            "beta": [],
+            "gamma": [make_wheel("1.0")],
+        }
+        coordinator = make_coordinator(listings=listings)
+        coordinator.index.store_metadata(
+            "alpha",
+            "2.0",
+            "Metadata-Version: 2.1\nName: alpha\nVersion: 2.0\n"
+            "Provides-Extra: ext-one\n"
+            'Requires-Dist: beta; extra == "ext-one"\n',
+        )
+        coordinator.index.store_metadata(
+            "alpha", "1.0", "Metadata-Version: 2.1\nName: alpha\nVersion: 1.0\n"
+        )
+        coordinator.index.store_metadata(
+            "gamma",
+            "1.0",
+            "Metadata-Version: 2.1\nName: gamma\nVersion: 1.0\n"
+            "Requires-Dist: alpha[ext-one]\n",
+        )
+        roots = {"gamma": VersionRange.full()}
+        provider = Provider(
+            coordinator, python_version="3.12.0", root_requirements=roots
+        )
+        resolver: Resolver[str, Version] = Resolver(
+            provider, range_type=VersionRange, root_version="0"
+        )
+        result = resolver.resolve(roots)
+        assert result["alpha[ext-one]"] == result["alpha"] == V("1.0")
+        assert "beta" not in result
 
     def test_backtrack_mode_raises_for_root_extra(self) -> None:
         """BACKTRACK raises for user-provided missing extra."""
