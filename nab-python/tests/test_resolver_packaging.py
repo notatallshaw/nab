@@ -14,6 +14,7 @@ from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
 from nab_resolver.resolver import ResolutionError, Resolver
+from nab_resolver.types import Term
 
 V = Version
 
@@ -45,6 +46,23 @@ class TestSpecifierToRange:
         """Contradictory specifiers produce an empty range."""
         r = SpecifierSet(">=2.0,<1.0").to_range()
         assert r.is_empty
+
+    def test_term_subset_ignores_arbitrary_flag(self) -> None:
+        """A specifier-built full range satisfies a flag-free full term.
+
+        ``SpecifierSet("")`` produces the full range flagged as also
+        admitting arbitrary ``===`` versions, while range unions built
+        during conflict resolution produce the unflagged full range.
+        The two compare unequal but their difference is empty, and term
+        satisfaction follows the difference: conflict resolution would
+        otherwise loop on a clause it can never resolve away.
+        """
+        flagged_full = SpecifierSet("").to_range()
+        exact = VersionRange.singleton(V("1.0"))
+        plain_full = exact | ~exact
+        assert plain_full != flagged_full
+        assert (flagged_full & ~plain_full).is_empty
+        assert Term("pkg", plain_full).satisfies(flagged_full)
 
     def test_not_equal(self) -> None:
         """Convert !=1.5 to a range excluding only 1.5."""

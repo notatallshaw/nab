@@ -340,10 +340,9 @@ def find_most_recent_satisfier(
         raise RuntimeError(unreachable)
     assert most_recent_term is not None
 
-    if not resolver.solution.satisfier_is_sole(most_recent, most_recent_term):
-        previous_level = recompute_previous_level(
-            resolver, most_recent, most_recent_term, previous_level
-        )
+    previous_level = recompute_previous_level(
+        resolver, most_recent, most_recent_term, previous_level
+    )
 
     return most_recent, most_recent_term, previous_level
 
@@ -356,8 +355,10 @@ def recompute_previous_level(
 ) -> int:
     """Refine previous_level when the satisfier is partial.
 
-    Isolates the satisfier's own contribution (from its cause), subtracts
-    it from the term, and folds the remainder's satisfier level in.
+    The satisfier's own assertion (the negated cause term) may cover only
+    part of the term; the trail must then also exclude the difference
+    ``own & ~term``, so the level of the earliest assignment that does is
+    folded in.
     """
     if satisfier.cause is None:
         return current_previous_level
@@ -370,14 +371,15 @@ def recompute_previous_level(
     if cause_term is None:
         return current_previous_level
 
-    individual = cause_term.negate()
-    remainder = satisfier_term.intersect(individual.negate())
-    if remainder is None or remainder.constraint.is_empty:
+    own_term = cause_term.negate()
+    difference = own_term.intersect(satisfier_term.negate())
+    assert difference is not None
+    if difference.constraint.is_empty:
         return current_previous_level
 
-    remainder_satisfier = resolver.solution.satisfier(remainder)
-    if remainder_satisfier is not None:
-        return max(current_previous_level, remainder_satisfier.decision_level)
+    difference_satisfier = resolver.solution.satisfier(difference.negate())
+    if difference_satisfier is not None:
+        return max(current_previous_level, difference_satisfier.decision_level)
     return current_previous_level
 
 

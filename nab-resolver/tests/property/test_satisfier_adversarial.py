@@ -64,7 +64,7 @@ def test_satisfier_with_trail_derived_probes(
     pkg_picks: list[str],
     polarity: bool,
 ) -> None:
-    """Satisfier and soleness agree with the model on trail-derived probes."""
+    """Satisfier agrees with the model on trail-derived probes."""
     ps: PartialSolution[str, int] = PartialSolution()
     model = ModelPS()
     probe_reps = _derived_probe_reps(ops)
@@ -84,5 +84,3 @@ def test_satisfier_with_trail_derived_probes(
                     else:
                         assert impl is not None
                         assert impl is entries[idx]
-                        expected_sole = model.is_sole(pkg, idx, rep, positive=positive)
-                        assert ps.satisfier_is_sole(impl, term) == expected_sole

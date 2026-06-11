@@ -204,29 +204,6 @@ class ModelPS:
                 return i
         return None
 
-    def is_sole(self, pkg: str, index: int, c: Rep, *, positive: bool) -> bool:
-        """Whether the satisfier at ``index`` alone satisfies the term.
-
-        Mirrors ``satisfier_is_sole``: decision entries and trail-initial
-        entries are always sole; otherwise the entry is sole when the
-        strict prefix before it does not already satisfy the term at the
-        range level (ungated, mirroring ``Term.satisfies``).
-        """
-        states = self.prefix_states(pkg)
-        if states[index][2]:
-            return True
-        if index == 0:
-            return True
-        prev_pos, prev_neg, _ = states[index - 1]
-        if prev_pos is None:
-            eff_prev = rep_not(prev_neg)
-        else:
-            eff_prev = rep_and(prev_pos, rep_not(prev_neg))
-        prev_satisfies = (
-            rep_subset(eff_prev, c) if positive else rep_disjoint(eff_prev, c)
-        )
-        return not prev_satisfies
-
 
 _operations = st.one_of(
     st.tuples(

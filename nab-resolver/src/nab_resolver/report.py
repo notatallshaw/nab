@@ -103,7 +103,7 @@ def prior_cause(
     """Compute the prior cause by resolving two incompatibilities.
 
     Follows pubgrub-rs's prior_cause: for the shared package, union
-    the terms (and drop if the union is universal). For other shared
+    the terms (and drop if the union is a tautology). For other shared
     packages, intersect the terms. For packages in only one side,
     keep as-is.
 
@@ -118,7 +118,7 @@ def prior_cause(
 
     result: list[Term[PackageType, VersionType]] = []
 
-    # Shared package: union, dropping if the result is universal.
+    # Shared package: union, dropping if the result is a tautology.
     incompat_shared = incompat_terms.pop(shared_package, None)
     cause_shared = cause_terms.pop(shared_package, None)
     if incompat_shared is not None and cause_shared is not None:
@@ -155,14 +155,14 @@ def union_terms(
 ) -> Term[PackageType, VersionType] | None:
     """Union two terms for the same package.
 
-    Returns None when the union is universal (the package is then
-    unconstrained and can be dropped).
+    Returns None when the union is a tautology (the term can be dropped
+    from the resolvent).  Only a negative result can be one: a positive
+    term, even over the full range, still requires the package to be
+    selected, so solutions that omit the package don't satisfy it.
     """
-    # Positive | Positive = Positive(R1 | R2)
+    # Positive | Positive = Positive(R1 | R2); never a tautology.
     if first.is_positive() and second.is_positive():
         merged = first.constraint | second.constraint
-        if (~merged).is_empty:
-            return None
         return Term(first.package, merged, positive=True)
 
     # Negative | Negative = Negative(R1 & R2) by De Morgan.

@@ -318,40 +318,6 @@ class PartialSolution(Generic[PackageType, VersionType]):
         """Return a copy of the positive-range map for each package."""
         return dict(self._positive_ranges)
 
-    def satisfier_is_sole(
-        self,
-        satisfier: Assignment[PackageType, VersionType],
-        term: Term[PackageType, VersionType],
-    ) -> bool:
-        """Check whether the satisfier alone satisfies the term.
-
-        Returns True if removing the satisfier would leave the term
-        unsatisfied; False if earlier assignments already satisfied it.
-        """
-        if satisfier.is_decision:
-            return True
-
-        effective = self._effective_range_before(satisfier, term.package)
-        if effective is None:
-            return True
-
-        return not term.satisfies(effective)
-
-    def _effective_range_before(
-        self, stop_at: Assignment[PackageType, VersionType], package: PackageType
-    ) -> RangeProtocol[VersionType] | None:
-        """Return what earlier trail entries imply about this package."""
-        if stop_at.package_index == 0:
-            return None
-
-        prev = self._assignments_by_package[package][stop_at.package_index - 1]
-        if prev.cum_positive is None:
-            assert prev.cum_negative is not None
-            return ~prev.cum_negative
-        if prev.cum_negative is None:
-            return prev.cum_positive
-        return prev.cum_positive & ~prev.cum_negative
-
     def _satisfied_at(
         self,
         assignment: Assignment[PackageType, VersionType],

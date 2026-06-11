@@ -337,14 +337,16 @@ class TestQuoteResolutionIdentity:
     def test_resolution_identity_positive_positive(
         self, left: Range[int], right: Range[int]
     ) -> None:
-        """``positive(A) ∪ positive(B)`` agrees with ``A ∪ B``."""
+        """``positive(A) ∪ positive(B)`` agrees with ``A ∪ B``.
+
+        The result is kept even when ``A ∪ B`` is the full range: a
+        positive term still requires the package to be selected, so it
+        is never a tautology and never reduces out of the resolvent.
+        """
         term_left = Term("pkg", left, positive=True)
         term_right = Term("pkg", right, positive=True)
         result = union_terms(term_left, term_right)
         range_union = left | right
-        if range_union == Range.full():
-            assert result is None
-            return
         assert result is not None
         assert result.is_positive()
         for version in VERSION_RANGE:

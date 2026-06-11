@@ -5,15 +5,14 @@ satisfies a term with a binary search rather than a linear scan.  The
 search is licensed by one invariant: along a package's chronological
 trail the effective range only narrows (positive derivations intersect,
 negative derivations union), so ``term.satisfies`` is monotone (once
-true at an entry it stays true for every later entry).  The search and
-the prefix lookups read ``cum_positive`` / ``cum_negative`` stored on
-each entry, so a stored-field or backtrack bug would silently return the
-wrong satisfier.
+true at an entry it stays true for every later entry).  The search
+reads ``cum_positive`` / ``cum_negative`` stored on each entry, so a
+stored-field or backtrack bug would silently return the wrong
+satisfier.
 
 These properties drive random decide/derive/backtrack sequences and
-check the invariant directly, that the binary search agrees with an
-independent linear scan, and that the O(1) prefix range agrees with a
-recomputed prefix.
+check the invariant directly and that the binary search agrees with an
+independent linear scan.
 """
 
 from __future__ import annotations
@@ -115,20 +114,6 @@ def _linear_satisfier(
     return None
 
 
-def _effective_before_reference(
-    ps: PartialSolution[str, int], entry: Assignment[str, int]
-) -> RangeProtocol[int] | None:
-    """Effective range of the strict per-package prefix before ``entry``."""
-    cum_pos: RangeProtocol[int] | None = None
-    cum_neg: RangeProtocol[int] | None = None
-    for prior in ps.assignments_for(entry.package)[: entry.package_index]:
-        if prior.is_decision or prior.positive:
-            cum_pos = prior.accumulated_range
-        else:
-            cum_neg = prior.accumulated_range
-    return _effective(cum_pos, cum_neg)
-
-
 @given(
     ops=st.lists(_operations, min_size=1, max_size=14),
     probes=st.lists(terms(), min_size=1, max_size=4),
@@ -162,16 +147,3 @@ def test_satisfier_matches_linear_scan(
         _apply(ps, op)
         for term in probes:
             assert ps.satisfier(term) is _linear_satisfier(ps, term)
-
-
-@given(ops=st.lists(_operations, min_size=1, max_size=14))
-@PROPERTY_SETTINGS
-def test_effective_range_before_matches_prefix(ops: list[Op]) -> None:
-    """The O(1) prefix range equals the recomputed strict prefix."""
-    ps: PartialSolution[str, int] = PartialSolution()
-    for op in ops:
-        _apply(ps, op)
-        for entry in ps.assignments_for(_PKG):
-            assert ps._effective_range_before(
-                entry, _PKG
-            ) == _effective_before_reference(ps, entry)

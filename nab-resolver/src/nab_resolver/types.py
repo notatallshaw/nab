@@ -127,11 +127,18 @@ class Term(Generic[PackageType, VersionType]):
 
         Negative: satisfied when assignment doesn't intersect constraint
         (no version in the assignment is in the constraint).
+
+        The subset test is ``(assignment & ~constraint).is_empty`` rather
+        than ``(assignment & constraint) == assignment``: range types may
+        carry flags (the vendored packaging ranges mark specifier-built
+        ranges as also admitting arbitrary ``===`` versions) under which
+        extensionally equal ranges compare unequal.  Emptiness of the
+        difference agrees with the algebra's own complement, which is what
+        PubGrub's conflict-resolution progress argument relies on.
         """
-        intersection = assignment & self.constraint
         if self._positive:
-            return intersection == assignment
-        return intersection.is_empty
+            return (assignment & ~self.constraint).is_empty
+        return (assignment & self.constraint).is_empty
 
     def intersect(
         self, other: Term[PackageType, VersionType]
