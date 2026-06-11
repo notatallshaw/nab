@@ -487,6 +487,43 @@ class TestCircularDependencies:
             resolver.resolve({"root": Range.singleton(1)})
 
 
+class TestSelfDependency:
+    def test_self_dep_excluding_own_version_backtracks(self) -> None:
+        """foo@2 depends on foo==1, contradicting itself; foo@1 is fine.
+
+        The raw dependency clause would carry two terms for the same
+        package, which the unit rule cannot fire on: the resolver
+        re-decides foo@2 after every backjump and never terminates.
+        The terms must be merged so foo@2 is rejected and foo@1 wins.
+        """
+        provider = DictProvider({"foo": {2: {"foo": Range.singleton(1)}, 1: {}}})
+        resolver = Resolver(provider, max_iterations=100)
+        result = resolver.resolve({"foo": Range.full()})
+        assert result == {"foo": 1}
+
+    def test_self_dep_excluding_own_version_unsat(self) -> None:
+        """The only version foo@1 depends on foo==2, which doesn't exist.
+
+        Must fail with an unsat proof, not by hitting max_iterations.
+        """
+        provider = DictProvider({"foo": {1: {"foo": Range.singleton(2)}}})
+        resolver = Resolver(provider, max_iterations=100)
+        with pytest.raises(ResolutionError, match="because"):
+            resolver.resolve({"foo": Range.full()})
+
+    def test_self_dep_containing_own_version_is_vacuous(self) -> None:
+        """foo@1 depends on foo=={1}: satisfied by itself, resolves."""
+        provider = DictProvider({"foo": {1: {"foo": Range.singleton(1)}}})
+        result = Resolver(provider).resolve({"foo": Range.full()})
+        assert result == {"foo": 1}
+
+    def test_self_dep_empty_range_unsat(self) -> None:
+        """foo@1 depends on foo in the empty range: unsatisfiable."""
+        provider = DictProvider({"foo": {1: {"foo": Range.empty()}}})
+        with pytest.raises(ResolutionError, match="because"):
+            Resolver(provider).resolve({"foo": Range.full()})
+
+
 class TestNoExtraPackages:
     def test_backtracked_dependencies_excluded(self) -> None:
         """Packages from a failed branch must not appear in result.
