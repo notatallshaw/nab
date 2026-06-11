@@ -260,9 +260,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
         """Recompute positive/negative/decided state for a package.
 
         Each ``Assignment.accumulated_range`` is already cumulative, so the
-        latest entry of each kind is enough to rebuild state.  A later
-        derivation clears the recorded decision, so a backtrack that pops a
-        decision but keeps a derivation does the right thing.
+        latest entry of each kind is enough to rebuild state.  Trail levels
+        never decrease, so popping a decision pops every later entry for the
+        same package; a surviving decision is always the current one.
         """
         last_pos: RangeProtocol[VersionType] | None = None
         last_neg: RangeProtocol[VersionType] | None = None
@@ -274,7 +274,6 @@ class PartialSolution(Generic[PackageType, VersionType]):
                 last_decision_version = assignment.version
             elif assignment.positive:
                 last_pos = assignment.accumulated_range
-                last_decision_version = None
             else:
                 last_neg = assignment.accumulated_range
 

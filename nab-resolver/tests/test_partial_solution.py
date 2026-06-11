@@ -167,6 +167,18 @@ class TestMultipleDerivations:
         assert 5 not in r  # still excluded from level 0
         assert 3 in r  # no longer excluded (was level 1)
 
+    def test_backtrack_keeps_decision_with_later_positive_derivation(self) -> None:
+        """A surviving decision stays decided even when a positive
+        derivation on the same package follows it in the trail."""
+        ps = PartialSolution()
+        ps.decide("foo", 3)
+        inc = Incompatibility([], cause=IncompatibilityCause.ROOT)
+        ps.derive("foo", Range.between(1, 10), positive=True, cause=inc)
+        # Removes nothing: every assignment is at the current level.
+        ps.backtrack(ps.decision_level)
+        assert ps.decisions() == {"foo": 3}
+        assert ps.undecided_packages() == set()
+
     def test_satisfier_with_multiple_positive_derivations(self) -> None:
         """satisfier walks through multiple positive derivations."""
         ps = PartialSolution()
