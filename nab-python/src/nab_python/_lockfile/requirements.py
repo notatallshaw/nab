@@ -33,8 +33,10 @@ def write_requirements_with_hashes(
     Each line is ``name==version`` followed by one ``--hash=sha256:...``
     per recorded artefact, in the format pip's hash-checking mode
     accepts.  Local and VCS pins are emitted as ``name @ <url>`` lines
-    without hashes (pip does not hash-check those forms).  Returns the
-    text and, when ``output_path`` is provided, atomically writes it.
+    without hashes (pip does not hash-check those forms); an editable
+    local pin renders as ``-e <url>`` and a ``subdirectory`` as a
+    ``#subdirectory=`` fragment.  Returns the text and, when
+    ``output_path`` is provided, atomically writes it.
     """
     return _render_requirements(lock_input, with_hashes=True, output_path=output_path)
 
@@ -45,8 +47,8 @@ def write_requirements_without_hashes(
     """Render ``lock_input`` as a plain ``name==version`` list.
 
     Same shape as :func:`write_requirements_with_hashes` but without
-    the ``--hash=sha256:...`` lines.  Local and VCS pins still render
-    as ``name @ <url>``.  Returns the text and, when ``output_path``
+    the ``--hash=sha256:...`` lines.  Local and VCS pins render the
+    same in both variants.  Returns the text and, when ``output_path``
     is provided, atomically writes it.
     """
     return _render_requirements(lock_input, with_hashes=False, output_path=output_path)
@@ -97,7 +99,13 @@ def _render_pins(pins: Mapping[str, PinShape], *, with_hashes: bool) -> list[str
         if isinstance(pin, IndexPin):
             lines.extend(_render_index_pin(pin, with_hashes=with_hashes))
         elif isinstance(pin, LocalPin):
-            lines.append(f"{pin.name} @ {Path(pin.path).resolve().as_uri()}")
+            url = Path(pin.path).resolve().as_uri()
+            if pin.subdirectory is not None:
+                url += f"#subdirectory={pin.subdirectory}"
+            if pin.editable:
+                lines.append(f"-e {url}")
+            else:
+                lines.append(f"{pin.name} @ {url}")
         elif isinstance(pin, VcsPin):
             lines.append(f"{pin.name} @ {pin.repo_url}")
         else:  # pragma: no cover - exhaustive
