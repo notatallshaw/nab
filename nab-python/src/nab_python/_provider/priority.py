@@ -93,7 +93,9 @@ def compute_matching(
     elif has_local_source:
         matching = 1
     else:
-        matching = _NO_LISTING_PRIOR
+        # Not cached, so the next call re-checks the index and the
+        # listing-arrival side effect above can still fire.
+        return _NO_LISTING_PRIOR
 
     if per_pkg is None:
         per_pkg = provider.matching_cache[normalized] = {}
