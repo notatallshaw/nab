@@ -6,6 +6,7 @@ import asyncio
 import json
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -206,6 +207,26 @@ class TestFetchCoordinator:
         coord.start()
         assert coord._thread is thread1
         coord.shutdown()
+
+    @respx.mock
+    def test_restart_after_shutdown_serves_requests(self) -> None:
+        """A coordinator restarted after shutdown serves new requests."""
+
+        class ReusableTransport(HttpxAsyncTransport):
+            """Survives the per-run client aclose so both runs can fetch."""
+
+            async def aclose(self) -> None:
+                pass
+
+        respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="ok"))
+        coord = FetchCoordinator(transport=ReusableTransport())  # type: ignore[arg-type]
+        with coord:
+            event = coord.request_metadata("first", "1.0", "https://f.com/first")
+            assert event.wait(timeout=5)
+        with coord:
+            event = coord.request_metadata("second", "1.0", "https://f.com/second")
+            assert event.wait(timeout=5)
+        assert coord.index.get_metadata("second", "1.0") == "ok"
 
     @respx.mock
     def test_request_listing(self) -> None:
@@ -517,6 +538,15 @@ class TestFetchCoordinator:
         coord.shutdown()
         assert coord._thread is None
 
+    def test_shutdown_resets_loop_state(self) -> None:
+        """shutdown() drops the closed loop so a later start() rewires it."""
+        coord = _coord()
+        coord.start()
+        coord.shutdown()
+        assert coord._loop is None
+        assert coord._async_q is None
+        assert not coord._queue_ready.is_set()
+
     def test_run_loop_exception_sets_crashed(self) -> None:
         """If _async_fetcher raises, _run_loop catches it and sets _crashed."""
         coord = _coord()
@@ -609,11 +639,11 @@ class TestFetchCoordinator:
 
     @respx.mock
     def test_shutdown_during_drain(self) -> None:
-        """None sentinel found during drain loop cancels tasks and returns."""
+        """None sentinel found during drain loop settles in-flight tasks and returns."""
         import asyncio as _asyncio
 
         async def slow_response(request: httpx.Request) -> httpx.Response:
-            await _asyncio.sleep(10)
+            await _asyncio.sleep(0.2)
             return httpx.Response(200, text="slow")
 
         respx.get(url__regex=r".*").mock(side_effect=slow_response)
@@ -666,6 +696,29 @@ class TestFetchCoordinator:
         coord._thread = None
         coord._started = False
         assert not coord._crashed
+        assert coord.index.get_metadata("first", "1.0") == "slow"
+        assert coord.index.get_metadata("drain", "1.0") == "slow"
+
+    @respx.mock
+    def test_drain_shutdown_replies_to_inflight_requests(self) -> None:
+        """A request batched with the shutdown sentinel still gets a reply."""
+
+        async def slow_response(request: httpx.Request) -> httpx.Response:
+            await asyncio.sleep(0.5)
+            return httpx.Response(200, text="slow")
+
+        respx.get(url__regex=r".*").mock(side_effect=slow_response)
+        coord = _coord()
+        coord.start()
+        loop = coord._loop
+        assert loop is not None
+        # Block the loop so the request and the sentinel arrive in one
+        # batch and the sentinel is found during the drain.
+        loop.call_soon_threadsafe(time.sleep, 0.3)
+        event = coord.request_metadata("pkg", "1.0", "https://f.com/pkg")
+        coord.shutdown()
+        assert event.wait(timeout=2)
+        assert coord.index.get_metadata("pkg", "1.0") == "slow"
 
     @respx.mock
     def test_request_metadata_deduplicates(self) -> None:
