@@ -76,17 +76,23 @@ def _pick_in_mode(
 ) -> Version | None:
     """Pick a candidate honoring ``ExtrasMode``.
 
-    User-requested extras return the first candidate that does not have
-    known-invalid metadata. Transitive extras additionally validate the
-    base metadata parses, so a malformed PKG-INFO becomes a candidate
-    skip instead of a fatal error during the later dependency fetch.
-    BACKTRACK mode additionally checks ``Provides-Extra``.
+    Fetches base metadata so an extraction failure (unparseable
+    PKG-INFO, or an sdist build the policy disallows) becomes a
+    candidate skip instead of a fatal error during the later
+    dependency fetch.  BACKTRACK mode additionally checks
+    ``Provides-Extra`` for transitive extras.
 
-    Missing-metadata cases (no PEP 658, no sdist) fall through;
-    mock test coordinators rely on this.
+    Missing-metadata cases (no PEP 658, no sdist) skip transitive
+    extras but fall through for user-requested ones; mock test
+    coordinators rely on this.
     """
     # Late import: ``pypi`` imports this module at module load.
-    from ..provider import ExtrasMode, MetadataError, _normalize_extra
+    from ..provider import (
+        ExtrasMode,
+        MetadataError,
+        UnsupportedSdistError,
+        _normalize_extra,
+    )
 
     _, _, normalized = provider.split_and_normalize(base)
     is_user = (normalized, extra) in provider.root_extras
@@ -94,17 +100,15 @@ def _pick_in_mode(
     for version in candidates:
         if provider.has_invalid_metadata(normalized, version):
             continue
-        if is_user:
-            return version
-        # Fetch base metadata so an unparseable PKG-INFO is caught
-        # before the extras proxy decides this version. Any
-        # MetadataError (parse failure or no metadata source) is a
-        # candidate skip.
         try:
             provider.get_dependencies(base, version)
-        except MetadataError:
+        except UnsupportedSdistError:
             continue
-        if not backtrack:
+        except MetadataError:
+            if not is_user or provider.has_invalid_metadata(normalized, version):
+                continue
+            return version
+        if is_user or not backtrack:
             return version
         metadata = provider.metadata_cache.get((normalized, version))
         provided = (

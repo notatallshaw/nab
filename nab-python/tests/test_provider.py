@@ -4748,6 +4748,51 @@ class TestExtrasInvalidMetadata:
         version = provider.choose_version("foo[security]", VersionRange.full())
         assert version == V("1.0")
 
+    def test_user_extra_skips_unsupported_sdist(self) -> None:
+        """A user-requested extra must not pick an unbuildable sdist version.
+
+        2.0 is sdist-only with a pre-2.2 PKG-INFO, so its metadata
+        cannot be extracted under the default BUILD_LOCAL policy.
+        The base package's look-ahead skips it; the user-extra path
+        must skip it too instead of letting the resolver's later
+        dependency fetch raise UnsupportedSdistError.
+        """
+        dists = [make_sdist("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(
+            dists,
+            metadata_by_version={"1.0": EXTRA_METADATA},
+            sdist_pkg_info=PRE_22_SDIST_PKG_INFO,
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_extras={("foo", "security")},
+        )
+        version = provider.choose_version("foo[security]", VersionRange.full())
+        assert version == V("1.0")
+
+    def test_user_extra_skips_when_get_dependencies_marks_invalid(self) -> None:
+        """A user-requested extra skips metadata rejected mid-loop.
+
+        The invalid metadata for 2.0 is not cached before the pick, so
+        only the fetch inside the candidate loop can reveal it.
+        """
+        wheels = [make_wheel("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(
+            wheels,
+            metadata_by_version={"2.0": self.BAD_META, "1.0": EXTRA_METADATA},
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            extras_mode=ExtrasMode.WARN,
+            root_extras={("foo", "security")},
+        )
+        version = provider.choose_version("foo[security]", VersionRange.full())
+        assert version == V("1.0")
+
 
 class TestScanBatchNoFirstCandidate:
     """Cover the `first_candidate is None` skip in _scan_batch."""
