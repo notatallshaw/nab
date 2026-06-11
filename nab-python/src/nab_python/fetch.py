@@ -487,6 +487,11 @@ class FetchCoordinator:
         self._thread.join(timeout=_COORDINATOR_JOIN_TIMEOUT_SECONDS)
         self._thread = None
         self._started = False
+        # Drop the dead loop so a later start() waits for the fresh one
+        # instead of submitting to a closed loop.
+        self._loop = None
+        self._async_q = None
+        self._queue_ready.clear()
 
     def _submit(self, item: _QueueItem) -> None:
         """Schedule ``item`` on the fetcher loop's queue from any thread."""
@@ -728,7 +733,8 @@ class FetchCoordinator:
 
         client = self._build_client()
         try:
-            while True:
+            stopping = False
+            while not stopping:
                 item = await queue.get()
                 if item is None:
                     break
@@ -742,10 +748,11 @@ class FetchCoordinator:
                     except asyncio.QueueEmpty:
                         break
                     if extra is None:
-                        for t in tasks:
-                            t.cancel()
-                        await asyncio.gather(*tasks, return_exceptions=True)
-                        return
+                        # Fall through to the gather below instead of
+                        # cancelling: a cancelled _handle never records a
+                        # result, leaving its waiter's event unset forever.
+                        stopping = True
+                        break
                     self._dispatch(extra, client, sem, tasks)
 
             if tasks:
