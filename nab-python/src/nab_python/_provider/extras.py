@@ -192,7 +192,11 @@ def get_extra_dependencies(
         return handle_missing_extra(provider, normalized, extra, version, cache_key)
 
     deps = dict(extra_map[extra])
-    deps[normalized] = VersionRange.singleton(version)
+    # Pin the base, intersected with any bound the extra itself
+    # places on it (``foo>=2; extra == "bar"``).
+    deps[normalized] = deps.get(
+        normalized, VersionRange.full()
+    ) & VersionRange.singleton(version)
 
     provider.deps_cache[cache_key] = deps
     provider.prefetch_new_deps(deps)
@@ -227,9 +231,10 @@ def handle_missing_extra(
         version,
         extra,
     )
-    # Return empty deps: the extra doesn't exist, so the proxy
-    # contributes nothing. Don't pin to the base version, as that
-    # creates unnecessary coupling that causes backtracking storms
-    # when the resolver tries many base versions.
-    provider.deps_cache[cache_key] = {}
-    return {}
+    # The extra contributes no deps at this version, but the proxy
+    # must still pin its base: without the pin the proxy and the base
+    # can settle on different versions, and if the base's version does
+    # provide the extra its dependencies are silently dropped.
+    deps = {normalized: VersionRange.singleton(version)}
+    provider.deps_cache[cache_key] = deps
+    return deps
