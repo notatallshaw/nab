@@ -267,6 +267,36 @@ class TestDownloadLock:
         assert (tmp_path / "foo-1.0-py3-none-any.whl").read_bytes() == wheel_bytes
         assert len(result.written) == 1
 
+    def test_uppercase_recorded_digest_verifies(self, tmp_path: Path) -> None:
+        wheel_bytes = b"WHEELDATA"
+        wheel_sha = hashlib.sha256(wheel_bytes).hexdigest().upper()
+        pin = _index_pin(wheel_sha=wheel_sha)
+        transport = _FakeTransport({"https://example.com/foo-1.0.whl": wheel_bytes})
+        result = download_lock(
+            LockInput(pins={"foo": pin}),
+            transport,
+            tmp_path,  # type: ignore[arg-type]
+        )
+        assert len(result.written) == 1
+        assert (tmp_path / "foo-1.0-py3-none-any.whl").read_bytes() == wheel_bytes
+
+    def test_idempotent_skip_with_uppercase_recorded_digest(
+        self, tmp_path: Path
+    ) -> None:
+        wheel_bytes = b"BYTES"
+        wheel_sha = hashlib.sha256(wheel_bytes).hexdigest().upper()
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(wheel_bytes)
+        pin = _index_pin(wheel_sha=wheel_sha)
+        transport = _FakeTransport({"https://example.com/foo-1.0.whl": wheel_bytes})
+        result = download_lock(
+            LockInput(pins={"foo": pin}),
+            transport,
+            tmp_path,  # type: ignore[arg-type]
+        )
+        assert result.written == ()
+        assert len(result.skipped) == 1
+        assert transport.requested == []
+
     def test_sha_mismatch_raises(self, tmp_path: Path) -> None:
         wheel_bytes = b"REAL"
         pin = _index_pin(wheel_sha="0" * 64)  # advertised sha is wrong
