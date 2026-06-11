@@ -12,6 +12,7 @@ from nab_resolver import propagate
 from nab_resolver.conflict import (
     apply_targeted_backtrack,
     conflict_resolution,
+    find_most_recent_satisfier,
     is_terminal_incompatibility,
     recompute_previous_level,
     try_force_resolution_step,
@@ -670,11 +671,19 @@ class TestResolverInternals:
         assert 2 in result.constraint
         assert 1 not in result.constraint
 
-    def testunion_terms_positive_covers_all_returns_none(self) -> None:
-        """Positive union of Range.full() is universal, returns None."""
+    def testunion_terms_positive_full_range_is_kept(self) -> None:
+        """A full-range positive union is not a tautology.
+
+        It still requires the package to be selected, so dropping it
+        from a resolvent would make the clause fire for solutions that
+        omit the package entirely.
+        """
         a = Term("foo", Range.full(), positive=True)
         b = Term("foo", Range.singleton(1), positive=True)
-        assert union_terms(a, b) is None
+        result = union_terms(a, b)
+        assert result is not None
+        assert result.is_positive()
+        assert (~result.constraint).is_empty
 
     def testunion_terms_negative_empty_intersection_returns_none(self) -> None:
         """Negative union where intersection is empty is universal."""
@@ -712,19 +721,28 @@ class TestResolverInternals:
         assert "foo" in packages
         assert "baz" in packages
 
-    def testprior_cause_shared_package_union_drops_universal(self) -> None:
-        """When the shared package's terms union to any(), it's dropped."""
+    def testprior_cause_shared_package_union_drops_tautology(self) -> None:
+        """When the shared package's terms union to a tautology, it's dropped.
+
+        Mixed polarity over the same range is the classic case: the
+        union ``bar >= 2 or not bar >= 2`` holds for every solution.
+        Two positive terms never qualify (their union still requires
+        the package), so only this form reduces.
+        """
         inc1 = Incompatibility(
             [Term("foo", Range.singleton(1)), Term("bar", Range.at_least(2))],
             cause=IncompatibilityCause.DEPENDENCY,
         )
         inc2 = Incompatibility(
-            [Term("bar", Range.less_than(2)), Term("baz", Range.singleton(3))],
+            [
+                Term("bar", Range.at_least(2), positive=False),
+                Term("baz", Range.singleton(3)),
+            ],
             cause=IncompatibilityCause.DEPENDENCY,
         )
         result = prior_cause(inc1, inc2, "bar")
         packages = {t.package for t in result}
-        # bar terms union to any(), so bar is dropped
+        # The bar terms union to a tautology, so bar is dropped.
         assert "bar" not in packages
         assert "foo" in packages
         assert "baz" in packages
@@ -1003,45 +1021,20 @@ class TestResolverInternals:
         result = recompute_previous_level(resolver, assignment, term, 3)
         assert result == 3
 
-    def test_effective_range_before_mixed(self) -> None:
-        """_effective_range_before accumulates multiple positives and a negative."""
-        solution = PartialSolution()
-        cause = Incompatibility(
-            [Term("x", Range.full())], cause=IncompatibilityCause.ROOT
-        )
-        # Two positive derivations: [1,10) then [2,10)
-        solution.derive("x", Range.between(1, 10), positive=True, cause=cause)
-        solution.derive("x", Range.at_least(2), positive=True, cause=cause)
-        # One negative derivation excludes x==5
-        solution.derive("x", Range.singleton(5), positive=False, cause=cause)
-        # Final derivation as the "satisfier"
-        solution.derive("x", Range.less_than(4), positive=True, cause=cause)
-
-        satisfier = solution.assignments_for("x")[-1]
-        # Effective before satisfier: [1,10) & [2,inf) & ~{5} = [2,5) | (5,10)
-        # Use a term that IS satisfied by [2,5) | (5,10): e.g. [2,10) minus {5}
-        term = Term("x", Range.between(2, 5))
-        # [2,5) | (5,10) is a subset of [2,5)? No, (5,10) is outside.
-        # Use a wider term: [2,10)
-        term = Term("x", Range.between(2, 10))
-        # Is [2,5) | (5,10) a subset of [2,10)?
-        # [2,5) is in [2,10). (5,10) is in [2,10). Yes.
-        assert not solution.satisfier_is_sole(satisfier, term)
-
-    def test_recompute_previous_level_no_remainder_satisfier(self) -> None:
-        """If satisfier(remainder) is None, previous_level is unchanged."""
+    def test_recompute_previous_level_no_difference_satisfier(self) -> None:
+        """If satisfier(difference) is None, previous_level is unchanged."""
         resolver = Resolver(DictProvider({}))
         cause = Incompatibility(
             [Term("x", Range.at_least(3), positive=False)],
             cause=IncompatibilityCause.DEPENDENCY,
         )
         solution = PartialSolution()
-        solution.derive("x", Range.less_than(3), positive=True, cause=cause)
+        solution.derive("x", Range.at_least(3), positive=True, cause=cause)
 
         # Force satisfier() to return None to exercise the defensive
         # branch in recompute_previous_level. In normal resolution this
         # branch is unreachable because the partial solution always
-        # contains an assignment that satisfies the remainder.
+        # contains an assignment that excludes the difference.
         solution.satisfier = lambda _term: None  # type: ignore[method-assign]
 
         term = Term("x", Range.between(1, 5))
@@ -1050,42 +1043,124 @@ class TestResolverInternals:
         result = recompute_previous_level(resolver, assignment, term, 7)
         assert result == 7
 
-    def test_recompute_previous_level_with_remainder(self) -> None:
-        """recompute_previous_level finds the remainder satisfier."""
+    def test_recompute_previous_level_partial_positive_satisfier(self) -> None:
+        """The satisfier's own assertion overshoots the term.
+
+        The trail must also exclude the overshoot, so the level of the
+        earlier assignment that does is folded in.
+        """
         resolver = Resolver(DictProvider({}))
-        # Set up a solution where the satisfier's cause contributes
-        # only part of the term's range, leaving a non-empty remainder
-        # that was satisfied by an earlier assignment.
-        cause = Incompatibility(
-            [Term("x", Range.at_least(3), positive=False)],
+        solution = PartialSolution()
+        solution.decide("a", 1)  # level 1
+        narrow_cause = Incompatibility(
+            [Term("x", Range.between(1, 6), positive=False)],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        solution = PartialSolution()
-        # Level 1: narrow x to [1, 5)
-        root_cause = Incompatibility(
-            [Term("x", Range.full())], cause=IncompatibilityCause.ROOT
+        solution.derive("x", Range.between(1, 6), positive=True, cause=narrow_cause)
+        solution.decide("b", 1)  # level 2
+        cause = Incompatibility(
+            [Term("x", Range.between(3, 9), positive=False)],
+            cause=IncompatibilityCause.DEPENDENCY,
         )
-        solution.derive("x", Range.between(1, 5), positive=True, cause=root_cause)
-        solution.decide("pkg", 1)
-        # Level 2: narrow x further to [1, 3) via cause that says "not x >= 3"
-        solution.derive("x", Range.less_than(3), positive=True, cause=cause)
-        # The satisfier is the level-2 derivation.  Its individual
-        # contribution is less_than(3).  The term is between(1,3).
-        # Remainder = between(1,3) intersect negate(less_than(3)) = between(1,3) & at_least(3) = empty.
-        # Since remainder is empty, previous_level stays unchanged.
-        # But let's use a term where remainder is non-empty:
+        solution.derive("x", Range.between(3, 9), positive=True, cause=cause)
+
+        term = Term("x", Range.between(3, 7))
+        assignment = solution.assignments_for("x")[-1]
+        resolver.solution = solution
+        # The satisfier's own [3,9) leaves [7,9) outside the term; the
+        # level-1 derivation [1,6) is what excludes it.
+        result = recompute_previous_level(resolver, assignment, term, 0)
+        assert result == 1
+
+    def test_recompute_previous_level_partial_negative_satisfier(self) -> None:
+        """A negative satisfier needs the earlier positive range.
+
+        Excluding [5,10) only satisfies x [1,5) together with the
+        level-1 derivation [1,10), so that level is folded in.
+        """
+        resolver = Resolver(DictProvider({}))
+        solution = PartialSolution()
+        solution.decide("a", 1)  # level 1
+        pos_cause = Incompatibility(
+            [Term("x", Range.between(1, 10), positive=False)],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        solution.derive("x", Range.between(1, 10), positive=True, cause=pos_cause)
+        solution.decide("b", 1)  # level 2
+        neg_cause = Incompatibility(
+            [Term("x", Range.between(5, 10), positive=True)],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        solution.derive("x", Range.between(5, 10), positive=False, cause=neg_cause)
+
         term = Term("x", Range.between(1, 5))
         assignment = solution.assignments_for("x")[-1]
-        # individual from cause: negate of neg-term for x = pos(at_least(3))
-        # negate of individual = neg(at_least(3))
-        # remainder = term.intersect(neg(at_least(3))) = between(1,5) & less_than(3) = between(1,3)
-        # between(1,3) is non-empty, so it looks for satisfier of between(1,3)
         resolver.solution = solution
-        result = recompute_previous_level(resolver, assignment, term, 1)
-        # The remainder [1,3) was satisfied at level 0 (before the
-        # decision at level 1) by the derivation of [1,5).
-        # max(1, 0) = 1.
+        result = recompute_previous_level(resolver, assignment, term, 0)
         assert result == 1
+
+    def test_recompute_previous_level_sole_satisfier(self) -> None:
+        """No refinement when the satisfier's own assertion covers the term."""
+        resolver = Resolver(DictProvider({}))
+        solution = PartialSolution()
+        solution.decide("a", 1)  # level 1
+        wide_cause = Incompatibility(
+            [Term("x", Range.between(1, 9), positive=False)],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        solution.derive("x", Range.between(1, 9), positive=True, cause=wide_cause)
+        solution.decide("b", 1)  # level 2
+        cause = Incompatibility(
+            [Term("x", Range.between(3, 5), positive=False)],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        solution.derive("x", Range.between(3, 5), positive=True, cause=cause)
+
+        # Own assertion [3,5) is a subset of the term [2,6).
+        term = Term("x", Range.between(2, 6))
+        assignment = solution.assignments_for("x")[-1]
+        resolver.solution = solution
+        result = recompute_previous_level(resolver, assignment, term, 0)
+        assert result == 0
+
+    def test_previous_level_includes_partial_satisfier_contribution(self) -> None:
+        """A partial satisfier raises previous_level past the other terms.
+
+        x's satisfier asserts [3,9), which only partially covers the
+        conflicting term x [3,7); the level-2 derivation [1,6) supplies
+        the rest, so the previous satisfier level is 2, not r's level 1.
+        """
+        solution = PartialSolution()
+        solution.decide("r", 1)  # level 1
+        solution.decide("a", 1)  # level 2
+        cause_a = Incompatibility(
+            [
+                Term("a", Range.singleton(1)),
+                Term("x", Range.between(1, 6), positive=False),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        solution.derive("x", Range.between(1, 6), positive=True, cause=cause_a)
+        solution.decide("b", 1)  # level 3
+        cause_b = Incompatibility(
+            [
+                Term("b", Range.singleton(1)),
+                Term("x", Range.between(3, 9), positive=False),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        solution.derive("x", Range.between(3, 9), positive=True, cause=cause_b)
+
+        resolver = Resolver(DictProvider({}))
+        resolver.solution = solution
+        conflict = Incompatibility(
+            [Term("r", Range.singleton(1)), Term("x", Range.between(3, 7))],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        satisfier, term, previous_level = find_most_recent_satisfier(resolver, conflict)
+        assert satisfier.decision_level == 3
+        assert term.package == "x"
+        assert previous_level == 2
 
 
 class TestBruteForceRegressions:
@@ -1127,6 +1202,44 @@ class TestBruteForceRegressions:
         assert result["pkg0"] in (1, 2)
         assert "pkg1" not in result
         assert "pkg2" not in result
+
+    def test_positive_full_union_term_is_not_dropped(self) -> None:
+        """Resolving two positive terms must keep a full-range union.
+
+        Graph:
+            root -> pkg0 (any)
+            pkg0@1 has no deps          pkg0@2 -> pkg1 (any)
+            pkg1@1 -> pkg2 (any)
+            pkg2@1 -> pkg0 (any), pkg1 (any), pkg3 (any)
+            pkg3@2 -> pkg0 (any), pkg1==2  (no pkg1@2 exists)
+
+        Expected: {root: 1, pkg0: 1}; pkg2 and pkg3 stay unselected.
+
+        Conflict resolution combines "no versions of pkg2 outside 1"
+        with a clause containing "pkg2 == 1"; the union is the positive
+        full range.  Dropping it as a tautology asserted "pkg3 must be
+        2 in every solution" even for solutions without pkg2, deriving
+        a false unsat.
+
+        Found by the removing-unselected-version property test.
+        """
+        provider = DictProvider(
+            {
+                "root": {1: {"pkg0": Range.full()}},
+                "pkg0": {1: {}, 2: {"pkg1": Range.full()}},
+                "pkg1": {1: {"pkg2": Range.full()}},
+                "pkg2": {
+                    1: {
+                        "pkg0": Range.full(),
+                        "pkg1": Range.full(),
+                        "pkg3": Range.full(),
+                    }
+                },
+                "pkg3": {2: {"pkg0": Range.full(), "pkg1": Range.singleton(2)}},
+            }
+        )
+        result = Resolver(provider).resolve({"root": Range.singleton(1)})
+        assert result == {"root": 1, "pkg0": 1}
 
 
 class TestBackjumpToRoot:

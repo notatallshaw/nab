@@ -10,7 +10,7 @@ constraint shapes, are applied in lockstep to the real class and to
   equals ``decision_level``, ``trail_index``/``package_index`` match);
 - state queries (``get`` membership, ``decisions``,
   ``undecided_packages``, ``has_positive_constraint``);
-- the binary-search ``satisfier`` and ``satisfier_is_sole``;
+- the binary-search ``satisfier``;
 - backtrack removing exactly the assignments above the target level.
 """
 
@@ -101,7 +101,7 @@ def test_state_matches_model(ops: list[tuple[object, ...]]) -> None:
 def test_satisfier_matches_model(
     ops: list[tuple[object, ...]], probes: list[tuple[str, Rep, bool]]
 ) -> None:
-    """Binary-search satisfier and satisfier_is_sole agree with the model."""
+    """Binary-search satisfier agrees with the model."""
     ps: PartialSolution[str, int] = PartialSolution()
     model = ModelPS()
     for op in ops:
@@ -121,8 +121,6 @@ def test_satisfier_matches_model(
                     f"satisfier mismatch for {term!r}: impl index "
                     f"{impl.package_index}, model index {idx}"
                 )
-                expected_sole = model.is_sole(pkg, idx, rep, positive=positive)
-                assert ps.satisfier_is_sole(impl, term) == expected_sole
 
 
 @given(ops=st.lists(operations(), min_size=1, max_size=18))

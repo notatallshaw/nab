@@ -149,17 +149,21 @@ def classify_intersection(
 ) -> SetRelation:
     """Classify a term against its precomputed assignment intersection.
 
-    Positive term: satisfied when intersection covers the assignment;
-    contradicted when intersection is empty.
-    Negative term: satisfied when intersection is empty; contradicted when
-    the assignment falls entirely inside the forbidden range.
+    Positive term: satisfied when the assignment is a subset of the
+    constraint; contradicted when the intersection is empty.
+    Negative term: satisfied when the intersection is empty; contradicted
+    when the assignment falls entirely inside the forbidden range.
+
+    The subset test is emptiness of ``assignment & ~constraint``, not a
+    range equality, so it agrees with :meth:`Term.satisfies` on flagged
+    range types (see that docstring).
     """
     if term.is_positive():
-        covers = intersection == assignment
+        covers = (assignment & ~term.constraint).is_empty
         empty = intersection.is_empty
     else:
         covers = intersection.is_empty
-        empty = intersection == assignment
+        empty = (assignment & ~term.constraint).is_empty
 
     if covers:
         return SetRelation.SATISFIED

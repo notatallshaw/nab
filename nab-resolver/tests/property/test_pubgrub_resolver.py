@@ -842,9 +842,33 @@ class TestIndependenceOfIrrelevantAlternatives:
 
     @pytest.mark.timeout(RESOLUTION_TIMEOUT_SECONDS * 50)
     @given(graph=dependency_graphs())
+    @example(
+        graph={
+            "root": {1: {"pkg0": Range.full()}},
+            "pkg0": {1: {}, 2: {"pkg1": Range.full()}},
+            "pkg1": {1: {"pkg2": Range.full()}},
+            "pkg2": {
+                1: {
+                    "pkg0": Range.full(),
+                    "pkg1": Range.full(),
+                    "pkg3": Range.full(),
+                }
+            },
+            "pkg3": {
+                1: {"pkg0": Range.singleton(1)},
+                2: {"pkg0": Range.full(), "pkg1": Range.singleton(2)},
+            },
+        }
+    )
     @BRUTE_FORCE_SETTINGS
     def test_removing_unselected_version_cant_break(self, graph: dict) -> None:
-        """Removing an unselected version cannot break a working resolution."""
+        """Removing an unselected version cannot break a working resolution.
+
+        The explicit example pins the case where dropping ``pkg3``@1
+        once made ``union_terms`` collapse two positive terms into a
+        full-range union and discard it as a tautology, deriving an
+        unsound clause and a false unsat.
+        """
         requirements = {"root": Range.singleton(1)}
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
