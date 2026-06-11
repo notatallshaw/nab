@@ -41,6 +41,7 @@ from nab_python.config import (
 from nab_python.lockfile import (
     LOCK_VERSION,
     DisjointnessError,
+    DivergentBaseDependencyError,
     IndexPin,
     LocalPin,
     LockInput,
@@ -745,6 +746,84 @@ class TestConflictForkBaseDepMarkers:
         pylock = build_pylock(self._lock_input())
         universal = next(p for p in pylock.packages if str(p.name) == "universal")
         assert universal.marker is None
+
+
+class TestConflictForkBaseDepDivergence:
+    """A base dep pinned differently across the conflict forks of one
+    environment cannot drop the membership clause on any entry, so no
+    entry would fire when no member is selected (at_most_one permits
+    zero).  The writer raises instead of emitting a lock that silently
+    skips the dependency."""
+
+    _ENV: ClassVar[dict[str, str]] = {"sys_platform": "linux"}
+
+    def _lock_input(
+        self,
+        *,
+        base_names: frozenset[str] = frozenset({"shared"}),
+        gpu_has_shared: bool = True,
+    ) -> LockInput:
+        env_marker = Marker('sys_platform == "linux"')
+        per_tuple: dict[str, dict[str, IndexPin]] = {
+            "cpu": {"shared": _index_pin(name="shared", version="1.0")},
+            "gpu": {"shared": _index_pin(name="shared", version="2.0")},
+        }
+        if not gpu_has_shared:
+            del per_tuple["gpu"]["shared"]
+        return LockInput(
+            per_tuple_pins=per_tuple,
+            tuple_markers={
+                "cpu": Marker('sys_platform == "linux" and "cpu" in extras'),
+                "gpu": Marker('sys_platform == "linux" and "gpu" in extras'),
+            },
+            tuple_env_markers={"cpu": env_marker, "gpu": env_marker},
+            tuple_environments={"cpu": self._ENV, "gpu": self._ENV},
+            env_base_names={tuple(sorted(self._ENV.items())): base_names},
+            extras=("cpu", "gpu"),
+            conflicts=(
+                ConflictSet(
+                    members=(
+                        ConflictMember(ConflictKind.EXTRA, "cpu"),
+                        ConflictMember(ConflictKind.EXTRA, "gpu"),
+                    ),
+                    policy=ConflictPolicy.AT_MOST_ONE,
+                ),
+            ),
+        )
+
+    def test_divergent_base_dep_raises_with_per_fork_pins(self) -> None:
+        with pytest.raises(DivergentBaseDependencyError) as info:
+            build_pylock(self._lock_input())
+        message = str(info.value)
+        assert "shared" in message
+        assert "cpu -> 1.0" in message
+        assert "gpu -> 2.0" in message
+
+    def test_write_lock_raises_and_writes_nothing(self, tmp_path: Path) -> None:
+        target = tmp_path / "pylock.toml"
+        with pytest.raises(DivergentBaseDependencyError):
+            write_lock(self._lock_input(), output_path=target)
+        assert not target.exists()
+
+    def test_divergent_member_only_dep_keeps_membership_entries(self) -> None:
+        """The same divergence on a dep the base pass did not pin is
+        representable: each entry keeps its membership clause and the
+        no-member context correctly installs neither."""
+        pylock = build_pylock(self._lock_input(base_names=frozenset()))
+        markers = sorted(
+            str(p.marker) for p in pylock.packages if str(p.name) == "shared"
+        )
+        assert len(markers) == 2
+        assert '"cpu" in extras' in markers[0]
+        assert '"gpu" in extras' in markers[1]
+
+    def test_base_dep_missing_from_one_fork_keeps_membership(self) -> None:
+        """A base dep absent from one fork is outside the env-only
+        collapse (it needs presence in every fork), so the present
+        fork's entry keeps its membership clause and nothing raises."""
+        pylock = build_pylock(self._lock_input(gpu_has_shared=False))
+        shared = next(p for p in pylock.packages if str(p.name) == "shared")
+        assert '"cpu" in extras' in str(shared.marker)
 
 
 class TestConflictForksWithoutBaseAttribution:

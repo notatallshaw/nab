@@ -43,6 +43,7 @@ from nab_python.config import ConfigError
 from nab_python.download import DownloadError
 from nab_python.lockfile import (
     DisjointnessError,
+    DivergentBaseDependencyError,
     IndexPin,
     LocalPin,
     LockInput,
@@ -672,6 +673,31 @@ class TestLockCommandUniversal:
         # nab-python/tests/test_lockfile.py.
         err = capsys.readouterr().err
         assert f"Error: {hint}\n" in err
+
+    def test_pylock_divergent_base_dep_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A DivergentBaseDependencyError during universal pylock
+        surfaces as exit 1 with a clean ``Error: ...`` line instead of
+        a traceback."""
+        pyproject = _universal_pyproject(tmp_path)
+        message = (
+            "shared: the conflict forks of one environment pin this base"
+            " dependency differently (cpu -> 1.0, gpu -> 2.0)"
+        )
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_universal_result(success=True),
+            ),
+            patch(
+                "nab.cli.write_lock",
+                side_effect=DivergentBaseDependencyError(message),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        assert f"Error: {message}\n" in capsys.readouterr().err
 
     def test_universal_lock_collision_without_conflict_shows_hint(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

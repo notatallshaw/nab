@@ -32,6 +32,7 @@ from nab_python.config import (
 from nab_python.download import download_lock  # noqa: F401 - re-exported for tests
 from nab_python.lockfile import (
     DisjointnessError,  # noqa: F401 - referenced as _cli.DisjointnessError in _lock
+    DivergentBaseDependencyError,  # noqa: F401 - referenced via _cli in _lock
     MissingHashError,
     MissingSdistError,
     write_lock,  # noqa: F401 - re-exported for tests
