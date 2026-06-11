@@ -172,9 +172,15 @@ def _normalize_extras(
 def _normalize_extra_values(results: MarkerList) -> MarkerList:
     """
     Normalize extra values.
+
+    Parenthesized groups parse to nested MarkerLists; recurse so extra
+    values at any depth are normalized.
     """
 
-    return [_normalize_extras(r) for r in results]
+    return [
+        _normalize_extra_values(r) if isinstance(r, list) else _normalize_extras(r)
+        for r in results
+    ]
 
 
 def _format_marker(

@@ -2574,6 +2574,26 @@ class TestExtras:
         assert "cryptography" not in base_deps
         assert "cryptography" not in sec_deps
 
+    def test_extra_dep_in_parenthesized_marker_group(self) -> None:
+        """A dep gated by ``(extra == ...)`` with legacy spelling stays in the extra."""
+        metadata = (
+            "Metadata-Version: 2.1\n"
+            "Name: foo\n"
+            "Version: 1.0\n"
+            "Provides-Extra: My_Extra\n"
+            "Provides-Extra: other\n"
+            "Requires-Dist: cryptography; "
+            'python_version >= "3.8" and (extra == "My_Extra" or extra == "other")\n'
+        )
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=metadata,
+            package="foo",
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        deps = provider.get_dependencies("foo[my-extra]", V("1.0"))
+        assert "cryptography" in deps
+
     def test_multiple_extras_same_package(self) -> None:
         """Different extras on the same package get separate deps."""
         metadata = (

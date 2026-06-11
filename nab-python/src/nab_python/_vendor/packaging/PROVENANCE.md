@@ -14,9 +14,21 @@ from an in-flight pull request, vendored so nab can use the public
 
 The snapshot is the full `src/packaging/` tree at that commit, plus
 `LICENSE`, `LICENSE.APACHE`, and `LICENSE.BSD` from the repository
-root. No code changes were made; relative imports inside `packaging`
-(`from .version import Version`, etc.) keep working when the package
-is loaded as `nab_python._vendor.packaging`.
+root. Relative imports inside `packaging` (`from .version import
+Version`, etc.) keep working when the package is loaded as
+`nab_python._vendor.packaging`.
+
+## Local patches
+
+Changes on top of the pinned commit. Carry these forward (or confirm
+they landed on the source branch) when updating the snapshot.
+
+- `markers.py`: `_normalize_extras` recurses into nested
+  `MarkerList`s so extra values inside parenthesized marker groups
+  are PEP 685-normalized. Without this, `(extra == "My_Extra")`
+  evaluates differently from the unparenthesized form and deps are
+  silently dropped from the extra. Also present in upstream
+  `packaging` 26.2; not yet fixed there.
 
 ## License
 

@@ -76,6 +76,20 @@ def test_equal_markers_are_interned() -> None:
     assert ruff_marker is not pytest_marker
 
 
+def test_extra_normalized_inside_parenthesized_marker_group() -> None:
+    """Extra values inside parenthesized marker groups are PEP 685-normalized."""
+    text = (
+        "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+        "Provides-Extra: My_Extra\n"
+        'Requires-Dist: bar; python_version >= "3.8" and (extra == "My_Extra")\n'
+    )
+    md = parse_metadata(text)
+    marker = md.requires_dist[0].marker
+    assert marker is not None
+    assert 'extra == "my-extra"' in str(marker)
+    assert marker.evaluate({"python_version": "3.12", "extra": "my-extra"})
+
+
 def test_markerless_requirement_keeps_none_marker() -> None:
     """A dep without a marker is unaffected by interning."""
     md = parse_metadata(
