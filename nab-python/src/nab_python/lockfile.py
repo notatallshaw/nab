@@ -24,7 +24,7 @@ from ._lockfile.builder import (
     read_lockfile_packages,
 )
 from ._lockfile.disjointness import DisjointnessError
-from ._lockfile.pylock import build_pylock, write_lock
+from ._lockfile.pylock import DivergentBaseDependencyError, build_pylock, write_lock
 from ._lockfile.requirements import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
@@ -44,6 +44,7 @@ __all__ = [
     "ACCEPTED_HASH_ALGORITHMS",
     "LOCK_VERSION",
     "DisjointnessError",
+    "DivergentBaseDependencyError",
     "IndexPin",
     "LocalPin",
     "LockInput",

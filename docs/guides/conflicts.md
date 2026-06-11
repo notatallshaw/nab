@@ -122,10 +122,14 @@ A dependency required by every member of a set but not by the base
 keeps its membership marker, so it does not install when no member is
 selected (relevant under `at_most_one`, which permits selecting none).
 A base resolve names the deps that install regardless of the
-selection, which is how the writer tells the two apart. When a single
-dependency is required by every member of two or more engaged sets at
-once, its marker is the conjunction across those sets; this stays
-correct for one set, the common case.
+selection, which is how the writer tells the two apart. When the
+forks of one environment pin a base dependency at different versions,
+no single entry can serve the no-member context; the writer raises a
+`DivergentBaseDependencyError` rather than emit a lock that silently
+skips the dependency. When a single dependency is required by every
+member of two or more engaged sets at once, its marker is the
+conjunction across those sets; this stays correct for one set, the
+common case.
 
 The lockfile stays within PEP 751: the membership markers use the
 standard `extras` and `dependency_groups` variables, and the install

@@ -45,9 +45,24 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "DivergentBaseDependencyError",
     "build_pylock",
     "write_lock",
 ]
+
+
+class DivergentBaseDependencyError(ValueError):
+    """An environment's conflict forks disagree on a base dependency's pin.
+
+    A base dependency present in every fork of an environment drops its
+    membership clause so it installs even when no conflicting member is
+    selected, which requires the forks to agree on one (version, source).
+    When they diverge, every candidate entry keeps a membership clause,
+    so nothing would fire in the no-member install context and the
+    dependency would silently not install.  Surface the divergence with
+    the offending package and per-fork pins so the producer can
+    reconcile the forks rather than commit an incomplete lock.
+    """
 
 
 def write_lock(
@@ -317,7 +332,9 @@ def _build_per_tuple_packages(lock_input: LockInput, lock_dir: Path) -> list[Pac
     not by the base is absent from that set, so it keeps the
     membership clause and does not install when no member is selected.
     See :class:`LockInput.env_base_names` for the missing-signature
-    contract.
+    contract.  Forks of one environment that disagree on a base
+    dependency's pin raise :class:`DivergentBaseDependencyError`
+    instead of emitting a lock whose no-member context misses it.
     """
     out: list[Package] = []
     by_name = _group_by_name(lock_input.per_tuple_pins)
@@ -330,6 +347,14 @@ def _build_per_tuple_packages(lock_input: LockInput, lock_dir: Path) -> list[Pac
     )
     for canonical_name, per_tuple in by_name.items():
         groups = _group_pins_by_pin(per_tuple)
+        _check_base_fork_agreement(
+            canonical_name,
+            per_tuple,
+            groups,
+            env_signatures,
+            env_fork_counts,
+            lock_input.env_base_names,
+        )
         for pins, tuple_labels in groups:
             marker = _build_marker(
                 canonical_name,
@@ -450,6 +475,46 @@ def _merge_pins_in_group(pins: list[PinShape]) -> PinShape:
         wheels=tuple(sorted(seen_wheels.values(), key=_wheel_sort_key)),
         requires_python=requires_python,
     )
+
+
+def _check_base_fork_agreement(
+    name: str,
+    per_tuple: Mapping[str, PinShape],
+    groups: list[tuple[list[PinShape], list[str]]],
+    env_signatures: Mapping[str, tuple[tuple[str, str], ...]],
+    env_fork_counts: Mapping[tuple[tuple[str, str], ...], int],
+    env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]],
+) -> None:
+    """Reject a base dep whose forks within one env pin it differently.
+
+    The env-only collapse in :func:`_build_marker` needs a single
+    (version, source) group spanning every fork of the environment.
+    Divergent pins split the forks across groups, so every entry would
+    keep its membership clause and none would fire when no member is
+    selected: the base dependency would silently not install.
+    """
+    by_env: defaultdict[tuple[tuple[str, str], ...], list[str]] = defaultdict(list)
+    for label in sorted(per_tuple.keys() & env_signatures.keys()):
+        by_env[env_signatures[label]].append(label)
+    for signature, labels in by_env.items():
+        if len(labels) < env_fork_counts[signature]:
+            continue
+        if name not in env_base_names.get(signature, frozenset()):
+            continue
+        in_env = set(labels)
+        widest = max(
+            sum(1 for label in group_labels if label in in_env)
+            for _, group_labels in groups
+        )
+        if widest >= env_fork_counts[signature]:
+            continue
+        forks = ", ".join(f"{label} -> {per_tuple[label].version}" for label in labels)
+        msg = (
+            f"{name}: the conflict forks of one environment pin this base"
+            f" dependency differently ({forks}); no lockfile entry would"
+            " install it when no conflicting member is selected"
+        )
+        raise DivergentBaseDependencyError(msg)
 
 
 def _build_marker(
