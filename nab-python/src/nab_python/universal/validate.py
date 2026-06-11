@@ -47,7 +47,9 @@ __all__ = [
 
 # Statuses that always fail the lock at install time, regardless of
 # build policy.
-_ALWAYS_FATAL_STATUSES = frozenset({"no_compatible_wheel", "no_metadata"})
+_ALWAYS_FATAL_STATUSES = frozenset(
+    {"version_not_found", "no_compatible_wheel", "no_metadata"}
+)
 
 # Statuses that fail only when the build policy refuses to build
 # from sdist (BuildPolicy.NEVER).  These pins resolve fine if the
@@ -77,8 +79,10 @@ class PinValidation:
 
     - ``ok``: chosen wheel's deps (after marker eval) match the resolver's.
     - ``divergent``: wheel has metadata but deps differ from baseline.
-    - ``sdist_only``: no wheels at all; the user must build from sdist.
-      Fatal under ``BuildPolicy.NEVER``.
+    - ``sdist_only``: an sdist but no wheels; the user must build from
+      sdist. Fatal under ``BuildPolicy.NEVER``.
+    - ``version_not_found``: the index has no files at the pinned
+      version (or no listing for the package). Always fatal.
     - ``no_compatible_wheel``: wheels exist but none match the tuple's
       tags and no buildable sdist exists. Always fatal.
     - ``no_compatible_wheel_with_sdist``: as above but a sdist is
@@ -112,9 +116,10 @@ class ValidationReport:
     def fatal_findings(self, *, build_allowed: bool = False) -> list[PinValidation]:
         """Return findings that would prevent installation.
 
-        Always fatal: ``no_compatible_wheel`` (no installable
-        artifact) and ``no_metadata`` (we can't trust the resolver
-        ran with the right deps).
+        Always fatal: ``version_not_found`` (nothing at the pinned
+        version), ``no_compatible_wheel`` (no installable artifact)
+        and ``no_metadata`` (we can't trust the resolver ran with
+        the right deps).
 
         Fatal under BuildPolicy.NEVER: ``sdist_only`` and
         ``no_compatible_wheel_with_sdist`` (only sdist available).
@@ -165,6 +170,14 @@ def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
     files_at_version = [f for f in listing if f.version == str(version)]
     wheels_at_version = [f for f in files_at_version if isinstance(f, WheelFile)]
     has_sdist = any(not isinstance(f, WheelFile) for f in files_at_version)
+    if not files_at_version:
+        return PinValidation(
+            tuple_label=tup.label,
+            package=package,
+            version=str(version),
+            status="version_not_found",
+            detail="index has no files at this version; nothing to install or build",
+        )
     if not wheels_at_version:
         return PinValidation(
             tuple_label=tup.label,

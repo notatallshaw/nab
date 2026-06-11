@@ -216,8 +216,8 @@ class TestValidateLock:
         assert "numpy" in win_finding.missing_deps
 
     def test_sdist_only_reported(self) -> None:
-        """A version with no wheels reports ``sdist_only``."""
-        coordinator = _make_coordinator({"pkg": []})  # listing exists but empty
+        """A version with an sdist but no wheels reports ``sdist_only``."""
+        coordinator = _make_coordinator({"pkg": [_sdist("pkg-1.0.tar.gz")]})
         result = UniversalResult(
             matrix=MagicMock(),
             tuple_results=[
@@ -231,6 +231,39 @@ class TestValidateLock:
         report = validate_lock(result, coordinator)
         assert report.pins_checked == 1
         assert report.findings[0].status == "sdist_only"
+
+    def test_version_not_found_when_no_files_at_pinned_version(self) -> None:
+        """A pin at a version with zero files reports ``version_not_found``."""
+        wheel = _wheel("pkg-1.0-py3-none-any.whl")
+        coordinator = _make_coordinator({"pkg": [wheel]})
+        result = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[
+                TupleResult(
+                    tuple_=_linux_311(),
+                    success=True,
+                    pins={"pkg": Version("2.0")},
+                ),
+            ],
+        )
+        report = validate_lock(result, coordinator)
+        assert report.findings[0].status == "version_not_found"
+
+    def test_version_not_found_when_package_has_no_listing(self) -> None:
+        """A pin for a package with no listing reports ``version_not_found``."""
+        coordinator = _make_coordinator({})
+        result = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[
+                TupleResult(
+                    tuple_=_linux_311(),
+                    success=True,
+                    pins={"pkg": Version("1.0")},
+                ),
+            ],
+        )
+        report = validate_lock(result, coordinator)
+        assert report.findings[0].status == "version_not_found"
 
     def test_no_compatible_wheel(self) -> None:
         """When wheels exist but none compatible, ``no_compatible_wheel``."""
@@ -713,6 +746,18 @@ class TestFatalFindings:
             package="p",
             version="1.0",
             status="no_compatible_wheel",
+        )
+        report = ValidationReport(pins_checked=1, findings=[f])
+        assert report.fatal_findings(build_allowed=False) == [f]
+        assert report.fatal_findings(build_allowed=True) == [f]
+
+    def test_version_not_found_always_fatal(self) -> None:
+        """``version_not_found`` fails regardless of build_allowed."""
+        f = PinValidation(
+            tuple_label="x",
+            package="p",
+            version="1.0",
+            status="version_not_found",
         )
         report = ValidationReport(pins_checked=1, findings=[f])
         assert report.fatal_findings(build_allowed=False) == [f]
