@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
+from nab_python._vendor.packaging.version import InvalidVersion, Version
 from nab_python.config import (
     ConfigError,
     ConflictSelectionError,
@@ -767,31 +767,18 @@ class TestResolvePyproject:
         requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
         assert "newer" not in requirements
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
-    @patch("nab_python.resolve.FetchCoordinator")
-    def test_root_marker_with_unparseable_python_version(
-        self,
-        mock_coord_cls: MagicMock,
-        mock_provider_cls: MagicMock,
-        mock_resolver_cls: MagicMock,
-        mock_build_lock: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Garbled ``python_version`` arg falls back to default environment."""
+    def test_unparseable_python_version_raises(self, tmp_path: Path) -> None:
+        """Garbled ``python_version`` arg raises instead of silently
+        resolving against the host interpreter.
+        """
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\ndependencies = ["foo"]\n',
         )
-        mock_coord_cls.return_value.__enter__ = lambda s: s
-        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-        mock_resolver_cls.return_value.resolve.return_value = {"foo": V("1.0")}
-
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="not-a-version")
-
-        requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
-        assert "foo" in requirements
+        with pytest.raises(InvalidVersion, match="'not-a-version'"):
+            resolve_pyproject(
+                pyproject, _FAKE_TRANSPORT, python_version="not-a-version"
+            )
 
     @patch("nab_python.resolve.build_lock_input_from_provider")
     @patch("nab_python.resolve.Resolver")

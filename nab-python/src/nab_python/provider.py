@@ -7,7 +7,6 @@ types.  Uses a thread pool with a shared HTTP session to overlap I/O.
 
 from __future__ import annotations
 
-import contextlib
 import enum
 import logging
 import re
@@ -98,16 +97,17 @@ _PYTHON_FULL_VERSION_PARTS = 3
 def python_axis_environment(python_version: str) -> dict[str, str]:
     """Map an explicit Python version to its PEP 508 marker keys.
 
-    ``python_full_version`` is padded to three components so patch-precision
-    markers evaluate the same here as in the universal matrix. Raises
-    ``InvalidVersion`` if the input is not a version.
+    ``python_version`` is padded to two components and
+    ``python_full_version`` to three so patch-precision markers evaluate
+    the same here as in the universal matrix. Raises ``InvalidVersion``
+    if the input is not a version.
     """
-    release = Version(python_version).release
-    minor = (
-        f"{release[0]}.{release[1]}"
-        if len(release) >= _PYTHON_VERSION_PARTS
-        else python_version
-    )
+    try:
+        release = Version(python_version).release
+    except InvalidVersion:
+        msg = f"python_version {python_version!r} is not a valid version"
+        raise InvalidVersion(msg) from None
+    minor = ".".join(str(part) for part in (*release, 0)[:_PYTHON_VERSION_PARTS])
     full = (
         python_version
         if len(release) >= _PYTHON_FULL_VERSION_PARTS
@@ -494,8 +494,7 @@ class Provider:
         }
         self.environment: dict[str, str] = env_init
         if python_version is not None:
-            with contextlib.suppress(InvalidVersion):
-                self.environment.update(python_axis_environment(python_version))
+            self.environment.update(python_axis_environment(python_version))
         if marker_environment:
             for key, value in marker_environment.items():
                 self.environment[key] = value

@@ -20,7 +20,7 @@ from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.version import Version
+from nab_python._vendor.packaging.version import InvalidVersion, Version
 from nab_python.fetch import InMemoryIndex
 from nab_python.provider import (
     BuildPolicy,
@@ -37,6 +37,7 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
     _add_extra_marker,
+    python_axis_environment,
 )
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -804,14 +805,13 @@ class TestGetDependencies:
         assert "only313" not in deps
         assert "only311" in deps
 
-    def test_invalid_python_version_falls_back_to_host(self) -> None:
-        """A malformed ``python_version`` is silently ignored; markers
-        evaluate against the host environment instead.
+    def test_invalid_python_version_raises(self) -> None:
+        """A malformed ``python_version`` raises instead of silently
+        evaluating markers against the host environment.
         """
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
-        # Should not raise; environment keeps the host values.
-        provider = Provider(coordinator, python_version="not-a-version")
-        assert "python_version" in provider.environment
+        with pytest.raises(InvalidVersion, match="'not-a-version'"):
+            Provider(coordinator, python_version="not-a-version")
 
     def test_arbitrary_equality_dep_is_literal_range(self) -> None:
         """``===`` deps round-trip as a literal-only range.
@@ -1271,6 +1271,18 @@ class TestMarkerEnvironment:
             marker_environment={},
         )
         assert provider.build_policy is BuildPolicy.BUILD_REMOTE
+
+
+class TestPythonAxisEnvironment:
+    def test_single_component_version_pads_python_version(self) -> None:
+        """``python_version`` is padded to major.minor like full to three."""
+        env = python_axis_environment("3")
+        assert env == {"python_version": "3.0", "python_full_version": "3.0.0"}
+
+    def test_unparseable_version_raises_named_error(self) -> None:
+        """The error names the bad ``python_version`` input."""
+        with pytest.raises(InvalidVersion, match="python_version 'not-a-version'"):
+            python_axis_environment("not-a-version")
 
 
 class TestLookAhead:

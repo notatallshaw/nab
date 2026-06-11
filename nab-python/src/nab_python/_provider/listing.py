@@ -271,10 +271,10 @@ def excluded_by_python(provider: Provider, dist: DistFile) -> bool:
         try:
             spec = SpecifierSet(requires_python)
             cached = Version(provider.python_version) not in spec
-        except (InvalidSpecifier, InvalidVersion):
-            # Malformed Requires-Python on the dist or our own
-            # python_version: treat as not-excluded, let downstream
-            # logic decide.
+        except InvalidSpecifier:
+            # Malformed Requires-Python on the dist: treat as
+            # not-excluded, let downstream logic decide.  Our own
+            # python_version is validated at Provider construction.
             cached = False
         provider.requires_python_cache[requires_python] = cached
     if cached:
