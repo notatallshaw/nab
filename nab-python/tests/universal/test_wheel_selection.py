@@ -54,6 +54,30 @@ class TestPlatformSpec:
         spec = PlatformSpec("macos_arm64")
         assert spec.arch == "arm64"
 
+    def test_label_suffix_distinguishes_space_from_underscore(self) -> None:
+        """Whitespace and ``_`` in ``platform_release`` encode differently.
+
+        Both are legal release characters; if they folded to the same
+        suffix the two specs' matrix tuples would share a label and
+        their per-tuple pins would silently merge.
+        """
+        with_space = PlatformSpec("linux_x86_64", platform_release="a a")
+        with_underscore = PlatformSpec("linux_x86_64", platform_release="a_a")
+        assert with_space.label_suffix() != with_underscore.label_suffix()
+
+    def test_label_suffix_release_cannot_forge_version_field(self) -> None:
+        """A ``-`` in ``platform_release`` cannot fake a ``ver`` field."""
+        release_only = PlatformSpec("linux_x86_64", platform_release="r-ver1")
+        release_and_version = PlatformSpec(
+            "linux_x86_64", platform_release="r", platform_version="1"
+        )
+        assert release_only.label_suffix() != release_and_version.label_suffix()
+
+    def test_label_suffix_escapes_kernel_release(self) -> None:
+        """Pins the escaped suffix shape for a realistic kernel release."""
+        spec = PlatformSpec("linux_x86_64", platform_release="5.15.0-generic")
+        assert spec.label_suffix() == "-glibc2.17-musl1.2-rel5.15.0_2d_generic"
+
 
 class TestCompatibleTagsForTuple:
     """``compatible_tags_for_tuple`` produces the full PEP 425 tag set."""
