@@ -131,7 +131,9 @@ def prior_cause(
         result.append(cause_shared)
 
     # Remaining packages: intersect when in both sides, else keep as-is.
-    all_packages = set(incompat_terms) | set(cause_terms)
+    # Dict merge keeps insertion order; a set union would iterate in hash
+    # order, making learned-clause term order vary across processes.
+    all_packages = {**incompat_terms, **cause_terms}
     for package in all_packages:
         incompat_term = incompat_terms.get(package)
         cause_term = cause_terms.get(package)
