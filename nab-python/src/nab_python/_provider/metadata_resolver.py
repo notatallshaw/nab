@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .._vcs_admission import admit_vcs_url
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
@@ -316,7 +317,7 @@ def marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> b
     """Evaluate ``marker`` against the env without ``extra`` set, cached."""
     result = provider.marker_base_cache.get(marker_id)
     if result is None:
-        result = marker.evaluate(provider.environment)
+        result = marker.evaluate({**provider.environment, **EMPTY_MEMBERSHIP_SETS})
         provider.marker_base_cache[marker_id] = result
     return result
 

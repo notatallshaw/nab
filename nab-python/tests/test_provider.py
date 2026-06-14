@@ -231,6 +231,44 @@ class TestSpeculativePrefetch:
         assert "bar" in deps
 
 
+class TestMembershipSetMarkerInMetadata:
+    """A Requires-Dist marker testing extras/dependency_groups drops only the dep.
+
+    The set variables are empty at resolve time, so the membership tests False
+    and the gated dep is excluded. The candidate version itself must survive,
+    matching the root-requirement handling (test_root_extras_set_marker_warns).
+    """
+
+    def test_extras_membership_marker_keeps_version(self) -> None:
+        meta_text = (
+            "Metadata-Version: 2.3\nName: foo\nVersion: 1.0\n"
+            "Provides-Extra: docs\n"
+            "Requires-Dist: realdep>=1.0\n"
+            'Requires-Dist: somedep; "docs" in extras\n'
+        )
+        coordinator = make_coordinator(
+            [make_wheel("1.0")], metadata_text=meta_text, package="foo"
+        )
+        provider = Provider(coordinator)
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "realdep" in deps
+        assert "somedep" not in deps
+
+    def test_dependency_groups_membership_marker_keeps_version(self) -> None:
+        meta_text = (
+            "Metadata-Version: 2.3\nName: foo\nVersion: 1.0\n"
+            "Requires-Dist: realdep>=1.0\n"
+            'Requires-Dist: somedep; "dev" in dependency_groups\n'
+        )
+        coordinator = make_coordinator(
+            [make_wheel("1.0")], metadata_text=meta_text, package="foo"
+        )
+        provider = Provider(coordinator)
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "realdep" in deps
+        assert "somedep" not in deps
+
+
 class TestFetchVersions:
     def test_caches_results(self) -> None:
         """Second call returns cached results without re-fetching."""

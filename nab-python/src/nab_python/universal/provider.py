@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .._vendor.packaging.markers import default_environment
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
@@ -139,7 +140,7 @@ class UniversalProvider(Provider):
         }
         merged.update(marker_environment)
         self.environment = merged
-        self.env_with_extra = dict(merged)
+        self.env_with_extra = {**merged, **EMPTY_MEMBERSHIP_SETS}
         # Normalize preferences keys so lookup matches the provider's
         # canonical naming scheme.
         self._preferences: dict[str, Version] = {

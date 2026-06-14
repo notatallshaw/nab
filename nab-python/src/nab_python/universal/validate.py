@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import WheelFile
 
+from .._conflict_kind import dependency_marker_holds
 from .._vendor.packaging.requirements import (
     InvalidRequirement,
     Requirement,
@@ -438,11 +439,11 @@ def _evaluate_metadata_deps_by_extra(
             continue
         key = _requirement_key(req)
         marker = req.marker
-        if marker is None or marker.evaluate(base_env):
+        if marker is None or dependency_marker_holds(marker, base_env):
             out[None].add(key)
             continue
         for e in extras:
-            if marker.evaluate({**environment, "extra": e}):
+            if dependency_marker_holds(marker, {**environment, "extra": e}):
                 out[e].add(key)
     return out
 

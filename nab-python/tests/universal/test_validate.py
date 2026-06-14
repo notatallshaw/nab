@@ -23,6 +23,7 @@ from nab_python.universal.resolve import TupleResult, UniversalResult
 from nab_python.universal.validate import (
     PinValidation,
     ValidationReport,
+    _evaluate_metadata_deps_by_extra,
     validate_lock,
 )
 from nab_python.universal.wheel_selection import PlatformSpec
@@ -853,13 +854,32 @@ class TestPerExtraDivergence:
 
     def test_evaluate_metadata_deps_by_extra_groups_correctly(self) -> None:
         """``_evaluate_metadata_deps_by_extra`` returns base + per-extra buckets."""
-        from nab_python.universal.validate import _evaluate_metadata_deps_by_extra
-
         env = _linux_311().environment
         out = _evaluate_metadata_deps_by_extra(_BASE_EXTRA_METADATA, env)
         assert out[None] == {"requests>=2"}
         assert out["redis"] == {"redis>=5"}
         assert out["postgres"] == {"psycopg2>=2.9"}
+
+    def test_membership_set_marker_drops_dep_not_version(self) -> None:
+        """A ``Requires-Dist`` marker testing extras/dependency_groups drops the dep.
+
+        The set variables are empty when validating a lock, so the membership
+        tests False and the gated dep is excluded without raising a KeyError
+        that would crash the whole validation pass.
+        """
+        meta = (
+            "Metadata-Version: 2.3\n"
+            "Name: foo\n"
+            "Version: 1.0\n"
+            "Provides-Extra: docs\n"
+            "Requires-Dist: realdep>=1.0\n"
+            'Requires-Dist: somedep; "docs" in extras\n'
+            'Requires-Dist: devdep; "dev" in dependency_groups\n'
+        )
+        env = _linux_311().environment
+        out = _evaluate_metadata_deps_by_extra(meta, env)
+        assert out[None] == {"realdep>=1"}
+        assert out["docs"] == set()
 
     def test_extras_divergent_status_when_only_extra_differs(self) -> None:
         """Base deps match but the redis extra differs -> ``divergent_in_extra``."""
