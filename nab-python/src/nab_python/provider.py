@@ -432,6 +432,16 @@ class Provider:
         """Construct the provider; see the class docstring for parameters."""
         self.coordinator = coordinator
         self.python_version = python_version
+        if marker_environment:
+            # The Requires-Python candidate filter reads self.python_version, so
+            # an impersonated target Python in the overlay must move it too,
+            # keeping the filter aligned with marker evaluation. Mirrors
+            # UniversalProvider.
+            self.python_version = (
+                marker_environment.get("python_full_version")
+                or marker_environment.get("python_version")
+                or python_version
+            )
         self.uploaded_prior_to = uploaded_prior_to
 
         # Passed through to the build env when extract_source_metadata
