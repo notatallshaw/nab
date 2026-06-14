@@ -911,11 +911,11 @@ def _build_constraints(
     sources: defaultdict[str, list[str]] = defaultdict(list)
     for cstr in config.constraints:
         req = Requirement(cstr)
-        if req.marker is not None and not req.marker.evaluate(environment):
-            continue
         if req.extras:
             msg = f"Constraints cannot have extras: {cstr}"
             raise ConfigError(msg)
+        if req.marker is not None and not req.marker.evaluate(environment):
+            continue
         if req.url is not None:
             admit_vcs_url(req.url, config.vcs)
             msg = (
