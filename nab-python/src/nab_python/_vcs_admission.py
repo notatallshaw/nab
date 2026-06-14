@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
 from nab_index.vcs import FULL_GIT_SHA_RE
 
@@ -100,6 +101,20 @@ def split_vcs_scheme(url: str) -> tuple[str | None, str]:
     return (None, url)
 
 
+def _without_userinfo(url: str) -> str:
+    """Drop any authority ``user[:pass]@`` / SSH ``git@`` from ``url``.
+
+    An ``allowed-repos`` prefix names a repo by scheme + host + path, not
+    by credentials, so both the candidate URL and the prefix are stripped
+    before the match. A URL with no userinfo is returned unchanged.
+    """
+    parts = urlsplit(url)
+    if "@" not in parts.netloc:
+        return url
+    host = parts.netloc.rsplit("@", 1)[1]
+    return urlunsplit(parts._replace(netloc=host))
+
+
 def has_full_commit_sha(url: str) -> bool:
     """Return True if the URL pins to a 40-char hex commit hash.
 
@@ -162,7 +177,10 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
     # An empty allowed-repos denies every repo (deny-all), matching
     # allowed-schemes: under policy = "allow" the user must list at least
     # one repo prefix.
-    if not any(inner_url.startswith(prefix) for prefix in config.allowed_repos):
+    if not any(
+        _without_userinfo(inner_url).startswith(_without_userinfo(prefix))
+        for prefix in config.allowed_repos
+    ):
         allowed_str = ", ".join(sorted(config.allowed_repos)) or "<empty>"
         msg = (
             "refusing VCS repo\n"

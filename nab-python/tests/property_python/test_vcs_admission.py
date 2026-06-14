@@ -21,6 +21,8 @@ Invariants:
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit, urlunsplit
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -120,6 +122,14 @@ def _decision(url: str, config: VcsConfig) -> tuple[str, str]:
         return ("refuse", "")
 
 
+def _drop_login(url: str) -> str:
+    """Strip any authority ``user[:pass]@`` / ``git@`` from ``url``."""
+    parts = urlsplit(url)
+    if "@" not in parts.netloc:
+        return url
+    return urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[1]))
+
+
 def _oracle(url: str, config: VcsConfig) -> str:
     """Decision procedure transcribed from the documented policy."""
     scheme = next((s for s in VALID_SCHEMES if url.startswith(f"{s}://")), None)
@@ -129,8 +139,8 @@ def _oracle(url: str, config: VcsConfig) -> str:
         return "refuse"
     if scheme not in config.allowed_schemes:
         return "refuse"
-    inner = url[len("git+") :]
-    if not any(inner.startswith(p) for p in config.allowed_repos):
+    inner = _drop_login(url[len("git+") :])
+    if not any(inner.startswith(_drop_login(p)) for p in config.allowed_repos):
         return "refuse"
     if config.require_pin:
         fragmentless = url.split("#", 1)[0]
