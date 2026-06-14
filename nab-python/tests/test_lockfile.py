@@ -2192,6 +2192,53 @@ class TestBuildLockInputFromProvider:
         assert isinstance(pin, IndexPin)
         assert pin.index == "https://example.com/simple/"
 
+    def test_artifact_urls_strip_credentials(self) -> None:
+        """A private index serving same-host file URLs keeps creds out of the lock.
+
+        The index field already drops embedded userinfo, but a private
+        index commonly serves wheel/sdist URLs on the same authenticated
+        host. Those URLs must not carry the token into the committed lock.
+        """
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://user:token@private.example/simple/foo/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=">=3.10",
+            has_metadata=False,
+            upload_time=None,
+            hashes=(("sha256", "a" * 64),),
+            size=1234,
+        )
+        sdist = SdistFile(
+            filename="foo-1.0.tar.gz",
+            url="https://user:token@private.example/simple/foo/foo-1.0.tar.gz",
+            version="1.0",
+            requires_python=">=3.10",
+            upload_time=None,
+            hashes=(("sha256", "b" * 64),),
+            size=4321,
+        )
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), wheel), (Version("1.0"), sdist)]},
+            listing_indexes={"foo": "private"},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {"foo": Version("1.0")},
+            indexes=(
+                IndexConfig("private", "https://user:token@private.example/simple/"),
+            ),
+        )
+        text = write_lock(lock_input)
+        assert "user:token@" not in text
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].url == (
+            "https://private.example/simple/foo/foo-1.0-py3-none-any.whl"
+        )
+        assert pin.sdist is not None
+        assert pin.sdist.url == "https://private.example/simple/foo/foo-1.0.tar.gz"
+
     def test_local_source_emits_local_pin(self, tmp_path: Path) -> None:
         provider = _FakeProvider(
             local_sources={"foo": LocalSource(name="foo", path=str(tmp_path))}
