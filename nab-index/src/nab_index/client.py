@@ -367,9 +367,11 @@ def _has_metadata(file_info: dict) -> bool:
 
     PEP 691 allows either a ``true`` boolean (sidecar exists but no
     hashes published) or a mapping carrying the digest table.  Either
-    flavour means the index will serve ``<file>.metadata``.
+    flavour means the index will serve ``<file>.metadata``.  The legacy
+    JSON key is ``dist-info-metadata`` (PEP 658); ``data-dist-info-metadata``
+    is the HTML attribute name and never appears in the JSON response.
     """
-    for key in ("core-metadata", "data-dist-info-metadata"):
+    for key in ("core-metadata", "dist-info-metadata"):
         value = file_info.get(key)
         if value is True or isinstance(value, dict):
             return True
@@ -383,7 +385,7 @@ def _metadata_hash(file_info: dict) -> tuple[str, str] | None:
     and what pip verifies.  A bare ``true`` (sidecar exists, no hash)
     or a table without sha256 yields None, so no check runs.
     """
-    for key in ("core-metadata", "data-dist-info-metadata"):
+    for key in ("core-metadata", "dist-info-metadata"):
         value = file_info.get(key)
         if isinstance(value, dict):
             digest = value.get("sha256")

@@ -34,7 +34,7 @@ LISTING_JSON = {
         {
             "filename": "pkg-1.0-py3-none-any.whl",
             "url": "https://files.example.com/pkg-1.0-py3-none-any.whl",
-            "data-dist-info-metadata": {"sha256": "abc"},
+            "dist-info-metadata": {"sha256": "abc"},
         },
     ],
 }

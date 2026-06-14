@@ -99,7 +99,7 @@ def _build_tarball(members: list[tuple[str, bytes]]) -> bytes:
 
 
 class TestHasMetadataFlag:
-    """PEP 691 boolean variants of ``core-metadata`` / ``data-dist-info-metadata``."""
+    """PEP 691 boolean variants of ``core-metadata`` / ``dist-info-metadata``."""
 
     def test_dict_value_advertises_metadata(self) -> None:
         from nab_index.client import _has_metadata
@@ -111,10 +111,10 @@ class TestHasMetadataFlag:
 
         assert _has_metadata({"core-metadata": True})
 
-    def test_legacy_data_dist_info_true(self) -> None:
+    def test_legacy_json_key_true(self) -> None:
         from nab_index.client import _has_metadata
 
-        assert _has_metadata({"data-dist-info-metadata": True})
+        assert _has_metadata({"dist-info-metadata": True})
 
     def test_false_value_does_not_advertise(self) -> None:
         from nab_index.client import _has_metadata
@@ -141,7 +141,7 @@ class TestMetadataHashParsing:
     def test_legacy_key_used(self) -> None:
         from nab_index.client import _metadata_hash
 
-        assert _metadata_hash({"data-dist-info-metadata": {"sha256": "ab"}}) == (
+        assert _metadata_hash({"dist-info-metadata": {"sha256": "ab"}}) == (
             "sha256",
             "ab",
         )
