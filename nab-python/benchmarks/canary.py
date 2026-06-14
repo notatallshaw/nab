@@ -1,9 +1,9 @@
 """Quick canary benchmark for fast iteration.
 
 Runs a curated subset of scenarios (canaries + hard cases) N times each
-and reports median decisions, conflicts, and wall time. The set is
-small enough to finish in a few minutes so it can be re-run after each
-algorithm change.
+and reports median decisions, distributions seen (search breadth), and
+wall time. The set is small enough to finish in a few minutes so it can
+be re-run after each algorithm change.
 
 Usage:
     python nab-python/benchmarks/canary.py [--commit LABEL] [--runs N]
@@ -62,26 +62,30 @@ DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
     IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
 )
 
+# Each entry pins its TOML variant as ``stem:name``. Most of these names also
+# live in -lowest / -lowest-direct siblings with different counts; the pins
+# record the variant the suite already ran so the numbers are reproducible
+# instead of depending on directory scan order.
 CANARY_SCENARIOS = [
-    "boto3-urllib3-transient",
-    "trustllm",
-    "copick",
-    "promptflow-vectordb",
-    "ultralytics-export",
-    "datacontract-cli",
-    "pandas-aws-boto3-dandi-frenzy",
-    "vllm-transformers-floor",
-    "google-bigquery-soda",
-    "langchain-ml-course",
-    "airflow-3-0-2-awswrangler",
-    "airflow-3-0-3-pandas-sqlalchemy",
-    "airflow-portalocker-qdrant",
-    "airflow-fastapi-121",
-    "so-dbt-core-snowflake-79744735",
-    "uv-issue-16601-xinference",
-    "uv-issue-16601-xinference-fixed",
-    "rag-chroma-langchain",
-    "streamlit-langchain",
+    "uv-lowest:boto3-urllib3-transient",
+    "pip-lowest:trustllm",
+    "pip-lowest:copick",
+    "pip-lowest:promptflow-vectordb",
+    "pip-lowest:ultralytics-export",
+    "pip-lowest:datacontract-cli",
+    "pip-lowest:pandas-aws-boto3-dandi-frenzy",
+    "ai-stack:vllm-transformers-floor",
+    "pip-lowest:google-bigquery-soda",
+    "pip-lowest:langchain-ml-course",
+    "airflow-lowest-direct:airflow-3-0-2-awswrangler",
+    "airflow-lowest-direct:airflow-3-0-3-pandas-sqlalchemy",
+    "airflow-lowest-direct:airflow-portalocker-qdrant",
+    "airflow-lowest-direct:airflow-fastapi-121",
+    "forums-lowest-direct:so-dbt-core-snowflake-79744735",
+    "uv-lowest:uv-issue-16601-xinference",
+    "uv-lowest:uv-issue-16601-xinference-fixed",
+    "ai-stack:rag-chroma-langchain",
+    "ai-stack:streamlit-langchain",
 ]
 
 WALL_TIMEOUT_S = 60
@@ -150,7 +154,7 @@ def parse_requirements(
             )
             raise NotImplementedError(msg)
         name = canonicalize_name(req.name)
-        reqs[name] = req.specifier.to_range()
+        reqs[name] = reqs.get(name, VersionRange.full()) & req.specifier.to_range()
         for extra in req.extras:
             reqs[f"{name}[{extra}]"] = VersionRange.full()
     return reqs
@@ -268,19 +272,46 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
             "restarts": rs.restarts,
             "incompatibilities_learned": rs.incompatibilities_learned,
             "metadata_fetched": ps.metadata_fetched,
+            "distributions_seen": ps.distributions_seen,
             "look_ahead_rejections": ps.look_ahead_rejections,
             "packages": packages,
             "wall_time_seconds": round(elapsed, 3),
         }
 
 
-def find_scenario(scenario_name: str) -> dict | None:
-    for toml_file in SCENARIOS_DIR.glob("*.toml"):
+def find_scenario(spec: str) -> dict | None:
+    """Locate a scenario by name, or by ``stem:name`` to pin a specific TOML file.
+
+    Many names live in several variant TOMLs (a ``highest`` file plus
+    ``-lowest`` / ``-lowest-direct`` siblings) with different decision counts.
+    A bare name scans the files in sorted order so the match is reproducible
+    across machines, and warns when the name is ambiguous so an exact-count run
+    can pin the variant with ``stem:name``.
+    """
+    if ":" in spec:
+        toml_stem, name = spec.split(":", 1)
+        toml_path = SCENARIOS_DIR / f"{toml_stem}.toml"
+        if not toml_path.is_file():
+            return None
+        with toml_path.open("rb") as f:
+            return tomllib.load(f).get(name)
+
+    matches: list[tuple[str, dict]] = []
+    for toml_file in sorted(SCENARIOS_DIR.glob("*.toml")):
         with toml_file.open("rb") as f:
             data = tomllib.load(f)
-        if scenario_name in data:
-            return data[scenario_name]
-    return None
+        if spec in data:
+            matches.append((toml_file.stem, data[spec]))
+    if not matches:
+        return None
+    if len(matches) > 1:
+        stems = ", ".join(stem for stem, _ in matches)
+        print(
+            f"  [ambiguous] {spec!r} is in {len(matches)} files ({stems}); "
+            f"using {matches[0][0]}. Pin one with '{matches[0][0]}:{spec}'.",
+            flush=True,
+        )
+    return matches[0][1]
 
 
 def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
@@ -397,6 +428,9 @@ def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
     summary = {
         "success_runs": f"{successes}/{len(runs_data)}",
         "median_decisions": int(med("decisions")),
+        "median_distributions_seen": int(med("distributions_seen")),
+        "median_metadata_fetched": int(med("metadata_fetched")),
+        "median_packages": int(med("packages")),
         "median_conflicts": int(med("conflicts")),
         "median_backjumps": int(med("backjumps")),
         "median_wall": round(med("wall_time_seconds"), 2),
@@ -435,29 +469,32 @@ def main() -> None:
         f"{'scenario':<45} "
         f"{'success':>9} "
         f"{'med_dec':>8} "
+        f"{'med_dist':>10} "
         f"{'med_wall':>10} "
         f"{'min_dec':>8} "
         f"{'max_dec':>8}"
     )
-    print("-" * 100)
+    print("-" * 110)
 
     summary_all: dict[str, dict] = {}
     for name in scenarios_to_run:
         scenario = find_scenario(name)
+        label = name.split(":", 1)[-1]
         if scenario is None:
-            print(f"{name:<45} NOT FOUND")
+            print(f"{label:<45} NOT FOUND")
             continue
         runs_data, summary = median_run(scenario, args.runs)
-        summary_all[name] = {"runs": runs_data, "summary": summary}
+        summary_all[label] = {"runs": runs_data, "summary": summary}
 
         if "skipped" in summary:
-            print(f"{name:<45} SKIPPED: {summary['skipped']}")
+            print(f"{label:<45} SKIPPED: {summary['skipped']}")
             continue
 
         print(
-            f"{name:<45} "
+            f"{label:<45} "
             f"{summary['success_runs']:>9} "
             f"{summary['median_decisions']:>8} "
+            f"{summary['median_distributions_seen']:>10} "
             f"{summary['median_wall']:>10} "
             f"{summary['min_decisions']:>8} "
             f"{summary['max_decisions']:>8}"
