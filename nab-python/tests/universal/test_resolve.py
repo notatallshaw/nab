@@ -707,6 +707,29 @@ class TestParseRequirements:
         with pytest.raises(ConfigError, match="extras"):
             _parse_requirements(["pkg[dev]<2.0"], env, kind="constraint")
 
+    def test_marker_false_drops_constraint(self) -> None:
+        """A constraint whose marker excludes the env is dropped.
+
+        The marker is evaluated per env for constraints too, so a
+        constraint gated off this tuple never binds. The sibling
+        single-env path once enforced such constraints unconditionally
+        (issue #38).
+        """
+        env = _linux_311().environment
+        out = _parse_requirements(
+            ['pkg<2.0 ; sys_platform == "win32"'], env, kind="constraint"
+        )
+        assert out == {}
+
+    def test_marker_true_keeps_constraint(self) -> None:
+        """A constraint whose marker matches the env binds its range."""
+        env = _linux_311().environment
+        out = _parse_requirements(
+            ['pkg<2.0 ; sys_platform == "linux"'], env, kind="constraint"
+        )
+        assert Version("1.0") in out["pkg"]
+        assert Version("2.0") not in out["pkg"]
+
     def test_extra_proxy_key_normalized(self) -> None:
         """The proxy key is PEP 685 normalized, matching the single-env path."""
         env = _linux_311().environment
@@ -1072,6 +1095,39 @@ class TestRunPassConflict:
         assert not results[0].success
         assert results[0].error is not None
         assert "ResolutionError" in results[0].error
+
+
+class TestRunPassConstraintMarker:
+    """A constraint's marker gates it per tuple, not across the matrix."""
+
+    def test_marker_gated_constraint_binds_only_matching_tuples(self) -> None:
+        """A win32-gated ``pkg<2.0`` pins 1.0 on Windows, leaves Linux at 2.0.
+
+        Each tuple evaluates the constraint marker against its own
+        environment, so the constraint binds only the Windows tuple.
+        Evaluating it once against a shared env, or skipping it for
+        constraints, would mis-pin a tuple's lock.
+        """
+        wheels = [_make_wheel("1.0", package="pkg"), _make_wheel("2.0", package="pkg")]
+        coordinator = _make_coordinator({"pkg": wheels})
+        results = _run_pass(
+            [_linux_311(), _windows_311()],
+            requirements=["pkg"],
+            constraints=['pkg<2.0 ; sys_platform == "win32"'],
+            coordinator=coordinator,
+            uploaded_prior_to=None,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+            resolution_strategy="highest",
+            direct_packages=frozenset({"pkg"}),
+            preferences={},
+            align_serial=False,
+        )
+        pins = {r.tuple_.platform_id: r.pins["pkg"] for r in results}
+        assert pins == {
+            "linux_x86_64": Version("2.0"),
+            "windows_amd64": Version("1.0"),
+        }
 
 
 class TestUniversalResult:

@@ -435,6 +435,75 @@ class TestPerTupleMarkerSimplification:
         # Same VCS commit -> single group -> one package
         assert len(data["packages"]) == 1
 
+    def test_vcs_pin_per_tuple_diverging_commit(self) -> None:
+        # Diverging commit -> two groups -> two packages
+        per_tuple = {
+            "py310": {
+                "foo": VcsPin(
+                    name="foo",
+                    version="1.0",
+                    repo_url="https://x/y.git",
+                    bare_repo_url="https://x/y.git",
+                    commit_id="a" * 40,
+                ),
+            },
+            "py311": {
+                "foo": VcsPin(
+                    name="foo",
+                    version="1.0",
+                    repo_url="https://x/y.git",
+                    bare_repo_url="https://x/y.git",
+                    commit_id="b" * 40,
+                ),
+            },
+        }
+        tuple_markers = {
+            "py310": Marker('python_version == "3.10"'),
+            "py311": Marker('python_version == "3.11"'),
+        }
+        text = write_lock(
+            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+        )
+        data = tomllib.loads(text)
+        assert len(data["packages"]) == 2
+        commits = {p["vcs"]["commit-id"] for p in data["packages"]}
+        assert commits == {"a" * 40, "b" * 40}
+
+    def test_discriminator_separates_vcs_commit(self) -> None:
+        one = VcsPin(
+            name="foo",
+            version="1.0",
+            repo_url="https://x/y.git",
+            bare_repo_url="https://x/y.git",
+            commit_id="a" * 40,
+        )
+        other = VcsPin(
+            name="foo",
+            version="1.0",
+            repo_url="https://x/y.git",
+            bare_repo_url="https://x/y.git",
+            commit_id="b" * 40,
+        )
+        assert _pin_discriminator(one) != _pin_discriminator(other)
+
+    def test_discriminator_separates_vcs_subdirectory(self) -> None:
+        plain = VcsPin(
+            name="foo",
+            version="1.0",
+            repo_url="https://x/y.git",
+            bare_repo_url="https://x/y.git",
+            commit_id="a" * 40,
+        )
+        sub = VcsPin(
+            name="foo",
+            version="1.0",
+            repo_url="https://x/y.git",
+            bare_repo_url="https://x/y.git",
+            commit_id="a" * 40,
+            subdirectory="pkg",
+        )
+        assert _pin_discriminator(plain) != _pin_discriminator(sub)
+
     def test_pin_in_both_pins_and_per_tuple_emits_once(self) -> None:
         # When the same package appears in both pins and per_tuple_pins,
         # the per_tuple_pins entry wins (single emission per name).

@@ -125,6 +125,16 @@ class TestMetadataDepsAreStatic:
         )
         assert metadata_deps_are_static(md) is False
 
+    def test_2_2_with_dynamic_provides_extra_is_not_static(self) -> None:
+        """Provides-Extra is the other DEPENDENCY_FIELDS member: a dynamic
+        extras set leaves the deps non-final even with a static Requires-Dist.
+        """
+        md = parse_metadata(
+            "Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n"
+            "Requires-Dist: bar\nDynamic: Provides-Extra\n"
+        )
+        assert metadata_deps_are_static(md) is False
+
     def test_micro_metadata_version_qualifies(self) -> None:
         md = parse_metadata("Metadata-Version: 2.2.1\nName: foo\nVersion: 1.0\n")
         assert metadata_deps_are_static(md) is True

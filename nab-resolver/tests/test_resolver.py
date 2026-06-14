@@ -26,7 +26,13 @@ from nab_resolver.incompat_index import (
 from nab_resolver.partial_solution import Assignment, PartialSolution
 from nab_resolver.propagate import term_relation
 from nab_resolver.ranges import Range
-from nab_resolver.report import explain_incompatibility, prior_cause, union_terms
+from nab_resolver.report import (
+    explain_incompatibility,
+    format_error,
+    format_term,
+    prior_cause,
+    union_terms,
+)
 from nab_resolver.resolver import (
     ResolutionError,
     Resolver,
@@ -1772,6 +1778,56 @@ class TestErrorMessages:
         # The error should have a derived incompatibility with causes
         root_inc = exc_info.value.incompatibility
         assert root_inc is not None
+
+    def test_dependency_clause_attributes_parent_to_dependency(self) -> None:
+        """A DEPENDENCY clause reads as parent depends on dependency."""
+        parent = Term("foo", Range.singleton(2), positive=True)
+        dependency = Term("bar", Range.at_least(3), positive=False)
+        clause = Incompatibility(
+            [parent, dependency], cause=IncompatibilityCause.DEPENDENCY
+        )
+        message = format_error(clause)
+        assert message == "because foo 2 depends on bar [3, +inf)"
+
+    def test_root_clause_attributes_to_the_project(self) -> None:
+        """A ROOT clause reads as a project dependency and ignores the root term."""
+        root = Term("root", Range.singleton(0), positive=True)
+        dependency = Term("baz", Range.at_least(1), positive=False)
+        clause = Incompatibility([root, dependency], cause=IncompatibilityCause.ROOT)
+        message = format_error(clause)
+        assert message == "because your project depends on baz [1, +inf)"
+
+    def test_no_versions_clause_reports_availability(self) -> None:
+        """A NO_VERSIONS clause names the unavailable range."""
+        clause = Incompatibility(
+            [Term("qux", Range.at_least(5), positive=True)],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+        message = format_error(clause)
+        assert message == "because no versions of qux [5, +inf) are available"
+
+    def test_derived_clause_chains_children_with_so(self) -> None:
+        """A DERIVED clause renders its child cause first, then a `so` line."""
+        no_versions = Incompatibility(
+            [Term("qux", Range.at_least(5), positive=True)],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+        derived = Incompatibility(
+            [Term("qux", Range.at_least(5), positive=True)],
+            cause=IncompatibilityCause.DERIVED,
+            cause_left=no_versions,
+        )
+        assert format_error(derived).splitlines() == [
+            "because no versions of qux [5, +inf) are available",
+            "so qux [5, +inf)",
+        ]
+
+    def test_format_term_marks_negation(self) -> None:
+        """format_term prefixes a negated term with `not` and leaves positives bare."""
+        positive = format_term(Term("a", Range.at_least(1), positive=True))
+        negative = format_term(Term("a", Range.at_least(1), positive=False))
+        assert positive == "a [1, +inf)"
+        assert negative == "not a [1, +inf)"
 
 
 class TestConstraints:

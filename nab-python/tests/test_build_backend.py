@@ -13,6 +13,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nab_python._provider.metadata_resolver import (
+    extend_with_extras,
+    parse_pyproject_deps,
+)
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
 from nab_python.build_backend import (
@@ -20,6 +24,7 @@ from nab_python.build_backend import (
     extract_metadata,
     extract_static_metadata,
 )
+from nab_python.metadata import parse_metadata
 
 
 def _write_pyproject(tmp: Path, body: str) -> Path:
@@ -358,3 +363,85 @@ class TestExtractMetadata:
             pytest.raises(BuildBackendError, match="backend exploded"),
         ):
             extract_metadata(tmp_path, config=MagicMock(name="config"))
+
+
+class TestStaticExtractAugmentParity:
+    """Pin the static extractor against the parallel augment and index paths.
+
+    Guards the two places they could silently diverge: extra-name
+    normalisation and malformed-dependency handling.
+    """
+
+    def test_non_canonical_extra_canonicalized(self, tmp_path: Path) -> None:
+        _write_pyproject(
+            tmp_path,
+            """
+            [project]
+            name = "foo"
+            version = "1.0"
+            [project.optional-dependencies]
+            "My.Extra" = ["click>=8"]
+            """,
+        )
+        meta = extract_static_metadata(tmp_path)
+        assert meta is not None
+        assert meta.provides_extra == ["my-extra"]
+        click = next(r for r in meta.requires_dist if r.name == "click")
+        assert str(click.marker) == 'extra == "my-extra"'
+
+    def test_non_canonical_extra_marker_matches_augment_path(
+        self, tmp_path: Path
+    ) -> None:
+        optional = {"My.Extra": ["click>=8"]}
+        _write_pyproject(
+            tmp_path,
+            """
+            [project]
+            name = "foo"
+            version = "1.0"
+            [project.optional-dependencies]
+            "My.Extra" = ["click>=8"]
+            """,
+        )
+        meta = extract_static_metadata(tmp_path)
+        assert meta is not None
+        bb_click = next(r for r in meta.requires_dist if r.name == "click")
+
+        augment_rd: list = []
+        extend_with_extras(augment_rd, optional)
+        aug_click = next(r for r in augment_rd if r.name == "click")
+
+        assert bb_click.marker is not None
+        assert aug_click.marker is not None
+        assert str(bb_click.marker) == str(aug_click.marker)
+        assert bb_click.marker.evaluate({"extra": "my-extra"})
+        assert aug_click.marker.evaluate({"extra": "my-extra"})
+
+    def test_malformed_static_dep_dropped_like_augment_index_refuses(
+        self, tmp_path: Path
+    ) -> None:
+        deps = ["requests>=2", "this is not a valid !! req"]
+        _write_pyproject(
+            tmp_path,
+            """
+            [project]
+            name = "foo"
+            version = "1.0"
+            dependencies = [
+                "requests>=2",
+                "this is not a valid !! req",
+            ]
+            """,
+        )
+        meta = extract_static_metadata(tmp_path)
+        assert meta is not None
+        bb_names = [r.name for r in meta.requires_dist]
+        aug_names = [r.name for r in parse_pyproject_deps(deps)]
+        assert bb_names == aug_names == ["requests"]
+
+        md = (
+            "Metadata-Version: 2.3\nName: foo\nVersion: 1.0\n"
+            "Requires-Dist: this is not a valid !! req\n"
+        )
+        with pytest.raises(ValueError, match="Expected"):
+            parse_metadata(md)

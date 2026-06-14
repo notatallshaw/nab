@@ -349,6 +349,38 @@ class TestRelativeUrlResolution:
         files = _parse_files(data, "https://pypi.org/simple/", "foo")
         assert files[0].url == urljoin(base, raw) == raw
 
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "https://files.example.com/a/../b/foo-1.0-py3-none-any.whl",
+            "https://files.example.com/foo-1.0-py3-none-any.whl?token=x",
+            "https://files.example.com/foo-1.0-py3-none-any.whl#sha256=abc",
+            "http://files.example.com/foo-1.0-py3-none-any.whl",
+        ],
+    )
+    def test_absolute_url_edge_forms_match_urljoin(self, raw: str) -> None:
+        base = "https://example.com/simple/foo/"
+        data = {"files": [{"filename": "foo-1.0-py3-none-any.whl", "url": raw}]}
+        files = _parse_files(data, "https://example.com/simple/", "foo")
+        assert files[0].url == urljoin(base, raw) == raw
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "//files.example.com/foo-1.0-py3-none-any.whl",
+            "https:foo-1.0-py3-none-any.whl",
+        ],
+    )
+    def test_non_absolute_url_resolves_against_page(self, raw: str) -> None:
+        # The shortcut only fires on an https://-or-http:// prefix; a
+        # protocol-relative or scheme-without-authority URL must fall through
+        # to urljoin, not be used verbatim. A broadened prefix would keep these
+        # unchanged and silently yield a wrong download URL.
+        base = "https://example.com/simple/foo/"
+        data = {"files": [{"filename": "foo-1.0-py3-none-any.whl", "url": raw}]}
+        files = _parse_files(data, "https://example.com/simple/", "foo")
+        assert files[0].url == urljoin(base, raw) != raw
+
 
 class TestParseHashes:
     def test_single_entry(self) -> None:
