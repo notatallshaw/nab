@@ -29,6 +29,7 @@ from ._vcs_admission import (
 )
 from ._vendor.packaging.markers import default_environment
 from ._vendor.packaging.ranges import VersionRange
+from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
 
@@ -285,14 +286,18 @@ class InvalidUploadTimeError(Exception):
 def _add_extra_marker(dep_str: str, extra_name: str) -> str:
     """Append ``extra == "name"`` to a :pep:`508` dep string.
 
-    Combines an existing marker with ``and`` so a dep like
-    ``numpy ; python_version >= '3.10'`` becomes
-    ``numpy ; (python_version >= '3.10') and extra == "foo"``.
+    Parses with :class:`Requirement` rather than splitting on the first
+    ``;`` so a semicolon inside a direct-reference URL is not mistaken
+    for the marker separator; an existing marker is combined with ``and``.
     """
-    base, sep, marker = dep_str.partition(";")
-    if sep:
-        return f'{base.strip()} ; ({marker.strip()}) and extra == "{extra_name}"'
-    return f'{dep_str} ; extra == "{extra_name}"'
+    req = Requirement(dep_str)
+    extra_marker = f'extra == "{extra_name}"'
+    if req.marker is not None:
+        marker = f"({req.marker}) and {extra_marker}"
+    else:
+        marker = extra_marker
+    req.marker = None
+    return f"{req} ; {marker}"
 
 
 @dataclass
