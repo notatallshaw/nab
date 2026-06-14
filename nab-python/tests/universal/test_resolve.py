@@ -38,6 +38,12 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_python.requirements_file import (
+    expand_extra_requirements,
+    read_pyproject_dependencies,
+    read_pyproject_name,
+    read_pyproject_optional_dependencies,
+)
 from nab_python.universal import resolve as resolve_mod
 from nab_python.universal.matrix import Matrix, MatrixTuple
 from nab_python.universal.resolve import (
@@ -743,6 +749,36 @@ class TestParseRequirements:
                 env,
                 vcs_config=vcs_config,
             )
+
+
+class TestUniversalSelfRefMarker:
+    """The universal flatten must keep a self-ref's marker so the per-tuple
+    parser drops its dep on the tuples the marker excludes."""
+
+    def test_marker_gated_dep_dropped_on_excluded_tuple(self, tmp_path: Path) -> None:
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            "[project]\nname = 'x'\ndependencies = []\n"
+            "[project.optional-dependencies]\n"
+            "fast = ['some-dep']\n"
+            "all = [\"x[fast]; python_version < '3.10'\"]\n"
+        )
+        reqs = read_pyproject_dependencies(path)
+        reqs.extend(
+            expand_extra_requirements(
+                read_pyproject_optional_dependencies(path),
+                read_pyproject_name(path),
+                ["all"],
+            )
+        )
+        strings = [str(r) for r in reqs]
+        assert "some-dep" not in _parse_requirements(strings, _linux_311().environment)
+        included = {
+            **_linux_311().environment,
+            "python_version": "3.9",
+            "python_full_version": "3.9.0",
+        }
+        assert "some-dep" in _parse_requirements(strings, included)
 
 
 class TestRootExtras:

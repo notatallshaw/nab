@@ -45,6 +45,7 @@ from .provider import (
     split_extra,
 )
 from .requirements_file import (
+    expand_extra_requirements,
     expand_group_includes,
     expand_self_extras,
     raise_for_unsatisfiable,
@@ -475,8 +476,6 @@ def _extra_requirements_from_table(
     See :func:`_load_extra_requirements` for the self-reference rules;
     ``path`` is used only for the missing-table error message.
     """
-    if not selected:
-        return []
     if not optional:
         msg = (
             "extras requested but [project.optional-dependencies] is"
@@ -545,8 +544,8 @@ def _fork_requirement_strings(
         _group_requirements_from_table(tables.groups, fork.active_groups, path=path)
     )
     requirements.extend(
-        _extra_requirements_from_table(
-            tables.optional, tables.project_name, fork.active_extras, path=path
+        expand_extra_requirements(
+            tables.optional, tables.project_name, fork.active_extras
         )
     )
     return [str(r) for r in requirements]
