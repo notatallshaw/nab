@@ -376,11 +376,9 @@ def parse_and_cache_metadata(
     Per-tuple classification (marker evaluation, extras admission)
     still runs locally in :func:`cache_deps_from_metadata`.  The
     sdist-dynamic-deps reconciliation in
-    :func:`resolve_dynamic_sdist` returns a *new* dataclass and is
-    therefore cached only by the (per-provider) ``metadata_cache``;
-    the coordinator-level entry stays the raw parse so subsequent
-    tuples can re-apply their own dynamic-resolution rules without
-    inheriting this tuple's pyproject fallback.
+    :func:`resolve_dynamic_sdist` returns a new dataclass cached in a
+    separate coordinator slot, so it too is reused across tuples while
+    the shared raw parse stays unreconciled.
     """
     package, version = cache_key
     version_str = str(version)

@@ -70,6 +70,9 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 LOCK_VERSION = "1.0"
+
+# Verification prefers sha256 (pip's hash-checking baseline), not the strongest;
+# any one published hash verifies the same bytes.
 ACCEPTED_HASH_ALGORITHMS: tuple[str, ...] = ("sha256", "sha384", "sha512")
 
 
@@ -110,7 +113,7 @@ class WheelArtifact:
 
     @property
     def primary_digest(self) -> tuple[str, str]:
-        """Return ``(algo, digest)`` of the strongest acceptable hash."""
+        """Return ``(algo, digest)`` for the first acceptable algorithm present."""
         chosen = _select_primary_digest(self.hashes)
         if chosen is None:
             msg = f"{self.filename} has no acceptable hash"
@@ -135,7 +138,7 @@ class SdistArtifact:
 
     @property
     def primary_digest(self) -> tuple[str, str]:
-        """Return ``(algo, digest)`` of the strongest acceptable hash."""
+        """Return ``(algo, digest)`` for the first acceptable algorithm present."""
         chosen = _select_primary_digest(self.hashes)
         if chosen is None:
             msg = f"{self.filename} has no acceptable hash"
