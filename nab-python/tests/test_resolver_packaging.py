@@ -181,6 +181,76 @@ class TestSpecifierToRange:
         assert V("1.9.9") in r
         assert V("2.0.dev0") not in r
 
+    def test_wildcard_includes_prerelease(self) -> None:
+        """==1.2.* admits pre-releases in the 1.2 family."""
+        r = SpecifierSet("==1.2.*").to_range()
+        assert V("1.2.0a1") in r
+        assert V("1.2.0") in r
+        assert V("1.2.9") in r
+        assert V("1.3.dev0") not in r
+        assert V("1.1.9") not in r
+
+    def test_compatible_release_post(self) -> None:
+        """~=2.2.post3 drops the last release component for the prefix.
+
+        The compatible bound is ==2.* so the upper edge is 3.dev0; the
+        lower edge keeps the post-release.
+        """
+        r = SpecifierSet("~=2.2.post3").to_range()
+        assert V("2.2.post2") not in r
+        assert V("2.2.post3") in r
+        assert V("2.2.5") in r
+        assert V("2.3") in r
+        assert V("3.0") not in r
+
+    def test_gt_pre_release(self) -> None:
+        """>1.0a1 carves out only 1.0a1 and its own pre/post/local family.
+
+        The specifier is a pre-release, so PEP 440 excludes 1.0a1
+        itself, 1.0a1+local, and 1.0a1.postN.  The final release 1.0 and
+        its post-releases are higher versions and stay in.
+        """
+        r = SpecifierSet(">1.0a1").to_range()
+        assert V("1.0a1") not in r
+        assert V("1.0a1.post1") not in r
+        assert V("1.0a2") in r
+        assert V("1.0") in r
+        assert V("1.0.post1") in r
+        assert V("1.1") in r
+
+    def test_epoch_ordering(self) -> None:
+        """An epoch sorts above every lower-epoch release."""
+        r = SpecifierSet(">=1!1.0").to_range()
+        assert V("1!1.0") in r
+        assert V("1!2.0") in r
+        assert V("1.0") not in r
+        assert V("999") not in r
+
+    def test_epoch_wildcard(self) -> None:
+        """==1!2.* keeps the epoch and stays within the 1!2 family."""
+        r = SpecifierSet("==1!2.*").to_range()
+        assert V("1!2.0") in r
+        assert V("1!2.0.dev0") in r
+        assert V("1!2.9") in r
+        assert V("1!3.0") not in r
+        assert V("2.0") not in r
+
+    def test_epoch_compatible_release(self) -> None:
+        """~=1!2.2 carries the epoch into both bounds."""
+        r = SpecifierSet("~=1!2.2").to_range()
+        assert V("1!2.2") in r
+        assert V("1!2.9") in r
+        assert V("1!3.0") not in r
+        assert V("2.2") not in r
+
+    def test_epoch_not_equal_excludes_local(self) -> None:
+        """!=1!1.5 excludes the local family but keeps post-releases."""
+        r = SpecifierSet("!=1!1.5").to_range()
+        assert V("1!1.4") in r
+        assert V("1!1.5") not in r
+        assert V("1!1.5+local") not in r
+        assert V("1!1.5.post1") in r
+
 
 class TestTrivialResolution:
     """Resolve simple graphs with PEP 440 versions."""
@@ -519,3 +589,58 @@ class TestBruteForceRegression:
         assert result["pkg0"] in (V("1.0"), V("2.0"))
         assert "pkg1" not in result
         assert "pkg2" not in result
+
+
+class _FilterProvider(PackagingProvider):
+    """PackagingProvider that selects via ``version_range.filter``.
+
+    The real PyPI provider picks with ``Provider.choose_version``, which
+    calls ``version_range.filter(all_versions)`` rather than a plain
+    membership test. ``filter`` is prerelease-aware, so it exposes the
+    constraint prerelease behavior that membership selection hides.
+    """
+
+    def choose_version(
+        self, package: str, version_range: VersionRange
+    ) -> Version | None:
+        return next(iter(version_range.filter(self._get_versions(package))), None)
+
+
+class TestConstraintPrereleases:
+    """A constraint that names a prerelease must enable that prerelease."""
+
+    def test_constraint_capping_at_prerelease_keeps_it(self) -> None:
+        """``foo<=2.0b1`` must pick 2.0b1, not the older 1.5.
+
+        PEP 440 enables prereleases for a specifier that names one. A
+        constraint is injected and read back through a double complement;
+        the old vendored packaging dropped the prerelease policy there, so
+        ``filter`` excluded 2.0b1 and the resolver fell back to 1.5.
+        """
+        provider = _FilterProvider(
+            {
+                "root": {V("1.0"): {"foo": SpecifierSet(">=1.0")}},
+                "foo": {V("2.0b1"): {}, V("1.5"): {}, V("1.0"): {}},
+            },
+        )
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {"root": VersionRange.singleton(V("1.0"))},
+            constraints={"foo": SpecifierSet("<=2.0b1").to_range()},
+        )
+        assert result["foo"] == V("2.0b1")
+
+
+class TestComplementPrereleases:
+    """``VersionRange.complement`` preserves the prerelease policy."""
+
+    def test_double_complement_keeps_prerelease_filtering(self) -> None:
+        """``~~r`` filters a named prerelease in, just as ``r`` does.
+
+        Resetting the policy on complement made the double complement
+        that constraint injection performs buffer 2.0b1 out under the
+        PEP 440 default.
+        """
+        r = SpecifierSet("<=2.0b1").to_range()
+        versions = [V("2.0b1"), V("1.5"), V("1.0")]
+        assert list(r.filter(versions)) == versions
+        assert list(r.complement().complement().filter(versions)) == versions
