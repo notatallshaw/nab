@@ -336,8 +336,9 @@ def _parse_files(
 
 def _parse_hashes(value: object) -> tuple[tuple[str, str], ...]:
     # Algo names are a tiny fixed vocabulary, so interning dedups them.
-    # Hex digests are lowercased to match hashlib.hexdigest() output:
-    # PEP 503/691 don't mandate a case, and pip treats them case-insensitively.
+    # Both halves are lowercased: PEP 503/691 don't mandate a case, pip
+    # treats them case-insensitively, and the acceptable-algorithm filter
+    # and hashlib.hexdigest() both expect the lowercase form.
     if not isinstance(value, dict):
         return ()
 
@@ -345,13 +346,13 @@ def _parse_hashes(value: object) -> tuple[tuple[str, str], ...]:
     if len(value) == 1:
         ((algo, digest),) = value.items()
         if isinstance(algo, str) and isinstance(digest, str):
-            return ((sys.intern(algo), digest.lower()),)
+            return ((sys.intern(algo.lower()), digest.lower()),)
         return ()
 
     out: list[tuple[str, str]] = []
     for algo, digest in value.items():
         if isinstance(algo, str) and isinstance(digest, str):
-            out.append((sys.intern(algo), digest.lower()))
+            out.append((sys.intern(algo.lower()), digest.lower()))
 
     return tuple(out)
 

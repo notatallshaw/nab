@@ -161,7 +161,7 @@ def _parse_pep503_hash_fragment(fragment: str) -> tuple[tuple[str, str], ...]:
     algo, sep, digest = fragment.partition("=")
     if not sep or not algo or not digest:
         return ()
-    return ((algo, digest.lower()),)
+    return ((algo.lower(), digest.lower()),)
 
 
 def _scan_flat_wheelhouse(
