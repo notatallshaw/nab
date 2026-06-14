@@ -312,6 +312,15 @@ class TestExpandSelfExtras:
         env = {"python_version": "3.12", "python_full_version": "3.12.0"}
         assert expand_self_extras(opt, "mypkg", ["all"], env) == ["all", "a"]
 
+    def test_self_reference_membership_set_marker_skipped(self) -> None:
+        """A self-ref marker testing a lockfile-only set is False at resolve time."""
+        opt = {
+            "all": ['mypkg[fast]; "x" in extras'],
+            "fast": ["some-dep"],
+        }
+        env = {"python_version": "3.12", "python_full_version": "3.12.0"}
+        assert expand_self_extras(opt, "mypkg", ["all"], env) == ["all"]
+
 
 class TestExpandExtraRequirements:
     def test_empty_selection_returns_empty(self) -> None:

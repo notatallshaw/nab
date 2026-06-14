@@ -9,6 +9,7 @@ import tomli
 
 from nab_resolver.errors import ResolutionError
 
+from ._conflict_kind import dependency_marker_holds
 from ._vendor.packaging.dependency_groups import resolve_dependency_groups
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.requirements import InvalidRequirement, Requirement
@@ -192,7 +193,7 @@ def expand_self_extras(
             if (
                 environment is not None
                 and req.marker is not None
-                and not req.marker.evaluate(environment)
+                and not dependency_marker_holds(req.marker, environment)
             ):
                 continue
             worklist.extend(
