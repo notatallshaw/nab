@@ -19,6 +19,7 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 
+from .._conflict_kind import dependency_marker_holds, membership_set_in_marker
 from .._vcs_admission import admit_vcs_url
 from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.ranges import VersionRange
@@ -509,13 +510,13 @@ def _run_pass(  # noqa: PLR0913
 
 
 def _warn_extra_marker_at_root(requirements: list[str]) -> list[str]:
-    """Warn when a root requirement uses an ``extra ==`` marker.
+    """Warn when a root requirement tests an extra/group membership marker.
 
-    Hole 1.6 plug.  ``packaging`` defaults the ``extra`` variable to
-    ``""`` at root, so a marker like ``pkg ; extra == "test"`` evaluates
-    False during root parsing and the dep is silently dropped.  The
-    user almost certainly meant the ``parent[test]`` extra-of-parent
-    syntax, not a self-referential extra marker.
+    Hole 1.6 plug.  ``packaging`` defaults ``extra`` to ``""`` at root and
+    the ``extras`` / ``dependency_groups`` set variables are empty at resolve
+    time, so a marker like ``pkg ; extra == "test"`` or ``pkg ; "test" in
+    extras`` evaluates False during root parsing and the dep is dropped.  The
+    user almost certainly meant the ``parent[test]`` extra-of-parent syntax.
 
     Returns the list of requirement strings that triggered the warning
     so callers can write tests against the diagnostic without parsing
@@ -528,12 +529,17 @@ def _warn_extra_marker_at_root(requirements: list[str]) -> list[str]:
         except InvalidRequirement:  # pragma: no cover - re-raised at resolve time
             continue
         marker_text = str(req.marker or "")
-        if "extra ==" in marker_text or "extra==" in marker_text:
+        if (
+            "extra ==" in marker_text
+            or "extra==" in marker_text
+            or membership_set_in_marker(marker_text)
+        ):
             flagged.append(req_str)
             logger.warning(
-                "Root requirement %r uses an ``extra`` marker; the dep will be "
-                "silently dropped because root has no parent extra.  Did you "
-                "mean ``pkg[extra]`` (extras-of-package) instead?",
+                "Root requirement %r tests an extra or dependency-group "
+                "membership marker; the dep is dropped because root activates "
+                "no extra or group at resolve time. For an extra, use "
+                "``pkg[extra]`` (extras-of-package).",
                 req_str,
             )
     return flagged
@@ -578,7 +584,9 @@ def _parse_requirements(
         if kind == "constraint" and req.extras:
             msg = f"Constraints cannot have extras: {req_str}"
             raise ConfigError(msg)
-        if req.marker is not None and not req.marker.evaluate(environment):
+        if req.marker is not None and not dependency_marker_holds(
+            req.marker, environment
+        ):
             continue
         if req.url is not None:
             admit_vcs_url(req.url, vcs_config or VcsConfig())

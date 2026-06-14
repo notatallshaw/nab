@@ -613,6 +613,16 @@ class TestWarnExtraMarkerAtRoot:
         flagged = _warn_extra_marker_at_root(['pkg ; extra=="test"'])
         assert flagged == ['pkg ; extra=="test"']
 
+    def test_extras_set_marker_is_flagged(self) -> None:
+        """``"test" in extras`` triggers the diagnostic."""
+        flagged = _warn_extra_marker_at_root(['pkg ; "test" in extras'])
+        assert flagged == ['pkg ; "test" in extras']
+
+    def test_dependency_groups_marker_is_flagged(self) -> None:
+        """``"dev" in dependency_groups`` triggers the diagnostic."""
+        flagged = _warn_extra_marker_at_root(['pkg ; "dev" in dependency_groups'])
+        assert flagged == ['pkg ; "dev" in dependency_groups']
+
     def test_clean_requirement_not_flagged(self) -> None:
         """A normal requirement passes silently."""
         flagged = _warn_extra_marker_at_root(
@@ -648,6 +658,12 @@ class TestParseRequirements:
         """A requirement whose marker excludes the env is dropped."""
         env = _linux_311().environment
         out = _parse_requirements(['pkg; sys_platform == "win32"'], env)
+        assert out == {}
+
+    def test_set_marker_drops_without_crash(self) -> None:
+        """A lockfile-only set marker is empty at resolve time, so the dep drops."""
+        env = _linux_311().environment
+        out = _parse_requirements(['pkg ; "x" in extras'], env)
         assert out == {}
 
     def test_extras_get_separate_entries(self) -> None:

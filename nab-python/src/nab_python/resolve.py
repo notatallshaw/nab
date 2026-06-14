@@ -16,6 +16,7 @@ from nab_resolver.resolver import (
     Resolver,
 )
 
+from ._conflict_kind import dependency_marker_holds, membership_set_in_marker
 from ._vcs_admission import admit_vcs_url
 from ._vendor.packaging.markers import default_environment
 from ._vendor.packaging.ranges import VersionRange
@@ -321,7 +322,9 @@ def _group_package_ranges(
     ranges: dict[str, VersionRange] = {}
     sources: dict[str, list[str]] = defaultdict(list)
     for req in requirements:
-        if req.marker is not None and not req.marker.evaluate(environment):
+        if req.marker is not None and not dependency_marker_holds(
+            req.marker, environment
+        ):
             continue
         if req.url is not None:
             continue
@@ -632,6 +635,23 @@ def _walk_no_versions_packages(
     return out
 
 
+def _warn_dropped_root_marker(req: Requirement) -> None:
+    """Warn when a dropped root requirement tests an extra/group membership.
+
+    A root marker testing ``extra``, ``extras``, or ``dependency_groups``
+    evaluates False at resolve time (root activates no extra or group), so the
+    dep would otherwise be dropped silently.
+    """
+    marker_text = str(req.marker)
+    if "extra ==" in marker_text or membership_set_in_marker(marker_text):
+        _logger.warning(
+            "Root requirement %r tests an extra or dependency-group membership "
+            "marker; the dep is dropped because root activates no extra or group "
+            "at resolve time. For an extra, use pkg[extra] (extras-of-package).",
+            str(req),
+        )
+
+
 def _build_resolver_inputs(
     requirements: list[Requirement],
     config: NabProjectConfig,
@@ -649,14 +669,10 @@ def _build_resolver_inputs(
     sources: defaultdict[str, list[str]] = defaultdict(list)
     root_extras: set[tuple[str, str]] = set()
     for req in requirements:
-        if req.marker is not None and not req.marker.evaluate(environment):
-            if "extra ==" in str(req.marker):
-                _logger.warning(
-                    "Root requirement %r uses an extra marker; the dep is "
-                    "dropped because root has no parent extra. Did you mean "
-                    "pkg[extra] (extras-of-package) instead?",
-                    str(req),
-                )
+        if req.marker is not None and not dependency_marker_holds(
+            req.marker, environment
+        ):
+            _warn_dropped_root_marker(req)
             continue
         if req.url is not None:
             admit_vcs_url(req.url, config.vcs)
@@ -942,7 +958,9 @@ def _build_constraints(
         if req.extras:
             msg = f"Constraints cannot have extras: {cstr}"
             raise ConfigError(msg)
-        if req.marker is not None and not req.marker.evaluate(environment):
+        if req.marker is not None and not dependency_marker_holds(
+            req.marker, environment
+        ):
             continue
         if req.url is not None:
             admit_vcs_url(req.url, config.vcs)
