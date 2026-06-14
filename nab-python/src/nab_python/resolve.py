@@ -169,13 +169,13 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         resolution_strategy if resolution_strategy is not None else config.resolution
     )
 
-    requirements = read_pyproject_dependencies(path)
-    requirements.extend(_load_group_requirements(path, effective_groups))
-    requirements.extend(_load_extra_requirements(path, extras))
     marker_environment = _build_marker_environment(
         python_version=effective_python,
         overrides=config.marker_environment,
     )
+    requirements = read_pyproject_dependencies(path)
+    requirements.extend(_load_group_requirements(path, effective_groups))
+    requirements.extend(_load_extra_requirements(path, extras, marker_environment))
     if len(effective_groups) > 1:
         _check_group_disjointness(
             _load_group_requirements_by_group(path, effective_groups),
@@ -438,13 +438,18 @@ def _check_group_disjointness_across_tuples(
     raise ResolutionError("; ".join(clauses))
 
 
-def _load_extra_requirements(path: Path, selected: Sequence[str]) -> list[Requirement]:
+def _load_extra_requirements(
+    path: Path,
+    selected: Sequence[str],
+    environment: dict[str, str] | None = None,
+) -> list[Requirement]:
     """Read [project.optional-dependencies] from ``path`` and expand ``selected``.
 
     Self-references (``{project_name}[a, b]`` inside an extra's
     contents) are expanded transitively so that the third-party deps
     they ultimately reach reach the resolver as root requirements.
-    See :func:`expand_self_extras` for the rationale.
+    A marker-gated self-reference is walked only when its marker holds
+    under ``environment``; see :func:`expand_self_extras`.
     """
     if not selected:
         return []
@@ -453,6 +458,7 @@ def _load_extra_requirements(path: Path, selected: Sequence[str]) -> list[Requir
         read_pyproject_name(path),
         selected,
         path=path,
+        environment=environment,
     )
 
 
@@ -462,6 +468,7 @@ def _extra_requirements_from_table(
     selected: Sequence[str],
     *,
     path: Path,
+    environment: dict[str, str] | None = None,
 ) -> list[Requirement]:
     """Expand ``selected`` extras from an already-read optional-deps table.
 
@@ -476,7 +483,7 @@ def _extra_requirements_from_table(
             f" missing from {path}: {sorted(selected)!r}"
         )
         raise LookupError(msg)
-    expanded = expand_self_extras(optional, project_name, selected)
+    expanded = expand_self_extras(optional, project_name, selected, environment)
     return select_optional_dependencies(optional, expanded)
 
 
