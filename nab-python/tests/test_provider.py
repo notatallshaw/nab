@@ -33,6 +33,7 @@ from nab_python.provider import (
     Provider,
     ResolutionStrategy,
     UnsupportedSdistError,
+    UnsupportedVcsError,
     VcsConfig,
     VcsPolicy,
     VcsSource,
@@ -837,6 +838,72 @@ class TestGetDependencies:
         assert "bar" in deps
         assert "custom-build" in deps["bar"]
         assert V("1.0") not in deps["bar"]
+        assert "baz" in deps
+
+
+class TestTransitiveDirectUrlDep:
+    """A direct-URL ``Requires-Dist`` is refused, not silently substituted.
+
+    The root and constraint inputs and the universal per-tuple path already
+    call ``admit_vcs_url`` then raise. Without the same check here a fetched
+    package's ``bar @ https://...`` dep was recorded as a bare ``bar`` and
+    resolved from the index, pinning the wrong artifact silently.
+    """
+
+    @staticmethod
+    def _provider_for(url: str, vcs_config: VcsConfig | None = None) -> Provider:
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\n"
+                "Name: foo\n"
+                "Version: 1.0\n"
+                f"Requires-Dist: bar @ {url}\n"
+            ),
+            package="foo",
+        )
+        return Provider(coordinator, python_version="3.12.0", vcs_config=vcs_config)
+
+    def test_plain_url_dep_refused(self) -> None:
+        """A non-VCS direct-URL dep raises rather than pinning from the index."""
+        provider = self._provider_for("https://example.com/bar-9.9-py3-none-any.whl")
+        with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
+            provider.get_dependencies("foo", V("1.0"))
+
+    def test_vcs_url_dep_blocked_by_default(self) -> None:
+        """A VCS dep is refused under the default BLOCK policy."""
+        provider = self._provider_for("git+https://example.com/bar.git@" + "a" * 40)
+        with pytest.raises(UnsupportedVcsError, match="BLOCK"):
+            provider.get_dependencies("foo", V("1.0"))
+
+    def test_admitted_vcs_url_dep_raises_not_implemented(self) -> None:
+        """An admitted VCS dep raises NotImplementedError; support is deferred."""
+        provider = self._provider_for(
+            "git+https://example.com/bar.git@" + "a" * 40,
+            vcs_config=VcsConfig(
+                policy=VcsPolicy.ALLOW, allowed_schemes=frozenset({"git+https"})
+            ),
+        )
+        with pytest.raises(NotImplementedError, match="not implemented"):
+            provider.get_dependencies("foo", V("1.0"))
+
+    def test_marker_gated_url_dep_not_applying_is_skipped(self) -> None:
+        """A url dep gated by a marker that does not apply is skipped, not refused."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\n"
+                "Name: foo\n"
+                "Version: 1.0\n"
+                "Requires-Dist: bar @ https://example.com/bar.whl ;"
+                ' python_version < "3.0"\n'
+                "Requires-Dist: baz>=1.0\n"
+            ),
+            package="foo",
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "bar" not in deps
         assert "baz" in deps
 
 

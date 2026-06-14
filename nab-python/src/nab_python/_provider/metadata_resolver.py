@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._vcs_admission import admit_vcs_url
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.utils import canonicalize_name
@@ -419,6 +420,13 @@ def cache_deps_from_metadata(
         req_extras = classify_requirement(provider, req, provided_extras)
         if req_extras is None:
             continue
+        if req.url is not None:
+            admit_vcs_url(req.url, provider.vcs_config)
+            msg = (
+                f"VCS dependency admitted by policy but resolver path is not"
+                f" implemented: {req.name} @ {req.url}"
+            )
+            raise NotImplementedError(msg)
         add_classified_dep(req, req_extras, base_deps, extra_deps_map)
     provider.deps_cache[cache_key] = base_deps
     provider.extra_deps_map[cache_key] = extra_deps_map

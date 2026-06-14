@@ -1165,6 +1165,9 @@ class Provider:
         except UnsupportedSdistError:
             self._unsupported_sdists.add(cache_key)
             raise
+        except (UnsupportedVcsError, NotImplementedError):
+            # A refused direct-URL dep is a hard error, not a parse skip.
+            raise
         except Exception as exc:
             logger.warning(
                 "Skipping %s==%s: metadata cannot be parsed (%s)."
