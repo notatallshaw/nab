@@ -31,6 +31,9 @@ if TYPE_CHECKING:
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_python._vendor.packaging.ranges import VersionRange
+from nab_python._vendor.packaging.requirements import Requirement
+from nab_python._vendor.packaging.utils import canonicalize_name
+from nab_python.config import PackageOverride
 from nab_python.fetch import FetchCoordinator
 from nab_python.provider import (
     BuildPolicy,
@@ -78,19 +81,27 @@ def _resolve_one(  # noqa: PLR0913 - one kwarg per knob; bundling hides the surf
     python_version: str,
     marker_environment: dict[str, str] | None,
     indexes: list,
-    index_overrides: list | None,
+    index_routes: list | None,
     uploaded_prior_to: datetime | None,
     strategy: ResolutionStrategy,
     direct_packages: frozenset[str],
     extras_mode: ExtrasMode,
     build_policy_overrides: Mapping[str, BuildPolicy] | None,
 ) -> dict:
+    package_overrides = tuple(
+        PackageOverride(
+            requirement=Requirement(name),
+            name=canonicalize_name(name),
+            version_range=VersionRange.full(),
+            build_policy=policy,
+        )
+        for name, policy in (build_policy_overrides or {}).items()
+    )
     with FetchCoordinator(
         HttpxAsyncTransport(),
         indexes=indexes,
         cache_dir=CACHE_DIR,
-        index_overrides=index_overrides,
-        marker_environment=marker_environment,
+        index_routes=index_routes,
     ) as coordinator:
         provider = Provider(
             coordinator,
@@ -99,7 +110,7 @@ def _resolve_one(  # noqa: PLR0913 - one kwarg per knob; bundling hides the surf
             uploaded_prior_to=uploaded_prior_to,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
-            build_policy_overrides=build_policy_overrides,
+            package_overrides=package_overrides,
             marker_environment=marker_environment,
             resolution_strategy=strategy,
             direct_packages=direct_packages,
@@ -164,7 +175,7 @@ def _scenario_inputs(scenario: dict) -> dict | None:
     constraint_strings: list[str] = scenario.get("constraints", [])
     marker_env = _scenarios.parse_marker_environment("sweep", scenario)
     indexes = _scenarios.parse_indexes("sweep", scenario)
-    index_overrides = _scenarios.parse_index_overrides("sweep", scenario)
+    index_routes = _scenarios.parse_index_overrides("sweep", scenario)
     datetime_str = scenario.get("datetime")
     project_name = scenario.get("project_name")
     project_extras = scenario.get("project_extras", [])
@@ -216,7 +227,7 @@ def _scenario_inputs(scenario: dict) -> dict | None:
         "python_version": python_version,
         "marker_environment": marker_env or None,
         "indexes": indexes,
-        "index_overrides": index_overrides or None,
+        "index_routes": index_routes or None,
         "uploaded_prior_to": uploaded_prior_to,
         "direct_packages": _direct_set(requirements),
         "build_policy_overrides": build_policy_overrides or None,

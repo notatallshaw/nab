@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from nab_resolver.types import RangeProtocol
 
     from .._vendor.packaging.version import Version
-    from ..config import NabProjectConfig
+    from ..config import IndexOverride, NabProjectConfig, PackageOverride
     from ..fetch import FetchCoordinator
     from .wheel_selection import PlatformSpec
 
@@ -74,13 +74,12 @@ class UniversalProvider(Provider):
         *,
         root_requirements: dict[str, VersionRange] | None = None,
         uploaded_prior_to: datetime | None = None,
-        uploaded_prior_to_overrides: Mapping[str, datetime | None] | None = None,
         extras_mode: ExtrasMode = ExtrasMode.ERROR_USER,
         root_extras: set[tuple[str, str]] | None = None,
         dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
-        dist_policy_overrides: Mapping[str, DistPolicy] | None = None,
         build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL,
-        build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
+        package_overrides: Sequence[PackageOverride] = (),
+        index_overrides: Mapping[str, IndexOverride] | None = None,
         vcs_config: VcsConfig | None = None,
         vcs_cache_dir: Path | None = None,
         local_sources: list[LocalSource] | None = None,
@@ -118,13 +117,12 @@ class UniversalProvider(Provider):
             ),
             root_requirements=root_requirements,
             uploaded_prior_to=uploaded_prior_to,
-            uploaded_prior_to_overrides=uploaded_prior_to_overrides,
             extras_mode=extras_mode,
             root_extras=root_extras,
             dist_policy=dist_policy,
-            dist_policy_overrides=dist_policy_overrides,
             build_policy=build_policy,
-            build_policy_overrides=build_policy_overrides,
+            package_overrides=package_overrides,
+            index_overrides=index_overrides,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
             vcs_config=vcs_config,
             local_sources=local_sources,

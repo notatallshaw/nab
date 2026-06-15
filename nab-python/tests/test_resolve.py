@@ -302,7 +302,7 @@ class TestSpecificModeConflictValidation:
             "gpu = []\n"
             "[tool.nab]\n"
             "conflicts = ["
-            '{ exactly_one = [{ extra = "cpu" }, { extra = "gpu" }] }'
+            '{ members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "exactly-one" }'
             "]\n"
         )
         with pytest.raises(ConflictSelectionError, match="exactly one"):
@@ -322,7 +322,7 @@ class TestSpecificModeConflictValidation:
             "gpu = []\n"
             "[tool.nab]\n"
             "conflicts = ["
-            '{ at_least_one = [{ extra = "cpu" }, { extra = "gpu" }] }'
+            '{ members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "at-least-one" }'
             "]\n"
         )
         with pytest.raises(ConflictSelectionError, match="at least one"):
@@ -341,7 +341,7 @@ class TestSpecificModeConflictValidation:
             'gpu = ["foo==2.0"]\n'
             "[tool.nab]\n"
             "conflicts = ["
-            '{ exactly_one = [{ extra = "cpu" }, { extra = "gpu" }] }'
+            '{ members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "exactly-one" }'
             "]\n"
         )
         with (
@@ -373,7 +373,7 @@ class TestSpecificModeConflictValidation:
             "[tool.nab]\n"
             'default-groups = ["a"]\n'
             "conflicts = ["
-            '{ exactly_one = [{ group = "a" }, { group = "b" }] }'
+            '{ members = [{ group = "a" }, { group = "b" }], policy = "exactly-one" }'
             "]\n"
         )
         with (
@@ -532,22 +532,20 @@ class TestResolvePyproject:
         assert forwarded[0].name == "private"
         assert forwarded[0].url == "https://custom.index/simple/"
 
-    def test_coordinator_marker_env_includes_python_version(
-        self, tmp_path: Path
-    ) -> None:
-        """An index-override marker referencing python_version must evaluate.
-
-        The coordinator evaluates index-override markers, so it needs the
-        full environment (defaults plus the effective python), not just the
-        user's [tool.nab.marker-environment] overrides.
-        """
+    def test_routing_override_passed_as_index_route(self, tmp_path: Path) -> None:
+        """A per-package routing override reaches the coordinator as a route."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\ndependencies = ["baz"]\n'
-            "[[tool.nab.index-overrides]]\n"
-            'name = "baz"\n'
-            'index = "private"\n'
-            "marker = \"python_version >= '3.12'\"\n",
+            "[[tool.nab.indexes]]\n"
+            'name = "pypi"\n'
+            'url = "https://pypi.org/simple/"\n'
+            "[[tool.nab.indexes]]\n"
+            'name = "private"\n'
+            'url = "https://private.example.com/simple/"\n'
+            "[[tool.nab.overrides.package]]\n"
+            'packages = ["baz"]\n'
+            'index = "private"\n',
         )
 
         with (
@@ -564,9 +562,8 @@ class TestResolvePyproject:
 
             resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        env = mock_coord_cls.call_args.kwargs["marker_environment"]
-        assert env is not None
-        assert env.get("python_version") == "3.12"
+        routes = mock_coord_cls.call_args.kwargs["index_routes"]
+        assert [(r.name, r.index) for r in routes] == [("baz", "private")]
 
     def test_arbitrary_equality_dep_passed_through(self, tmp_path: Path) -> None:
         """``===`` deps reach the resolver as literal-only ranges.
@@ -1183,8 +1180,8 @@ class TestResolveUniversalPyproject:
             'gpu = ["torch==2.0+gpu"]\n'
             "[tool.nab]\n"
             'mode = "universal"\n'
-            'conflicts = [{ exactly_one = [{ extra = "cpu" },'
-            ' { extra = "gpu" }] }]\n'
+            'conflicts = [{ members = [{ extra = "cpu" },'
+            ' { extra = "gpu" }], policy = "exactly-one" }]\n'
             "[tool.nab.matrix]\n"
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
@@ -1206,8 +1203,8 @@ class TestResolveUniversalPyproject:
             'gpu = ["torch==2.0+gpu"]\n'
             "[tool.nab]\n"
             'mode = "universal"\n'
-            'conflicts = [{ at_least_one = [{ extra = "cpu" },'
-            ' { extra = "gpu" }] }]\n'
+            'conflicts = [{ members = [{ extra = "cpu" },'
+            ' { extra = "gpu" }], policy = "at-least-one" }]\n'
             "[tool.nab.matrix]\n"
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
@@ -1254,8 +1251,8 @@ class TestResolveUniversalPyproject:
             'gpu = ["torch==2.0+gpu"]\n'
             "[tool.nab]\n"
             'mode = "universal"\n'
-            'conflicts = [{ exactly_one = [{ extra = "cpu" },'
-            ' { extra = "gpu" }] }]\n'
+            'conflicts = [{ members = [{ extra = "cpu" },'
+            ' { extra = "gpu" }], policy = "exactly-one" }]\n'
             "[tool.nab.matrix]\n"
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
@@ -1432,7 +1429,7 @@ class TestResolveUniversalPyproject:
             'mode = "universal"\n'
             'default-groups = ["a"]\n'
             "conflicts = ["
-            '{ exactly_one = [{ group = "a" }, { group = "b" }] }'
+            '{ members = [{ group = "a" }, { group = "b" }], policy = "exactly-one" }'
             "]\n"
             "[tool.nab.matrix]\n"
             'python = "==3.11"\n'
@@ -1482,7 +1479,7 @@ class TestResolvePyprojectVcs:
             f'["foo @ git+https://github.com/foo/bar.git@{_FORTY}"]\n',
         )
 
-        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
     def test_block_default_refuses_vcs_constraint(self, tmp_path: Path) -> None:
@@ -1493,7 +1490,7 @@ class TestResolvePyprojectVcs:
             f'["foo @ git+https://github.com/foo/bar.git@{_FORTY}"]\n',
         )
 
-        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
     def test_admitted_vcs_dependency_raises_not_implemented(
@@ -1505,7 +1502,8 @@ class TestResolvePyprojectVcs:
             f'["foo @ git+https://github.com/foo/bar.git@{_FORTY}"]\n'
             "[tool.nab.vcs]\n"
             'policy = "allow"\n'
-            'allowed-schemes = ["git+https"]\n',
+            'allowed-schemes = ["git+https"]\n'
+            'allowed-repos = ["https://github.com/"]\n',
         )
 
         with pytest.raises(NotImplementedError, match="not implemented"):
@@ -1525,7 +1523,8 @@ class TestResolvePyprojectVcs:
             f'["foo @ git+https://github.com/foo/bar.git@{_FORTY}"]\n'
             "[tool.nab.vcs]\n"
             'policy = "allow"\n'
-            'allowed-schemes = ["git+https"]\n',
+            'allowed-schemes = ["git+https"]\n'
+            'allowed-repos = ["https://github.com/"]\n',
         )
 
         with pytest.raises(NotImplementedError, match="not implemented"):

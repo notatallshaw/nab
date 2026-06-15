@@ -93,7 +93,7 @@ def extract_source_metadata(
     metadata = extract_static_metadata(path)
     if metadata is not None:
         return metadata
-    effective = provider.effective_build_policy(package)
+    effective = provider.effective_build_policy_for_source(package)
     if kind == "local":
         allowed = {BuildPolicy.BUILD_LOCAL, BuildPolicy.BUILD_REMOTE}
         minimum = BuildPolicy.BUILD_LOCAL

@@ -143,7 +143,7 @@ class TestResolveSha:
 
     def test_floating_under_pin_raises(self) -> None:
         req = VcsRequest("git", "https://x", "main", "")
-        with pytest.raises(VcsCloneError, match="vcs_require_pin"):
+        with pytest.raises(VcsCloneError, match=r"vcs\.require-pin"):
             _resolve_sha(req, require_pin=True)
 
     def test_floating_no_pin_calls_ls_remote(
@@ -415,6 +415,7 @@ class TestProviderVcsIntegration:
             vcs_config=VcsConfig(
                 policy=VcsPolicy.ALLOW,
                 allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
                 require_pin=True,
             ),
             vcs_sources=[
@@ -444,6 +445,7 @@ class TestProviderVcsIntegration:
             vcs_config=VcsConfig(
                 policy=VcsPolicy.ALLOW,
                 allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
                 require_pin=True,
             ),
             vcs_sources=[
@@ -502,6 +504,7 @@ class TestProviderVcsIntegration:
                 vcs_config=VcsConfig(
                     policy=VcsPolicy.ALLOW,
                     allowed_schemes=frozenset({"git+https"}),
+                    allowed_repos=("https://example.com/",),
                     require_pin=True,
                 ),
                 vcs_sources=[

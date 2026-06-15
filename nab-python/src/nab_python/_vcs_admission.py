@@ -32,7 +32,7 @@ class VcsPolicy(enum.Enum):
     Cloning a remote repo is one short step from arbitrary code execution
     (modern Python projects build via PEP 517 backends, which run user
     code).  Default posture is :attr:`BLOCK`; opt-in is per-protocol via
-    ``vcs_allowed_schemes`` and per-repo via ``vcs_allowed_repos``.
+    ``vcs.allowed-schemes`` and per-repo via ``vcs.allowed-repos``.
     """
 
     BLOCK = "block"
@@ -138,9 +138,9 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         msg = (
             "refusing VCS requirement\n"
             f"    {url}\n"
-            "    reason: VcsPolicy is BLOCK (default).\n"
-            "    to allow: set vcs_policy=VcsPolicy.ALLOW with appropriate\n"
-            "              vcs_allowed_schemes (and optionally vcs_allowed_repos)."
+            '    reason: vcs.policy is "block" (default).\n'
+            '    to allow: set vcs.policy = "allow" with appropriate\n'
+            "              vcs.allowed-schemes (and vcs.allowed-repos)."
         )
         raise UnsupportedVcsError(msg)
 
@@ -149,7 +149,7 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         msg = (
             "refusing VCS scheme\n"
             f"    {url}\n"
-            f'    reason: scheme "{scheme}" not in vcs_allowed_schemes='
+            f'    reason: scheme "{scheme}" not in vcs.allowed-schemes='
             f"{{{allowed_str}}}."
         )
         if scheme in _VCS_INSECURE_SCHEMES:
@@ -159,14 +159,15 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
             )
         raise UnsupportedVcsError(msg)
 
-    if config.allowed_repos and not any(
-        inner_url.startswith(prefix) for prefix in config.allowed_repos
-    ):
-        allowed_str = ", ".join(sorted(config.allowed_repos))
+    # An empty allowed-repos denies every repo (deny-all), matching
+    # allowed-schemes: under policy = "allow" the user must list at least
+    # one repo prefix.
+    if not any(inner_url.startswith(prefix) for prefix in config.allowed_repos):
+        allowed_str = ", ".join(sorted(config.allowed_repos)) or "<empty>"
         msg = (
             "refusing VCS repo\n"
             f"    {url}\n"
-            "    reason: repo URL prefix not in vcs_allowed_repos.\n"
+            "    reason: repo URL prefix not in vcs.allowed-repos.\n"
             f"    allowed prefixes: {allowed_str}"
         )
         raise UnsupportedVcsError(msg)
@@ -175,10 +176,10 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         msg = (
             "refusing unpinned VCS ref\n"
             f"    {url}\n"
-            "    reason: vcs_require_pin is True and no 40-char commit hash"
+            "    reason: vcs.require-pin is true and no 40-char commit hash"
             " present.\n"
             "    to allow: pin the requirement to a 40-char commit hash, or set\n"
-            "              vcs_require_pin=False (not recommended for"
+            "              vcs.require-pin = false (not recommended for"
             " reproducible installs)."
         )
         raise UnsupportedVcsError(msg)

@@ -385,7 +385,7 @@ class TestWheelTagFiltering:
         assert provider.excluded_by_wheel_tags == 0
 
     def test_sdist_only_under_no_dist_policy_drops_version(self) -> None:
-        """``NO_SDIST`` plus no compatible wheel removes the version."""
+        """``WHEEL_ONLY`` plus no compatible wheel removes the version."""
         files: list[WheelFile | SdistFile] = [
             _platform_wheel("2.0", "cp311-cp311-win_amd64"),
             _sdist("2.0"),
@@ -394,11 +394,11 @@ class TestWheelTagFiltering:
             _index_with_files(files),
             marker_environment=_LINUX_ENV,
             platform_spec=PlatformSpec("linux_x86_64"),
-            dist_policy=DistPolicy.NO_SDIST,
+            dist_policy=DistPolicy.WHEEL_ONLY,
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
         result = provider.filter_distributions("pkg", files)
-        # Parent already drops sdist under NO_SDIST; the only file left
+        # Parent already drops sdist under WHEEL_ONLY; the only file left
         # is the incompatible win wheel, so the version disappears.
         assert result == []
 
@@ -518,6 +518,7 @@ class TestVcsConfigPlumbing:
             vcs_config=VcsConfig(
                 policy=VcsPolicy.ALLOW,
                 allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
             ),
             vcs_sources=[source],
             build_policy=BuildPolicy.NEVER,

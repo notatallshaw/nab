@@ -6,8 +6,8 @@
 > consumer behaviour across installers varies; the schema may
 > tighten in future.
 
-Resolve against PyPI plus a second index, with one package
-routed to the second index when running on Linux x86_64.
+Resolve against PyPI plus a second index, with one package pinned to
+the second index.
 
 ## Project setup
 
@@ -29,24 +29,58 @@ url  = "https://pypi.org/simple/"
 name = "torch-cpu"
 url  = "https://download.pytorch.org/whl/cpu"
 
-[[tool.nab.index-overrides]]
-name   = "torch"
-index  = "torch-cpu"
-marker = "platform_machine == 'x86_64' and platform_system == 'Linux'"
+[[tool.nab.overrides.package]]
+packages = ["torch"]
+index    = "torch-cpu"
 ```
+
+Routing lives in `[[tool.nab.overrides.package]]` via the `index` body
+field, alongside the other per-package policies (see the
+[configuration guide](configuration.md)).  A routing entry must use
+bare-name requirements: the routing decision happens before any version
+is known, so a version specifier alongside `index` is rejected, and a
+package may have only one route.
 
 ## How nab routes the request
 
-* `numpy` has no override, so nab walks `[pypi, torch-cpu]` and
+* `numpy` has no routing override, so nab walks `[pypi, torch-cpu]` and
   picks the first index that lists it (PyPI).
-* `torch` has an override. On Linux x86_64 the marker holds; nab
-  consults only `torch-cpu`. On any other host the override does
-  not apply and nab falls back to the global ordering.
+* `torch` has a routing override, so nab consults only `torch-cpu`.
 
-If `torch-cpu` does not list `torch` on the matched host,
-resolution fails for that requirement. Strict pinning is the
-point: silent fallthrough is a foot-gun on a host the override
-was meant to govern.
+If `torch-cpu` does not list `torch`, resolution fails for that
+requirement. Strict pinning is the point: silent fallthrough is a
+foot-gun on an index the override was meant to govern.
+
+## Per-index policy
+
+`[tool.nab.overrides.index]` applies a policy to every package served
+from an index. Here every package that comes from PyPI is wheel-only,
+while packages from the torch index keep the global default:
+
+```toml
+[tool.nab.overrides.index]
+pypi = { dist-policy = "wheel-only" }
+```
+
+## Policy across both surfaces is an error, not a precedence
+
+The per-package and per-index surfaces are not ranked. If a per-package
+override and the per-index override for the serving index both set the
+same field for a candidate, the resolve raises a clear error rather
+than picking one:
+
+```toml
+# torch is pinned to torch-cpu (above).  This per-package override sets
+# dist-policy for torch, and the per-index override sets dist-policy for
+# everything from torch-cpu: a torch candidate served from torch-cpu is
+# governed by both, so the resolve errors.  Remove one of the two.
+[[tool.nab.overrides.package]]
+packages = ["torch"]
+dist-policy = "wheel-only"
+
+[tool.nab.overrides.index]
+torch-cpu = { dist-policy = "sdist-only" }
+```
 
 ## Run
 
@@ -58,14 +92,6 @@ nab lock pyproject.toml
 
 * Index ordering is significant. Reorder the
   `[[tool.nab.indexes]]` entries to change which index wins for
-  any package without an override.
-* Overrides are first-match-wins per package. Multiple overrides
-  for the same package with different markers act as a routing
-  table: declare the more specific markers first.
-* Marker-gated overrides are evaluated against
-  `[tool.nab.marker-environment]` in single-environment mode only.
-  Under `mode = "universal"` there is no single environment, so
-  marker entries on `[[tool.nab.index-overrides]]` are skipped and
-  the global index order applies for every tuple.  Use overrides
-  without a marker, or split the resolve into per-tuple specific
-  locks, when you need per-environment routing.
+  any package without a route.
+* Routing carries no version scope and no marker: a package has at most
+  one route, fixed for the whole resolve.

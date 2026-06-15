@@ -20,10 +20,19 @@ import os
 from hypothesis import HealthCheck, settings
 from hypothesis import strategies as st
 
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
+from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
+from nab_python.config import PackageOverride
+from nab_python.provider import DistPolicy
 
 PACKAGE_NAMES = [f"pkg{i}" for i in range(10)]
+
+# Specifier clauses over a small version grid so two random requirements
+# overlap roughly half the time; a bare name (full range) is included so
+# the always-overlaps case is exercised.
+OVERRIDE_SPECIFIERS = ["", "<=2", ">=2", "<3", ">=3", ">1,<4", "==2"]
 
 VERSION_POOL = [
     Version(f"{major}.{minor}") for major in range(1, 6) for minor in range(3)
@@ -203,3 +212,22 @@ def small_packaging_graphs(
     graph["root"] = {Version("1.0"): root_deps}
 
     return graph
+
+
+@st.composite
+def package_overrides(draw: st.DrawFn, *, name: str) -> PackageOverride:
+    """Draw one per-package ``PackageOverride`` for ``name``.
+
+    The requirement is ``name`` plus a specifier drawn from a small grid
+    so two draws overlap roughly half the time; the body sets a single
+    ``dist_policy`` value (the field the overlap property checks).
+    """
+    specifier = draw(st.sampled_from(OVERRIDE_SPECIFIERS))
+    requirement = Requirement(f"{name} {specifier}".strip())
+    dist_policy = draw(st.sampled_from(list(DistPolicy)))
+    return PackageOverride(
+        requirement=requirement,
+        name=canonicalize_name(name),
+        version_range=requirement.specifier.to_range(),
+        dist_policy=dist_policy,
+    )

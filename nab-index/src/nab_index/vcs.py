@@ -40,10 +40,10 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-# Match a 40-char lower-case hex git/hg commit SHA.  Exported so the
+# Match a 40-char hex git/hg commit SHA (case-insensitive).  Exported so the
 # VCS-admission code in ``nab_python.provider`` shares one definition with
 # the clone-time validation in this module.
-FULL_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+FULL_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _VCS_PREFIX_RE = re.compile(r"^git\+")
 
 
@@ -184,7 +184,7 @@ def _resolve_sha(request: VcsRequest, *, require_pin: bool) -> str:
     if require_pin:
         msg = (
             f"refusing to resolve floating ref {request.ref!r} for"
-            f" {request.repo_url!r}: vcs_require_pin is True"
+            f" {request.repo_url!r}: vcs.require-pin is true"
         )
         raise VcsCloneError(msg)
 

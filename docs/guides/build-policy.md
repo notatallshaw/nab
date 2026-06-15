@@ -14,7 +14,7 @@ The default is `build-local`: local checkouts and workspace
 members may invoke a backend, but remote sources (PyPI sdists,
 VCS clones) are read statically only.  Lift a specific package
 to `build-remote` with a per-package override when you know it
-needs a real build (`[tool.nab.build-policy-package]`); keep
+needs a real build (`[[tool.nab.overrides.package]]`); keep
 the global default tight rather than enabling builds for the
 whole graph.
 
@@ -81,40 +81,49 @@ without opening the door to remote-sdist builds.  Lower to
 
 For transitive dependencies that only publish a dynamic sdist
 (native or CUDA-heavy wheels are the usual offenders), prefer a
-per-package override rather than raising the global to
-`build-remote`:
+per-package override rather than raising the global to `build-remote`:
 
 ```toml
-[tool.nab.build-policy-package]
-deepspeed = "build-remote"
+[[tool.nab.overrides.package]]
+packages = ["deepspeed"]
+build-policy = "build-remote"
 ```
 
 That keeps the rest of the graph in the hermetic default while
 permitting the one package you actually need to build.
 
-## Per-package overrides
+## Overrides
 
-`[tool.nab.build-policy-package]` replaces the global on a
-per-package basis, in either direction:
+A `[[tool.nab.overrides.package]]` entry replaces the global build
+policy for its selected packages, in either direction:
 
 ```toml
 [tool.nab]
 build-policy = "never"
 
-[tool.nab.build-policy-package]
-deepspeed = "build-remote"
+[[tool.nab.overrides.package]]
+packages = ["deepspeed"]
+build-policy = "build-remote"
 ```
 
-The override participates in the `marker_environment` guard:
-when impersonating a non-host target, every override must be
-`never`, because backends run on the host and cannot reflect the
+Set the build policy for every package served from a given index with a
+per-index override instead:
+
+```toml
+[tool.nab.overrides.index]
+internal = { build-policy = "build-remote" }
+```
+
+Overrides participate in the `marker_environment` guard: when
+impersonating a non-host target, every override that sets `build-policy`
+must be `never`, because backends run on the host and cannot reflect the
 impersonated target's metadata.
 
 ## Interaction with `marker_environment`
 
 The marker overlay (used by universal resolution and by manual
 platform impersonation) is incompatible with anything other than
-`never` at both the global and the override level: invoking a
-backend on the host produces metadata that does not match the
-impersonated target, so the combination is rejected at
-config-load time.
+`never` at both the global level and in every override that sets
+`build-policy`: invoking a backend on the host produces metadata that
+does not match the impersonated target, so the combination is rejected
+at provider construction time.

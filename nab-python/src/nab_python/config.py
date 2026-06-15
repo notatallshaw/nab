@@ -11,6 +11,7 @@ import enum
 import itertools
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -22,10 +23,11 @@ from nab_index.multi_index import IndexConfig
 
 from ._conflict_kind import KIND_EXTRA, KIND_GROUP
 from ._toml import tool_nab_section
+from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import InvalidName, canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
-from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexOverride
+from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from .provider import (
     BuildPolicy,
     DistPolicy,
@@ -49,6 +51,8 @@ if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from pathlib import Path
 
+    from ._vendor.packaging.ranges import VersionRange
+
 __all__ = [
     "ConfigError",
     "ConflictFork",
@@ -57,12 +61,16 @@ __all__ = [
     "ConflictPolicy",
     "ConflictSelectionError",
     "ConflictSet",
+    "IndexOverride",
     "MatrixConfig",
     "NabProjectConfig",
+    "OverrideConflictError",
+    "PackageOverride",
     "ResolveMode",
     "conflict_exclusion_groups",
     "conflict_forks",
     "conflict_member_groups",
+    "index_routes_from_config",
     "read_pyproject_config",
     "validate_conflict_exclusions",
     "validate_conflict_minimums",
@@ -76,15 +84,10 @@ _TOP_LEVEL_KEYS = frozenset(
         "default-groups",
         "requires-python",
         "uploaded-prior-to",
-        "uploaded-prior-to-package",
         "dist-policy",
-        "dist-policy-package",
         "build-policy",
-        "build-policy-package",
-        "trust-unverified-sdist-deps",
         "marker-environment",
         "indexes",
-        "index-overrides",
         "vcs",
         "local-sources",
         "vcs-sources",
@@ -92,10 +95,29 @@ _TOP_LEVEL_KEYS = frozenset(
         "resolution",
         "workspace",
         "conflicts",
+        "overrides",
     },
 )
 
 _DURATION_PATTERN = re.compile(r"^P(\d+)D$")
+
+# PEP 508 environment-marker variables; reject a misspelled
+# [tool.nab.marker-environment] key (e.g. ``python-version``).
+_PEP508_MARKER_VARIABLES = frozenset(
+    {
+        "os_name",
+        "sys_platform",
+        "platform_machine",
+        "platform_python_implementation",
+        "platform_release",
+        "platform_system",
+        "platform_version",
+        "python_version",
+        "python_full_version",
+        "implementation_name",
+        "implementation_version",
+    },
+)
 
 
 class ResolveMode(enum.Enum):
@@ -135,9 +157,9 @@ class ConflictPolicy(enum.Enum):
     completeness.
     """
 
-    AT_MOST_ONE = "at_most_one"
-    EXACTLY_ONE = "exactly_one"
-    AT_LEAST_ONE = "at_least_one"
+    AT_MOST_ONE = "at-most-one"
+    EXACTLY_ONE = "exactly-one"
+    AT_LEAST_ONE = "at-least-one"
 
 
 class ConflictKind(enum.Enum):
@@ -175,7 +197,7 @@ class ConflictSet:
 
     @override
     def __str__(self) -> str:
-        """Render as ``at_most_one (extra 'cpu', extra 'gpu')`` for messages."""
+        """Render as ``at-most-one (extra 'cpu', extra 'gpu')`` for messages."""
         joined = ", ".join(str(m) for m in self.members)
         return f"{self.policy.value} ({joined})"
 
@@ -230,6 +252,53 @@ class ConflictFork:
     selection: tuple[tuple[str, str], ...]
     active_extras: tuple[str, ...]
     active_groups: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PackageOverride:
+    """One ``[[tool.nab.overrides.package]]`` entry: a requirement plus a body.
+
+    The selector is a single PEP 508 ``requirement`` (name plus an
+    optional version specifier; no extras, marker, or URL).  ``name`` is
+    the canonical package name and ``version_range`` is the requirement's
+    range, so a policy field applies only to candidate versions inside
+    it.  The *body* sets any combination of ``dist_policy`` (with
+    ``dist_trust_unverified_deps`` folding in the sdist-trust flag),
+    ``build_policy``, the ``uploaded_prior_to`` cutoff (or
+    ``uploaded_prior_to_disabled`` for the ``false`` form), and the
+    routing ``index``.  An entry that sets ``index`` must use a bare-name
+    requirement (full range), because routing decides where to fetch a
+    listing before any version is known.
+    """
+
+    requirement: Requirement
+    name: str
+    version_range: VersionRange
+    dist_policy: DistPolicy | None = None
+    dist_trust_unverified_deps: bool | None = None
+    build_policy: BuildPolicy | None = None
+    uploaded_prior_to: datetime | None = None
+    uploaded_prior_to_disabled: bool = False
+    index: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IndexOverride:
+    """One ``[tool.nab.overrides.index]`` entry: policy for an index.
+
+    Keyed by a declared index name.  The body sets any combination of
+    ``dist_policy`` (with ``dist_trust_unverified_deps``),
+    ``build_policy``, and the ``uploaded_prior_to`` cutoff (or
+    ``uploaded_prior_to_disabled`` for the ``false`` form).  It applies
+    to every package served from that index; it carries no routing and
+    no version scope.
+    """
+
+    dist_policy: DistPolicy | None = None
+    dist_trust_unverified_deps: bool | None = None
+    build_policy: BuildPolicy | None = None
+    uploaded_prior_to: datetime | None = None
+    uploaded_prior_to_disabled: bool = False
 
 
 # Two active selections engage the set's exclusivity, forcing a fork.
@@ -310,19 +379,13 @@ class NabProjectConfig:
     default_groups: tuple[str, ...] = ()
     requires_python: str | None = None
     uploaded_prior_to: datetime | None = None
-    uploaded_prior_to_overrides: Mapping[str, datetime | None] = field(
-        default_factory=dict
-    )
     dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST
-    dist_policy_overrides: Mapping[str, DistPolicy] = field(default_factory=dict)
     build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL
-    build_policy_overrides: Mapping[str, BuildPolicy] = field(default_factory=dict)
     trust_unverified_sdist_deps: bool = False
     marker_environment: Mapping[str, str] = field(default_factory=dict)
     indexes: tuple[IndexConfig, ...] = (
         IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
     )
-    index_overrides: tuple[IndexOverride, ...] = ()
     vcs: VcsConfig = field(default_factory=VcsConfig)
     local_sources: tuple[LocalSource, ...] = ()
     vcs_sources: tuple[VcsSource, ...] = ()
@@ -330,6 +393,16 @@ class NabProjectConfig:
     resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST
     workspace: WorkspaceConfig | None = None
     conflicts: tuple[ConflictSet, ...] = ()
+    # Per-package overrides from ``[[tool.nab.overrides.package]]``, one
+    # per requirement, in declared order.  Version-scoped: a policy field
+    # applies only to candidate versions inside its requirement's range.
+    # Routing entries (those that set ``index``) are also projected into
+    # coordinator routes by ``index_routes_from_config``.
+    package_overrides: tuple[PackageOverride, ...] = ()
+    # Per-index overrides from ``[tool.nab.overrides.index]``, keyed by
+    # declared index name.  Each applies to every package served from
+    # that index; no routing, no version scope.
+    index_overrides: Mapping[str, IndexOverride] = field(default_factory=dict)
     # Canonical names of workspace members. Populated by
     # _apply_workspace_discovery; empty otherwise. Distinct from
     # ``local_sources``, which also carries explicit
@@ -347,6 +420,17 @@ class ConflictSelectionError(ConfigError):
     Raised on the single-environment path, where one resolution cannot
     serve two mutually-exclusive members at once.  Universal mode forks
     the resolve instead of raising.
+    """
+
+
+class OverrideConflictError(ConfigError):
+    """A per-package and a per-index override set the same field for one candidate.
+
+    Raised at resolve time when a candidate ``(package, version)`` served
+    from an index is governed by both a per-package override (whose range
+    contains the version) and a per-index override that each set the same
+    policy field.  The two surfaces are deliberately not ranked, so an
+    overlap is an error rather than a precedence call.
     """
 
 
@@ -532,19 +616,14 @@ def _parse_nab_table(
         )
         raise ConfigError(msg)
 
-    index_overrides = _parse_index_overrides(raw.get("index-overrides", []))
-    if mode is ResolveMode.UNIVERSAL:
-        marker_gated = sorted(o.name for o in index_overrides if o.marker)
-        if marker_gated:
-            joined = ", ".join(marker_gated)
-            msg = (
-                "mode = 'universal' does not support marker-gated"
-                f" [[tool.nab.index-overrides]] ({joined}): a universal lock"
-                " fetches each package once and cannot route it to a"
-                " different index per environment. Drop the marker or use"
-                " mode = 'specific'."
-            )
-            raise ConfigError(msg)
+    dist_policy, trust_unverified = _parse_dist_policy_global(raw.get("dist-policy"))
+    indexes = _parse_indexes(raw.get("indexes"))
+    declared_index_names = frozenset(i.name for i in indexes)
+    package_overrides, index_overrides = _parse_overrides(
+        raw.get("overrides"),
+        anchor=anchor,
+        declared_index_names=declared_index_names,
+    )
 
     default_groups = _parse_string_list("default-groups", raw.get("default-groups", []))
     conflicts = _parse_conflicts(raw.get("conflicts"))
@@ -558,32 +637,16 @@ def _parse_nab_table(
         uploaded_prior_to=_parse_uploaded_prior_to(
             raw.get("uploaded-prior-to"), anchor=anchor
         ),
-        uploaded_prior_to_overrides=_parse_uploaded_prior_to_package(
-            raw.get("uploaded-prior-to-package"), anchor=anchor
-        ),
-        dist_policy=_parse_enum(
-            "dist-policy", raw.get("dist-policy"), DistPolicy, DistPolicy.WHEEL_OR_SDIST
-        ),
-        dist_policy_overrides=_parse_dist_policy_package(
-            raw.get("dist-policy-package")
-        ),
+        dist_policy=dist_policy,
         build_policy=_parse_enum(
             "build-policy",
             raw.get("build-policy"),
             BuildPolicy,
             BuildPolicy.BUILD_LOCAL,
         ),
-        build_policy_overrides=_parse_build_policy_package(
-            raw.get("build-policy-package")
-        ),
-        trust_unverified_sdist_deps=_parse_bool(
-            "trust-unverified-sdist-deps",
-            raw.get("trust-unverified-sdist-deps"),
-            default=False,
-        ),
+        trust_unverified_sdist_deps=trust_unverified,
         marker_environment=_parse_marker_environment(raw.get("marker-environment", {})),
-        indexes=_parse_indexes(raw.get("indexes")),
-        index_overrides=index_overrides,
+        indexes=indexes,
         vcs=_parse_vcs(raw.get("vcs", {})),
         local_sources=_parse_local_sources(
             raw.get("local-sources", []), pyproject_dir=pyproject_dir
@@ -598,6 +661,8 @@ def _parse_nab_table(
         ),
         workspace=_parse_workspace(raw.get("workspace")),
         conflicts=conflicts,
+        package_overrides=package_overrides,
+        index_overrides=index_overrides,
     )
 
 
@@ -659,6 +724,22 @@ def _parse_requires_python(value: object) -> str | None:
         )
         raise ConfigError(msg) from exc
     return raw
+
+
+def index_routes_from_config(config: NabProjectConfig) -> list[IndexRoute]:
+    """Project the routing package overrides into coordinator :class:`IndexRoute`s.
+
+    Each per-package override that sets ``index`` contributes one route,
+    keyed by its bare package name.  A routing entry always uses a
+    bare-name requirement (parse-time guarantee), and the parse-time
+    non-overlap check forbids two routes for one package, so the resulting
+    route map has at most one entry per name.
+    """
+    return [
+        IndexRoute(name=override.name, index=override.index)
+        for override in config.package_overrides
+        if override.index is not None
+    ]
 
 
 def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime | None:
@@ -742,116 +823,42 @@ def read_pyproject_lock_anchor(path: Path) -> datetime | None:
         return None
 
 
-def _parse_uploaded_prior_to_package(
-    value: object, *, anchor: datetime
-) -> Mapping[str, datetime | None]:
-    """Parse the optional ``[tool.nab.uploaded-prior-to-package]`` table.
+_DIST_POLICY_TABLE_KEYS = frozenset({"policy", "trust-unverified-deps"})
 
-    Each entry maps a package name to either:
 
-    - ``false``: disable the cooldown for that package entirely.
-    - any value :func:`_parse_uploaded_prior_to` accepts (ISO datetime
-      with timezone, TOML offset-date-time, or ``"P<n>D"`` duration);
-      use that cutoff for the package, overriding the global value.
+def _parse_dist_policy_global(value: object) -> tuple[DistPolicy, bool]:
+    """Parse the global ``dist-policy``: an enum string or a policy table.
 
-    ``true`` is rejected: the only meaningful boolean is ``false``
-    ("no cooldown").  Package names are canonicalised so that
-    ``Foo-Bar`` and ``foo_bar`` collapse to the same entry; a
-    duplicate raises :class:`ConfigError` with the original keys
-    in the message.
-
-    ``anchor`` is forwarded to :func:`_parse_uploaded_prior_to` so
-    per-package ``P<n>D`` overrides resolve against the same reference
-    timestamp as the global value.
+    The table form ``{ policy = "...", trust-unverified-deps = bool }``
+    folds the sdist-trust flag into the dist body.  Returns
+    ``(policy, trust_unverified)``.
     """
     if value is None:
-        return {}
+        return (DistPolicy.WHEEL_OR_SDIST, False)
     if not isinstance(value, dict):
+        return (
+            _parse_enum("dist-policy", value, DistPolicy, DistPolicy.WHEEL_OR_SDIST),
+            False,
+        )
+    unknown = sorted(set(value) - _DIST_POLICY_TABLE_KEYS)
+    if unknown:
         msg = (
-            "[tool.nab.uploaded-prior-to-package] must be a table,"
-            f" got {type(value).__name__}"
+            f"dist-policy table has unknown key(s) {unknown!r};"
+            f" expected {sorted(_DIST_POLICY_TABLE_KEYS)!r}"
         )
         raise ConfigError(msg)
-    out: dict[str, datetime | None] = {}
-    seen: dict[str, str] = {}
-    for raw_key, raw_val in value.items():
-        if raw_val is True:
-            msg = (
-                f"[tool.nab.uploaded-prior-to-package].{raw_key}: ``true`` is"
-                " not a valid override; use ``false`` to disable the cooldown"
-                " or an absolute datetime / 'PnD' duration to set a window"
-            )
-            raise ConfigError(msg)
-        cutoff: datetime | None
-        if raw_val is False:
-            cutoff = None
-        else:
-            try:
-                cutoff = _parse_uploaded_prior_to(raw_val, anchor=anchor)
-            except ConfigError as exc:
-                msg = f"[tool.nab.uploaded-prior-to-package].{raw_key}: {exc}"
-                raise ConfigError(msg) from exc
-        canonical = canonicalize_name(raw_key)
-        if canonical in seen:
-            msg = (
-                "[tool.nab.uploaded-prior-to-package] declares duplicate"
-                f" canonical name {canonical!r} via {seen[canonical]!r}"
-                f" and {raw_key!r}"
-            )
-            raise ConfigError(msg)
-        seen[canonical] = raw_key
-        out[canonical] = cutoff
-    return out
-
-
-def _parse_dist_policy_package(value: object) -> Mapping[str, DistPolicy]:
-    """Parse the optional ``[tool.nab.dist-policy-package]`` table.
-
-    Maps a package name to one of the :class:`DistPolicy` values
-    ("no-sdist", "prefer-binary", "allow", "sdist-only").  The
-    per-package value overrides the global ``dist-policy`` for that
-    package; mirrors pip's ``--no-binary-package <pkg>`` shape by
-    mapping ``<pkg> = "sdist-only"``.
-
-    Package names are canonicalised; duplicates raise
-    :class:`ConfigError` with the original keys named.
-    """
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        msg = (
-            "[tool.nab.dist-policy-package] must be a table,"
-            f" got {type(value).__name__}"
-        )
+    if "policy" not in value:
+        msg = "dist-policy table must set 'policy'"
         raise ConfigError(msg)
-    out: dict[str, DistPolicy] = {}
-    seen: dict[str, str] = {}
-    valid = sorted(p.value for p in DistPolicy)
-    for raw_key, raw_val in value.items():
-        if not isinstance(raw_val, str):
-            msg = (
-                f"[tool.nab.dist-policy-package].{raw_key} must be a string,"
-                f" got {type(raw_val).__name__}"
-            )
-            raise ConfigError(msg)
-        try:
-            policy = DistPolicy(raw_val)
-        except ValueError as exc:
-            msg = (
-                f"[tool.nab.dist-policy-package].{raw_key} must be one of"
-                f" {valid!r}, got {raw_val!r}"
-            )
-            raise ConfigError(msg) from exc
-        canonical = canonicalize_name(raw_key)
-        if canonical in seen:
-            msg = (
-                "[tool.nab.dist-policy-package] declares duplicate canonical"
-                f" name {canonical!r} via {seen[canonical]!r} and {raw_key!r}"
-            )
-            raise ConfigError(msg)
-        seen[canonical] = raw_key
-        out[canonical] = policy
-    return out
+    policy = _parse_enum(
+        "dist-policy.policy", value["policy"], DistPolicy, DistPolicy.WHEEL_OR_SDIST
+    )
+    trust = _parse_bool(
+        "dist-policy.trust-unverified-deps",
+        value.get("trust-unverified-deps"),
+        default=False,
+    )
+    return (policy, trust)
 
 
 def _parse_bool(key: str, value: object, *, default: bool) -> bool:
@@ -896,8 +903,18 @@ def _parse_marker_environment(value: object) -> dict[str, str]:
                 f"marker-environment entries must be string -> string, got {k!r}: {v!r}"
             )
             raise ConfigError(msg)
+        if k not in _PEP508_MARKER_VARIABLES:
+            valid = sorted(_PEP508_MARKER_VARIABLES)
+            msg = (
+                f"unknown marker-environment variable {k!r}; expected a PEP 508"
+                f" marker variable, one of {valid!r}"
+            )
+            raise ConfigError(msg)
         out[k] = v
     return out
+
+
+_INDEX_KEYS = frozenset({"name", "url"})
 
 
 def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
@@ -918,6 +935,13 @@ def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
         if not isinstance(entry, dict):
             msg = f"indexes[{i}] must be a table, got {type(entry).__name__}"
             raise ConfigError(msg)
+        unknown = sorted(set(entry) - _INDEX_KEYS)
+        if unknown:
+            msg = (
+                f"unknown indexes[{i}] keys: {unknown!r};"
+                f" expected {sorted(_INDEX_KEYS)!r}"
+            )
+            raise ConfigError(msg)
         try:
             name = entry["name"]
             url = entry["url"]
@@ -935,30 +959,457 @@ def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
     return tuple(out)
 
 
-def _parse_index_overrides(value: object) -> tuple[IndexOverride, ...]:
-    if not isinstance(value, list):
-        msg = f"index-overrides must be an array of tables, got {type(value).__name__}"
+_OVERRIDES_KEYS = frozenset({"package", "index"})
+_PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
+    {"dist-policy", "build-policy", "uploaded-prior-to", "index", "strict"}
+)
+_PACKAGE_OVERRIDE_KEYS = frozenset({"packages"}) | _PACKAGE_OVERRIDE_BODY_KEYS
+_INDEX_OVERRIDE_KEYS = frozenset({"dist-policy", "build-policy", "uploaded-prior-to"})
+# Body keys deferred to later PRs; rejected so nothing inert ships.
+_OVERRIDE_DEFERRED_KEYS = frozenset(
+    {"resolution", "prereleases", "source", "vcs", "metadata", "marker"}
+)
+# The policy fields a [[tool.nab.overrides.package]] entry may carry per
+# field name, mapping each to the offending-entry attribute used by the
+# parse-time overlap check below.
+_PACKAGE_POLICY_FIELDS = (
+    ("dist-policy", "dist_policy"),
+    ("dist-policy.trust-unverified-deps", "dist_trust_unverified_deps"),
+    ("build-policy", "build_policy"),
+    ("uploaded-prior-to", "uploaded_prior_to"),
+    ("uploaded-prior-to", "uploaded_prior_to_disabled"),
+    ("index", "index"),
+)
+
+
+def _parse_overrides(
+    value: object,
+    *,
+    anchor: datetime,
+    declared_index_names: frozenset[str],
+) -> tuple[tuple[PackageOverride, ...], dict[str, IndexOverride]]:
+    """Parse ``[tool.nab.overrides]`` into per-package and per-index overrides.
+
+    The table carries two sub-surfaces: ``[[tool.nab.overrides.package]]``
+    (an array of requirement-keyed entries) and
+    ``[tool.nab.overrides.index]`` (a table keyed by declared index name).
+    Returns ``(package_overrides, index_overrides)``.  Per-package entries
+    that set the same policy field for one package with overlapping
+    version ranges are rejected here (no precedence between them).
+    """
+    if value is None:
+        return ((), {})
+    if not isinstance(value, dict):
+        msg = f"overrides must be a table, got {type(value).__name__}"
         raise ConfigError(msg)
-    out: list[IndexOverride] = []
+    unknown = sorted(set(value) - _OVERRIDES_KEYS)
+    if unknown:
+        msg = (
+            f"unknown [tool.nab.overrides] keys: {unknown!r}; expected"
+            f" {sorted(_OVERRIDES_KEYS)!r}"
+        )
+        raise ConfigError(msg)
+    package_overrides = _parse_package_overrides(
+        value.get("package"), anchor=anchor, declared_index_names=declared_index_names
+    )
+    _check_package_override_overlap(package_overrides)
+    index_overrides = _parse_index_overrides(
+        value.get("index"), anchor=anchor, declared_index_names=declared_index_names
+    )
+    return (package_overrides, index_overrides)
+
+
+def _parse_package_overrides(
+    value: object,
+    *,
+    anchor: datetime,
+    declared_index_names: frozenset[str],
+) -> tuple[PackageOverride, ...]:
+    """Parse ``[[tool.nab.overrides.package]]`` into requirement-keyed entries.
+
+    Each table's ``packages`` selector lists PEP 508 requirements (name
+    plus an optional version specifier); one :class:`PackageOverride` is
+    produced per requirement so listing several applies the body to each.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        msg = (
+            f"overrides.package must be an array of tables, got {type(value).__name__}"
+        )
+        raise ConfigError(msg)
+    out: list[PackageOverride] = []
     for i, entry in enumerate(value):
-        if not isinstance(entry, dict):
-            msg = f"index-overrides[{i}] must be a table, got {type(entry).__name__}"
-            raise ConfigError(msg)
-        try:
-            name = entry["name"]
-            index = entry["index"]
-        except KeyError as missing:
-            msg = f"index-overrides[{i}] missing required key {missing!s}"
-            raise ConfigError(msg) from None
-        marker = entry.get("marker")
-        if not isinstance(name, str) or not isinstance(index, str):
-            msg = f"index-overrides[{i}] name and index must be strings"
-            raise ConfigError(msg)
-        if marker is not None and not isinstance(marker, str):
-            msg = f"index-overrides[{i}] marker must be a string when set"
-            raise ConfigError(msg)
-        out.append(IndexOverride(name=name, index=index, marker=marker))
+        out.extend(
+            _parse_package_override_entry(
+                entry, i, anchor=anchor, declared_index_names=declared_index_names
+            )
+        )
     return tuple(out)
+
+
+def _parse_package_override_entry(
+    entry: object,
+    index: int,
+    *,
+    anchor: datetime,
+    declared_index_names: frozenset[str],
+) -> list[PackageOverride]:
+    where = f"overrides.package[{index}]"
+    if not isinstance(entry, dict):
+        msg = f"{where} must be a table, got {type(entry).__name__}"
+        raise ConfigError(msg)
+    _reject_deferred(entry, where)
+    unknown = sorted(set(entry) - _PACKAGE_OVERRIDE_KEYS)
+    if unknown:
+        msg = (
+            f"{where}: unknown override key(s) {unknown!r}; expected"
+            f" 'packages' and body keys {sorted(_PACKAGE_OVERRIDE_BODY_KEYS)!r}"
+        )
+        raise ConfigError(msg)
+
+    requirements = _parse_override_packages(entry.get("packages"), where)
+    if not requirements:
+        msg = (
+            f"{where} must carry a 'packages' selector listing at least one"
+            " PEP 508 requirement"
+        )
+        raise ConfigError(msg)
+
+    dist_policy, dist_trust = _parse_override_dist(entry.get("dist-policy"), where)
+    build_policy = (
+        _parse_enum(
+            f"{where}.build-policy",
+            entry["build-policy"],
+            BuildPolicy,
+            BuildPolicy.NEVER,
+        )
+        if "build-policy" in entry
+        else None
+    )
+    uploaded_prior_to, uploaded_disabled = _parse_override_uploaded_prior_to(
+        entry.get("uploaded-prior-to"),
+        where,
+        anchor=anchor,
+        present="uploaded-prior-to" in entry,
+    )
+    route = _parse_override_index(entry, where, declared_index_names)
+    has_body = (
+        dist_policy is not None
+        or dist_trust is not None
+        or build_policy is not None
+        or uploaded_prior_to is not None
+        or uploaded_disabled
+        or route is not None
+    )
+    if not has_body:
+        msg = (
+            f"{where} sets no policy; an entry must set at least one of"
+            f" {sorted(_PACKAGE_OVERRIDE_BODY_KEYS)!r}"
+        )
+        raise ConfigError(msg)
+    if route is not None:
+        for requirement in requirements:
+            if str(requirement.specifier):
+                msg = (
+                    f"{where}.index routing requires bare-name requirements"
+                    " (no version specifier); routing decides where to fetch a"
+                    " listing before any version is known, but"
+                    f" {str(requirement)!r} is version-scoped"
+                )
+                raise ConfigError(msg)
+
+    return [
+        PackageOverride(
+            requirement=requirement,
+            name=canonicalize_name(requirement.name),
+            version_range=requirement.specifier.to_range(),
+            dist_policy=dist_policy,
+            dist_trust_unverified_deps=dist_trust,
+            build_policy=build_policy,
+            uploaded_prior_to=uploaded_prior_to,
+            uploaded_prior_to_disabled=uploaded_disabled,
+            index=route,
+        )
+        for requirement in requirements
+    ]
+
+
+def _check_package_override_overlap(
+    overrides: tuple[PackageOverride, ...],
+) -> None:
+    """Reject two per-package entries setting one field for overlapping ranges.
+
+    For each (canonical name, policy field) the entries that set the field
+    must have pairwise-disjoint version ranges.  Two ranges overlap when
+    ``not (range_a & range_b).is_empty``.  A bare-name requirement is the
+    full range, so it overlaps every range for that package; in
+    particular two routing entries for one package always conflict.
+    """
+    for _field, attr in _PACKAGE_POLICY_FIELDS:
+        by_name: defaultdict[str, list[PackageOverride]] = defaultdict(list)
+        for entry in overrides:
+            if _override_sets(entry, attr):
+                by_name[entry.name].append(entry)
+        for name, entries in by_name.items():
+            for left, right in itertools.combinations(entries, 2):
+                if not (left.version_range & right.version_range).is_empty:
+                    msg = (
+                        f"[[tool.nab.overrides.package]] entries for {name!r}"
+                        f" both set {_field!r} for overlapping versions:"
+                        f" {str(left.requirement)!r} and"
+                        f" {str(right.requirement)!r}.  Per-package overrides for"
+                        " one field must cover disjoint version ranges."
+                    )
+                    raise ConfigError(msg)
+
+
+def _override_sets(override: PackageOverride, attr: str) -> bool:
+    """Whether ``override`` carries the policy field named by ``attr``.
+
+    The ``uploaded_prior_to_disabled`` flag and the ``index`` route both
+    count as setting their field even when their value is falsy/empty.
+    """
+    value = getattr(override, attr)
+    if attr == "uploaded_prior_to_disabled":
+        return bool(value)
+    return value is not None
+
+
+def _reject_deferred(entry: dict[str, Any], where: str) -> None:
+    """Reject override-body keys deferred to a later release."""
+    deferred = sorted(set(entry) & _OVERRIDE_DEFERRED_KEYS)
+    if deferred:
+        msg = (
+            f"{where}: key(s) {deferred!r} are not supported in this release;"
+            " marker / resolution / prereleases / source / vcs / metadata"
+            " override bodies are deferred to a later PR"
+        )
+        raise ConfigError(msg)
+
+
+def _parse_index_overrides(
+    value: object,
+    *,
+    anchor: datetime,
+    declared_index_names: frozenset[str],
+) -> dict[str, IndexOverride]:
+    """Parse ``[tool.nab.overrides.index]`` into a name-keyed policy map.
+
+    Each key must name a declared ``[[tool.nab.indexes]]`` entry.  The
+    body sets policy fields only (no routing, no version scope); the
+    override applies to every package served from that index.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        msg = (
+            "overrides.index must be a table keyed by index name, got"
+            f" {type(value).__name__}"
+        )
+        raise ConfigError(msg)
+    out: dict[str, IndexOverride] = {}
+    for name, body in value.items():
+        where = f"overrides.index.{name}"
+        if name not in declared_index_names:
+            valid = sorted(declared_index_names)
+            msg = (
+                f"{where} names undeclared index {name!r};"
+                f" declared indexes are {valid!r}"
+            )
+            raise ConfigError(msg)
+        out[name] = _parse_index_override_body(body, where, anchor=anchor)
+    return out
+
+
+def _parse_index_override_body(
+    body: object, where: str, *, anchor: datetime
+) -> IndexOverride:
+    if not isinstance(body, dict):
+        msg = f"{where} must be a table, got {type(body).__name__}"
+        raise ConfigError(msg)
+    _reject_deferred(body, where)
+    unknown = sorted(set(body) - _INDEX_OVERRIDE_KEYS)
+    if unknown:
+        msg = (
+            f"{where}: unknown override key(s) {unknown!r}; expected body keys"
+            f" {sorted(_INDEX_OVERRIDE_KEYS)!r} (per-index overrides carry no"
+            " routing and no version scope)"
+        )
+        raise ConfigError(msg)
+    dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
+    build_policy = (
+        _parse_enum(
+            f"{where}.build-policy",
+            body["build-policy"],
+            BuildPolicy,
+            BuildPolicy.NEVER,
+        )
+        if "build-policy" in body
+        else None
+    )
+    uploaded_prior_to, uploaded_disabled = _parse_override_uploaded_prior_to(
+        body.get("uploaded-prior-to"),
+        where,
+        anchor=anchor,
+        present="uploaded-prior-to" in body,
+    )
+    has_body = (
+        dist_policy is not None
+        or dist_trust is not None
+        or build_policy is not None
+        or uploaded_prior_to is not None
+        or uploaded_disabled
+    )
+    if not has_body:
+        msg = (
+            f"{where} sets no policy; an entry must set at least one of"
+            f" {sorted(_INDEX_OVERRIDE_KEYS)!r}"
+        )
+        raise ConfigError(msg)
+    return IndexOverride(
+        dist_policy=dist_policy,
+        dist_trust_unverified_deps=dist_trust,
+        build_policy=build_policy,
+        uploaded_prior_to=uploaded_prior_to,
+        uploaded_prior_to_disabled=uploaded_disabled,
+    )
+
+
+def _parse_override_packages(value: object, where: str) -> tuple[Requirement, ...]:
+    """Parse the ``packages`` selector into PEP 508 requirements.
+
+    Each entry is a requirement of name plus an optional version
+    specifier; extras, markers, and URLs are rejected.  A bare name means
+    all versions; a version specifier scopes the entry to matching ones.
+    """
+    if value is None:
+        return ()
+    names = _parse_string_list(f"{where}.packages", value)
+    out: list[Requirement] = []
+    for raw in names:
+        try:
+            requirement = Requirement(raw)
+        except InvalidRequirement as exc:
+            msg = f"{where}.packages entry {raw!r} is not a valid PEP 508 requirement"
+            raise ConfigError(msg) from exc
+        if requirement.extras or requirement.marker is not None or requirement.url:
+            msg = (
+                f"{where}.packages entry {raw!r} may carry only a name and an"
+                " optional version specifier; extras, markers, and URLs are not"
+                " supported on the override surface"
+            )
+            raise ConfigError(msg)
+        out.append(requirement)
+    return tuple(out)
+
+
+def _parse_override_dist(
+    value: object, where: str
+) -> tuple[DistPolicy | None, bool | None]:
+    """Parse the ``dist-policy`` body: an enum string or a policy table.
+
+    The table form ``{ policy = ..., trust-unverified-deps = bool }``
+    folds the sdist-trust flag into the dist body.
+    """
+    if value is None:
+        return (None, None)
+    if isinstance(value, str):
+        return (
+            _parse_enum(
+                f"{where}.dist-policy", value, DistPolicy, DistPolicy.WHEEL_OR_SDIST
+            ),
+            None,
+        )
+    if not isinstance(value, dict):
+        msg = (
+            f"{where}.dist-policy must be a policy string or a table"
+            f" {{ policy, trust-unverified-deps }}, got {type(value).__name__}"
+        )
+        raise ConfigError(msg)
+    unknown = sorted(set(value) - _DIST_POLICY_TABLE_KEYS)
+    if unknown:
+        msg = (
+            f"{where}.dist-policy has unknown key(s) {unknown!r};"
+            f" expected {sorted(_DIST_POLICY_TABLE_KEYS)!r}"
+        )
+        raise ConfigError(msg)
+    if "policy" not in value:
+        msg = f"{where}.dist-policy table must set 'policy'"
+        raise ConfigError(msg)
+    policy = _parse_enum(
+        f"{where}.dist-policy.policy",
+        value["policy"],
+        DistPolicy,
+        DistPolicy.WHEEL_OR_SDIST,
+    )
+    trust = value.get("trust-unverified-deps")
+    if trust is not None and not isinstance(trust, bool):
+        msg = f"{where}.dist-policy.trust-unverified-deps must be a boolean"
+        raise ConfigError(msg)
+    return (policy, trust)
+
+
+def _parse_override_uploaded_prior_to(
+    value: object, where: str, *, anchor: datetime, present: bool
+) -> tuple[datetime | None, bool]:
+    """Parse the ``uploaded-prior-to`` body: ``false`` disables, else a cutoff."""
+    if not present:
+        return (None, False)
+    if value is False:
+        return (None, True)
+    if value is True:
+        msg = (
+            f"{where}.uploaded-prior-to: ``true`` is not a valid value; use"
+            " ``false`` to disable the cutoff or a datetime / 'PnD' duration"
+            " to set a window"
+        )
+        raise ConfigError(msg)
+    try:
+        cutoff = _parse_uploaded_prior_to(value, anchor=anchor)
+    except ConfigError as exc:
+        msg = f"{where}.uploaded-prior-to: {exc}"
+        raise ConfigError(msg) from exc
+    return (cutoff, False)
+
+
+def _parse_override_index(
+    entry: dict[str, Any], where: str, declared_index_names: frozenset[str]
+) -> str | None:
+    """Parse the routing ``index`` body and validate its ``strict`` flag.
+
+    The route is always a strict pin to one index, so ``strict`` only
+    accepts ``true``.  ``strict = false`` is rejected: fallthrough on a
+    miss is not cleanly wireable through the single-index-pin router this
+    release ships.
+    """
+    route = entry.get("index")
+    if route is not None and not isinstance(route, str):
+        msg = f"{where}.index must be a string, got {type(route).__name__}"
+        raise ConfigError(msg)
+    if route is not None and route not in declared_index_names:
+        valid = sorted(declared_index_names)
+        msg = (
+            f"{where}.index routes to undeclared index {route!r};"
+            f" declared indexes are {valid!r}"
+        )
+        raise ConfigError(msg)
+    if "strict" not in entry:
+        return route
+    if route is None:
+        msg = f"{where}.strict is only meaningful alongside an 'index' route"
+        raise ConfigError(msg)
+    strict = entry["strict"]
+    if not isinstance(strict, bool):
+        msg = f"{where}.strict must be a boolean, got {type(strict).__name__}"
+        raise ConfigError(msg)
+    if not strict:
+        msg = (
+            f"{where}.strict = false (fallthrough routing) is not supported in"
+            " this release; the index route is always a strict pin"
+        )
+        raise ConfigError(msg)
+    return route
 
 
 def _parse_vcs(value: object) -> VcsConfig:
@@ -987,54 +1438,6 @@ def _parse_vcs(value: object) -> VcsConfig:
         allowed_repos=tuple(allowed_repos),
         require_pin=require_pin_raw,
     )
-
-
-def _parse_build_policy_package(value: object) -> Mapping[str, BuildPolicy]:
-    """Parse the optional ``[tool.nab.build-policy-package]`` table.
-
-    Maps a package name to one of the :class:`BuildPolicy` values
-    ("never", "build-local", "build-remote").  The per-package value
-    overrides the global ``build-policy`` for that package.
-
-    Package names are canonicalised; duplicates raise
-    :class:`ConfigError` with the original keys named.
-    """
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        msg = (
-            "[tool.nab.build-policy-package] must be a table,"
-            f" got {type(value).__name__}"
-        )
-        raise ConfigError(msg)
-    out: dict[str, BuildPolicy] = {}
-    seen: dict[str, str] = {}
-    valid = sorted(p.value for p in BuildPolicy)
-    for raw_key, raw_val in value.items():
-        if not isinstance(raw_val, str):
-            msg = (
-                f"[tool.nab.build-policy-package].{raw_key} must be a string,"
-                f" got {type(raw_val).__name__}"
-            )
-            raise ConfigError(msg)
-        try:
-            policy = BuildPolicy(raw_val)
-        except ValueError as exc:
-            msg = (
-                f"[tool.nab.build-policy-package].{raw_key} must be one of"
-                f" {valid!r}, got {raw_val!r}"
-            )
-            raise ConfigError(msg) from exc
-        canonical = canonicalize_name(raw_key)
-        if canonical in seen:
-            msg = (
-                "[tool.nab.build-policy-package] declares duplicate canonical"
-                f" name {canonical!r} via {seen[canonical]!r} and {raw_key!r}"
-            )
-            raise ConfigError(msg)
-        seen[canonical] = raw_key
-        out[canonical] = policy
-    return out
 
 
 _LOCAL_SOURCE_KEYS = frozenset({"name", "path", "editable", "subdirectory"})
@@ -1087,6 +1490,9 @@ def _parse_local_sources(
     return tuple(out)
 
 
+_VCS_SOURCE_KEYS = frozenset({"name", "url"})
+
+
 def _parse_vcs_sources(value: object) -> tuple[VcsSource, ...]:
     if not isinstance(value, list):
         msg = f"vcs-sources must be an array of tables, got {type(value).__name__}"
@@ -1095,6 +1501,13 @@ def _parse_vcs_sources(value: object) -> tuple[VcsSource, ...]:
     for i, entry in enumerate(value):
         if not isinstance(entry, dict):
             msg = f"vcs-sources[{i}] must be a table, got {type(entry).__name__}"
+            raise ConfigError(msg)
+        unknown = sorted(set(entry) - _VCS_SOURCE_KEYS)
+        if unknown:
+            msg = (
+                f"unknown vcs-sources[{i}] keys: {unknown!r};"
+                f" expected {sorted(_VCS_SOURCE_KEYS)!r}"
+            )
             raise ConfigError(msg)
         try:
             name = entry["name"]
@@ -1171,7 +1584,8 @@ def _parse_workspace(value: object) -> WorkspaceConfig | None:
 # anything.  Distinct from ``_MIN_ENGAGED_MEMBERS`` (a runtime engagement
 # threshold), which happens to be the same number for unrelated reasons.
 _MIN_CONFLICT_MEMBERS = 2
-_CONFLICT_POLICY_KEYS = {p.value: p for p in ConflictPolicy}
+_CONFLICT_POLICY_VALUES = {p.value: p for p in ConflictPolicy}
+_CONFLICT_SET_KEYS = frozenset({"members", "policy"})
 
 
 def _parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
@@ -1179,9 +1593,9 @@ def _parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
 
     Each item is either a bare array of members (uv-compatible; the
     members are mutually exclusive under the default at-most-one
-    policy) or a single-key table naming the policy
-    (``at_most_one``/``exactly_one``/``at_least_one``) whose value is
-    the member array.  A member is ``{ extra = "NAME" }`` or
+    policy) or a table ``{ members = [...], policy = "..." }`` whose
+    ``policy`` value is ``at-most-one`` / ``exactly-one`` /
+    ``at-least-one``.  A member is ``{ extra = "NAME" }`` or
     ``{ group = "NAME" }``.
     """
     if value is None:
@@ -1238,31 +1652,43 @@ def _parse_conflict_set(item: object, index: int) -> ConflictSet:
             policy=ConflictPolicy.AT_MOST_ONE,
         )
     if isinstance(item, dict):
-        keys = set(item)
-        unknown = sorted(keys - _CONFLICT_POLICY_KEYS.keys())
+        unknown = sorted(set(item) - _CONFLICT_SET_KEYS)
         if unknown:
+            valid = sorted(_CONFLICT_POLICY_VALUES)
             msg = (
                 f"{where}: unknown conflict-set key(s) {unknown!r}; expected a"
-                f" policy table with one of {sorted(_CONFLICT_POLICY_KEYS)!r}"
-                " or a bare array of members"
+                f" table {{ members = [...], policy = '...' }} with policy one of"
+                f" {valid!r}, or a bare array of members"
             )
             raise ConfigError(msg)
-        if len(keys) != 1:
-            msg = (
-                f"{where}: a policy conflict set must name exactly one policy"
-                f" of {sorted(_CONFLICT_POLICY_KEYS)!r}, got {sorted(keys)!r}"
-            )
+        if "members" not in item:
+            msg = f"{where}: a conflict-set table must set 'members'"
             raise ConfigError(msg)
-        policy_key = next(iter(keys))
+        policy = _parse_conflict_policy(item.get("policy"), where)
         return ConflictSet(
-            members=_parse_conflict_members(item[policy_key], f"{where}.{policy_key}"),
-            policy=_CONFLICT_POLICY_KEYS[policy_key],
+            members=_parse_conflict_members(item["members"], f"{where}.members"),
+            policy=policy,
         )
     msg = (
-        f"{where} must be an array of members or a policy table, got"
+        f"{where} must be an array of members or a conflict-set table, got"
         f" {type(item).__name__}"
     )
     raise ConfigError(msg)
+
+
+def _parse_conflict_policy(value: object, where: str) -> ConflictPolicy:
+    """Parse the ``policy`` value of a conflict-set table; default at-most-one."""
+    if value is None:
+        return ConflictPolicy.AT_MOST_ONE
+    if not isinstance(value, str):
+        msg = f"{where}.policy must be a string, got {type(value).__name__}"
+        raise ConfigError(msg)
+    policy = _CONFLICT_POLICY_VALUES.get(value)
+    if policy is None:
+        valid = sorted(_CONFLICT_POLICY_VALUES)
+        msg = f"{where}.policy must be one of {valid!r}, got {value!r}"
+        raise ConfigError(msg)
+    return policy
 
 
 def _parse_conflict_members(value: object, where: str) -> tuple[ConflictMember, ...]:

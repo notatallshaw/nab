@@ -38,11 +38,12 @@ from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
+from nab_python.config import PackageOverride
 from nab_python.fetch import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
     FetchCoordinator,
-    IndexOverride,
+    IndexRoute,
 )
 from nab_python.provider import (
     BuildPolicy,
@@ -212,17 +213,25 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
     constraints: dict[str, VersionRange] | None,
     marker_environment: dict[str, str] | None = None,
     indexes: list[IndexConfig] | None = None,
-    index_overrides: list[IndexOverride] | None = None,
+    index_routes: list[IndexRoute] | None = None,
     build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
     *,
     trust_unverified_sdist_deps: bool = False,
 ) -> dict:
+    package_overrides = tuple(
+        PackageOverride(
+            requirement=Requirement(name),
+            name=canonicalize_name(name),
+            version_range=VersionRange.full(),
+            build_policy=policy,
+        )
+        for name, policy in (build_policy_overrides or {}).items()
+    )
     with FetchCoordinator(
         HttpxAsyncTransport(),
         indexes=indexes,
         cache_dir=CACHE_DIR,
-        index_overrides=index_overrides,
-        marker_environment=marker_environment,
+        index_routes=index_routes,
     ) as coordinator:
         provider = Provider(
             coordinator,
@@ -231,7 +240,7 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
             uploaded_prior_to=uploaded_prior_to,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
-            build_policy_overrides=build_policy_overrides,
+            package_overrides=package_overrides,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
             marker_environment=marker_environment,
         )
@@ -360,8 +369,8 @@ def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
             for entry in raw_indexes
         ]
     raw_overrides = scenario.get("index_overrides", [])
-    index_overrides = [
-        IndexOverride(
+    index_routes = [
+        IndexRoute(
             name=str(entry["name"]),
             index=str(entry["index"]),
             marker=entry.get("marker"),
@@ -413,7 +422,7 @@ def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
             constraints,
             marker_environment=marker_environment or None,
             indexes=indexes,
-            index_overrides=index_overrides or None,
+            index_routes=index_routes or None,
             build_policy_overrides=build_policy_overrides or None,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
         )

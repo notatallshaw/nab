@@ -21,9 +21,12 @@ _FORTY = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _allow_https() -> VcsConfig:
+    # An empty allowed-repos now denies all, so list a permissive prefix
+    # for the scheme/pin tests that are not about repo filtering.
     return VcsConfig(
         policy=VcsPolicy.ALLOW,
         allowed_schemes=frozenset({"git+https"}),
+        allowed_repos=("https://",),
     )
 
 
@@ -104,10 +107,11 @@ class TestHasFullCommitSha:
         url = f"git+https://github.com/foo/bar.git@{_FORTY}#subdirectory=sub"
         assert has_full_commit_sha(url)
 
-    def test_uppercase_sha_rejected(self) -> None:
+    def test_uppercase_sha_accepted(self) -> None:
+        # A 40-char hex SHA is case-insensitive; uppercase satisfies require-pin.
         upper = _FORTY.upper()
         url = f"git+https://github.com/foo/bar.git@{upper}"
-        assert not has_full_commit_sha(url)
+        assert has_full_commit_sha(url)
 
     def test_sha_in_authority_without_path_rejected(self) -> None:
         """An ``@<sha>`` in the authority is userinfo, not a ref."""
@@ -121,7 +125,7 @@ class TestHasFullCommitSha:
 
 class TestAdmitVcsUrlBlock:
     def test_block_default_refuses_vcs(self) -> None:
-        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             admit_vcs_url(
                 f"git+https://github.com/foo/bar.git@{_FORTY}",
                 VcsConfig(),
@@ -133,7 +137,7 @@ class TestAdmitVcsUrlBlock:
             policy=VcsPolicy.BLOCK,
             allowed_schemes=frozenset({"git+https"}),
         )
-        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             admit_vcs_url(
                 f"git+https://github.com/foo/bar.git@{_FORTY}",
                 config,
@@ -149,7 +153,7 @@ class TestAdmitVcsUrlScheme:
         assert scheme == "git+https"
 
     def test_disallowed_scheme_refused(self) -> None:
-        with pytest.raises(UnsupportedVcsError, match="not in vcs_allowed_schemes"):
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-schemes"):
             admit_vcs_url(
                 f"git+ssh://git@github.com/foo/bar.git@{_FORTY}",
                 _allow_https(),
@@ -171,12 +175,18 @@ class TestAdmitVcsUrlScheme:
 
 
 class TestAdmitVcsUrlRepo:
-    def test_empty_repos_allows_any(self) -> None:
-        scheme = admit_vcs_url(
-            f"git+https://example.com/r.git@{_FORTY}",
-            _allow_https(),
+    def test_empty_repos_denies_all(self) -> None:
+        # An empty allowed-repos under policy = "allow" admits nothing;
+        # the user must list at least one repo prefix.
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
         )
-        assert scheme == "git+https"
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url(
+                f"git+https://example.com/r.git@{_FORTY}",
+                config,
+            )
 
     def test_matching_prefix_passes(self) -> None:
         config = VcsConfig(
@@ -196,7 +206,7 @@ class TestAdmitVcsUrlRepo:
             allowed_schemes=frozenset({"git+https"}),
             allowed_repos=("https://github.com/apache/",),
         )
-        with pytest.raises(UnsupportedVcsError, match="not in vcs_allowed_repos"):
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
             admit_vcs_url(
                 f"git+https://github.com/evil/airflow.git@{_FORTY}",
                 config,
@@ -224,14 +234,14 @@ class TestAdmitVcsUrlRequirePin:
         )
 
     def test_unpinned_refused_when_required(self) -> None:
-        with pytest.raises(UnsupportedVcsError, match="vcs_require_pin"):
+        with pytest.raises(UnsupportedVcsError, match="vcs.require-pin"):
             admit_vcs_url(
                 "git+https://github.com/foo/bar.git",
                 _allow_https(),
             )
 
     def test_tag_refused_when_pin_required(self) -> None:
-        with pytest.raises(UnsupportedVcsError, match="vcs_require_pin"):
+        with pytest.raises(UnsupportedVcsError, match="vcs.require-pin"):
             admit_vcs_url(
                 "git+https://github.com/foo/bar.git@v1.0",
                 _allow_https(),
@@ -239,7 +249,7 @@ class TestAdmitVcsUrlRequirePin:
 
     def test_sha_in_authority_refused_when_pin_required(self) -> None:
         """The clone parser sees no ref here, so admission must refuse."""
-        with pytest.raises(UnsupportedVcsError, match="vcs_require_pin"):
+        with pytest.raises(UnsupportedVcsError, match="vcs.require-pin"):
             admit_vcs_url(
                 f"git+https://github.com@{_FORTY}",
                 _allow_https(),
@@ -249,6 +259,7 @@ class TestAdmitVcsUrlRequirePin:
         config = VcsConfig(
             policy=VcsPolicy.ALLOW,
             allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://",),
             require_pin=False,
         )
         scheme = admit_vcs_url(

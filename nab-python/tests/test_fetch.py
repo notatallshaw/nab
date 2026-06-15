@@ -25,9 +25,9 @@ from nab_python.fetch import (
     FetchCoordinator,
     FetchKind,
     FetchRequest,
-    IndexOverride,
+    IndexRoute,
     InMemoryIndex,
-    _resolve_overrides,
+    _resolve_routes,
 )
 
 
@@ -1028,75 +1028,29 @@ class TestFetchCoordinatorCache:
             coord.shutdown()
 
 
-class TestResolveOverrides:
-    """Tests for the marker-aware override-resolution helper."""
+class TestResolveRoutes:
+    """Tests for the route-resolution helper.
 
-    def test_no_overrides_no_op(self) -> None:
-        assert _resolve_overrides([], None) == {}
+    Routes carry no marker now: routing decides where a listing is
+    fetched before any version (or marker context) is known.
+    """
 
-    def test_no_marker_always_matches(self) -> None:
-        result = _resolve_overrides(
-            [IndexOverride("torch", "torch-cpu")],
-            None,
-        )
+    def test_no_routes_no_op(self) -> None:
+        assert _resolve_routes([]) == {}
+
+    def test_single_route(self) -> None:
+        result = _resolve_routes([IndexRoute("torch", "torch-cpu")])
         assert result == {"torch": "torch-cpu"}
 
-    def test_marker_matches_env(self) -> None:
-        result = _resolve_overrides(
-            [
-                IndexOverride(
-                    "torch",
-                    "torch-cpu",
-                    marker='platform_system == "Linux"',
-                ),
-            ],
-            {"platform_system": "Linux"},
+    def test_distinct_packages(self) -> None:
+        result = _resolve_routes(
+            [IndexRoute("torch", "torch-cpu"), IndexRoute("numpy", "alt")]
         )
-        assert result == {"torch": "torch-cpu"}
-
-    def test_marker_misses_env(self) -> None:
-        result = _resolve_overrides(
-            [
-                IndexOverride(
-                    "torch",
-                    "torch-cpu",
-                    marker='platform_system == "Linux"',
-                ),
-            ],
-            {"platform_system": "Darwin"},
-        )
-        assert result == {}
-
-    def test_first_match_wins(self) -> None:
-        result = _resolve_overrides(
-            [
-                IndexOverride(
-                    "torch",
-                    "torch-cpu",
-                    marker='platform_system == "Linux"',
-                ),
-                IndexOverride(
-                    "torch",
-                    "torch-rocm",
-                ),
-            ],
-            {"platform_system": "Linux"},
-        )
-        assert result == {"torch": "torch-cpu"}
+        assert result == {"torch": "torch-cpu", "numpy": "alt"}
 
     def test_canonicalises_name(self) -> None:
-        result = _resolve_overrides(
-            [IndexOverride("My-Pkg", "alt")],
-            None,
-        )
+        result = _resolve_routes([IndexRoute("My-Pkg", "alt")])
         assert "my-pkg" in result
-
-    def test_marker_required_but_no_env_drops(self) -> None:
-        result = _resolve_overrides(
-            [IndexOverride("torch", "alt", marker='os_name == "posix"')],
-            None,
-        )
-        assert result == {}
 
 
 class TestMultiIndexCoordinator:
@@ -1176,7 +1130,7 @@ class TestMultiIndexCoordinator:
                     IndexConfig("pypi", "https://pypi.org/simple/"),
                     IndexConfig("torch-cpu", "https://torch.example/cpu/"),
                 ],
-                index_overrides=[IndexOverride("torch", "torch-cpu")],
+                index_routes=[IndexRoute("torch", "torch-cpu")],
             ) as coord,
         ):
             event = coord.request_listing("torch")
@@ -1273,7 +1227,7 @@ class TestMultiIndexCoordinator:
                     IndexConfig("pypi", "https://pypi.org/simple/"),
                     IndexConfig("torch-cpu", "https://torch.example/cpu/"),
                 ],
-                index_overrides=[IndexOverride("torch", "torch-cpu")],
+                index_routes=[IndexRoute("torch", "torch-cpu")],
             ) as coord,
         ):
             coord.request_listing("torch").wait(timeout=5)
@@ -1354,7 +1308,7 @@ class TestMultiIndexCoordinator:
             transport=HttpxAsyncTransport(),
             cache_dir=tmp_path,
             indexes=[IndexConfig("pypi", "https://pypi.org/simple/")],
-            index_overrides=[IndexOverride("torch", "no-such-index")],
+            index_routes=[IndexRoute("torch", "no-such-index")],
         )
         try:
             with pytest.raises(ValueError, match="unknown index names"):

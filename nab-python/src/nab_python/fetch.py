@@ -24,7 +24,6 @@ from nab_index.client import SdistFile, WheelFile
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 
-from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
@@ -39,7 +38,7 @@ __all__ = [
     "FetchKind",
     "FetchRequest",
     "InMemoryIndex",
-    "IndexOverride",
+    "IndexRoute",
 ]
 
 
@@ -68,47 +67,28 @@ class FetchKind(enum.Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class IndexOverride:
-    """Per-package index routing rule.
+class IndexRoute:
+    """Per-package index routing rule (a strict pin to one index).
 
     ``name`` is the package name (canonicalised internally).  ``index``
     is the *name* of an :class:`IndexConfig` declared in the
-    coordinator's ordered list.  ``marker`` is an optional :pep:`508`
-    marker text; ``None`` or the empty string mean "always applies".
-    Multiple overrides for the same name are evaluated in declared
-    order; the first one whose marker is True wins, later entries are
-    ignored.
+    coordinator's ordered list.  Routing decides where to fetch a
+    package's listing before any version is known, so a route carries no
+    version scope and no marker; the override layer guarantees at most one
+    route per package.
     """
 
     name: str
     index: str
-    marker: str | None = None
 
 
-def _resolve_overrides(
-    overrides: list[IndexOverride],
-    marker_environment: dict[str, str] | None,
-) -> dict[str, str]:
-    """Reduce overrides to ``{canonical_name: index_name}`` for the env.
+def _resolve_routes(routes: list[IndexRoute]) -> dict[str, str]:
+    """Reduce routes to ``{canonical_name: index_name}``.
 
-    First-match-wins per name; later entries for the same name are
-    silently ignored.  Marker eval against ``marker_environment``;
-    ``None`` env means non-marker entries match and marker entries
-    do not.
+    At most one route exists per package (the override layer rejects two
+    routes for one name at parse time), so this is a straight projection.
     """
-    out: dict[str, str] = {}
-    for entry in overrides:
-        canonical = canonicalize_name(entry.name)
-        if canonical in out:
-            continue
-        if entry.marker in (None, ""):
-            out[canonical] = entry.index
-            continue
-        if marker_environment is None:
-            continue
-        if Marker(entry.marker).evaluate(marker_environment):
-            out[canonical] = entry.index
-    return out
+    return {canonicalize_name(entry.name): entry.index for entry in routes}
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,8 +377,7 @@ class FetchCoordinator:
         cache_dir: Path | None = None,
         cache_backend: CacheBackend | None = None,
         offline: bool = False,
-        index_overrides: list[IndexOverride] | None = None,
-        marker_environment: dict[str, str] | None = None,
+        index_routes: list[IndexRoute] | None = None,
     ) -> None:
         """Create a coordinator that wraps ``transport``.
 
@@ -408,9 +387,9 @@ class FetchCoordinator:
         ``[IndexConfig("pypi", "https://pypi.org/simple/")]``.  Each
         index name must be unique across the list.
 
-        ``index_overrides`` adds per-package routing rules; an entry's
-        ``index`` field names one of the configured indexes and its
-        optional ``marker`` is evaluated against ``marker_environment``.
+        ``index_routes`` adds per-package routing rules; an entry's
+        ``index`` field names one of the configured indexes and pins that
+        package's listing fetch to it.
 
         ``cache_backend`` wins over ``cache_dir`` if both are given;
         otherwise ``cache_dir`` enables a per-index :class:`OnDiskCache`
@@ -445,10 +424,7 @@ class FetchCoordinator:
         else:
             self._cache = NullCache()
         self._cache_dir = cache_dir
-        self._index_overrides = list(index_overrides or [])
-        self._marker_environment = (
-            dict(marker_environment) if marker_environment is not None else None
-        )
+        self._index_routes = list(index_routes or [])
         self.index = InMemoryIndex()
         self._thread: threading.Thread | None = None
         self._started = False
@@ -681,9 +657,7 @@ class FetchCoordinator:
         :class:`MultiIndexClient` whose underlying clients share the
         coordinator's transport but get their own per-URL cache.
         """
-        override_map = _resolve_overrides(
-            self._index_overrides, self._marker_environment
-        )
+        override_map = _resolve_routes(self._index_routes)
         if len(self.indexes) == 1 and not override_map:
             cfg = self.indexes[0]
             return self._build_index_client(cfg.url)

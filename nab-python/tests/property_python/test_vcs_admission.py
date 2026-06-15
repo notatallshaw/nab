@@ -107,9 +107,7 @@ def _oracle(url: str, config: VcsConfig) -> str:
     if scheme not in config.allowed_schemes:
         return "refuse"
     inner = url[len("git+") :]
-    if config.allowed_repos and not any(
-        inner.startswith(p) for p in config.allowed_repos
-    ):
+    if not any(inner.startswith(p) for p in config.allowed_repos):
         return "refuse"
     if config.require_pin:
         fragmentless = url.split("#", 1)[0]
