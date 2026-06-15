@@ -645,6 +645,7 @@ def _parse_nab_table(
         anchor=anchor,
         declared_index_names=declared_index_names,
     )
+    marker_environment = _parse_marker_environment(raw.get("marker-environment", {}))
 
     build_policy = _parse_enum(
         "build-policy", raw.get("build-policy"), BuildPolicy, BuildPolicy.BUILD_LOCAL
@@ -656,6 +657,14 @@ def _parse_nab_table(
             package_overrides=package_overrides,
             index_overrides=index_overrides,
         )
+        if marker_environment:
+            msg = (
+                "mode = 'universal' does not support"
+                " [tool.nab.marker-environment]: the matrix defines each"
+                " environment, so a global overlay would conflict with the"
+                " per-tuple values. Drop it or use mode = 'specific'."
+            )
+            raise ConfigError(msg)
 
     default_groups = _parse_string_list("default-groups", raw.get("default-groups", []))
     conflicts = _parse_conflicts(raw.get("conflicts"))
@@ -672,7 +681,7 @@ def _parse_nab_table(
         dist_policy=dist_policy,
         build_policy=build_policy,
         trust_unverified_sdist_deps=trust_unverified,
-        marker_environment=_parse_marker_environment(raw.get("marker-environment", {})),
+        marker_environment=marker_environment,
         indexes=indexes,
         vcs=_parse_vcs(raw.get("vcs", {})),
         local_sources=_parse_local_sources(
