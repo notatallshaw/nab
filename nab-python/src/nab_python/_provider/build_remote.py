@@ -43,7 +43,9 @@ def build_remote_sdist(
     entry in ``provider.versions_cache``.  A built sdist whose
     ``Requires-Python`` excludes the resolve target is rejected, since the
     Simple-API listing filter only sees the listing's own (possibly absent)
-    Requires-Python, not the value the build produces.
+    Requires-Python, not the value the build produces.  A built sdist whose
+    declared name or version disagrees with the requested candidate is also
+    rejected rather than used for the wrong package.
     """
     # Late imports: ``provider`` imports this module at module load.
     from .. import build_backend
@@ -93,6 +95,13 @@ def build_remote_sdist(
         msg = (
             f"{package}=={version} built sdist requires Python {spec} but the"
             f" resolve targets Python {target}"
+        )
+        raise UnsupportedSdistError(msg)
+    if canonicalize_name(built.name) != canonical or built.version != version:
+        msg = (
+            f"{package}=={version} built sdist declares"
+            f" {built.name}=={built.version}, which does not match the"
+            " requested candidate"
         )
         raise UnsupportedSdistError(msg)
     return built

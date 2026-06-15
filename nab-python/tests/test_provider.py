@@ -5639,6 +5639,38 @@ class TestBuildRemoteFailureModes:
         result = build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
         assert result is built
 
+    def test_built_name_mismatch_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from nab_python._provider import build_remote
+        from nab_python.metadata import WheelMetadata as _WheelMetadata
+
+        wrong = _WheelMetadata(
+            name="other-pkg",
+            version=V("1.0"),
+            requires_python=None,
+            requires_dist=[Requirement("dep-a>=1")],
+            provides_extra=[],
+        )
+        provider = self._build_into(monkeypatch, wrong)
+        with pytest.raises(UnsupportedSdistError, match="does not match"):
+            build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+
+    def test_built_version_mismatch_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from nab_python._provider import build_remote
+        from nab_python.metadata import WheelMetadata as _WheelMetadata
+
+        wrong = _WheelMetadata(
+            name="pkg",
+            version=V("2.0"),
+            requires_python=None,
+            requires_dist=[Requirement("dep-a>=1")],
+            provides_extra=[],
+        )
+        provider = self._build_into(monkeypatch, wrong)
+        with pytest.raises(UnsupportedSdistError, match="does not match"):
+            build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+
 
 class TestPublicAccessors:
     """Public read accessors used by lockfile / download tooling."""
