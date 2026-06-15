@@ -756,6 +756,24 @@ class TestResolveAndDownload:
             with pytest.raises(BuildEnvError, match="sdist-only"):
                 env._resolve_and_download(wheel_dir)
 
+    def test_url_build_requirement_wrapped(self, tmp_path: Path) -> None:
+        """A direct-URL build requirement the inner resolve refuses is
+        wrapped as BuildEnvError, so the outer resolve skips the
+        unbuildable sdist instead of aborting on the raw
+        UnsupportedVcsError.
+        """
+        env = NabBuildEnv(
+            requires=["plugin @ https://example.com/plugin-1.0.tar.gz"],
+            config=NabProjectConfig(),
+        )
+        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
+        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
+        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        with pytest.raises(BuildEnvError, match="build env resolve"):
+            env._resolve_and_download(wheel_dir)
+
 
 class TestNabBuildEnvLifecycle:
     """Edge cases of the context-manager lifecycle that fall outside

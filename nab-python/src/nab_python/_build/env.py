@@ -37,6 +37,7 @@ from installer.destinations import SchemeDictionaryDestination
 from installer.sources import WheelFile
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 
+from .._vcs_admission import UnsupportedVcsError
 from ..config import NabProjectConfig
 from ..download import download_lock
 
@@ -277,12 +278,19 @@ class NabBuildEnv:
         # this again for ``get_requires_for_build_wheel`` follow-ups;
         # build a fresh transport each time.
         transport = self._transport_factory()
-        result = resolve_pyproject(
-            synthetic,
-            transport,
-            config=inner_config,
-            python_version=self._python_version,
-        )
+        try:
+            result = resolve_pyproject(
+                synthetic,
+                transport,
+                config=inner_config,
+                python_version=self._python_version,
+            )
+        except (UnsupportedVcsError, NotImplementedError) as exc:
+            # A direct-URL/VCS build requirement means nab cannot build this
+            # sdist. Report it as a build-env failure so the outer resolve
+            # skips the version instead of aborting on the raw error.
+            msg = f"build env resolve failed: {exc}"
+            raise BuildEnvError(msg) from exc
 
         # Reject sdist-only pins early: build deps that ship only an
         # sdist trigger a recursive backend invocation that this
