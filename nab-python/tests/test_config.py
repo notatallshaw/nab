@@ -1139,6 +1139,17 @@ class TestIndexOverrides:
         with pytest.raises(ConfigError, match="marker must be a string"):
             read_pyproject_config(path)
 
+    def test_unknown_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.index-overrides]]\n"
+            'name = "torch"\n'
+            'index = "x"\n'
+            "markers = \"platform_machine == 'aarch64'\"\n",
+        )
+        with pytest.raises(ConfigError, match="unknown index-overrides\\[0\\] keys"):
+            read_pyproject_config(path)
+
     def test_marker_gated_rejected_in_universal_mode(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,

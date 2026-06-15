@@ -935,6 +935,9 @@ def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
     return tuple(out)
 
 
+_INDEX_OVERRIDE_KEYS = frozenset({"name", "index", "marker"})
+
+
 def _parse_index_overrides(value: object) -> tuple[IndexOverride, ...]:
     if not isinstance(value, list):
         msg = f"index-overrides must be an array of tables, got {type(value).__name__}"
@@ -943,6 +946,13 @@ def _parse_index_overrides(value: object) -> tuple[IndexOverride, ...]:
     for i, entry in enumerate(value):
         if not isinstance(entry, dict):
             msg = f"index-overrides[{i}] must be a table, got {type(entry).__name__}"
+            raise ConfigError(msg)
+        unknown = sorted(set(entry) - _INDEX_OVERRIDE_KEYS)
+        if unknown:
+            msg = (
+                f"unknown index-overrides[{i}] keys: {unknown!r};"
+                f" expected {sorted(_INDEX_OVERRIDE_KEYS)!r}"
+            )
             raise ConfigError(msg)
         try:
             name = entry["name"]
