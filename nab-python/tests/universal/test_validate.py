@@ -392,6 +392,30 @@ class TestFetchWheelMetadata:
         report = validate_lock(result, coordinator)
         assert report.findings[0].status == "ok"
 
+    def test_unparseable_wheel_metadata_reported(self) -> None:
+        """A fetchable but malformed chosen-wheel metadata is a finding, not a crash."""
+        wheel = _wheel("pkg-1.0-cp311-cp311-linux_x86_64.whl")
+        # Missing the required Name header, so parse_metadata raises
+        # ValueError.  With no baseline the per-wheel path runs.
+        malformed = "Metadata-Version: 2.1\nVersion: 1.0\nRequires-Dist: foo\n\n"
+        coordinator = _make_coordinator(
+            {"pkg": [wheel]},
+            per_wheel_metadata={wheel.filename: malformed},
+        )
+        result = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[
+                TupleResult(
+                    tuple_=_linux_311(),
+                    success=True,
+                    pins={"pkg": Version("1.0")},
+                ),
+            ],
+        )
+        report = validate_lock(result, coordinator)
+        assert report.findings[0].status == "unparseable_metadata"
+        assert report.pins_ok == 0
+
 
 def _sdist(filename: str) -> SdistFile:
     parts = filename.split("-")

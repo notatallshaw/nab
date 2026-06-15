@@ -48,7 +48,7 @@ __all__ = [
 # Statuses that always fail the lock at install time, regardless of
 # build policy.
 _ALWAYS_FATAL_STATUSES = frozenset(
-    {"version_not_found", "no_compatible_wheel", "no_metadata"}
+    {"version_not_found", "no_compatible_wheel", "no_metadata", "unparseable_metadata"}
 )
 
 # Statuses that fail only when the build policy refuses to build
@@ -89,6 +89,8 @@ class PinValidation:
       available. Fatal under ``BuildPolicy.NEVER``.
     - ``no_metadata``: the chosen wheel has no fetchable metadata.
       Always fatal.
+    - ``unparseable_metadata``: the chosen wheel's metadata was fetched
+      but could not be parsed, so its deps can't be trusted. Always fatal.
     - ``static_sdist_authoritative``: the sdist's PEP 621 or PEP 643
       metadata guarantees every wheel of this version shares the same
       dep-affecting metadata, so per-wheel fetches were skipped.
@@ -117,9 +119,9 @@ class ValidationReport:
         """Return findings that would prevent installation.
 
         Always fatal: ``version_not_found`` (nothing at the pinned
-        version), ``no_compatible_wheel`` (no installable artifact)
-        and ``no_metadata`` (we can't trust the resolver ran with
-        the right deps).
+        version), ``no_compatible_wheel`` (no installable artifact),
+        ``no_metadata`` and ``unparseable_metadata`` (we can't trust
+        the resolver ran with the right deps).
 
         Fatal under BuildPolicy.NEVER: ``sdist_only`` and
         ``no_compatible_wheel_with_sdist`` (only sdist available).
@@ -235,13 +237,25 @@ def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
             chosen_wheel=chosen.filename,
             detail="wheel has no metadata file we could fetch",
         )
-    chosen_by_extra = _evaluate_metadata_deps_by_extra(metadata_text, tup.environment)
-    listing_text = coordinator.index.get_metadata(normalized, str(version))
-    listing_by_extra: dict[str | None, set[str]] = (
-        _evaluate_metadata_deps_by_extra(listing_text, tup.environment)
-        if listing_text is not None
-        else {None: set()}
-    )
+    try:
+        chosen_by_extra = _evaluate_metadata_deps_by_extra(
+            metadata_text, tup.environment
+        )
+        listing_text = coordinator.index.get_metadata(normalized, str(version))
+        listing_by_extra: dict[str | None, set[str]] = (
+            _evaluate_metadata_deps_by_extra(listing_text, tup.environment)
+            if listing_text is not None
+            else {None: set()}
+        )
+    except ValueError as exc:
+        return PinValidation(
+            tuple_label=tup.label,
+            package=package,
+            version=str(version),
+            status="unparseable_metadata",
+            chosen_wheel=chosen.filename,
+            detail=f"wheel metadata could not be parsed: {exc}",
+        )
     chosen_base = chosen_by_extra.get(None, set())
     listing_base = listing_by_extra.get(None, set())
     extra = sorted(chosen_base - listing_base)
