@@ -24,6 +24,7 @@ from nab_index.client import SdistFile, WheelFile
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 
+from ._conflict_kind import dependency_marker_holds
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.utils import canonicalize_name
 
@@ -106,7 +107,7 @@ def _resolve_overrides(
             continue
         if marker_environment is None:
             continue
-        if Marker(entry.marker).evaluate(marker_environment):
+        if dependency_marker_holds(Marker(entry.marker), marker_environment):
             out[canonical] = entry.index
     return out
 

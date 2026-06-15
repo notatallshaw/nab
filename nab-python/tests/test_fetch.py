@@ -1098,6 +1098,30 @@ class TestResolveOverrides:
         )
         assert result == {}
 
+    def test_membership_set_marker_drops_without_crash(self) -> None:
+        result = _resolve_overrides(
+            [IndexOverride("torch", "alt", marker='"gpu" in extras')],
+            {"platform_system": "Linux"},
+        )
+        assert result == {}
+
+    def test_dependency_groups_marker_drops_without_crash(self) -> None:
+        result = _resolve_overrides(
+            [IndexOverride("torch", "alt", marker='"dev" in dependency_groups')],
+            {"platform_system": "Linux"},
+        )
+        assert result == {}
+
+    def test_membership_set_marker_does_not_block_other_override(self) -> None:
+        result = _resolve_overrides(
+            [
+                IndexOverride("torch", "alt", marker='"gpu" in extras'),
+                IndexOverride("numpy", "numpy-nightly"),
+            ],
+            {"platform_system": "Linux"},
+        )
+        assert result == {"numpy": "numpy-nightly"}
+
 
 class TestMultiIndexCoordinator:
     """Tests for FetchCoordinator with multiple indexes + overrides."""
