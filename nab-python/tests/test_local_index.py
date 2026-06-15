@@ -317,6 +317,53 @@ class TestPep503Directory:
         result = run(client.get_files("foo"))
         assert [r.filename for r in result] == ["foo-1.0-py3-none-any.whl"]
 
+    def test_pep503_core_metadata_hash_advertised(self, tmp_path: Path) -> None:
+        body = (
+            '<a href="foo-1.0-py3-none-any.whl"'
+            f' data-core-metadata="sha256={"a" * 64}">foo</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert result[0].has_metadata is True
+        assert result[0].metadata_url is not None
+
+    def test_pep503_core_metadata_true_advertised(self, tmp_path: Path) -> None:
+        body = '<a href="foo-1.0-py3-none-any.whl" data-core-metadata="true">foo</a>'
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert result[0].has_metadata is True
+
+    def test_pep503_legacy_metadata_attr_advertised(self, tmp_path: Path) -> None:
+        body = (
+            '<a href="foo-1.0-py3-none-any.whl" data-dist-info-metadata="true">foo</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert result[0].has_metadata is True
+
+    def test_pep503_no_metadata_attr(self, tmp_path: Path) -> None:
+        body = '<a href="foo-1.0-py3-none-any.whl">foo</a>'
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert result[0].has_metadata is False
+        assert result[0].metadata_url is None
+
+    def test_pep503_empty_metadata_attr_not_advertised(self, tmp_path: Path) -> None:
+        body = '<a href="foo-1.0-py3-none-any.whl" data-core-metadata="">foo</a>'
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert result[0].has_metadata is False
+
 
 class TestMetadataAndSdist:
     def test_get_metadata_text(self, tmp_path: Path) -> None:
@@ -359,6 +406,7 @@ class TestMakeRecord:
                 None,
                 (),
                 "readme",
+                has_metadata=False,
             )
             is None
         )
