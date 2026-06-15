@@ -300,10 +300,12 @@ def _parse_files(
         # wheel.  Interning collapses the duplicates into one shared
         # string per distinct specifier.
         requires_python_raw = file_info.get("requires-python")
+        # PEP 691 mandates a string; a non-conformant index serving a number
+        # would otherwise crash SpecifierSet downstream. Treat it as absent.
         requires_python = (
             sys.intern(requires_python_raw)
             if isinstance(requires_python_raw, str)
-            else requires_python_raw
+            else None
         )
         # A non-conformant index may serve a non-string ``upload-time``
         # (a JSON number or bool); drop it so the downstream datetime
