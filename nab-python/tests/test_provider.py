@@ -5467,6 +5467,79 @@ class TestBuildRemoteFailureModes:
         with pytest.raises(UnsupportedSdistError, match="no sdist is available"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
+    def _build_into(self, monkeypatch: pytest.MonkeyPatch, built: object) -> Provider:
+        from nab_python._provider import build_remote
+
+        provider = self._provider(with_sdist=True)
+        provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
+
+        def _ok_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+            provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
+            return _done_event()
+
+        cast(
+            "MagicMock", provider.coordinator
+        ).request_sdist_archive.side_effect = _ok_fetch
+        monkeypatch.setattr(
+            build_remote, "extract_sdist_archive", lambda _d, target: target
+        )
+        monkeypatch.setattr(
+            "nab_python.build_backend.extract_metadata", lambda *_a, **_k: built
+        )
+        return provider
+
+    def test_built_requires_python_excludes_target_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from nab_python._provider import build_remote
+        from nab_python.metadata import WheelMetadata as _WheelMetadata
+
+        built = _WheelMetadata(
+            name="pkg",
+            version=V("1.0"),
+            requires_python=SpecifierSet(">=3.13"),
+            requires_dist=[Requirement("dep-a>=1")],
+            provides_extra=[],
+        )
+        provider = self._build_into(monkeypatch, built)
+        with pytest.raises(UnsupportedSdistError, match="requires Python"):
+            build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+
+    def test_built_requires_python_compatible_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from nab_python._provider import build_remote
+        from nab_python.metadata import WheelMetadata as _WheelMetadata
+
+        built = _WheelMetadata(
+            name="pkg",
+            version=V("1.0"),
+            requires_python=SpecifierSet(">=3.10"),
+            requires_dist=[Requirement("dep-a>=1")],
+            provides_extra=[],
+        )
+        provider = self._build_into(monkeypatch, built)
+        result = build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+        assert result is built
+
+    def test_built_requires_python_no_target_skips_check(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from nab_python._provider import build_remote
+        from nab_python.metadata import WheelMetadata as _WheelMetadata
+
+        built = _WheelMetadata(
+            name="pkg",
+            version=V("1.0"),
+            requires_python=SpecifierSet(">=3.13"),
+            requires_dist=[Requirement("dep-a>=1")],
+            provides_extra=[],
+        )
+        provider = self._build_into(monkeypatch, built)
+        provider.python_version = None
+        result = build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+        assert result is built
+
 
 class TestPublicAccessors:
     """Public read accessors used by lockfile / download tooling."""
