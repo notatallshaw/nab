@@ -661,6 +661,12 @@ def _parse_nab_table(
     conflicts = _parse_conflicts(raw.get("conflicts"))
     _validate_default_groups_against_conflicts(default_groups, conflicts)
 
+    local_sources = _parse_local_sources(
+        raw.get("local-sources", []), pyproject_dir=pyproject_dir
+    )
+    vcs_sources = _parse_vcs_sources(raw.get("vcs-sources", []))
+    _reject_duplicate_source_names(local_sources, vcs_sources)
+
     return NabProjectConfig(
         mode=mode,
         constraints=_parse_string_list("constraints", raw.get("constraints", [])),
@@ -675,10 +681,8 @@ def _parse_nab_table(
         marker_environment=_parse_marker_environment(raw.get("marker-environment", {})),
         indexes=indexes,
         vcs=_parse_vcs(raw.get("vcs", {})),
-        local_sources=_parse_local_sources(
-            raw.get("local-sources", []), pyproject_dir=pyproject_dir
-        ),
-        vcs_sources=_parse_vcs_sources(raw.get("vcs-sources", [])),
+        local_sources=local_sources,
+        vcs_sources=vcs_sources,
         matrix=matrix,
         resolution=_parse_enum(
             "resolution",
@@ -1661,6 +1665,28 @@ def _parse_vcs_sources(value: object) -> tuple[VcsSource, ...]:
             raise ConfigError(msg)
         out.append(VcsSource(name=name, url=url))
     return tuple(out)
+
+
+def _reject_duplicate_source_names(
+    local_sources: tuple[LocalSource, ...],
+    vcs_sources: tuple[VcsSource, ...],
+) -> None:
+    """Reject a canonical name claimed by more than one local/VCS source.
+
+    The provider enforces this while indexing, but as a bare ValueError raised
+    after the resolve starts; raising ConfigError here surfaces it at parse
+    time like every other config error.
+    """
+    seen: dict[str, str] = {}
+    for source in (*local_sources, *vcs_sources):
+        canonical = canonicalize_name(source.name)
+        if canonical in seen:
+            msg = (
+                "[tool.nab] local-sources/vcs-sources declare duplicate canonical"
+                f" name {canonical!r} via {seen[canonical]!r} and {source.name!r}"
+            )
+            raise ConfigError(msg)
+        seen[canonical] = source.name
 
 
 def _parse_python_patches(value: object) -> dict[str, str] | None:
