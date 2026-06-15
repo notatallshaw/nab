@@ -48,6 +48,19 @@ def _parse_requirements(strings: Sequence[str], source: str) -> list[Requirement
         raise InvalidProjectRequirementError(msg) from exc
 
 
+def _require_string_list(value: object, source: str) -> list[str]:
+    """Validate that a PEP 621 dependency value is an array of strings.
+
+    A bare string passes the type checker as ``Sequence[str]`` but
+    iterates character by character, so ``dependencies = "requests"``
+    would parse as eight single-character requirements rather than fail.
+    """
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        msg = f"{source} must be an array of strings"
+        raise InvalidProjectRequirementError(msg)
+    return value
+
+
 def read_pyproject_dependencies(path: Path) -> list[Requirement]:
     """Read [project].dependencies from a pyproject.toml file.
 
@@ -59,8 +72,9 @@ def read_pyproject_dependencies(path: Path) -> list[Requirement]:
     with path.open("rb") as f:
         data = tomli.load(f)
 
-    dep_strings: list[str] = data["project"]["dependencies"]
-    return _parse_requirements(dep_strings, "[project].dependencies")
+    source = "[project].dependencies"
+    dep_strings = _require_string_list(data["project"]["dependencies"], source)
+    return _parse_requirements(dep_strings, source)
 
 
 def read_pyproject_name(path: Path) -> str | None:
@@ -102,7 +116,10 @@ def _canonicalize_optional_deps(
     """Map each extra name to its requirements under PEP 685 normalization."""
     canonical: dict[str, list[str]] = {}
     for name, reqs in optional_deps.items():
-        canonical.setdefault(canonicalize_name(name), []).extend(reqs)
+        source = f"[project.optional-dependencies] extra {name!r}"
+        canonical.setdefault(canonicalize_name(name), []).extend(
+            _require_string_list(reqs, source)
+        )
     return canonical
 
 

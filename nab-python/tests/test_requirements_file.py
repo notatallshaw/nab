@@ -70,6 +70,24 @@ class TestReadPyprojectDependencies:
         ):
             read_pyproject_dependencies(p)
 
+    def test_string_dependencies_value_raises(self, tmp_path: object) -> None:
+        """A bare string is rejected, not iterated character by character."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('[project]\ndependencies = "requests"\n')
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"\[project\].dependencies"
+        ):
+            read_pyproject_dependencies(p)
+
+    def test_non_string_dependency_element_raises(self, tmp_path: object) -> None:
+        """A non-string array element raises rather than crashing on parse."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text("[project]\ndependencies = [123]\n")
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"\[project\].dependencies"
+        ):
+            read_pyproject_dependencies(p)
+
 
 class TestReadPyprojectGroups:
     def test_reads_groups_table(self, tmp_path: object) -> None:
@@ -175,6 +193,11 @@ class TestSelectOptionalDependencies:
     def test_malformed_requirement_string_raises(self) -> None:
         with pytest.raises(InvalidProjectRequirementError, match="gpu"):
             select_optional_dependencies({"gpu": ["torch >= bad junk"]}, ("gpu",))
+
+    def test_string_extra_value_raises(self) -> None:
+        """An extra whose value is a bare string is rejected, not char-iterated."""
+        with pytest.raises(InvalidProjectRequirementError, match="gpu"):
+            select_optional_dependencies({"gpu": "torch"}, ("gpu",))
 
     def test_selected_extra_name_canonicalized(self) -> None:
         """PEP 685: a request differing only by case/separator still matches."""
