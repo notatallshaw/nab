@@ -104,6 +104,16 @@ def test_provides_extra_kept_as_strings() -> None:
     assert md.provides_extra == ["dev", "docs"]
 
 
+def test_provides_extra_whitespace_stripped() -> None:
+    """Surrounding whitespace on a ``Provides-Extra`` value is insignificant."""
+    text = (
+        "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+        "Provides-Extra: dev \nProvides-Extra: docs\t\n"
+    )
+    md = parse_metadata(text)
+    assert md.provides_extra == ["dev", "docs"]
+
+
 class TestMetadataDepsAreStatic:
     def test_2_2_without_dynamic_is_static(self) -> None:
         md = parse_metadata("Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n")
