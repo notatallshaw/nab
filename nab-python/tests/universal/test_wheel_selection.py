@@ -389,6 +389,50 @@ class TestSelectWheelForTuple:
         assert chosen is not None
         assert "manylinux_2_17" in chosen.filename
 
+    def test_higher_build_tag_wins_at_same_rank(self) -> None:
+        """Among same-tag wheels, the higher PEP 427 build tag wins."""
+        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
+        build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
+        chosen = select_wheel_for_tuple(
+            [build1, build5], python_version="3.11", spec=spec
+        )
+        assert chosen is build5
+
+    def test_build_tag_selection_is_order_independent(self) -> None:
+        """The same wheel is chosen regardless of index file order."""
+        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
+        build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
+        forward = select_wheel_for_tuple(
+            [build1, build5], python_version="3.11", spec=spec
+        )
+        reverse = select_wheel_for_tuple(
+            [build5, build1], python_version="3.11", spec=spec
+        )
+        assert forward is build5
+        assert reverse is build5
+
+    def test_build_tagged_wheel_beats_untagged_at_same_rank(self) -> None:
+        """An absent build tag sorts lowest, so a tagged wheel wins."""
+        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        untagged = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        build3 = _wheel("pkg-1.0-3-cp311-cp311-manylinux_2_17_x86_64.whl")
+        chosen = select_wheel_for_tuple(
+            [untagged, build3], python_version="3.11", spec=spec
+        )
+        assert chosen is build3
+
+    def test_malformed_build_tag_treated_as_absent(self) -> None:
+        """A build segment without a leading digit sorts lowest."""
+        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        malformed = _wheel("pkg-1.0-x-cp311-cp311-manylinux_2_17_x86_64.whl")
+        build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
+        chosen = select_wheel_for_tuple(
+            [malformed, build5], python_version="3.11", spec=spec
+        )
+        assert chosen is build5
+
 
 class TestUnknownPlatformKindGuard:
     """Explicit guard for the unreachable platform-kind branch."""
