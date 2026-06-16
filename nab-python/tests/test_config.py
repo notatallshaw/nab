@@ -803,6 +803,10 @@ class TestReadLockAnchor:
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:
         assert read_pyproject_lock_anchor(tmp_path / "missing.toml") is None
 
+    def test_directory_returns_none(self, tmp_path: Path) -> None:
+        # A directory is left for the full config parse to report, like a missing file.
+        assert read_pyproject_lock_anchor(tmp_path) is None
+
     def test_malformed_toml_returns_none(self, tmp_path: Path) -> None:
         # A syntax error is left for the full config parse to report.
         path = write(tmp_path, '[project]\ndependencies = ["foo"\n')

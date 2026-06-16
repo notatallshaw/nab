@@ -581,8 +581,9 @@ def resolve_group_selection(
 
     try:
         defined = read_pyproject_groups(path)
-    except FileNotFoundError:
-        sys.stderr.write(f"Error: {path} not found\n")
+    except OSError:
+        reason = "is a directory" if path.is_dir() else "not found"
+        sys.stderr.write(f"Error: {path} {reason}\n")
         sys.exit(1)
     except TypeError as e:
         sys.stderr.write(f"Error in {path}: {e}\n")
@@ -605,8 +606,9 @@ def resolve_extra_selection(
 
     try:
         defined = read_pyproject_optional_dependencies(path)
-    except FileNotFoundError:
-        sys.stderr.write(f"Error: {path} not found\n")
+    except OSError:
+        reason = "is a directory" if path.is_dir() else "not found"
+        sys.stderr.write(f"Error: {path} {reason}\n")
         sys.exit(1)
     except TypeError as e:
         sys.stderr.write(f"Error in {path}: {e}\n")
