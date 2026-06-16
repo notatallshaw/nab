@@ -459,6 +459,33 @@ class TestLockCommandSpecific:
             lock(pyproject, output=Path("-"))
         assert "is not valid TOML" in capsys.readouterr().err
 
+    def test_output_is_directory_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--output naming an existing directory exits cleanly, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        out.mkdir()
+        with (
+            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        assert "cannot write output" in capsys.readouterr().err
+
+    def test_output_missing_parent_dir_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--output under a non-existent directory exits cleanly, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "nope" / "pylock.toml"
+        with (
+            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        assert "cannot write output" in capsys.readouterr().err
+
     def test_resolution_flag_threads_to_resolver(self, tmp_path: Path) -> None:
         """``--resolution lowest`` reaches resolve_pyproject as the enum."""
         pyproject = _make_pyproject(tmp_path)
@@ -2372,6 +2399,20 @@ class TestDownloadCommand:
         ):
             download(pyproject)
         assert "Download failed" in capsys.readouterr().err
+
+    def test_output_is_existing_file_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--output colliding with an existing file exits cleanly, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "wheels"
+        out.write_text("not a directory")
+        with (
+            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            download(pyproject, output=out)
+        assert "cannot write to output directory" in capsys.readouterr().err
 
     def test_extras_flag_forwarded_to_resolver(self, tmp_path: Path) -> None:
         # ``--extras`` is required for ``exactly_one`` / ``at_least_one``
