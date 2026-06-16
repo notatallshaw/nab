@@ -95,7 +95,10 @@ top-level keys remain the global defaults; an override narrows them.
 
 ### Per-package overrides
 
-The common case is a table keyed by the package name:
+A per-package override is a policy body applied to a requirement.  It can
+be written two ways, and both may appear in one file.
+
+The name-keyed table is the terse form for a single package:
 
 ```toml
 # Build lxml from source and trust its (pre-PEP-643) PKG-INFO deps.
@@ -103,23 +106,17 @@ The common case is a table keyed by the package name:
 dist-policy = { policy = "sdist-only", trust-unverified-deps = true }
 ```
 
-To scope an override to a range of versions, put a PEP 508 specifier in
-the (quoted) key.  Two non-overlapping ranges for one package are two
-entries:
+`[[tool.nab.package-rules]]` is an array whose `match` selector lists the
+requirements one body applies to.  The same override written as a rule:
 
 ```toml
-# Old releases come only as sdists, newer ones only as wheels.
-[tool.nab.packages."numpy <= 1.21"]
-dist-policy = "sdist-only"
-
-[tool.nab.packages."numpy >= 1.22"]
-dist-policy = "wheel-only"
+[[tool.nab.package-rules]]
+match = ["lxml"]
+dist-policy = { policy = "sdist-only", trust-unverified-deps = true }
 ```
 
-When one body has to cover several packages at once — most often
-routing a set of internal packages to one index — use
-`[[tool.nab.package-rules]]`, an array whose `match` selector lists the
-requirements the body applies to:
+A rule is the form to reach for when one body covers several packages at
+once, most often routing a set of internal packages to one index:
 
 ```toml
 [[tool.nab.package-rules]]
@@ -127,7 +124,22 @@ match = ["acme-core", "acme-plugins", "acme-utils"]
 index = "internal"
 ```
 
-Both forms may appear in one file, and a body sets any combination of:
+To scope an override to a range of versions, put a PEP 508 specifier in
+the (quoted) table key or in a `match` entry.  Two non-overlapping ranges
+for one package are two entries, in either form:
+
+```toml
+# Both forms take specifiers and mix in one file: old numpy as sdists,
+# newer numpy as wheels.
+[tool.nab.packages."numpy <= 1.21"]
+dist-policy = "sdist-only"
+
+[[tool.nab.package-rules]]
+match = ["numpy >= 1.22"]
+dist-policy = "wheel-only"
+```
+
+A body sets any combination of:
 
 * `dist-policy`: an enum string, or `{ policy = "...",
   trust-unverified-deps = true|false }`.
@@ -139,7 +151,7 @@ Both forms may appear in one file, and a body sets any combination of:
   bare-name selectors, because the routing decision happens before any
   version is known; a version specifier alongside `index` is rejected.
 
-A selector is a name plus an optional version specifier — no extras,
+A selector is a name plus an optional version specifier, with no extras,
 marker, or URL.  Package names are canonicalised, so `Foo-Bar`,
 `foo_bar`, and `foo-bar` name the same package; two entries that set the
 same field for it are an overlap error (below).
@@ -165,9 +177,9 @@ one route.
 ### Per-index overrides
 
 `[tool.nab.index.<name>]` is keyed by a declared index name.  Each entry
-sets policy only — `dist-policy`, `build-policy`, `uploaded-prior-to` —
-and applies to every package served from that index.  It carries no
-routing and no version scope.
+sets policy only (`dist-policy`, `build-policy`, `uploaded-prior-to`) and
+applies to every package served from that index.  It carries no routing
+and no version scope.
 
 ```toml
 # Everything served from PyPI is wheel-only.

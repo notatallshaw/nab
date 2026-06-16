@@ -35,11 +35,18 @@ index = "torch-cpu"
 
 Routing lives on the per-package override, via the `index` body field,
 alongside the other per-package policies (see the
-[configuration guide](configuration.md)).  Several packages routed to
-one index read better as a `[[tool.nab.package-rules]]` entry with a
-`match` list.  A routing entry must use bare-name selectors: the routing
-decision happens before any version is known, so a version specifier
-alongside `index` is rejected, and a package may have only one route.
+[configuration guide](configuration.md)).  To route several packages to
+one index, list them in a `[[tool.nab.package-rules]]` entry instead:
+
+```toml
+[[tool.nab.package-rules]]
+match = ["torch", "torchvision", "torchaudio"]
+index = "torch-cpu"
+```
+
+A routing entry must use bare-name selectors: the routing decision
+happens before any version is known, so a version specifier alongside
+`index` is rejected, and a package may have only one route.
 
 ## How nab routes the request
 

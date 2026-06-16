@@ -94,13 +94,21 @@ permitting the one package you actually need to build.
 ## Overrides
 
 A per-package override replaces the global build policy for its selected
-packages, in either direction:
+packages, in either direction.  Key it by name:
 
 ```toml
 [tool.nab]
 build-policy = "never"
 
 [tool.nab.packages.deepspeed]
+build-policy = "build-remote"
+```
+
+Or list several packages in one `[[tool.nab.package-rules]]` entry:
+
+```toml
+[[tool.nab.package-rules]]
+match = ["deepspeed", "flash-attn"]
 build-policy = "build-remote"
 ```
 
