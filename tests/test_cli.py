@@ -297,6 +297,20 @@ class TestLockCommandSpecific:
             lock(pyproject)
         assert "Resolution failed" in capsys.readouterr().err
 
+    def test_unknown_group_exits_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A typo'd --group with a present table exits 1, not a raw traceback."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "1"\ndependencies = ["foo"]\n'
+            "[dependency-groups]\n"
+            'dev = ["ruff"]\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, groups=("typo",), offline=True, cache=False)
+        assert "Dependency group 'typo' not found" in capsys.readouterr().err
+
     def test_unsupported_vcs_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

@@ -115,8 +115,26 @@ class TestResolveGroupsToRequirements:
         assert names == ["pytest", "ruff"]
 
     def test_unknown_group_raises(self) -> None:
-        with pytest.raises(BaseException, match="nope"):
+        with pytest.raises(LookupError, match="nope"):
             resolve_groups_to_requirements({"dev": ["pytest"]}, ("nope",))
+
+    def test_multiple_missing_includes_raise_lookuperror(self) -> None:
+        groups = {"x": [{"include-group": "miss1"}, {"include-group": "miss2"}]}
+        with pytest.raises(LookupError, match="miss1.*miss2"):
+            resolve_groups_to_requirements(groups, ("x",))
+
+    def test_cyclic_include_raises_clean(self) -> None:
+        groups = {
+            "a": [{"include-group": "b"}],
+            "b": [{"include-group": "a"}],
+        }
+        with pytest.raises(InvalidProjectRequirementError, match="Cyclic"):
+            resolve_groups_to_requirements(groups, ("a",))
+
+    def test_duplicate_group_names_raise_clean(self) -> None:
+        groups = {"my-dev": ["pytest"], "my_dev": ["ruff"]}
+        with pytest.raises(InvalidProjectRequirementError, match="Duplicate"):
+            resolve_groups_to_requirements(groups, ("my-dev",))
 
     def test_malformed_requirement_string_raises(self) -> None:
         with pytest.raises(

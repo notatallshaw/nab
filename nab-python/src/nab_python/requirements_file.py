@@ -10,6 +10,7 @@ import tomli
 from nab_resolver.errors import ResolutionError
 
 from ._vendor.packaging.dependency_groups import resolve_dependency_groups
+from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 from ._vendor.packaging.utils import canonicalize_name
@@ -332,11 +333,10 @@ def resolve_groups_to_requirements(
     """Resolve PEP 735 group includes and return the union of requirements.
 
     ``selected`` names the groups whose requirements should be
-    expanded.  Unknown group names surface as :class:`LookupError`
-    from the vendored resolver and a malformed requirement string as
-    :class:`InvalidProjectRequirementError`; a cyclic include raises the
-    vendored resolver's error.  Returns an empty list when
-    ``selected`` is empty.
+    expanded.  An unknown group name surfaces as :class:`LookupError`;
+    a malformed requirement string, cyclic include, or duplicate group
+    name surfaces as :class:`InvalidProjectRequirementError`.  Returns
+    an empty list when ``selected`` is empty.
     """
     if not selected:
         return []
@@ -345,6 +345,12 @@ def resolve_groups_to_requirements(
     except InvalidRequirement as exc:
         msg = f"invalid requirement in [dependency-groups]: {exc}"
         raise InvalidProjectRequirementError(msg) from exc
+    except ExceptionGroup as group:
+        detail = "; ".join(str(e) for e in group.exceptions)
+        if all(isinstance(e, LookupError) for e in group.exceptions):
+            raise LookupError(detail) from group
+        msg = f"invalid [dependency-groups]: {detail}"
+        raise InvalidProjectRequirementError(msg) from group
     return [Requirement(s) for s in resolved]
 
 
