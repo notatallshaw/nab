@@ -543,9 +543,7 @@ class TestResolvePyproject:
             "[[tool.nab.indexes]]\n"
             'name = "private"\n'
             'url = "https://private.example.com/simple/"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["baz"]\n'
-            'index = "private"\n',
+            '[tool.nab.packages.baz]\nindex = "private"\n',
         )
 
         with (

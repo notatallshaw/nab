@@ -1169,8 +1169,8 @@ class TestVcsSources:
             read_pyproject_config(path)
 
 
-class TestPackageOverrides:
-    """``[[tool.nab.overrides.package]]`` parses into requirement-keyed entries."""
+class TestPackageSugar:
+    """``[tool.nab.packages.<name>]`` parses into per-package overrides."""
 
     def test_absent_is_empty(self, tmp_path: Path) -> None:
         path = write(tmp_path, "[tool.nab]\n")
@@ -1178,38 +1178,28 @@ class TestPackageOverrides:
         assert config.package_overrides == ()
         assert config.index_overrides == {}
 
-    def test_packages_dist_policy_string(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml", "xmlsec"]\n'
-            'dist-policy = "sdist-only"\n',
-        )
-        config = read_pyproject_config(path, discover_workspace=False)
-        first, second = config.package_overrides
-        assert first.name == "lxml"
-        assert second.name == "xmlsec"
-        assert first.dist_policy is DistPolicy.SDIST_ONLY
-        assert second.dist_policy is DistPolicy.SDIST_ONLY
+    def test_dist_policy_string(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab.packages.lxml]\ndist-policy = "sdist-only"\n')
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.name == "lxml"
+        assert override.dist_policy is DistPolicy.SDIST_ONLY
 
-    def test_packages_canonicalised(self, tmp_path: Path) -> None:
+    def test_name_canonicalised(self, tmp_path: Path) -> None:
         path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["Pkg_Foo"]\n'
-            'dist-policy = "sdist-only"\n',
+            tmp_path, '[tool.nab.packages.Pkg_Foo]\ndist-policy = "sdist-only"\n'
         )
         (override,) = read_pyproject_config(
             path, discover_workspace=False
         ).package_overrides
         assert override.name == "pkg-foo"
 
-    def test_version_specifier_scopes_the_entry(self, tmp_path: Path) -> None:
+    def test_version_specifier_in_quoted_key_scopes_the_entry(
+        self, tmp_path: Path
+    ) -> None:
         path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml <= 2"]\n'
-            'dist-policy = "sdist-only"\n',
+            tmp_path, '[tool.nab.packages."lxml <= 2"]\ndist-policy = "sdist-only"\n'
         )
         (override,) = read_pyproject_config(
             path, discover_workspace=False
@@ -1222,8 +1212,7 @@ class TestPackageOverrides:
     def test_dist_policy_table_with_trust(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml"]\n'
+            "[tool.nab.packages.lxml]\n"
             'dist-policy = { policy = "sdist-only", trust-unverified-deps = true }\n',
         )
         (override,) = read_pyproject_config(
@@ -1232,11 +1221,21 @@ class TestPackageOverrides:
         assert override.dist_policy is DistPolicy.SDIST_ONLY
         assert override.dist_trust_unverified_deps is True
 
+    def test_dist_policy_table_without_trust(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.lxml]\ndist-policy = { policy = "sdist-only" }\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.dist_policy is DistPolicy.SDIST_ONLY
+        assert override.dist_trust_unverified_deps is None
+
     def test_build_policy_and_uploaded_prior_to(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
+            "[tool.nab.packages.foo]\n"
             'build-policy = "build-remote"\n'
             'uploaded-prior-to = "2026-05-01T00:00:00Z"\n',
         )
@@ -1251,8 +1250,7 @@ class TestPackageOverrides:
             tmp_path,
             "[tool.nab]\n"
             'uploaded-prior-to = "2026-05-01T00:00:00Z"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
+            "[tool.nab.packages.foo]\n"
             "uploaded-prior-to = false\n",
         )
         config = read_pyproject_config(path, discover_workspace=False)
@@ -1262,89 +1260,15 @@ class TestPackageOverrides:
         assert override.uploaded_prior_to_disabled is True
 
     def test_uploaded_prior_to_true_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            "uploaded-prior-to = true\n",
-        )
+        path = write(tmp_path, "[tool.nab.packages.foo]\nuploaded-prior-to = true\n")
         with pytest.raises(ConfigError, match="``true`` is not a valid value"):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_overlapping_ranges_for_one_field_rejected(self, tmp_path: Path) -> None:
-        # ``lxml <= 2`` and ``lxml >= 1`` overlap on [1, 2]; setting the
-        # same field for both is a parse-time conflict (no precedence).
+    def test_uploaded_prior_to_invalid_value(self, tmp_path: Path) -> None:
         path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml <= 2"]\n'
-            'dist-policy = "sdist-only"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml >= 1"]\n'
-            'dist-policy = "wheel-only"\n',
+            tmp_path, '[tool.nab.packages.foo]\nuploaded-prior-to = "not-a-date"\n'
         )
-        with pytest.raises(ConfigError, match="overlapping versions"):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_disjoint_ranges_for_one_field_ok(self, tmp_path: Path) -> None:
-        # ``lxml <= 2`` and ``lxml >= 3`` are disjoint, so both may set
-        # the same field.
-        path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml <= 2"]\n'
-            'dist-policy = "sdist-only"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml >= 3"]\n'
-            'dist-policy = "wheel-only"\n',
-        )
-        config = read_pyproject_config(path, discover_workspace=False)
-        low, high = config.package_overrides
-        assert low.dist_policy is DistPolicy.SDIST_ONLY
-        assert high.dist_policy is DistPolicy.WHEEL_ONLY
-
-    def test_overlap_check_is_per_field(self, tmp_path: Path) -> None:
-        # Overlapping ranges that set DIFFERENT fields are fine; the
-        # non-overlap rule is per (package, field).
-        path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml <= 2"]\n'
-            'dist-policy = "sdist-only"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml >= 1"]\n'
-            'build-policy = "build-remote"\n',
-        )
-        config = read_pyproject_config(path, discover_workspace=False)
-        assert len(config.package_overrides) == 2
-
-    def test_single_entry_is_not_a_conflict(self, tmp_path: Path) -> None:
-        # One per-package entry plus the global default never conflicts.
-        path = write(
-            tmp_path,
-            "[tool.nab]\n"
-            'dist-policy = "wheel-or-sdist"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml"]\n'
-            'dist-policy = "sdist-only"\n',
-        )
-        config = read_pyproject_config(path, discover_workspace=False)
-        (override,) = config.package_overrides
-        assert override.dist_policy is DistPolicy.SDIST_ONLY
-
-    def test_bare_name_overlaps_a_scoped_entry(self, tmp_path: Path) -> None:
-        # A bare name is the full range, so it overlaps any scoped range
-        # for the same package and field.
-        path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml"]\n'
-            'dist-policy = "sdist-only"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["lxml >= 3"]\n'
-            'dist-policy = "wheel-only"\n',
-        )
-        with pytest.raises(ConfigError, match="overlapping versions"):
+        with pytest.raises(ConfigError, match=r"\.uploaded-prior-to:"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_routing_index(self, tmp_path: Path) -> None:
@@ -1356,15 +1280,11 @@ class TestPackageOverrides:
             "[[tool.nab.indexes]]\n"
             'name = "internal"\n'
             'url = "https://pkgs.example.com/simple/"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["acme-core", "acme-utils"]\n'
-            'index = "internal"\n',
+            '[tool.nab.packages.acme-core]\nindex = "internal"\n',
         )
         config = read_pyproject_config(path, discover_workspace=False)
-        routes = index_routes_from_config(config)
-        assert routes == [
+        assert index_routes_from_config(config) == [
             IndexRoute(name="acme-core", index="internal"),
-            IndexRoute(name="acme-utils", index="internal"),
         ]
 
     def test_routing_with_version_specifier_rejected(self, tmp_path: Path) -> None:
@@ -1376,64 +1296,19 @@ class TestPackageOverrides:
             "[[tool.nab.indexes]]\n"
             'name = "internal"\n'
             'url = "https://pkgs.example.com/simple/"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo <= 2"]\n'
-            'index = "internal"\n',
+            '[tool.nab.packages."foo <= 2"]\nindex = "internal"\n',
         )
         with pytest.raises(ConfigError, match="bare-name requirements"):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_two_routes_for_one_package_rejected(self, tmp_path: Path) -> None:
-        # Two routing entries for one package always overlap (full range).
-        path = write(
-            tmp_path,
-            "[[tool.nab.indexes]]\n"
-            'name = "pypi"\n'
-            'url = "https://pypi.org/simple/"\n'
-            "[[tool.nab.indexes]]\n"
-            'name = "internal"\n'
-            'url = "https://pkgs.example.com/simple/"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            'index = "pypi"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            'index = "internal"\n',
-        )
-        with pytest.raises(ConfigError, match="overlapping versions"):
-            read_pyproject_config(path, discover_workspace=False)
-
     def test_routing_unknown_index_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.overrides.package]]\npackages = ["foo"]\nindex = "nope"\n',
-        )
+        path = write(tmp_path, '[tool.nab.packages.foo]\nindex = "nope"\n')
         with pytest.raises(ConfigError, match="routes to undeclared index"):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_strict_false_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.indexes]]\n"
-            'name = "pypi"\n'
-            'url = "https://pypi.org/simple/"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            'index = "pypi"\n'
-            "strict = false\n",
-        )
-        with pytest.raises(ConfigError, match="strict = false"):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_strict_without_index_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            'dist-policy = "sdist-only"\n'
-            "strict = true\n",
-        )
-        with pytest.raises(ConfigError, match="only meaningful alongside"):
+    def test_index_must_be_string(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab.packages.foo]\nindex = 1\n")
+        with pytest.raises(ConfigError, match="index must be a string"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_strict_true_is_accepted(self, tmp_path: Path) -> None:
@@ -1442,88 +1317,30 @@ class TestPackageOverrides:
             "[[tool.nab.indexes]]\n"
             'name = "pypi"\n'
             'url = "https://pypi.org/simple/"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            'index = "pypi"\n'
-            "strict = true\n",
+            '[tool.nab.packages.foo]\nindex = "pypi"\nstrict = true\n',
         )
-        config = read_pyproject_config(path, discover_workspace=False)
-        (override,) = config.package_overrides
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
         assert override.index == "pypi"
 
-    def test_marker_rejected(self, tmp_path: Path) -> None:
+    def test_strict_false_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            "marker = \"sys_platform == 'linux'\"\n"
-            'dist-policy = "sdist-only"\n',
+            "[[tool.nab.indexes]]\n"
+            'name = "pypi"\n'
+            'url = "https://pypi.org/simple/"\n'
+            '[tool.nab.packages.foo]\nindex = "pypi"\nstrict = false\n',
         )
-        with pytest.raises(ConfigError, match="deferred to a later PR"):
+        with pytest.raises(ConfigError, match="strict = false"):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_packages_with_marker_rejected(self, tmp_path: Path) -> None:
+    def test_strict_without_index_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            "packages = [\"foo ; sys_platform == 'linux'\"]\n"
-            'dist-policy = "sdist-only"\n',
+            '[tool.nab.packages.foo]\ndist-policy = "sdist-only"\nstrict = true\n',
         )
-        with pytest.raises(ConfigError, match="extras, markers, and URLs"):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_packages_with_extra_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo[bar]"]\n'
-            'dist-policy = "sdist-only"\n',
-        )
-        with pytest.raises(ConfigError, match="extras, markers, and URLs"):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_packages_with_url_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo @ https://example.com/foo.whl"]\n'
-            'dist-policy = "sdist-only"\n',
-        )
-        with pytest.raises(ConfigError, match="extras, markers, and URLs"):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_must_carry_packages(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.overrides.package]]\ndist-policy = "sdist-only"\n',
-        )
-        with pytest.raises(ConfigError, match="must carry a 'packages' selector"):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_must_set_a_body(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.overrides.package]]\npackages = ["foo"]\n',
-        )
-        with pytest.raises(ConfigError, match="sets no policy"):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_non_routing_entry_skipped_in_routes(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            'dist-policy = "sdist-only"\n',
-        )
-        config = read_pyproject_config(path, discover_workspace=False)
-        assert index_routes_from_config(config) == []
-
-    def test_index_must_be_string(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.overrides.package]]\npackages = ["foo"]\nindex = 1\n',
-        )
-        with pytest.raises(ConfigError, match="index must be a string"):
+        with pytest.raises(ConfigError, match="only meaningful alongside"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_strict_must_be_bool(self, tmp_path: Path) -> None:
@@ -1532,27 +1349,20 @@ class TestPackageOverrides:
             "[[tool.nab.indexes]]\n"
             'name = "pypi"\n'
             'url = "https://pypi.org/simple/"\n'
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            'index = "pypi"\n'
-            'strict = "x"\n',
+            '[tool.nab.packages.foo]\nindex = "pypi"\nstrict = "x"\n',
         )
         with pytest.raises(ConfigError, match="strict must be a boolean"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_dist_policy_must_be_string_or_table(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.overrides.package]]\npackages = ["foo"]\ndist-policy = 1\n',
-        )
+        path = write(tmp_path, "[tool.nab.packages.foo]\ndist-policy = 1\n")
         with pytest.raises(ConfigError, match="must be a policy string or a table"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_dist_policy_table_unknown_key(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
+            "[tool.nab.packages.foo]\n"
             'dist-policy = { policy = "sdist-only", bogus = 1 }\n',
         )
         with pytest.raises(ConfigError, match="has unknown key"):
@@ -1561,9 +1371,7 @@ class TestPackageOverrides:
     def test_dist_policy_table_missing_policy(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            "dist-policy = { trust-unverified-deps = true }\n",
+            "[tool.nab.packages.foo]\ndist-policy = { trust-unverified-deps = true }\n",
         )
         with pytest.raises(ConfigError, match="table must set 'policy'"):
             read_pyproject_config(path, discover_workspace=False)
@@ -1571,8 +1379,7 @@ class TestPackageOverrides:
     def test_dist_policy_table_trust_must_be_bool(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
+            "[tool.nab.packages.foo]\n"
             'dist-policy = { policy = "sdist-only", trust-unverified-deps = 1 }\n',
         )
         with pytest.raises(
@@ -1580,71 +1387,376 @@ class TestPackageOverrides:
         ):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_uploaded_prior_to_invalid_value(self, tmp_path: Path) -> None:
+    def test_must_set_a_body(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab.packages.foo]\n")
+        with pytest.raises(ConfigError, match="sets no policy"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_body_must_be_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab.packages]\nfoo = 1\n")
+        with pytest.raises(ConfigError, match="'foo' must be a table"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_unknown_key_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab.packages.foo]\nbogus = 1\n")
+        with pytest.raises(ConfigError, match="unknown override key"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_deferred_key_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab.packages.foo]\nresolution = "lowest"\n')
+        with pytest.raises(ConfigError, match="deferred to a later PR"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_marker_in_key_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            'uploaded-prior-to = "not-a-date"\n',
+            "[tool.nab.packages.\"foo ; sys_platform == 'linux'\"]\n"
+            'dist-policy = "sdist-only"\n',
         )
-        with pytest.raises(ConfigError, match=r"\.uploaded-prior-to:"):
+        with pytest.raises(ConfigError, match="extras, markers, and URLs"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_extra_in_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[tool.nab.packages."foo[bar]"]\ndist-policy = "sdist-only"\n'
+        )
+        with pytest.raises(ConfigError, match="extras, markers, and URLs"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_url_in_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo @ https://example.com/foo.whl"]\n'
+            'dist-policy = "sdist-only"\n',
+        )
+        with pytest.raises(ConfigError, match="extras, markers, and URLs"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_glob_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[tool.nab.packages."acme-*"]\ndist-policy = "sdist-only"\n'
+        )
+        with pytest.raises(ConfigError, match="not a valid PEP 508 requirement"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_non_routing_entry_skipped_in_routes(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab.packages.foo]\ndist-policy = "sdist-only"\n')
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert index_routes_from_config(config) == []
+
+    def test_uppercase_name_and_specifier_in_one_key(self, tmp_path: Path) -> None:
+        # The key is Requirement()-parsed before only its .name is
+        # canonicalised, so casing and the specifier both survive.
+        path = write(
+            tmp_path, '[tool.nab.packages."Pkg_Foo <= 2"]\ndist-policy = "sdist-only"\n'
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.name == "pkg-foo"
+        assert str(override.requirement.specifier) == "<=2"
+        assert Version("1.0") in override.version_range
+        assert Version("3.0") not in override.version_range
+
+    def test_as_array_rejected(self, tmp_path: Path) -> None:
+        # The plural ``packages`` key is the sugar table; an array there is
+        # almost certainly a mistyped ``[[tool.nab.package-rules]]``.
+        path = write(tmp_path, '[[tool.nab.packages]]\nmatch = ["foo"]\n')
+        with pytest.raises(ConfigError, match="name-keyed table form") as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+        message = str(excinfo.value)
+        assert "[[tool.nab.package-rules]]" in message
+        assert "match" in message
+
+    def test_must_be_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\npackages = "x"\n')
+        with pytest.raises(ConfigError, match="must be a table keyed by package name"):
+            read_pyproject_config(path, discover_workspace=False)
+
+
+class TestPackageRules:
+    """``[[tool.nab.package-rules]]`` applies one body across several requirements."""
+
+    def test_match_several_packages(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.package-rules]]\n"
+            'match = ["lxml", "xmlsec"]\n'
+            'dist-policy = "sdist-only"\n',
+        )
+        first, second = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert first.name == "lxml"
+        assert second.name == "xmlsec"
+        assert first.dist_policy is DistPolicy.SDIST_ONLY
+        assert second.dist_policy is DistPolicy.SDIST_ONLY
+
+    def test_routing_many_packages_to_one_index(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "pypi"\n'
+            'url = "https://pypi.org/simple/"\n'
+            "[[tool.nab.indexes]]\n"
+            'name = "internal"\n'
+            'url = "https://pkgs.example.com/simple/"\n'
+            "[[tool.nab.package-rules]]\n"
+            'match = ["acme-core", "acme-utils"]\n'
+            'index = "internal"\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert index_routes_from_config(config) == [
+            IndexRoute(name="acme-core", index="internal"),
+            IndexRoute(name="acme-utils", index="internal"),
+        ]
+
+    def test_version_specifier_scopes_the_entry(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.package-rules]]\nmatch = ["lxml <= 2"]\ndist-policy = "sdist-only"\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert str(override.requirement.specifier) == "<=2"
+
+    def test_must_carry_match(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[[tool.nab.package-rules]]\ndist-policy = "sdist-only"\n'
+        )
+        with pytest.raises(ConfigError, match="must carry a 'match' selector"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_match_must_be_list(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.package-rules]]\nmatch = "lxml"\ndist-policy = "sdist-only"\n',
+        )
+        with pytest.raises(ConfigError, match="match must be a list of strings"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_must_set_a_body(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[[tool.nab.package-rules]]\nmatch = ["foo"]\n')
+        with pytest.raises(ConfigError, match="sets no policy"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_unknown_key_rejected(self, tmp_path: Path) -> None:
         path = write(
-            tmp_path,
-            '[[tool.nab.overrides.package]]\npackages = ["foo"]\nbogus = 1\n',
+            tmp_path, '[[tool.nab.package-rules]]\nmatch = ["foo"]\nbogus = 1\n'
         )
         with pytest.raises(ConfigError, match="unknown override key"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_deferred_key_rejected(self, tmp_path: Path) -> None:
         path = write(
-            tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["foo"]\n'
-            'resolution = "lowest"\n',
+            tmp_path, '[[tool.nab.package-rules]]\nmatch = ["foo"]\nmarker = "x"\n'
         )
         with pytest.raises(ConfigError, match="deferred to a later PR"):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_packages_glob_rejected(self, tmp_path: Path) -> None:
+    def test_match_with_marker_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            "[[tool.nab.overrides.package]]\n"
-            'packages = ["acme-*"]\n'
+            "[[tool.nab.package-rules]]\n"
+            "match = [\"foo ; sys_platform == 'linux'\"]\n"
             'dist-policy = "sdist-only"\n',
         )
-        with pytest.raises(ConfigError, match="not a valid PEP 508 requirement"):
+        with pytest.raises(ConfigError, match="extras, markers, and URLs"):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_overrides_must_be_table(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\noverrides = "x"\n')
-        with pytest.raises(ConfigError, match="overrides must be a table"):
+    def test_as_table_rejected(self, tmp_path: Path) -> None:
+        # ``package-rules`` is the array form; a name-keyed table belongs in
+        # ``[tool.nab.packages.<name>]``.
+        path = write(
+            tmp_path, '[tool.nab.package-rules.foo]\ndist-policy = "sdist-only"\n'
+        )
+        with pytest.raises(ConfigError, match="must be an array of tables") as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+        assert "[tool.nab.packages.<name>]" in str(excinfo.value)
+
+    def test_entry_must_be_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\npackage-rules = ["x"]\n')
+        with pytest.raises(ConfigError, match=r"package-rules\[0\] must be a table"):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_overrides_unknown_subkey(self, tmp_path: Path) -> None:
-        path = write(tmp_path, "[tool.nab.overrides]\nbogus = 1\n")
-        with pytest.raises(ConfigError, match="unknown \\[tool.nab.overrides\\] keys"):
+    def test_intra_rule_duplicate_package_conflicts(self, tmp_path: Path) -> None:
+        # Two match entries that canonicalise to one package and set the same
+        # field overlap (full range): a conflict, not a silent dedup.
+        path = write(
+            tmp_path,
+            '[[tool.nab.package-rules]]\nmatch = ["foo", "Foo"]\ndist-policy = "sdist-only"\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_package_must_be_array(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab.overrides]\npackage = "x"\n')
-        with pytest.raises(
-            ConfigError, match="overrides.package must be an array of tables"
-        ):
+
+class TestPackageOverrideConflicts:
+    """The combined per-package overrides must not conflict on one field."""
+
+    def test_overlapping_ranges_for_one_field_rejected(self, tmp_path: Path) -> None:
+        # ``lxml <= 2`` and ``lxml >= 1`` overlap on [1, 2]; setting the
+        # same field for both is a parse-time conflict (no precedence).
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."lxml <= 2"]\n'
+            'dist-policy = "sdist-only"\n'
+            '[tool.nab.packages."lxml >= 1"]\n'
+            'dist-policy = "wheel-only"\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_package_entry_must_be_table(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab.overrides]\npackage = ["x"]\n')
-        with pytest.raises(
-            ConfigError, match=r"overrides\.package\[0\] must be a table"
-        ):
+    def test_disjoint_ranges_for_one_field_ok(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."lxml <= 2"]\n'
+            'dist-policy = "sdist-only"\n'
+            '[tool.nab.packages."lxml >= 3"]\n'
+            'dist-policy = "wheel-only"\n',
+        )
+        low, high = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert low.dist_policy is DistPolicy.SDIST_ONLY
+        assert high.dist_policy is DistPolicy.WHEEL_ONLY
+
+    def test_overlap_check_is_per_field(self, tmp_path: Path) -> None:
+        # Overlapping ranges that set DIFFERENT fields are fine; the
+        # non-overlap rule is per (package, field).
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."lxml <= 2"]\n'
+            'dist-policy = "sdist-only"\n'
+            '[tool.nab.packages."lxml >= 1"]\n'
+            'build-policy = "build-remote"\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert len(config.package_overrides) == 2
+
+    def test_single_entry_with_global_default_is_not_a_conflict(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'dist-policy = "wheel-or-sdist"\n'
+            '[tool.nab.packages.lxml]\ndist-policy = "sdist-only"\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.dist_policy is DistPolicy.SDIST_ONLY
+
+    def test_bare_name_overlaps_a_scoped_entry(self, tmp_path: Path) -> None:
+        # A bare name is the full range, so it overlaps any scoped range
+        # for the same package and field.
+        path = write(
+            tmp_path,
+            "[tool.nab.packages.lxml]\n"
+            'dist-policy = "sdist-only"\n'
+            '[tool.nab.packages."lxml >= 3"]\n'
+            'dist-policy = "wheel-only"\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
             read_pyproject_config(path, discover_workspace=False)
+
+    def test_two_routes_for_one_package_rejected(self, tmp_path: Path) -> None:
+        # One route from each surface for the same package always overlaps.
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "pypi"\n'
+            'url = "https://pypi.org/simple/"\n'
+            "[[tool.nab.indexes]]\n"
+            'name = "internal"\n'
+            'url = "https://pkgs.example.com/simple/"\n'
+            '[tool.nab.packages.foo]\nindex = "pypi"\n'
+            "[[tool.nab.package-rules]]\n"
+            'match = ["foo"]\nindex = "internal"\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_sugar_and_rule_conflict_on_one_field(self, tmp_path: Path) -> None:
+        # Both surfaces expand into one list before the conflict check.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.foo]\ndist-policy = "sdist-only"\n'
+            "[[tool.nab.package-rules]]\n"
+            'match = ["foo"]\ndist-policy = "wheel-only"\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_sugar_and_rule_union_distinct_packages(self, tmp_path: Path) -> None:
+        # Distinct packages from both surfaces survive as the union, in
+        # declared order, each keeping its own body.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.foo]\ndist-policy = "sdist-only"\n'
+            "[[tool.nab.package-rules]]\n"
+            'match = ["bar"]\nbuild-policy = "build-remote"\n',
+        )
+        foo, bar = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert foo.name == "foo"
+        assert foo.dist_policy is DistPolicy.SDIST_ONLY
+        assert foo.build_policy is None
+        assert bar.name == "bar"
+        assert bar.build_policy is BuildPolicy.BUILD_REMOTE
+        assert bar.dist_policy is None
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            'build-policy = "build-remote"',
+            'uploaded-prior-to = "2026-05-01T00:00:00Z"',
+            "uploaded-prior-to = false",
+        ],
+    )
+    def test_overlapping_same_field_rejected_per_field(
+        self, tmp_path: Path, body: str
+    ) -> None:
+        path = write(
+            tmp_path,
+            f'[tool.nab.packages."foo <= 2"]\n{body}\n'
+            f'[tool.nab.packages."foo >= 1"]\n{body}\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_uploaded_prior_to_cutoff_vs_disable_overlap_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        # A datetime cutoff and a ``false`` disable are two forms of the one
+        # uploaded-prior-to field, so overlapping ranges still conflict (and
+        # across surfaces too).
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo <= 2"]\n'
+            'uploaded-prior-to = "2026-05-01T00:00:00Z"\n'
+            "[[tool.nab.package-rules]]\n"
+            'match = ["foo >= 1"]\nuploaded-prior-to = false\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_overlapping_different_fields_do_not_conflict(self, tmp_path: Path) -> None:
+        # uploaded-prior-to (disabled) and build-policy are different fields,
+        # so overlapping ranges are fine.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo <= 2"]\nuploaded-prior-to = false\n'
+            '[tool.nab.packages."foo >= 1"]\nbuild-policy = "build-remote"\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert len(config.package_overrides) == 2
 
 
 class TestIndexOverrides:
-    """``[tool.nab.overrides.index]`` parses into a name-keyed policy map."""
+    """``[tool.nab.index.<name>]`` parses into a name-keyed policy map."""
 
     def _two_indexes(self) -> str:
         return (
@@ -1659,8 +1771,18 @@ class TestIndexOverrides:
     def test_dist_policy(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            self._two_indexes() + "[tool.nab.overrides.index]\n"
-            'internal = { dist-policy = "wheel-only" }\n',
+            self._two_indexes()
+            + '[tool.nab.index.internal]\ndist-policy = "wheel-only"\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.index_overrides["internal"].dist_policy is DistPolicy.WHEEL_ONLY
+
+    def test_inline_form(self, tmp_path: Path) -> None:
+        # The inline map spelling parses to the same dict as the header form.
+        path = write(
+            tmp_path,
+            self._two_indexes()
+            + '[tool.nab.index]\ninternal = { dist-policy = "wheel-only" }\n',
         )
         config = read_pyproject_config(path, discover_workspace=False)
         assert config.index_overrides["internal"].dist_policy is DistPolicy.WHEEL_ONLY
@@ -1668,7 +1790,7 @@ class TestIndexOverrides:
     def test_full_body(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            self._two_indexes() + "[tool.nab.overrides.index.internal]\n"
+            self._two_indexes() + "[tool.nab.index.internal]\n"
             'build-policy = "build-remote"\n'
             'uploaded-prior-to = "2026-05-01T00:00:00Z"\n'
             'dist-policy = { policy = "sdist-only", trust-unverified-deps = true }\n',
@@ -1684,8 +1806,8 @@ class TestIndexOverrides:
     def test_uploaded_prior_to_false_disables(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            self._two_indexes() + "[tool.nab.overrides.index.internal]\n"
-            "uploaded-prior-to = false\n",
+            self._two_indexes()
+            + "[tool.nab.index.internal]\nuploaded-prior-to = false\n",
         )
         override = read_pyproject_config(
             path, discover_workspace=False
@@ -1694,52 +1816,37 @@ class TestIndexOverrides:
         assert override.uploaded_prior_to_disabled is True
 
     def test_unknown_index_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[tool.nab.overrides.index]\nnope = { dist-policy = "wheel-only" }\n',
-        )
+        path = write(tmp_path, '[tool.nab.index.nope]\ndist-policy = "wheel-only"\n')
         with pytest.raises(ConfigError, match="names undeclared index"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_must_be_table(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab.overrides]\nindex = "x"\n')
-        with pytest.raises(
-            ConfigError, match="overrides.index must be a table keyed by index name"
-        ):
+        path = write(tmp_path, '[tool.nab]\nindex = "x"\n')
+        with pytest.raises(ConfigError, match="must be a table keyed by index name"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_body_must_be_table(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            self._two_indexes() + "[tool.nab.overrides]\nindex = { internal = 1 }\n",
-        )
-        with pytest.raises(
-            ConfigError, match=r"overrides\.index\.internal must be a table"
-        ):
+        path = write(tmp_path, self._two_indexes() + "[tool.nab.index]\ninternal = 1\n")
+        with pytest.raises(ConfigError, match=r"index\.internal must be a table"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_no_routing_key(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            self._two_indexes() + "[tool.nab.overrides.index.internal]\n"
-            'index = "pypi"\n',
+            self._two_indexes() + '[tool.nab.index.internal]\nindex = "pypi"\n',
         )
         with pytest.raises(ConfigError, match="unknown override key"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_must_set_a_body(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            self._two_indexes() + "[tool.nab.overrides.index.internal]\n",
-        )
+        path = write(tmp_path, self._two_indexes() + "[tool.nab.index.internal]\n")
         with pytest.raises(ConfigError, match="sets no policy"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_deferred_key_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            self._two_indexes() + "[tool.nab.overrides.index.internal]\n"
-            "marker = \"sys_platform == 'linux'\"\n",
+            self._two_indexes() + '[tool.nab.index.internal]\nmarker = "x"\n',
         )
         with pytest.raises(ConfigError, match="deferred to a later PR"):
             read_pyproject_config(path, discover_workspace=False)

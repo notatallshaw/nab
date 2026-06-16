@@ -88,24 +88,46 @@ single PyPI entry.
 
 ## Overrides
 
-`[tool.nab.overrides]` scopes policy to a subset of packages.  It has
-two deliberately different sub-surfaces: one keyed by *requirement*
-(per-package, version-scoped, and the only one that carries index
-routing) and one keyed by *index name* (per-index, policy only).  The
-flat top-level keys remain the global defaults; an override narrows
-them.
+Two surfaces scope policy to a subset of packages.  One is keyed by
+*package* (`[tool.nab.packages.<name>]` and `[[tool.nab.package-rules]]`),
+the other by *index name* (`[tool.nab.index.<name>]`).  The flat
+top-level keys remain the global defaults; an override narrows them.
 
 ### Per-package overrides
 
-`[[tool.nab.overrides.package]]` is an array of entries.  Each carries
-a `packages` selector of PEP 508 requirements (a name plus an optional
-version specifier — no extras, marker, or URL) and a body.  Listing
-several requirements applies the body to each.  A version specifier
-scopes the entry to the candidate versions inside its range, so a
-policy field applies *per candidate version*; a bare name means all
-versions.
+The common case is a table keyed by the package name:
 
-A body sets any combination of:
+```toml
+# Build lxml from source and trust its (pre-PEP-643) PKG-INFO deps.
+[tool.nab.packages.lxml]
+dist-policy = { policy = "sdist-only", trust-unverified-deps = true }
+```
+
+To scope an override to a range of versions, put a PEP 508 specifier in
+the (quoted) key.  Two non-overlapping ranges for one package are two
+entries:
+
+```toml
+# Old releases come only as sdists, newer ones only as wheels.
+[tool.nab.packages."numpy <= 1.21"]
+dist-policy = "sdist-only"
+
+[tool.nab.packages."numpy >= 1.22"]
+dist-policy = "wheel-only"
+```
+
+When one body has to cover several packages at once — most often
+routing a set of internal packages to one index — use
+`[[tool.nab.package-rules]]`, an array whose `match` selector lists the
+requirements the body applies to:
+
+```toml
+[[tool.nab.package-rules]]
+match = ["acme-core", "acme-plugins", "acme-utils"]
+index = "internal"
+```
+
+Both forms may appear in one file, and a body sets any combination of:
 
 * `dist-policy`: an enum string, or `{ policy = "...",
   trust-unverified-deps = true|false }`.
@@ -114,66 +136,46 @@ A body sets any combination of:
   cutoff for the selected versions).
 * `index`: route the selected packages to this declared index (a
   strict pin: only that index is consulted).  Routing requires
-  bare-name requirements, because the routing decision happens before
-  any version is known; a version specifier alongside `index` is
-  rejected.
+  bare-name selectors, because the routing decision happens before any
+  version is known; a version specifier alongside `index` is rejected.
 
-```toml
-# Build lxml from source and trust its (pre-PEP-643) PKG-INFO deps.
-[[tool.nab.overrides.package]]
-packages = ["lxml"]
-dist-policy = { policy = "sdist-only", trust-unverified-deps = true }
+A selector is a name plus an optional version specifier — no extras,
+marker, or URL.  Package names are canonicalised, so `Foo-Bar`,
+`foo_bar`, and `foo-bar` name the same package; two entries that set the
+same field for it are an overlap error (below).
 
-# Two non-overlapping version ranges for one package: old releases come
-# only as sdists, newer ones only as wheels.
-[[tool.nab.overrides.package]]
-packages = ["numpy <= 1.21"]
-dist-policy = "sdist-only"
-
-[[tool.nab.overrides.package]]
-packages = ["numpy >= 1.22"]
-dist-policy = "wheel-only"
-
-# Route several internal packages to the internal index (bare names).
-[[tool.nab.overrides.package]]
-packages = ["acme-core", "acme-plugins", "acme-utils"]
-index = "internal"
-```
-
-The version ranges of two entries that set the **same field** for the
-**same package** must not overlap.  Overlapping ranges are a parse-time
-error rather than a precedence call:
+The version ranges of two per-package entries (from either form) that
+set the **same field** for the **same package** must not overlap.
+Overlapping ranges are a parse-time error rather than a precedence call:
 
 ```toml
 # ERROR: <= 2 and >= 1 overlap on [1, 2], and both set dist-policy.
-[[tool.nab.overrides.package]]
-packages = ["lxml <= 2"]
+[tool.nab.packages."lxml <= 2"]
 dist-policy = "sdist-only"
 
-[[tool.nab.overrides.package]]
-packages = ["lxml >= 1"]
+[tool.nab.packages."lxml >= 1"]
 dist-policy = "wheel-only"
 ```
 
 By that guarantee, at most one per-package entry governs a given
-(package, version) for a given field.  Two routing entries for one
-package always overlap (routing needs the full range), so a package may
-have at most one route.
+(package, version) for a given field.  Two routes for one package always
+overlap (routing needs the full range), so a package may have at most
+one route.
 
 ### Per-index overrides
 
-`[tool.nab.overrides.index]` is a table keyed by a declared index name.
-Each entry sets policy only — `dist-policy`, `build-policy`,
-`uploaded-prior-to` — and applies to every package served from that
-index.  It carries no routing and no version scope.
+`[tool.nab.index.<name>]` is keyed by a declared index name.  Each entry
+sets policy only — `dist-policy`, `build-policy`, `uploaded-prior-to` —
+and applies to every package served from that index.  It carries no
+routing and no version scope.
 
 ```toml
 # Everything served from PyPI is wheel-only.
-[tool.nab.overrides.index]
-pypi = { dist-policy = "wheel-only" }
+[tool.nab.index.pypi]
+dist-policy = "wheel-only"
 
-# A longer body, written as its own table.
-[tool.nab.overrides.index.internal]
+# A longer body.
+[tool.nab.index.internal]
 build-policy = "build-remote"
 uploaded-prior-to = "2026-05-01T00:00:00Z"
 ```
@@ -228,13 +230,13 @@ build cost on the resolve side.
 Scope the policy to a subset of packages with a per-package override:
 
 ```toml
-[[tool.nab.overrides.package]]
-packages = ["lxml", "xmlsec"]
+[[tool.nab.package-rules]]
+match = ["lxml", "xmlsec"]
 dist-policy = "sdist-install"
 ```
 
-The same five values are accepted.  Package names are canonicalised so
-`Foo-Bar`, `foo_bar`, and `foo-bar` collapse to one entry.
+The same five values are accepted.  Package names are canonicalised, so
+`Foo-Bar`, `foo_bar`, and `foo-bar` name the same package.
 
 ## VCS policy
 

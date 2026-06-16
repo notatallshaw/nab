@@ -29,17 +29,17 @@ url  = "https://pypi.org/simple/"
 name = "torch-cpu"
 url  = "https://download.pytorch.org/whl/cpu"
 
-[[tool.nab.overrides.package]]
-packages = ["torch"]
-index    = "torch-cpu"
+[tool.nab.packages.torch]
+index = "torch-cpu"
 ```
 
-Routing lives in `[[tool.nab.overrides.package]]` via the `index` body
-field, alongside the other per-package policies (see the
-[configuration guide](configuration.md)).  A routing entry must use
-bare-name requirements: the routing decision happens before any version
-is known, so a version specifier alongside `index` is rejected, and a
-package may have only one route.
+Routing lives on the per-package override, via the `index` body field,
+alongside the other per-package policies (see the
+[configuration guide](configuration.md)).  Several packages routed to
+one index read better as a `[[tool.nab.package-rules]]` entry with a
+`match` list.  A routing entry must use bare-name selectors: the routing
+decision happens before any version is known, so a version specifier
+alongside `index` is rejected, and a package may have only one route.
 
 ## How nab routes the request
 
@@ -53,13 +53,13 @@ foot-gun on an index the override was meant to govern.
 
 ## Per-index policy
 
-`[tool.nab.overrides.index]` applies a policy to every package served
+`[tool.nab.index.<name>]` applies a policy to every package served
 from an index. Here every package that comes from PyPI is wheel-only,
 while packages from the torch index keep the global default:
 
 ```toml
-[tool.nab.overrides.index]
-pypi = { dist-policy = "wheel-only" }
+[tool.nab.index.pypi]
+dist-policy = "wheel-only"
 ```
 
 ## Policy across both surfaces is an error, not a precedence
@@ -74,12 +74,11 @@ than picking one:
 # dist-policy for torch, and the per-index override sets dist-policy for
 # everything from torch-cpu: a torch candidate served from torch-cpu is
 # governed by both, so the resolve errors.  Remove one of the two.
-[[tool.nab.overrides.package]]
-packages = ["torch"]
+[tool.nab.packages.torch]
 dist-policy = "wheel-only"
 
-[tool.nab.overrides.index]
-torch-cpu = { dist-policy = "sdist-only" }
+[tool.nab.index.torch-cpu]
+dist-policy = "sdist-only"
 ```
 
 ## Run

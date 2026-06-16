@@ -100,8 +100,8 @@ platforms = [
 ]
 
 # Workspace packages skip the cooldown; bumps land immediately.
-[[tool.nab.overrides.package]]
-packages = ["nab", "nab-resolver", "nab-python", "nab-index"]
+[[tool.nab.package-rules]]
+match = ["nab", "nab-resolver", "nab-python", "nab-index"]
 uploaded-prior-to = false
 
 # https://docs.pytest.org/en/stable/reference/reference.html#confval-addopts

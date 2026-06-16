@@ -1,8 +1,8 @@
 """Property test: per-package overlap is an error iff the ranges overlap.
 
-The parse-time non-overlap check rejects two ``[[tool.nab.overrides.package]]``
-entries that set the same field for one package when their version ranges
-overlap.  The oracle is the ``packaging.ranges.VersionRange`` algebra:
+The parse-time non-overlap check rejects two per-package overrides that
+set the same field for one package when their version ranges overlap.
+The oracle is the ``packaging.ranges.VersionRange`` algebra:
 two ranges overlap exactly when ``not (a & b).is_empty``.
 
 Invariants:

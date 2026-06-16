@@ -14,7 +14,7 @@ The default is `build-local`: local checkouts and workspace
 members may invoke a backend, but remote sources (PyPI sdists,
 VCS clones) are read statically only.  Lift a specific package
 to `build-remote` with a per-package override when you know it
-needs a real build (`[[tool.nab.overrides.package]]`); keep
+needs a real build (`[tool.nab.packages.<name>]`); keep
 the global default tight rather than enabling builds for the
 whole graph.
 
@@ -84,8 +84,7 @@ For transitive dependencies that only publish a dynamic sdist
 per-package override rather than raising the global to `build-remote`:
 
 ```toml
-[[tool.nab.overrides.package]]
-packages = ["deepspeed"]
+[tool.nab.packages.deepspeed]
 build-policy = "build-remote"
 ```
 
@@ -94,15 +93,14 @@ permitting the one package you actually need to build.
 
 ## Overrides
 
-A `[[tool.nab.overrides.package]]` entry replaces the global build
-policy for its selected packages, in either direction:
+A per-package override replaces the global build policy for its selected
+packages, in either direction:
 
 ```toml
 [tool.nab]
 build-policy = "never"
 
-[[tool.nab.overrides.package]]
-packages = ["deepspeed"]
+[tool.nab.packages.deepspeed]
 build-policy = "build-remote"
 ```
 
@@ -110,8 +108,8 @@ Set the build policy for every package served from a given index with a
 per-index override instead:
 
 ```toml
-[tool.nab.overrides.index]
-internal = { build-policy = "build-remote" }
+[tool.nab.index.internal]
+build-policy = "build-remote"
 ```
 
 Overrides participate in the `marker_environment` guard: when
