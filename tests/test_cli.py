@@ -537,6 +537,22 @@ class TestLockCommandUniversal:
         assert "Error in [tool.nab]:" in err
         assert "gpuu" in err
 
+    def test_not_implemented_vcs_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An admitted VCS dep hits the unimplemented universal path and exits 1, not a traceback."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                side_effect=NotImplementedError("resolver path is not implemented"),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        assert "resolver path is not implemented" in capsys.readouterr().err
+
     def test_pylock_writes_universal_lock(self, tmp_path: Path) -> None:
         """Universal + pylock format runs the real merge + write pipeline."""
         pyproject = _universal_pyproject(tmp_path)
