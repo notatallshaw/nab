@@ -1696,6 +1696,8 @@ class TestLoadExtraRequirements:
     def test_returns_requirements_for_selected_extras(self, tmp_path: Path) -> None:
         """Selected extras expand into ``Requirement`` instances, with
         self-references walked transitively to their underlying deps.
+        The self-reference itself does not survive as a requirement: the
+        project is the root, not an index candidate.
         """
         path = tmp_path / "pyproject.toml"
         path.write_text(
@@ -1706,10 +1708,8 @@ class TestLoadExtraRequirements:
         )
         reqs = _load_extra_requirements(path, ["all"])
         names = sorted(r.name for r in reqs)
-        # Self-reference walks to ``pytest`` while keeping the
-        # original ``x[test]`` placeholder so the resolver still sees
-        # the project's own extras-proxy.
         assert "pytest" in names
+        assert "x" not in names
 
     def test_selected_extra_name_canonicalized(self, tmp_path: Path) -> None:
         """A --extra spelling differing only by case/separator still resolves."""
