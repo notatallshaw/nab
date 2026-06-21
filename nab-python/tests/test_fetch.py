@@ -191,13 +191,13 @@ LISTING_JSON = {
             "filename": "testpkg-1.0-py3-none-any.whl",
             "url": "https://files.example.com/testpkg-1.0-py3-none-any.whl",
             "requires-python": ">=3.8",
-            "data-dist-info-metadata": {"sha256": "abc"},
+            "dist-info-metadata": {"sha256": "abc"},
         },
         {
             "filename": "testpkg-2.0-py3-none-any.whl",
             "url": "https://files.example.com/testpkg-2.0-py3-none-any.whl",
             "requires-python": ">=3.8",
-            "data-dist-info-metadata": {"sha256": "def"},
+            "dist-info-metadata": {"sha256": "def"},
         },
     ],
 }
@@ -416,17 +416,17 @@ class TestFetchCoordinator:
                 {
                     "filename": "pkg-3.0-py3-none-any.whl",
                     "url": "https://f.com/pkg-3.0-py3-none-any.whl",
-                    "data-dist-info-metadata": {"sha256": "x"},
+                    "dist-info-metadata": {"sha256": "x"},
                 },
                 {
                     "filename": "pkg-2.0-py3-none-any.whl",
                     "url": "https://f.com/pkg-2.0-py3-none-any.whl",
-                    "data-dist-info-metadata": {"sha256": "y"},
+                    "dist-info-metadata": {"sha256": "y"},
                 },
                 {
                     "filename": "pkg-1.0-py3-none-any.whl",
                     "url": "https://f.com/pkg-1.0-py3-none-any.whl",
-                    "data-dist-info-metadata": {"sha256": "z"},
+                    "dist-info-metadata": {"sha256": "z"},
                 },
             ],
         }
