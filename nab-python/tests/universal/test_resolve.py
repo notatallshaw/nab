@@ -761,7 +761,7 @@ class TestParseRequirements:
     def test_vcs_url_refused_by_default_policy(self) -> None:
         """A git+https requirement is refused under the default BLOCK policy."""
         env = _linux_311().environment
-        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             _parse_requirements(
                 [f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"], env
             )
@@ -769,7 +769,7 @@ class TestParseRequirements:
     def test_url_constraint_refused(self) -> None:
         """A direct-URL constraint is refused the same way as a requirement."""
         env = _linux_311().environment
-        with pytest.raises(UnsupportedVcsError, match="VcsPolicy is BLOCK"):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             _parse_requirements(
                 [f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"],
                 env,
@@ -780,7 +780,9 @@ class TestParseRequirements:
         """An admitted VCS requirement still has no universal resolve path."""
         env = _linux_311().environment
         vcs_config = VcsConfig(
-            policy=VcsPolicy.ALLOW, allowed_schemes=frozenset({"git+https"})
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://example.com/",),
         )
         with pytest.raises(NotImplementedError, match="not implemented"):
             _parse_requirements(
@@ -973,6 +975,7 @@ class TestVcsConfigPlumbing:
             vcs_config=VcsConfig(
                 policy=VcsPolicy.ALLOW,
                 allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
             ),
             vcs_sources=[source],
             vcs_cache_dir=cache,
@@ -1007,6 +1010,7 @@ class TestVcsConfigPlumbing:
                 vcs_config=VcsConfig(
                     policy=VcsPolicy.ALLOW,
                     allowed_schemes=frozenset({"git+https"}),
+                    allowed_repos=("https://example.com/",),
                 ),
                 vcs_sources=[source],
                 vcs_cache_dir=None,

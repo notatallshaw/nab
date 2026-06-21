@@ -195,12 +195,18 @@ def filter_distributions(
 ) -> list[tuple[Version, DistFile]]:
     """Filter by requires-python, upload time, and sort.
 
-    Sorting: newest version first. When the effective ``dist_policy``
-    is PREFER_BINARY or SDIST_INSTALL, wheels sort before sdists at
+    Sorting: newest version first. When the effective ``dist-policy``
+    is PREFER_WHEEL or SDIST_INSTALL, wheels sort before sdists at
     the same version so the metadata picker hits the cheapest source
     first.  ``normalized`` is the canonical package name used to look
-    up the per-package ``uploaded-prior-to`` and ``dist-policy``
-    overrides.
+    up the per-package / per-index ``uploaded-prior-to`` and
+    ``dist-policy`` overrides; the serving index is read from the
+    coordinator.
+
+    The dist-policy and upload-time cutoff are version-scoped: a
+    per-package override applies only to candidate versions inside its
+    requirement's range, so each version's policy is evaluated against
+    its own :class:`Version`.
 
     :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` is *not*
     filtered here: both wheels and sdists stay in ``versions_cache``
@@ -211,14 +217,15 @@ def filter_distributions(
     # Late import: ``pypi`` imports this module at module load.
     from ..provider import DistPolicy
 
-    effective_dist_policy = provider.effective_dist_policy(normalized)
+    index_name = provider.serving_index(normalized)
 
     # Fast path: skip the time-filter dispatch entirely when no cutoff applies.
-    time_filter_active = provider.uploaded_prior_to is not None or bool(
-        provider.uploaded_prior_to_overrides
+    time_filter_active = (
+        provider.uploaded_prior_to is not None or provider.overrides_set_time
     )
 
     result: list[tuple[Version, DistFile]] = []
+    sort_with_wheel_first = False
     for dist in files:
         provider.stats.distributions_seen += 1
         if isinstance(dist, WheelFile):
@@ -226,32 +233,35 @@ def filter_distributions(
         else:
             provider.stats.sdists_seen += 1
 
-        if effective_dist_policy == DistPolicy.NO_SDIST and not isinstance(
-            dist, WheelFile
-        ):
-            provider.stats.excluded_by_dist_policy += 1
-            continue
-        if effective_dist_policy == DistPolicy.SDIST_ONLY and isinstance(
-            dist, WheelFile
-        ):
-            provider.stats.excluded_by_dist_policy += 1
-            continue
-
-        # Cheap string-only filters first so the Version regex parse only
-        # runs on dists we might keep.
-        if excluded_by_python(provider, dist):
-            continue
-        if time_filter_active and excluded_by_time(provider, normalized, dist):
-            continue
-
+        # Parse the version first: the policy and the cutoff are
+        # version-scoped, so an unparseable version is dropped before
+        # either is consulted.
         try:
             version = _intern_version(dist.version)
         except InvalidVersion:
             continue
 
+        effective_dist_policy = provider.effective_dist_policy(
+            normalized, version, index_name
+        )
+        if _excluded_by_dist_policy(dist, effective_dist_policy):
+            provider.stats.excluded_by_dist_policy += 1
+            continue
+        if effective_dist_policy in (DistPolicy.PREFER_WHEEL, DistPolicy.SDIST_INSTALL):
+            sort_with_wheel_first = True
+
+        if excluded_by_python(provider, dist):
+            continue
+        if time_filter_active:
+            cutoff = provider.effective_uploaded_prior_to(
+                normalized, version, index_name
+            )
+            if excluded_by_time(provider, normalized, dist, cutoff):
+                continue
+
         result.append((version, dist))
 
-    if effective_dist_policy in (DistPolicy.PREFER_BINARY, DistPolicy.SDIST_INSTALL):
+    if sort_with_wheel_first:
         result.sort(
             key=lambda pair: (pair[0], isinstance(pair[1], WheelFile)),
             reverse=True,
@@ -259,6 +269,23 @@ def filter_distributions(
     else:
         result.sort(key=lambda pair: pair[0], reverse=True)
     return result
+
+
+def _excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
+    """Return True when ``policy`` rejects ``dist``'s artifact kind.
+
+    ``WHEEL_ONLY`` drops sdists and ``SDIST_ONLY`` drops wheels; the
+    other policies admit both kinds here (``SDIST_INSTALL`` keeps wheels
+    as a metadata source and prunes them at lock-construction time).
+    """
+    # Late import: ``pypi`` imports this module at module load.
+    from ..provider import DistPolicy
+
+    if policy == DistPolicy.WHEEL_ONLY:
+        return not isinstance(dist, WheelFile)
+    if policy == DistPolicy.SDIST_ONLY:
+        return isinstance(dist, WheelFile)
+    return False
 
 
 def excluded_by_python(provider: Provider, dist: DistFile) -> bool:
@@ -282,19 +309,15 @@ def excluded_by_python(provider: Provider, dist: DistFile) -> bool:
     return cached
 
 
-def excluded_by_time(provider: Provider, normalized: str, dist: DistFile) -> bool:
-    """Return True when ``dist`` was uploaded after the effective cutoff.
+def excluded_by_time(
+    provider: Provider, normalized: str, dist: DistFile, cutoff: datetime | None
+) -> bool:
+    """Return True when ``dist`` was uploaded after ``cutoff``.
 
-    The effective cutoff is the per-package override at ``normalized``
-    if one is set, otherwise the global ``uploaded_prior_to``.  An
-    override of ``None`` (declared as ``false`` in
-    ``[tool.nab.uploaded-prior-to-package]``) disables the cooldown
-    for the package even when a global cutoff is set.
+    ``cutoff`` is the effective upload-time cutoff for ``normalized``,
+    already resolved through the overrides and the global
+    ``uploaded-prior-to`` (``None`` means no cutoff applies to this package).
     """
-    if normalized in provider.uploaded_prior_to_overrides:
-        cutoff = provider.uploaded_prior_to_overrides[normalized]
-    else:
-        cutoff = provider.uploaded_prior_to
     if cutoff is None:
         return False
     if dist.upload_time is None:

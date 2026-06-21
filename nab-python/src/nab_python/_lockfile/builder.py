@@ -104,8 +104,10 @@ class LockInputProvider(Protocol):
         """Return the listing slice that matches ``(canonical_name, version)``."""
         ...
 
-    def effective_dist_policy(self, canonical_name: str, /) -> DistPolicy:
-        """Return the effective :class:`DistPolicy` for ``canonical_name``."""
+    def effective_dist_policy(
+        self, canonical_name: str, version: Version, index_name: str | None = None, /
+    ) -> DistPolicy:
+        """Return the effective :class:`DistPolicy` for ``canonical_name==version``."""
         ...
 
 
@@ -354,7 +356,11 @@ def _index_pin_from_listing(
     from ..provider import DistPolicy
 
     files = list(provider.dist_files_for(canonical, version))
-    if provider.effective_dist_policy(canonical) is DistPolicy.SDIST_INSTALL:
+    serving = provider.coordinator.index.get_listing_index(canonical)
+    if (
+        provider.effective_dist_policy(canonical, version, serving)
+        is DistPolicy.SDIST_INSTALL
+    ):
         files = [f for f in files if not isinstance(f, WheelFile)]
         if not any(isinstance(f, SdistFile) for f in files):
             msg = (

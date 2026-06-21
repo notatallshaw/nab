@@ -35,11 +35,12 @@ from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
+from nab_python.config import PackageOverride
 from nab_python.fetch import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
     FetchCoordinator,
-    IndexOverride,
+    IndexRoute,
 )
 from nab_python.provider import (
     BuildPolicy,
@@ -212,7 +213,7 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
     constraints: dict[str, VersionRange] | None = None,
     marker_environment: dict[str, str] | None = None,
     indexes: list[IndexConfig] | None = None,
-    index_overrides: list[IndexOverride] | None = None,
+    index_routes: list[IndexRoute] | None = None,
     build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
     resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
     *,
@@ -222,12 +223,20 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
     direct_packages = frozenset(
         name for name in requirements if split_extra(name)[1] is None
     )
+    package_overrides = tuple(
+        PackageOverride(
+            requirement=Requirement(name),
+            name=canonicalize_name(name),
+            version_range=VersionRange.full(),
+            build_policy=policy,
+        )
+        for name, policy in (build_policy_overrides or {}).items()
+    )
     with FetchCoordinator(
         HttpxAsyncTransport(),
         indexes=indexes,
         cache_dir=CACHE_DIR,
-        index_overrides=index_overrides,
-        marker_environment=marker_environment,
+        index_routes=index_routes,
     ) as coordinator:
         provider = Provider(
             coordinator,
@@ -236,7 +245,7 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
             uploaded_prior_to=uploaded_prior_to,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
-            build_policy_overrides=build_policy_overrides,
+            package_overrides=package_overrides,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
             marker_environment=marker_environment,
             resolution_strategy=resolution_strategy,
@@ -316,7 +325,7 @@ def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
     vcs_policy_str: str,
     marker_environment: dict[str, str],
     indexes: list[IndexConfig],
-    index_overrides: list[IndexOverride],
+    index_routes: list[IndexRoute],
     build_packages: list[str] | None = None,
     resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
     *,
@@ -346,14 +355,9 @@ def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
         expected_input["indexes"] = [
             {"name": cfg.name, "url": cfg.url} for cfg in indexes
         ]
-    if index_overrides:
-        expected_input["index_overrides"] = [
-            {
-                "name": o.name,
-                "index": o.index,
-                **({"marker": o.marker} if o.marker else {}),
-            }
-            for o in index_overrides
+    if index_routes:
+        expected_input["index_routes"] = [
+            {"name": o.name, "index": o.index} for o in index_routes
         ]
     if build_packages:
         expected_input["build_packages"] = sorted(build_packages)
@@ -364,30 +368,30 @@ def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
     return expected_input
 
 
-def parse_index_overrides(
+def parse_index_routes(
     scenario_name: str,
     scenario: dict,
-) -> list[IndexOverride]:
-    """Read the ``index_overrides`` array of records from a scenario.
+) -> list[IndexRoute]:
+    """Read the ``index_routes`` array of records from a scenario.
 
     Each entry is a TOML inline table with keys ``name`` (the package
-    name) and ``index`` (the *name* of an entry in ``indexes``), plus
-    an optional ``marker``.  Entries are returned in declaration order
-    so :func:`nab_python.fetch._resolve_overrides` can apply
-    first-match-wins on duplicates.
+    name) and ``index`` (the *name* of an entry in ``indexes``).  A route
+    carries no version scope and no marker.  Entries are returned in
+    declaration order so :func:`nab_python.fetch._resolve_routes` can
+    apply last-match-wins on duplicates.
     """
-    raw = scenario.get("index_overrides", [])
+    raw = scenario.get("index_routes", [])
     if not isinstance(raw, list):
         msg = (
-            f"{scenario_name}: index_overrides must be a TOML array of"
+            f"{scenario_name}: index_routes must be a TOML array of"
             f" tables, got {type(raw).__name__}"
         )
         raise TypeError(msg)
-    out: list[IndexOverride] = []
+    out: list[IndexRoute] = []
     for entry in raw:
         if not isinstance(entry, dict):
             msg = (
-                f"{scenario_name}: index_overrides entries must be tables,"
+                f"{scenario_name}: index_routes entries must be tables,"
                 f" got {type(entry).__name__}"
             )
             raise TypeError(msg)
@@ -396,12 +400,10 @@ def parse_index_overrides(
             index = entry["index"]
         except KeyError as missing:
             msg = (
-                f"{scenario_name}: index_overrides entry missing required"
-                f" key {missing!s}"
+                f"{scenario_name}: index_routes entry missing required key {missing!s}"
             )
             raise ValueError(msg) from None
-        marker = entry.get("marker")
-        out.append(IndexOverride(name=str(name), index=str(index), marker=marker))
+        out.append(IndexRoute(name=str(name), index=str(index)))
     return out
 
 
@@ -513,7 +515,7 @@ def process_scenario(
     constraint_strings: list[str] = scenario.get("constraints", [])
     marker_environment = parse_marker_environment(scenario_name, scenario)
     indexes = parse_indexes(scenario_name, scenario)
-    index_overrides = parse_index_overrides(scenario_name, scenario)
+    index_routes = parse_index_routes(scenario_name, scenario)
     build_policy_overrides = parse_build_packages(scenario_name, scenario)
     if marker_environment and build_policy_overrides:
         # BuildPolicy.BUILD_REMOTE + marker_environment is rejected at
@@ -585,7 +587,7 @@ def process_scenario(
         vcs_policy_str,
         marker_environment,
         indexes,
-        index_overrides,
+        index_routes,
         build_packages=sorted(build_policy_overrides),
         resolution_strategy=resolution_strategy,
         trust_unverified_sdist_deps=trust_unverified_sdist_deps,
@@ -620,7 +622,7 @@ def process_scenario(
         constraints,
         marker_environment=marker_environment or None,
         indexes=indexes,
-        index_overrides=index_overrides or None,
+        index_routes=index_routes or None,
         build_policy_overrides=build_policy_overrides or None,
         resolution_strategy=resolution_strategy,
         trust_unverified_sdist_deps=trust_unverified_sdist_deps,

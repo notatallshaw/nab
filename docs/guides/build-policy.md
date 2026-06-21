@@ -14,7 +14,7 @@ The default is `build-local`: local checkouts and workspace
 members may invoke a backend, but remote sources (PyPI sdists,
 VCS clones) are read statically only.  Lift a specific package
 to `build-remote` with a per-package override when you know it
-needs a real build (`[tool.nab.build-policy-package]`); keep
+needs a real build (`[tool.nab.packages.<name>]`); keep
 the global default tight rather than enabling builds for the
 whole graph.
 
@@ -81,40 +81,62 @@ without opening the door to remote-sdist builds.  Lower to
 
 For transitive dependencies that only publish a dynamic sdist
 (native or CUDA-heavy wheels are the usual offenders), prefer a
-per-package override rather than raising the global to
-`build-remote`:
+per-package override rather than raising the global to `build-remote`:
 
 ```toml
-[tool.nab.build-policy-package]
-deepspeed = "build-remote"
+[tool.nab.packages.deepspeed]
+build-policy = "build-remote"
 ```
 
 That keeps the rest of the graph in the hermetic default while
 permitting the one package you actually need to build.
 
-## Per-package overrides
+## Overrides
 
-`[tool.nab.build-policy-package]` replaces the global on a
-per-package basis, in either direction:
+A per-package override replaces the global build policy for its selected
+packages, in either direction.  Key it by name:
 
 ```toml
 [tool.nab]
 build-policy = "never"
 
-[tool.nab.build-policy-package]
-deepspeed = "build-remote"
+[tool.nab.packages.deepspeed]
+build-policy = "build-remote"
 ```
 
-The override participates in the `marker_environment` guard:
-when impersonating a non-host target, every override must be
-`never`, because backends run on the host and cannot reflect the
-impersonated target's metadata.
+Or list several packages in one `[[tool.nab.package-rules]]` entry:
 
-## Interaction with `marker_environment`
+```toml
+[[tool.nab.package-rules]]
+match = ["deepspeed", "flash-attn"]
+build-policy = "build-remote"
+```
 
-The marker overlay (used by universal resolution and by manual
-platform impersonation) is incompatible with anything other than
-`never` at both the global and the override level: invoking a
-backend on the host produces metadata that does not match the
-impersonated target, so the combination is rejected at
-config-load time.
+Set the build policy for every package served from a given index with a
+per-index override instead:
+
+```toml
+[tool.nab.index.internal]
+build-policy = "build-remote"
+```
+
+A build-policy override for a local checkout or VCS clone is matched by
+bare name only.  A source build is decided before any version is
+resolved, so a version-scoped per-package override (a quoted
+`"name <specifier>"` key) does not govern a local or VCS source build,
+and per-index overrides do not apply to sources (a local source has no
+serving index).  Use a bare-name key to govern a source build.
+
+## Platform impersonation forbids host builds
+
+A PEP 517 backend always runs on the host nab runs on, so it reports the
+host's dependencies.  That is correct when you resolve for the host, but
+wrong when you resolve *as if* you were on another platform.  nab refuses
+the combination in both places it can impersonate a platform:
+
+* With `[tool.nab.marker-environment]` set, `build-policy` must be `never`
+  at the global level and in every override that sets it.  A non-`never`
+  value is rejected before the resolve starts.
+* Under `mode = "universal"`, `build-policy` defaults to `never` and
+  cannot be raised.  An explicit non-`never` value, global or in any
+  override, is a config error.

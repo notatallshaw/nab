@@ -96,7 +96,7 @@ def build_inputs(name: str, scenario: dict) -> dict:
         "constraints": constraints,
         "marker_environment": marker_environment or None,
         "indexes": sc.parse_indexes(name, scenario),
-        "index_overrides": sc.parse_index_overrides(name, scenario) or None,
+        "index_routes": sc.parse_index_routes(name, scenario) or None,
         "build_policy_overrides": build_policy_overrides or None,
         "resolution_strategy": resolution_strategy,
     }

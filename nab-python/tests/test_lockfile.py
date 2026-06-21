@@ -1793,7 +1793,7 @@ class TestMarkerDisjointness:
                 declared_groups=conflict_member_groups(conflicts),
             )
         message = str(info.value)
-        assert "switch to at_most_one or exactly_one" in message
+        assert "switch to at-most-one or exactly-one" in message
         assert "If these are intentionally mutually exclusive" not in message
 
     def test_at_most_one_prunes_same_collision(self) -> None:
@@ -1998,7 +1998,9 @@ class _FakeProvider:
     ) -> list[WheelFile | SdistFile]:
         return [d for v, d in self._listings.get(canonical, []) if v == version]
 
-    def effective_dist_policy(self, canonical: str) -> DistPolicy:
+    def effective_dist_policy(
+        self, canonical: str, version: Version, index_name: str | None = None
+    ) -> DistPolicy:
         return self._dist_policy_overrides.get(canonical, DistPolicy.WHEEL_OR_SDIST)
 
 

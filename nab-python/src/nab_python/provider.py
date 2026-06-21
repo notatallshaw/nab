@@ -12,7 +12,7 @@ import logging
 import re
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, cast
 
 from nab_index.client import SdistFile, WheelFile
 
@@ -34,13 +34,13 @@ from ._vendor.packaging.version import InvalidVersion, Version
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
 
     from nab_resolver.types import Incompatibility, RangeProtocol
 
-    from .config import NabProjectConfig
+    from .config import IndexOverride, NabProjectConfig, PackageOverride
     from .fetch import FetchCoordinator
     from .metadata import WheelMetadata
 
@@ -70,22 +70,6 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _EXTRA_RE = re.compile(r"^(?P<base>[^\[]+)\[(?P<extra>[^\]]+)\]$")
-
-_OverrideValue = TypeVar("_OverrideValue")
-
-
-def _canonical_override_map(
-    overrides: Mapping[str, _OverrideValue] | None, label: str
-) -> dict[str, _OverrideValue]:
-    """Return a copy of *overrides* with each key canonicalized; raise on duplicates."""
-    out: dict[str, _OverrideValue] = {}
-    for raw_name, value in (overrides or {}).items():
-        canonical = canonicalize_name(raw_name)
-        if canonical in out:
-            msg = f"duplicate {label} override for {raw_name!r}"
-            raise ValueError(msg)
-        out[canonical] = value
-    return out
 
 
 # PEP 508 ``python_version`` is the ``major.minor`` pair;
@@ -162,10 +146,10 @@ class ExtrasMode(enum.Enum):
 class DistPolicy(enum.Enum):
     """How to admit wheels and sdists during resolution."""
 
-    NO_SDIST = "no-sdist"
+    WHEEL_ONLY = "wheel-only"
     """Ignore sdists entirely. Only use wheels with PEP 658 metadata."""
 
-    PREFER_BINARY = "prefer-binary"
+    PREFER_WHEEL = "prefer-wheel"
     """Try wheels first, fall back to sdists for versions without wheels."""
 
     WHEEL_OR_SDIST = "wheel-or-sdist"
@@ -340,6 +324,25 @@ class ProviderStats:
 DistFile = WheelFile | SdistFile
 
 
+# Sentinel for "this override does not set the field".  Distinct from
+# ``None``, which is a real value (a disabled upload-time cutoff).
+_UNSET = object()
+
+
+def _unset_if_none(value: object) -> object:
+    """Map ``None`` to ``_UNSET``, passing every other value through.
+
+    Most policy fields store ``None`` to mean "unset" on the override
+    dataclasses, so wrapping their attribute access in this helper yields
+    the ``_UNSET``-or-value shape :meth:`Provider._effective_field`
+    expects.  The upload-time helpers, where ``None`` is a real value
+    (a disabled cutoff), build that shape themselves and skip this.
+    """
+    if value is None:
+        return _UNSET
+    return value
+
+
 class Provider:
     """Lazy index-backed provider for nab-resolver.
 
@@ -403,19 +406,18 @@ class Provider:
     CONFLICT_THRESHOLD = _priority.CONFLICT_THRESHOLD
     CULPRIT_DEMOTE_THRESHOLD = _priority.CULPRIT_DEMOTE_THRESHOLD
 
-    def __init__(  # noqa: PLR0913, PLR0915, C901 - resolver config is wide; bundling all flags into one bag is worse for callers
+    def __init__(  # noqa: PLR0913, PLR0915 - resolver config is wide; bundling all flags into one bag is worse for callers
         self,
         coordinator: FetchCoordinator,
         python_version: str | None = None,
         root_requirements: dict[str, VersionRange] | None = None,
         uploaded_prior_to: datetime | None = None,
-        uploaded_prior_to_overrides: Mapping[str, datetime | None] | None = None,
         extras_mode: ExtrasMode = ExtrasMode.ERROR_USER,
         root_extras: set[tuple[str, str]] | None = None,
         dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
-        dist_policy_overrides: Mapping[str, DistPolicy] | None = None,
         build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL,
-        build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
+        package_overrides: Sequence[PackageOverride] = (),
+        index_overrides: Mapping[str, IndexOverride] | None = None,
         vcs_config: VcsConfig | None = None,
         marker_environment: dict[str, str] | None = None,
         local_sources: list[LocalSource] | None = None,
@@ -431,9 +433,6 @@ class Provider:
         self.coordinator = coordinator
         self.python_version = python_version
         self.uploaded_prior_to = uploaded_prior_to
-        self.uploaded_prior_to_overrides = _canonical_override_map(
-            uploaded_prior_to_overrides, "uploaded-prior-to"
-        )
 
         # Passed through to the build env when extract_source_metadata
         # falls through to a PEP 517 backend; static-only callers leave None.
@@ -441,42 +440,26 @@ class Provider:
         self.extras_mode = extras_mode
         self.root_extras = root_extras or set()
         self._dist_policy = dist_policy
-        self._dist_policy_overrides = _canonical_override_map(
-            dist_policy_overrides, "dist-policy"
-        )
         self.build_policy = build_policy
         # Opt-out: trust a pre-2.2 sdist's PKG-INFO deps as final instead of
         # routing through the dynamic path. Off by default (strict PEP 643).
         self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
         self._resolution_strategy = resolution_strategy
         self._direct_packages: frozenset[str] = direct_packages or frozenset()
-
-        self._build_policy_overrides = _canonical_override_map(
-            build_policy_overrides, "build-policy"
+        self._package_overrides = tuple(package_overrides)
+        self._index_overrides: Mapping[str, IndexOverride] = index_overrides or {}
+        # True when any override sets a time cutoff or disables one, so the
+        # listing filter can skip the per-candidate dispatch otherwise.
+        self.overrides_set_time = any(
+            o.uploaded_prior_to is not None or o.uploaded_prior_to_disabled
+            for o in self._package_overrides
+        ) or any(
+            o.uploaded_prior_to is not None or o.uploaded_prior_to_disabled
+            for o in self._index_overrides.values()
         )
 
-        # Backends run on the host, so invoking one under a marker overlay
-        # would produce metadata that does not match the impersonated target.
-        # The guard inspects overrides as well as the global so a single
-        # build-* entry cannot quietly opt out of the soundness check.
         if marker_environment:
-            offending: list[tuple[str, BuildPolicy]] = []
-            if build_policy is not BuildPolicy.NEVER:
-                offending.append(("<global>", build_policy))
-            for canonical, policy in self._build_policy_overrides.items():
-                if policy is not BuildPolicy.NEVER:
-                    offending.append((canonical, policy))
-            if offending:
-                rendered = ", ".join(
-                    f"{name}={policy.value}" for name, policy in offending
-                )
-                msg = (
-                    "marker_environment overlay requires BuildPolicy.NEVER"
-                    " globally and in every per-package override; got"
-                    f" {rendered}.  Backends run on the host and report"
-                    " metadata for the host, not the impersonated target."
-                )
-                raise ValueError(msg)
+            self._check_marker_overlay_build_policy(build_policy)
 
         self.vcs_config = vcs_config or VcsConfig()
         self.local_sources = _sources.index_local_sources(self, local_sources or [])
@@ -611,21 +594,242 @@ class Provider:
                     continue
                 self.coordinator.request_listing(normalized)
 
+    def _check_marker_overlay_build_policy(self, build_policy: BuildPolicy) -> None:
+        """Reject a non-``NEVER`` build policy under a marker overlay.
+
+        Backends run on the host, so invoking one under a marker overlay
+        would produce metadata that does not match the impersonated
+        target.  The guard inspects both override surfaces as well as the
+        global so a single build override cannot quietly opt out of the
+        soundness check.
+        """
+        offending: list[tuple[str, BuildPolicy]] = []
+        if build_policy is not BuildPolicy.NEVER:
+            offending.append(("<global>", build_policy))
+        offending.extend(
+            (o.name, o.build_policy)
+            for o in self._package_overrides
+            if o.build_policy not in (None, BuildPolicy.NEVER)
+        )
+        offending.extend(
+            (f"index:{name}", o.build_policy)
+            for name, o in self._index_overrides.items()
+            if o.build_policy not in (None, BuildPolicy.NEVER)
+        )
+        if not offending:
+            return
+        rendered = ", ".join(f"{name}={policy.value}" for name, policy in offending)
+        msg = (
+            "marker_environment overlay requires BuildPolicy.NEVER globally"
+            " and in every override that sets build-policy; got"
+            f" {rendered}.  Backends run on the host and report metadata for"
+            " the host, not the impersonated target."
+        )
+        raise ValueError(msg)
+
     def fetch_versions(self, package: str) -> list[tuple[Version, DistFile]]:
         """See :func:`nab_python._provider.listing.fetch_versions`."""
         return _listing.fetch_versions(self, package)
 
-    def effective_build_policy(self, canonical_name: str) -> BuildPolicy:
-        """Return the build policy for ``canonical_name``.
+    def serving_index(self, canonical_name: str) -> str | None:
+        """Return the index that served ``canonical_name``'s listing, or None.
 
-        Caller must canonicalise the name first.  Overrides may be looser or
-        stricter than the global policy.
+        Drawn from the coordinator's record of which configured index a
+        package's listing came from; ``None`` before any listing resolves
+        or for synthetic (local / VCS) sources.
         """
-        return self._build_policy_overrides.get(canonical_name, self.build_policy)
+        return self.coordinator.index.get_listing_index(canonical_name)
 
-    def effective_dist_policy(self, canonical_name: str) -> DistPolicy:
-        """Return the dist policy for ``canonical_name``."""
-        return self._dist_policy_overrides.get(canonical_name, self._dist_policy)
+    def effective_build_policy(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None = None,
+    ) -> BuildPolicy:
+        """Return the build policy for ``canonical_name==version`` from ``index_name``.
+
+        Caller must canonicalise the name first.  A per-package override
+        whose version range contains ``version`` and a per-index override
+        for ``index_name`` that both set ``build-policy`` are a conflict
+        (raises :class:`~nab_python.config.OverrideConflictError`).
+        """
+        result = self._effective_field(
+            canonical_name,
+            version,
+            index_name,
+            field="build-policy",
+            package_value=lambda o: _unset_if_none(o.build_policy),
+            index_value=lambda o: _unset_if_none(o.build_policy),
+        )
+        if result is _UNSET:
+            return self.build_policy
+        assert isinstance(result, BuildPolicy)
+        return result
+
+    def effective_build_policy_for_source(self, canonical_name: str) -> BuildPolicy:
+        """Return the build policy for a synthetic local/VCS source.
+
+        These sources have no serving index and their version is not
+        known until the backend runs, so the version-scoped lookup does
+        not apply.  A per-package override is honoured only when it uses a
+        bare-name requirement (full range); a version-scoped override does
+        not govern a local/VCS source's build decision.
+        """
+        for override in self._package_overrides:
+            if (
+                override.name == canonical_name
+                and override.build_policy is not None
+                and not str(override.requirement.specifier)
+            ):
+                return override.build_policy
+        return self.build_policy
+
+    def effective_dist_policy(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None = None,
+    ) -> DistPolicy:
+        """Return the dist policy for ``name==version`` served from ``index_name``."""
+        result = self._effective_field(
+            canonical_name,
+            version,
+            index_name,
+            field="dist-policy",
+            package_value=lambda o: _unset_if_none(o.dist_policy),
+            index_value=lambda o: _unset_if_none(o.dist_policy),
+        )
+        if result is _UNSET:
+            return self._dist_policy
+        assert isinstance(result, DistPolicy)
+        return result
+
+    def effective_uploaded_prior_to(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None = None,
+    ) -> datetime | None:
+        """Return the upload-time cutoff for ``canonical_name==version``, or None.
+
+        A matching override may set an absolute cutoff or disable it (the
+        ``false`` form); a disabling override returns ``None``.  Falls
+        back to the global ``uploaded_prior_to`` when no override sets the
+        field.  A per-package (range-matching) and a per-index override
+        that both set the field are a conflict.
+        """
+        result = self._effective_field(
+            canonical_name,
+            version,
+            index_name,
+            field="uploaded-prior-to",
+            package_value=self._package_uploaded_prior_to,
+            index_value=self._index_uploaded_prior_to,
+        )
+        if result is _UNSET:
+            return self.uploaded_prior_to
+        # ``result`` is either ``None`` (a disabled cutoff) or a datetime;
+        # the upload-time value helpers only ever yield those two.
+        return cast("datetime | None", result)
+
+    def effective_trust_unverified(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None = None,
+    ) -> bool:
+        """Return the sdist-trust flag for ``canonical_name==version``."""
+        result = self._effective_field(
+            canonical_name,
+            version,
+            index_name,
+            field="dist-policy.trust-unverified-deps",
+            package_value=lambda o: _unset_if_none(o.dist_trust_unverified_deps),
+            index_value=lambda o: _unset_if_none(o.dist_trust_unverified_deps),
+        )
+        if result is _UNSET:
+            return self.trust_unverified_sdist_deps
+        assert isinstance(result, bool)
+        return result
+
+    @staticmethod
+    def _package_uploaded_prior_to(override: PackageOverride) -> object:
+        """Per-package upload-time value: a datetime, ``None`` (disabled), or unset."""
+        if override.uploaded_prior_to is not None:
+            return override.uploaded_prior_to
+        if override.uploaded_prior_to_disabled:
+            return None
+        return _UNSET
+
+    @staticmethod
+    def _index_uploaded_prior_to(override: IndexOverride) -> object:
+        """Per-index upload-time value: a datetime, ``None`` (disabled), or unset."""
+        if override.uploaded_prior_to is not None:
+            return override.uploaded_prior_to
+        if override.uploaded_prior_to_disabled:
+            return None
+        return _UNSET
+
+    def _matching_package_override(
+        self, canonical_name: str, version: Version, sets_field: Callable[..., object]
+    ) -> PackageOverride | None:
+        """Return the per-package override for ``version`` that sets the field.
+
+        At most one matches because the parse-time non-overlap check
+        forbids two same-field entries with overlapping ranges.
+        """
+        for override in self._package_overrides:
+            if override.name != canonical_name:
+                continue
+            if version not in override.version_range:
+                continue
+            if sets_field(override) is not _UNSET:
+                return override
+        return None
+
+    def _effective_field(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None,
+        *,
+        field: str,
+        package_value: Callable[[PackageOverride], object],
+        index_value: Callable[[IndexOverride], object],
+    ) -> object:
+        """Resolve one policy field for a candidate across both override surfaces.
+
+        Returns the per-package value when a range-matching per-package
+        override sets ``field``, else the per-index value when the serving
+        index's override sets it, else ``_UNSET`` (the caller substitutes
+        the global default).  When BOTH surfaces set the field for this
+        candidate, raises :class:`~nab_python.config.OverrideConflictError`:
+        the two surfaces are deliberately not ranked.
+
+        Each value callable returns ``_UNSET`` when its override does not
+        set the field, and the actual value (which may be ``None`` for a
+        disabled upload-time cutoff) when it does.
+        """
+        pkg = self._matching_package_override(canonical_name, version, package_value)
+        idx = self._index_overrides.get(index_name) if index_name is not None else None
+        idx_value = index_value(idx) if idx is not None else _UNSET
+
+        if pkg is not None and idx_value is not _UNSET:
+            # Late import: config imports provider at module load.
+            from .config import OverrideConflictError  # noqa: PLC0415
+
+            msg = (
+                f"override conflict for {canonical_name}=={version} served from"
+                f" index {index_name!r}: both a per-package override"
+                f" ({str(pkg.requirement)!r}) and the per-index override set"
+                f" {field!r}.  The per-package and per-index surfaces are not"
+                " ranked; remove one of the two settings for this field."
+            )
+            raise OverrideConflictError(msg)
+
+        if pkg is not None:
+            return package_value(pkg)
+        return idx_value
 
     def force_backtrack_count(self, canonical_name: str) -> int:
         """How many times this package has triggered force-backtrack."""
@@ -1137,7 +1341,9 @@ class Provider:
         if cache_key in self.deps_cache:
             return self.deps_cache[cache_key]
         if cache_key in self._unsupported_sdists:
-            effective = self.effective_build_policy(normalized)
+            effective = self.effective_build_policy(
+                normalized, version, self.serving_index(normalized)
+            )
             msg = (
                 f"{normalized}=={version} sdist metadata could not be extracted"
                 f" under BuildPolicy.{effective.name} (cached prior failure)"

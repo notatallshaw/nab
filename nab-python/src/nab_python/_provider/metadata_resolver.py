@@ -174,7 +174,9 @@ def resolve_dynamic_sdist(
     if augmented is not None:
         index.store_resolved_sdist_metadata(canonical, version_str, augmented)
         return augmented
-    effective = provider.effective_build_policy(canonical)
+    effective = provider.effective_build_policy(
+        canonical, version, provider.serving_index(canonical)
+    )
     if effective is BuildPolicy.BUILD_REMOTE:
         built = build_remote_sdist(provider, package, version)
         index.store_resolved_sdist_metadata(canonical, version_str, built)
@@ -366,7 +368,7 @@ def parse_and_cache_metadata(
 
     When ``from_sdist`` is set and the PKG-INFO deps are not trusted as
     final (not :pep:`643` static, or a Dynamic dependency field under
-    the ``trust-unverified-sdist-deps`` opt-out), attempts the
+    the dist-policy ``trust-unverified-deps`` opt-out), attempts the
     ``pyproject.toml`` fallback before raising
     :class:`UnsupportedSdistError` under :class:`BuildPolicy.NEVER`.
 
@@ -388,7 +390,10 @@ def parse_and_cache_metadata(
         metadata = parse_metadata(metadata_text)
         provider.coordinator.index.store_parsed_metadata(package, version_str, metadata)
     if from_sdist and _sdist_deps_need_dynamic(
-        metadata, trust_unverified=provider.trust_unverified_sdist_deps
+        metadata,
+        trust_unverified=provider.effective_trust_unverified(
+            package, version, provider.serving_index(package)
+        ),
     ):
         metadata = resolve_dynamic_sdist(provider, cache_key, metadata)
     cache_deps_from_metadata(provider, cache_key, metadata)

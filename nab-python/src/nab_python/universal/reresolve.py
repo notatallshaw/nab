@@ -27,11 +27,11 @@ from .matrix import Matrix as _Matrix
 from .resolve import resolve_with_coordinator
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Iterator, Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
 
-    from ..config import NabProjectConfig
+    from ..config import IndexOverride, NabProjectConfig, PackageOverride
     from ..fetch import FetchCoordinator
     from .matrix import MatrixTuple
     from .resolve import UniversalResult
@@ -62,11 +62,10 @@ def reresolve_divergent_tuples(  # noqa: PLR0913 - mirrors the original resolve
     *,
     constraints: list[str] | None = None,
     uploaded_prior_to: datetime | None = None,
-    uploaded_prior_to_overrides: Mapping[str, datetime | None] | None = None,
     dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
-    dist_policy_overrides: Mapping[str, DistPolicy] | None = None,
     build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL,
-    build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
+    package_overrides: Sequence[PackageOverride] = (),
+    index_overrides: Mapping[str, IndexOverride] | None = None,
     vcs_config: VcsConfig | None = None,
     local_sources: list[LocalSource] | None = None,
     vcs_sources: list[VcsSource] | None = None,
@@ -91,11 +90,10 @@ def reresolve_divergent_tuples(  # noqa: PLR0913 - mirrors the original resolve
         report,
         constraints=constraints,
         uploaded_prior_to=uploaded_prior_to,
-        uploaded_prior_to_overrides=uploaded_prior_to_overrides,
         dist_policy=dist_policy,
-        dist_policy_overrides=dist_policy_overrides,
         build_policy=build_policy,
-        build_policy_overrides=build_policy_overrides,
+        package_overrides=package_overrides,
+        index_overrides=index_overrides,
         vcs_config=vcs_config,
         local_sources=local_sources,
         vcs_sources=vcs_sources,
@@ -126,11 +124,10 @@ def _reresolve_one_step(  # noqa: PLR0913
     *,
     constraints: list[str] | None,
     uploaded_prior_to: datetime | None,
-    uploaded_prior_to_overrides: Mapping[str, datetime | None] | None = None,
     dist_policy: DistPolicy,
-    dist_policy_overrides: Mapping[str, DistPolicy] | None = None,
     build_policy: BuildPolicy,
-    build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
+    package_overrides: Sequence[PackageOverride] = (),
+    index_overrides: Mapping[str, IndexOverride] | None = None,
     vcs_config: VcsConfig | None = None,
     local_sources: list[LocalSource] | None = None,
     vcs_sources: list[VcsSource] | None = None,
@@ -164,11 +161,10 @@ def _reresolve_one_step(  # noqa: PLR0913
             wheel_metadata,
             constraints=constraints,
             uploaded_prior_to=uploaded_prior_to,
-            uploaded_prior_to_overrides=uploaded_prior_to_overrides,
             dist_policy=dist_policy,
-            dist_policy_overrides=dist_policy_overrides,
             build_policy=build_policy,
-            build_policy_overrides=build_policy_overrides,
+            package_overrides=package_overrides,
+            index_overrides=index_overrides,
             vcs_config=vcs_config,
             local_sources=local_sources,
             vcs_sources=vcs_sources,
@@ -188,11 +184,10 @@ def _resolve_one_tuple_with_overrides(  # noqa: PLR0913
     *,
     constraints: list[str] | None,
     uploaded_prior_to: datetime | None,
-    uploaded_prior_to_overrides: Mapping[str, datetime | None] | None = None,
     dist_policy: DistPolicy,
-    dist_policy_overrides: Mapping[str, DistPolicy] | None = None,
     build_policy: BuildPolicy,
-    build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
+    package_overrides: Sequence[PackageOverride] = (),
+    index_overrides: Mapping[str, IndexOverride] | None = None,
     vcs_config: VcsConfig | None = None,
     local_sources: list[LocalSource] | None = None,
     vcs_sources: list[VcsSource] | None = None,
@@ -216,11 +211,10 @@ def _resolve_one_tuple_with_overrides(  # noqa: PLR0913
             requirements,
             constraints=constraints,
             uploaded_prior_to=uploaded_prior_to,
-            uploaded_prior_to_overrides=uploaded_prior_to_overrides,
             dist_policy=dist_policy,
-            dist_policy_overrides=dist_policy_overrides,
             build_policy=build_policy,
-            build_policy_overrides=build_policy_overrides,
+            package_overrides=package_overrides,
+            index_overrides=index_overrides,
             vcs_config=vcs_config,
             local_sources=local_sources,
             vcs_sources=vcs_sources,

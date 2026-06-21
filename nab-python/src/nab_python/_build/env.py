@@ -6,7 +6,7 @@
 * ``venv.EnvBuilder`` (stdlib) creates an empty interpreter at a temp
   path, ``with_pip=False``; nab does not need pip in there.
 * nab's own resolver picks versions for ``[build-system].requires``
-  using the same indexes / ``exclude-newer`` window as the outer
+  using the same indexes / ``uploaded-prior-to`` window as the outer
   resolve.
 * ``download_lock`` from :mod:`nab_python.download` fetches the
   resolved wheels into a temp directory.
@@ -97,7 +97,7 @@ class NabBuildEnv:
 
     ``requires`` is the PEP 508 string list from
     ``[build-system].requires``. ``config`` carries the indexes,
-    ``exclude-newer`` window and other nab inputs from the outer
+    ``uploaded-prior-to`` window and other nab inputs from the outer
     resolve; it is pruned (no local sources, no workspace, no
     marker overlay) before the inner resolve so the build env is
     computed against PyPI alone.
@@ -269,9 +269,9 @@ class NabBuildEnv:
 
         inner_config = NabProjectConfig(
             indexes=self._config.indexes,
+            package_overrides=self._config.package_overrides,
             index_overrides=self._config.index_overrides,
             uploaded_prior_to=self._config.uploaded_prior_to,
-            uploaded_prior_to_overrides=self._config.uploaded_prior_to_overrides,
         )
         # download_lock closes its transport, and ``install`` may call
         # this again for ``get_requires_for_build_wheel`` follow-ups;

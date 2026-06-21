@@ -35,18 +35,21 @@ conflicts = [
 ]
 ```
 
-To require a choice rather than merely forbidding co-selection, name the
-policy explicitly. The three policies mirror Gentoo's `REQUIRED_USE`
-operators:
+To require a choice rather than merely forbidding co-selection, use the
+table form and name the policy as a value. The three policies mirror
+Gentoo's `REQUIRED_USE` operators:
 
 ```toml
 [tool.nab]
 conflicts = [
-    { at_most_one = [{ extra = "cpu" }, { extra = "gpu" }] },   # ?? (default)
-    { exactly_one = [{ extra = "cpu" }, { extra = "gpu" }] },   # ^^
-    { at_least_one = [{ group = "a" }, { group = "b" }] },      # ||
+    { members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "at-most-one" },   # ?? (default)
+    { members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "exactly-one" },   # ^^
+    { members = [{ group = "a" }, { group = "b" }], policy = "at-least-one" },      # ||
 ]
 ```
+
+A table without a `policy` key defaults to `at-most-one`, the same as
+the bare-list form.
 
 Extra and group names are normalised (PEP 685 / PEP 735), so the
 spelling here does not have to match the table key exactly.
@@ -65,12 +68,11 @@ once. Selecting both is rejected before any network work:
 ```console
 $ nab lock --extras cpu gpu
 Error in [tool.nab]: extra 'cpu', extra 'gpu' cannot be selected
-together: declared mutually exclusive (at_most_one) in
+together: declared mutually exclusive (at-most-one) in
 [tool.nab].conflicts
 ```
 
-`exactly_one` additionally rejects selecting none; `at_least_one`
-rejects selecting none.
+`exactly-one` and `at-least-one` additionally reject selecting none.
 
 ## Universal mode: fork the resolve
 
@@ -106,13 +108,14 @@ forks; only the all-in-one umbrella, which cannot resolve disjointly,
 is rejected.
 
 The require-one check is not skipped in universal mode. Declaring
-`exactly_one` or `at_least_one` and selecting none of its members still
+`exactly-one` or `at-least-one` and selecting none of its members still
 raises before the resolve, the same as in specific mode. Only the
 co-selection case differs: universal mode forks instead of rejecting.
 
 Groups named in `[tool.nab].default-groups` count as part of the
 selection for every conflict check. A project with
-`default-groups = ["a"]` and `exactly_one = [{ group = "a" }, { group = "b" }]`
+`default-groups = ["a"]` and a `policy = "exactly-one"` set over
+groups `a` and `b`
 satisfies the minimum without passing `--groups`, and a `--groups b`
 on top of that default activates two members of an exclusive set,
 which the exclusion check then catches (specific mode) or the
@@ -120,7 +123,7 @@ universal resolver forks into two.
 
 A dependency required by every member of a set but not by the base
 keeps its membership marker, so it does not install when no member is
-selected (relevant under `at_most_one`, which permits selecting none).
+selected (relevant under `at-most-one`, which permits selecting none).
 A base resolve names the deps that install regardless of the
 selection, which is how the writer tells the two apart. When the
 forks of one environment pin a base dependency at different versions,

@@ -1530,8 +1530,8 @@ requirements = [
 # Migrated from unsupported.toml (2026-04-27).  These were filed against
 # original tool-specific features (uv universal resolution, multi-index,
 # --pre flag, project install) but the requirement list itself is a valid
-# single-platform PyPI input that nab can resolve.  Scenarios marked with
-# allow_prereleases = true require pre-release pinning to find a candidate.
+# single-platform PyPI input that nab can resolve.  Some need a
+# pre-release pin to find a candidate.
 # ============================================================================
 
 [uv-pyspark-resolution]
@@ -1624,12 +1624,11 @@ requirements = ["playwright"]
 [uv-issue-11636-llvmlite-prerelease]
 # https://github.com/astral-sh/uv/issues/11636
 # llvmlite==0.44.0 only exists as a pre-release on PyPI at the chosen
-# date; needs allow_prereleases to find a candidate.
+# date; needs a pre-release pin to find a candidate.
 resolution = "lowest"
 python_version = "3.13"
 platform_system = "Linux"
 datetime = "2025-02-19 20:01:16"
-allow_prereleases = true
 requirements = ["llvmlite==0.44.0"]
 
 [uv-tensorflow-macos]

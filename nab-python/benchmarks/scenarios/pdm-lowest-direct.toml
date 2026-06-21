@@ -329,7 +329,6 @@ resolution = "lowest-direct"
 python_version = "3.10"
 platform_system = "Linux"
 datetime = "2025-10-02 08:42:21"
-allow_prereleases = true
 requirements = [
     "pydantic>=2.10.6",
     "pydantic>=2.12.0a1",

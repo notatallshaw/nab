@@ -53,8 +53,8 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     left alone.  Local and VCS pins are skipped.
 
     ``--groups`` / ``--all-groups`` and ``--extras`` / ``--all-extras``
-    mirror ``nab lock``: a project declaring an ``exactly_one`` or
-    ``at_least_one`` conflict needs at least one member selected for
+    mirror ``nab lock``: a project declaring an ``exactly-one`` or
+    ``at-least-one`` conflict needs at least one member selected for
     the resolve to start, so these flags also gate the download.
     """
     if max_concurrency < 1:

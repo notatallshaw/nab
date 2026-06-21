@@ -1828,8 +1828,7 @@ class TestLockAnchorReuse:
         )
         pyproject = _make_pyproject(
             tmp_path,
-            '[project]\ndependencies = ["foo"]\n'
-            '[tool.nab]\nuploaded-prior-to = "P4D"\n',
+            '[project]\ndependencies = ["foo"]\n[tool.nab]\nuploaded-prior-to = "P4D"\n',
         )
         with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
             lock(pyproject, output=prior)
@@ -1845,8 +1844,7 @@ class TestLockAnchorReuse:
         )
         pyproject = _make_pyproject(
             tmp_path,
-            '[project]\ndependencies = ["foo"]\n'
-            '[tool.nab]\nuploaded-prior-to = "P4D"\n',
+            '[project]\ndependencies = ["foo"]\n[tool.nab]\nuploaded-prior-to = "P4D"\n',
         )
         with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
             lock(pyproject, output=prior, upgrade=True)

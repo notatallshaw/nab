@@ -100,11 +100,9 @@ platforms = [
 ]
 
 # Workspace packages skip the cooldown; bumps land immediately.
-[tool.nab.uploaded-prior-to-package]
-nab = false
-nab-resolver = false
-nab-python = false
-nab-index = false
+[[tool.nab.package-rules]]
+match = ["nab", "nab-resolver", "nab-python", "nab-index"]
+uploaded-prior-to = false
 
 # https://docs.pytest.org/en/stable/reference/reference.html#confval-addopts
 [tool.pytest.ini_options]

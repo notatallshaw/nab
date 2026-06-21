@@ -20,7 +20,9 @@ from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
+from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import InvalidVersion, Version
+from nab_python.config import IndexOverride, OverrideConflictError, PackageOverride
 from nab_python.fetch import InMemoryIndex
 from nab_python.provider import (
     BuildPolicy,
@@ -44,6 +46,17 @@ from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 V = Version
+
+
+def pkg_override(req_str: str, **body: object) -> PackageOverride:
+    """Build a :class:`PackageOverride` from a PEP 508 requirement string."""
+    requirement = Requirement(req_str)
+    return PackageOverride(
+        requirement=requirement,
+        name=canonicalize_name(requirement.name),
+        version_range=requirement.specifier.to_range(),
+        **body,  # type: ignore[arg-type]
+    )
 
 
 def make_wheel(
@@ -982,7 +995,7 @@ class TestTransitiveDirectUrlDep:
     def test_vcs_url_dep_blocked_by_default(self) -> None:
         """A VCS dep is refused under the default BLOCK policy."""
         provider = self._provider_for("git+https://example.com/bar.git@" + "a" * 40)
-        with pytest.raises(UnsupportedVcsError, match="BLOCK"):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             provider.get_dependencies("foo", V("1.0"))
 
     def test_admitted_vcs_url_dep_raises_not_implemented(self) -> None:
@@ -990,7 +1003,9 @@ class TestTransitiveDirectUrlDep:
         provider = self._provider_for(
             "git+https://example.com/bar.git@" + "a" * 40,
             vcs_config=VcsConfig(
-                policy=VcsPolicy.ALLOW, allowed_schemes=frozenset({"git+https"})
+                policy=VcsPolicy.ALLOW,
+                allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
             ),
         )
         with pytest.raises(NotImplementedError, match="not implemented"):
@@ -1413,18 +1428,23 @@ class TestMarkerEnvironment:
     def test_overlay_with_never_override_passes(self) -> None:
         """Overrides at ``NEVER`` skip the guard's offending branch.
 
-        Covers the loop's skip-iteration path: a non-empty
-        ``build_policy_overrides`` whose entries are all ``NEVER`` must
-        not contribute to the guard's offending list.
+        Covers the loop's skip-iteration path: a build override whose
+        policy is ``NEVER`` must not contribute to the guard's offending
+        list.
         """
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
             coordinator,
             build_policy=BuildPolicy.NEVER,
-            build_policy_overrides={"quarantined": BuildPolicy.NEVER},
+            package_overrides=(
+                pkg_override("quarantined", build_policy=BuildPolicy.NEVER),
+            ),
             marker_environment={"platform_system": "Windows"},
         )
-        assert provider.effective_build_policy("quarantined") is BuildPolicy.NEVER
+        assert (
+            provider.effective_build_policy("quarantined", V("1.0"))
+            is BuildPolicy.NEVER
+        )
 
     def test_default_policy_blocked_when_overlay_used(self) -> None:
         """The default ``BUILD_LOCAL`` is rejected with a marker overlay.
@@ -1450,13 +1470,28 @@ class TestMarkerEnvironment:
             )
 
     def test_overlay_with_build_remote_override_raises(self) -> None:
-        """A per-package override that escapes ``NEVER`` also fails the guard."""
+        """A build override that escapes ``NEVER`` also fails the guard."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         with pytest.raises(ValueError, match="marker_environment overlay requires"):
             Provider(
                 coordinator,
                 build_policy=BuildPolicy.NEVER,
-                build_policy_overrides={"foo": BuildPolicy.BUILD_REMOTE},
+                package_overrides=(
+                    pkg_override("foo", build_policy=BuildPolicy.BUILD_REMOTE),
+                ),
+                marker_environment={"platform_system": "Windows"},
+            )
+
+    def test_overlay_with_build_remote_index_override_raises(self) -> None:
+        """A per-index build override that escapes ``NEVER`` fails the guard."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        with pytest.raises(ValueError, match="marker_environment overlay requires"):
+            Provider(
+                coordinator,
+                build_policy=BuildPolicy.NEVER,
+                index_overrides={
+                    "internal": IndexOverride(build_policy=BuildPolicy.BUILD_REMOTE)
+                },
                 marker_environment={"platform_system": "Windows"},
             )
 
@@ -2335,11 +2370,11 @@ class TestUploadedPriorTo:
 
 
 class TestUploadedPriorToOverrides:
-    """Per-package overrides bypass or override the global cutoff."""
+    """Per-package / per-index overrides bypass or replace the global cutoff."""
 
     def test_override_disables_global_cutoff(self) -> None:
-        """An override of ``None`` (declared as ``false``) keeps every
-        wheel even when the global cutoff would exclude them."""
+        """An override with the ``false`` form keeps every wheel even when
+        the global cutoff would exclude them."""
         wheels = [
             make_wheel("2.0", upload_time="2024-06-01T00:00:00Z"),
             make_wheel("1.0", upload_time="2024-01-01T00:00:00Z"),
@@ -2349,7 +2384,7 @@ class TestUploadedPriorToOverrides:
         provider = Provider(
             coordinator,
             uploaded_prior_to=global_cutoff,
-            uploaded_prior_to_overrides={"foo": None},
+            package_overrides=(pkg_override("foo", uploaded_prior_to_disabled=True),),
         )
         versions = [v for v, _ in provider.fetch_versions("foo")]
         assert versions == [V("2.0"), V("1.0")]
@@ -2368,12 +2403,32 @@ class TestUploadedPriorToOverrides:
         provider = Provider(
             coordinator,
             uploaded_prior_to=global_cutoff,
-            uploaded_prior_to_overrides={"foo": package_cutoff},
+            package_overrides=(pkg_override("foo", uploaded_prior_to=package_cutoff),),
         )
         versions = [v for v, _ in provider.fetch_versions("foo")]
         # 3.0 (Aug) excluded by package cutoff (Jul); 2.0 (Jun) kept
         # because the package override allows up to Jul; 1.0 (Jan) kept.
         assert versions == [V("2.0"), V("1.0")]
+
+    def test_version_scoped_cutoff(self) -> None:
+        """A version-scoped override applies only inside its range."""
+        wheels = [
+            make_wheel("3.0", upload_time="2024-08-01T00:00:00Z"),
+            make_wheel("1.0", upload_time="2024-08-01T00:00:00Z"),
+        ]
+        coordinator = make_coordinator(wheels, package="foo")
+        global_cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        provider = Provider(
+            coordinator,
+            uploaded_prior_to=global_cutoff,
+            package_overrides=(
+                pkg_override("foo <= 2", uploaded_prior_to_disabled=True),
+            ),
+        )
+        versions = [v for v, _ in provider.fetch_versions("foo")]
+        # 1.0 is inside the override range (cutoff disabled) so it stays;
+        # 3.0 is outside it and the global cutoff (Mar) drops its Aug upload.
+        assert versions == [V("1.0")]
 
     def test_override_only_applies_to_named_package(self) -> None:
         """Other packages keep using the global cutoff."""
@@ -2386,11 +2441,46 @@ class TestUploadedPriorToOverrides:
         provider = Provider(
             coordinator,
             uploaded_prior_to=global_cutoff,
-            uploaded_prior_to_overrides={"foo": None},
+            package_overrides=(pkg_override("foo", uploaded_prior_to_disabled=True),),
         )
         versions = [v for v, _ in provider.fetch_versions("bar")]
         # ``bar`` has no override, so the global cutoff still applies.
         assert versions == [V("1.0")]
+
+    def test_per_index_cutoff_takes_effect(self) -> None:
+        """A per-index override changes behaviour vs the global default."""
+        wheels = [
+            make_wheel("2.0", upload_time="2024-06-01T00:00:00Z"),
+            make_wheel("1.0", upload_time="2024-01-01T00:00:00Z"),
+        ]
+        coordinator = make_coordinator(wheels, package="foo")
+        coordinator.index.store_listing_index("foo", "internal")
+        package_cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        provider = Provider(
+            coordinator,
+            index_overrides={
+                "internal": IndexOverride(uploaded_prior_to=package_cutoff)
+            },
+        )
+        versions = [v for v, _ in provider.fetch_versions("foo")]
+        # The per-index cutoff (Mar) drops 2.0 (Jun) even though the global
+        # cutoff is unset.
+        assert versions == [V("1.0")]
+
+    def test_per_index_applies_to_every_package(self) -> None:
+        """A per-index override governs every package served from it."""
+        package_cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        index = IndexOverride(uploaded_prior_to=package_cutoff)
+        for pkg in ("foo", "bar"):
+            wheels = [
+                make_wheel("2.0", upload_time="2024-06-01T00:00:00Z"),
+                make_wheel("1.0", upload_time="2024-01-01T00:00:00Z"),
+            ]
+            coordinator = make_coordinator(wheels, package=pkg)
+            coordinator.index.store_listing_index(pkg, "internal")
+            provider = Provider(coordinator, index_overrides={"internal": index})
+            versions = [v for v, _ in provider.fetch_versions(pkg)]
+            assert versions == [V("1.0")]
 
     def test_override_with_no_global_cutoff(self) -> None:
         """A per-package cutoff with no global cutoff still filters."""
@@ -2403,35 +2493,217 @@ class TestUploadedPriorToOverrides:
         provider = Provider(
             coordinator,
             uploaded_prior_to=None,
-            uploaded_prior_to_overrides={"foo": package_cutoff},
+            package_overrides=(pkg_override("foo", uploaded_prior_to=package_cutoff),),
         )
         versions = [v for v, _ in provider.fetch_versions("foo")]
         assert versions == [V("1.0")]
 
-    def test_override_canonicalises_name(self) -> None:
-        """An override declared as ``Foo_Bar`` applies to ``foo-bar``."""
-        wheels = [
-            make_wheel("2.0", upload_time="2024-06-01T00:00:00Z"),
-            make_wheel("1.0", upload_time="2024-01-01T00:00:00Z"),
-        ]
-        coordinator = make_coordinator(wheels, package="foo-bar")
-        package_cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+
+class TestEffectiveTrustUnverified:
+    """``effective_trust_unverified`` reads overrides then the global."""
+
+    def test_override_sets_trust(self) -> None:
+        coordinator = make_coordinator([], package="foo")
         provider = Provider(
             coordinator,
-            uploaded_prior_to=None,
-            uploaded_prior_to_overrides={"Foo_Bar": package_cutoff},
+            package_overrides=(pkg_override("foo", dist_trust_unverified_deps=True),),
         )
-        versions = [v for v, _ in provider.fetch_versions("foo-bar")]
-        assert versions == [V("1.0")]
+        assert provider.effective_trust_unverified("foo", V("1.0")) is True
+        assert provider.effective_trust_unverified("bar", V("1.0")) is False
 
-    def test_duplicate_override_raises(self) -> None:
+    def test_per_index_trust(self) -> None:
         coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            index_overrides={
+                "internal": IndexOverride(dist_trust_unverified_deps=True)
+            },
+        )
+        assert provider.effective_trust_unverified("foo", V("1.0"), "internal") is True
+        assert provider.effective_trust_unverified("foo", V("1.0"), "pypi") is False
+
+
+class TestEffectiveFieldResolution:
+    """Per-package vs per-index resolution and cross-surface conflicts."""
+
+    def test_per_package_outside_range_falls_through(self) -> None:
+        # A version-scoped override does not apply outside its range; the
+        # global default is used.
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            package_overrides=(
+                pkg_override("foo <= 2", dist_policy=DistPolicy.SDIST_ONLY),
+            ),
+        )
+        assert provider.effective_dist_policy("foo", V("1.0")) is DistPolicy.SDIST_ONLY
+        assert (
+            provider.effective_dist_policy("foo", V("5.0")) is DistPolicy.WHEEL_OR_SDIST
+        )
+
+    def test_per_index_applies_when_no_per_package(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        coordinator.index.store_listing_index("foo", "internal")
+        provider = Provider(
+            coordinator,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            index_overrides={
+                "internal": IndexOverride(dist_policy=DistPolicy.WHEEL_ONLY)
+            },
+        )
+        assert (
+            provider.effective_dist_policy("foo", V("1.0"), "internal")
+            is DistPolicy.WHEEL_ONLY
+        )
+
+    def test_cross_surface_conflict_raises(self) -> None:
+        # A per-package override whose range contains the version AND a
+        # per-index override for the serving index both set dist-policy.
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            package_overrides=(
+                pkg_override("foo <= 2", dist_policy=DistPolicy.SDIST_ONLY),
+            ),
+            index_overrides={
+                "internal": IndexOverride(dist_policy=DistPolicy.WHEEL_ONLY)
+            },
+        )
+        with pytest.raises(OverrideConflictError, match="override conflict for foo"):
+            provider.effective_dist_policy("foo", V("1.0"), "internal")
+
+    def test_cross_surface_no_conflict_outside_range(self) -> None:
+        # The same package at a version OUTSIDE the per-package range: only
+        # the per-index override applies, no conflict.
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            package_overrides=(
+                pkg_override("foo <= 2", dist_policy=DistPolicy.SDIST_ONLY),
+            ),
+            index_overrides={
+                "internal": IndexOverride(dist_policy=DistPolicy.WHEEL_ONLY)
+            },
+        )
+        assert (
+            provider.effective_dist_policy("foo", V("5.0"), "internal")
+            is DistPolicy.WHEEL_ONLY
+        )
+
+    def test_conflict_propagates_through_filter(self) -> None:
+        # The conflict is raised at the filter site, not swallowed as a
+        # backtrack: a candidate version inside the range fails loud.
+        wheels = [make_wheel("1.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        coordinator.index.store_listing_index("foo", "internal")
+        provider = Provider(
+            coordinator,
+            package_overrides=(
+                pkg_override("foo <= 2", dist_policy=DistPolicy.SDIST_ONLY),
+            ),
+            index_overrides={
+                "internal": IndexOverride(dist_policy=DistPolicy.WHEEL_ONLY)
+            },
+        )
+        with pytest.raises(OverrideConflictError):
+            provider.fetch_versions("foo")
+
+    def test_single_per_package_not_a_conflict(self) -> None:
+        # One per-package override plus the global default never conflicts.
+        coordinator = make_coordinator([], package="foo")
+        coordinator.index.store_listing_index("foo", "internal")
+        provider = Provider(
+            coordinator,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            package_overrides=(pkg_override("foo", dist_policy=DistPolicy.SDIST_ONLY),),
+        )
+        assert (
+            provider.effective_dist_policy("foo", V("1.0"), "internal")
+            is DistPolicy.SDIST_ONLY
+        )
+
+    def test_build_policy_skips_dist_only_override(self) -> None:
+        # A dist-only override must not be read when querying build policy.
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            build_policy=BuildPolicy.BUILD_LOCAL,
+            package_overrides=(
+                pkg_override("foo", dist_policy=DistPolicy.SDIST_ONLY),
+                pkg_override("foo", build_policy=BuildPolicy.BUILD_REMOTE),
+            ),
+        )
+        assert (
+            provider.effective_build_policy("foo", V("1.0")) is BuildPolicy.BUILD_REMOTE
+        )
+
+    def test_package_override_for_other_field_does_not_set_upload_time(self) -> None:
+        # A package override that sets only dist-policy must not be read as
+        # setting uploaded-prior-to; the global cutoff still applies.
         cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
-        with pytest.raises(ValueError, match="duplicate uploaded-prior-to override"):
-            Provider(
-                coordinator,
-                uploaded_prior_to_overrides={"foo": cutoff, "Foo": None},
-            )
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            uploaded_prior_to=cutoff,
+            package_overrides=(pkg_override("foo", dist_policy=DistPolicy.SDIST_ONLY),),
+        )
+        assert provider.effective_uploaded_prior_to("foo", V("1.0")) == cutoff
+
+    def test_per_index_upload_time_disabled(self) -> None:
+        cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            uploaded_prior_to=cutoff,
+            index_overrides={
+                "internal": IndexOverride(uploaded_prior_to_disabled=True)
+            },
+        )
+        assert provider.effective_uploaded_prior_to("foo", V("1.0"), "internal") is None
+
+    def test_per_index_override_for_other_field_leaves_upload_time(self) -> None:
+        # A per-index override that sets only dist-policy does not set
+        # uploaded-prior-to; the global cutoff still applies.
+        cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            uploaded_prior_to=cutoff,
+            index_overrides={
+                "internal": IndexOverride(dist_policy=DistPolicy.WHEEL_ONLY)
+            },
+        )
+        assert (
+            provider.effective_uploaded_prior_to("foo", V("1.0"), "internal") == cutoff
+        )
+
+    def test_build_policy_for_bare_name_source_override(self) -> None:
+        # A bare-name build override governs a synthetic local/VCS source.
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            build_policy=BuildPolicy.NEVER,
+            package_overrides=(
+                pkg_override("foo", build_policy=BuildPolicy.BUILD_REMOTE),
+            ),
+        )
+        assert (
+            provider.effective_build_policy_for_source("foo")
+            is BuildPolicy.BUILD_REMOTE
+        )
+
+    def test_build_policy_for_source_ignores_version_scoped_override(self) -> None:
+        # A version-scoped build override does not govern a source decision.
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            build_policy=BuildPolicy.NEVER,
+            package_overrides=(
+                pkg_override("foo <= 2", build_policy=BuildPolicy.BUILD_REMOTE),
+            ),
+        )
+        assert provider.effective_build_policy_for_source("foo") is BuildPolicy.NEVER
 
 
 def _make_sdist(version: str, package: str = "foo") -> SdistFile:
@@ -2446,7 +2718,7 @@ def _make_sdist(version: str, package: str = "foo") -> SdistFile:
 
 
 class TestDistPolicyOverrides:
-    """``SDIST_ONLY`` policy and per-package overrides on the filter."""
+    """``SDIST_ONLY`` policy and per-package / per-index overrides on the filter."""
 
     def test_global_sdist_only_drops_wheels(self) -> None:
         files: list[WheelFile | SdistFile] = [
@@ -2461,7 +2733,7 @@ class TestDistPolicyOverrides:
         assert isinstance(kept[0][1], SdistFile)
 
     def test_override_sdist_only_for_one_package(self) -> None:
-        # Global policy is ALLOW; override forces sdist for ``lxml`` only.
+        # Global policy is wheel-or-sdist; override forces sdist for ``lxml`` only.
         files: list[WheelFile | SdistFile] = [
             make_wheel("1.0"),
             _make_sdist("1.0"),
@@ -2470,14 +2742,51 @@ class TestDistPolicyOverrides:
         provider = Provider(
             coordinator,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            dist_policy_overrides={"lxml": DistPolicy.SDIST_ONLY},
+            package_overrides=(
+                pkg_override("lxml", dist_policy=DistPolicy.SDIST_ONLY),
+            ),
         )
         kept = provider.fetch_versions("lxml")
         assert len(kept) == 1
         assert isinstance(kept[0][1], SdistFile)
 
+    def test_version_scoped_dist_policy(self) -> None:
+        # ``lxml <= 2 -> sdist-only`` and ``lxml >= 3 -> wheel-only``: lxml
+        # 1.0 resolves sdist-only, lxml 3.0 wheel-only, lxml 2.5 the global
+        # default.  Prove behaviour at the filter site.
+        files: list[WheelFile | SdistFile] = [
+            make_wheel("3.0"),
+            _make_sdist("3.0"),
+            make_wheel("2.5"),
+            _make_sdist("2.5"),
+            make_wheel("1.0"),
+            _make_sdist("1.0"),
+        ]
+        coordinator = make_coordinator(files, package="lxml")
+        provider = Provider(
+            coordinator,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            package_overrides=(
+                pkg_override("lxml <= 2", dist_policy=DistPolicy.SDIST_ONLY),
+                pkg_override("lxml >= 3", dist_policy=DistPolicy.WHEEL_ONLY),
+            ),
+        )
+        kept = provider.fetch_versions("lxml")
+        by_version: dict[Version, list[WheelFile | SdistFile]] = {}
+        for version, dist in kept:
+            by_version.setdefault(version, []).append(dist)
+        # 1.0 (<=2): sdist-only kept.
+        assert [type(d).__name__ for d in by_version[V("1.0")]] == ["SdistFile"]
+        # 3.0 (>=3): wheel-only kept.
+        assert [type(d).__name__ for d in by_version[V("3.0")]] == ["WheelFile"]
+        # 2.5 (no override): both kinds kept under the global default.
+        assert {type(d).__name__ for d in by_version[V("2.5")]} == {
+            "WheelFile",
+            "SdistFile",
+        }
+
     def test_override_does_not_apply_to_other_packages(self) -> None:
-        # Override targets ``lxml``; ``foo`` keeps the global ALLOW.
+        # Override targets ``lxml``; ``foo`` keeps the global policy.
         files: list[WheelFile | SdistFile] = [
             make_wheel("1.0"),
             _make_sdist("1.0"),
@@ -2486,13 +2795,15 @@ class TestDistPolicyOverrides:
         provider = Provider(
             coordinator,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            dist_policy_overrides={"lxml": DistPolicy.SDIST_ONLY},
+            package_overrides=(
+                pkg_override("lxml", dist_policy=DistPolicy.SDIST_ONLY),
+            ),
         )
         kept = provider.fetch_versions("foo")
         # Both kept since ``foo`` is not the target of the override.
         assert len(kept) == 2
 
-    def test_override_no_sdist_relaxes_global_sdist_only(self) -> None:
+    def test_override_wheel_only_relaxes_global_sdist_only(self) -> None:
         # Global SDIST_ONLY drops wheels; override keeps them for ``foo``.
         files: list[WheelFile | SdistFile] = [
             make_wheel("1.0"),
@@ -2502,10 +2813,30 @@ class TestDistPolicyOverrides:
         provider = Provider(
             coordinator,
             dist_policy=DistPolicy.SDIST_ONLY,
-            dist_policy_overrides={"foo": DistPolicy.NO_SDIST},
+            package_overrides=(pkg_override("foo", dist_policy=DistPolicy.WHEEL_ONLY),),
         )
         kept = provider.fetch_versions("foo")
         # Only the wheel survives; the override flips both directions.
+        assert len(kept) == 1
+        assert isinstance(kept[0][1], WheelFile)
+
+    def test_per_index_dist_policy_takes_effect(self) -> None:
+        # A package served from ``internal`` gets WHEEL_ONLY while the
+        # global default keeps both kinds; proves per-index wiring.
+        files: list[WheelFile | SdistFile] = [
+            make_wheel("1.0"),
+            _make_sdist("1.0"),
+        ]
+        coordinator = make_coordinator(files, package="foo")
+        coordinator.index.store_listing_index("foo", "internal")
+        provider = Provider(
+            coordinator,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            index_overrides={
+                "internal": IndexOverride(dist_policy=DistPolicy.WHEEL_ONLY)
+            },
+        )
+        kept = provider.fetch_versions("foo")
         assert len(kept) == 1
         assert isinstance(kept[0][1], WheelFile)
 
@@ -2514,30 +2845,32 @@ class TestDistPolicyOverrides:
         provider = Provider(
             coordinator,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            dist_policy_overrides={"lxml": DistPolicy.SDIST_ONLY},
+            package_overrides=(
+                pkg_override("lxml", dist_policy=DistPolicy.SDIST_ONLY),
+            ),
         )
-        assert provider.effective_dist_policy("lxml") is DistPolicy.SDIST_ONLY
-        assert provider.effective_dist_policy("foo") is DistPolicy.WHEEL_OR_SDIST
+        assert provider.effective_dist_policy("lxml", V("1.0")) is DistPolicy.SDIST_ONLY
+        assert (
+            provider.effective_dist_policy("foo", V("1.0")) is DistPolicy.WHEEL_OR_SDIST
+        )
 
-    def test_override_canonicalises_name(self) -> None:
+    def test_per_index_effective_lookup(self) -> None:
         coordinator = make_coordinator([], package="foo")
         provider = Provider(
             coordinator,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            dist_policy_overrides={"L_XML": DistPolicy.SDIST_ONLY},
+            index_overrides={
+                "internal": IndexOverride(dist_policy=DistPolicy.WHEEL_ONLY)
+            },
         )
-        assert provider.effective_dist_policy("l-xml") is DistPolicy.SDIST_ONLY
-
-    def test_duplicate_override_raises(self) -> None:
-        coordinator = make_coordinator([], package="foo")
-        with pytest.raises(ValueError, match="duplicate dist-policy override"):
-            Provider(
-                coordinator,
-                dist_policy_overrides={
-                    "lxml": DistPolicy.SDIST_ONLY,
-                    "LXML": DistPolicy.NO_SDIST,
-                },
-            )
+        assert (
+            provider.effective_dist_policy("foo", V("1.0"), "internal")
+            is DistPolicy.WHEEL_ONLY
+        )
+        assert (
+            provider.effective_dist_policy("foo", V("1.0"), "pypi")
+            is DistPolicy.WHEEL_OR_SDIST
+        )
 
 
 EXTRA_METADATA = (
@@ -3249,20 +3582,20 @@ PRE_22_SDIST_PKG_INFO = (
 
 
 class TestDistPolicy:
-    def test_no_sdist_ignores_sdists(self) -> None:
-        """NO_SDIST policy filters out sdists from the listing."""
+    def test_wheel_only_ignores_sdists(self) -> None:
+        """WHEEL_ONLY policy filters out sdists from the listing."""
         coordinator = make_coordinator(
             [make_wheel("1.0"), make_sdist("0.9")],
             metadata_text="Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
         )
-        provider = Provider(coordinator, dist_policy=DistPolicy.NO_SDIST)
+        provider = Provider(coordinator, dist_policy=DistPolicy.WHEEL_ONLY)
         versions = provider.fetch_versions("pkg")
         # Only the wheel should remain
         assert len(versions) == 1
         assert isinstance(versions[0][1], WheelFile)
 
     def test_allow_includes_sdists(self) -> None:
-        """ALLOW policy includes both wheels and sdists."""
+        """WHEEL_OR_SDIST policy includes both wheels and sdists."""
         coordinator = make_coordinator(
             [make_wheel("1.0"), make_sdist("0.9")],
             metadata_text="Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
@@ -3271,20 +3604,20 @@ class TestDistPolicy:
         versions = provider.fetch_versions("pkg")
         assert len(versions) == 2
 
-    def test_prefer_binary_wheels_before_sdists(self) -> None:
-        """PREFER_BINARY sorts wheels before sdists at same version."""
+    def test_prefer_wheel_wheels_before_sdists(self) -> None:
+        """PREFER_WHEEL sorts wheels before sdists at same version."""
         coordinator = make_coordinator(
             [make_sdist("1.0"), make_wheel("1.0")],
             metadata_text="Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
         )
-        provider = Provider(coordinator, dist_policy=DistPolicy.PREFER_BINARY)
+        provider = Provider(coordinator, dist_policy=DistPolicy.PREFER_WHEEL)
         versions = provider.fetch_versions("pkg")
         assert len(versions) == 2
         assert isinstance(versions[0][1], WheelFile)
         assert isinstance(versions[1][1], SdistFile)
 
     def test_sdist_install_keeps_wheels_and_sorts_wheels_first(self) -> None:
-        """SDIST_INSTALL behaves like ALLOW for the listing.
+        """SDIST_INSTALL behaves like WHEEL_OR_SDIST for the listing.
 
         Wheels stay in the listing (the resolver reads metadata from
         them), but they sort before the sdist at the same version so
@@ -3415,6 +3748,68 @@ class TestDistPolicy:
         with pytest.raises(UnsupportedSdistError):
             provider.get_dependencies("pkg", V("1.0"))
 
+    def test_per_package_override_trusts_pre_22_sdist_deps(self) -> None:
+        """A per-package override body trusts pre-2.2 PKG-INFO deps through
+        get_dependencies, just like the constructor flag.
+        """
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PRE_22_SDIST_PKG_INFO,
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+            package_overrides=(pkg_override("pkg", dist_trust_unverified_deps=True),),
+        )
+        deps = provider.get_dependencies("pkg", V("1.0"))
+        assert "dep-a" in deps
+        assert "dep-b" in deps
+
+    def test_per_index_override_trusts_pre_22_sdist_deps(self) -> None:
+        """A per-index override body trusts the same deps for the served
+        package, while a package off that index still raises under NEVER.
+        """
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PRE_22_SDIST_PKG_INFO,
+        )
+        coordinator.index.store_listing_index("pkg", "internal")
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+            index_overrides={
+                "internal": IndexOverride(dist_trust_unverified_deps=True)
+            },
+        )
+        deps = provider.get_dependencies("pkg", V("1.0"))
+        assert "dep-a" in deps
+        assert "dep-b" in deps
+
+    def test_per_index_override_does_not_trust_off_index(self) -> None:
+        """The per-index trust override does not extend to a package served
+        from a different index, which still raises under NEVER.
+        """
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PRE_22_SDIST_PKG_INFO,
+        )
+        coordinator.index.store_listing_index("pkg", "pypi")
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+            index_overrides={
+                "internal": IndexOverride(dist_trust_unverified_deps=True)
+            },
+        )
+        with pytest.raises(UnsupportedSdistError):
+            provider.get_dependencies("pkg", V("1.0"))
+
     def test_sdist_no_pkg_info_raises(self) -> None:
         """Raise MetadataError when PKG-INFO cannot be extracted."""
         coordinator = make_coordinator(
@@ -3434,7 +3829,7 @@ class TestDistPolicy:
         coordinator = make_coordinator(
             [make_wheel("1.0", has_metadata=False)],
         )
-        provider = Provider(coordinator, dist_policy=DistPolicy.NO_SDIST)
+        provider = Provider(coordinator, dist_policy=DistPolicy.WHEEL_ONLY)
         with pytest.raises(MetadataError):
             provider.get_dependencies("pkg", V("1.0"))
 
@@ -3444,7 +3839,7 @@ class TestDistPolicy:
         coordinator = make_coordinator(
             [make_wheel("2.0"), make_wheel("1.0", has_metadata=False)],
         )
-        provider = Provider(coordinator, dist_policy=DistPolicy.NO_SDIST)
+        provider = Provider(coordinator, dist_policy=DistPolicy.WHEEL_ONLY)
         provider.fetch_versions("pkg")
         # v1.0 has no metadata_url and sdists are disabled.
         with pytest.raises(MetadataError, match="no sdist"):
@@ -4319,39 +4714,32 @@ class TestBuildPolicyDefaults:
 
 
 class TestEffectiveBuildPolicy:
-    """Per-package overrides replace the global policy for one package."""
+    """Overrides replace the global build policy per package/index."""
 
     def test_no_overrides_falls_back_to_global(self) -> None:
         coordinator = make_coordinator([], package="foo")
         provider = Provider(coordinator, build_policy=BuildPolicy.BUILD_LOCAL)
-        assert provider.effective_build_policy("anything") is BuildPolicy.BUILD_LOCAL
+        assert (
+            provider.effective_build_policy("anything", V("1.0"))
+            is BuildPolicy.BUILD_LOCAL
+        )
 
     def test_override_replaces_global_for_named_package(self) -> None:
         coordinator = make_coordinator([], package="foo")
         provider = Provider(
             coordinator,
             build_policy=BuildPolicy.BUILD_LOCAL,
-            build_policy_overrides={"pyspark-client": BuildPolicy.BUILD_REMOTE},
+            package_overrides=(
+                pkg_override("pyspark-client", build_policy=BuildPolicy.BUILD_REMOTE),
+            ),
         )
         assert (
-            provider.effective_build_policy("pyspark-client")
+            provider.effective_build_policy("pyspark-client", V("1.0"))
             is BuildPolicy.BUILD_REMOTE
-        )
-        assert provider.effective_build_policy("other-pkg") is BuildPolicy.BUILD_LOCAL
-
-    def test_override_canonicalises_name(self) -> None:
-        """An override declared as ``Pyspark_Client`` matches a request
-        for ``pyspark-client`` (canonical equivalence per PEP 503).
-        """
-        coordinator = make_coordinator([], package="foo")
-        provider = Provider(
-            coordinator,
-            build_policy=BuildPolicy.BUILD_LOCAL,
-            build_policy_overrides={"Pyspark_Client": BuildPolicy.BUILD_REMOTE},
         )
         assert (
-            provider.effective_build_policy("pyspark-client")
-            is BuildPolicy.BUILD_REMOTE
+            provider.effective_build_policy("other-pkg", V("1.0"))
+            is BuildPolicy.BUILD_LOCAL
         )
 
     def test_override_can_be_more_restrictive(self) -> None:
@@ -4362,23 +4750,50 @@ class TestEffectiveBuildPolicy:
         provider = Provider(
             coordinator,
             build_policy=BuildPolicy.BUILD_REMOTE,
-            build_policy_overrides={"quarantined": BuildPolicy.NEVER},
+            package_overrides=(
+                pkg_override("quarantined", build_policy=BuildPolicy.NEVER),
+            ),
         )
-        assert provider.effective_build_policy("quarantined") is BuildPolicy.NEVER
         assert (
-            provider.effective_build_policy("anything-else") is BuildPolicy.BUILD_REMOTE
+            provider.effective_build_policy("quarantined", V("1.0"))
+            is BuildPolicy.NEVER
+        )
+        assert (
+            provider.effective_build_policy("anything-else", V("1.0"))
+            is BuildPolicy.BUILD_REMOTE
         )
 
-    def test_duplicate_override_raises(self) -> None:
+    def test_version_scoped_build_policy(self) -> None:
         coordinator = make_coordinator([], package="foo")
-        with pytest.raises(ValueError, match="duplicate build-policy override"):
-            Provider(
-                coordinator,
-                build_policy_overrides={
-                    "foo": BuildPolicy.BUILD_LOCAL,
-                    "Foo": BuildPolicy.BUILD_REMOTE,
-                },
-            )
+        provider = Provider(
+            coordinator,
+            build_policy=BuildPolicy.BUILD_LOCAL,
+            package_overrides=(
+                pkg_override("foo <= 2", build_policy=BuildPolicy.NEVER),
+            ),
+        )
+        assert provider.effective_build_policy("foo", V("1.0")) is BuildPolicy.NEVER
+        assert (
+            provider.effective_build_policy("foo", V("5.0")) is BuildPolicy.BUILD_LOCAL
+        )
+
+    def test_per_index_build_policy(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            build_policy=BuildPolicy.BUILD_LOCAL,
+            index_overrides={
+                "internal": IndexOverride(build_policy=BuildPolicy.BUILD_REMOTE)
+            },
+        )
+        assert (
+            provider.effective_build_policy("foo", V("1.0"), "internal")
+            is BuildPolicy.BUILD_REMOTE
+        )
+        assert (
+            provider.effective_build_policy("foo", V("1.0"), "pypi")
+            is BuildPolicy.BUILD_LOCAL
+        )
 
     def test_dynamic_sdist_path_under_build_remote_invokes_backend(
         self,
@@ -4406,7 +4821,9 @@ class TestEffectiveBuildPolicy:
             python_version="3.12.0",
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_LOCAL,
-            build_policy_overrides={"pkg": BuildPolicy.BUILD_REMOTE},
+            package_overrides=(
+                pkg_override("pkg", build_policy=BuildPolicy.BUILD_REMOTE),
+            ),
         )
 
         provider.versions_cache["pkg"] = [(_Version("1.0"), make_sdist("1.0"))]
@@ -5080,6 +5497,7 @@ class TestPublicAccessors:
             vcs_config=VcsConfig(
                 policy=VcsPolicy.ALLOW,
                 allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
             ),
             build_policy=BuildPolicy.NEVER,
         )

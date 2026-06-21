@@ -99,8 +99,8 @@ def validate_marker_disjointness(
 
     ``declared_groups`` carries every conflict set regardless of policy
     so the hint can distinguish an undeclared collision (suggest adding
-    a declaration) from one already declared under ``at_least_one``
-    (suggest tightening to ``at_most_one`` or ``exactly_one``).
+    a declaration) from one already declared under ``at-least-one``
+    (suggest tightening to ``at-most-one`` or ``exactly-one``).
     """
     if not environments:
         return
@@ -265,7 +265,7 @@ def _conflict_hint(
     because a conflict declaration would not help.
 
     When ``declared_groups`` already covers the active members, the
-    hint instead suggests tightening the policy: an ``at_least_one``
+    hint instead suggests tightening the policy: an ``at-least-one``
     declaration permits co-selection, so the validator still raises and
     the user has to switch to an exclusive policy to prune the point.
     """
@@ -288,8 +288,8 @@ def _conflict_hint(
     if already_declared:
         return (
             ". These members are declared in [tool.nab].conflicts under a"
-            " policy that permits co-selection; switch to at_most_one or"
-            " exactly_one to prune the colliding context"
+            " policy that permits co-selection; switch to at-most-one or"
+            " exactly-one to prune the colliding context"
         )
     return (
         ". If these are intentionally mutually exclusive, declare them in"

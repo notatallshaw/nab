@@ -539,7 +539,7 @@ def _build_marker(
     ``tuple_markers`` means the caller has not declared a tuple
     universe and the marker is omitted.
 
-    A dep required by every member of an ``at_most_one`` set but not
+    A dep required by every member of an ``at-most-one`` set but not
     by the base is absent from ``env_base_names``, so it keeps the
     membership OR and does not install when no member is selected.
     An environment with no base-name set (no conflict fork ran) leaves

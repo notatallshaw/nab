@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import httpx
@@ -17,7 +18,7 @@ import respx
 
 from nab_index.cache import NullCache
 from nab_index.cached_client import CachedAsyncSimpleClient
-from nab_index.client import WheelFile
+from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
@@ -25,9 +26,9 @@ from nab_python.fetch import (
     FetchCoordinator,
     FetchKind,
     FetchRequest,
-    IndexOverride,
+    IndexRoute,
     InMemoryIndex,
-    _resolve_overrides,
+    _resolve_routes,
 )
 
 
@@ -833,6 +834,35 @@ class TestFetchCoordinator:
         assert pyproject_at_event == ['[project]\nname = "pkg"\n']
 
     @respx.mock
+    def test_request_listing_serving_index_stored_before_event(self) -> None:
+        """The serving index is visible before the listing event fires.
+
+        A waiter released by the listing event reads ``serving_index``
+        with no further synchronisation to apply per-index policy to the
+        listing filter, so the serving index must be recorded before the
+        event is set (mirrors the sdist pyproject store-before-fire
+        ordering).
+        """
+        respx.get("https://pypi.org/simple/testpkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+
+        serving_at_event: list[str | None] = []
+
+        class RecordingIndex(InMemoryIndex):
+            def store_listing(
+                self, package: str, data: Sequence[WheelFile | SdistFile]
+            ) -> None:
+                serving_at_event.append(self.get_listing_index(package))
+                super().store_listing(package, data)
+
+        with _coord() as coord:
+            coord.index = RecordingIndex()
+            event = coord.request_listing("testpkg")
+            event.wait(timeout=5)
+        assert serving_at_event == ["pypi"]
+
+    @respx.mock
     def test_request_sdist_deduplicates(self) -> None:
         """Second request_sdist for the same key reuses the pending."""
         import io
@@ -1028,75 +1058,29 @@ class TestFetchCoordinatorCache:
             coord.shutdown()
 
 
-class TestResolveOverrides:
-    """Tests for the marker-aware override-resolution helper."""
+class TestResolveRoutes:
+    """Tests for the route-resolution helper.
 
-    def test_no_overrides_no_op(self) -> None:
-        assert _resolve_overrides([], None) == {}
+    Routes carry no marker now: routing decides where a listing is
+    fetched before any version (or marker context) is known.
+    """
 
-    def test_no_marker_always_matches(self) -> None:
-        result = _resolve_overrides(
-            [IndexOverride("torch", "torch-cpu")],
-            None,
-        )
+    def test_no_routes_no_op(self) -> None:
+        assert _resolve_routes([]) == {}
+
+    def test_single_route(self) -> None:
+        result = _resolve_routes([IndexRoute("torch", "torch-cpu")])
         assert result == {"torch": "torch-cpu"}
 
-    def test_marker_matches_env(self) -> None:
-        result = _resolve_overrides(
-            [
-                IndexOverride(
-                    "torch",
-                    "torch-cpu",
-                    marker='platform_system == "Linux"',
-                ),
-            ],
-            {"platform_system": "Linux"},
+    def test_distinct_packages(self) -> None:
+        result = _resolve_routes(
+            [IndexRoute("torch", "torch-cpu"), IndexRoute("numpy", "alt")]
         )
-        assert result == {"torch": "torch-cpu"}
-
-    def test_marker_misses_env(self) -> None:
-        result = _resolve_overrides(
-            [
-                IndexOverride(
-                    "torch",
-                    "torch-cpu",
-                    marker='platform_system == "Linux"',
-                ),
-            ],
-            {"platform_system": "Darwin"},
-        )
-        assert result == {}
-
-    def test_first_match_wins(self) -> None:
-        result = _resolve_overrides(
-            [
-                IndexOverride(
-                    "torch",
-                    "torch-cpu",
-                    marker='platform_system == "Linux"',
-                ),
-                IndexOverride(
-                    "torch",
-                    "torch-rocm",
-                ),
-            ],
-            {"platform_system": "Linux"},
-        )
-        assert result == {"torch": "torch-cpu"}
+        assert result == {"torch": "torch-cpu", "numpy": "alt"}
 
     def test_canonicalises_name(self) -> None:
-        result = _resolve_overrides(
-            [IndexOverride("My-Pkg", "alt")],
-            None,
-        )
+        result = _resolve_routes([IndexRoute("My-Pkg", "alt")])
         assert "my-pkg" in result
-
-    def test_marker_required_but_no_env_drops(self) -> None:
-        result = _resolve_overrides(
-            [IndexOverride("torch", "alt", marker='os_name == "posix"')],
-            None,
-        )
-        assert result == {}
 
 
 class TestMultiIndexCoordinator:
@@ -1176,7 +1160,7 @@ class TestMultiIndexCoordinator:
                     IndexConfig("pypi", "https://pypi.org/simple/"),
                     IndexConfig("torch-cpu", "https://torch.example/cpu/"),
                 ],
-                index_overrides=[IndexOverride("torch", "torch-cpu")],
+                index_routes=[IndexRoute("torch", "torch-cpu")],
             ) as coord,
         ):
             event = coord.request_listing("torch")
@@ -1273,7 +1257,7 @@ class TestMultiIndexCoordinator:
                     IndexConfig("pypi", "https://pypi.org/simple/"),
                     IndexConfig("torch-cpu", "https://torch.example/cpu/"),
                 ],
-                index_overrides=[IndexOverride("torch", "torch-cpu")],
+                index_routes=[IndexRoute("torch", "torch-cpu")],
             ) as coord,
         ):
             coord.request_listing("torch").wait(timeout=5)
@@ -1354,7 +1338,7 @@ class TestMultiIndexCoordinator:
             transport=HttpxAsyncTransport(),
             cache_dir=tmp_path,
             indexes=[IndexConfig("pypi", "https://pypi.org/simple/")],
-            index_overrides=[IndexOverride("torch", "no-such-index")],
+            index_routes=[IndexRoute("torch", "no-such-index")],
         )
         try:
             with pytest.raises(ValueError, match="unknown index names"):
