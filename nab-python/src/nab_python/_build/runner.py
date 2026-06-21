@@ -250,9 +250,9 @@ def _parse_metadata(metadata_path: Path) -> WheelMetadata:
 
     provides_extra: list[str] = sorted(
         {
-            canonicalize_name(extra)
+            canonicalize_name(stripped)
             for extra in msg_obj.get_all("Provides-Extra") or ()
-            if extra
+            if (stripped := extra.strip())
         }
     )
 
