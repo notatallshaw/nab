@@ -240,6 +240,45 @@ class TestAdmitVcsUrlRepo:
         )
         assert scheme == "git+https"
 
+    def test_https_credentials_under_prefix_pass(self) -> None:
+        """A token in the authority does not move the repo out of its org."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/myorg/",),
+        )
+        scheme = admit_vcs_url(
+            f"git+https://x-access-token:secret@github.com/myorg/fork.git@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+https"
+
+    def test_ssh_login_under_prefix_passes(self) -> None:
+        """The mandatory SSH ``git@`` login does not block a prefix match."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+ssh"}),
+            allowed_repos=("ssh://github.com/myorg/",),
+        )
+        scheme = admit_vcs_url(
+            f"git+ssh://git@github.com/myorg/fork.git@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+ssh"
+
+    def test_credentials_outside_prefix_still_refused(self) -> None:
+        """Stripping credentials does not admit a repo outside the allowlist."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/myorg/",),
+        )
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url(
+                f"git+https://user:pass@github.com/evil/fork.git@{_FORTY}",
+                config,
+            )
+
 
 class TestAdmitVcsUrlRequirePin:
     def test_pinned_passes(self) -> None:
