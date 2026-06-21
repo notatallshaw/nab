@@ -293,6 +293,11 @@ def _parse_files(
             if isinstance(requires_python_raw, str)
             else requires_python_raw
         )
+        # A non-conformant index may serve a non-string ``upload-time``
+        # (a JSON number or bool); drop it so the downstream datetime
+        # parse never crashes.
+        upload_time_raw = file_info.get("upload-time")
+        upload_time = upload_time_raw if isinstance(upload_time_raw, str) else None
 
         wheel_parsed = _parse_wheel_filename(filename)
         if wheel_parsed is not None:
@@ -306,7 +311,7 @@ def _parse_files(
                     version=version,
                     requires_python=requires_python,
                     has_metadata=_has_metadata(file_info),
-                    upload_time=file_info.get("upload-time"),
+                    upload_time=upload_time,
                     hashes=hashes,
                     size=size,
                     metadata_hash=_metadata_hash(file_info),
@@ -325,7 +330,7 @@ def _parse_files(
                     url=file_url,
                     version=version,
                     requires_python=requires_python,
-                    upload_time=file_info.get("upload-time"),
+                    upload_time=upload_time,
                     hashes=hashes,
                     size=size,
                 )
