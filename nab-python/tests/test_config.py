@@ -1036,6 +1036,21 @@ class TestMarkerEnvironment:
         with pytest.raises(ConfigError, match="unknown marker-environment variable"):
             read_pyproject_config(path)
 
+    def test_rejected_in_universal_mode(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[tool.nab.marker-environment]\n"
+            'platform_system = "Windows"\n',
+        )
+        with pytest.raises(
+            ConfigError, match="does not support .tool.nab.marker-environment."
+        ):
+            read_pyproject_config(path)
+
 
 class TestIndexes:
     def test_round_trip(self, tmp_path: Path) -> None:
