@@ -113,6 +113,32 @@ class TestExtractStaticMetadata:
         )
         assert extract_static_metadata(tmp_path) is None
 
+    def test_dynamic_version_placeholder_returns_none(self, tmp_path: Path) -> None:
+        _write_pyproject(
+            tmp_path,
+            """
+            [project]
+            name = "foo"
+            version = "0.0.0"
+            dynamic = ["version"]
+            """,
+        )
+        assert extract_static_metadata(tmp_path) is None
+
+    def test_dynamic_non_version_keeps_static_version(self, tmp_path: Path) -> None:
+        _write_pyproject(
+            tmp_path,
+            """
+            [project]
+            name = "foo"
+            version = "1.0"
+            dynamic = ["readme"]
+            """,
+        )
+        meta = extract_static_metadata(tmp_path)
+        assert meta is not None
+        assert meta.version == Version("1.0")
+
     def test_missing_name_returns_none(self, tmp_path: Path) -> None:
         _write_pyproject(tmp_path, '[project]\nversion = "1.0"\n')
         assert extract_static_metadata(tmp_path) is None
