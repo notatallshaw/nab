@@ -356,13 +356,8 @@ def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
             {"name": cfg.name, "url": cfg.url} for cfg in indexes
         ]
     if index_routes:
-        expected_input["index_overrides"] = [
-            {
-                "name": o.name,
-                "index": o.index,
-                **({"marker": o.marker} if o.marker else {}),
-            }
-            for o in index_routes
+        expected_input["index_routes"] = [
+            {"name": o.name, "index": o.index} for o in index_routes
         ]
     if build_packages:
         expected_input["build_packages"] = sorted(build_packages)
@@ -373,22 +368,22 @@ def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
     return expected_input
 
 
-def parse_index_overrides(
+def parse_index_routes(
     scenario_name: str,
     scenario: dict,
 ) -> list[IndexRoute]:
-    """Read the ``index_overrides`` array of records from a scenario.
+    """Read the ``index_routes`` array of records from a scenario.
 
     Each entry is a TOML inline table with keys ``name`` (the package
-    name) and ``index`` (the *name* of an entry in ``indexes``), plus
-    an optional ``marker``.  Entries are returned in declaration order
-    so :func:`nab_python.fetch._resolve_routes` can apply
-    last-match-wins on duplicates.
+    name) and ``index`` (the *name* of an entry in ``indexes``).  A route
+    carries no version scope and no marker.  Entries are returned in
+    declaration order so :func:`nab_python.fetch._resolve_routes` can
+    apply last-match-wins on duplicates.
     """
-    raw = scenario.get("index_overrides", [])
+    raw = scenario.get("index_routes", [])
     if not isinstance(raw, list):
         msg = (
-            f"{scenario_name}: index_overrides must be a TOML array of"
+            f"{scenario_name}: index_routes must be a TOML array of"
             f" tables, got {type(raw).__name__}"
         )
         raise TypeError(msg)
@@ -396,7 +391,7 @@ def parse_index_overrides(
     for entry in raw:
         if not isinstance(entry, dict):
             msg = (
-                f"{scenario_name}: index_overrides entries must be tables,"
+                f"{scenario_name}: index_routes entries must be tables,"
                 f" got {type(entry).__name__}"
             )
             raise TypeError(msg)
@@ -405,12 +400,10 @@ def parse_index_overrides(
             index = entry["index"]
         except KeyError as missing:
             msg = (
-                f"{scenario_name}: index_overrides entry missing required"
-                f" key {missing!s}"
+                f"{scenario_name}: index_routes entry missing required key {missing!s}"
             )
             raise ValueError(msg) from None
-        marker = entry.get("marker")
-        out.append(IndexRoute(name=str(name), index=str(index), marker=marker))
+        out.append(IndexRoute(name=str(name), index=str(index)))
     return out
 
 
@@ -522,7 +515,7 @@ def process_scenario(
     constraint_strings: list[str] = scenario.get("constraints", [])
     marker_environment = parse_marker_environment(scenario_name, scenario)
     indexes = parse_indexes(scenario_name, scenario)
-    index_routes = parse_index_overrides(scenario_name, scenario)
+    index_routes = parse_index_routes(scenario_name, scenario)
     build_policy_overrides = parse_build_packages(scenario_name, scenario)
     if marker_environment and build_policy_overrides:
         # BuildPolicy.BUILD_REMOTE + marker_environment is rejected at

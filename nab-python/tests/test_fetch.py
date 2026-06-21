@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import httpx
@@ -17,7 +18,7 @@ import respx
 
 from nab_index.cache import NullCache
 from nab_index.cached_client import CachedAsyncSimpleClient
-from nab_index.client import WheelFile
+from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
@@ -831,6 +832,35 @@ class TestFetchCoordinator:
             )
             event.wait(timeout=5)
         assert pyproject_at_event == ['[project]\nname = "pkg"\n']
+
+    @respx.mock
+    def test_request_listing_serving_index_stored_before_event(self) -> None:
+        """The serving index is visible before the listing event fires.
+
+        A waiter released by the listing event reads ``serving_index``
+        with no further synchronisation to apply per-index policy to the
+        listing filter, so the serving index must be recorded before the
+        event is set (mirrors the sdist pyproject store-before-fire
+        ordering).
+        """
+        respx.get("https://pypi.org/simple/testpkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+
+        serving_at_event: list[str | None] = []
+
+        class RecordingIndex(InMemoryIndex):
+            def store_listing(
+                self, package: str, data: Sequence[WheelFile | SdistFile]
+            ) -> None:
+                serving_at_event.append(self.get_listing_index(package))
+                super().store_listing(package, data)
+
+        with _coord() as coord:
+            coord.index = RecordingIndex()
+            event = coord.request_listing("testpkg")
+            event.wait(timeout=5)
+        assert serving_at_event == ["pypi"]
 
     @respx.mock
     def test_request_sdist_deduplicates(self) -> None:

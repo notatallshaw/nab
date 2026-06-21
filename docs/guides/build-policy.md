@@ -120,16 +120,23 @@ per-index override instead:
 build-policy = "build-remote"
 ```
 
-Overrides participate in the `marker_environment` guard: when
-impersonating a non-host target, every override that sets `build-policy`
-must be `never`, because backends run on the host and cannot reflect the
-impersonated target's metadata.
+A build-policy override for a local checkout or VCS clone is matched by
+bare name only.  A source build is decided before any version is
+resolved, so a version-scoped per-package override (a quoted
+`"name <specifier>"` key) does not govern a local or VCS source build,
+and per-index overrides do not apply to sources (a local source has no
+serving index).  Use a bare-name key to govern a source build.
 
-## Interaction with `marker_environment`
+## Platform impersonation forbids host builds
 
-The marker overlay (used by universal resolution and by manual
-platform impersonation) is incompatible with anything other than
-`never` at both the global level and in every override that sets
-`build-policy`: invoking a backend on the host produces metadata that
-does not match the impersonated target, so the combination is rejected
-at provider construction time.
+A PEP 517 backend always runs on the host nab runs on, so it reports the
+host's dependencies.  That is correct when you resolve for the host, but
+wrong when you resolve *as if* you were on another platform.  nab refuses
+the combination in both places it can impersonate a platform:
+
+* With `[tool.nab.marker-environment]` set, `build-policy` must be `never`
+  at the global level and in every override that sets it.  A non-`never`
+  value is rejected before the resolve starts.
+* Under `mode = "universal"`, `build-policy` defaults to `never` and
+  cannot be raised.  An explicit non-`never` value, global or in any
+  override, is a config error.

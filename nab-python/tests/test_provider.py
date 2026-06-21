@@ -2638,14 +2638,6 @@ class TestEffectiveFieldResolution:
             provider.effective_build_policy("foo", V("1.0")) is BuildPolicy.BUILD_REMOTE
         )
 
-    def test_route_index_for(self) -> None:
-        coordinator = make_coordinator([], package="foo")
-        provider = Provider(
-            coordinator,
-            package_overrides=(pkg_override("foo", index="internal"),),
-        )
-        assert provider.route_index_for("foo") == "internal"
-
     def test_package_override_for_other_field_does_not_set_upload_time(self) -> None:
         # A package override that sets only dist-policy must not be read as
         # setting uploaded-prior-to; the global cutoff still applies.
@@ -2712,7 +2704,6 @@ class TestEffectiveFieldResolution:
             ),
         )
         assert provider.effective_build_policy_for_source("foo") is BuildPolicy.NEVER
-        assert provider.route_index_for("bar") is None
 
 
 def _make_sdist(version: str, package: str = "foo") -> SdistFile:

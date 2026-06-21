@@ -831,19 +831,6 @@ class Provider:
             return package_value(pkg)
         return idx_value
 
-    def route_index_for(self, canonical_name: str) -> str | None:
-        """Return the routing index for ``canonical_name``, or None.
-
-        Name-only lookup over the bare-name routing overrides; routing
-        decides where a listing is fetched before any version is known.
-        At most one routing entry exists per package (parse-time
-        non-overlap).
-        """
-        for override in self._package_overrides:
-            if override.index is not None and override.name == canonical_name:
-                return override.index
-        return None
-
     def force_backtrack_count(self, canonical_name: str) -> int:
         """How many times this package has triggered force-backtrack."""
         return self._force_backtrack_counts.get(canonical_name, 0)

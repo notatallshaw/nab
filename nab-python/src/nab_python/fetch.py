@@ -778,8 +778,10 @@ class FetchCoordinator:
                     # failure is stored as an error so fetch_versions can
                     # surface it instead of reporting no candidates.
                     if isinstance(exc, OfflineError):
-                        self.index.store_listing(req.package, [])
+                        # Record the serving index before the empty listing
+                        # fires the pending event (see _fetch_listing).
                         self._record_serving_index(client, req.package)
+                        self.index.store_listing(req.package, [])
                     else:
                         self.index.store_listing_error(req.package, exc)
                 else:
@@ -797,8 +799,12 @@ class FetchCoordinator:
         req: FetchRequest,
     ) -> None:
         files = await client.get_files(req.package)
-        self.index.store_listing(req.package, files)
+        # Record the serving index before store_listing fires the pending
+        # event: a waiter released by the event reads serving_index with no
+        # further synchronisation to apply per-index policy to the listing
+        # filter (mirrors the sdist pyproject store-before-fire ordering).
         self._record_serving_index(client, req.package)
+        self.index.store_listing(req.package, files)
 
         # auto-prefetch metadata for newest candidates (files are oldest-first)
         wheels_with_meta: list[tuple[WheelFile, str]] = [

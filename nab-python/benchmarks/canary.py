@@ -368,14 +368,10 @@ def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
             IndexConfig(name=str(entry["name"]), url=str(entry["url"]))
             for entry in raw_indexes
         ]
-    raw_overrides = scenario.get("index_overrides", [])
+    raw_routes = scenario.get("index_routes", [])
     index_routes = [
-        IndexRoute(
-            name=str(entry["name"]),
-            index=str(entry["index"]),
-            marker=entry.get("marker"),
-        )
-        for entry in raw_overrides
+        IndexRoute(name=str(entry["name"]), index=str(entry["index"]))
+        for entry in raw_routes
     ]
     raw_build_packages = scenario.get("build_packages", []) or []
     build_policy_overrides = {

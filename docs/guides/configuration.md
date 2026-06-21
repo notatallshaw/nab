@@ -62,9 +62,11 @@ sys_platform = "linux"
 platform_machine = "x86_64"
 ```
 
-A marker overlay requires `build-policy = "never"` at the global level
-and in every override that sets `build-policy`; invoking a backend on
-the host produces metadata that does not match the impersonated target.
+Setting this overlay requires `build-policy = "never"` at the global
+level and in every override that sets `build-policy`: a PEP 517 backend
+runs on the host, so a build cannot reflect the impersonated target.
+See [Build policy](build-policy.md) for the same rule under universal
+mode.
 
 ## Indexes
 
@@ -104,15 +106,24 @@ The name-keyed table is the terse form for a single package:
 # Build lxml from source and trust its (pre-PEP-643) PKG-INFO deps.
 [tool.nab.packages.lxml]
 dist-policy = { policy = "sdist-only", trust-unverified-deps = true }
+
+# Quote the key to carry a version specifier on the requirement.
+[tool.nab.packages."numpy > 2"]
+dist-policy = "wheel-only"
 ```
 
 `[[tool.nab.package-rules]]` is an array whose `match` selector lists the
-requirements one body applies to.  The same override written as a rule:
+requirements one body applies to.  The same overrides written as rules:
 
 ```toml
 [[tool.nab.package-rules]]
 match = ["lxml"]
 dist-policy = { policy = "sdist-only", trust-unverified-deps = true }
+
+# A match entry takes the same name-plus-specifier requirement.
+[[tool.nab.package-rules]]
+match = ["numpy > 2"]
+dist-policy = "wheel-only"
 ```
 
 A rule is the form to reach for when one body covers several packages at
@@ -319,6 +330,11 @@ python-patches = { "3.11" = "3.11.4" }
 uv's `fork-strategy=fewest`; `desc` mirrors `fork-strategy=
 requires-python`).  `python-patches` overrides the per-minor
 `python_full_version` marker value for marker evaluation.
+
+Each tuple impersonates a platform, so universal mode cannot build on
+the host: `build-policy` defaults to `never` and cannot be raised.  An
+explicit non-`never` value (global or in any override) is a config
+error.  See [Build policy](build-policy.md).
 
 ### `requires-python` vs `[tool.nab.matrix].python`
 

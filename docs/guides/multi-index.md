@@ -69,6 +69,11 @@ while packages from the torch index keep the global default:
 dist-policy = "wheel-only"
 ```
 
+A package is attributed to a single serving index: its route target if
+it has one, otherwise the first index in declared order that lists it. A
+per-index override therefore governs a package only through that one
+attributing index, not through every index that could also serve it.
+
 ## Policy across both surfaces is an error, not a precedence
 
 The per-package and per-index surfaces are not ranked. If a per-package
@@ -77,11 +82,13 @@ same field for a candidate, the resolve raises a clear error rather
 than picking one:
 
 ```toml
-# torch is pinned to torch-cpu (above).  This per-package override sets
-# dist-policy for torch, and the per-index override sets dist-policy for
-# everything from torch-cpu: a torch candidate served from torch-cpu is
-# governed by both, so the resolve errors.  Remove one of the two.
+# torch routes to torch-cpu and this per-package override sets its
+# dist-policy; the per-index override sets dist-policy for everything from
+# torch-cpu.  A torch candidate served from torch-cpu is governed by both,
+# so the resolve errors.  Remove one of the two settings.  (Both keys live
+# in the one [tool.nab.packages.torch] table; a package cannot have two.)
 [tool.nab.packages.torch]
+index = "torch-cpu"
 dist-policy = "wheel-only"
 
 [tool.nab.index.torch-cpu]

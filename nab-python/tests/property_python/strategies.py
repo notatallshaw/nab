@@ -16,6 +16,7 @@ tests exercise:
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 from hypothesis import HealthCheck, settings
 from hypothesis import strategies as st
@@ -25,7 +26,7 @@ from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import PackageOverride
-from nab_python.provider import DistPolicy
+from nab_python.provider import BuildPolicy, DistPolicy
 
 PACKAGE_NAMES = [f"pkg{i}" for i in range(10)]
 
@@ -219,15 +220,33 @@ def package_overrides(draw: st.DrawFn, *, name: str) -> PackageOverride:
     """Draw one per-package ``PackageOverride`` for ``name``.
 
     The requirement is ``name`` plus a specifier drawn from a small grid
-    so two draws overlap roughly half the time; the body sets a single
-    ``dist_policy`` value (the field the overlap property checks).
+    so two draws overlap roughly half the time.  The body sets exactly one
+    field, drawn across the policy surfaces, so the overlap property
+    exercises per-field discrimination and the uploaded-prior-to
+    cutoff/disable bucketing (a datetime cutoff and a ``false`` disable
+    count as the same field).
     """
     specifier = draw(st.sampled_from(OVERRIDE_SPECIFIERS))
     requirement = Requirement(f"{name} {specifier}".strip())
-    dist_policy = draw(st.sampled_from(list(DistPolicy)))
+    field = draw(st.sampled_from(["dist", "build", "upload_cutoff", "upload_off"]))
+    dist_policy: DistPolicy | None = None
+    build_policy: BuildPolicy | None = None
+    uploaded_prior_to: datetime | None = None
+    uploaded_prior_to_disabled = False
+    if field == "dist":
+        dist_policy = draw(st.sampled_from(list(DistPolicy)))
+    elif field == "build":
+        build_policy = draw(st.sampled_from(list(BuildPolicy)))
+    elif field == "upload_cutoff":
+        uploaded_prior_to = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    else:
+        uploaded_prior_to_disabled = True
     return PackageOverride(
         requirement=requirement,
         name=canonicalize_name(name),
         version_range=requirement.specifier.to_range(),
         dist_policy=dist_policy,
+        build_policy=build_policy,
+        uploaded_prior_to=uploaded_prior_to,
+        uploaded_prior_to_disabled=uploaded_prior_to_disabled,
     )

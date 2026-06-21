@@ -122,6 +122,21 @@ class TestHasFullCommitSha:
         url = f"git+https://{_FORTY}@github.com/foo/bar.git"
         assert not has_full_commit_sha(url)
 
+    def test_thirty_nine_char_ref_rejected(self) -> None:
+        # One char short of the 40-hex requirement.
+        url = f"git+https://github.com/foo/bar.git@{'a' * 39}"
+        assert not has_full_commit_sha(url)
+
+    def test_forty_one_char_ref_rejected(self) -> None:
+        # One char over the 40-hex requirement.
+        url = f"git+https://github.com/foo/bar.git@{'a' * 41}"
+        assert not has_full_commit_sha(url)
+
+    def test_forty_char_non_hex_ref_rejected(self) -> None:
+        # Exactly 40 chars but not all hex ('g' is out of range).
+        url = f"git+https://github.com/foo/bar.git@{'g' * 40}"
+        assert not has_full_commit_sha(url)
+
 
 class TestAdmitVcsUrlBlock:
     def test_block_default_refuses_vcs(self) -> None:

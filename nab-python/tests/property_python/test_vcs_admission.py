@@ -25,7 +25,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_index.vcs import FULL_GIT_SHA_RE, VcsRequest
+from nab_index.vcs import VcsRequest
 from nab_python._vcs_admission import (
     UnsupportedVcsError,
     VcsConfig,
@@ -50,6 +50,17 @@ ALL_SCHEMES = [
 
 SHA = "a" * 39 + "b"
 UPPER_SHA = SHA.upper()
+
+
+def _is_full_sha(ref: str) -> bool:
+    """Hand-transcribed "exactly 40 hex chars" rule.
+
+    Kept independent of the implementation's ``FULL_GIT_SHA_RE`` so the
+    oracle checks the documented policy rather than the regex against
+    itself.
+    """
+    return len(ref) == 40 and all(c in "0123456789abcdefABCDEF" for c in ref)
+
 
 configs = st.builds(
     VcsConfig,
@@ -79,7 +90,19 @@ def structured_urls(draw: st.DrawFn) -> str:
         st.lists(st.sampled_from(["org", "repo.git", "repo", "a"]), max_size=3)
     )
     ref = draw(
-        st.sampled_from(["", f"@{SHA}", "@main", f"@{UPPER_SHA}", "@release/1.0", "@"])
+        st.sampled_from(
+            [
+                "",
+                f"@{SHA}",
+                "@main",
+                f"@{UPPER_SHA}",
+                "@release/1.0",
+                "@",
+                f"@{'a' * 39}",  # 39 chars: one short of a full SHA
+                f"@{'a' * 41}",  # 41 chars: one over
+                f"@{'g' * 40}",  # 40 chars but not all hex
+            ]
+        )
     )
     frag = draw(st.sampled_from(["", "#subdirectory=src", "#egg=foo", "#x@y"]))
     # Keep any ref in the path component; a ref directly after the
@@ -114,7 +137,7 @@ def _oracle(url: str, config: VcsConfig) -> str:
         after = fragmentless.split("://", 1)[-1]
         if "@" not in after:
             return "refuse"
-        if not FULL_GIT_SHA_RE.match(after.rsplit("@", 1)[1]):
+        if not _is_full_sha(after.rsplit("@", 1)[1]):
             return "refuse"
     return "admit"
 
@@ -179,13 +202,16 @@ def test_admitted_pin_is_a_real_pin_at_clone_time(url: str) -> None:
     config = VcsConfig(
         policy=VcsPolicy.ALLOW,
         allowed_schemes=frozenset(VALID_SCHEMES),
-        allowed_repos=(),
+        # "" is an allow-all prefix (every inner URL starts with it), so the
+        # repo gate passes and the pin/clone-agreement assertion is reached;
+        # an empty tuple would deny every repo and make this test vacuous.
+        allowed_repos=("",),
         require_pin=True,
     )
     kind, _scheme = _decision(url, config)
     if kind != "admit":
         return
     request = VcsRequest.parse(url)
-    assert FULL_GIT_SHA_RE.match(request.ref), (
+    assert _is_full_sha(request.ref), (
         f"admission said pinned, clone parser sees ref={request.ref!r} for {url!r}"
     )

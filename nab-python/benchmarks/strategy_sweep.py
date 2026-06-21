@@ -175,7 +175,7 @@ def _scenario_inputs(scenario: dict) -> dict | None:
     constraint_strings: list[str] = scenario.get("constraints", [])
     marker_env = _scenarios.parse_marker_environment("sweep", scenario)
     indexes = _scenarios.parse_indexes("sweep", scenario)
-    index_routes = _scenarios.parse_index_overrides("sweep", scenario)
+    index_routes = _scenarios.parse_index_routes("sweep", scenario)
     datetime_str = scenario.get("datetime")
     project_name = scenario.get("project_name")
     project_extras = scenario.get("project_extras", [])

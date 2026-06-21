@@ -535,7 +535,9 @@ def read_pyproject_config(
     is materialised as an additional :class:`LocalSource` (explicit
     ``[[tool.nab.local-sources]]`` entries win on collision) and the
     effective ``build-policy`` is floored at
-    :attr:`BuildPolicy.BUILD_LOCAL`.  Pass ``discover_workspace=False``
+    :attr:`BuildPolicy.BUILD_LOCAL`, except under ``mode = "universal"``,
+    where ``build-policy`` stays at ``never`` (host builds are forbidden)
+    and the floor is not applied.  Pass ``discover_workspace=False``
     to skip the walk; useful for tests or for callers that layer their
     own workspace logic on top of a base config.
 
@@ -547,8 +549,12 @@ def read_pyproject_config(
     """
     if anchor is None:
         anchor = datetime.now(timezone.utc)
-    with path.open("rb") as f:
-        data = tomli.load(f)
+    try:
+        with path.open("rb") as f:
+            data = tomli.load(f)
+    except tomli.TOMLDecodeError as exc:
+        msg = f"{path} is not valid TOML: {exc}"
+        raise ConfigError(msg) from exc
     raw = tool_nab_section(data)
     if not isinstance(raw, dict):
         msg = f"[tool.nab] must be a table, got {type(raw).__name__}"
@@ -573,7 +579,11 @@ def _apply_workspace_discovery(
         return config
     merged = merge_workspace_local_sources(config.local_sources, discovered)
     explicit_names = {canonicalize_name(src.name) for src in config.local_sources}
-    promoted_policy = auto_promote_build_policy_for_workspace(config.build_policy)
+    # Universal mode forbids host builds (see _enforce_universal_build_policy),
+    # so the workspace BUILD_LOCAL floor does not apply: keep its never.
+    promoted_policy = config.build_policy
+    if config.mode is not ResolveMode.UNIVERSAL:
+        promoted_policy = auto_promote_build_policy_for_workspace(config.build_policy)
     if promoted_policy is not config.build_policy:
         _logger.info(
             "workspace discovery promoted build-policy from %r to %r"
@@ -636,6 +646,17 @@ def _parse_nab_table(
         declared_index_names=declared_index_names,
     )
 
+    build_policy = _parse_enum(
+        "build-policy", raw.get("build-policy"), BuildPolicy, BuildPolicy.BUILD_LOCAL
+    )
+    if mode is ResolveMode.UNIVERSAL:
+        build_policy = _enforce_universal_build_policy(
+            build_policy_set="build-policy" in raw,
+            build_policy=build_policy,
+            package_overrides=package_overrides,
+            index_overrides=index_overrides,
+        )
+
     default_groups = _parse_string_list("default-groups", raw.get("default-groups", []))
     conflicts = _parse_conflicts(raw.get("conflicts"))
     _validate_default_groups_against_conflicts(default_groups, conflicts)
@@ -649,12 +670,7 @@ def _parse_nab_table(
             raw.get("uploaded-prior-to"), anchor=anchor
         ),
         dist_policy=dist_policy,
-        build_policy=_parse_enum(
-            "build-policy",
-            raw.get("build-policy"),
-            BuildPolicy,
-            BuildPolicy.BUILD_LOCAL,
-        ),
+        build_policy=build_policy,
         trust_unverified_sdist_deps=trust_unverified,
         marker_environment=_parse_marker_environment(raw.get("marker-environment", {})),
         indexes=indexes,
@@ -675,6 +691,42 @@ def _parse_nab_table(
         package_overrides=package_overrides,
         index_overrides=index_overrides,
     )
+
+
+def _enforce_universal_build_policy(
+    *,
+    build_policy_set: bool,
+    build_policy: BuildPolicy,
+    package_overrides: tuple[PackageOverride, ...],
+    index_overrides: Mapping[str, IndexOverride],
+) -> BuildPolicy:
+    """Force ``never`` under universal mode and reject explicit host builds.
+
+    Universal resolution impersonates one platform per matrix tuple, but a
+    PEP 517 backend only ever runs on the host, so a build cannot reflect a
+    non-host target.  ``build-policy`` therefore defaults to ``never`` under
+    ``mode = "universal"``; an explicit non-``never`` value, global or in any
+    override, is an error.
+    """
+    offending: list[str] = []
+    if build_policy_set and build_policy is not BuildPolicy.NEVER:
+        offending.append(f"build-policy = {build_policy.value!r}")
+    for pkg in package_overrides:
+        bp = pkg.build_policy
+        if bp is not None and bp is not BuildPolicy.NEVER:
+            offending.append(f"packages.{pkg.requirement} build-policy = {bp.value!r}")
+    for name, index_override in index_overrides.items():
+        bp = index_override.build_policy
+        if bp is not None and bp is not BuildPolicy.NEVER:
+            offending.append(f"index.{name} build-policy = {bp.value!r}")
+    if offending:
+        msg = (
+            "mode = 'universal' cannot build on the host, so build-policy must"
+            f" be 'never'; got {', '.join(offending)}.  Remove the setting (it"
+            " defaults to 'never' under universal mode) or set it to 'never'."
+        )
+        raise ConfigError(msg)
+    return BuildPolicy.NEVER
 
 
 def _parse_mode(value: object) -> ResolveMode:

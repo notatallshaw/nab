@@ -108,6 +108,38 @@ class TestTopLevelKeys:
         with pytest.raises(ConfigError, match="\\[tool.nab\\] must be a table"):
             read_pyproject_config(path)
 
+    def test_invalid_toml_rejected(self, tmp_path: Path) -> None:
+        # A TOML syntax error (here a duplicated table) is reported as a
+        # ConfigError, not a raw TOMLDecodeError, so the CLI renders it
+        # under "Error in [tool.nab]" like every other config problem.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.foo]\nindex = "a"\n'
+            '[tool.nab.packages.foo]\ndist-policy = "wheel-only"\n',
+        )
+        with pytest.raises(ConfigError, match="not valid TOML"):
+            read_pyproject_config(path)
+
+    @pytest.mark.parametrize(
+        "removed_key",
+        [
+            "dist-policy-package",
+            "build-policy-package",
+            "uploaded-prior-to-package",
+            "index-overrides",
+            "trust-unverified-sdist-deps",
+        ],
+    )
+    def test_removed_legacy_key_rejected(
+        self, tmp_path: Path, removed_key: str
+    ) -> None:
+        # The pre-1.0 clean break removed these keys with no alias; they now
+        # fail loud as unknown [tool.nab] keys rather than being silently
+        # ignored.
+        path = write(tmp_path, f'[tool.nab]\n{removed_key} = "x"\n')
+        with pytest.raises(ConfigError, match="unknown \\[tool.nab\\] keys"):
+            read_pyproject_config(path)
+
 
 class TestConflictRendering:
     """The ``__str__`` formats are codified in the conflicts guide."""
@@ -862,6 +894,90 @@ class TestPolicies:
             read_pyproject_config(path)
 
 
+_UNIVERSAL_MATRIX = (
+    '[tool.nab.matrix]\npython = ">=3.11,<3.12"\nplatforms = ["linux_x86_64"]\n'
+)
+
+
+class TestUniversalBuildPolicy:
+    """Universal mode cannot build on the host: build-policy is forced never."""
+
+    def test_defaults_to_never(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n' + _UNIVERSAL_MATRIX,
+        )
+        assert read_pyproject_config(path).build_policy is BuildPolicy.NEVER
+
+    def test_explicit_never_accepted(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\nbuild-policy = "never"\n'
+            + _UNIVERSAL_MATRIX,
+        )
+        assert read_pyproject_config(path).build_policy is BuildPolicy.NEVER
+
+    def test_explicit_build_local_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\nbuild-policy = "build-local"\n'
+            + _UNIVERSAL_MATRIX,
+        )
+        with pytest.raises(ConfigError, match="universal.*build-policy.*never"):
+            read_pyproject_config(path)
+
+    def test_explicit_build_remote_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\nbuild-policy = "build-remote"\n'
+            + _UNIVERSAL_MATRIX,
+        )
+        with pytest.raises(ConfigError, match="universal.*build-policy.*never"):
+            read_pyproject_config(path)
+
+    def test_package_override_build_policy_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            + _UNIVERSAL_MATRIX
+            + '[tool.nab.packages.foo]\nbuild-policy = "build-remote"\n',
+        )
+        with pytest.raises(ConfigError, match="packages.foo"):
+            read_pyproject_config(path)
+
+    def test_package_override_without_build_policy_ok(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            + _UNIVERSAL_MATRIX
+            + '[tool.nab.packages.foo]\ndist-policy = "wheel-only"\n',
+        )
+        assert read_pyproject_config(path).build_policy is BuildPolicy.NEVER
+
+    def test_index_override_build_policy_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            + _UNIVERSAL_MATRIX
+            + '[tool.nab.index.pypi]\nbuild-policy = "build-remote"\n',
+        )
+        with pytest.raises(ConfigError, match="index.pypi"):
+            read_pyproject_config(path)
+
+    def test_index_override_without_build_policy_ok(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            + _UNIVERSAL_MATRIX
+            + '[tool.nab.index.pypi]\ndist-policy = "wheel-only"\n',
+        )
+        assert read_pyproject_config(path).build_policy is BuildPolicy.NEVER
+
+    def test_specific_mode_build_local_unaffected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nbuild-policy = "build-local"\n')
+        assert read_pyproject_config(path).build_policy is BuildPolicy.BUILD_LOCAL
+
+
 class TestResolution:
     def test_default_is_highest(self, tmp_path: Path) -> None:
         """Without a [tool.nab].resolution key, the default is HIGHEST."""
@@ -1510,6 +1626,25 @@ class TestPackageRules:
             IndexRoute(name="acme-core", index="internal"),
             IndexRoute(name="acme-utils", index="internal"),
         ]
+
+    def test_routing_with_version_specifier_rejected(self, tmp_path: Path) -> None:
+        # The rule form shares the bare-name routing guard with the table
+        # form: a match entry carrying a specifier together with index is
+        # rejected.
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "pypi"\n'
+            'url = "https://pypi.org/simple/"\n'
+            "[[tool.nab.indexes]]\n"
+            'name = "internal"\n'
+            'url = "https://pkgs.example.com/simple/"\n'
+            "[[tool.nab.package-rules]]\n"
+            'match = ["foo <= 2"]\n'
+            'index = "internal"\n',
+        )
+        with pytest.raises(ConfigError, match="bare-name requirements"):
+            read_pyproject_config(path, discover_workspace=False)
 
     def test_version_specifier_scopes_the_entry(self, tmp_path: Path) -> None:
         path = write(
@@ -2232,6 +2367,21 @@ class TestWorkspaceDiscoveryIntegration:
         )
         config = read_pyproject_config(member)
         assert config.build_policy is BuildPolicy.BUILD_REMOTE
+
+    def test_universal_member_not_promoted(self, tmp_path: Path) -> None:
+        """Universal mode keeps never; workspace discovery does not promote it.
+
+        A host build cannot reflect a non-host matrix tuple, so the
+        BUILD_LOCAL floor applied to workspace members is skipped.
+        """
+        member = self._ws(tmp_path)
+        member.write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n' + _UNIVERSAL_MATRIX,
+        )
+        config = read_pyproject_config(member)
+        assert config.build_policy is BuildPolicy.NEVER
 
     def test_no_discovery_skips_walk(self, tmp_path: Path) -> None:
         member = self._ws(tmp_path)
