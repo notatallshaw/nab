@@ -255,6 +255,9 @@ def _resolve_universal(
     except UnsupportedVcsError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)
+    except NotImplementedError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
 
     if not result.success:
         _print_universal_blocks(result)

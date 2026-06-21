@@ -2886,6 +2886,14 @@ NO_EXTRA_METADATA = (
     "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar>=1.0\n"
 )
 
+WHITESPACE_EXTRA_METADATA = (
+    "Metadata-Version: 2.1\n"
+    "Name: foo\n"
+    "Version: 1.0\n"
+    "Provides-Extra: security \n"
+    'Requires-Dist: cryptography>=2.0; extra == "security"\n'
+)
+
 
 class TestExtras:
     def test_choose_version_delegates_to_base(self) -> None:
@@ -2925,6 +2933,17 @@ class TestExtras:
         assert "cryptography" in deps
         assert "foo" in deps
         assert "bar" not in deps
+
+    def test_get_dependencies_whitespace_provides_extra_keeps_deps(self) -> None:
+        """A trailing space on Provides-Extra must not drop the extra's deps."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=WHITESPACE_EXTRA_METADATA,
+            package="foo",
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        deps = provider.get_dependencies("foo[security]", V("1.0"))
+        assert "cryptography" in deps
 
     def test_choose_extra_version_filters_by_base_range(self) -> None:
         """An extras proxy whose base==V is excluded by the base's positive

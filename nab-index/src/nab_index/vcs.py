@@ -189,7 +189,10 @@ def _resolve_sha(request: VcsRequest, *, require_pin: bool) -> str:
         raise VcsCloneError(msg)
 
     target = request.ref or "HEAD"
-    ls_remote_args = ["git", "ls-remote", request.repo_url, target]
+    # Also request the peeled form: an exact-ref ls-remote omits the
+    # companion refs/tags/<name>^{} line, so without it an annotated tag
+    # would resolve to the tag object rather than the commit it points at.
+    ls_remote_args = ["git", "ls-remote", request.repo_url, target, f"{target}^{{}}"]
     try:
         proc = subprocess.run(  # noqa: S603 - URL admission upstream
             ls_remote_args,

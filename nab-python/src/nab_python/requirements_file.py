@@ -10,6 +10,7 @@ import tomli
 from nab_resolver.errors import ResolutionError
 
 from ._vendor.packaging.dependency_groups import resolve_dependency_groups
+from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 from ._vendor.packaging.utils import canonicalize_name
@@ -109,16 +110,22 @@ def _canonicalize_optional_deps(
 def select_optional_dependencies(
     optional_deps: Mapping[str, Sequence[str]],
     selected: Sequence[str],
+    project_name: str | None = None,
 ) -> list[Requirement]:
     """Return the union of requirement strings for ``selected`` extras.
 
     Extra names are compared under PEP 685 normalization, so
     ``My_Extra`` selects a declared ``my-extra``.  Unknown extra names
     raise ``LookupError``.  Returns an empty list when ``selected`` is
-    empty.
+    empty.  A self-reference (a requirement naming ``project_name``) has
+    its extras reached through the expanded selection, so it is dropped
+    here rather than returned as a dependency on the project itself.
     """
     if not selected:
         return []
+    canonical_project = (
+        canonicalize_name(project_name) if project_name is not None else None
+    )
     canonical_deps = _canonicalize_optional_deps(optional_deps)
     out: list[Requirement] = []
     for name in selected:
@@ -129,12 +136,15 @@ def select_optional_dependencies(
                 f" [project.optional-dependencies]; defined: {sorted(optional_deps)!r}"
             )
             raise LookupError(msg)
-        out.extend(
-            _parse_requirements(
-                canonical_deps[canonical],
-                f"[project.optional-dependencies] extra {name!r}",
-            )
-        )
+        for req in _parse_requirements(
+            canonical_deps[canonical],
+            f"[project.optional-dependencies] extra {name!r}",
+        ):
+            if canonical_project is not None and (
+                canonicalize_name(req.name) == canonical_project
+            ):
+                continue
+            out.append(req)
     return out
 
 
@@ -260,6 +270,7 @@ def expand_extra_requirements(
             ):
                 edge = gates if req.marker is None else gates | {str(req.marker)}
                 worklist.extend((canonicalize_name(sub), edge) for sub in req.extras)
+                continue
             if gates:
                 req.marker = _and_markers(req.marker, gates)
             out.append(req)
@@ -332,11 +343,10 @@ def resolve_groups_to_requirements(
     """Resolve PEP 735 group includes and return the union of requirements.
 
     ``selected`` names the groups whose requirements should be
-    expanded.  Unknown group names surface as :class:`LookupError`
-    from the vendored resolver and a malformed requirement string as
-    :class:`InvalidProjectRequirementError`; a cyclic include raises the
-    vendored resolver's error.  Returns an empty list when
-    ``selected`` is empty.
+    expanded.  An unknown group name surfaces as :class:`LookupError`;
+    a malformed requirement string, cyclic include, or duplicate group
+    name surfaces as :class:`InvalidProjectRequirementError`.  Returns
+    an empty list when ``selected`` is empty.
     """
     if not selected:
         return []
@@ -345,6 +355,12 @@ def resolve_groups_to_requirements(
     except InvalidRequirement as exc:
         msg = f"invalid requirement in [dependency-groups]: {exc}"
         raise InvalidProjectRequirementError(msg) from exc
+    except ExceptionGroup as group:
+        detail = "; ".join(str(e) for e in group.exceptions)
+        if all(isinstance(e, LookupError) for e in group.exceptions):
+            raise LookupError(detail) from group
+        msg = f"invalid [dependency-groups]: {detail}"
+        raise InvalidProjectRequirementError(msg) from group
     return [Requirement(s) for s in resolved]
 
 

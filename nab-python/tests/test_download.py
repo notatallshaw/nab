@@ -419,6 +419,77 @@ class TestDownloadLock:
         assert not (tmp_path.parent / "evil.whl").exists()
 
 
+class TestLocalIndexArtefacts:
+    """Artefacts resolved from a local file:// (find-links) index."""
+
+    def test_entry_carries_local_path(self, tmp_path: Path) -> None:
+        wheel = WheelArtifact(
+            filename="foo-1.0-py3-none-any.whl",
+            url=(tmp_path / "foo-1.0-py3-none-any.whl").as_uri(),
+            hashes=(("sha256", "a" * 64),),
+            local_path=tmp_path / "foo-1.0-py3-none-any.whl",
+        )
+        pin = IndexPin(name="foo", version="1.0", index="local", wheels=(wheel,))
+        (entry,) = list(iter_artifacts(LockInput(pins={"foo": pin})))
+        assert entry.local_path == tmp_path / "foo-1.0-py3-none-any.whl"
+
+    def test_wheel_and_sdist_copied_from_disk(self, tmp_path: Path) -> None:
+        src = tmp_path / "wheelhouse"
+        src.mkdir()
+        out = tmp_path / "out"
+        wheel_bytes = b"WHEELDATA"
+        sdist_bytes = b"SDISTDATA"
+        wheel_file = src / "foo-1.0-py3-none-any.whl"
+        sdist_file = src / "foo-1.0.tar.gz"
+        wheel_file.write_bytes(wheel_bytes)
+        sdist_file.write_bytes(sdist_bytes)
+        wheel = WheelArtifact(
+            filename="foo-1.0-py3-none-any.whl",
+            url=wheel_file.as_uri(),
+            hashes=(("sha256", hashlib.sha256(wheel_bytes).hexdigest()),),
+            local_path=wheel_file,
+        )
+        sdist = SdistArtifact(
+            filename="foo-1.0.tar.gz",
+            url=sdist_file.as_uri(),
+            hashes=(("sha256", hashlib.sha256(sdist_bytes).hexdigest()),),
+            local_path=sdist_file,
+        )
+        pin = IndexPin(
+            name="foo", version="1.0", index="local", sdist=sdist, wheels=(wheel,)
+        )
+        # The transport would serve the wrong bytes; a local artefact must
+        # never reach it.
+        transport = _FakeTransport(
+            {wheel_file.as_uri(): b"WRONG", sdist_file.as_uri(): b"WRONG"}
+        )
+        result = download_lock(
+            LockInput(pins={"foo": pin}),
+            transport,  # type: ignore[arg-type]
+            out,
+        )
+        assert (out / "foo-1.0-py3-none-any.whl").read_bytes() == wheel_bytes
+        assert (out / "foo-1.0.tar.gz").read_bytes() == sdist_bytes
+        assert len(result.written) == 2
+        assert transport.requested == []
+
+    def test_missing_local_file_raises_download_error(self, tmp_path: Path) -> None:
+        missing = tmp_path / "gone" / "foo-1.0-py3-none-any.whl"
+        wheel = WheelArtifact(
+            filename="foo-1.0-py3-none-any.whl",
+            url=missing.as_uri(),
+            hashes=(("sha256", "a" * 64),),
+            local_path=missing,
+        )
+        pin = IndexPin(name="foo", version="1.0", index="local", wheels=(wheel,))
+        with pytest.raises(DownloadError, match="failed to read foo-1.0-py3-none-any"):
+            download_lock(
+                LockInput(pins={"foo": pin}),
+                _FakeTransport({}),  # type: ignore[arg-type]
+                tmp_path / "out",
+            )
+
+
 def test_download_entry_is_a_dataclass() -> None:
     e = DownloadEntry(
         package="foo",

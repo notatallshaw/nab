@@ -93,6 +93,31 @@ class TestHttpxAsyncTransport:
             asyncio.run(go())
 
     @respx.mock
+    def test_get_follows_redirects(self) -> None:
+        """httpx follows a 3xx redirect, like the urllib3 backend and pip/uv."""
+        respx.get("https://example.com/simple/pkg").mock(
+            return_value=httpx.Response(
+                301, headers={"Location": "https://example.com/simple/pkg/"}
+            )
+        )
+        respx.get("https://example.com/simple/pkg/").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                resp = await transport.get("https://example.com/simple/pkg")
+                resp.raise_for_status()
+                return resp
+            finally:
+                await transport.aclose()
+
+        resp = asyncio.run(go())
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+
+    @respx.mock
     def test_get_wraps_connection_error(self) -> None:
         respx.get("https://example.com/").mock(side_effect=httpx.ConnectError("boom"))
 

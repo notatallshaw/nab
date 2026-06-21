@@ -80,6 +80,11 @@ def _project_to_metadata(project: dict) -> WheelMetadata | None:
     version_raw = project.get("version")
     if not isinstance(name, str) or not isinstance(version_raw, str):
         return None
+    dynamic = project.get("dynamic")
+    if isinstance(dynamic, list) and "version" in dynamic:
+        # A dynamic version is computed by the build backend; a static
+        # value alongside it is a stale placeholder, not authoritative.
+        return None
     try:
         version = Version(version_raw)
     except InvalidVersion:

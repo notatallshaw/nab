@@ -172,7 +172,7 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
         _parse_requirement_cached(r) for r in msg.get_all("Requires-Dist") or []
     ]
 
-    provides_extra = list(msg.get_all("Provides-Extra") or [])
+    provides_extra = [e.strip() for e in msg.get_all("Provides-Extra") or []]
 
     metadata_version = msg.get("Metadata-Version")
     # PEP 643 field names are case-insensitive and, per RFC 822, surrounding

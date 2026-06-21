@@ -110,6 +110,9 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     except DownloadError as e:
         sys.stderr.write(f"Download failed: {e}\n")
         sys.exit(1)
+    except OSError as e:
+        sys.stderr.write(f"Error: cannot write to output directory {output}: {e}\n")
+        sys.exit(1)
 
     sys.stderr.write(
         f"Downloaded {len(outcome.written)} files,"

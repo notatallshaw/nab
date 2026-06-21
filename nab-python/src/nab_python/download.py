@@ -4,6 +4,8 @@ Consumes a :class:`~nab_python.lockfile.LockInput` and writes every
 recorded wheel and sdist into a target directory, verifying the
 recorded hash.  Local and VCS pins are skipped: their contents live
 elsewhere on disk and the lockfile carries no ``sha256`` for them.
+An artefact from a local ``file://`` (find-links) index is copied
+from its on-disk path rather than fetched over HTTP.
 
 Use as a one-shot from the CLI ``nab download`` command, or
 programmatically after :func:`~nab_python.resolve.resolve_pyproject_to_lock`.
@@ -54,6 +56,10 @@ class DownloadEntry:
     ``digest`` is the recorded hex digest under that algorithm.
     The downloader verifies against the first acceptable algorithm the
     index published, preferring sha256 over sha384 over sha512.
+
+    ``local_path`` is set for an artefact from a local ``file://``
+    (find-links) index; its bytes are read from disk instead of fetched
+    over ``url``.
     """
 
     package: str
@@ -62,6 +68,7 @@ class DownloadEntry:
     url: str
     hash_algo: str
     digest: str
+    local_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +122,7 @@ def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:
             url=pin.sdist.url,
             hash_algo=algo,
             digest=digest.lower(),
+            local_path=pin.sdist.local_path,
         )
     for wheel in pin.wheels:
         algo, digest = wheel.primary_digest
@@ -125,6 +133,7 @@ def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:
             url=wheel.url,
             hash_algo=algo,
             digest=digest.lower(),
+            local_path=wheel.local_path,
         )
 
 
@@ -176,15 +185,7 @@ async def _run_downloads(
                 skipped.append(target)
                 logger.info("skip %s (%s matches)", entry.filename, entry.hash_algo)
                 return
-            try:
-                data = await client.download(entry.url)
-            except HttpError as exc:
-                msg = (
-                    f"{entry.package}=={entry.version}: failed to fetch"
-                    f" {entry.filename}: {exc}"
-                )
-                raise DownloadError(msg) from exc
-
+            data = await _fetch_bytes(entry, client)
             actual = hashlib.new(entry.hash_algo, data).hexdigest()
             if actual != entry.digest:
                 msg = (
@@ -209,6 +210,26 @@ async def _run_downloads(
     finally:
         await client.aclose()
     return DownloadResult(written=tuple(written), skipped=tuple(skipped))
+
+
+async def _fetch_bytes(entry: DownloadEntry, client: AsyncSimpleClient) -> bytes:
+    """Read a local artefact from disk, else fetch it over HTTP."""
+    if entry.local_path is not None:
+        try:
+            return entry.local_path.read_bytes()
+        except OSError as exc:
+            msg = (
+                f"{entry.package}=={entry.version}: failed to read"
+                f" {entry.filename} from {entry.local_path}: {exc}"
+            )
+            raise DownloadError(msg) from exc
+    try:
+        return await client.download(entry.url)
+    except HttpError as exc:
+        msg = (
+            f"{entry.package}=={entry.version}: failed to fetch {entry.filename}: {exc}"
+        )
+        raise DownloadError(msg) from exc
 
 
 def _already_present(target: Path, algo: str, expected_digest: str) -> bool:

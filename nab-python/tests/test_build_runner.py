@@ -510,6 +510,20 @@ class TestParseMetadata:
         names = sorted(r.name for r in meta.requires_dist)
         assert names == ["click"]
 
+    def test_provides_extra_whitespace_stripped(self, tmp_path: Path) -> None:
+        """Surrounding whitespace on a Provides-Extra value is insignificant
+        per RFC 822; canonicalize_name does not strip it, so strip first."""
+        from nab_python._build.runner import _parse_metadata
+
+        path = tmp_path / "METADATA"
+        path.write_text(
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+            "Provides-Extra: security \nProvides-Extra: docs\t\n",
+            encoding="utf-8",
+        )
+        meta = _parse_metadata(path)
+        assert meta.provides_extra == ["docs", "security"]
+
 
 class TestBuildWheelExtraction:
     """``_build_wheel_and_extract`` raises when the built wheel has

@@ -115,8 +115,26 @@ class TestResolveGroupsToRequirements:
         assert names == ["pytest", "ruff"]
 
     def test_unknown_group_raises(self) -> None:
-        with pytest.raises(BaseException, match="nope"):
+        with pytest.raises(LookupError, match="nope"):
             resolve_groups_to_requirements({"dev": ["pytest"]}, ("nope",))
+
+    def test_multiple_missing_includes_raise_lookuperror(self) -> None:
+        groups = {"x": [{"include-group": "miss1"}, {"include-group": "miss2"}]}
+        with pytest.raises(LookupError, match="miss1.*miss2"):
+            resolve_groups_to_requirements(groups, ("x",))
+
+    def test_cyclic_include_raises_clean(self) -> None:
+        groups = {
+            "a": [{"include-group": "b"}],
+            "b": [{"include-group": "a"}],
+        }
+        with pytest.raises(InvalidProjectRequirementError, match="Cyclic"):
+            resolve_groups_to_requirements(groups, ("a",))
+
+    def test_duplicate_group_names_raise_clean(self) -> None:
+        groups = {"my-dev": ["pytest"], "my_dev": ["ruff"]}
+        with pytest.raises(InvalidProjectRequirementError, match="Duplicate"):
+            resolve_groups_to_requirements(groups, ("my-dev",))
 
     def test_malformed_requirement_string_raises(self) -> None:
         with pytest.raises(
@@ -348,6 +366,14 @@ class TestExpandExtraRequirements:
         out = expand_extra_requirements(opt, "mypkg", ["all"])
         dep = next(r for r in out if r.name == "some-dep")
         assert dep.marker is None
+
+    def test_self_reference_not_emitted_as_requirement(self) -> None:
+        """The self-reference activates its extra but never lands as a
+        requirement of its own; the project is the root, not a dependency."""
+        opt = {"all": ["mypkg[fast]"], "fast": ["some-dep"]}
+        names = {r.name for r in expand_extra_requirements(opt, "mypkg", ["all"])}
+        assert "mypkg" not in names
+        assert "some-dep" in names
 
     def test_dep_own_marker_anded_with_activation(self) -> None:
         opt = {

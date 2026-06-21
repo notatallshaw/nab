@@ -1036,6 +1036,21 @@ class TestMarkerEnvironment:
         with pytest.raises(ConfigError, match="unknown marker-environment variable"):
             read_pyproject_config(path)
 
+    def test_rejected_in_universal_mode(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[tool.nab.marker-environment]\n"
+            'platform_system = "Windows"\n',
+        )
+        with pytest.raises(
+            ConfigError, match="does not support .tool.nab.marker-environment."
+        ):
+            read_pyproject_config(path)
+
 
 class TestIndexes:
     def test_round_trip(self, tmp_path: Path) -> None:
@@ -1242,6 +1257,15 @@ class TestLocalSources:
         with pytest.raises(ConfigError, match="unknown local-sources"):
             read_pyproject_config(path)
 
+    def test_duplicate_canonical_name_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "Foo-Bar"\npath = "../a"\n'
+            '[[tool.nab.local-sources]]\nname = "foo_bar"\npath = "../b"\n',
+        )
+        with pytest.raises(ConfigError, match="duplicate canonical name"):
+            read_pyproject_config(path)
+
 
 class TestVcsSources:
     def test_round_trip(self, tmp_path: Path) -> None:
@@ -1282,6 +1306,27 @@ class TestVcsSources:
             '[[tool.nab.vcs-sources]]\nname = "x"\nurl = "git+https://h/x@a"\nbogus = 1\n',
         )
         with pytest.raises(ConfigError, match="unknown vcs-sources"):
+            read_pyproject_config(path)
+
+    def test_duplicate_canonical_name_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.vcs-sources]]\nname = "Foo-Bar"\n'
+            'url = "git+https://github.com/me/a.git@abc"\n'
+            '[[tool.nab.vcs-sources]]\nname = "foo_bar"\n'
+            'url = "git+https://github.com/me/b.git@def"\n',
+        )
+        with pytest.raises(ConfigError, match="duplicate canonical name"):
+            read_pyproject_config(path)
+
+    def test_canonical_name_collides_with_local_source(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "Foo-Bar"\npath = "../a"\n'
+            '[[tool.nab.vcs-sources]]\nname = "foo_bar"\n'
+            'url = "git+https://github.com/me/b.git@abc"\n',
+        )
+        with pytest.raises(ConfigError, match="duplicate canonical name"):
             read_pyproject_config(path)
 
 

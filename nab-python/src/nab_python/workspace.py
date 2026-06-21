@@ -158,7 +158,14 @@ def read_workspace_members(root_pyproject: Path) -> tuple[LocalSource, ...]:
             raise WorkspaceDiscoveryError(msg)
         with member_pyproject.open("rb") as f:
             member_data = tomli.load(f)
-        name = member_data.get("project", {}).get("name")
+        project_table = member_data.get("project", {})
+        if not isinstance(project_table, dict):
+            msg = (
+                f"{member_pyproject}: workspace member [project] must be a"
+                f" table, got {type(project_table).__name__}"
+            )
+            raise WorkspaceDiscoveryError(msg)
+        name = project_table.get("name")
         if not isinstance(name, str) or not name:
             msg = (
                 f"{member_pyproject}: workspace member must declare"
