@@ -207,17 +207,23 @@ def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
 
 
 def _strip_userinfo(url: str) -> str:
-    """Return ``url`` with any ``user:password@`` userinfo removed.
+    """Return ``url`` with credential userinfo removed.
 
-    Lockfiles are committed to version control, so an index or VCS
-    URL carrying embedded credentials must not be written verbatim.
-    Only the userinfo is dropped: host case and port are preserved
-    and a ``git+`` scheme prefix is left intact.  A no-op for URLs
-    without credentials.
+    Lockfiles are committed to version control, so an index or VCS URL
+    carrying an embedded ``user:password`` must not be written verbatim.
+    An SSH login such as ``git@`` is the protocol login, not a secret,
+    and is required to clone, so it is kept (only an embedded password is
+    dropped); host case and port are preserved.  A no-op for URLs without
+    userinfo.
     """
     parts = urlsplit(url)
-    netloc = parts.netloc.rpartition("@")[2]
-    return urlunsplit(parts._replace(netloc=netloc))
+    userinfo, sep, host = parts.netloc.rpartition("@")
+    if not sep:
+        return url
+    if parts.scheme.endswith("ssh"):
+        login = userinfo.split(":", 1)[0]
+        host = f"{login}@{host}"
+    return urlunsplit(parts._replace(netloc=host))
 
 
 def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a distinct lockfile field

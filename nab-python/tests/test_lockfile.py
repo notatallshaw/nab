@@ -2354,6 +2354,49 @@ class TestBuildLockInputFromProvider:
         assert isinstance(pin, VcsPin)
         assert pin.bare_repo_url == "https://example.com/r.git"
 
+    def test_vcs_pin_ssh_keeps_login(self) -> None:
+        """An SSH login (``git@``) is the protocol login, not a credential.
+
+        Stripping it yields a URL the installer cannot clone over SSH, so
+        it must survive into both the bare URL and the pinned repo URL.
+        """
+        sha = "a" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url=f"git+ssh://git@github.com/foo/bar.git@{sha}",
+                ),
+            },
+            vcs_pins={"foo": sha},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.bare_repo_url == "ssh://git@github.com/foo/bar.git"
+        assert pin.repo_url == f"git+ssh://git@github.com/foo/bar.git@{sha}"
+
+    def test_vcs_pin_ssh_drops_embedded_password(self) -> None:
+        """An embedded password in an SSH URL is still dropped; login stays."""
+        sha = "a" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url=f"git+ssh://git:secret@github.com/foo/bar.git@{sha}",
+                ),
+            },
+            vcs_pins={"foo": sha},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.bare_repo_url == "ssh://git@github.com/foo/bar.git"
+
     def test_vcs_source_without_resolved_sha_raises(self) -> None:
         """A pinned VCS source with no recorded SHA is an invariant breach.
 
