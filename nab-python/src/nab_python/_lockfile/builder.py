@@ -13,7 +13,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, overload
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import tomli
 
@@ -544,7 +544,7 @@ def _vcs_pin_from_source(
     bare_repo_url = _strip_userinfo(parsed.repo_url)
     repo_url = f"{parsed.scheme}+{bare_repo_url}@{resolved_sha}"
     if parsed.subdirectory:
-        repo_url += f"#subdirectory={parsed.subdirectory}"
+        repo_url += f"#subdirectory={quote(parsed.subdirectory, safe='/')}"
 
     return VcsPin(
         name=canonical,

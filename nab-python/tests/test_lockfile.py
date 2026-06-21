@@ -2266,6 +2266,32 @@ class TestBuildLockInputFromProvider:
         )
         assert pin.bare_repo_url == "https://example.com/r.git"
 
+    def test_vcs_pin_repo_url_encodes_subdirectory(self) -> None:
+        """A subdirectory with a URL-reserved char is percent-encoded.
+
+        The requirements.txt ``name @ <url>`` line is parsed as PEP 508; an
+        unencoded space terminates the URL token, so ``repo_url`` must carry
+        the fragment encoded to stay installable.
+        """
+        sha = "a" * 40
+        provider = _FakeProvider(
+            vcs_sources={
+                "foo": VcsSource(
+                    name="foo",
+                    url=f"git+https://example.com/r.git@{sha}#subdirectory=my pkg",
+                ),
+            },
+            vcs_pins={"foo": sha},
+        )
+        lock_input = build_lock_input_from_provider(
+            provider, {"foo": Version("0.0.0+vcs")}
+        )
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert (
+            pin.repo_url == f"git+https://example.com/r.git@{sha}#subdirectory=my%20pkg"
+        )
+
     def test_vcs_requirements_line_pins_to_commit(self) -> None:
         """A branch/tag-pinned VCS source renders the resolved commit.
 
@@ -3094,6 +3120,27 @@ class TestWriteRequirementsWithHashes:
         )
         url = tmp_path.resolve().as_uri()
         assert text.strip() == f"-e {url}#subdirectory=packages/foo"
+
+    def test_local_pin_subdirectory_encodes_reserved_char(self, tmp_path: Path) -> None:
+        """A subdirectory with a URL-reserved char is percent-encoded.
+
+        An unencoded space terminates the URL token of the PEP 508
+        ``name @ <url>`` line, so the fragment must stay encoded.
+        """
+        text = write_requirements_without_hashes(
+            LockInput(
+                pins={
+                    "foo": LocalPin(
+                        name="foo",
+                        version="1.0",
+                        path=str(tmp_path),
+                        subdirectory="my pkg",
+                    )
+                }
+            )
+        )
+        url = tmp_path.resolve().as_uri()
+        assert text.strip() == f"foo @ {url}#subdirectory=my%20pkg"
 
     def test_vcs_pin_round_trips_url(self) -> None:
         text = write_requirements_with_hashes(

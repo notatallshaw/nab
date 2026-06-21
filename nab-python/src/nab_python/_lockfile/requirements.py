@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     import os
@@ -101,7 +102,7 @@ def _render_pins(pins: Mapping[str, PinShape], *, with_hashes: bool) -> list[str
         elif isinstance(pin, LocalPin):
             url = Path(pin.path).resolve().as_uri()
             if pin.subdirectory is not None:
-                url += f"#subdirectory={pin.subdirectory}"
+                url += f"#subdirectory={quote(pin.subdirectory, safe='/')}"
             if pin.editable:
                 lines.append(f"-e {url}")
             else:
