@@ -487,7 +487,7 @@ def _extra_requirements_from_table(
         )
         raise LookupError(msg)
     expanded = expand_self_extras(optional, project_name, selected, environment)
-    return select_optional_dependencies(optional, expanded)
+    return select_optional_dependencies(optional, expanded, project_name)
 
 
 def _validate_conflict_members_exist(

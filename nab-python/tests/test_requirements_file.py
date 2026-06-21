@@ -367,6 +367,14 @@ class TestExpandExtraRequirements:
         dep = next(r for r in out if r.name == "some-dep")
         assert dep.marker is None
 
+    def test_self_reference_not_emitted_as_requirement(self) -> None:
+        """The self-reference activates its extra but never lands as a
+        requirement of its own; the project is the root, not a dependency."""
+        opt = {"all": ["mypkg[fast]"], "fast": ["some-dep"]}
+        names = {r.name for r in expand_extra_requirements(opt, "mypkg", ["all"])}
+        assert "mypkg" not in names
+        assert "some-dep" in names
+
     def test_dep_own_marker_anded_with_activation(self) -> None:
         opt = {
             "fast": ["some-dep; sys_platform == 'linux'"],
