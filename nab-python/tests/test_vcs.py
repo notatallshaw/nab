@@ -208,6 +208,36 @@ class TestResolveSha:
             _resolve_sha(req, require_pin=False)
 
 
+class TestResolveShaAnnotatedTag:
+    """An annotated tag resolves to its commit, not the tag object.
+
+    ``git ls-remote repo <ref>`` returns only the tag-object line for an
+    exact ref; the peeled ``refs/tags/<ref>^{}`` commit line appears only
+    when the peeled ref is queried too, so ``_resolve_sha`` must ask for
+    it to pin the commit a ``git tag -a`` release points at.
+    """
+
+    def test_annotated_tag_resolves_to_commit_not_tag_object(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tag_object = "a" * 40
+        commit = "b" * 40
+        queried: list[str] = []
+
+        def fake_run(cmd: list[str], **_kwargs: object) -> object:
+            queried.extend(cmd)
+            lines = [f"{tag_object}\trefs/tags/v1"]
+            if any(arg.endswith("^{}") for arg in cmd):
+                lines.append(f"{commit}\trefs/tags/v1^{{}}")
+            return type("P", (), {"stdout": "\n".join(lines) + "\n"})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://x", "v1", "")
+        assert _resolve_sha(req, require_pin=False) == commit
+        assert "v1^{}" in queried
+
+
 class TestPrepareClone:
     def test_idempotent_when_dest_exists(
         self,
