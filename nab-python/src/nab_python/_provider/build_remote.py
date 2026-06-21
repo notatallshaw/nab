@@ -23,11 +23,11 @@ from typing import TYPE_CHECKING
 from nab_index.client import SdistFile, WheelFile, extract_sdist_archive
 
 from .._vendor.packaging.utils import canonicalize_name
+from .._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
     from ..provider import Provider
 
@@ -40,7 +40,10 @@ def build_remote_sdist(
     """Download the sdist for ``(package, version)``, extract, and build.
 
     ``package`` is the canonical package name; ``version`` matches an
-    entry in ``provider.versions_cache``.
+    entry in ``provider.versions_cache``.  A built sdist whose
+    ``Requires-Python`` excludes the resolve target is rejected, since the
+    Simple-API listing filter only sees the listing's own (possibly absent)
+    Requires-Python, not the value the build produces.
     """
     # Late imports: ``provider`` imports this module at module load.
     from .. import build_backend
@@ -75,7 +78,7 @@ def build_remote_sdist(
             msg = f"{package}=={version} sdist archive could not be extracted: {exc}"
             raise UnsupportedSdistError(msg) from exc
         try:
-            return build_backend.extract_metadata(
+            built = build_backend.extract_metadata(
                 source_dir,
                 config=provider.build_config,
                 python_version=provider.python_version,
@@ -83,6 +86,16 @@ def build_remote_sdist(
         except BuildBackendError as exc:
             msg = f"{package}=={version} build-remote backend failed: {exc}"
             raise UnsupportedSdistError(msg) from exc
+
+    target = provider.python_version
+    spec = built.requires_python
+    if spec is not None and target and Version(target) not in spec:
+        msg = (
+            f"{package}=={version} built sdist requires Python {spec} but the"
+            f" resolve targets Python {target}"
+        )
+        raise UnsupportedSdistError(msg)
+    return built
 
 
 def _find_sdist(
