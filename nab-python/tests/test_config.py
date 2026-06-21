@@ -1242,6 +1242,15 @@ class TestLocalSources:
         with pytest.raises(ConfigError, match="unknown local-sources"):
             read_pyproject_config(path)
 
+    def test_duplicate_canonical_name_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "Foo-Bar"\npath = "../a"\n'
+            '[[tool.nab.local-sources]]\nname = "foo_bar"\npath = "../b"\n',
+        )
+        with pytest.raises(ConfigError, match="duplicate canonical name"):
+            read_pyproject_config(path)
+
 
 class TestVcsSources:
     def test_round_trip(self, tmp_path: Path) -> None:
@@ -1282,6 +1291,27 @@ class TestVcsSources:
             '[[tool.nab.vcs-sources]]\nname = "x"\nurl = "git+https://h/x@a"\nbogus = 1\n',
         )
         with pytest.raises(ConfigError, match="unknown vcs-sources"):
+            read_pyproject_config(path)
+
+    def test_duplicate_canonical_name_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.vcs-sources]]\nname = "Foo-Bar"\n'
+            'url = "git+https://github.com/me/a.git@abc"\n'
+            '[[tool.nab.vcs-sources]]\nname = "foo_bar"\n'
+            'url = "git+https://github.com/me/b.git@def"\n',
+        )
+        with pytest.raises(ConfigError, match="duplicate canonical name"):
+            read_pyproject_config(path)
+
+    def test_canonical_name_collides_with_local_source(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "Foo-Bar"\npath = "../a"\n'
+            '[[tool.nab.vcs-sources]]\nname = "foo_bar"\n'
+            'url = "git+https://github.com/me/b.git@abc"\n',
+        )
+        with pytest.raises(ConfigError, match="duplicate canonical name"):
             read_pyproject_config(path)
 
 
