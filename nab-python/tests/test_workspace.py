@@ -243,6 +243,24 @@ class TestReadWorkspaceMembers:
         with pytest.raises(WorkspaceDiscoveryError, match=r"\[project\]\.name"):
             read_workspace_members(root)
 
+    def test_member_non_table_project_raises(self, tmp_path: Path) -> None:
+        # ``project = "x"`` (a scalar) is a common slip for ``[project]``;
+        # it must raise a clean WorkspaceDiscoveryError, not AttributeError.
+        root = _write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n',
+        )
+        _write(
+            tmp_path / "pkg" / "pyproject.toml",
+            'project = "broken"\n',
+        )
+        with pytest.raises(
+            WorkspaceDiscoveryError, match=r"\[project\] must be a table"
+        ):
+            read_workspace_members(root)
+
     def test_duplicate_canonical_name_raises(self, tmp_path: Path) -> None:
         # ``A`` and ``a`` canonicalise to the same name.
         root = _write(
