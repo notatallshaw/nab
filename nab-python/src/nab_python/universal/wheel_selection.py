@@ -13,6 +13,7 @@ tags share a member with the tuple's compatible-tag set.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from functools import cache, lru_cache
 from typing import TYPE_CHECKING
@@ -38,6 +39,11 @@ __all__ = [
 
 
 _MIN_WHEEL_FILENAME_PARTS = 5
+
+# PEP 427: a build tag adds a sixth dash-separated segment at index 2,
+# and build tags start with a digit (captured here for ordering).
+_WHEEL_PARTS_WITH_BUILD = 6
+_BUILD_TAG_RE = re.compile(r"(\d+)(.*)", re.ASCII)
 
 # Default manylinux floor: glibc 2.17 (the manylinux2014 generation,
 # adopted by every mainstream distro since CentOS 7 / Ubuntu 14.04).
@@ -333,12 +339,13 @@ def select_wheel_for_tuple(
     Implements PEP 425 preference: wheels matching earlier
     (more-specific) tags in ``compatible_tags_for_tuple`` win over
     those matching later (more-generic) tags.  Within the same tag
-    rank, the first wheel in input order wins.
+    rank, the wheel with the highest PEP 427 build tag wins (an absent
+    tag sorts lowest); exact ties keep input order.
     """
     compat_list = list(_tags_in_order(python_version, spec, implementation))
     rank: dict[Tag, int] = {tag: i for i, tag in enumerate(compat_list)}
 
-    best: tuple[int, WheelFile] | None = None
+    best: tuple[int, tuple[int, str], WheelFile] | None = None
     for wheel in wheels:
         wheel_tags = wheel_tag_set(wheel.filename)
         if not wheel_tags:
@@ -347,9 +354,29 @@ def select_wheel_for_tuple(
         wheel_rank = min((rank[t] for t in wheel_tags if t in rank), default=None)
         if wheel_rank is None:
             continue
-        if best is None or wheel_rank < best[0]:
-            best = (wheel_rank, wheel)
-    return best[1] if best is not None else None
+        build_key = _build_tag_sort_key(wheel.filename)
+        if (
+            best is None
+            or wheel_rank < best[0]
+            or (wheel_rank == best[0] and build_key > best[1])
+        ):
+            best = (wheel_rank, build_key, wheel)
+    return best[2] if best is not None else None
+
+
+def _build_tag_sort_key(filename: str) -> tuple[int, str]:
+    """Return a PEP 427 build-tag sort key; an absent tag sorts lowest.
+
+    The build tag is the third dash-separated segment when present.
+    A missing or malformed tag sorts below every real build number.
+    """
+    parts = filename[:-4].split("-")
+    if len(parts) != _WHEEL_PARTS_WITH_BUILD:
+        return (-1, "")
+    match = _BUILD_TAG_RE.match(parts[2])
+    if match is None:
+        return (-1, "")
+    return (int(match.group(1)), match.group(2))
 
 
 def _tags_in_order(
