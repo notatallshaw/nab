@@ -51,12 +51,21 @@ from .cli import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from nab_index.transport import AsyncHttpTransport
     from nab_python._vendor.packaging.version import Version
     from nab_python.resolve import ResolutionResult
     from nab_python.universal.resolve import TupleResult, UniversalResult
+
+
+def _emit_or_exit(emit: Callable[[], None]) -> None:
+    """Run an emit step, mapping an unwritable ``--output`` to a clean exit."""
+    try:
+        emit()
+    except OSError as e:
+        sys.stderr.write(f"Error: cannot write output: {e}\n")
+        sys.exit(1)
 
 
 @app.command
@@ -131,19 +140,21 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
 
     transport = _cli._make_transport(http_backend)  # noqa: SLF001
     if config.mode is ResolveMode.UNIVERSAL:
-        _emit_universal(
-            path,
-            config=config,
-            cache_dir=effective_cache_dir,
-            transport=transport,
-            offline=offline,
-            output=output,
-            format=format,
-            provenance=provenance,
-            groups=selected_groups,
-            extras=selected_extras,
-            resolution_strategy=strategy_override,
-            workspace_to_drop=workspace_to_drop,
+        _emit_or_exit(
+            lambda: _emit_universal(
+                path,
+                config=config,
+                cache_dir=effective_cache_dir,
+                transport=transport,
+                offline=offline,
+                output=output,
+                format=format,
+                provenance=provenance,
+                groups=selected_groups,
+                extras=selected_extras,
+                resolution_strategy=strategy_override,
+                workspace_to_drop=workspace_to_drop,
+            )
         )
         return
 
@@ -158,12 +169,14 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         extras=selected_extras,
         resolution_strategy=strategy_override,
     )
-    _emit_specific(
-        result,
-        format=format,
-        output=output,
-        provenance=provenance,
-        workspace_to_drop=workspace_to_drop,
+    _emit_or_exit(
+        lambda: _emit_specific(
+            result,
+            format=format,
+            output=output,
+            provenance=provenance,
+            workspace_to_drop=workspace_to_drop,
+        )
     )
 
 
