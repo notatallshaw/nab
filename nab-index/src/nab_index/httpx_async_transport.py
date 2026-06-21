@@ -66,6 +66,9 @@ class HttpxAsyncTransport:
         """Create a transport."""
         self._client = httpx.AsyncClient(
             http2=http2,
+            # httpx defaults this off, unlike urllib3 and pip; the Simple
+            # API relies on redirects (canonicalising URLs, mirrors, CDNs).
+            follow_redirects=True,
             verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
         )
 
