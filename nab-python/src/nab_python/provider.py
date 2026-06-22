@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, cast
 
 from nab_index.client import SdistFile, WheelFile
 
+from ._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from ._provider import extras as _extras
 from ._provider import listing as _listing
 from ._provider import lookahead as _lookahead
@@ -533,8 +534,13 @@ class Provider:
         self.marker_extra_cache: dict[int, dict[str, bool]] = {}
         # Memoised str(marker) for the cheap "extra" in marker_text gate.
         self.marker_text_cache: dict[int, str] = {}
-        # Reused per-evaluation environment dict (avoids a copy per requirement).
-        self.env_with_extra: dict[str, str] = dict(self.environment)
+        # Reused per-evaluation environment dict (avoids a copy per requirement),
+        # seeded with the empty lockfile-only set variables (see
+        # EMPTY_MEMBERSHIP_SETS) so a marker testing one evaluates False.
+        self.env_with_extra: dict[str, str | frozenset[str]] = {
+            **self.environment,
+            **EMPTY_MEMBERSHIP_SETS,
+        }
 
         # (base, extra, normalized_name) per input package string.
         self._package_parts: dict[str, tuple[str, str | None, str]] = {}
