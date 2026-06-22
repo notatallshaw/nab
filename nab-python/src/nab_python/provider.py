@@ -89,18 +89,23 @@ def python_axis_environment(python_version: str) -> dict[str, str]:
     if the input is not a version.
     """
     try:
-        release = Version(python_version).release
+        parsed = Version(python_version)
     except InvalidVersion:
         msg = f"python_version {python_version!r} is not a valid version"
         raise InvalidVersion(msg) from None
+    release = parsed.release
     minor = ".".join(str(part) for part in (*release, 0)[:_PYTHON_VERSION_PARTS])
-    full = (
-        python_version
-        if len(release) >= _PYTHON_FULL_VERSION_PARTS
-        else ".".join(
+    if len(release) >= _PYTHON_FULL_VERSION_PARTS:
+        full = python_version
+    else:
+        # Pad the release to three components, keeping the epoch and any
+        # prerelease/post/dev/local tag, which live outside ``release``.
+        epoch = f"{parsed.epoch}!" if parsed.epoch else ""
+        padded = ".".join(
             str(part) for part in (*release, 0, 0)[:_PYTHON_FULL_VERSION_PARTS]
         )
-    )
+        suffix = str(parsed)[len(parsed.base_version) :]
+        full = f"{epoch}{padded}{suffix}"
     return {"python_version": minor, "python_full_version": full}
 
 
