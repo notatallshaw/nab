@@ -678,7 +678,7 @@ def _parse_nab_table(
 
     return NabProjectConfig(
         mode=mode,
-        constraints=_parse_string_list("constraints", raw.get("constraints", [])),
+        constraints=_parse_constraints(raw.get("constraints", [])),
         default_groups=default_groups,
         requires_python=_parse_requires_python(raw.get("requires-python")),
         uploaded_prior_to=_parse_uploaded_prior_to(
@@ -767,6 +767,21 @@ def _parse_string_list(key: str, value: object) -> tuple[str, ...]:
             raise ConfigError(msg)
         out.append(item)
     return tuple(out)
+
+
+def _require_pep508(key: str, item: str) -> None:
+    try:
+        Requirement(item)
+    except InvalidRequirement as exc:
+        msg = f"{key} is not a valid requirement: {exc}"
+        raise ConfigError(msg) from exc
+
+
+def _parse_constraints(value: object) -> tuple[str, ...]:
+    items = _parse_string_list("constraints", value)
+    for i, item in enumerate(items):
+        _require_pep508(f"constraints[{i}]", item)
+    return items
 
 
 def _reject_duplicates(key: str, items: tuple[str, ...]) -> None:
