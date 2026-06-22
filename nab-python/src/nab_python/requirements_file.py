@@ -67,15 +67,28 @@ def read_pyproject_dependencies(path: Path) -> list[Requirement]:
     """Read [project].dependencies from a pyproject.toml file.
 
     Returns a list of Requirement objects parsed from the dependency
-    strings.  Raises FileNotFoundError if the file doesn't exist,
-    KeyError if [project] or [project].dependencies is missing, or
-    InvalidProjectRequirementError if a dependency string is malformed.
+    strings. The key is optional under PEP 621, so an absent
+    ``dependencies`` reads as an empty list. Raises FileNotFoundError if
+    the file doesn't exist, KeyError if [project] is missing, and
+    InvalidProjectRequirementError if a dependency string is malformed or
+    if ``dependencies`` is declared dynamic. The root-project lock path
+    cannot run the build backend that would compute a dynamic value.
     """
     with path.open("rb") as f:
         data = tomli.load(f)
 
     source = "[project].dependencies"
-    dep_strings = _require_string_list(data["project"]["dependencies"], source)
+    project = data["project"]
+    if "dependencies" not in project:
+        dynamic = project.get("dynamic")
+        if isinstance(dynamic, list) and "dependencies" in dynamic:
+            msg = (
+                "[project].dependencies is declared dynamic; computing it"
+                " requires the build backend, which the root-project lock"
+                " path does not support"
+            )
+            raise InvalidProjectRequirementError(msg)
+    dep_strings = _require_string_list(project.get("dependencies", []), source)
     return _parse_requirements(dep_strings, source)
 
 
