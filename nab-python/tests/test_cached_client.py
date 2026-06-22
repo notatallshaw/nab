@@ -126,6 +126,18 @@ class TestHasMetadataFlag:
 
         assert not _has_metadata({})
 
+    def test_core_metadata_false_suppresses_legacy_key(self) -> None:
+        from nab_index.client import _has_metadata
+
+        assert not _has_metadata(
+            {"core-metadata": False, "dist-info-metadata": {"sha256": "deadbeef"}}
+        )
+
+    def test_core_metadata_true_ignores_legacy_key(self) -> None:
+        from nab_index.client import _has_metadata
+
+        assert _has_metadata({"core-metadata": True, "dist-info-metadata": False})
+
 
 class TestMetadataHashParsing:
     """``_metadata_hash`` carries the published sha256 to verify, or None."""
@@ -160,6 +172,36 @@ class TestMetadataHashParsing:
         from nab_index.client import _metadata_hash
 
         assert _metadata_hash({}) is None
+
+    def test_core_metadata_false_ignores_legacy_hash(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert (
+            _metadata_hash(
+                {"core-metadata": False, "dist-info-metadata": {"sha256": "deadbeef"}}
+            )
+            is None
+        )
+
+    def test_core_metadata_true_ignores_legacy_hash(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert (
+            _metadata_hash(
+                {"core-metadata": True, "dist-info-metadata": {"sha256": "cafef00d"}}
+            )
+            is None
+        )
+
+    def test_core_metadata_hash_preferred_over_legacy(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash(
+            {
+                "core-metadata": {"sha256": "AAAA"},
+                "dist-info-metadata": {"sha256": "BBBB"},
+            }
+        ) == ("sha256", "aaaa")
 
     def test_parse_files_populates_metadata_hash(self) -> None:
         from nab_index.client import WheelFile, _parse_files
