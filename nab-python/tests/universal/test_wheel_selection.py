@@ -127,14 +127,17 @@ class TestCompatibleTagsForTuple:
         assert "cp311-cp311-musllinux_1_2_x86_64" in tag_strs
         assert "cp311-cp311-musllinux_1_0_x86_64" in tag_strs
 
-    def test_macos_arm64_uses_default_floor(self) -> None:
-        """``macos_arm64`` defaults to macOS 11 (arm64 minimum)."""
+    def test_macos_arm64_default_accepts_modern_wheels(self) -> None:
+        """The default ``macos_arm64`` admits ``macosx_11_0`` and ``macosx_12_0``."""
         spec = PlatformSpec("macos_arm64")
         tag_strs = {
             str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
         }
         # mac_platforms yields versions <= the declared one
         assert "cp311-cp311-macosx_11_0_arm64" in tag_strs
+        assert "cp311-cp311-macosx_12_0_arm64" in tag_strs
+        # Still a ceiling: a newer-than-default macOS wheel is excluded.
+        assert "cp311-cp311-macosx_13_0_arm64" not in tag_strs
 
     def test_macos_x86_64_uses_default_floor(self) -> None:
         """``macos_x86_64`` defaults to macOS 10.13 (x86_64-era)."""
@@ -223,6 +226,13 @@ class TestWheelCompatibility:
         assert wheel_compatible_with_tuple(wheel, python_version="3.10", spec=spec)
         assert wheel_compatible_with_tuple(wheel, python_version="3.13", spec=spec)
 
+    def test_default_macos_arm64_accepts_modern_arm64_wheel(self) -> None:
+        """``macosx_11_0`` and ``macosx_12_0`` wheels match the default spec."""
+        spec = PlatformSpec("macos_arm64")
+        for tag in ("macosx_11_0_arm64", "macosx_12_0_arm64"):
+            wheel = _wheel(f"pkg-1.0-cp311-cp311-{tag}.whl")
+            assert wheel_compatible_with_tuple(wheel, python_version="3.11", spec=spec)
+
     def test_garbage_filename(self) -> None:
         """A non-wheel filename is rejected."""
         spec = PlatformSpec("linux_x86_64")
@@ -302,6 +312,25 @@ class TestSelectWheelForTuple:
         spec = PlatformSpec("linux_x86_64")
         wheels = [_wheel("pkg-1.0-cp311-cp311-win_amd64.whl")]
         assert select_wheel_for_tuple(wheels, python_version="3.11", spec=spec) is None
+
+    def test_default_macos_arm64_selects_modern_only_wheel(self) -> None:
+        """A version shipping only a ``macosx_12_0`` arm64 wheel is selectable."""
+        spec = PlatformSpec("macos_arm64")
+        wheels = [_wheel("pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl")]
+        chosen = select_wheel_for_tuple(wheels, python_version="3.12", spec=spec)
+        assert chosen is not None
+        assert chosen.filename == "pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl"
+
+    def test_default_macos_arm64_prefers_native_over_universal(self) -> None:
+        """A ``macosx_12_0_arm64`` wheel beats the ``py3-none-any`` fallback."""
+        spec = PlatformSpec("macos_arm64")
+        wheels = [
+            _wheel("pkg-2.2.0-py3-none-any.whl"),
+            _wheel("pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl"),
+        ]
+        chosen = select_wheel_for_tuple(wheels, python_version="3.12", spec=spec)
+        assert chosen is not None
+        assert chosen.filename == "pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl"
 
     def test_specific_beats_universal(self) -> None:
         """A platform-specific wheel beats py3-none-any."""
