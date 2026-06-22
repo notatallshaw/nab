@@ -434,6 +434,32 @@ class TestFetchVersions:
         versions = [v for v, _ in provider.filter_distributions("foo", records)]
         assert versions == [V("1.0")]
 
+    def test_python_version_only_overlay_syncs_full_version(self) -> None:
+        """An overlay with python_version alone syncs the whole axis.
+
+        Overlaying ``python_version = "3.8"`` moves ``python_full_version``
+        off the host patch level and sets the Requires-Python filter target
+        to the impersonated full release.
+        """
+        coordinator = make_coordinator(
+            [
+                make_wheel("1.0", requires_python=">=3.8,<3.9"),
+                make_wheel("2.0", requires_python=">=3.12"),
+            ],
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.3",
+            build_policy=BuildPolicy.NEVER,
+            marker_environment={"python_version": "3.8"},
+        )
+        assert provider.environment["python_version"] == "3.8"
+        assert provider.environment["python_full_version"] == "3.8.0"
+        assert provider.python_version == "3.8.0"
+        versions = [v for v, _ in provider.fetch_versions("foo")]
+        assert versions == [V("1.0")]
+
     def test_sorted_descending(self) -> None:
         """Results are sorted newest-first."""
         wheels = [make_wheel(v) for v in ("1.0", "3.0", "2.0")]

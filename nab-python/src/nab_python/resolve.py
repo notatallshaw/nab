@@ -43,6 +43,7 @@ from .lockfile import LockInput, build_lock_input_from_provider
 from .provider import (
     Provider,
     ResolutionStrategy,
+    apply_python_axis_overlay,
     join_extra,
     python_axis_environment,
     split_extra,
@@ -713,7 +714,8 @@ def _build_marker_environment(
     Mirrors :class:`Provider`: defaults from
     :func:`default_environment`, then ``python_version`` /
     ``python_full_version`` rewritten from the effective Python, then
-    user overrides.
+    user overrides. An overlay touching one python-axis key re-derives the
+    other through :func:`apply_python_axis_overlay` so they stay in sync.
     """
     env: dict[str, str] = {
         key: value
@@ -721,7 +723,7 @@ def _build_marker_environment(
         if isinstance(value, str)
     }
     env.update(python_axis_environment(python_version))
-    env.update(overrides)
+    apply_python_axis_overlay(env, overrides)
     return env
 
 
