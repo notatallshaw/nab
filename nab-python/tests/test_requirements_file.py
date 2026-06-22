@@ -72,11 +72,31 @@ class TestReadPyprojectDependencies:
         p.write_text("[project]\ndependencies = []\n")
         assert read_pyproject_dependencies(p) == []
 
-    def test_dynamic_dependencies_returns_empty(self, tmp_path: object) -> None:
-        """dynamic = ['dependencies'] with no static key reads as empty."""
+    def test_other_dynamic_field_returns_empty(self, tmp_path: object) -> None:
+        """dynamic = ['version'] without a deps key still reads as empty."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('[project]\nname = "foo"\ndynamic = ["version"]\n')
+        assert read_pyproject_dependencies(p) == []
+
+    def test_dynamic_dependencies_raises(self, tmp_path: object) -> None:
+        """dynamic = ['dependencies'] is unsupported, not an empty dep set."""
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('[project]\nname = "foo"\ndynamic = ["dependencies"]\n')
-        assert read_pyproject_dependencies(p) == []
+        with pytest.raises(InvalidProjectRequirementError, match="dynamic"):
+            read_pyproject_dependencies(p)
+
+    def test_static_dependencies_win_over_dynamic_listing(
+        self, tmp_path: object
+    ) -> None:
+        """A present static key is read even if dynamic also lists it."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text(
+            '[project]\nname = "foo"\n'
+            'dynamic = ["dependencies"]\n'
+            'dependencies = ["requests"]\n'
+        )
+        deps = read_pyproject_dependencies(p)
+        assert [d.name for d in deps] == ["requests"]
 
     def test_malformed_dependency_string_raises(self, tmp_path: object) -> None:
         """A malformed PEP 508 string raises InvalidProjectRequirementError."""
