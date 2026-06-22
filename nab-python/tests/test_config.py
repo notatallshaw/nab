@@ -581,6 +581,16 @@ class TestConstraints:
         with pytest.raises(ConfigError, match="constraints\\[0\\] must be a string"):
             read_pyproject_config(path)
 
+    def test_constraints_entries_must_be_valid_pep508(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nconstraints = ["urllib3 (((not valid pep508"]\n',
+        )
+        with pytest.raises(
+            ConfigError, match="constraints\\[0\\] is not a valid requirement"
+        ):
+            read_pyproject_config(path)
+
 
 class TestDefaultGroups:
     def test_default_is_empty(self, tmp_path: Path) -> None:
