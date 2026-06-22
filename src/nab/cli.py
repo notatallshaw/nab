@@ -462,6 +462,9 @@ def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyprojec
     except KeyError:
         sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
         sys.exit(1)
+    except TypeError as e:
+        sys.stderr.write(f"Error in {path}: {e}\n")
+        sys.exit(1)
     except InvalidProjectRequirementError as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
@@ -482,7 +485,7 @@ def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyprojec
         sys.exit(1)
 
 
-def _resolve_universal(
+def _resolve_universal(  # noqa: C901 - one except per exit-mapped error
     path: Path,
     *,
     config: NabProjectConfig,
@@ -515,6 +518,9 @@ def _resolve_universal(
         sys.exit(1)
     except KeyError:
         sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
+        sys.exit(1)
+    except TypeError as e:
+        sys.stderr.write(f"Error in {path}: {e}\n")
         sys.exit(1)
     except InvalidProjectRequirementError as e:
         sys.stderr.write(f"Error: {e}\n")

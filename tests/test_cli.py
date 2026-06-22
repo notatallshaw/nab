@@ -442,6 +442,28 @@ class TestLockCommandSpecific:
             lock(pyproject)
         assert "no [project].dependencies" in capsys.readouterr().err
 
+    def test_string_project_table_exits_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A non-table [project] exits 1 with a diagnostic, not a traceback."""
+        pyproject = _make_pyproject(tmp_path, 'project = "hello"\n')
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject)
+        err = capsys.readouterr().err
+        assert "[project] must be a table" in err
+        assert "Traceback" not in err
+
+    def test_array_project_table_exits_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An array [project] exits 1 with a diagnostic, not a traceback."""
+        pyproject = _make_pyproject(tmp_path, 'project = ["a", "b"]\n')
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject)
+        err = capsys.readouterr().err
+        assert "[project] must be a table" in err
+        assert "Traceback" not in err
+
     def test_missing_hash_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -776,6 +798,25 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, output=out)
         assert "resolver path is not implemented" in capsys.readouterr().err
+
+    def test_string_project_table_exits_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A non-table [project] in universal mode exits 1, not a traceback."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            'project = "hello"\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        err = capsys.readouterr().err
+        assert "[project] must be a table" in err
+        assert "Traceback" not in err
 
     def test_pylock_writes_universal_lock(self, tmp_path: Path) -> None:
         """Universal + pylock format runs the real merge + write pipeline."""
