@@ -52,9 +52,13 @@ _BUILD_TAG_RE = re.compile(r"(\d+)(.*)", re.ASCII)
 _DEFAULT_MANYLINUX_FLOOR = (2, 17)
 # Default musllinux floor: musl 1.2 (adopted by Alpine 3.13+, 2021+).
 _DEFAULT_MUSLLINUX_FLOOR = (1, 2)
-# Default macOS minimum: 11 (Big Sur, 2020+).  arm64 was introduced
-# at 11.0; using 10.x for arm64 has no compatible wheels.
-_DEFAULT_MACOS_MIN = (11, 0)
+# The macOS defaults model the deployment-target (system) macOS version.
+# ``mac_platforms`` treats this as a ceiling: a system at macOS V installs
+# wheels built for V and older, never newer, so a higher value accepts more
+# (newer) wheels. Default arm64 target: 12.0 (Monterey). Apple Silicon was
+# introduced at 11.0, but most arm64 wheels published since 2023 target
+# macosx_12_0 or newer, so a value below 12.0 would reject them.
+_DEFAULT_MACOS_MIN = (12, 0)
 # Default macOS minimum for x86_64 builds.  10.13 was the last with
 # wide wheel coverage; newer macOS x86_64 builds rarely declare
 # below 10.13.
@@ -74,8 +78,8 @@ class PlatformSpec:
 
     Users can override the per-platform floors when their
     deployment target requires it.  The defaults are deliberately
-    permissive (manylinux 2.17, musl 1.2, macOS 11) so most real
-    deployments work out of the box.
+    permissive (manylinux 2.17, musl 1.2, macOS 12 arm64 / 10.13
+    x86_64) so most real deployments work out of the box.
 
     ``platform_release`` and ``platform_version`` set the
     corresponding PEP 508 marker values on this platform's tuples
