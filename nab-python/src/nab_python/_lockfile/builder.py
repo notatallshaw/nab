@@ -432,7 +432,7 @@ def _build_artifact(
     hashes = _filter_acceptable_hashes(canonical, source.filename, source.hashes)
     return cls(
         filename=source.filename,
-        url=source.url,
+        url=_strip_userinfo(source.url),
         hashes=hashes,
         size=source.size,
         upload_time=_parse_upload_time(source.upload_time),
