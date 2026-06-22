@@ -2089,6 +2089,14 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="unknown matrix.implementations"):
             read_pyproject_config(write(tmp_path, body))
 
+    def test_duplicate_implementations_rejected(self, tmp_path: Path) -> None:
+        # A duplicate makes len(implementations) > 1, which flips
+        # multi_implementation on and emits a spurious implementation_name
+        # marker a sole-cpython matrix omits.
+        body = self._matrix_body(implementations='["cpython", "cpython"]')
+        with pytest.raises(ConfigError, match="duplicate entry"):
+            read_pyproject_config(write(tmp_path, body))
+
     def test_must_be_table(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
@@ -2197,6 +2205,14 @@ class TestMatrix:
         body = self._matrix_body()
         body = body.replace('["linux_x86_64", "macos_arm64"]', '["frobnicate"]')
         with pytest.raises(ConfigError, match="Unknown platform ids"):
+            read_pyproject_config(write(tmp_path, body))
+
+    def test_duplicate_platforms_rejected(self, tmp_path: Path) -> None:
+        body = self._matrix_body()
+        body = body.replace(
+            '["linux_x86_64", "macos_arm64"]', '["linux_x86_64", "linux_x86_64"]'
+        )
+        with pytest.raises(ConfigError, match="duplicate entry"):
             read_pyproject_config(write(tmp_path, body))
 
     def test_empty_python_range_rejected(self, tmp_path: Path) -> None:

@@ -769,6 +769,15 @@ def _parse_string_list(key: str, value: object) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _reject_duplicates(key: str, items: tuple[str, ...]) -> None:
+    seen: set[str] = set()
+    for item in items:
+        if item in seen:
+            msg = f"{key} has duplicate entry: {item!r}"
+            raise ConfigError(msg)
+        seen.add(item)
+
+
 def _parse_optional_string(key: str, value: object) -> str | None:
     if value is None:
         return None
@@ -1990,6 +1999,7 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
     if not platforms:
         msg = "matrix.platforms must list at least one platform id"
         raise ConfigError(msg)
+    _reject_duplicates("matrix.platforms", platforms)
     python_order = value.get("python-order", "asc")
     if python_order not in {"asc", "desc"}:
         msg = f"matrix.python-order must be 'asc' or 'desc', got {python_order!r}"
@@ -2035,6 +2045,7 @@ def _parse_implementations(value: object) -> tuple[str, ...]:
     if not impls:
         msg = "matrix.implementations must list at least one implementation"
         raise ConfigError(msg)
+    _reject_duplicates("matrix.implementations", impls)
     unknown = sorted(set(impls) - set(_KNOWN_IMPLEMENTATIONS))
     if unknown:
         msg = (
