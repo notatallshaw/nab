@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nab_index.client import AsyncSimpleClient
@@ -26,7 +27,6 @@ from .lockfile import IndexPin, LocalPin, LockInput, VcsPin
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport
 
@@ -172,6 +172,14 @@ async def _run_downloads(
 
     async def _one(entry: DownloadEntry) -> None:
         async with sem:
+            # The filename is index-controlled; reject anything but a plain
+            # basename so a crafted name cannot escape output_dir on write.
+            if not entry.filename or Path(entry.filename).name != entry.filename:
+                msg = (
+                    f"{entry.package}=={entry.version}:"
+                    f" unsafe artefact filename: {entry.filename!r}"
+                )
+                raise DownloadError(msg)
             target = output_dir / entry.filename
             if _already_present(target, entry.hash_algo, entry.digest):
                 skipped.append(target)

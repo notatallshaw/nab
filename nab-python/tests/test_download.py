@@ -372,6 +372,52 @@ class TestDownloadLock:
         )
         assert target.is_dir()
 
+    def test_rejects_parent_escape_filename(self, tmp_path: Path) -> None:
+        payload = b"EVIL"
+        sha = hashlib.sha256(payload).hexdigest()
+        wheel = WheelArtifact(
+            filename="../escaped.whl",
+            url="https://example.com/foo-1.0.whl",
+            hashes=(("sha256", sha),),
+            size=4,
+        )
+        pin = IndexPin(
+            name="foo", version="1.0", index="pypi", sdist=None, wheels=(wheel,)
+        )
+        transport = _FakeTransport({"https://example.com/foo-1.0.whl": payload})
+        output_dir = tmp_path / "wheels"
+        with pytest.raises(DownloadError, match="unsafe"):
+            download_lock(
+                LockInput(pins={"foo": pin}),
+                transport,  # type: ignore[arg-type]
+                output_dir,
+            )
+        assert not (tmp_path / "escaped.whl").exists()
+
+    def test_rejects_index_injectable_traversal_filename(self, tmp_path: Path) -> None:
+        # A malicious index serving "foo" can return this filename: it parses as
+        # name "foo" version "1.0" (so the resolver pins it) while the tail carries
+        # the traversal into the join at the write site.
+        payload = b"EVIL"
+        sha = hashlib.sha256(payload).hexdigest()
+        wheel = WheelArtifact(
+            filename="foo-1.0-py3-none-any/../../../evil.whl",
+            url="https://example.com/foo-1.0.whl",
+            hashes=(("sha256", sha),),
+            size=4,
+        )
+        pin = IndexPin(
+            name="foo", version="1.0", index="pypi", sdist=None, wheels=(wheel,)
+        )
+        transport = _FakeTransport({"https://example.com/foo-1.0.whl": payload})
+        with pytest.raises(DownloadError, match="unsafe"):
+            download_lock(
+                LockInput(pins={"foo": pin}),
+                transport,  # type: ignore[arg-type]
+                tmp_path / "wheels",
+            )
+        assert not (tmp_path.parent / "evil.whl").exists()
+
 
 class TestLocalIndexArtefacts:
     """Artefacts resolved from a local file:// (find-links) index."""
