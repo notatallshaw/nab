@@ -201,7 +201,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     ) as coordinator:
         provider = Provider(
             coordinator,
-            python_version=effective_python,
+            python_version=marker_environment["python_full_version"],
             root_requirements=resolver_requirements,
             uploaded_prior_to=config.uploaded_prior_to,
             root_extras=root_extras,
@@ -232,7 +232,9 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             raise
         pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
         if config.local_sources or config.vcs_sources:
-            _raise_for_local_vcs_python(provider, pins, Version(effective_python))
+            _raise_for_local_vcs_python(
+                provider, pins, Version(marker_environment["python_full_version"])
+            )
         lock_input = build_lock_input_from_provider(
             provider,
             pins,

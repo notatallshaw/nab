@@ -2663,6 +2663,74 @@ class TestLocalVcsRequiresPython:
             with pytest.raises(ResolutionError, match="foo 1.0 requires Python"):
                 resolve_pyproject(root, _FAKE_TRANSPORT, python_version="3.10.0")
 
+    def test_resolve_pyproject_overlay_target_satisfies_local(
+        self, tmp_path: Path
+    ) -> None:
+        """A marker overlay's impersonated Python is the local-source target.
+
+        A source valid only for the impersonated Python must not be refused
+        for failing the host Python. Mirrors the universal per-tuple check.
+        """
+        member = tmp_path / "foo"
+        member.mkdir()
+        (member / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n',
+            encoding="utf-8",
+        )
+        root = tmp_path / "pyproject.toml"
+        root.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'python_version = "3.12"\npython_full_version = "3.12.1"\n'
+            '[[tool.nab.local-sources]]\nname = "foo"\npath = "foo"\n',
+            encoding="utf-8",
+        )
+        fake = make_coordinator([], package="foo")
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda _self: fake
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            result = resolve_pyproject(root, _FAKE_TRANSPORT, python_version="3.10.0")
+        assert result.pins["foo"] == V("1.0")
+
+    def test_resolve_pyproject_overlay_target_satisfies_index(
+        self, tmp_path: Path
+    ) -> None:
+        """The overlay's impersonated Python also gates index candidates.
+
+        An index candidate whose Requires-Python admits only the overlaid
+        Python must survive the listing filter, matching the local-source
+        check so both judge the same Requires-Python identically.
+        """
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://example.com/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=">=3.12",
+            has_metadata=True,
+            upload_time=None,
+        )
+        root = tmp_path / "pyproject.toml"
+        root.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'python_version = "3.12"\npython_full_version = "3.12.1"\n',
+            encoding="utf-8",
+        )
+        fake = make_coordinator([wheel], package="foo", auto_metadata=True)
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda _self: fake
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            result = resolve_pyproject(root, _FAKE_TRANSPORT, python_version="3.10.0")
+        assert result.pins["foo"] == V("1.0")
+
 
 def _index_wheels(name: str, *versions: str) -> list[WheelFile]:
     """One pure-python wheel per version, dependency-free in minimal METADATA."""
