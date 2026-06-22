@@ -134,8 +134,8 @@ def _extend_with_dep_strings(
     for dep in raw:
         if not isinstance(dep, str):
             continue
-        text = _add_extra_marker(dep, extra) if extra is not None else dep
         try:
+            text = _add_extra_marker(dep, extra) if extra is not None else dep
             out.append(Requirement(text))
         except (ValueError, TypeError):
             logger.warning("skipping unparseable requirement: %s", dep)

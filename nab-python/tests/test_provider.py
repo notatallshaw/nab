@@ -4596,7 +4596,23 @@ class TestAddExtraMarker:
     def test_with_existing_marker(self) -> None:
         """An existing marker is wrapped and combined with ``and``."""
         out = _add_extra_marker("numpy>=1.0 ; python_version >= '3.10'", "foo")
-        assert out == ("numpy>=1.0 ; (python_version >= '3.10') and extra == \"foo\"")
+        assert out == 'numpy>=1.0 ; (python_version >= "3.10") and extra == "foo"'
+
+    def test_semicolon_in_direct_url_kept(self) -> None:
+        """A ``;`` in a direct-URL is part of the URL, not the marker."""
+        out = _add_extra_marker("foo @ https://h/a;b/p.tar.gz", "bar")
+        req = Requirement(out)
+        assert req.url == "https://h/a;b/p.tar.gz"
+        assert str(req.marker) == 'extra == "bar"'
+
+    def test_semicolon_in_direct_url_with_marker_kept(self) -> None:
+        """The URL ``;`` survives and the existing marker is kept with extra."""
+        out = _add_extra_marker(
+            "foo @ https://h/a;b/p.tar.gz ; python_version >= '3.10'", "bar"
+        )
+        req = Requirement(out)
+        assert req.url == "https://h/a;b/p.tar.gz"
+        assert str(req.marker) == 'python_version >= "3.10" and extra == "bar"'
 
 
 class TestSharedSlotProvenance:

@@ -247,9 +247,10 @@ def extend_with_extras(requires_dist: list[Requirement], optional: dict) -> list
         for dep_str in extra_deps:
             if not isinstance(dep_str, str):
                 continue
-            with_marker = _add_extra_marker(dep_str, extra_name)
             try:
-                requires_dist.append(Requirement(with_marker))
+                requires_dist.append(
+                    Requirement(_add_extra_marker(dep_str, extra_name))
+                )
             except InvalidRequirement:
                 continue
     return provides_extra

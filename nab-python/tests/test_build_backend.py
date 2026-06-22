@@ -443,6 +443,16 @@ class TestStaticExtractAugmentParity:
         assert bb_click.marker.evaluate({"extra": "my-extra"})
         assert aug_click.marker.evaluate({"extra": "my-extra"})
 
+    def test_semicolon_in_extra_url_dep_not_dropped(self) -> None:
+        """A direct-URL extra dep with a ``;`` survives instead of being dropped."""
+        augment_rd: list = []
+        extend_with_extras(augment_rd, {"net": ["bar @ https://h/a;b/p.tar.gz"]})
+
+        bar = next((r for r in augment_rd if r.name == "bar"), None)
+        assert bar is not None
+        assert bar.url == "https://h/a;b/p.tar.gz"
+        assert str(bar.marker) == 'extra == "net"'
+
     def test_malformed_static_dep_dropped_like_augment_index_refuses(
         self, tmp_path: Path
     ) -> None:
