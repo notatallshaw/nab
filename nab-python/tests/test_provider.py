@@ -17,6 +17,7 @@ from nab_python._provider.metadata_resolver import (
     pick_dist_for_metadata,
 )
 from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
@@ -1586,6 +1587,18 @@ class TestPythonAxisEnvironment:
         """The error names the bad ``python_version`` input."""
         with pytest.raises(InvalidVersion, match="python_version 'not-a-version'"):
             python_axis_environment("not-a-version")
+
+    def test_two_component_prerelease_keeps_tag(self) -> None:
+        """A 2-release-component prerelease keeps its tag in full version."""
+        env = python_axis_environment("3.14a1")
+        assert env["python_version"] == "3.14"
+        assert Version(env["python_full_version"]) == Version("3.14a1")
+
+    def test_two_component_prerelease_not_treated_as_final(self) -> None:
+        """A prerelease target must not satisfy a final-release marker."""
+        env = python_axis_environment("3.14rc1")
+        assert Marker('python_full_version >= "3.14.0"').evaluate(env) is False
+        assert Marker('python_full_version == "3.14.0"').evaluate(env) is False
 
 
 class TestLookAhead:
