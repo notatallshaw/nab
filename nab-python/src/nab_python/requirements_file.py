@@ -98,22 +98,44 @@ def _require_string_list(value: object, source: str) -> list[str]:
     return value
 
 
+def _load_project_table(path: Path) -> Mapping[str, object]:
+    """Load a pyproject.toml and return its ``[project]`` table.
+
+    Returns an empty mapping when ``[project]`` is absent (a
+    workspace-root pyproject without its own distribution).  Raises
+    :class:`TypeError` when ``[project]`` is present but not a table, so
+    the readers below fail with a named diagnostic instead of a raw
+    subscript or attribute error.
+    """
+    with path.open("rb") as f:
+        data = tomli.load(f)
+    project = data.get("project", {})
+    if not isinstance(project, dict):
+        msg = f"[project] must be a table, got {type(project).__name__}"
+        raise TypeError(msg)
+    return project
+
+
 def read_pyproject_dependencies(path: Path) -> list[Requirement]:
     """Read [project].dependencies from a pyproject.toml file.
 
     Returns a list of Requirement objects parsed from the dependency
     strings. The key is optional under PEP 621, so an absent
     ``dependencies`` reads as an empty list. Raises FileNotFoundError if
-    the file doesn't exist, KeyError if [project] is missing, and
-    InvalidProjectRequirementError if a dependency string is malformed or
-    if ``dependencies`` is declared dynamic. The root-project lock path
-    cannot run the build backend that would compute a dynamic value.
+    the file doesn't exist, KeyError if [project] is missing, TypeError
+    if [project] is not a table, and InvalidProjectRequirementError if a
+    dependency string is malformed or if ``dependencies`` is declared
+    dynamic. The root-project lock path cannot run the build backend
+    that would compute a dynamic value.
     """
     with path.open("rb") as f:
         data = tomli.load(f)
+    project = data["project"]
+    if not isinstance(project, dict):
+        msg = f"[project] must be a table, got {type(project).__name__}"
+        raise TypeError(msg)
 
     source = "[project].dependencies"
-    project = data["project"]
     if "dependencies" not in project:
         dynamic = project.get("dynamic")
         if isinstance(dynamic, list) and "dependencies" in dynamic:
@@ -134,9 +156,7 @@ def read_pyproject_name(path: Path) -> str | None:
     has no ``[project]`` table or no ``name`` key (a workspace-root
     pyproject without its own distribution).
     """
-    with path.open("rb") as f:
-        data = tomli.load(f)
-    name = data.get("project", {}).get("name")
+    name = _load_project_table(path).get("name")
     return name if isinstance(name, str) else None
 
 
@@ -149,9 +169,7 @@ def read_pyproject_optional_dependencies(
     Returns an empty dict when ``[project.optional-dependencies]``
     is absent.
     """
-    with path.open("rb") as f:
-        data = tomli.load(f)
-    raw = data.get("project", {}).get("optional-dependencies", {})
+    raw = _load_project_table(path).get("optional-dependencies", {})
     if not isinstance(raw, dict):
         msg = (
             f"[project.optional-dependencies] must be a table, got {type(raw).__name__}"
