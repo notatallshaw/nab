@@ -63,19 +63,38 @@ def _parse_file_url(url: str) -> Path:
 
 _REQUIRES_PYTHON_ATTR = "data-requires-python"
 _YANKED_ATTR = "data-yanked"
+_CORE_METADATA_ATTR = "data-core-metadata"
+_LEGACY_METADATA_ATTR = "data-dist-info-metadata"
+
+
+def _html_advertises_metadata(value: str | None) -> bool:
+    """Return True when a metadata-sidecar attribute value advertises a sidecar.
+
+    PEP 658/714 set the value to ``true`` (sidecar exists, no hash) or
+    ``<algo>=<hexdigest>``.  Mirrors the JSON path's ``true``/digest
+    semantics in :func:`nab_index.client._has_metadata`.
+    """
+    if value is None:
+        return False
+    if value == "true":
+        return True
+    algo, sep, digest = value.partition("=")
+    return bool(sep and algo and digest)
 
 
 class _Pep503Parser(HTMLParser):
     """Collect ``<a href="..." data-requires-python="...">`` entries.
 
     Anchors carrying ``data-yanked`` (PEP 592) are dropped at parse
-    time so the listing never surfaces them.  Matches the PEP 691
-    behaviour in :func:`nab_index.client._parse_files`.
+    time so the listing never surfaces them.  The PEP 714
+    ``data-core-metadata`` attribute (or legacy ``data-dist-info-metadata``)
+    is read so a wheel's advertised sidecar is honoured, matching the PEP
+    691 JSON behaviour in :func:`nab_index.client._parse_files`.
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self.links: list[tuple[str, str | None]] = []
+        self.links: list[tuple[str, str | None, bool]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag != "a":
@@ -83,6 +102,8 @@ class _Pep503Parser(HTMLParser):
         href: str | None = None
         requires_python: str | None = None
         yanked = False
+        core_metadata: str | None = None
+        legacy_metadata: str | None = None
         for name, value in attrs:
             if name == "href":
                 href = value
@@ -90,8 +111,15 @@ class _Pep503Parser(HTMLParser):
                 requires_python = value
             elif name == _YANKED_ATTR:
                 yanked = True
+            elif name == _CORE_METADATA_ATTR:
+                core_metadata = value
+            elif name == _LEGACY_METADATA_ATTR:
+                legacy_metadata = value
         if href is not None and not yanked:
-            self.links.append((href, requires_python))
+            advertised = core_metadata if core_metadata is not None else legacy_metadata
+            self.links.append(
+                (href, requires_python, _html_advertises_metadata(advertised))
+            )
 
 
 _FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
@@ -108,12 +136,18 @@ def _scan_pep503_directory(
     parser = _Pep503Parser()
     parser.feed(index_html.read_text(encoding="utf-8"))
     files: list[WheelFile | SdistFile] = []
-    for href, requires_python in parser.links:
+    for href, requires_python, has_metadata in parser.links:
         filename, file_url, local_path, hashes = _resolve_local_link(href, package_dir)
         if filename is None:
             continue
         record = _make_record(
-            filename, file_url, local_path, requires_python, hashes, canonical
+            filename,
+            file_url,
+            local_path,
+            requires_python,
+            hashes,
+            canonical,
+            has_metadata=has_metadata,
         )
         if record is not None:
             files.append(record)
@@ -176,7 +210,9 @@ def _scan_flat_wheelhouse(
             continue
         if _FLAT_EXTS.search(entry.name) is None:
             continue
-        record = _make_record(entry.name, entry.as_uri(), entry, None, (), canonical)
+        record = _make_record(
+            entry.name, entry.as_uri(), entry, None, (), canonical, has_metadata=False
+        )
         if record is not None:
             files.append(record)
     return files
@@ -189,6 +225,8 @@ def _make_record(
     requires_python: str | None,
     hashes: tuple[tuple[str, str], ...],
     expected: str,
+    *,
+    has_metadata: bool,
 ) -> WheelFile | SdistFile | None:
     """Build a file record, or ``None`` for unusable filenames.
 
@@ -206,7 +244,7 @@ def _make_record(
             url=file_url,
             version=version,
             requires_python=requires_python,
-            has_metadata=False,
+            has_metadata=has_metadata,
             upload_time=None,
             hashes=hashes,
             local_path=local_path,
@@ -272,8 +310,8 @@ class LocalIndexClient:
     ) -> str:
         """Return PEP 658 metadata text for a wheel sitting on disk.
 
-        Local wheels never advertise a sidecar hash, so ``metadata_hash``
-        is accepted only to match the remote client signature.
+        The on-disk sidecar is trusted, so ``metadata_hash`` is accepted
+        only to match the remote client signature and is not verified.
         """
         path = _parse_file_url(metadata_url)
         return path.read_text(encoding="utf-8")
