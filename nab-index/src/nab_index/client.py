@@ -368,20 +368,32 @@ def _parse_size(value: object) -> int | None:
     return None
 
 
+_LEGACY_METADATA_KEY = "dist-info-metadata"
+
+
+def _metadata_value(file_info: dict) -> object:
+    """Return the metadata field, applying PEP 714 key precedence.
+
+    When ``core-metadata`` is present it wins and the legacy
+    ``dist-info-metadata`` key is ignored, so ``core-metadata: false``
+    means no sidecar even if a stale legacy entry lingers.  The legacy key
+    applies only when ``core-metadata`` is absent.  ``data-dist-info-metadata``
+    is the HTML attribute name and never appears in the JSON response.
+    """
+    if "core-metadata" in file_info:
+        return file_info.get("core-metadata")
+    return file_info.get(_LEGACY_METADATA_KEY)
+
+
 def _has_metadata(file_info: dict) -> bool:
     """Return True when the file entry advertises a PEP 658/714 sidecar.
 
     PEP 691 allows either a ``true`` boolean (sidecar exists but no
     hashes published) or a mapping carrying the digest table.  Either
-    flavour means the index will serve ``<file>.metadata``.  The legacy
-    JSON key is ``dist-info-metadata`` (PEP 658); ``data-dist-info-metadata``
-    is the HTML attribute name and never appears in the JSON response.
+    flavour means the index will serve ``<file>.metadata``.
     """
-    for key in ("core-metadata", "dist-info-metadata"):
-        value = file_info.get(key)
-        if value is True or isinstance(value, dict):
-            return True
-    return False
+    value = _metadata_value(file_info)
+    return value is True or isinstance(value, dict)
 
 
 def _metadata_hash(file_info: dict) -> tuple[str, str] | None:
@@ -391,12 +403,11 @@ def _metadata_hash(file_info: dict) -> tuple[str, str] | None:
     and what pip verifies.  A bare ``true`` (sidecar exists, no hash)
     or a table without sha256 yields None, so no check runs.
     """
-    for key in ("core-metadata", "dist-info-metadata"):
-        value = file_info.get(key)
-        if isinstance(value, dict):
-            digest = value.get("sha256")
-            if isinstance(digest, str):
-                return ("sha256", digest.lower())
+    value = _metadata_value(file_info)
+    if isinstance(value, dict):
+        digest = value.get("sha256")
+        if isinstance(digest, str):
+            return ("sha256", digest.lower())
     return None
 
 
