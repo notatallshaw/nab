@@ -67,15 +67,17 @@ def read_pyproject_dependencies(path: Path) -> list[Requirement]:
     """Read [project].dependencies from a pyproject.toml file.
 
     Returns a list of Requirement objects parsed from the dependency
-    strings.  Raises FileNotFoundError if the file doesn't exist,
-    KeyError if [project] or [project].dependencies is missing, or
-    InvalidProjectRequirementError if a dependency string is malformed.
+    strings.  ``[project].dependencies`` is optional under PEP 621, so an
+    absent key reads as an empty base dependency set.  Raises
+    FileNotFoundError if the file doesn't exist, KeyError if [project] is
+    missing, or InvalidProjectRequirementError if a dependency string is
+    malformed.
     """
     with path.open("rb") as f:
         data = tomli.load(f)
 
     source = "[project].dependencies"
-    dep_strings = _require_string_list(data["project"]["dependencies"], source)
+    dep_strings = _require_string_list(data["project"].get("dependencies", []), source)
     return _parse_requirements(dep_strings, source)
 
 
