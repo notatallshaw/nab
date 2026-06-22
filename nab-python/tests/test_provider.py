@@ -300,6 +300,32 @@ class TestFetchVersions:
         provider = Provider(coordinator, python_version=None)
         assert len(provider.fetch_versions("foo")) == 1
 
+    def test_requires_python_filter_honors_python_overlay(self) -> None:
+        """The Requires-Python filter targets the impersonated Python.
+
+        Under a marker-environment overlay the candidate filter must use
+        the overlaid Python, not the host, so it agrees with how markers
+        are evaluated.
+        """
+        coordinator = make_coordinator(
+            [
+                make_wheel("1.0", requires_python=">=3.8,<3.9"),
+                make_wheel("2.0", requires_python=">=3.12"),
+            ],
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            build_policy=BuildPolicy.NEVER,
+            marker_environment={
+                "python_version": "3.8",
+                "python_full_version": "3.8.0",
+            },
+        )
+        versions = [v for v, _ in provider.fetch_versions("foo")]
+        assert versions == [V("1.0")]
+
     def test_sorted_descending(self) -> None:
         """Results are sorted newest-first."""
         wheels = [make_wheel(v) for v in ("1.0", "3.0", "2.0")]
