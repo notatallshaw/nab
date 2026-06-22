@@ -896,7 +896,7 @@ def read_pyproject_lock_anchor(path: Path) -> datetime | None:
     try:
         with path.open("rb") as f:
             data = tomli.load(f)
-    except (FileNotFoundError, tomli.TOMLDecodeError):
+    except (OSError, tomli.TOMLDecodeError):
         return None
     raw = tool_nab_section(data)
     value = raw.get("uploaded-prior-to") if isinstance(raw, dict) else None

@@ -463,6 +463,14 @@ class TestLockCommandSpecific:
         with pytest.raises(SystemExit, match="1"):
             lock(tmp_path / "missing.toml")
 
+    def test_directory_path_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A directory path exits 1 with a clean message, not a traceback."""
+        with pytest.raises(SystemExit, match="1"):
+            lock(tmp_path)
+        assert "is a directory" in capsys.readouterr().err
+
     def test_malformed_toml_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -2443,6 +2451,31 @@ class TestDownloadCommand:
         ):
             download(pyproject, output=out)
         assert "cannot write to output directory" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {},
+            {"all_groups": True},
+            {"all_extras": True},
+            {"groups": ("g",)},
+            {"extras": ("e",)},
+        ],
+    )
+    def test_directory_path_exits(
+        self,
+        kwargs: dict[str, object],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A directory path exits 1 with a clean message, not a traceback.
+
+        The group/extra selection flags read the path before the config
+        load, so they must reject a directory just as cleanly.
+        """
+        with pytest.raises(SystemExit, match="1"):
+            download(tmp_path, **kwargs)
+        assert "is a directory" in capsys.readouterr().err
 
     def test_extras_flag_forwarded_to_resolver(self, tmp_path: Path) -> None:
         # ``--extras`` is required for ``exactly_one`` / ``at_least_one``

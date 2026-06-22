@@ -130,8 +130,9 @@ def _load_config(
     discover_workspace: bool = True,
     anchor: datetime | None = None,
 ) -> NabProjectConfig:
-    if not path.exists():
-        sys.stderr.write(f"Error: {path} not found\n")
+    if not path.is_file():
+        reason = "is a directory" if path.is_dir() else "not found"
+        sys.stderr.write(f"Error: {path} {reason}\n")
         sys.exit(1)
 
     try:
