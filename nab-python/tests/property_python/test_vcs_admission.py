@@ -89,7 +89,10 @@ def structured_urls(draw: st.DrawFn) -> str:
     user = draw(st.sampled_from(["", "git@", "user@"]))
     host = draw(st.sampled_from(["github.com", "example.org", "h"]))
     segments = draw(
-        st.lists(st.sampled_from(["org", "repo.git", "repo", "a"]), max_size=3)
+        st.lists(
+            st.sampled_from(["org", "orgx", "repo.git", "repo.gitx", "repo", "a"]),
+            max_size=3,
+        )
     )
     ref = draw(
         st.sampled_from(
@@ -130,6 +133,21 @@ def _drop_login(url: str) -> str:
     return urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[1]))
 
 
+def _prefix_under_repo(inner: str, prefix: str) -> bool:
+    """Boundary-aware repo-prefix check, transcribed from the documented policy.
+
+    A candidate is under an allowed prefix only when the prefix ends at a
+    path-segment boundary, so a sibling repo whose URL merely begins with
+    the prefix (``.../airflow.git`` vs ``.../airflow.git.evil``) is refused.
+    """
+    if not inner.startswith(prefix):
+        return False
+    rest = inner[len(prefix) :]
+    if not rest or not prefix or prefix[-1] in "/@#":
+        return True
+    return rest[0] in "/@#"
+
+
 def _oracle(url: str, config: VcsConfig) -> str:
     """Decision procedure transcribed from the documented policy."""
     scheme = next((s for s in VALID_SCHEMES if url.startswith(f"{s}://")), None)
@@ -140,7 +158,7 @@ def _oracle(url: str, config: VcsConfig) -> str:
     if scheme not in config.allowed_schemes:
         return "refuse"
     inner = _drop_login(url[len("git+") :])
-    if not any(inner.startswith(_drop_login(p)) for p in config.allowed_repos):
+    if not any(_prefix_under_repo(inner, _drop_login(p)) for p in config.allowed_repos):
         return "refuse"
     if config.require_pin:
         fragmentless = url.split("#", 1)[0]

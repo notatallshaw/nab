@@ -115,6 +115,29 @@ def _without_userinfo(url: str) -> str:
     return urlunsplit(parts._replace(netloc=host))
 
 
+_REPO_BOUNDARY_CHARS: frozenset[str] = frozenset({"/", "@", "#"})
+
+
+def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
+    """Return True if ``inner_url`` names a repo under ``prefix``.
+
+    A bare :meth:`str.startswith` would admit a sibling repo whose URL
+    merely begins with an allowed entry (``.../airflow.git`` would admit
+    ``.../airflow.git.evil``).  The match here requires the prefix to end
+    at a path-segment boundary: the candidate must equal the prefix, the
+    prefix must already end in a separator, or the next candidate
+    character must be ``/`` (path), ``@`` (ref) or ``#`` (fragment).
+    Both URLs have their authority ``user[:pass]@`` / ``git@`` stripped
+    by the caller.
+    """
+    if not inner_url.startswith(prefix):
+        return False
+    rest = inner_url[len(prefix) :]
+    if not rest or not prefix or prefix[-1] in _REPO_BOUNDARY_CHARS:
+        return True
+    return rest[0] in _REPO_BOUNDARY_CHARS
+
+
 def has_full_commit_sha(url: str) -> bool:
     """Return True if the URL pins to a 40-char hex commit hash.
 
@@ -178,7 +201,7 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
     # allowed-schemes: under policy = "allow" the user must list at least
     # one repo prefix.
     if not any(
-        _without_userinfo(inner_url).startswith(_without_userinfo(prefix))
+        _repo_prefix_matches(_without_userinfo(inner_url), _without_userinfo(prefix))
         for prefix in config.allowed_repos
     ):
         allowed_str = ", ".join(sorted(config.allowed_repos)) or "<empty>"
