@@ -212,8 +212,6 @@ class Matrix:
     tuple.  Users with deployments on later patch releases should
     declare them here so marker evaluation matches reality.  Example:
     ``python_patches={"3.11": "3.11.4", "3.12": "3.12.1"}``.
-    See ``universal_open_questions.md`` section 1.1 for the design
-    discussion.
 
     ``implementations``: the interpreter implementations to model
     (``"cpython"``, ``"pypy"``).  Defaults to ``("cpython",)``.  Each
