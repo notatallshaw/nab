@@ -1004,6 +1004,11 @@ class TestConflictForkRequiresPythonMerge:
         assert foo.requires_python is not None
         assert str(foo.requires_python) == ">=3.10"
 
+    def test_unconstrained_fork_drops_requires_python(self) -> None:
+        pylock = build_pylock(self._build(">=3.10", None))
+        foo = next(p for p in pylock.packages if str(p.name) == "foo")
+        assert foo.requires_python is None
+
 
 class TestConflictForkByteStability:
     """``write_lock`` is deterministic across multiple conflict forks.
@@ -2945,6 +2950,31 @@ class TestBuildLockInputFromProvider:
         )
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), wheel_a), (Version("1.0"), wheel_b)]}
+        )
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.requires_python is None
+
+    def test_unconstrained_artifact_drops_requires_python(self) -> None:
+        constrained = _wheel_file(requires_python=">=3.10")
+        unconstrained = WheelFile(
+            filename="foo-1.0-cp312-cp312-linux_x86_64.whl",
+            url="https://example.com/foo-1.0-cp312-cp312-linux_x86_64.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=False,
+            upload_time=None,
+            hashes=(("sha256", "c" * 64),),
+            size=1024,
+        )
+        provider = _FakeProvider(
+            listings={
+                "foo": [
+                    (Version("1.0"), constrained),
+                    (Version("1.0"), unconstrained),
+                ]
+            }
         )
         lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
         pin = lock_input.pins["foo"]
