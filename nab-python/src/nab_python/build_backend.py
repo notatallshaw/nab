@@ -21,6 +21,7 @@ from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
 from .metadata import WheelMetadata, load_static_project
+from .requirements_file import InvalidProjectRequirementError, _require_string_list
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -48,6 +49,11 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     Returns a :class:`WheelMetadata` shape when the static fields are
     authoritative, populating ``name``, ``version``,
     ``requires_python``, ``requires_dist``, and ``provides_extra``.
+
+    Raises :class:`InvalidProjectRequirementError` when ``dependencies``
+    or ``optional-dependencies`` is present but structurally wrong (not
+    an array of strings / not a table), rather than silently dropping the
+    declared dependencies.
 
     The returned ``provides_extra`` includes both the lower-cased
     keys of ``project.optional-dependencies`` and any extras declared
@@ -112,14 +118,27 @@ def _collect_requires_dist(project: dict) -> list[Requirement]:
 
     Optional-dependencies entries get an ``; extra == "name"`` marker
     appended (combined with any existing marker via ``and``).
+
+    A structurally wrong value (``dependencies`` that is not an array of
+    strings, ``optional-dependencies`` that is not a table, or a per-extra
+    value that is not an array of strings) raises
+    :class:`InvalidProjectRequirementError`.  A well-typed entry that is
+    not valid PEP 508 is dropped with a warning.
     """
     out: list[Requirement] = []
-    _extend_with_dep_strings(out, project.get("dependencies"))
-    optional = project.get("optional-dependencies", {})
-    if isinstance(optional, dict):
-        for raw_extra, deps in sorted(optional.items()):
-            extra = canonicalize_name(str(raw_extra))
-            _extend_with_dep_strings(out, deps, extra=extra)
+    _extend_with_dep_strings(
+        out,
+        project.get("dependencies", []),
+        source="[project].dependencies",
+    )
+    for raw_extra, deps in sorted(_require_optional_dependencies(project).items()):
+        extra = canonicalize_name(str(raw_extra))
+        _extend_with_dep_strings(
+            out,
+            deps,
+            source=f"[project].optional-dependencies extra {raw_extra!r}",
+            extra=extra,
+        )
     return out
 
 
@@ -127,28 +146,42 @@ def _extend_with_dep_strings(
     out: list[Requirement],
     raw: object,
     *,
+    source: str,
     extra: str | None = None,
 ) -> None:
-    if not isinstance(raw, list):
-        return
+    for dep in _require_string_list(raw, source):
+        req = _parse_dep(dep, extra)
+        if req is not None:
+            out.append(req)
+
+
+def _parse_dep(dep: str, extra: str | None) -> Requirement | None:
+    """Parse one PEP 508 string, warning and dropping if it is malformed."""
     # Late import: ``pypi`` imports this module at module load.
     from .provider import _add_extra_marker  # noqa: PLC0415
 
-    for dep in raw:
-        if not isinstance(dep, str):
-            continue
-        try:
-            text = _add_extra_marker(dep, extra) if extra is not None else dep
-            out.append(Requirement(text))
-        except (ValueError, TypeError):
-            logger.warning("skipping unparseable requirement: %s", dep)
+    try:
+        text = _add_extra_marker(dep, extra) if extra is not None else dep
+        return Requirement(text)
+    except (ValueError, TypeError):
+        logger.warning("skipping unparseable requirement: %s", dep)
+        return None
+
+
+def _require_optional_dependencies(project: dict) -> dict:
+    """Return ``[project.optional-dependencies]`` as a table, or raise."""
+    optional = project.get("optional-dependencies", {})
+    if not isinstance(optional, dict):
+        msg = "[project].optional-dependencies must be a table"
+        raise InvalidProjectRequirementError(msg)
+    return optional
 
 
 def _collect_provides_extra(project: dict) -> set[str]:
-    optional = project.get("optional-dependencies", {})
-    if not isinstance(optional, dict):
-        return set()
-    return {canonicalize_name(str(extra)) for extra in optional}
+    return {
+        canonicalize_name(str(extra))
+        for extra in _require_optional_dependencies(project)
+    }
 
 
 def extract_metadata(
