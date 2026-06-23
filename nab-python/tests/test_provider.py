@@ -6094,7 +6094,7 @@ class TestStaticSdistMetadata:
         assert "dep-a" in deps
 
     def test_pyproject_dependencies_wrong_type(self) -> None:
-        """``dependencies`` declared as non-list aborts the fallback."""
+        """``dependencies`` declared as non-list rejects the version."""
         pyproject = '[project]\nname = "pkg"\nversion = "1.0"\ndependencies = "dep-a"\n'
         coordinator = make_coordinator(
             [make_sdist("1.0")],
@@ -6106,11 +6106,11 @@ class TestStaticSdistMetadata:
             python_version="3.12.0",
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
-        with pytest.raises(UnsupportedSdistError):
+        with pytest.raises(MetadataError, match="must be an array of strings"):
             provider.get_dependencies("pkg", V("1.0"))
 
     def test_pyproject_optional_dependencies_wrong_type(self) -> None:
-        """``optional-dependencies`` declared as non-table aborts the fallback."""
+        """``optional-dependencies`` declared as non-table rejects the version."""
         pyproject = (
             "[project]\n"
             'name = "pkg"\n'
@@ -6128,7 +6128,7 @@ class TestStaticSdistMetadata:
             python_version="3.12.0",
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
-        with pytest.raises(UnsupportedSdistError):
+        with pytest.raises(MetadataError, match="must be a table"):
             provider.get_dependencies("pkg", V("1.0"))
 
     def test_pyproject_skips_non_string_dynamic_entries(self) -> None:
@@ -6153,8 +6153,8 @@ class TestStaticSdistMetadata:
         deps = provider.get_dependencies("pkg", V("1.0"))
         assert "dep-a" in deps
 
-    def test_pyproject_skips_non_list_extra_value(self) -> None:
-        """An extras value that isn't a list is skipped without aborting."""
+    def test_pyproject_extra_value_not_list_rejects(self) -> None:
+        """An extras value that isn't a list rejects the version."""
         pyproject = (
             "[project]\n"
             'name = "pkg"\n'
@@ -6174,13 +6174,11 @@ class TestStaticSdistMetadata:
             python_version="3.12.0",
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
-        provider.get_dependencies("pkg", V("1.0"))
-        metadata = provider.metadata_cache[("pkg", V("1.0"))]
-        assert "foo" in metadata.provides_extra
-        assert "bad" not in metadata.provides_extra
+        with pytest.raises(MetadataError, match="extra 'bad' must be an array"):
+            provider.get_dependencies("pkg", V("1.0"))
 
-    def test_pyproject_drops_non_string_dep_strings(self) -> None:
-        """Non-string dependency entries are skipped during parsing."""
+    def test_pyproject_non_string_dep_entry_rejects(self) -> None:
+        """A non-string dependency entry rejects the version."""
         pyproject = (
             "[project]\n"
             'name = "pkg"\n'
@@ -6197,9 +6195,8 @@ class TestStaticSdistMetadata:
             python_version="3.12.0",
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
-        deps = provider.get_dependencies("pkg", V("1.0"))
-        assert "dep-a" in deps
-        assert "dep-b" in deps
+        with pytest.raises(MetadataError, match="must be an array of strings"):
+            provider.get_dependencies("pkg", V("1.0"))
 
     def test_pyproject_drops_invalid_requirements(self) -> None:
         """Malformed requirement strings are dropped, not fatal."""
@@ -6246,8 +6243,8 @@ class TestStaticSdistMetadata:
         metadata = provider.metadata_cache[("pkg", V("1.0"))]
         assert "foo" in metadata.provides_extra
 
-    def test_pyproject_skips_non_string_extra_dep(self) -> None:
-        """Non-string entries inside an extras list are skipped."""
+    def test_pyproject_non_string_extra_dep_rejects(self) -> None:
+        """A non-string entry inside an extras list rejects the version."""
         pyproject = (
             "[project]\n"
             'name = "pkg"\n'
@@ -6266,7 +6263,8 @@ class TestStaticSdistMetadata:
             python_version="3.12.0",
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
-        provider.get_dependencies("pkg", V("1.0"))
+        with pytest.raises(MetadataError, match="extra 'foo' must be an array"):
+            provider.get_dependencies("pkg", V("1.0"))
 
     def test_build_remote_invokes_backend(
         self, monkeypatch: pytest.MonkeyPatch
