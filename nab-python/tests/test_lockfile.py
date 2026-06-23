@@ -240,7 +240,6 @@ class TestPerTupleMarkerSimplification:
             LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
         )
         data = tomllib.loads(text)
-        # Two Package entries, each with a marker
         assert len(data["packages"]) == 2
         markers = [p.get("marker") for p in data["packages"]]
         assert all(m is not None for m in markers)

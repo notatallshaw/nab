@@ -518,11 +518,7 @@ def process_scenario(
     index_routes = parse_index_routes(scenario_name, scenario)
     build_policy_overrides = parse_build_packages(scenario_name, scenario)
     if marker_environment and build_policy_overrides:
-        # BuildPolicy.BUILD_REMOTE + marker_environment is rejected at
-        # provider construction (host backend cannot reflect the
-        # impersonated target).  Drop the per-package builds so the
-        # scenario still runs; if resolution now fails the override
-        # was load-bearing and the scenario needs an audit.
+        # BUILD_REMOTE + marker_environment is rejected at provider construction.
         print(
             f"\n  [audit] {scenario_name}: dropping {len(build_policy_overrides)}"
             " build_packages override(s) because the scenario uses a"
