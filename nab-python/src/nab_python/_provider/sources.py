@@ -84,6 +84,7 @@ def extract_source_metadata(
     ``"vcs"`` for :class:`VcsSource` clones (admitted only at
     :attr:`BuildPolicy.BUILD_REMOTE`).
     """
+    # Imported in-function so tests can patch the module attribute.
     from .. import build_backend
     from ..build_backend import BuildBackendError, extract_static_metadata
     from ..provider import BuildPolicy, UnsupportedSdistError
@@ -189,6 +190,7 @@ def materialize_vcs_source(
     source: VcsSource,
 ) -> list[tuple[Version, SdistFile]]:
     """Clone ``source`` and materialise it via the same path as a LocalSource."""
+    # Imported in-function so tests can patch the module attribute.
     from nab_index import vcs as _vcs
 
     from ..provider import UnsupportedSdistError
