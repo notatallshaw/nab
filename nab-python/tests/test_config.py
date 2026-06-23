@@ -1056,6 +1056,39 @@ class TestMarkerEnvironment:
         with pytest.raises(ConfigError, match="unknown marker-environment variable"):
             read_pyproject_config(path)
 
+    def test_version_value_round_trip(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.marker-environment]\n"
+            'python_version = "3.12"\n'
+            'python_full_version = "3.12.4"\n',
+        )
+        env = read_pyproject_config(path).marker_environment
+        assert env == {"python_version": "3.12", "python_full_version": "3.12.4"}
+
+    def test_python_version_must_be_pep440(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[tool.nab.marker-environment]\npython_version = "3.x"\n'
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"marker-environment.python_version must be a PEP 440 version,"
+            r" got '3.x'",
+        ):
+            read_pyproject_config(path)
+
+    def test_python_full_version_must_be_pep440(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.marker-environment]\npython_full_version = "not-a-version"\n',
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"marker-environment.python_full_version must be a PEP 440"
+            r" version, got 'not-a-version'",
+        ):
+            read_pyproject_config(path)
+
     def test_rejected_in_universal_mode(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
