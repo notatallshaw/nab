@@ -1327,10 +1327,6 @@ class TestResolveUniversalWrapper:
 
     def test_constructs_coordinator_and_delegates(self) -> None:
         """The wrapper constructs a FetchCoordinator and delegates."""
-        # We don't exercise real networking; we verify the wrapper
-        # contract by mocking ``FetchCoordinator`` and
-        # ``HttpxAsyncTransport`` and asserting the inner function
-        # was called with our coordinator.
         sentinel = MagicMock()
         sentinel.success = True
         sentinel.tuple_results = []

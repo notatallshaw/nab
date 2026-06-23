@@ -133,7 +133,6 @@ class TestConflictCountsReachProvider:
         )
         resolver = Resolver(provider)
         resolver.resolve({"root": Range.singleton(1)})
-        # prioritize was called at least once
         assert len(provider.seen_conflict_counts) > 0
 
     def test_conflict_counts_accumulate(self) -> None:
@@ -152,7 +151,6 @@ class TestConflictCountsReachProvider:
             resolver.resolve({"root": Range.singleton(1)})
         except ResolutionError:
             pass
-        # Later calls to prioritize should see non-empty conflict counts
         non_empty = [c for c in provider.seen_conflict_counts if c]
         assert len(non_empty) > 0
 
