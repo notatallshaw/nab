@@ -146,20 +146,6 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     # into the active group set alongside the CLI selection.
     effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
 
-    if config.conflicts:
-        # Read each table once and reuse it across the existence check
-        # and the umbrella expansion, so a conflict the selection only
-        # reaches transitively is still caught without re-parsing the
-        # file.
-        optional = read_pyproject_optional_dependencies(path)
-        groups_table = read_pyproject_groups(path)
-        project_name = read_pyproject_name(path)
-        _validate_conflict_members_exist(config.conflicts, optional, groups_table)
-        active_extras = expand_self_extras(optional, project_name, extras)
-        active_groups = expand_group_includes(groups_table, effective_groups)
-        validate_conflict_exclusions(config.conflicts, active_extras, active_groups)
-        validate_conflict_minimums(config.conflicts, active_extras, active_groups)
-
     if python_version is not None:
         effective_python = python_version
     elif config.requires_python is not None:
@@ -168,14 +154,34 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         vi = sys.version_info
         effective_python = f"{vi.major}.{vi.minor}.{vi.micro}"
 
-    effective_strategy = (
-        resolution_strategy if resolution_strategy is not None else config.resolution
-    )
-
     marker_environment = _build_marker_environment(
         python_version=effective_python,
         overrides=config.marker_environment,
     )
+
+    if config.conflicts:
+        # Read each table once and reuse it across the existence check
+        # and the umbrella expansion, so a conflict the selection only
+        # reaches transitively is still caught without re-parsing the
+        # file.  The expansion takes the target environment so a self
+        # reference gated by a PEP 508 marker counts toward the exclusion
+        # check only when its marker holds here; members reached through
+        # disjoint markers never co-select.
+        optional = read_pyproject_optional_dependencies(path)
+        groups_table = read_pyproject_groups(path)
+        project_name = read_pyproject_name(path)
+        _validate_conflict_members_exist(config.conflicts, optional, groups_table)
+        active_extras = expand_self_extras(
+            optional, project_name, extras, marker_environment
+        )
+        active_groups = expand_group_includes(groups_table, effective_groups)
+        validate_conflict_exclusions(config.conflicts, active_extras, active_groups)
+        validate_conflict_minimums(config.conflicts, active_extras, active_groups)
+
+    effective_strategy = (
+        resolution_strategy if resolution_strategy is not None else config.resolution
+    )
+
     requirements = read_pyproject_dependencies(path)
     requirements.extend(_load_group_requirements(path, effective_groups))
     requirements.extend(_load_extra_requirements(path, extras, marker_environment))

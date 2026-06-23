@@ -288,6 +288,52 @@ class TestSpecificModeConflictValidation:
         # is pulled in through the self-reference.
         assert result.pins["foo"] == V("1.0")
 
+    def test_umbrella_extra_disjoint_markers_resolve(self, tmp_path: Path) -> None:
+        """Self-refs to both members under disjoint markers do not co-select.
+
+        ``all`` reaches cpu only below 3.10 and gpu only at 3.10+, so on
+        Python 3.12 just gpu is active and there is no co-selection. The
+        exclusion check must evaluate the self-reference markers in the
+        target environment rather than walking every self-reference.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            "dependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "all = [\n"
+            "    \"x[cpu]; python_version < '3.10'\",\n"
+            "    \"x[gpu]; python_version >= '3.10'\",\n"
+            "]\n"
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_lock_input_from_provider"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("2.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            result = resolve_pyproject(
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("all",),
+                python_version="3.12.0",
+            )
+        # Only gpu's self-reference marker holds on 3.12, so gpu's pin is
+        # the one that reaches the resolver and cpu's is excluded.
+        root_reqs = mock_provider_cls.call_args.kwargs["root_requirements"]
+        assert V("2.0") in root_reqs["foo"]
+        assert V("1.0") not in root_reqs["foo"]
+        assert result.pins == {"foo": V("2.0")}
+
     def test_specific_mode_exactly_one_with_no_member_raises(
         self, tmp_path: Path
     ) -> None:
