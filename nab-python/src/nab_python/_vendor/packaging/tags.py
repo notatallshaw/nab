@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 __all__ = [
     "INTERPRETER_SHORT_NAMES",
     "AppleVersion",
+    "InvalidTag",
     "PythonVersion",
     "Tag",
     "UnsortedTagsError",
@@ -55,7 +56,14 @@ def __dir__() -> list[str]:
 logger = logging.getLogger(__name__)
 
 PythonVersion = Sequence[int]
+"""
+A sequence of integers describing a Python version, e.g. ``(3, 13)``.
+"""
+
 AppleVersion = tuple[int, int]
+"""
+A ``(major, minor)`` integer pair describing an Apple OS version.
+"""
 _T = TypeVar("_T")
 
 INTERPRETER_SHORT_NAMES: dict[str, str] = {
@@ -81,6 +89,14 @@ class UnsortedTagsError(ValueError):
     Raised when a tag component is not in sorted order per PEP 425.
 
     .. versionadded:: 26.1
+    """
+
+
+class InvalidTag(ValueError):
+    """
+    Raised when a tag has an empty interpreter, ABI, or platform component.
+
+    .. versionadded:: 26.3
     """
 
 
@@ -216,24 +232,33 @@ def parse_tag(tag: str, *, validate_order: bool = False) -> frozenset[Tag]:
         are in sorted order.
     :raises UnsortedTagsError: If **validate_order** is true and any compressed tag
         set component is not in sorted order.
+    :raises InvalidTag: If the interpreter, ABI, or platform field (or any member
+        of a compressed tag set) is empty.
 
     .. versionadded:: 26.1
        The *validate_order* parameter.
+
+    .. versionadded:: 26.3
+       Raises :class:`InvalidTag` on empty tag components.
     """
-    tags = set()
-    interpreters, abis, platforms = tag.split("-")
-    if validate_order:
-        for component in (interpreters, abis, platforms):
-            parts = component.split(".")
-            if parts != sorted(parts):
-                raise UnsortedTagsError(
-                    f"Tag component {component!r} is not in sorted order per PEP 425"
-                )
-    for interpreter in interpreters.split("."):
-        for abi in abis.split("."):
-            for platform_ in platforms.split("."):
-                tags.add(Tag(interpreter, abi, platform_))
-    return frozenset(tags)
+    component_parts = [component.split(".") for component in tag.split("-")]
+    for parts in component_parts:
+        if "" in parts:
+            component = ".".join(parts)
+            raise InvalidTag(f"Tag {tag!r} has an empty component: {component!r}")
+        if validate_order and parts != sorted(parts):
+            component = ".".join(parts)
+            raise UnsortedTagsError(
+                f"Tag component {component!r} is not in sorted order per PEP 425"
+            )
+
+    interpreters, abis, platforms = component_parts
+    return frozenset(
+        Tag(interpreter, abi, platform_)
+        for interpreter in interpreters
+        for abi in abis
+        for platform_ in platforms
+    )
 
 
 def _get_config_var(name: str, warn: bool = False) -> int | str | None:
@@ -363,8 +388,10 @@ def cpython_tags(
     if abis is None:
         abis = _cpython_abis(python_version, warn) if len(python_version) > 1 else []
     abis = list(abis)
-    # 'abi3' and 'none' are explicitly handled later.
-    for explicit_abi in ("abi3", "none"):
+    threading = _is_threaded_cpython(abis)
+    # Stable ABIs and 'none' are explicitly handled later.
+    explicit_abis = ("abi3", "abi3t", "none") if threading else ("abi3", "none")
+    for explicit_abi in explicit_abis:
         try:
             abis.remove(explicit_abi)
         except ValueError:  # noqa: PERF203
@@ -375,10 +402,8 @@ def cpython_tags(
         for platform_ in platforms:
             yield Tag(interpreter, abi, platform_)
 
-    threading = _is_threaded_cpython(abis)
     use_abi3 = _abi3_applies(python_version, threading)
     use_abi3t = _abi3t_applies(python_version, threading)
-
     if use_abi3:
         yield from (Tag(interpreter, "abi3", platform_) for platform_ in platforms)
     if use_abi3t:
@@ -416,7 +441,7 @@ def _generic_abi() -> list[str]:
     #                                               => graalpy_38_native
 
     ext_suffix = _get_config_var("EXT_SUFFIX", warn=True)
-    if not isinstance(ext_suffix, str) or ext_suffix[0] != ".":
+    if not isinstance(ext_suffix, str) or not ext_suffix.startswith("."):
         raise SystemError("invalid sysconfig.get_config_var('EXT_SUFFIX')")
     parts = ext_suffix.split(".")
     if len(parts) < 3:
@@ -598,28 +623,30 @@ def mac_platforms(
         - On Linux, code must be run on the system itself to determine
           compatibility
     """
-    version_str, _, cpu_arch = platform.mac_ver()
-    if version is None:
-        version = cast("AppleVersion", tuple(map(int, version_str.split(".")[:2])))
-        if version == (10, 16):
-            # When built against an older macOS SDK, Python will report macOS 10.16
-            # instead of the real version.
-            version_str = subprocess.run(
-                [
-                    sys.executable,
-                    "-sS",
-                    "-c",
-                    "import platform; print(platform.mac_ver()[0])",
-                ],
-                check=True,
-                env={"SYSTEM_VERSION_COMPAT": "0"},
-                stdout=subprocess.PIPE,
-                text=True,
-            ).stdout
+    if version is None or arch is None:
+        version_str, _, cpu_arch = platform.mac_ver()
+        if version is None:
             version = cast("AppleVersion", tuple(map(int, version_str.split(".")[:2])))
-
-    if arch is None:
-        arch = _mac_arch(cpu_arch)
+            if version == (10, 16):
+                # When built against an older macOS SDK, Python will report macOS 10.16
+                # instead of the real version.
+                version_str = subprocess.run(
+                    [
+                        sys.executable,
+                        "-sS",
+                        "-c",
+                        "import platform; print(platform.mac_ver()[0])",
+                    ],
+                    check=True,
+                    env={"SYSTEM_VERSION_COMPAT": "0"},
+                    stdout=subprocess.PIPE,
+                    text=True,
+                ).stdout
+                version = cast(
+                    "AppleVersion", tuple(map(int, version_str.split(".")[:2]))
+                )
+        if arch is None:
+            arch = _mac_arch(cpu_arch)
 
     if (10, 0) <= version < (11, 0):
         # Prior to Mac OS 11, each yearly release of Mac OS bumped the
@@ -868,13 +895,16 @@ def sys_tags(*, warn: bool = False) -> Iterator[Tag]:
         Added the `pp3-none-any` tag (:issue:`311`).
     .. versionchanged:: 26.1
         Added the `abi3t` tag (:issue:`1099`).
+    .. versionchanged:: 26.3
+        Native ``linux_*`` platform tags are now ordered before ``manylinux``
+        and ``musllinux`` tags (:issue:`160`).
     """
 
     interp_name = interpreter_name()
     if interp_name == "cp":
         yield from cpython_tags(warn=warn)
     else:
-        yield from generic_tags()
+        yield from generic_tags(warn=warn)
 
     if interp_name == "pp":
         interp = "pp3"
