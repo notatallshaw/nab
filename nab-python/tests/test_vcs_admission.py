@@ -21,7 +21,7 @@ _FORTY = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _allow_https() -> VcsConfig:
-    # An empty allowed-repos now denies all, so list a permissive prefix
+    # An empty allowed-repos denies all, so list a permissive prefix
     # for the scheme/pin tests that are not about repo filtering.
     return VcsConfig(
         policy=VcsPolicy.ALLOW,
