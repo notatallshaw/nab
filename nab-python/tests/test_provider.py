@@ -513,6 +513,69 @@ class TestResolutionStrategy:
         assert provider.choose_version("foo", VersionRange.full()) == V("2.0")
 
 
+class TestEqualVersionDifferentStrings:
+    """One logical release published with mismatched filename version strings.
+
+    A wheel filename reading ``1.0`` and an sdist filename reading ``1.0.0``
+    are the same version (``Version("1.0") == Version("1.0.0")``) with
+    distinct ``str()`` forms.  The listing collapses them to one version,
+    keeps the wheel as the metadata source, and pins the same string under
+    every resolution strategy.
+    """
+
+    @staticmethod
+    def _files() -> list[WheelFile | SdistFile]:
+        return [make_wheel("1.0"), make_sdist("1.0.0")]
+
+    def test_listing_collapses_to_one_logical_version(self) -> None:
+        coordinator = make_coordinator(self._files(), package="pkg")
+        provider = Provider(coordinator, python_version="3.12.0")
+        version_list = provider.fetch_versions("pkg")
+        versions = provider.versions_only("pkg", version_list)
+        assert versions == [V("1.0")]
+        assert {str(v) for v in versions} == {"1.0"}
+
+    def test_wheel_not_evicted_by_same_version_sdist(self) -> None:
+        coordinator = make_coordinator(self._files(), package="pkg")
+        provider = Provider(coordinator, python_version="3.12.0")
+        version_list = provider.fetch_versions("pkg")
+        mapping = provider._wheel_by_version("pkg", version_list)
+        assert len(mapping) == 1
+        dist = mapping[V("1.0")]
+        assert isinstance(dist, WheelFile)
+        assert dist.metadata_url is not None
+
+    def test_pin_string_is_strategy_independent(self) -> None:
+        chosen: dict[ResolutionStrategy, Version | None] = {}
+        for strategy in (ResolutionStrategy.HIGHEST, ResolutionStrategy.LOWEST):
+            coordinator = make_coordinator(self._files(), package="pkg")
+            provider = Provider(
+                coordinator,
+                python_version="3.12.0",
+                resolution_strategy=strategy,
+            )
+            chosen[strategy] = provider.choose_version(
+                "pkg", SpecifierSet(">=1.0").to_range()
+            )
+        highest = chosen[ResolutionStrategy.HIGHEST]
+        lowest = chosen[ResolutionStrategy.LOWEST]
+        assert highest is not None
+        assert lowest is not None
+        assert str(highest) == str(lowest)
+
+    def test_pin_string_independent_of_file_order(self) -> None:
+        forward = make_coordinator(self._files(), package="pkg")
+        reverse_files = list(reversed(self._files()))
+        backward = make_coordinator(reverse_files, package="pkg")
+        p_forward = Provider(forward, python_version="3.12.0")
+        p_backward = Provider(backward, python_version="3.12.0")
+        v_forward = p_forward.choose_version("pkg", SpecifierSet(">=1.0").to_range())
+        v_backward = p_backward.choose_version("pkg", SpecifierSet(">=1.0").to_range())
+        assert v_forward is not None
+        assert v_backward is not None
+        assert str(v_forward) == str(v_backward)
+
+
 class TestPrereleaseAdmission:
     """The real Provider applies PEP 440 pre-release admission end to end.
 
