@@ -83,7 +83,7 @@ _PEP610_USER_PASS_ENV_VARS_REGEX = re.compile(
 def _strip_auth_from_netloc(netloc: str, safe_user_passwords: Collection[str]) -> str:
     if "@" not in netloc:
         return netloc
-    user_pass, netloc_no_user_pass = netloc.split("@", 1)
+    user_pass, netloc_no_user_pass = netloc.rsplit("@", 1)
     if user_pass in safe_user_passwords:
         return netloc
     if _PEP610_USER_PASS_ENV_VARS_REGEX.match(user_pass):
@@ -110,7 +110,10 @@ def _strip_url(url: str, safe_user_passwords: Collection[str]) -> str:
 
 
 class DirectUrlValidationError(Exception):
-    """Raised when when input data is not spec-compliant."""
+    """Raised when when input data is not spec-compliant.
+
+    .. versionadded:: 26.1
+    """
 
     context: str | None = None
     message: str
@@ -146,6 +149,8 @@ class _DirectUrlRequiredKeyError(DirectUrlValidationError):
 
 @dataclasses.dataclass(frozen=True, init=False)
 class VcsInfo:
+    """The version control information of a :class:`DirectUrl`."""
+
     vcs: str
     commit_id: str
     requested_revision: str | None = None
@@ -173,6 +178,8 @@ class VcsInfo:
 
 @dataclasses.dataclass(frozen=True, init=False)
 class ArchiveInfo:
+    """The archive information of a :class:`DirectUrl`."""
+
     hashes: Mapping[str, str] | None = None
 
     def __init__(
@@ -219,6 +226,8 @@ class ArchiveInfo:
 
 @dataclasses.dataclass(frozen=True, init=False)
 class DirInfo:
+    """The local directory information of a :class:`DirectUrl`."""
+
     editable: bool | None = None
 
     def __init__(
@@ -237,7 +246,10 @@ class DirInfo:
 
 @dataclasses.dataclass(frozen=True, init=False)
 class DirectUrl:
-    """A class representing a direct URL."""
+    """A class representing a direct URL.
+
+    .. versionadded:: 26.1
+    """
 
     url: str
     archive_info: ArchiveInfo | None = None
@@ -277,7 +289,10 @@ class DirectUrl:
             raise DirectUrlValidationError(
                 "Exactly one of vcs_info, archive_info, dir_info must be present"
             )
-        if direct_url.dir_info is not None and not direct_url.url.startswith("file://"):
+        if (
+            direct_url.dir_info is not None
+            and urllib.parse.urlsplit(direct_url.url).scheme != "file"
+        ):
             raise DirectUrlValidationError(
                 "URL scheme must be file:// when dir_info is present",
                 context="url",
