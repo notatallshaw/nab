@@ -584,7 +584,6 @@ class TestPreference:
 class TestMaxIterations:
     def test_exceeds_max_iterations(self) -> None:
         """Resolver raises when max_iterations is exceeded."""
-        # Create a scenario that needs many rounds
         provider = DictProvider(
             {
                 "root": {1: {"a": Range.full()}},
@@ -1302,7 +1301,6 @@ class TestRestart:
         With restart: after 5 conflicts, a is promoted, decided first,
         and b is only decided once at the end.
         """
-        # Provider that promotes high-conflict packages
         a_versions = {}
         for v in range(10, 0, -1):
             a_versions[v] = {"b": Range.at_least(v)}
@@ -1319,7 +1317,6 @@ class TestRestart:
         assert result["a"] == 1
         assert result["b"] == 1
         assert resolver.stats.restarts >= 1
-        # With restart + promotion, fewer decisions than without
         assert resolver.stats.decisions < 30
 
     def test_restarts_are_bounded(self) -> None:
@@ -1584,7 +1581,6 @@ class TestForceBacktrack:
         )
         resolver = Resolver(provider)
         resolver.resolve({"root": Range.singleton(1)})
-        # Force-backtrack target should have been queued at least once.
         assert provider._fired
 
     def test_resolver_triggers_backtrack_path(self) -> None:
@@ -1715,7 +1711,6 @@ class TestDependencyMerge:
             cause=IncompatibilityCause.DEPENDENCY,
         )
         add_incompatibility(r, second)
-        # One stored clause; package term covers both versions.
         assert len(r.incompatibilities) == 1
         merged = r.incompatibilities[0]
         assert 1 in merged.terms[0].constraint
@@ -1740,7 +1735,6 @@ class TestDependencyMerge:
             cause=IncompatibilityCause.DEPENDENCY,
         )
         add_incompatibility(r, second)
-        # The new clause is fully subsumed by the existing range.
         assert len(r.incompatibilities) == 1
         assert r.incompatibilities[0] is first
 
@@ -1775,7 +1769,6 @@ class TestErrorMessages:
             resolver.resolve({"root": Range.singleton(1)})
         message = str(exc_info.value)
         assert "D" in message or "A" in message or "E" in message
-        # The error should have a derived incompatibility with causes
         root_inc = exc_info.value.incompatibility
         assert root_inc is not None
 

@@ -68,8 +68,7 @@ def conflict_resolution(
 
     while True:
         if is_terminal_incompatibility(current_incompatibility):
-            # Unreachable in practice: the backjump_target == 0 check below
-            # preempts this path.  Kept as a safety net.
+            # Unreachable: the backjump_target == 0 check below raises first.
             raise ResolutionError(  # pragma: no cover
                 format_error(current_incompatibility),
                 incompatibility=current_incompatibility,

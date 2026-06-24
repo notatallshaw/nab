@@ -38,7 +38,6 @@ STAT_LABELS = {
     "look_ahead_rejections": "Look-ahead rejections",
     "packages_resolved": "Packages resolved",
     "wall_time_seconds": "Wall time (s)",
-    # legacy keys (older results before stats rework):
     "listing_requests": "Listing requests (legacy)",
     "metadata_requests": "Metadata requests (legacy)",
 }

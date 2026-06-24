@@ -410,7 +410,6 @@ class Provider:
     # blockers that are also the right pin.
     _MAX_FORCE_BACKTRACKS_PER_PKG = 3
 
-    # Re-exported from _provider.priority so test references keep resolving.
     TIER_AFFECTED = _priority.TIER_AFFECTED
     TIER_NORMAL = _priority.TIER_NORMAL
     TIER_CULPRIT = _priority.TIER_CULPRIT

@@ -3158,7 +3158,6 @@ class TestExtras:
         provider = Provider(coordinator, python_version="3.12.0")
         provider.get_dependencies("foo[security]", V("1.0"))
         provider.get_dependencies("foo[security]", V("1.0"))
-        # Deps should be cached after first call
         assert ("foo[security]", V("1.0")) in provider.deps_cache
 
     def test_prioritize_extras_before_base(self) -> None:
@@ -3250,10 +3249,8 @@ class TestExtras:
         )
         provider = Provider(coordinator, python_version="3.12.0")
         base_deps = provider.get_dependencies("foo", V("1.0"))
-        # bar is a base dep (env marker, not extra-gated)
         assert "bar" in base_deps
         extra_deps = provider.get_dependencies("foo[dev]", V("1.0"))
-        # baz is from the extra, bar should not be in extra deps
         assert "baz" in extra_deps
         assert "bar" not in extra_deps
 
@@ -3686,7 +3683,6 @@ class TestDistPolicy:
         )
         provider = Provider(coordinator, dist_policy=DistPolicy.WHEEL_ONLY)
         versions = provider.fetch_versions("pkg")
-        # Only the wheel should remain
         assert len(versions) == 1
         assert isinstance(versions[0][1], WheelFile)
 
@@ -4273,7 +4269,6 @@ class TestPickBestCandidateNone:
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
         with patch.object(provider, "pick_best_candidate", return_value=None):
-            # Should return without requesting any metadata.
             provider.speculative_prefetch("foo", [(V("1.0"), wheels[0])])
         coordinator.request_metadata.assert_not_called()
 

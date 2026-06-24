@@ -155,7 +155,6 @@ class TestInfinitySentinels:
     def test_infinity_hashing(self) -> None:
         from nab_resolver.ranges import NEGATIVE_INFINITY, POSITIVE_INFINITY
 
-        # Must be hashable for use in sets/dicts
         hashable_set = {NEGATIVE_INFINITY, POSITIVE_INFINITY}
         assert len(hashable_set) == 2
         assert hash(NEGATIVE_INFINITY) == hash(NEGATIVE_INFINITY)
@@ -173,8 +172,8 @@ class TestRangeContainment:
 
     def test_exact_boundary_inclusive(self) -> None:
         r = Range.between(2, 5)
-        assert 2 in r  # inclusive lower
-        assert 5 not in r  # exclusive upper
+        assert 2 in r
+        assert 5 not in r
 
     def test_at_most(self) -> None:
         r = Range.at_most(3)

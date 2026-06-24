@@ -2,8 +2,8 @@
 
 Wraps :func:`packaging.utils.canonicalize_name` so the local- and
 multi-index modules share a single helper.  ``packaging`` is already
-a runtime dependency (see ``pyproject.toml``), so deferring to it
-avoids the divergent regexes the helpers used to carry.
+a runtime dependency (see ``pyproject.toml``), so the helpers defer
+to it.
 """
 
 from __future__ import annotations

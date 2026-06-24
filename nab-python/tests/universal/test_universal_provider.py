@@ -158,7 +158,6 @@ class TestPreferences:
             marker_environment=_LINUX_ENV,
             preferences={"My-Cool_Pkg": Version("1.0")},
         )
-        # canonicalize_name lowercases and replaces underscores with hyphens
         assert "my-cool-pkg" in provider._preferences
 
     def test_preference_used_when_in_range(self) -> None:
@@ -182,10 +181,7 @@ class TestPreferences:
             marker_environment=_LINUX_ENV,
             preferences={"pkg": Version("5.0")},
         )
-        # Range >=2.0 admits 2.0 and 3.0; preference 5.0 isn't in
-        # listing so we fall through to highest.
         result = provider.choose_version("pkg", VersionRange.full())
-        # Highest in the listing is 3.0; preference 5.0 isn't a candidate.
         assert result == Version("3.0")
 
 

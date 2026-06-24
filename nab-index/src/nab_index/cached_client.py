@@ -5,9 +5,6 @@ before any HTTP transport call. Honors a small subset of RFC 9111:
 fresh entries are served directly, stale entries are revalidated with
 ``If-None-Match``, and PEP 658 metadata + sdist PKG-INFO are treated
 as immutable (cached forever; never revalidated).
-
-Cache hits short-circuit before any HTTP code runs. With a fully
-populated cache the client never opens a socket.
 """
 
 from __future__ import annotations

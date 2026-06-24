@@ -559,9 +559,7 @@ def _parse_requirements(
     """Convert PEP 508 strings to resolver requirements for ``environment``.
 
     Marker-gated requirements whose marker evaluates to False in
-    ``environment`` are dropped.  This matches what
-    ``Provider._classify_requirement`` does for transitive deps;
-    we just apply the same rule at the root.
+    ``environment`` are dropped, as for transitive deps.
 
     A direct-URL/VCS requirement is refused via :func:`admit_vcs_url`,
     mirroring the single-environment path; universal resolution of such

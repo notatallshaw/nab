@@ -216,10 +216,7 @@ def _scenario_inputs(scenario: dict) -> dict | None:
     )
     build_policy_overrides = _scenarios.parse_build_packages("sweep", scenario)
     if marker_env and build_policy_overrides:
-        # See ``scenarios.py``: BUILD_REMOTE + marker_environment is
-        # rejected at provider construction.  Drop the overrides so the
-        # sweep keeps running; a scenario that now fails was relying on
-        # the prior silent passthrough.
+        # BUILD_REMOTE + marker_environment is rejected at provider construction.
         build_policy_overrides = []
     return {
         "requirements": requirements,
