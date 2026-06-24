@@ -52,7 +52,7 @@ def resolve_metadata(
     only sdist values are subject to the :pep:`643` Dynamic
     guarantees and may need a ``pyproject.toml`` fallback.
     """
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from ..provider import MetadataError
 
     _, _, normalized = provider.split_and_normalize(package)

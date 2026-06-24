@@ -157,7 +157,7 @@ def _extend_with_dep_strings(
 
 def _parse_dep(dep: str, extra: str | None) -> Requirement | None:
     """Parse one PEP 508 string, warning and dropping if it is malformed."""
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: avoids a circular import with ``provider``.
     from .provider import _add_extra_marker  # noqa: PLC0415
 
     try:

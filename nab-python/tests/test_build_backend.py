@@ -74,7 +74,6 @@ class TestExtractStaticMetadata:
         assert "pytest" in names
         assert "sphinx" in names
         assert sorted(meta.provides_extra) == ["dev", "docs"]
-        # The pytest entry has an extra marker
         pytest_req = next(r for r in meta.requires_dist if r.name == "pytest")
         assert pytest_req.marker is not None
         assert 'extra == "dev"' in str(pytest_req.marker)
