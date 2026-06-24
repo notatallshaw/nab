@@ -22,8 +22,17 @@ from nab_python.config import (
     conflict_forks,
     index_routes_from_config,
     read_pyproject_config,
-    read_pyproject_lock_anchor,
     validate_conflict_minimums,
+)
+from nab_python.config_sources import (
+    SourceConfigError,
+    SourceRoots,
+    build_cli_layer,
+    discover_layers,
+    read_env_layer,
+    render_explain,
+    render_get,
+    resolve_config,
 )
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from nab_python.provider import (
@@ -42,6 +51,39 @@ def write(tmp_path: Path, body: str) -> Path:
     p = tmp_path / "pyproject.toml"
     p.write_text(body)
     return p
+
+
+class TestCliOverridesFold:
+    """``--project-*`` overrides fold into the resolved config."""
+
+    def test_cli_override_beats_file_scalar(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\ndist-policy = "wheel-or-sdist"\n')
+        config = read_pyproject_config(
+            path, discover_workspace=False, cli_overrides={"dist-policy": "sdist-only"}
+        )
+        assert config.dist_policy is DistPolicy.SDIST_ONLY
+
+    def test_cli_overrides_none_matches_no_overrides(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\ndist-policy = "sdist-only"\n')
+        plain = read_pyproject_config(path, discover_workspace=False)
+        explicit_none = read_pyproject_config(
+            path, discover_workspace=False, cli_overrides=None
+        )
+        assert plain == explicit_none
+
+    def test_cli_array_appends_after_files(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nconstraints = ["a<1"]\n')
+        config = read_pyproject_config(
+            path, discover_workspace=False, cli_overrides={"constraints": ["b<2"]}
+        )
+        assert config.constraints == ("a<1", "b<2")
+
+    def test_cli_mode_universal_requires_matrix(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        with pytest.raises(ConfigError, match=r"requires a \[tool.nab.matrix\]"):
+            read_pyproject_config(
+                path, discover_workspace=False, cli_overrides={"mode": "universal"}
+            )
 
 
 class TestDefaults:
@@ -118,6 +160,21 @@ class TestTopLevelKeys:
             '[tool.nab.packages.foo]\ndist-policy = "wheel-only"\n',
         )
         with pytest.raises(ConfigError, match="not valid TOML"):
+            read_pyproject_config(path)
+
+    @pytest.mark.parametrize("user_key", ["offline = true", 'cache-dir = "x"'])
+    def test_user_scope_key_in_pyproject_rejected(
+        self, tmp_path: Path, user_key: str
+    ) -> None:
+        # A USER-scope registry option in pyproject [tool.nab] surfaces the
+        # registry category error (single parse path), not the generic
+        # unknown-key error.  This pins the reject_user_keys_in_pyproject
+        # call ahead of the unknown-key check inside _parse_nab_table.
+        path = write(tmp_path, f"[tool.nab]\n{user_key}\n")
+        with pytest.raises(
+            SourceConfigError,
+            match="user-scope option and cannot be set in pyproject",
+        ):
             read_pyproject_config(path)
 
     @pytest.mark.parametrize(
@@ -772,57 +829,6 @@ class TestUploadedPriorTo:
             read_pyproject_config(path)
 
 
-class TestReadLockAnchor:
-    """``read_pyproject_lock_anchor`` returns only absolute cutoffs."""
-
-    def test_iso_string(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path, '[tool.nab]\nuploaded-prior-to = "2026-05-01T00:00:00Z"\n'
-        )
-        assert read_pyproject_lock_anchor(path) == datetime(
-            2026, 5, 1, tzinfo=timezone.utc
-        )
-
-    def test_native_toml_datetime(self, tmp_path: Path) -> None:
-        path = write(tmp_path, "[tool.nab]\nuploaded-prior-to = 2026-05-01T00:00:00Z\n")
-        assert read_pyproject_lock_anchor(path) == datetime(
-            2026, 5, 1, tzinfo=timezone.utc
-        )
-
-    def test_duration_returns_none(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\nuploaded-prior-to = "P4D"\n')
-        assert read_pyproject_lock_anchor(path) is None
-
-    def test_absent_returns_none(self, tmp_path: Path) -> None:
-        path = write(tmp_path, "[tool.nab]\n")
-        assert read_pyproject_lock_anchor(path) is None
-
-    def test_invalid_value_returns_none(self, tmp_path: Path) -> None:
-        # The full config parse reports the error; the anchor read stays quiet.
-        path = write(tmp_path, '[tool.nab]\nuploaded-prior-to = "not-a-date"\n')
-        assert read_pyproject_lock_anchor(path) is None
-
-    def test_non_table_tool_nab_returns_none(self, tmp_path: Path) -> None:
-        path = write(tmp_path, 'tool = {nab = "oops"}\n')
-        assert read_pyproject_lock_anchor(path) is None
-
-    def test_non_table_tool_returns_none(self, tmp_path: Path) -> None:
-        path = write(tmp_path, 'tool = "oops"\n')
-        assert read_pyproject_lock_anchor(path) is None
-
-    def test_missing_file_returns_none(self, tmp_path: Path) -> None:
-        assert read_pyproject_lock_anchor(tmp_path / "missing.toml") is None
-
-    def test_directory_returns_none(self, tmp_path: Path) -> None:
-        # A directory is left for the full config parse to report, like a missing file.
-        assert read_pyproject_lock_anchor(tmp_path) is None
-
-    def test_malformed_toml_returns_none(self, tmp_path: Path) -> None:
-        # A syntax error is left for the full config parse to report.
-        path = write(tmp_path, '[project]\ndependencies = ["foo"\n')
-        assert read_pyproject_lock_anchor(path) is None
-
-
 class TestPolicies:
     def test_sdist_and_build_round_trip(self, tmp_path: Path) -> None:
         path = write(
@@ -1182,6 +1188,26 @@ class TestLocalSources:
         srcs = read_pyproject_config(path).local_sources
         assert srcs == (LocalSource(name="my-fork", path=str(sibling.resolve())),)
 
+    def test_relative_path_base_is_symlink_dir(self, tmp_path: Path) -> None:
+        # A relative local-sources path resolves against the symlink's own
+        # directory, not the symlink target's directory.
+        target_dir = tmp_path / "real"
+        target_dir.mkdir()
+        link_dir = tmp_path / "link_dir"
+        link_dir.mkdir()
+        real_pyproject = target_dir / "pyproject.toml"
+        real_pyproject.write_text(
+            '[[tool.nab.local-sources]]\nname = "foo"\npath = "./libs/foo"\n'
+        )
+        link_pyproject = link_dir / "pyproject.toml"
+        link_pyproject.symlink_to(real_pyproject)
+        srcs = read_pyproject_config(
+            link_pyproject, discover_workspace=False
+        ).local_sources
+        assert srcs == (
+            LocalSource(name="foo", path=str((link_dir / "libs" / "foo").resolve())),
+        )
+
     def test_absolute_path_unchanged(self, tmp_path: Path) -> None:
         abs_dir = tmp_path / "abs-fork"
         abs_dir.mkdir()
@@ -1478,7 +1504,22 @@ class TestPackageSugar:
 
     def test_routing_unknown_index_rejected(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab.packages.foo]\nindex = "nope"\n')
-        with pytest.raises(ConfigError, match="routes to undeclared index"):
+        with pytest.raises(
+            ConfigError, match=r"packages\.'foo'\.index routes to undeclared index"
+        ):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_routing_unknown_index_via_package_rules_names_that_surface(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.package-rules]]\nmatch = ["foo"]\nindex = "nope"\n',
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"package-rules\[0\]\.index routes to undeclared index",
+        ):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_index_must_be_string(self, tmp_path: Path) -> None:
@@ -2512,3 +2553,221 @@ class TestWorkspaceDiscoveryIntegration:
         assert config.default_groups == ()
         assert config.constraints == ()
         assert config.conflicts == ()
+
+
+def _inspect(path: Path, key: str) -> str:
+    """Render ``nab config get <key>`` the way the inspector would.
+
+    Discovers the same project-dir ladder ``read_pyproject_config`` reads
+    (pyproject + project-dir ``nab.toml``) and renders the effective value,
+    so a test can assert the inspector reports exactly what the resolve
+    consumes.
+    """
+    roots = SourceRoots(project_dir=path.parent.resolve(), pyproject=path.resolve())
+    layers = discover_layers(roots)
+    effective = resolve_config(layers, read_env_layer({}), build_cli_layer({}))
+    return render_get(effective, key).strip()
+
+
+def _explain(path: Path, key: str) -> str:
+    roots = SourceRoots(project_dir=path.parent.resolve(), pyproject=path.resolve())
+    layers = discover_layers(roots)
+    effective = resolve_config(layers, read_env_layer({}), build_cli_layer({}))
+    return render_explain(effective, key)
+
+
+class TestProjectNabTomlConfiguresResolve:
+    """A project-dir ``nab.toml`` functionally configures every PROJECT key.
+
+    Each test sets a value ONLY in a project-dir ``nab.toml`` (never in
+    pyproject) and asserts (a) ``read_pyproject_config`` (what the resolve
+    consumes) reflects it and (b) ``nab config get/explain`` (the
+    inspector) agrees, one representative key per structural type.
+    """
+
+    def _write(self, tmp_path: Path, pyproject: str, nab_toml: str) -> Path:
+        path = tmp_path / "pyproject.toml"
+        path.write_text(pyproject)
+        (tmp_path / "nab.toml").write_text(nab_toml)
+        return path
+
+    def test_scalar_build_policy(self, tmp_path: Path) -> None:
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n',
+            'build-policy = "never"\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.build_policy is BuildPolicy.NEVER
+        assert _inspect(path, "build-policy") == "never"
+        assert "project" in _explain(path, "build-policy")
+
+    def test_scalar_dist_policy_folds_trust(self, tmp_path: Path) -> None:
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n',
+            '[dist-policy]\npolicy = "wheel-only"\ntrust-unverified-deps = true\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.dist_policy is DistPolicy.WHEEL_ONLY
+        assert config.trust_unverified_sdist_deps is True
+        assert "wheel-only" in _inspect(path, "dist-policy")
+
+    def test_table_vcs(self, tmp_path: Path) -> None:
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n',
+            '[vcs]\npolicy = "allow"\nallowed-schemes = ["https"]\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.vcs.policy is VcsPolicy.ALLOW
+        assert config.vcs.allowed_schemes == frozenset({"https"})
+        assert "policy=allow" in _inspect(path, "vcs")
+
+    def test_table_marker_environment(self, tmp_path: Path) -> None:
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n',
+            '[marker-environment]\nsys_platform = "linux"\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.marker_environment == {"sys_platform": "linux"}
+        assert "sys_platform=linux" in _inspect(path, "marker-environment")
+
+    def test_list_constraints(self, tmp_path: Path) -> None:
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n',
+            'constraints = ["foo<2"]\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.constraints == ("foo<2",)
+        assert _inspect(path, "constraints") == "foo<2"
+
+    def test_list_constraints_concat_across_files(self, tmp_path: Path) -> None:
+        # Array concat: a pyproject list and a project-nab.toml list merge
+        # additively, they do not conflict.
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n'
+            '[tool.nab]\nconstraints = ["foo<2"]\n',
+            'constraints = ["bar<3"]\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.constraints == ("foo<2", "bar<3")
+        assert _inspect(path, "constraints") == "foo<2, bar<3"
+
+    def test_array_of_tables_indexes(self, tmp_path: Path) -> None:
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n',
+            "[[indexes]]\n"
+            'name = "internal"\n'
+            'url = "https://pkgs.example.com/simple/"\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert [i.name for i in config.indexes] == ["internal"]
+        assert "internal=https://pkgs.example.com/simple/" in _inspect(path, "indexes")
+
+    def test_override_table_packages(self, tmp_path: Path) -> None:
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n',
+            '[packages.numpy]\nbuild-policy = "never"\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.name == "numpy"
+        assert override.build_policy is BuildPolicy.NEVER
+        assert "numpy" in _inspect(path, "packages")
+
+    def test_override_table_index(self, tmp_path: Path) -> None:
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n',
+            "[[indexes]]\n"
+            'name = "internal"\n'
+            'url = "https://pkgs.example.com/simple/"\n'
+            '[index.internal]\ndist-policy = "wheel-only"\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.index_overrides["internal"].dist_policy is DistPolicy.WHEEL_ONLY
+        assert "internal" in _inspect(path, "index")
+
+    def test_cross_field_matrix_and_mode(self, tmp_path: Path) -> None:
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n',
+            'mode = "universal"\n'
+            "[matrix]\n"
+            'python = ">=3.11,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.mode is ResolveMode.UNIVERSAL
+        assert config.matrix is not None
+        assert config.matrix.platforms == ("linux_x86_64",)
+        # Universal mode forces the build-policy floor to never even though
+        # the project-nab.toml set no build-policy.
+        assert config.build_policy is BuildPolicy.NEVER
+        assert _inspect(path, "mode") == "universal"
+
+    def test_uploaded_prior_to_duration_anchored(self, tmp_path: Path) -> None:
+        # A P<n>D duration set in the project nab.toml anchors against the
+        # lock anchor the resolve threads, not a fresh now().
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n',
+            'uploaded-prior-to = "P4D"\n',
+        )
+        anchor = datetime(2024, 1, 5, tzinfo=timezone.utc)
+        config = read_pyproject_config(path, discover_workspace=False, anchor=anchor)
+        assert config.uploaded_prior_to == datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+
+class TestProjectNabTomlGateAndConflict:
+    """The category gate and the cross-file conflict fire on the resolve path."""
+
+    def test_user_key_in_pyproject_still_rejected(self, tmp_path: Path) -> None:
+        # A USER-scope key in pyproject [tool.nab] is the category gate; it
+        # must still error when a project nab.toml is present.
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            '[project]\nname = "x"\nversion = "0"\n[tool.nab]\noffline = true\n'
+        )
+        (tmp_path / "nab.toml").write_text('resolution = "lowest"\n')
+        with pytest.raises(
+            SourceConfigError,
+            match="user-scope option and cannot be set in pyproject",
+        ):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_conflict_across_project_files_rejected(self, tmp_path: Path) -> None:
+        # The same scalar key set to different values in pyproject and the
+        # project nab.toml is a hard error on the resolve path.
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            '[tool.nab]\nbuild-policy = "build-local"\n'
+        )
+        (tmp_path / "nab.toml").write_text('build-policy = "never"\n')
+        with pytest.raises(SourceConfigError, match="conflicting values"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_override_overlap_across_project_files_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        # The per-package same-field overlap composes with the cross-file
+        # rule: an override in pyproject and an overlapping one in the project
+        # nab.toml is the hard overlap error, not a silent last-win.
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            '[tool.nab.packages.numpy]\nbuild-policy = "never"\n'
+        )
+        (tmp_path / "nab.toml").write_text(
+            '[packages.numpy]\nbuild-policy = "build-local"\n'
+        )
+        with pytest.raises(SourceConfigError, match="overlapping versions"):
+            read_pyproject_config(path, discover_workspace=False)

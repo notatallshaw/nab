@@ -82,14 +82,25 @@ def write_lock(
     machines (PEP 751 records those paths relative to the lock file).
     With no ``output_path`` the current directory is the base.
     """
-    require_artifact_hashes(lock_input)
     lock_dir = Path(output_path).parent if output_path is not None else None
-    pylock = build_pylock(lock_input, lock_dir=lock_dir)
-    pylock.validate()
-    text = tomli_w.dumps(dict(pylock.to_dict()))
+    text = render_lock(lock_input, lock_dir=lock_dir)
     if output_path is not None:
         Path(output_path).write_text(text, encoding="utf-8")
     return text
+
+
+def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
+    """Serialise ``lock_input`` to PEP 751 TOML text without writing a file.
+
+    ``lock_dir`` is the directory the lock will live in; directory, wheel
+    and sdist paths are emitted relative to it so the lock stays portable.
+    Defaults to the current directory.  Used by ``write_lock`` and by
+    ``nab lock --locked`` to render the would-be lock for comparison.
+    """
+    require_artifact_hashes(lock_input)
+    pylock = build_pylock(lock_input, lock_dir=lock_dir)
+    pylock.validate()
+    return tomli_w.dumps(dict(pylock.to_dict()))
 
 
 def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylock:

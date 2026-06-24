@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import tyro
 from tyro.extras import SubcommandApp
@@ -28,12 +30,30 @@ from nab_python.config import (
     NabProjectConfig,
     read_pyproject_config,
 )
+from nab_python.config_sources import (
+    OPTIONS,
+    EffectiveValue,
+    RejectedLayer,
+    Scope,
+    SourceConfigError,
+    SourceKind,
+    SourceRoots,
+    build_cli_layer,
+    build_cli_overrides,
+    discover_layers,
+    inspector_anchor,
+    project_cli_override_notice,
+    project_cli_override_records,
+    read_env_layer,
+    resolve_config,
+)
 from nab_python.download import download_lock  # noqa: F401 - re-exported for tests
 from nab_python.lockfile import (
     DisjointnessError,  # noqa: F401 - referenced as _cli.DisjointnessError in _lock
     DivergentBaseDependencyError,  # noqa: F401 - referenced via _cli in _lock
     MissingHashError,
     MissingSdistError,
+    render_lock,  # noqa: F401 - referenced as _cli.render_lock in _lock
     write_lock,  # noqa: F401 - re-exported for tests
     write_requirements_with_hashes,  # noqa: F401 - re-exported for tests
     write_requirements_without_hashes,  # noqa: F401 - re-exported for tests
@@ -51,7 +71,7 @@ from nab_python.workspace import WorkspaceDiscoveryError
 from nab_resolver.resolver import ResolutionError
 
 if TYPE_CHECKING:
-    from datetime import datetime
+    from collections.abc import Mapping
 
     from nab_index.transport import AsyncHttpTransport
     from nab_python.provider import ResolutionStrategy
@@ -71,6 +91,11 @@ PathArg = Annotated[Path, tyro.conf.Positional]
 HttpBackend = Literal["urllib3", "httpx"]
 LockFormat = Literal["pylock", "requirements", "requirements-without-hashes"]
 ResolutionFlag = Literal["highest", "lowest", "lowest-direct"]
+ModeFlag = Literal["specific", "universal"]
+DistPolicyFlag = Literal[
+    "wheel-only", "prefer-wheel", "wheel-or-sdist", "sdist-only", "sdist-install"
+]
+BuildPolicyFlag = Literal["never", "build-local", "build-remote"]
 
 _DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.toml",
@@ -124,20 +149,258 @@ def _resolve_effective_cache_dir(cache_dir: Path | None, *, cache: bool) -> Path
     return _default_cache_dir()
 
 
-def _load_config(
+def _config_search_roots(pyproject: Path) -> SourceRoots:
+    """Locate the system/user/project config roots for ``pyproject``.
+
+    Uses the same XDG roots as cache-dir: the user ``nab.toml`` lives at
+    ``$XDG_CONFIG_HOME/nab/nab.toml`` or ``~/.config/nab/nab.toml``; the
+    system file at ``/etc/nab/nab.toml``.  Tests inject roots by
+    monkeypatching this function, so the real ``~/.config`` is never
+    touched in the suite.  Discovery is project-dir only.  There is no
+    walk-up.
+
+    ``pyproject`` is the project file the user pointed at, threaded
+    through so the registry's pyproject layer reads that exact file even
+    when its name is not ``pyproject.toml``; the project-dir ``nab.toml``
+    is looked up beside it.  The pyproject root keeps the file's own
+    directory (resolved) rather than resolving the file itself, so a
+    relative ``local-sources`` path resolves against the symlink's
+    directory, matching the resolve path; ``open`` still follows the
+    symlink to read it.
+    """
+    base = os.environ.get("XDG_CONFIG_HOME")
+    user_dir = Path(base) if base else Path.home() / ".config"
+    project_dir = pyproject.parent.resolve()
+    return SourceRoots(
+        system_toml=Path("/etc/nab/nab.toml"),
+        user_toml=user_dir / "nab" / "nab.toml",
+        project_dir=project_dir,
+        pyproject=project_dir / pyproject.name,
+    )
+
+
+def effective_config(
     path: Path,
     *,
-    discover_workspace: bool = True,
-    anchor: datetime | None = None,
-) -> NabProjectConfig:
+    cli_overrides: Mapping[str, object] | None = None,
+    collect_rejected: bool = False,
+    rejected_out: list[RejectedLayer] | None = None,
+) -> dict[str, EffectiveValue]:
+    """Resolve the full layered config for the pyproject at ``path``.
+
+    Discovers the system/user/project TOML layers (roots from
+    :func:`_config_search_roots`), reads the ``NAB_*`` env layer, builds
+    the CLI layer from ``cli_overrides`` (only keys the user set), and
+    merges them through the registry.  Returns the effective map; when
+    ``collect_rejected`` is set the category-rejections are attached per
+    key (``EffectiveValue.rejected``) for ``explain --include-rejected``.
+    ``rejected_out``, when supplied, is filled with the full rejection
+    list so the caller can also surface the orphan rejections (an unknown
+    key or ``NAB_*`` var that names no registry option, and so attaches to
+    no key) that ``nab config list`` reports.
+    """
+    roots = _config_search_roots(path)
+    rejected: list[RejectedLayer] = []
+    sink = rejected if collect_rejected else None
+    # Pin one ``now`` for the pass so identical relative ``P<n>D`` override
+    # durations across the two project files are not read as conflicting
+    # values (the resolve path uses its lockfile anchor instead).
+    with inspector_anchor():
+        layers = discover_layers(roots, rejections=sink)
+        env_layer = read_env_layer(os.environ, rejections=sink)
+        cli_layer = build_cli_layer(cli_overrides or {})
+        if rejected_out is not None:
+            rejected_out.extend(rejected)
+        return resolve_config(layers, env_layer, cli_layer, rejected=rejected)
+
+
+def lock_anchor(
+    path: Path, cli_overrides: Mapping[str, object] | None = None
+) -> datetime | None:
+    """Return the absolute ``uploaded-prior-to`` cutoff for ``nab lock``.
+
+    Sources the cutoff through the same registry ladder the resolve uses
+    (so a value set in the project-dir ``nab.toml`` is honoured exactly
+    like one in pyproject ``[tool.nab]``).  ``cli_overrides`` lets a
+    ``--project-uploaded-prior-to`` flag set the cutoff too, so the lock
+    anchor matches the resolve window the override produces.  An absolute
+    datetime is the lock anchor: the resolve window is already fixed, so
+    anchoring there makes ``created-at`` deterministic and two locks from
+    identical inputs produce identical bytes.  A relative ``P<n>D``
+    duration anchors to run time, so it is not reproducible and returns
+    ``None``; an unset value returns ``None`` too.  Config errors are
+    swallowed here (the full resolve parse reports them) so this
+    best-effort read never crashes.
+    """
+    try:
+        effective = effective_config(path, cli_overrides=cli_overrides)
+    except SourceConfigError:
+        return None
+    value = effective["uploaded-prior-to"].value
+    return value if isinstance(value, datetime) else None
+
+
+@dataclass(frozen=True, slots=True)
+class RunSettings:
+    """The run knobs a subcommand reads from the layered config for one run."""
+
+    resolution: ResolutionStrategy | None
+    offline: bool
+    cache_dir: Path | None
+    http_backend: HttpBackend
+    max_concurrency: int
+    # The (flag, rendered value) pairs for any --project-* override set on
+    # the CLI, recorded into the lockfile provenance so the lock is auditable.
+    cli_project_overrides: tuple[tuple[str, str], ...]
+
+
+def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a registry key
+    *,
+    cli_resolution: str | None,
+    cli_offline: bool | None,
+    cli_cache_dir: Path | None,
+    cli_http_backend: str | None = None,
+    cli_max_concurrency: int | None = None,
+    cli_mode: str | None = None,
+    cli_requires_python: str | None = None,
+    cli_uploaded_prior_to: str | None = None,
+    cli_dist_policy: str | None = None,
+    cli_build_policy: str | None = None,
+    cli_constraint: tuple[str, ...] = (),
+    cli_default_group: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Build the registry-keyed CLI override dict from the named flags.
+
+    The one place the ``cli_param`` -> value mapping is written: the run
+    subcommands and ``nab config`` route their flag values through here so
+    the literal lives once.  ``build_cli_overrides`` then keeps only the
+    keys the user actually set.  USER options and the ``--project-*``
+    overrides for the scalar and array PROJECT options pass through; the
+    structured PROJECT tables stay file-only.
+    """
+    return build_cli_overrides(
+        {
+            "project_resolution": cli_resolution,
+            "offline": cli_offline,
+            "cache_dir": cli_cache_dir,
+            "http_backend": cli_http_backend,
+            "max_concurrency": cli_max_concurrency,
+            "project_mode": cli_mode,
+            "project_requires_python": cli_requires_python,
+            "project_uploaded_prior_to": cli_uploaded_prior_to,
+            "project_dist_policy": cli_dist_policy,
+            "project_build_policy": cli_build_policy,
+            "project_constraint": cli_constraint,
+            "project_default_group": cli_default_group,
+        }
+    )
+
+
+def project_config_overrides(
+    cli_overrides: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the PROJECT-scope CLI overrides that belong in the config.
+
+    ``resolution`` is excluded: it keeps its own ``resolution_strategy``
+    path into the resolver, so it must not also enter the merged config.
+    USER options are excluded too (they configure the run, not the project).
+    The rest are the ``--project-*`` overrides the resolve folds in through
+    :func:`config.read_pyproject_config`.
+    """
+    project_keys = {
+        spec.key
+        for spec in OPTIONS
+        if spec.scope is Scope.PROJECT and spec.key != "resolution"
+    }
+    return {key: value for key, value in cli_overrides.items() if key in project_keys}
+
+
+def _layered_run_settings(
+    path: Path, cli_overrides: Mapping[str, object]
+) -> tuple[RunSettings, Mapping[str, EffectiveValue]]:
+    """Fold the layered registry values into a subcommand's run knobs.
+
+    Returns the :class:`RunSettings` reflecting the full ladder, plus the
+    effective map so the caller can emit the reproducibility notice for a
+    CLI PROJECT override.  ``resolution`` stays ``None`` (config wins
+    downstream) when no source above the default set it, preserving the
+    contract that the resolver falls back to ``config.resolution``.
+    """
+    effective = effective_config(path, cli_overrides=cli_overrides)
+    res_ev = effective["resolution"]
+    resolution = res_ev.value if res_ev.origin.kind is not SourceKind.DEFAULT else None
+    settings = RunSettings(
+        resolution=resolution,
+        offline=effective["offline"].value,
+        cache_dir=effective["cache-dir"].value,
+        http_backend=effective["http-backend"].value,
+        max_concurrency=effective["max-concurrency"].value,
+        cli_project_overrides=project_cli_override_records(effective),
+    )
+    return settings, effective
+
+
+def _layered_run_settings_or_exit(
+    path: Path,
+    cli_overrides: Mapping[str, object],
+    *,
+    produces_lock: bool = True,
+) -> RunSettings:
+    """Fold the layered run settings, exiting on a category error.
+
+    Wraps :func:`_layered_run_settings` with the single
+    ``SourceConfigError`` -> ``Config error: ...`` -> ``exit(1)`` mapping
+    shared by ``nab lock`` and ``nab download``.  On success it also emits
+    the reproducibility notice when a PROJECT option was set on the CLI,
+    so a result-shaping override is never silent.  ``produces_lock`` picks
+    the wording: ``nab lock`` warns about the lock it produces while ``nab
+    download`` (which writes no lock) warns only that the resolved set
+    reflects the override.
+    """
+    try:
+        settings, effective = _layered_run_settings(path, cli_overrides)
+    except SourceConfigError as exc:
+        _fail_config(exc)
+    notice = project_cli_override_notice(effective, produces_lock=produces_lock)
+    if notice is not None:
+        sys.stderr.write(notice)
+    return settings
+
+
+def _fail_config(exc: SourceConfigError) -> NoReturn:
+    """Map a layered config error to the shared ``Config error:`` exit."""
+    sys.stderr.write(f"Config error: {exc}\n")
+    sys.exit(1)
+
+
+def _require_pyproject_file(path: Path) -> None:
+    """Exit 1 if ``path`` is not a readable pyproject file.
+
+    Shared by ``_load_config`` (the run path) and ``nab config`` so the
+    not-found/directory wording lives in one place.  A missing or
+    directory ``--path`` is a hard error, not a silently-skipped source.
+    """
     if not path.is_file():
         reason = "is a directory" if path.is_dir() else "not found"
         sys.stderr.write(f"Error: {path} {reason}\n")
         sys.exit(1)
 
+
+def _load_config(
+    path: Path,
+    *,
+    discover_workspace: bool = True,
+    anchor: datetime | None = None,
+    cli_overrides: Mapping[str, object] | None = None,
+) -> NabProjectConfig:
+    _require_pyproject_file(path)
+
     try:
         return read_pyproject_config(
-            path, discover_workspace=discover_workspace, anchor=anchor
+            path,
+            discover_workspace=discover_workspace,
+            anchor=anchor,
+            cli_overrides=cli_overrides,
         )
     except ConfigError as exc:
         sys.stderr.write(f"Error in [tool.nab]: {exc}\n")
@@ -292,6 +555,7 @@ def _print_universal_blocks(result: UniversalResult) -> None:
 # Side-effect imports: each module's @app.command decorators register the
 # subcommand.  Placed at the bottom so helpers above bind before
 # nab._lock / nab._download import back from this module.
+from . import _config_cmd as _config_module  # noqa: E402, F401 - side-effect
 from . import _download as _download_module  # noqa: E402, F401 - side-effect
 from . import _lock as _lock_module  # noqa: E402, F401 - side-effect
 

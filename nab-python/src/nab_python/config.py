@@ -27,12 +27,26 @@ from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import InvalidName, canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
+from .config_sources import (
+    ConfigError,
+    EffectiveValue,
+    SourceKind,
+    SourceRoots,
+    build_cli_layer,
+    discover_layers,
+    pyproject_registry_keys,
+    read_env_layer,
+    reject_user_keys_in_pyproject,
+    resolve_anchor,
+    resolve_config,
+)
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from .provider import (
     BuildPolicy,
     DistPolicy,
     LocalSource,
     ResolutionStrategy,
+    ResolveMode,
     VcsConfig,
     VcsPolicy,
     VcsSource,
@@ -77,30 +91,6 @@ __all__ = [
 ]
 
 
-_TOP_LEVEL_KEYS = frozenset(
-    {
-        "mode",
-        "constraints",
-        "default-groups",
-        "requires-python",
-        "uploaded-prior-to",
-        "dist-policy",
-        "build-policy",
-        "marker-environment",
-        "indexes",
-        "vcs",
-        "local-sources",
-        "vcs-sources",
-        "matrix",
-        "resolution",
-        "workspace",
-        "conflicts",
-        "packages",
-        "package-rules",
-        "index",
-    },
-)
-
 _DURATION_PATTERN = re.compile(r"^P(\d+)D$")
 
 # PEP 508 environment-marker variables; reject a misspelled
@@ -120,20 +110,6 @@ _PEP508_MARKER_VARIABLES = frozenset(
         "implementation_version",
     },
 )
-
-
-class ResolveMode(enum.Enum):
-    """How the resolver interprets the project.
-
-    ``SPECIFIC`` runs the single-environment resolver against one
-    marker environment (host or impersonated).  ``UNIVERSAL`` runs the
-    matrix-based per-tuple resolver and is *experimental*: users
-    must opt in by setting ``[tool.nab].mode = "universal"`` and
-    declaring ``[tool.nab.matrix]``.
-    """
-
-    SPECIFIC = "specific"
-    UNIVERSAL = "universal"
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +260,11 @@ class PackageOverride:
     uploaded_prior_to: datetime | None = None
     uploaded_prior_to_disabled: bool = False
     index: str | None = None
+    # The config surface this entry was declared on (e.g. "packages.'numpy'"
+    # or "package-rules[0]").  Only used to name the source in an error that
+    # is raised after the two project files merge, so it is excluded from
+    # equality.
+    source_label: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,10 +396,6 @@ class NabProjectConfig:
     workspace_member_names: frozenset[str] = field(default_factory=frozenset)
 
 
-class ConfigError(ValueError):
-    """Raised when ``[tool.nab]`` is structurally invalid."""
-
-
 class ConflictSelectionError(ConfigError):
     """A requested extra/group selection violates a declared conflict.
 
@@ -523,6 +500,7 @@ def read_pyproject_config(
     *,
     discover_workspace: bool = True,
     anchor: datetime | None = None,
+    cli_overrides: Mapping[str, Any] | None = None,
 ) -> NabProjectConfig:
     """Parse ``[tool.nab]`` from ``path`` into :class:`NabProjectConfig`.
 
@@ -541,28 +519,195 @@ def read_pyproject_config(
     to skip the walk; useful for tests or for callers that layer their
     own workspace logic on top of a base config.
 
+    The ``[tool.nab]``-config portion is sourced from the registry merged
+    ladder (pyproject ``[tool.nab]`` plus a project-dir ``nab.toml``,
+    merged by :func:`config_sources.resolve_config` with its per-key merge,
+    cross-file conflict check, and category gate), so a project-dir
+    ``nab.toml`` value configures the resolve exactly as the inspector
+    reports it.  The
+    cross-field transforms (mode/matrix, build-policy floors,
+    universal marker-environment ban, source-name uniqueness, declared
+    index references) then run on the merged config; workspace discovery
+    runs last.
+
     ``anchor`` is the timestamp ``P<n>D`` durations resolve against.
     Defaults to ``datetime.now(UTC)`` when not supplied, which gives
     fresh-resolve semantics.  The ``nab lock`` CLI passes the anchor
     captured in any existing lockfile so re-locks reproduce the same
     cutoff for relative durations.
+
+    ``cli_overrides`` carries the ``--project-*`` overrides for the
+    PROJECT options that take a CLI flag, keyed by registry key.  They
+    layer as the highest-precedence source, so a flag wins over both
+    project files and an array flag appends after them.  ``None`` (the
+    default) is a file-only resolve, byte-identical to before.
     """
     if anchor is None:
         anchor = datetime.now(timezone.utc)
-    try:
-        with path.open("rb") as f:
-            data = tomli.load(f)
-    except tomli.TOMLDecodeError as exc:
-        msg = f"{path} is not valid TOML: {exc}"
-        raise ConfigError(msg) from exc
-    raw = tool_nab_section(data)
-    if not isinstance(raw, dict):
-        msg = f"[tool.nab] must be a table, got {type(raw).__name__}"
-        raise ConfigError(msg)
-    config = _parse_nab_table(raw, anchor=anchor, pyproject_dir=path.parent.resolve())
+    pyproject_dir = path.parent.resolve()
+    _reject_unknown_pyproject_keys(path)
+    # Point the pyproject root at ``pyproject_dir / path.name`` (not
+    # ``path.resolve()``) so the registry's declaring directory is the
+    # symlink's own directory, matching the historical local-sources base
+    # and the project-dir nab.toml lookup.  ``open`` still follows the
+    # symlink, so the same file is read.
+    roots = SourceRoots(project_dir=pyproject_dir, pyproject=pyproject_dir / path.name)
+    # Bind the lock anchor so the registry resolves ``P<n>D`` durations
+    # (top-level and override-body) against it, exactly as the old direct
+    # parse did.  System/user nab.toml and env/CLI carry no PROJECT key, so
+    # they are excluded here: this is the file-only project config.
+    with resolve_anchor(anchor):
+        layers = discover_layers(roots)
+        cli_layer = build_cli_layer(cli_overrides or {})
+        effective = resolve_config(layers, read_env_layer({}), cli_layer)
+    config = _config_from_effective(
+        effective, anchor=anchor, pyproject_dir=pyproject_dir
+    )
     if discover_workspace:
         config = _apply_workspace_discovery(path, config)
     return config
+
+
+def _config_from_effective(
+    effective: Mapping[str, EffectiveValue],
+    *,
+    anchor: datetime,
+    pyproject_dir: Path,
+) -> NabProjectConfig:
+    """Assemble :class:`NabProjectConfig` from the registry merged ladder.
+
+    Each ``[tool.nab]`` config key is taken from its effective (merged)
+    value; the registry has already applied the per-key merge, the
+    cross-file conflict rule, and the category gate.  The cross-field
+    transforms the single-key rows deliberately defer (mode/matrix mutual
+    requirement, declared-index references for routing and per-index
+    overrides, the cross-surface package-override overlap, universal
+    build-policy enforcement and the marker-environment ban, the
+    default-groups-vs-conflicts check, and source-name uniqueness) then run
+    here over the merged whole.  Workspace discovery is applied by the
+    caller afterwards.
+    """
+    del anchor  # P<n>D durations are already anchored in the effective map.
+    mode: ResolveMode = effective["mode"].value
+    matrix: MatrixConfig | None = effective["matrix"].value
+    if mode is ResolveMode.UNIVERSAL and matrix is None:
+        msg = (
+            "mode = 'universal' requires a [tool.nab.matrix] table"
+            " declaring python and platforms"
+        )
+        raise ConfigError(msg)
+    if mode is ResolveMode.SPECIFIC and matrix is not None:
+        msg = (
+            "[tool.nab.matrix] is set but mode is 'specific'; set"
+            " mode = 'universal' to opt in to the experimental"
+            " matrix-based resolver"
+        )
+        raise ConfigError(msg)
+
+    dist_policy, trust_unverified = effective["dist-policy"].value
+    indexes: tuple[IndexConfig, ...] = effective["indexes"].value
+    declared_index_names = frozenset(i.name for i in indexes)
+
+    package_overrides = (
+        *effective["packages"].value,
+        *effective["package-rules"].value,
+    )
+    _check_package_override_overlap(package_overrides)
+    _validate_routes_declared(package_overrides, declared_index_names)
+
+    index_overrides: Mapping[str, IndexOverride] = effective["index"].value
+    _validate_index_overrides_declared(index_overrides, declared_index_names)
+
+    marker_environment = effective["marker-environment"].value
+    build_policy: BuildPolicy = effective["build-policy"].value
+    if mode is ResolveMode.UNIVERSAL:
+        build_policy = _enforce_universal_build_policy(
+            build_policy_set=effective["build-policy"].origin.kind
+            is not SourceKind.DEFAULT,
+            build_policy=build_policy,
+            package_overrides=package_overrides,
+            index_overrides=index_overrides,
+        )
+        if marker_environment:
+            msg = (
+                "mode = 'universal' does not support"
+                " [tool.nab.marker-environment]: the matrix defines each"
+                " environment, so a global overlay would conflict with the"
+                " per-tuple values. Drop it or use mode = 'specific'."
+            )
+            raise ConfigError(msg)
+
+    default_groups = effective["default-groups"].value
+    conflicts = effective["conflicts"].value
+    _validate_default_groups_against_conflicts(default_groups, conflicts)
+
+    local_sources = effective["local-sources"].value
+    vcs_sources = effective["vcs-sources"].value
+    _reject_duplicate_source_names(local_sources, vcs_sources)
+
+    del pyproject_dir  # paths were resolved per-layer by the registry.
+    return NabProjectConfig(
+        mode=mode,
+        constraints=effective["constraints"].value,
+        default_groups=default_groups,
+        requires_python=effective["requires-python"].value,
+        uploaded_prior_to=effective["uploaded-prior-to"].value,
+        dist_policy=dist_policy,
+        build_policy=build_policy,
+        trust_unverified_sdist_deps=trust_unverified,
+        marker_environment=marker_environment,
+        indexes=indexes,
+        vcs=effective["vcs"].value,
+        local_sources=local_sources,
+        vcs_sources=vcs_sources,
+        matrix=matrix,
+        resolution=effective["resolution"].value,
+        workspace=effective["workspace"].value,
+        conflicts=conflicts,
+        package_overrides=package_overrides,
+        index_overrides=index_overrides,
+    )
+
+
+def _validate_routes_declared(
+    package_overrides: tuple[PackageOverride, ...],
+    declared_index_names: frozenset[str],
+) -> None:
+    """Reject a routing override that names an index not in ``indexes``.
+
+    A per-package surface is parsed without the declared index set, so the
+    route-points-at-a-real-index check runs here, after the index list is
+    known.  The error names the surface the route was declared on
+    (``packages.'<name>'`` or ``package-rules[N]``).
+    """
+    for pkg_override in package_overrides:
+        route = pkg_override.index
+        if route is not None and route not in declared_index_names:
+            valid = sorted(declared_index_names)
+            msg = (
+                f"{pkg_override.source_label}.index routes to undeclared index"
+                f" {route!r}; declared indexes are {valid!r}"
+            )
+            raise ConfigError(msg)
+
+
+def _validate_index_overrides_declared(
+    index_overrides: Mapping[str, IndexOverride],
+    declared_index_names: frozenset[str],
+) -> None:
+    """Reject a ``[tool.nab.index.<name>]`` key naming an undeclared index.
+
+    The registry parses this surface with ``declared_index_names=None``, so
+    the cross-key check runs post-merge with the single-file message.
+    """
+    for name in index_overrides:
+        if name not in declared_index_names:
+            valid = sorted(declared_index_names)
+            msg = (
+                f"index.{name} names undeclared index {name!r};"
+                f" declared indexes are {valid!r}"
+            )
+            raise ConfigError(msg)
 
 
 _logger = logging.getLogger(__name__)
@@ -604,106 +749,37 @@ def _apply_workspace_discovery(
     )
 
 
-def _parse_nab_table(
-    raw: dict[str, Any], *, anchor: datetime, pyproject_dir: Path
-) -> NabProjectConfig:
-    unknown = sorted(set(raw) - _TOP_LEVEL_KEYS)
+def _reject_unknown_pyproject_keys(path: Path) -> None:
+    """Reject a USER-scope or unknown key in pyproject ``[tool.nab]``.
+
+    Run before the registry merge so the resolve reports a typo'd
+    ``[tool.nab]`` key and a USER-scope key set in pyproject with the
+    established messages.  A USER-scope option (``offline``, ``cache-dir``)
+    surfaces the category error; an unknown key fails loud rather than being
+    silently dropped.  Reads the pyproject raw directly; the registry merge
+    reads the same file again, and this keeps the unknown-key error a
+    ``ConfigError`` on the pyproject surface for everything that is a known
+    key.
+    """
+    try:
+        with path.open("rb") as f:
+            data = tomli.load(f)
+    except tomli.TOMLDecodeError as exc:
+        msg = f"{path} is not valid TOML: {exc}"
+        raise ConfigError(msg) from exc
+    raw = tool_nab_section(data)
+    if not isinstance(raw, dict):
+        msg = f"[tool.nab] must be a table, got {type(raw).__name__}"
+        raise ConfigError(msg)
+    # Parser fold: a USER-scope registry option in pyproject [tool.nab]
+    # surfaces the registry category error before the generic unknown-key
+    # error below.
+    reject_user_keys_in_pyproject(raw)
+    known = pyproject_registry_keys()
+    unknown = sorted(set(raw) - known)
     if unknown:
-        msg = (
-            f"unknown [tool.nab] keys: {unknown!r}; expected one of"
-            f" {sorted(_TOP_LEVEL_KEYS)!r}"
-        )
+        msg = f"unknown [tool.nab] keys: {unknown!r}; expected one of {sorted(known)!r}"
         raise ConfigError(msg)
-
-    mode = _parse_mode(raw.get("mode"))
-    matrix = _parse_matrix(raw.get("matrix"))
-    if mode is ResolveMode.UNIVERSAL and matrix is None:
-        msg = (
-            "mode = 'universal' requires a [tool.nab.matrix] table"
-            " declaring python and platforms"
-        )
-        raise ConfigError(msg)
-    if mode is ResolveMode.SPECIFIC and matrix is not None:
-        msg = (
-            "[tool.nab.matrix] is set but mode is 'specific'; set"
-            " mode = 'universal' to opt in to the experimental"
-            " matrix-based resolver"
-        )
-        raise ConfigError(msg)
-
-    dist_policy, trust_unverified = _parse_dist_policy_global(raw.get("dist-policy"))
-    indexes = _parse_indexes(raw.get("indexes"))
-    declared_index_names = frozenset(i.name for i in indexes)
-    package_overrides = _parse_package_overrides(
-        raw.get("packages"),
-        raw.get("package-rules"),
-        anchor=anchor,
-        declared_index_names=declared_index_names,
-    )
-    index_overrides = _parse_index_overrides(
-        raw.get("index"),
-        anchor=anchor,
-        declared_index_names=declared_index_names,
-    )
-    marker_environment = _parse_marker_environment(raw.get("marker-environment", {}))
-
-    build_policy = _parse_enum(
-        "build-policy", raw.get("build-policy"), BuildPolicy, BuildPolicy.BUILD_LOCAL
-    )
-    if mode is ResolveMode.UNIVERSAL:
-        build_policy = _enforce_universal_build_policy(
-            build_policy_set="build-policy" in raw,
-            build_policy=build_policy,
-            package_overrides=package_overrides,
-            index_overrides=index_overrides,
-        )
-        if marker_environment:
-            msg = (
-                "mode = 'universal' does not support"
-                " [tool.nab.marker-environment]: the matrix defines each"
-                " environment, so a global overlay would conflict with the"
-                " per-tuple values. Drop it or use mode = 'specific'."
-            )
-            raise ConfigError(msg)
-
-    default_groups = _parse_string_list("default-groups", raw.get("default-groups", []))
-    conflicts = _parse_conflicts(raw.get("conflicts"))
-    _validate_default_groups_against_conflicts(default_groups, conflicts)
-
-    local_sources = _parse_local_sources(
-        raw.get("local-sources", []), pyproject_dir=pyproject_dir
-    )
-    vcs_sources = _parse_vcs_sources(raw.get("vcs-sources", []))
-    _reject_duplicate_source_names(local_sources, vcs_sources)
-
-    return NabProjectConfig(
-        mode=mode,
-        constraints=_parse_constraints(raw.get("constraints", [])),
-        default_groups=default_groups,
-        requires_python=_parse_requires_python(raw.get("requires-python")),
-        uploaded_prior_to=_parse_uploaded_prior_to(
-            raw.get("uploaded-prior-to"), anchor=anchor
-        ),
-        dist_policy=dist_policy,
-        build_policy=build_policy,
-        trust_unverified_sdist_deps=trust_unverified,
-        marker_environment=marker_environment,
-        indexes=indexes,
-        vcs=_parse_vcs(raw.get("vcs", {})),
-        local_sources=local_sources,
-        vcs_sources=vcs_sources,
-        matrix=matrix,
-        resolution=_parse_enum(
-            "resolution",
-            raw.get("resolution"),
-            ResolutionStrategy,
-            ResolutionStrategy.HIGHEST,
-        ),
-        workspace=_parse_workspace(raw.get("workspace")),
-        conflicts=conflicts,
-        package_overrides=package_overrides,
-        index_overrides=index_overrides,
-    )
 
 
 def _enforce_universal_build_policy(
@@ -743,8 +819,6 @@ def _enforce_universal_build_policy(
 
 
 def _parse_mode(value: object) -> ResolveMode:
-    if value is None:
-        return ResolveMode.SPECIFIC
     if not isinstance(value, str):
         msg = f"mode must be a string, got {type(value).__name__}"
         raise ConfigError(msg)
@@ -793,9 +867,7 @@ def _reject_duplicates(key: str, items: tuple[str, ...]) -> None:
         seen.add(item)
 
 
-def _parse_optional_string(key: str, value: object) -> str | None:
-    if value is None:
-        return None
+def _parse_string_value(key: str, value: object) -> str:
     if not isinstance(value, str):
         msg = f"{key} must be a string, got {type(value).__name__}"
         raise ConfigError(msg)
@@ -812,9 +884,7 @@ def _parse_requires_python(value: object) -> str | None:
     well-meaning bare versions like ``"3.13"``; those are not valid
     specifiers and must be written ``"==3.13"`` or ``">=3.13,<3.14"``.
     """
-    raw = _parse_optional_string("requires-python", value)
-    if raw is None:
-        return None
+    raw = _parse_string_value("requires-python", value)
     try:
         SpecifierSet(raw)
     except InvalidSpecifier as exc:
@@ -842,16 +912,14 @@ def index_routes_from_config(config: NabProjectConfig) -> list[IndexRoute]:
     ]
 
 
-def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime | None:
+def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime:
     """Parse ``uploaded-prior-to`` (ISO datetime, TOML datetime, or ``P<n>D``).
 
     Naive datetimes are rejected so lockfiles read identically across
     timezones. ``P<n>D`` (a nab extension) is resolved against
-    ``anchor`` so re-locks reproduce the same cutoff.
+    ``anchor`` so re-locks reproduce the same cutoff.  Callers only reach
+    here with a present value (the absent case is handled upstream).
     """
-    if value is None:
-        return None
-
     if isinstance(value, datetime):
         if value.tzinfo is None:
             msg = (
@@ -899,30 +967,6 @@ def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime | N
     return dt
 
 
-def read_pyproject_lock_anchor(path: Path) -> datetime | None:
-    """Return the absolute ``uploaded-prior-to`` timestamp, if one is set.
-
-    A ``P<n>D`` duration is anchored to run time, so it is not reproducible
-    and returns ``None``. ``nab lock`` uses an absolute cutoff as the lock
-    anchor so re-locks from identical inputs produce identical bytes.
-    Absent or invalid values return ``None``; the full config parse reports
-    the error, including a missing file.
-    """
-    try:
-        with path.open("rb") as f:
-            data = tomli.load(f)
-    except (OSError, tomli.TOMLDecodeError):
-        return None
-    raw = tool_nab_section(data)
-    value = raw.get("uploaded-prior-to") if isinstance(raw, dict) else None
-    if isinstance(value, str) and _DURATION_PATTERN.match(value):
-        return None
-    try:
-        return _parse_uploaded_prior_to(value, anchor=datetime.now(timezone.utc))
-    except ConfigError:
-        return None
-
-
 _DIST_POLICY_TABLE_KEYS = frozenset({"policy", "trust-unverified-deps"})
 
 
@@ -933,8 +977,6 @@ def _parse_dist_policy_global(value: object) -> tuple[DistPolicy, bool]:
     folds the sdist-trust flag into the dist body.  Returns
     ``(policy, trust_unverified)``.
     """
-    if value is None:
-        return (DistPolicy.WHEEL_OR_SDIST, False)
     if not isinstance(value, dict):
         return (
             _parse_enum("dist-policy", value, DistPolicy, DistPolicy.WHEEL_OR_SDIST),
@@ -1018,9 +1060,6 @@ _INDEX_KEYS = frozenset({"name", "url"})
 
 
 def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
-    if value is None:
-        return (IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),)
-
     if not isinstance(value, list):
         msg = f"indexes must be an array of tables, got {type(value).__name__}"
         raise ConfigError(msg)
@@ -1030,7 +1069,6 @@ def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
         raise ConfigError(msg)
 
     out: list[IndexConfig] = []
-    seen: set[str] = set()
     for i, entry in enumerate(value):
         if not isinstance(entry, dict):
             msg = f"indexes[{i}] must be a table, got {type(entry).__name__}"
@@ -1051,12 +1089,24 @@ def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
         if not isinstance(name, str) or not isinstance(url, str):
             msg = f"indexes[{i}] name and url must be strings"
             raise ConfigError(msg)
-        if name in seen:
-            msg = f"duplicate index name: {name!r}"
-            raise ConfigError(msg)
-        seen.add(name)
         out.append(IndexConfig(name=name, url=url))
+    _check_index_name_uniqueness(out)
     return tuple(out)
+
+
+def _check_index_name_uniqueness(indexes: Sequence[IndexConfig]) -> None:
+    """Reject two indexes declared with the same name.
+
+    Shared by the single-file parse and the registry's across-file merge
+    re-validation (config_sources): a name may appear at most once, whether
+    the duplicate is in one file or split across the two project files.
+    """
+    seen: set[str] = set()
+    for index in indexes:
+        if index.name in seen:
+            msg = f"duplicate index name: {index.name!r}"
+            raise ConfigError(msg)
+        seen.add(index.name)
 
 
 _PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
@@ -1082,43 +1132,10 @@ _PACKAGE_POLICY_FIELDS = (
 )
 
 
-def _parse_package_overrides(
-    packages: object,
-    rules: object,
-    *,
-    anchor: datetime,
-    declared_index_names: frozenset[str],
-) -> tuple[PackageOverride, ...]:
-    """Parse the per-package surfaces into one list of requirement-keyed overrides.
-
-    Two surfaces feed it: ``[tool.nab.packages.<name>]`` (a table keyed by
-    package name, the sugar form) and ``[[tool.nab.package-rules]]`` (an
-    array of tables whose ``match`` selector lists requirements, so one
-    body can cover several).  Both desugar into :class:`PackageOverride`
-    entries; the combined list is checked so no two entries set the same
-    policy field for one package over overlapping version ranges.
-    """
-    out: list[PackageOverride] = []
-    out.extend(
-        _parse_packages_sugar(
-            packages, anchor=anchor, declared_index_names=declared_index_names
-        )
-    )
-    out.extend(
-        _parse_package_rules(
-            rules, anchor=anchor, declared_index_names=declared_index_names
-        )
-    )
-    overrides = tuple(out)
-    _check_package_override_overlap(overrides)
-    return overrides
-
-
 def _parse_packages_sugar(
     value: object,
     *,
     anchor: datetime,
-    declared_index_names: frozenset[str],
 ) -> list[PackageOverride]:
     """Parse ``[tool.nab.packages.<name>]`` into per-package overrides.
 
@@ -1127,8 +1144,6 @@ def _parse_packages_sugar(
     sub-table is the override body.  The key is the whole selector, so the
     sugar form carries no inner selector key.
     """
-    if value is None:
-        return []
     if isinstance(value, list):
         msg = (
             "[tool.nab.packages] is the name-keyed table form"
@@ -1163,7 +1178,6 @@ def _parse_packages_sugar(
                 body,
                 where,
                 anchor=anchor,
-                declared_index_names=declared_index_names,
             )
         )
     return out
@@ -1173,7 +1187,6 @@ def _parse_package_rules(
     value: object,
     *,
     anchor: datetime,
-    declared_index_names: frozenset[str],
 ) -> list[PackageOverride]:
     """Parse ``[[tool.nab.package-rules]]`` into per-package overrides.
 
@@ -1182,8 +1195,6 @@ def _parse_package_rules(
     single rule can cover many packages (e.g. routing a namespace to one
     index).
     """
-    if value is None:
-        return []
     if not isinstance(value, list):
         msg = (
             "[tool.nab.package-rules] must be an array of tables"
@@ -1193,11 +1204,7 @@ def _parse_package_rules(
         raise ConfigError(msg)
     out: list[PackageOverride] = []
     for i, entry in enumerate(value):
-        out.extend(
-            _parse_package_rule_entry(
-                entry, i, anchor=anchor, declared_index_names=declared_index_names
-            )
-        )
+        out.extend(_parse_package_rule_entry(entry, i, anchor=anchor))
     return out
 
 
@@ -1206,7 +1213,6 @@ def _parse_package_rule_entry(
     index: int,
     *,
     anchor: datetime,
-    declared_index_names: frozenset[str],
 ) -> list[PackageOverride]:
     where = f"package-rules[{index}]"
     if not isinstance(entry, dict):
@@ -1228,13 +1234,7 @@ def _parse_package_rule_entry(
         )
         raise ConfigError(msg)
     body = {key: val for key, val in entry.items() if key != "match"}
-    return _build_package_overrides(
-        requirements,
-        body,
-        where,
-        anchor=anchor,
-        declared_index_names=declared_index_names,
-    )
+    return _build_package_overrides(requirements, body, where, anchor=anchor)
 
 
 def _build_package_overrides(
@@ -1243,7 +1243,6 @@ def _build_package_overrides(
     where: str,
     *,
     anchor: datetime,
-    declared_index_names: frozenset[str],
 ) -> list[PackageOverride]:
     """Turn a validated selector and body into one override per requirement."""
     dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
@@ -1263,7 +1262,7 @@ def _build_package_overrides(
         anchor=anchor,
         present="uploaded-prior-to" in body,
     )
-    route = _parse_override_index(body, where, declared_index_names)
+    route = _parse_override_index(body, where)
     has_body = (
         dist_policy is not None
         or dist_trust is not None
@@ -1300,6 +1299,7 @@ def _build_package_overrides(
             uploaded_prior_to=uploaded_prior_to,
             uploaded_prior_to_disabled=uploaded_disabled,
             index=route,
+            source_label=where,
         )
         for requirement in requirements
     ]
@@ -1385,16 +1385,17 @@ def _parse_index_overrides(
     value: object,
     *,
     anchor: datetime,
-    declared_index_names: frozenset[str],
 ) -> dict[str, IndexOverride]:
     """Parse ``[tool.nab.index.<name>]`` into a name-keyed policy map.
 
-    Each key must name a declared ``[[tool.nab.indexes]]`` entry.  The
-    body sets policy fields only (no routing, no version scope); the
-    override applies to every package served from that index.
+    Each key must name a declared ``[[tool.nab.indexes]]`` entry; that
+    cross-key check is a resolve-path concern run post-merge by
+    :func:`_validate_index_overrides_declared` (the surface is parsed in
+    isolation from the ``indexes`` row, so this parser does not see the
+    declared set).  The body sets policy fields only (no routing, no
+    version scope); the override applies to every package served from that
+    index.
     """
-    if value is None:
-        return {}
     if not isinstance(value, dict):
         msg = (
             "[tool.nab.index] must be a table keyed by index name, got"
@@ -1404,13 +1405,6 @@ def _parse_index_overrides(
     out: dict[str, IndexOverride] = {}
     for name, body in value.items():
         where = f"index.{name}"
-        if name not in declared_index_names:
-            valid = sorted(declared_index_names)
-            msg = (
-                f"{where} names undeclared index {name!r};"
-                f" declared indexes are {valid!r}"
-            )
-            raise ConfigError(msg)
         out[name] = _parse_index_override_body(body, where, anchor=anchor)
     return out
 
@@ -1551,26 +1545,21 @@ def _parse_override_uploaded_prior_to(
     return (cutoff, False)
 
 
-def _parse_override_index(
-    entry: dict[str, Any], where: str, declared_index_names: frozenset[str]
-) -> str | None:
+def _parse_override_index(entry: dict[str, Any], where: str) -> str | None:
     """Parse the routing ``index`` body and validate its ``strict`` flag.
 
     The route is always a strict pin to one index, so ``strict`` only
     accepts ``true``.  ``strict = false`` is rejected: fallthrough on a
     miss is not cleanly wireable through the single-index-pin router this
     release ships.
+
+    The route-names-a-declared-index check is a resolve-path concern run
+    post-merge by :func:`_validate_routes_declared`, since this parser sees
+    the override surface in isolation from the ``indexes`` row.
     """
     route = entry.get("index")
     if route is not None and not isinstance(route, str):
         msg = f"{where}.index must be a string, got {type(route).__name__}"
-        raise ConfigError(msg)
-    if route is not None and route not in declared_index_names:
-        valid = sorted(declared_index_names)
-        msg = (
-            f"{where}.index routes to undeclared index {route!r};"
-            f" declared indexes are {valid!r}"
-        )
         raise ConfigError(msg)
     if "strict" not in entry:
         return route
@@ -1763,8 +1752,6 @@ def _parse_workspace(value: object) -> WorkspaceConfig | None:
     validates the table shape so typos like ``member = ...`` (missing
     the ``s``) fail loud at config-parse time.
     """
-    if value is None:
-        return None
     if not isinstance(value, dict):
         msg = f"[tool.nab.workspace] must be a table, got {type(value).__name__}"
         raise ConfigError(msg)
@@ -1798,12 +1785,22 @@ def _parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
     ``at-least-one``.  A member is ``{ extra = "NAME" }`` or
     ``{ group = "NAME" }``.
     """
-    if value is None:
-        return ()
     if not isinstance(value, list):
         msg = f"conflicts must be an array of conflict sets, got {type(value).__name__}"
         raise ConfigError(msg)
     sets = tuple(_parse_conflict_set(item, i) for i, item in enumerate(value))
+    _check_conflict_member_uniqueness(sets)
+    return sets
+
+
+def _check_conflict_member_uniqueness(sets: Sequence[ConflictSet]) -> None:
+    """Reject a member declared in more than one conflict set.
+
+    Shared by the single-file parse and the registry's across-file merge
+    re-validation (config_sources): a member may belong to at most one
+    conflict set, whether the duplicate is in one file or split across the
+    two project files.
+    """
     seen: set[ConflictMember] = set()
     for conflict_set in sets:
         for member in conflict_set.members:
@@ -1814,7 +1811,6 @@ def _parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
                 )
                 raise ConfigError(msg)
             seen.add(member)
-    return sets
 
 
 def _validate_default_groups_against_conflicts(
@@ -1982,8 +1978,6 @@ def _validate_matrix_python(spec: str) -> None:
 
 
 def _parse_matrix(value: object) -> MatrixConfig | None:
-    if value is None:
-        return None
     if not isinstance(value, dict):
         msg = f"[tool.nab.matrix] must be a table, got {type(value).__name__}"
         raise ConfigError(msg)

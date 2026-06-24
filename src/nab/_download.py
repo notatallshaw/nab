@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Annotated
+
+import tyro
 
 from nab_python.config import ResolveMode
 from nab_python.download import DownloadError
@@ -24,8 +27,12 @@ from nab_python.download import DownloadError
 from . import cli as _cli
 from ._lock import resolve_extra_selection, resolve_group_selection
 from .cli import (
+    BuildPolicyFlag,
+    DistPolicyFlag,
     HttpBackend,
+    ModeFlag,
     PathArg,
+    ResolutionFlag,
     app,
 )
 
@@ -35,16 +42,24 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     path: PathArg = Path("pyproject.toml"),
     *,
     output: Path = Path("wheels"),
-    http_backend: HttpBackend = "urllib3",
+    http_backend: HttpBackend | None = None,
     cache_dir: Path | None = None,
     cache: bool = True,
-    offline: bool = False,
-    max_concurrency: int = 8,
+    offline: bool | None = None,
+    max_concurrency: int | None = None,
     workspace_discovery: bool = True,
     groups: tuple[str, ...] = (),
     all_groups: bool = False,
     extras: tuple[str, ...] = (),
     all_extras: bool = False,
+    project_resolution: ResolutionFlag | None = None,
+    project_mode: ModeFlag | None = None,
+    project_requires_python: str | None = None,
+    project_uploaded_prior_to: str | None = None,
+    project_dist_policy: DistPolicyFlag | None = None,
+    project_build_policy: BuildPolicyFlag | None = None,
+    project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
+    project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
 ) -> None:
     """Resolve and download every wheel/sdist into a local directory.
 
@@ -56,11 +71,13 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     mirror ``nab lock``: a project declaring an ``exactly-one`` or
     ``at-least-one`` conflict needs at least one member selected for
     the resolve to start, so these flags also gate the download.
-    """
-    if max_concurrency < 1:
-        sys.stderr.write("Error: --max-concurrency must be at least 1.\n")
-        sys.exit(1)
 
+    ``--offline``, ``--cache-dir``, ``--http-backend``,
+    ``--max-concurrency`` and ``--project-resolution`` flow through the
+    same config sources ``nab lock`` uses, so a ``NAB_*`` env var or a
+    system/user/project ``nab.toml`` is read for ``nab download`` as for
+    ``nab lock``.
+    """
     selected_groups = resolve_group_selection(
         path, groups=groups, all_groups=all_groups
     )
@@ -68,22 +85,42 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         path, extras=extras, all_extras=all_extras
     )
 
+    overrides = _cli._cli_overrides(  # noqa: SLF001
+        cli_resolution=project_resolution,
+        cli_offline=offline,
+        cli_cache_dir=cache_dir,
+        cli_http_backend=http_backend,
+        cli_max_concurrency=max_concurrency,
+        cli_mode=project_mode,
+        cli_requires_python=project_requires_python,
+        cli_uploaded_prior_to=project_uploaded_prior_to,
+        cli_dist_policy=project_dist_policy,
+        cli_build_policy=project_build_policy,
+        cli_constraint=project_constraint,
+        cli_default_group=project_default_group,
+    )
     config = _cli._load_config(  # noqa: SLF001
-        path, discover_workspace=workspace_discovery
+        path,
+        discover_workspace=workspace_discovery,
+        cli_overrides=_cli.project_config_overrides(overrides),
+    )
+    settings = _cli._layered_run_settings_or_exit(  # noqa: SLF001
+        path, overrides, produces_lock=False
     )
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
-        cache_dir, cache=cache
+        settings.cache_dir, cache=cache
     )
-    transport = _cli._make_transport(http_backend)  # noqa: SLF001
+    transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
     if config.mode is ResolveMode.UNIVERSAL:
         universal = _cli._resolve_universal(  # noqa: SLF001
             path,
             config=config,
             cache_dir=effective_cache_dir,
-            offline=offline,
+            offline=settings.offline,
             transport=transport,
             groups=selected_groups,
             extras=selected_extras,
+            resolution_strategy=settings.resolution,
         )
         lock_input = _cli.merge_universal_lock_inputs(universal)
     else:
@@ -91,21 +128,22 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
             path,
             config=config,
             cache_dir=effective_cache_dir,
-            offline=offline,
+            offline=settings.offline,
             transport=transport,
             failure_prefix="Cannot download",
             groups=selected_groups,
             extras=selected_extras,
+            resolution_strategy=settings.resolution,
         )
         lock_input = result.lock_input
 
-    download_transport = _cli._make_transport(http_backend)  # noqa: SLF001
+    download_transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
     try:
         outcome = _cli.download_lock(
             lock_input,
             download_transport,
             output,
-            max_concurrency=max_concurrency,
+            max_concurrency=settings.max_concurrency,
         )
     except DownloadError as e:
         sys.stderr.write(f"Download failed: {e}\n")

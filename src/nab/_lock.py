@@ -18,14 +18,17 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Formatter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
+
+import tomli
+import tomli_w
+import tyro
 
 from nab._version import __version__
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python.config import (
     NabProjectConfig,
     ResolveMode,
-    read_pyproject_lock_anchor,
 )
 from nab_python.lockfile import (
     IndexPin,
@@ -35,7 +38,6 @@ from nab_python.lockfile import (
     read_lockfile_anchor,
     read_lockfile_packages,
 )
-from nab_python.provider import ResolutionStrategy
 from nab_python.requirements_file import (
     read_pyproject_groups,
     read_pyproject_optional_dependencies,
@@ -43,8 +45,11 @@ from nab_python.requirements_file import (
 
 from . import cli as _cli
 from .cli import (
+    BuildPolicyFlag,
+    DistPolicyFlag,
     HttpBackend,
     LockFormat,
+    ModeFlag,
     PathArg,
     ResolutionFlag,
     app,
@@ -55,6 +60,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
     from nab_python._vendor.packaging.version import Version
+    from nab_python.provider import ResolutionStrategy
     from nab_python.resolve import ResolutionResult
     from nab_python.universal.resolve import TupleResult, UniversalResult
 
@@ -74,18 +80,26 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     *,
     output: Path | None = None,
     format: LockFormat = "pylock",  # noqa: A002 - shadows builtin by convention
-    http_backend: HttpBackend = "urllib3",
+    http_backend: HttpBackend | None = None,
     cache_dir: Path | None = None,
     cache: bool = True,
-    offline: bool = False,
+    offline: bool | None = None,
     groups: tuple[str, ...] = (),
     all_groups: bool = False,
     extras: tuple[str, ...] = (),
     all_extras: bool = False,
     workspace_discovery: bool = True,
     no_emit_workspace: bool = False,
-    resolution: ResolutionFlag | None = None,
+    project_resolution: ResolutionFlag | None = None,
+    project_mode: ModeFlag | None = None,
+    project_requires_python: str | None = None,
+    project_uploaded_prior_to: str | None = None,
+    project_dist_policy: DistPolicyFlag | None = None,
+    project_build_policy: BuildPolicyFlag | None = None,
+    project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
+    project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     upgrade: bool = False,
+    locked: bool = False,
 ) -> None:
     """Resolve dependencies and emit a lockfile or pin list.
 
@@ -111,34 +125,76 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     lockfile via pip's PEP 751 install or ``--require-hashes``: both
     refuse directory entries because they cannot be hashed.
 
-    ``--resolution`` overrides ``[tool.nab].resolution`` for this run.
-    ``--upgrade`` re-anchors the ``P<n>D`` cutoff to ``datetime.now(UTC)``
-    instead of reusing the timestamp recorded in any existing lockfile.
+    ``--project-resolution`` overrides ``[tool.nab].resolution`` for this
+    run (a PROJECT-scope override, so it is layered through the config
+    sources; see Configuration).  ``--http-backend`` is a USER option, so
+    it too is read from the config sources (``NAB_HTTP_BACKEND`` or an
+    ``nab.toml``) when the flag is not passed.  ``--upgrade`` re-anchors the
+    ``P<n>D`` cutoff to ``datetime.now(UTC)`` instead of reusing the
+    timestamp recorded in any existing lockfile.
+
+    ``--locked`` re-resolves and verifies the committed pylock is already
+    up to date, writing nothing and exiting non-zero if it would change.
+    It is for pylock output to a file, single-environment mode only.
     """
     _validate_pylock_output_name(output=output, format=format)
-    anchor = _determine_lock_anchor(path, output=output, format=format, upgrade=upgrade)
+    if locked and (format != "pylock" or _cli.is_stdout(output)):
+        sys.stderr.write(
+            "Error: --locked is only supported for pylock output to a file.\n"
+        )
+        sys.exit(1)
+    overrides = _cli._cli_overrides(  # noqa: SLF001
+        cli_resolution=project_resolution,
+        cli_offline=offline,
+        cli_cache_dir=cache_dir,
+        cli_http_backend=http_backend,
+        cli_mode=project_mode,
+        cli_requires_python=project_requires_python,
+        cli_uploaded_prior_to=project_uploaded_prior_to,
+        cli_dist_policy=project_dist_policy,
+        cli_build_policy=project_build_policy,
+        cli_constraint=project_constraint,
+        cli_default_group=project_default_group,
+    )
+    project_overrides = _cli.project_config_overrides(overrides)
+    anchor = _determine_lock_anchor(
+        path,
+        output=output,
+        format=format,
+        upgrade=upgrade,
+        cli_overrides=project_overrides,
+    )
     config = _cli._load_config(  # noqa: SLF001
-        path, discover_workspace=workspace_discovery, anchor=anchor
+        path,
+        discover_workspace=workspace_discovery,
+        anchor=anchor,
+        cli_overrides=project_overrides,
     )
+    if locked and config.mode is ResolveMode.UNIVERSAL:
+        sys.stderr.write("Error: --locked is not supported in universal mode.\n")
+        sys.exit(1)
+    settings = _cli._layered_run_settings_or_exit(path, overrides)  # noqa: SLF001
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
-        cache_dir, cache=cache
+        settings.cache_dir, cache=cache
     )
-    provenance = _build_provenance(path, config=config, anchor=anchor)
+    provenance = _build_provenance(
+        path,
+        config=config,
+        anchor=anchor,
+        cli_project_overrides=settings.cli_project_overrides,
+    )
     selected_groups = resolve_group_selection(
         path, groups=groups, all_groups=all_groups
     )
     selected_extras = resolve_extra_selection(
         path, extras=extras, all_extras=all_extras
     )
-    strategy_override = (
-        ResolutionStrategy(resolution) if resolution is not None else None
-    )
 
     workspace_to_drop = (
         config.workspace_member_names if no_emit_workspace else frozenset()
     )
 
-    transport = _cli._make_transport(http_backend)  # noqa: SLF001
+    transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
     if config.mode is ResolveMode.UNIVERSAL:
         _emit_or_exit(
             lambda: _emit_universal(
@@ -146,13 +202,13 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
                 config=config,
                 cache_dir=effective_cache_dir,
                 transport=transport,
-                offline=offline,
+                offline=settings.offline,
                 output=output,
                 format=format,
                 provenance=provenance,
                 groups=selected_groups,
                 extras=selected_extras,
-                resolution_strategy=strategy_override,
+                resolution_strategy=settings.resolution,
                 workspace_to_drop=workspace_to_drop,
             )
         )
@@ -162,13 +218,16 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         path,
         config=config,
         cache_dir=effective_cache_dir,
-        offline=offline,
+        offline=settings.offline,
         transport=transport,
         failure_prefix="Cannot lock",
         groups=selected_groups,
         extras=selected_extras,
-        resolution_strategy=strategy_override,
+        resolution_strategy=settings.resolution,
     )
+    if locked:
+        _check_locked(result, output=output, workspace_to_drop=workspace_to_drop)
+        return
     _emit_or_exit(
         lambda: _emit_specific(
             result,
@@ -233,6 +292,55 @@ def _emit_specific(
     except _cli.MissingHashError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)
+
+
+def _packages_only(text: str) -> str:
+    """Re-render lock TOML without the volatile ``[tool.nab]`` block.
+
+    Drops the provenance block (its command line and timestamp change every
+    run) so two locks compare equal whenever their packages, environments,
+    and metadata match.
+    """
+    data = tomli.loads(text)
+    data.pop("tool", None)
+    return tomli_w.dumps(data)
+
+
+def _check_locked(
+    result: ResolutionResult,
+    *,
+    output: Path | None,
+    workspace_to_drop: frozenset[str],
+) -> None:
+    """Verify the committed pylock matches a fresh resolve, writing nothing.
+
+    The resolve has already run; this renders the lock it would produce and
+    compares it to the committed file with the provenance block dropped from
+    both, so only a real change to the locked packages fails.  The committed
+    lock is never read back into the resolve.
+    """
+    lock_input = _drop_workspace_pins(result.lock_input, workspace_to_drop)
+    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
+    if not target.exists():
+        sys.stderr.write(
+            f"Error: --locked: no lockfile at {target} to check;"
+            " run `nab lock` first.\n"
+        )
+        sys.exit(1)
+    try:
+        new_text = _cli.render_lock(lock_input, lock_dir=target.parent)
+    except _cli.MissingHashError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
+    committed = _packages_only(target.read_text(encoding="utf-8"))
+    if _packages_only(new_text) == committed:
+        sys.stderr.write(f"Lockfile {target} is up to date.\n")
+        return
+    sys.stderr.write(
+        f"Error: --locked: lockfile {target} is out of date;"
+        " re-run `nab lock` to update it.\n"
+    )
+    sys.exit(1)
 
 
 def _write_specific(
@@ -632,7 +740,11 @@ def resolve_extra_selection(
 
 
 def _build_provenance(
-    path: Path, *, config: NabProjectConfig, anchor: datetime
+    path: Path,
+    *,
+    config: NabProjectConfig,
+    anchor: datetime,
+    cli_project_overrides: tuple[tuple[str, str], ...] = (),
 ) -> Provenance:
     """Capture the inputs that produced this run for the lockfile.
 
@@ -641,7 +753,8 @@ def _build_provenance(
     ``anchor`` is the timestamp used as ``now`` when resolving relative
     ``P<n>D`` durations on this run.  Recording it as ``created-at``
     lets the next ``nab lock`` reuse the same anchor and reproduce the
-    same cutoff.
+    same cutoff.  ``cli_project_overrides`` records the ``--project-*``
+    overrides passed on this run so the lock is auditable.
     """
     python_specifier: str | None
     platforms: tuple[str, ...]
@@ -660,7 +773,36 @@ def _build_provenance(
         mode=config.mode.value,
         python_specifier=python_specifier,
         platforms=platforms,
+        cli_project_overrides=cli_project_overrides,
     )
+
+
+def _reused_lock_anchor(
+    path: Path,
+    *,
+    output: Path | None,
+    format: str,  # noqa: A002 - shadows builtin by convention
+    cli_overrides: Mapping[str, object] | None = None,
+) -> tuple[datetime | None, datetime | None]:
+    """Return ``(absolute_cutoff, prior_lock_anchor)`` for the re-lock anchor.
+
+    An absolute ``uploaded-prior-to`` fixes the resolve window, so it is the
+    anchor regardless of ``--upgrade``, and two locks from identical inputs
+    produce identical bytes.  ``cli_overrides`` carries a
+    ``--project-uploaded-prior-to`` override so the anchor it produces matches
+    the resolve window.  When there is no absolute cutoff, a ``pylock`` written
+    to a file reuses the ``created-at`` from the existing lock so re-locks
+    reproduce the same cutoff; that recorded timestamp is the only anchor
+    ``--upgrade`` actually drops.  Stdout, the requirements formats, and a
+    first lock have nothing to reuse.
+    """
+    absolute = _cli.lock_anchor(path, cli_overrides)
+    if absolute is not None:
+        return absolute, None
+    if _cli.is_stdout(output) or format != "pylock":
+        return None, None
+    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
+    return None, read_lockfile_anchor(target)
 
 
 def _determine_lock_anchor(
@@ -669,41 +811,32 @@ def _determine_lock_anchor(
     output: Path | None,
     format: str,  # noqa: A002 - shadows builtin by convention
     upgrade: bool,
+    cli_overrides: Mapping[str, object] | None = None,
 ) -> datetime:
     """Pick the ``P<n>D`` anchor for ``nab lock``.
 
-    When the project pins an absolute ``uploaded-prior-to``, that timestamp
-    is the anchor: the resolve window is already fixed, so anchoring there
-    makes ``created-at`` deterministic and two locks from identical inputs
-    produce identical bytes. ``--upgrade`` still re-floats to now.
-
-    Otherwise returns ``datetime.now(UTC)`` (a fresh anchor) when:
-
-    - ``--upgrade`` is set: the user is opting into a calendar refresh.
-    - Output is stdout (``-``): there is no file to read back later, so
-      no point preserving an anchor that nothing will reuse.
-    - Format is not ``pylock``: requirements files do not carry the
-      ``[tool.nab]`` block we read the anchor from.
-    - The expected pylock does not exist or has no recorded anchor:
-      first lock or a damaged file.
-
-    Otherwise returns the ``[tool.nab].created-at`` from the existing
-    pylock, so a re-lock against the same project produces the same
-    cutoff for ``P<n>D`` durations.
+    Without ``--upgrade`` the anchor is the cutoff a re-lock reuses: an
+    absolute ``uploaded-prior-to`` cutoff, or the ``created-at`` from an
+    existing pylock, falling back to ``datetime.now(UTC)``.  ``cli_overrides``
+    is forwarded so a ``--project-uploaded-prior-to`` flag pins the anchor.
+    ``--upgrade`` re-anchors to now.  It changes the resolve only when it drops
+    a reused lockfile ``created-at`` (an absolute cutoff still governs the
+    resolve either way), so the notice fires only in that case.
     """
-    fresh = datetime.now(timezone.utc)
+    absolute, prior = _reused_lock_anchor(
+        path, output=output, format=format, cli_overrides=cli_overrides
+    )
     if upgrade:
+        fresh = datetime.now(timezone.utc)
+        if prior is not None:
+            sys.stderr.write(
+                "notice: --upgrade re-anchored the resolve window to"
+                f" {fresh.isoformat()}, dropping the cutoff {prior.isoformat()}"
+                " recorded in the existing lockfile.\n"
+            )
         return fresh
-    absolute = read_pyproject_lock_anchor(path)
-    if absolute is not None:
-        return absolute
-    if _cli.is_stdout(output):
-        return fresh
-    if format != "pylock":
-        return fresh
-    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
-    prior = read_lockfile_anchor(target)
-    return prior if prior is not None else fresh
+    reused = absolute if absolute is not None else prior
+    return reused if reused is not None else datetime.now(timezone.utc)
 
 
 def _validate_pylock_output_name(

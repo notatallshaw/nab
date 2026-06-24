@@ -40,6 +40,7 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import ConfigError
+from nab_python.config_sources import SourceRoots
 from nab_python.download import DownloadError
 from nab_python.lockfile import (
     DisjointnessError,
@@ -568,18 +569,18 @@ class TestLockCommandSpecific:
         assert "cannot write output" in capsys.readouterr().err
 
     def test_resolution_flag_threads_to_resolver(self, tmp_path: Path) -> None:
-        """``--resolution lowest`` reaches resolve_pyproject as the enum."""
+        """``--project-resolution lowest`` reaches resolve_pyproject as the enum."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
             "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
         ) as mock_resolve:
-            lock(pyproject, output=out, resolution="lowest")
+            lock(pyproject, output=out, project_resolution="lowest")
         kwargs = mock_resolve.call_args.kwargs
         assert kwargs["resolution_strategy"] is ResolutionStrategy.LOWEST
 
     def test_resolution_flag_default_none(self, tmp_path: Path) -> None:
-        """No --resolution: resolve_pyproject sees ``None`` (config wins)."""
+        """No --project-resolution: resolve_pyproject sees ``None`` (config wins)."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
@@ -587,6 +588,120 @@ class TestLockCommandSpecific:
         ) as mock_resolve:
             lock(pyproject, output=out)
         assert mock_resolve.call_args.kwargs["resolution_strategy"] is None
+
+    def test_cli_project_override_prints_notice(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A CLI PROJECT override on ``nab lock`` is surfaced on stderr."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+            lock(pyproject, output=out, project_resolution="lowest")
+        err = capsys.readouterr().err
+        assert "does not derive from the committed" in err
+        assert "--project-resolution -> lowest" in err
+
+    def test_no_cli_project_override_prints_no_notice(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No CLI PROJECT override: no reproducibility notice."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+            lock(pyproject, output=out)
+        assert "does not derive from the committed" not in capsys.readouterr().err
+
+    def test_config_layer_error_exits(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cross-file conflict exits 1 via the shared [tool.nab] map."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n[tool.nab]\nresolution = "highest"\n',
+        )
+        (tmp_path / "nab.toml").write_text('resolution = "lowest"\n')
+        out = tmp_path / "pylock.toml"
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        with (
+            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        # The merged config now sources every PROJECT key from the registry
+        # ladder, so a cross-file conflict surfaces while loading the config
+        # (the shared [tool.nab] error map) rather than later in the
+        # run-settings fold.
+        err = capsys.readouterr().err
+        assert "Error in [tool.nab]:" in err
+        assert "conflicting values" in err
+
+    def test_standalone_nab_toml_malformed_exits(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A malformed standalone user nab.toml exits 1, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        user = tmp_path / "usr" / "nab" / "nab.toml"
+        user.parent.mkdir(parents=True)
+        user.write_text("offline = \n")
+        out = tmp_path / "pylock.toml"
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(user_toml=user, project_dir=p.parent, pyproject=p),
+        )
+        with (
+            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        assert "Config error:" in capsys.readouterr().err
+
+    def test_standalone_nab_toml_unknown_key_exits(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An unknown key in a standalone user nab.toml exits 1, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        user = tmp_path / "usr" / "nab" / "nab.toml"
+        user.parent.mkdir(parents=True)
+        user.write_text("typoo = 1\n")
+        out = tmp_path / "pylock.toml"
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(user_toml=user, project_dir=p.parent, pyproject=p),
+        )
+        with (
+            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        err = capsys.readouterr().err
+        assert "Config error:" in err
+        assert "typoo" in err
 
 
 class TestLockCommandUniversal:
@@ -1852,6 +1967,52 @@ class TestDetermineLockAnchor:
         assert anchor != self._RECORDED
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
 
+    def test_upgrade_notices_when_it_drops_a_cutoff(self, tmp_path: Path) -> None:
+        # Re-anchoring over a reusable cutoff changes the resolve window, so
+        # --upgrade names the cutoff it dropped instead of doing it silently.
+        target = tmp_path / "pylock.toml"
+        self._write_prior(target)
+        pyproject = _make_pyproject(tmp_path)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _determine_lock_anchor(
+                pyproject, output=target, format="pylock", upgrade=True
+            )
+        notice = err.getvalue()
+        assert "--upgrade re-anchored" in notice
+        assert self._RECORDED.isoformat() in notice
+
+    def test_upgrade_silent_on_fresh_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # With nothing to reuse, --upgrade has no window to drop, so no notice.
+        monkeypatch.chdir(tmp_path)
+        pyproject = _make_pyproject(tmp_path)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _determine_lock_anchor(
+                pyproject, output=None, format="pylock", upgrade=True
+            )
+        assert err.getvalue() == ""
+
+    def test_upgrade_silent_for_absolute_cutoff(self, tmp_path: Path) -> None:
+        # An absolute uploaded-prior-to governs the resolve regardless of
+        # --upgrade, so --upgrade does not drop it and prints no notice.
+        target = tmp_path / "pylock.toml"
+        self._write_prior(target)
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            f'[tool.nab]\nuploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n',
+        )
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            anchor = _determine_lock_anchor(
+                pyproject, output=target, format="pylock", upgrade=True
+            )
+        assert err.getvalue() == ""
+        assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
+
     def test_stdout_returns_fresh(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
@@ -1914,6 +2075,49 @@ class TestDetermineLockAnchor:
             pyproject, output=target, format="pylock", upgrade=False
         )
         assert anchor == self._ABSOLUTE
+
+    def test_absolute_cutoff_from_project_nab_toml_is_the_anchor(
+        self, tmp_path: Path
+    ) -> None:
+        # An absolute cutoff set in the project-dir nab.toml (not pyproject)
+        # must pin the anchor too: the resolve honours it, so the lock must.
+        target = tmp_path / "pylock.toml"
+        self._write_prior(target)
+        pyproject = _make_pyproject(tmp_path)
+        (tmp_path / "nab.toml").write_text(
+            f'uploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n'
+        )
+        anchor = _determine_lock_anchor(
+            pyproject, output=target, format="pylock", upgrade=False
+        )
+        assert anchor == self._ABSOLUTE
+
+    def test_invalid_config_falls_through_to_prior(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A category-gated value (uploaded-prior-to in a USER source) makes
+        # the best-effort anchor read raise SourceConfigError; it is
+        # swallowed so the full resolve parse reports it, and the anchor
+        # falls through to the prior lock.
+        target = tmp_path / "pylock.toml"
+        self._write_prior(target)
+        pyproject = _make_pyproject(tmp_path)
+        user_toml = tmp_path / "user.toml"
+        user_toml.write_text(f'uploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n')
+
+        def fake_roots(p: Path) -> SourceRoots:
+            return SourceRoots(
+                system_toml=None,
+                user_toml=user_toml,
+                project_dir=p.parent.resolve(),
+                pyproject=p.resolve(),
+            )
+
+        monkeypatch.setattr("nab.cli._config_search_roots", fake_roots)
+        anchor = _determine_lock_anchor(
+            pyproject, output=target, format="pylock", upgrade=False
+        )
+        assert anchor == self._RECORDED
 
     def test_absolute_cutoff_ignored_under_upgrade(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(
@@ -1993,6 +2197,234 @@ class TestLockAnchorReuse:
         from nab_python.lockfile import read_lockfile_anchor
 
         assert read_lockfile_anchor(out) == absolute
+
+
+def _hashed_pin(version: str, name: str, *, sha: str) -> IndexPin:
+    """Like ``_foo_index_pin`` but with caller-chosen artifact hashes."""
+    return IndexPin(
+        name=name,
+        version=version,
+        index="pypi",
+        sdist=SdistArtifact(
+            filename=f"{name}-{version}.tar.gz",
+            url=f"https://example.com/{name}-{version}.tar.gz",
+            hashes=(("sha256", sha),),
+        ),
+        wheels=(
+            WheelArtifact(
+                filename=f"{name}-{version}-py3-none-any.whl",
+                url=f"https://example.com/{name}-{version}-py3-none-any.whl",
+                hashes=(("sha256", sha),),
+            ),
+        ),
+    )
+
+
+class TestLockedFlag:
+    """``nab lock --locked`` re-resolves and verifies the committed pylock."""
+
+    def _write_lock(self, pyproject: Path, out: Path, result: ResolutionResult) -> None:
+        with patch("nab.cli.resolve_pyproject", return_value=result):
+            app.cli(args=["lock", str(pyproject), "--output", str(out)], prog="nab")
+
+    def _run_locked(self, pyproject: Path, out: Path, result: ResolutionResult) -> None:
+        with patch("nab.cli.resolve_pyproject", return_value=result):
+            app.cli(
+                args=["lock", str(pyproject), "--output", str(out), "--locked"],
+                prog="nab",
+            )
+
+    def test_up_to_date_exits_zero_without_writing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        self._write_lock(
+            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+        )
+        capsys.readouterr()
+        before = out.read_bytes()
+        self._run_locked(
+            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+        )
+        assert "is up to date" in capsys.readouterr().err
+        assert out.read_bytes() == before
+
+    def test_out_of_date_version_exits_one_without_writing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        self._write_lock(
+            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+        )
+        capsys.readouterr()
+        before = out.read_bytes()
+        with pytest.raises(SystemExit) as exc:
+            self._run_locked(
+                pyproject, out, _stub_resolution_result(pins={"foo": V("2.0")})
+            )
+        assert exc.value.code == 1
+        assert "out of date" in capsys.readouterr().err
+        assert out.read_bytes() == before
+
+    def test_out_of_date_hash_change_exits_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Same version, different artifact hash: the compare looks past the
+        # version, so a re-upload is still caught.
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        first = ResolutionResult(
+            pins={"foo": V("1.0")},
+            lock_input=LockInput(pins={"foo": _hashed_pin("1.0", "foo", sha="a" * 64)}),
+        )
+        self._write_lock(pyproject, out, first)
+        capsys.readouterr()
+        changed = ResolutionResult(
+            pins={"foo": V("1.0")},
+            lock_input=LockInput(pins={"foo": _hashed_pin("1.0", "foo", sha="c" * 64)}),
+        )
+        with pytest.raises(SystemExit) as exc:
+            self._run_locked(pyproject, out, changed)
+        assert exc.value.code == 1
+        assert "out of date" in capsys.readouterr().err
+
+    def test_missing_lockfile_exits_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            self._run_locked(pyproject, out, _stub_resolution_result())
+        assert exc.value.code == 1
+        assert "no lockfile" in capsys.readouterr().err
+
+    def test_unhashable_pin_during_render_exits_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A pin that cannot be hashed makes the render fail; --locked reports
+        # it and exits without touching the committed lock, like a normal lock.
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        self._write_lock(
+            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+        )
+        capsys.readouterr()
+        before = out.read_bytes()
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                return_value=_stub_resolution_result(pins={"foo": V("1.0")}),
+            ),
+            patch("nab.cli.render_lock", side_effect=MissingHashError("no hash")),
+            pytest.raises(SystemExit) as exc,
+        ):
+            app.cli(
+                args=["lock", str(pyproject), "--output", str(out), "--locked"],
+                prog="nab",
+            )
+        assert exc.value.code == 1
+        assert "Cannot lock" in capsys.readouterr().err
+        assert out.read_bytes() == before
+
+    def test_requirements_format_unsupported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "requirements.txt"
+        with pytest.raises(SystemExit) as exc:
+            app.cli(
+                args=[
+                    "lock",
+                    str(pyproject),
+                    "--output",
+                    str(out),
+                    "--format",
+                    "requirements",
+                    "--locked",
+                ],
+                prog="nab",
+            )
+        assert exc.value.code == 1
+        assert "only supported for pylock" in capsys.readouterr().err
+        assert not out.exists()
+
+    def test_stdout_unsupported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            app.cli(
+                args=["lock", str(pyproject), "--output", "-", "--locked"], prog="nab"
+            )
+        assert exc.value.code == 1
+        assert "only supported for pylock" in capsys.readouterr().err
+
+    def test_universal_unsupported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            app.cli(
+                args=["lock", str(pyproject), "--output", str(out), "--locked"],
+                prog="nab",
+            )
+        assert exc.value.code == 1
+        assert "not supported in universal mode" in capsys.readouterr().err
+        assert not out.exists()
+
+    def test_local_source_paths_do_not_false_mismatch(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A relative local-source path is emitted relative to the lock dir on
+        # both passes, so an unchanged project stays up to date.
+        (tmp_path / "vendor").mkdir()
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            "[[tool.nab.local-sources]]\n"
+            'name = "foo"\npath = "vendor"\n',
+        )
+        out = tmp_path / "pylock.toml"
+        result = _stub_resolution_result(pins={"foo": V("1.0")})
+        self._write_lock(pyproject, out, result)
+        capsys.readouterr()
+        self._run_locked(
+            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+        )
+        assert "is up to date" in capsys.readouterr().err
+
+
+class TestLockProvenanceCliOverrides:
+    """A --project-* CLI override is recorded in the lockfile provenance."""
+
+    def test_cli_override_recorded_in_pylock(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+            app.cli(
+                args=[
+                    "lock",
+                    str(pyproject),
+                    "--output",
+                    str(out),
+                    "--project-resolution",
+                    "lowest",
+                ],
+                prog="nab",
+            )
+        block = tomli.loads(out.read_text())["tool"]["nab"]
+        assert block["cli-project-overrides"] == ["--project-resolution=lowest"]
+
+    def test_no_cli_override_omits_key(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+            app.cli(args=["lock", str(pyproject), "--output", str(out)], prog="nab")
+        block = tomli.loads(out.read_text())["tool"]["nab"]
+        assert "cli-project-overrides" not in block
 
 
 class TestGroupAndExtraSelection:
@@ -2277,6 +2709,112 @@ class TestHelpText:
         assert "--no-cache" in help_text
 
 
+class TestOfflineFlagContract:
+    """Pin the tyro argv contract for the tri-state ``--offline`` flag.
+
+    ``offline`` is layered (env / nab.toml may set it) and the CLI is the
+    top rung, so the flag has to distinguish ``--offline True`` /
+    ``--offline False`` from being absent (``None``, let the lower layers
+    decide).  tyro renders that tri-state as a value-taking choice rather
+    than an ``--offline`` / ``--no-offline`` pair; these tests lock that
+    surface so it cannot drift unnoticed.
+    """
+
+    def test_offline_renders_as_tristate_choice(self) -> None:
+        help_text = _command_help("lock")
+        assert "--offline {None,True,False}" in help_text
+
+    def _run_offline_argv(self, tmp_path: Path, value: str) -> object:
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                return_value=_stub_resolution_result(pins={}),
+            ) as mock_resolve,
+            patch("nab.cli.write_lock"),
+        ):
+            app.cli(
+                args=[
+                    "lock",
+                    str(pyproject),
+                    "--offline",
+                    value,
+                    "--output",
+                    str(tmp_path / "pylock.toml"),
+                ],
+                prog="nab",
+            )
+        return mock_resolve.call_args.kwargs["offline"]
+
+    def test_offline_true_parses(self, tmp_path: Path) -> None:
+        assert self._run_offline_argv(tmp_path, "True") is True
+
+    def test_offline_false_parses(self, tmp_path: Path) -> None:
+        assert self._run_offline_argv(tmp_path, "False") is False
+
+    def test_bare_offline_without_value_exits_2(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            pytest.raises(SystemExit) as exc,
+        ):
+            app.cli(args=["lock", str(pyproject), "--offline"], prog="nab")
+        assert exc.value.code == 2
+
+
+class TestLayeredRunKnobFlagContract:
+    """Pin the tyro argv contract for the layered USER run knobs.
+
+    ``http-backend`` and ``max-concurrency`` are layered (env / nab.toml may
+    set them), so each CLI flag is tri-state: a value distinguishes an
+    explicit override from being absent (``None``, let the lower layers
+    decide).  These tests lock how tyro renders that so it cannot drift.
+    """
+
+    def test_http_backend_renders_as_tristate_choice(self) -> None:
+        for command in ("lock", "download", "config"):
+            assert "--http-backend {None,urllib3,httpx}" in _command_help(command)
+
+    def test_max_concurrency_renders_as_tristate_value(self) -> None:
+        for command in ("download", "config"):
+            assert "--max-concurrency {None}|INT" in _command_help(command)
+
+    def test_project_scalar_override_renders_choices(self) -> None:
+        for command in ("lock", "download", "config"):
+            help_text = _command_help(command)
+            assert "--project-mode {None,specific,universal}" in help_text
+            assert "--project-build-policy {None,never,build-local,build-remote}" in (
+                help_text
+            )
+
+    def test_project_array_override_is_repeatable_single_value(self) -> None:
+        for command in ("lock", "download", "config"):
+            assert "--project-constraint STR" in _command_help(command)
+
+    def test_http_backend_value_reaches_transport(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                return_value=_stub_resolution_result(pins={}),
+            ),
+            patch("nab.cli.write_lock"),
+            patch("nab.cli._make_transport") as mock_transport,
+        ):
+            app.cli(
+                args=[
+                    "lock",
+                    str(pyproject),
+                    "--http-backend",
+                    "httpx",
+                    "--output",
+                    str(tmp_path / "pylock.toml"),
+                ],
+                prog="nab",
+            )
+        assert mock_transport.call_args.args[0] == "httpx"
+
+
 class TestPackageVersion:
     """Tests for nab._version.__version__ and the python -m nab entry point."""
 
@@ -2404,6 +2942,30 @@ class TestDownloadCommand:
         ):
             download(pyproject, output=out)
         mock_dl.assert_called_once()
+
+    def test_project_override_uses_download_wording(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A CLI PROJECT override on ``nab download`` uses the no-lock wording."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "vendor"
+        download_result = MagicMock(written=(out / "x.whl",), skipped=())
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        with (
+            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            patch("nab.cli.download_lock", return_value=download_result),
+        ):
+            download(pyproject, output=out, project_resolution="lowest")
+        err = capsys.readouterr().err
+        assert "the values below reflect that override" in err
+        assert "the lock they produce" not in err
+        assert "--project-resolution -> lowest" in err
 
     def test_universal_mode_downloads_all_tuples(self, tmp_path: Path) -> None:
         """Universal mode re-resolves the matrix and downloads the union."""
