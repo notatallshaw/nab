@@ -112,9 +112,7 @@ _PEP508_MARKER_VARIABLES = frozenset(
     },
 )
 
-# Marker variables whose values must parse as PEP 440 versions. These feed
-# python_axis_environment and the provider, so a bad value here would crash
-# the resolve with a raw InvalidVersion instead of a ConfigError.
+# Marker variables whose values must parse as PEP 440 versions.
 _VERSION_MARKER_VARIABLES = frozenset({"python_version", "python_full_version"})
 
 
