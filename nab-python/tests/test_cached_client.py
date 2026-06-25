@@ -150,6 +150,14 @@ class TestMetadataHashParsing:
             "abcd",
         )
 
+    def test_uppercase_algo_name(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({"core-metadata": {"SHA256": "ABCD"}}) == (
+            "sha256",
+            "abcd",
+        )
+
     def test_legacy_key_used(self) -> None:
         from nab_index.client import _metadata_hash
 
