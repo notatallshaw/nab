@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import tarfile
@@ -18,7 +19,7 @@ import respx
 
 from nab_index.cache import NullCache
 from nab_index.cached_client import CachedAsyncSimpleClient
-from nab_index.client import SdistFile, WheelFile
+from nab_index.client import MetadataHashMismatchError, SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
@@ -69,6 +70,25 @@ class TestInMemoryIndex:
         idx = InMemoryIndex()
         idx.store_metadata("foo", "1.0", None)
         assert idx.has_metadata("foo", "1.0")
+
+    def test_metadata_error_roundtrip(self) -> None:
+        idx = InMemoryIndex()
+        assert idx.get_metadata_error("foo", "1.0") is None
+        error = MetadataHashMismatchError("metadata sha256 mismatch")
+        idx.store_metadata_error("foo", "1.0", error)
+        assert idx.get_metadata_error("foo", "1.0") is error
+        assert idx.get_metadata("foo", "1.0") is None
+
+    def test_store_metadata_error_fires_metadata_pending(self) -> None:
+        idx = InMemoryIndex()
+        pending, _ = idx.get_or_create_pending("metadata:foo:1.0")
+        idx.store_metadata_error("foo", "1.0", MetadataHashMismatchError("bad"))
+        assert pending.event.is_set()
+
+    def test_store_metadata_error_without_pending(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_metadata_error("foo", "1.0", MetadataHashMismatchError("bad"))
+        assert idx.get_metadata_error("foo", "1.0") is not None
         assert idx.get_metadata("foo", "1.0") is None
 
     def test_pending_event_set_on_listing(self) -> None:
@@ -409,6 +429,8 @@ class TestFetchCoordinator:
 
     @respx.mock
     def test_listing_triggers_metadata_prefetch(self) -> None:
+        metadata_body = "Metadata-Version: 2.1\n"
+        digest = hashlib.sha256(metadata_body.encode()).hexdigest()
         listing = {
             "meta": {"api-version": "1.0"},
             "name": "pkg",
@@ -416,17 +438,17 @@ class TestFetchCoordinator:
                 {
                     "filename": "pkg-3.0-py3-none-any.whl",
                     "url": "https://f.com/pkg-3.0-py3-none-any.whl",
-                    "dist-info-metadata": {"sha256": "x"},
+                    "dist-info-metadata": {"sha256": digest},
                 },
                 {
                     "filename": "pkg-2.0-py3-none-any.whl",
                     "url": "https://f.com/pkg-2.0-py3-none-any.whl",
-                    "dist-info-metadata": {"sha256": "y"},
+                    "dist-info-metadata": {"sha256": digest},
                 },
                 {
                     "filename": "pkg-1.0-py3-none-any.whl",
                     "url": "https://f.com/pkg-1.0-py3-none-any.whl",
-                    "dist-info-metadata": {"sha256": "z"},
+                    "dist-info-metadata": {"sha256": digest},
                 },
             ],
         }
@@ -434,7 +456,7 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, json=listing)
         )
         respx.get(url__regex=r".*\.whl\.metadata$").mock(
-            return_value=httpx.Response(200, text="Metadata-Version: 2.1\n")
+            return_value=httpx.Response(200, text=metadata_body)
         )
         with _coord() as coord:
             event = coord.request_listing("pkg")
@@ -503,6 +525,29 @@ class TestFetchCoordinator:
             event.wait(timeout=5)
             assert not coord._crashed
             assert coord.index.get_metadata("broken", "1.0") is None
+
+    @respx.mock
+    def test_metadata_hash_mismatch_records_integrity_error(self) -> None:
+        """A PEP 658 sidecar that fails its published hash is recorded as an
+        integrity error, not stored as a None (no-metadata) result."""
+        good = b"Metadata-Version: 2.1\nName: tampered\n"
+        good_digest = hashlib.sha256(good).hexdigest()
+        tampered = b"Metadata-Version: 2.1\nName: evil\n"
+        respx.get("https://files.example.com/tampered-1.0.whl.metadata").mock(
+            return_value=httpx.Response(200, content=tampered)
+        )
+        with _coord() as coord:
+            event = coord.request_metadata(
+                "tampered",
+                "1.0",
+                "https://files.example.com/tampered-1.0.whl.metadata",
+                ("sha256", good_digest),
+            )
+            event.wait(timeout=5)
+            assert not coord._crashed
+            assert coord.index.get_metadata("tampered", "1.0") is None
+            error = coord.index.get_metadata_error("tampered", "1.0")
+            assert isinstance(error, MetadataHashMismatchError)
 
     def test_crashed_raises(self) -> None:
         coord = _coord()

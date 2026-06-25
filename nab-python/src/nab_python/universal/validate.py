@@ -422,7 +422,11 @@ def _fetch_wheel_metadata(
         wheel.metadata_hash,
     )
     event.wait()
-    return coordinator.index.get_metadata(normalized, f"{version}#{wheel.filename}")
+    sentinel = f"{version}#{wheel.filename}"
+    integrity_error = coordinator.index.get_metadata_error(normalized, sentinel)
+    if integrity_error is not None:
+        raise integrity_error
+    return coordinator.index.get_metadata(normalized, sentinel)
 
 
 def _evaluate_metadata_deps_by_extra(

@@ -15,7 +15,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from unittest.mock import MagicMock
 
-from nab_index.client import SdistFile, WheelFile
+import pytest
+
+from nab_index.client import MetadataHashMismatchError, SdistFile, WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.version import Version
 from nab_python.universal.matrix import MatrixTuple
@@ -371,6 +373,32 @@ class TestFetchWheelMetadata:
         )
         report = validate_lock(result, coordinator)
         assert report.findings[0].status == "no_metadata"
+
+    def test_metadata_hash_mismatch_aborts_validation(self) -> None:
+        """An integrity failure recorded for the chosen wheel aborts the
+        validation pass rather than degrading to a no-metadata finding."""
+        wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        coordinator = _make_coordinator(
+            {"pkg": [wheel]},
+            baseline_metadata={"pkg": _BASE_METADATA},
+        )
+        coordinator.index.store_metadata_error(
+            "pkg",
+            f"1.0#{wheel.filename}",
+            MetadataHashMismatchError("metadata sha256 mismatch"),
+        )
+        result = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[
+                TupleResult(
+                    tuple_=_linux_311(),
+                    success=True,
+                    pins={"pkg": Version("1.0")},
+                ),
+            ],
+        )
+        with pytest.raises(MetadataHashMismatchError):
+            validate_lock(result, coordinator)
 
     def test_fetch_via_coordinator_populates_cache(self) -> None:
         """A successful coordinator fetch lands metadata at the sentinel key."""

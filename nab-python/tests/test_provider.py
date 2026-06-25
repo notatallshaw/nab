@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nab_index.client import SdistFile, WheelFile
+from nab_index.client import MetadataHashMismatchError, SdistFile, WheelFile
 from nab_python._provider.metadata_resolver import (
     add_classified_dep,
     classify_requirement,
@@ -856,6 +856,27 @@ class TestGetDependencies:
         # Metadata should only be requested once (via speculative prefetch
         # or direct request), second call uses the deps cache
         assert ("foo", V("1.0")) in provider.deps_cache
+
+    def test_metadata_hash_mismatch_aborts_no_sdist_fallback(self) -> None:
+        """A recorded PEP 658 integrity failure aborts get_dependencies rather
+        than degrading to the sdist's PKG-INFO deps."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0"), make_sdist("1.0")],
+            sdist_pkg_info=(
+                "Metadata-Version: 2.2\n"
+                "Name: foo\n"
+                "Version: 1.0\n"
+                "Requires-Dist: from-sdist\n"
+            ),
+            package="foo",
+        )
+        coordinator.index.store_metadata_error(
+            "foo", "1.0", MetadataHashMismatchError("metadata sha256 mismatch")
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        with pytest.raises(MetadataHashMismatchError):
+            provider.get_dependencies("foo", V("1.0"))
+        assert ("foo", V("1.0")) not in provider.deps_cache
 
     def test_unknown_version_raises(self) -> None:
         """Raise MetadataError when version doesn't exist."""
@@ -4351,6 +4372,22 @@ class TestAwaitMetadataBatchEdgeCases:
         result = provider.choose_version("foo", spec.to_range())
         assert result == V("1.0")
         assert ("foo", V("2.0")) not in provider.deps_cache
+
+    def test_batch_metadata_hash_mismatch_aborts(self) -> None:
+        """A recorded integrity failure in the batch path aborts the wait
+        rather than leaving the version un-cached for an sdist fallback."""
+        wheels = [make_wheel("1.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        coordinator.index.store_metadata_error(
+            "foo", "1.0", MetadataHashMismatchError("metadata sha256 mismatch")
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        with pytest.raises(MetadataHashMismatchError):
+            provider._await_metadata_batch(
+                "foo",
+                [(V("1.0"), "1.0", _done_event())],
+            )
+        assert ("foo", V("1.0")) not in provider.deps_cache
 
     def test_batch_does_not_parse_sdist_pkg_info_as_wheel_metadata(self) -> None:
         """Sdist PKG-INFO in the shared slot is not cached by the batch path.

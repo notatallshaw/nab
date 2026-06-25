@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
-from nab_index.client import SdistFile, WheelFile
+from nab_index.client import MetadataHashMismatchError, SdistFile, WheelFile
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 
@@ -121,6 +121,7 @@ class InMemoryIndex:
         self._listing_errors: dict[str, BaseException] = {}
         self._listing_indexes: dict[str, str] = {}
         self._metadata: dict[tuple[str, str], str | None] = {}
+        self._metadata_errors: dict[tuple[str, str], BaseException] = {}
         # Keys whose ``_metadata`` slot was last written from an sdist
         # PKG-INFO rather than a wheel METADATA; readers need the
         # origin because only sdist deps go through the PEP 643 gate.
@@ -216,6 +217,27 @@ class InMemoryIndex:
         if pending is not None:
             pending.result = data
             pending.event.set()
+
+    def store_metadata_error(
+        self, package: str, version: str, error: BaseException
+    ) -> None:
+        """Record an integrity failure for a metadata fetch and unblock waiters.
+
+        Distinct from ``store_metadata(None)``: ``None`` means no PEP 658
+        sidecar arrived and the resolver may fall back to the sdist, while an
+        error means the sidecar was served but failed its published hash.
+        """
+        key = f"metadata:{package}:{version}"
+        with self._lock:
+            self._metadata_errors[(package, version)] = error
+            pending = self._pending.get(key)
+        if pending is not None:
+            pending.event.set()
+
+    def get_metadata_error(self, package: str, version: str) -> BaseException | None:
+        """Return a recorded metadata integrity error, or ``None``."""
+        with self._lock:
+            return self._metadata_errors.get((package, version))
 
     def store_sdist_metadata(
         self, package: str, version: str, data: str | None
@@ -770,28 +792,38 @@ class FetchCoordinator:
                     await self._fetch_sdist_archive(client, req)
             except Exception as exc:
                 logger.exception("Fetch failed: %s %s", req.kind.value, req.package)
-                # Record a result so any waiter unblocks; without it the
-                # resolver deadlocks on event.wait().
-                if req.kind is FetchKind.LISTING:
-                    # Offline + cold cache is a deliberate empty listing
-                    # (the resolver proceeds with no candidates); any other
-                    # failure is stored as an error so fetch_versions can
-                    # surface it instead of reporting no candidates.
-                    if isinstance(exc, OfflineError):
-                        # Record the serving index before the empty listing
-                        # fires the pending event (see _fetch_listing).
-                        self._record_serving_index(client, req.package)
-                        self.index.store_listing(req.package, [])
-                    else:
-                        self.index.store_listing_error(req.package, exc)
-                else:
-                    assert req.version is not None
-                    if req.kind is FetchKind.METADATA:
-                        self.index.store_metadata(req.package, req.version, None)
-                    elif req.kind is FetchKind.SDIST:
-                        self.index.store_sdist_metadata(req.package, req.version, None)
-                    else:
-                        self.index.store_sdist_archive(req.package, req.version, None)
+                self._record_fetch_failure(client, req, exc)
+
+    def _record_fetch_failure(
+        self,
+        client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
+        req: FetchRequest,
+        exc: Exception,
+    ) -> None:
+        """Record a failed fetch so any waiter unblocks (else a deadlock)."""
+        if req.kind is FetchKind.LISTING:
+            # Offline + cold cache is a deliberate empty listing (the
+            # resolver proceeds with no candidates); any other failure is
+            # stored as an error so fetch_versions can surface it instead of
+            # reporting no candidates.
+            if isinstance(exc, OfflineError):
+                # Record the serving index before the empty listing fires the
+                # pending event (see _fetch_listing).
+                self._record_serving_index(client, req.package)
+                self.index.store_listing(req.package, [])
+            else:
+                self.index.store_listing_error(req.package, exc)
+            return
+        assert req.version is not None
+        if req.kind is FetchKind.METADATA:
+            if isinstance(exc, MetadataHashMismatchError):
+                self.index.store_metadata_error(req.package, req.version, exc)
+            else:
+                self.index.store_metadata(req.package, req.version, None)
+        elif req.kind is FetchKind.SDIST:
+            self.index.store_sdist_metadata(req.package, req.version, None)
+        else:
+            self.index.store_sdist_archive(req.package, req.version, None)
 
     async def _fetch_listing(
         self,
