@@ -29,6 +29,7 @@ from nab_python.universal.validate import (
     ValidationReport,
     _dependencies_override_for,
     _evaluate_metadata_deps_by_extra,
+    _requirement_key,
     validate_lock,
 )
 from nab_python.universal.wheel_selection import PlatformSpec
@@ -1225,6 +1226,21 @@ class TestSpecifierDivergence:
         finding = self._validate_single(baseline, chosen)
         assert finding.status == "divergent"
 
+    def test_arbitrary_equality_trailing_zeros_diverge(self) -> None:
+        """``===`` is literal, so ``1.0.0`` and ``1.0`` are different deps."""
+        baseline = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Dist: dep===1.0\n\n"
+        )
+        chosen = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Dist: dep===1.0.0\n\n"
+        )
+        finding = self._validate_single(baseline, chosen)
+        assert finding.status == "divergent"
+        assert finding.extra_deps == ("dep===1.0.0",)
+        assert finding.missing_deps == ("dep===1.0",)
+
 
 def _single_linux_result() -> UniversalResult:
     """A one-tuple result pinning ``pkg==1.0`` on linux/py311."""
@@ -1328,3 +1344,35 @@ class TestDependenciesOverrideValidation:
         overrides = (pkg_override("pkg", requires_python=">=3.11"),)
         report = validate_lock(result, coordinator, overrides)
         assert report.findings[0].status == "divergent"
+
+
+class TestRequirementKey:
+    """``_requirement_key`` normalizes only where PEP 440 allows it."""
+
+    def test_equality_normalizes_trailing_zeros(self) -> None:
+        assert _requirement_key(Requirement("dep==1.0.0")) == _requirement_key(
+            Requirement("dep==1.0")
+        )
+
+    def test_arbitrary_equality_keeps_trailing_zeros_distinct(self) -> None:
+        assert _requirement_key(Requirement("dep===1.0.0")) == "dep===1.0.0"
+        assert _requirement_key(Requirement("dep===1.0")) == "dep===1.0"
+        assert _requirement_key(Requirement("dep===1.0.0")) != _requirement_key(
+            Requirement("dep===1.0")
+        )
+
+    def test_arbitrary_equality_keeps_leading_zeros_distinct(self) -> None:
+        assert _requirement_key(Requirement("dep===01.0")) == "dep===01.0"
+        assert _requirement_key(Requirement("dep===01.0")) != _requirement_key(
+            Requirement("dep===1.0")
+        )
+
+    def test_arbitrary_equality_keeps_prerelease_spelling_distinct(self) -> None:
+        assert _requirement_key(Requirement("dep===1.0.0alpha1")) != _requirement_key(
+            Requirement("dep===1.0.0a1")
+        )
+
+    def test_arbitrary_equality_keeps_local_case_distinct(self) -> None:
+        assert _requirement_key(Requirement("dep===1.0+ABC")) != _requirement_key(
+            Requirement("dep===1.0+abc")
+        )
