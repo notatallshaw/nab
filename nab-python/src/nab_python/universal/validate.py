@@ -526,10 +526,8 @@ def _requirement_key(req: Requirement) -> str:
     Versions are canonicalized per specifier so equivalent spellings
     (``>=2.0`` vs ``>=2``) compare equal across wheels; the marker is
     omitted because bucketing by extra already accounts for it.
-    Trailing zeros are kept for ``~=`` and ``===`` because both treat
-    them as significant (``~=`` for its implied upper bound, ``===`` as
-    a literal string match), so trimming them would conflate distinct
-    constraints.
+    ``===`` matches the version string literally, so its operand is kept
+    raw, and ``~=`` keeps trailing zeros because they set its upper bound.
     """
     name: str = canonicalize_name(req.name)
     if req.extras:
@@ -539,8 +537,12 @@ def _requirement_key(req: Requirement) -> str:
     return name + ",".join(
         sorted(
             spec.operator
-            + canonicalize_version(
-                spec.version, strip_trailing_zero=spec.operator not in {"~=", "==="}
+            + (
+                spec.version
+                if spec.operator == "==="
+                else canonicalize_version(
+                    spec.version, strip_trailing_zero=spec.operator != "~="
+                )
             )
             for spec in req.specifier
         )
