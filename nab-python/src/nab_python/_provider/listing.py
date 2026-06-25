@@ -79,10 +79,19 @@ def versions_only(
     normalized: str,
     version_list: list[tuple[Version, DistFile]],
 ) -> list[Version]:
-    """Return the cached version-only view for ``normalized``."""
+    """Return the cached version-only view for ``normalized``.
+
+    One entry per version, in listing order, so a release with both a
+    wheel and an sdist is not listed twice.
+    """
     cached = provider.versions_only_cache.get(normalized)
     if cached is None:
-        cached = [v for v, _ in version_list]
+        seen: set[Version] = set()
+        cached = []
+        for version, _ in version_list:
+            if version not in seen:
+                seen.add(version)
+                cached.append(version)
         provider.versions_only_cache[normalized] = cached
     return cached
 
@@ -92,12 +101,40 @@ def wheel_by_version(
     normalized: str,
     version_list: list[tuple[Version, DistFile]],
 ) -> dict[Version, DistFile]:
-    """Return the cached ``Version -> DistFile`` mapping for ``normalized``."""
+    """Return the cached ``Version -> DistFile`` mapping for ``normalized``.
+
+    Keeps the cheapest metadata source per version (wheel with PEP 658
+    metadata, then any wheel, then sdist), so a same-version sdist does
+    not displace the wheel.
+    """
     cached = provider.wheel_by_version_cache.get(normalized)
     if cached is None:
-        cached = dict(version_list)
+        cached = {}
+        for version, dist in version_list:
+            cached[version] = _prefer_metadata_source(cached.get(version), dist)
         provider.wheel_by_version_cache[normalized] = cached
     return cached
+
+
+def _prefer_metadata_source(current: DistFile | None, candidate: DistFile) -> DistFile:
+    """Return the cheaper metadata source of ``current`` and ``candidate``.
+
+    Same ranking as
+    :func:`nab_python._provider.metadata_resolver.pick_dist_for_metadata`:
+    a wheel with a PEP 658 ``metadata_url``, then any wheel, then an sdist.
+    """
+    if current is None:
+        return candidate
+    return (
+        current if _metadata_rank(current) <= _metadata_rank(candidate) else candidate
+    )
+
+
+def _metadata_rank(dist: DistFile) -> int:
+    """Rank a dist by metadata-fetch cost (lower is cheaper)."""
+    if isinstance(dist, WheelFile):
+        return 0 if dist.metadata_url is not None else 1
+    return 2
 
 
 def speculative_prefetch(
@@ -268,7 +305,31 @@ def filter_distributions(
         )
     else:
         result.sort(key=lambda pair: pair[0], reverse=True)
-    return result
+    return _canonicalize_equal_versions(result)
+
+
+def _canonicalize_equal_versions(
+    result: list[tuple[Version, DistFile]],
+) -> list[tuple[Version, DistFile]]:
+    """Share one ``Version`` object across artifacts of one logical release.
+
+    ``Version("1.0") == Version("1.0.0")`` yet their ``str()`` differ, so a
+    release shipping a wheel filename ``1.0`` and an sdist filename ``1.0.0``
+    would carry two equal but differently stringed versions, and the pin
+    string (``str`` of the decided version) would then vary with resolution
+    strategy and listing order.  Collapse each equal group to one
+    representative, chosen by fewest release segments then string, so the
+    pin is deterministic.
+    """
+    representative: dict[Version, Version] = {}
+    for version, _ in result:
+        chosen = representative.get(version)
+        if chosen is None or (len(version.release), str(version)) < (
+            len(chosen.release),
+            str(chosen),
+        ):
+            representative[version] = version
+    return [(representative[version], dist) for version, dist in result]
 
 
 def _excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
