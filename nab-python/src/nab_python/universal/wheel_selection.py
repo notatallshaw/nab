@@ -71,6 +71,15 @@ _LEGACY_MANYLINUX: dict[tuple[int, int], str] = {
     (2, 5): "manylinux1",
 }
 
+# Lowest glibc 2.x minor a manylinux wheel may target, by arch.  manylinux1
+# (PEP 513) and manylinux2010 (PEP 571) cover only x86_64/i686; manylinux2014
+# (PEP 599, glibc 2.17) was the first to add other arches, so every other arch
+# stops at glibc 2.17.
+_LEGACY_GLIBC_MAJOR = 2
+_X86_MANYLINUX_ARCHS = frozenset({"x86_64", "i686"})
+_X86_MIN_GLIBC2_MINOR = 5
+_OTHER_MIN_GLIBC2_MINOR = 17
+
 
 @dataclass(frozen=True)
 class PlatformSpec:
@@ -178,23 +187,31 @@ def _linux_platform_tags(
 
     Returns the tag list in install-preference order: most-specific
     (highest glibc/musl version) first.  Accepts every minor version
-    at or below the declared floor; this is the spec-compliant
-    interpretation of "manylinux_X_Y means glibc X.Y or older".
+    at or below the declared floor, down to the arch's oldest
+    supported glibc; this is the spec-compliant interpretation of
+    "manylinux_X_Y means glibc X.Y or older".
 
     Note: PEP 600 says installers prefer wheels with the *highest*
     glibc among compatible ones.  Our use case is "decide which
     wheel a tuple would install"; the tag list ordering matches
     that preference.
     """
-    # manylinux_X_Y: PEP 600 form.  We accept any minor at or below
-    # the floor (a wheel built for glibc 2.5 runs on a system with
-    # glibc 2.17; a wheel built for glibc 2.34 does not).  Iterate
-    # high-to-low for preference order, emitting each legacy alias
-    # right after its equivalent PEP 600 tag so a legacy-named wheel
-    # ranks at its own glibc, matching packaging.tags.
+    # manylinux_X_Y: PEP 600 form.  Iterate high-to-low for preference
+    # order, emitting each legacy alias right after its equivalent
+    # PEP 600 tag so a legacy-named wheel ranks at its own glibc, matching
+    # packaging.tags.  A glibc 2.x floor stops at the arch's oldest tag
+    # (2.5 for x86, 2.17 otherwise); any other major stops at minor 0.
     major, minor = manylinux_floor
+    if major == _LEGACY_GLIBC_MAJOR:
+        min_minor = (
+            _X86_MIN_GLIBC2_MINOR
+            if arch in _X86_MANYLINUX_ARCHS
+            else _OTHER_MIN_GLIBC2_MINOR
+        )
+    else:
+        min_minor = 0
     out: list[str] = []
-    for m in range(minor, -1, -1):
+    for m in range(minor, min_minor - 1, -1):
         out.append(f"manylinux_{major}_{m}_{arch}")
         legacy = _LEGACY_MANYLINUX.get((major, m))
         if legacy is not None:

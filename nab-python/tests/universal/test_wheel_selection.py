@@ -118,6 +118,46 @@ class TestCompatibleTagsForTuple:
         assert "cp311-cp311-manylinux2014_x86_64" not in tag_strs
         assert "cp311-cp311-manylinux2010_x86_64" in tag_strs
 
+    def test_aarch64_manylinux_floor_stops_at_2_17(self) -> None:
+        """aarch64 does not descend below glibc 2.17 (PEP 599)."""
+        spec = PlatformSpec("linux_aarch64", manylinux_floor=(2, 17))
+        tag_strs = {
+            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
+        }
+        assert "cp311-cp311-manylinux_2_17_aarch64" in tag_strs
+        assert "cp311-cp311-manylinux2014_aarch64" in tag_strs
+        assert "cp311-cp311-manylinux_2_16_aarch64" not in tag_strs
+        assert "cp311-cp311-manylinux_2_5_aarch64" not in tag_strs
+        assert "cp311-cp311-manylinux2010_aarch64" not in tag_strs
+        assert "cp311-cp311-manylinux1_aarch64" not in tag_strs
+
+    def test_aarch64_rejects_legacy_alias_wheels(self) -> None:
+        """A manylinux1/manylinux2010 aarch64 wheel is not installable."""
+        spec = PlatformSpec("linux_aarch64")
+        for alias in ("manylinux1", "manylinux2010"):
+            wheel = _wheel(f"foo-1.0-cp311-cp311-{alias}_aarch64.whl")
+            assert not wheel_compatible_with_tuple(
+                wheel, python_version="3.11", spec=spec
+            )
+
+    def test_x86_64_keeps_legacy_alias_floor(self) -> None:
+        """x86_64 still descends to manylinux1 (glibc 2.5)."""
+        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        tag_strs = {
+            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
+        }
+        assert "cp311-cp311-manylinux1_x86_64" in tag_strs
+        assert "cp311-cp311-manylinux_2_5_x86_64" in tag_strs
+
+    def test_non_glibc2_floor_descends_to_x_0(self) -> None:
+        """A glibc 3.x floor descends to 3.0 on any arch (the 2.17 cap is glibc 2.x only)."""
+        spec = PlatformSpec("linux_aarch64", manylinux_floor=(3, 1))
+        tag_strs = {
+            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
+        }
+        assert "cp311-cp311-manylinux_3_1_aarch64" in tag_strs
+        assert "cp311-cp311-manylinux_3_0_aarch64" in tag_strs
+
     def test_linux_includes_musllinux_at_floor(self) -> None:
         """Musllinux at-or-below the floor is admitted."""
         spec = PlatformSpec("linux_x86_64", musllinux_floor=(1, 2))
