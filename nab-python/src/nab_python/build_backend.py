@@ -42,8 +42,9 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     """Build :class:`WheelMetadata` from a directory's static pyproject.toml.
 
     Returns ``None`` when ``[project]`` is missing, malformed, or
-    ``project.dynamic`` includes ``dependencies`` /
-    ``optional-dependencies`` (the field cannot be trusted as static).
+    ``project.dynamic`` includes ``dependencies``,
+    ``optional-dependencies``, ``version``, or ``requires-python`` (the
+    field cannot be trusted as static).
     Returns a :class:`WheelMetadata` shape when the static fields are
     authoritative, populating ``name``, ``version``,
     ``requires_python``, ``requires_dist``, and ``provides_extra``.
@@ -81,8 +82,10 @@ def _project_to_metadata(project: dict) -> WheelMetadata | None:
     if not isinstance(name, str) or not isinstance(version_raw, str):
         return None
     dynamic = project.get("dynamic")
-    if isinstance(dynamic, list) and "version" in dynamic:
-        # A dynamic version is computed by the build backend; a static
+    if isinstance(dynamic, list) and (
+        "version" in dynamic or "requires-python" in dynamic
+    ):
+        # A dynamic field is computed by the build backend; a static
         # value alongside it is a stale placeholder, not authoritative.
         return None
     try:
