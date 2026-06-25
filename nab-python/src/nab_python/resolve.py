@@ -28,6 +28,7 @@ from .config import (
     ConfigError,
     ConflictFork,
     ConflictKind,
+    ConflictSelectionError,
     ConflictSet,
     NabProjectConfig,
     ResolveMode,
@@ -750,6 +751,32 @@ def _raise_for_local_vcs_python(
             raise ResolutionError(msg)
 
 
+def _validate_universal_conflict_minimums(
+    conflicts: Sequence[ConflictSet],
+    tables: _ForkTables,
+    selected_extras: Sequence[str],
+    active_groups: Sequence[str],
+    tuples: Sequence[MatrixTuple],
+) -> None:
+    """Run the require-one minimums check per tuple, marker-aware.
+
+    A member reached only through a marker-gated self reference is active
+    only on the tuples whose environment satisfies that marker, so the
+    check expands the self-extra closure against each tuple's environment.
+    A tuple on which no member is active fails the policy even when another
+    tuple satisfies it.
+    """
+    for t in tuples:
+        active_extras = expand_self_extras(
+            tables.optional, tables.project_name, selected_extras, t.environment
+        )
+        try:
+            validate_conflict_minimums(conflicts, active_extras, active_groups)
+        except ConflictSelectionError as exc:
+            msg = f"{exc} (tuple {t.label})"
+            raise ConflictSelectionError(msg) from exc
+
+
 def resolve_universal_pyproject(
     path: Path,
     *,
@@ -818,10 +845,12 @@ def resolve_universal_pyproject(
         _validate_conflict_members_exist(
             config.conflicts, tables.optional, tables.groups
         )
-        validate_conflict_minimums(
+        _validate_universal_conflict_minimums(
             config.conflicts,
-            expand_self_extras(tables.optional, tables.project_name, extras),
+            tables,
+            extras,
             expand_group_includes(tables.groups, effective_groups),
+            expanded_tuples,
         )
 
     conflict_fork_list = conflict_forks(extras, effective_groups, config.conflicts)

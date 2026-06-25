@@ -1305,6 +1305,57 @@ class TestResolveUniversalPyproject:
         forks = mock_resolve_universal.call_args.kwargs["forks"]
         assert len(forks) == 2
 
+    def test_marker_gated_member_unreachable_on_a_tuple_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """A require-one member reachable only on a win32-gated tuple
+        leaves the non-win32 tuple with no member, so the resolve raises."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "myproj"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            "all = ['myproj[gpu]; sys_platform == \"win32\"']\n"
+            'gpu = ["cupy"]\n'
+            'cpu = ["numpy"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [{ members = [{ extra = "cpu" },'
+            ' { extra = "gpu" }], policy = "exactly-one" }]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64", "windows_amd64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="exactly one"),
+        ):
+            resolve_universal_pyproject(pyproject, extras=["all"])
+        mock_universal.assert_not_called()
+
+    @patch("nab_python.resolve.resolve_universal")
+    def test_marker_gated_member_reachable_on_every_tuple_passes(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """A self reference whose marker holds on every tuple keeps the
+        require-one set satisfied, so the resolve proceeds."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "myproj"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            "all = [\"myproj[gpu]; python_version >= '3.0'\"]\n"
+            'gpu = ["cupy"]\n'
+            'cpu = ["numpy"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [{ members = [{ extra = "cpu" },'
+            ' { extra = "gpu" }], policy = "exactly-one" }]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64", "windows_amd64"]\n'
+        )
+        resolve_universal_pyproject(pyproject, extras=["all"])
+        mock_resolve_universal.assert_called_once()
+
     @patch("nab_python.resolve.resolve_universal")
     @patch("nab_python.resolve._check_group_disjointness_across_tuples")
     def test_repeated_active_groups_check_once(
