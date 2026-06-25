@@ -1463,6 +1463,69 @@ class TestResolveUniversalPyproject:
         mock_universal.assert_not_called()
 
     @patch("nab_python.resolve.resolve_universal")
+    def test_umbrella_extra_disjoint_markers_resolve(
+        self, mock_resolve_universal: MagicMock, tmp_path: Path
+    ) -> None:
+        """Self-refs to both members under disjoint markers do not co-select.
+
+        ``all`` reaches cpu only below 3.10 and gpu only at 3.10+, so no
+        single tuple activates both. The exclusion check runs per tuple
+        against each tuple's environment, so the resolve proceeds.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "all = [\n"
+            "    \"x[cpu]; python_version < '3.10'\",\n"
+            "    \"x[gpu]; python_version >= '3.10'\",\n"
+            "]\n"
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.9,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        resolve_universal_pyproject(pyproject, extras=["all"])
+        mock_resolve_universal.assert_called_once()
+
+    def test_umbrella_extra_co_selecting_on_one_tuple_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """Overlapping self-ref markers co-activate both members on a tuple.
+
+        ``all`` reaches cpu at 3.10+ and gpu at every version, so the 3.11
+        tuple activates both. The per-tuple exclusion check must refuse the
+        resolve even though the 3.9 tuple reaches only gpu.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "all = [\n"
+            "    \"x[cpu]; python_version >= '3.10'\",\n"
+            '    "x[gpu]",\n'
+            "]\n"
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.9,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="cannot be selected together"),
+        ):
+            resolve_universal_pyproject(pyproject, extras=["all"])
+        mock_universal.assert_not_called()
+
+    @patch("nab_python.resolve.resolve_universal")
     def test_umbrella_extra_reaching_one_member_single_fork(
         self, mock_resolve_universal: MagicMock, tmp_path: Path
     ) -> None:
