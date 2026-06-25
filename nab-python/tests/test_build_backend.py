@@ -125,6 +125,18 @@ class TestExtractStaticMetadata:
         )
         assert extract_static_metadata(tmp_path) is None
 
+    def test_dynamic_requires_python_returns_none(self, tmp_path: Path) -> None:
+        _write_pyproject(
+            tmp_path,
+            """
+            [project]
+            name = "foo"
+            version = "1.0"
+            dynamic = ["requires-python"]
+            """,
+        )
+        assert extract_static_metadata(tmp_path) is None
+
     def test_dynamic_non_version_keeps_static_version(self, tmp_path: Path) -> None:
         _write_pyproject(
             tmp_path,
