@@ -400,14 +400,19 @@ def _metadata_hash(file_info: dict) -> tuple[str, str] | None:
     """Return the sidecar's published ``(algo, hex)`` to verify, or None.
 
     Only sha256 is checked: it is what PyPI publishes for core metadata
-    and what pip verifies.  A bare ``true`` (sidecar exists, no hash)
-    or a table without sha256 yields None, so no check runs.
+    and what pip verifies.  The algorithm name is matched case-insensitively.
+    A bare ``true`` (sidecar exists, no hash) or a table without sha256
+    yields None, so no check runs.
     """
     value = _metadata_value(file_info)
     if isinstance(value, dict):
-        digest = value.get("sha256")
-        if isinstance(digest, str):
-            return ("sha256", digest.lower())
+        for algo, digest in value.items():
+            if (
+                isinstance(algo, str)
+                and algo.lower() == "sha256"
+                and isinstance(digest, str)
+            ):
+                return ("sha256", digest.lower())
     return None
 
 
