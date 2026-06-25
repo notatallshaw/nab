@@ -513,6 +513,12 @@ class Provider:
         self.extra_deps_map: dict[
             tuple[str, Version], dict[str, dict[str, VersionRange]]
         ] = {}
+        # Direct-URL deps gated behind a provided-but-unrequested extra. The
+        # refusal is deferred until the extra is selected, so a plain resolve of
+        # a package that merely offers such an extra is not aborted.
+        self.deferred_url_extras: dict[
+            tuple[str, Version], dict[str, list[tuple[Requirement, str]]]
+        ] = {}
 
         # Memoised sdist-rejections so re-tries do not re-parse PKG-INFO.
         self._unsupported_sdists: set[tuple[str, Version]] = set()

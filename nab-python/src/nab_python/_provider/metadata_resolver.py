@@ -417,26 +417,53 @@ def cache_deps_from_metadata(
     # Late import: ``pypi`` imports this module at module load.
     from ..provider import _normalize_extra
 
+    package, _ = cache_key
     provider.metadata_cache[cache_key] = metadata
     provided_extras = {_normalize_extra(e) for e in metadata.provides_extra}
     base_deps: dict[str, VersionRange] = {}
     extra_deps_map: dict[str, dict[str, VersionRange]] = {
         e: {} for e in provided_extras
     }
+    deferred_url_extras: dict[str, list[tuple[Requirement, str]]] = {}
     for req in metadata.requires_dist:
         req_extras = classify_requirement(provider, req, provided_extras)
         if req_extras is None:
             continue
         if req.url is not None:
-            admit_vcs_url(req.url, provider.vcs_config)
-            msg = (
-                f"VCS dependency admitted by policy but resolver path is not"
-                f" implemented: {req.name} @ {req.url}"
-            )
-            raise NotImplementedError(msg)
+            if _url_dep_is_active(provider, package, req_extras):
+                refuse_url_dep(provider, req, req.url)
+            else:
+                for extra_name in req_extras:
+                    deferred_url_extras.setdefault(extra_name, []).append(
+                        (req, req.url)
+                    )
+            continue
         add_classified_dep(req, req_extras, base_deps, extra_deps_map)
     provider.deps_cache[cache_key] = base_deps
     provider.extra_deps_map[cache_key] = extra_deps_map
+    provider.deferred_url_extras[cache_key] = deferred_url_extras
+
+
+def _url_dep_is_active(provider: Provider, package: str, req_extras: set[str]) -> bool:
+    """Whether a direct-URL dep must be refused at base-metadata time.
+
+    A base dep (no extra gating) is always active. An extra-gated dep is active
+    only when the user requested one of its extras at the root; otherwise its
+    refusal defers to the per-extra path.
+    """
+    if not req_extras:
+        return True
+    return any((package, extra) in provider.root_extras for extra in req_extras)
+
+
+def refuse_url_dep(provider: Provider, req: Requirement, url: str) -> None:
+    """Refuse a direct-URL requirement, or raise ``NotImplementedError``."""
+    admit_vcs_url(url, provider.vcs_config)
+    msg = (
+        f"VCS dependency admitted by policy but resolver path is not"
+        f" implemented: {req.name} @ {url}"
+    )
+    raise NotImplementedError(msg)
 
 
 def add_classified_dep(
