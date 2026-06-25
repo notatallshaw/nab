@@ -722,6 +722,57 @@ class TestPyprojectStaticDepsFastPath:
         assert _pyproject_is_pep621_static(coordinator, "pkg", Version("1.0")) is True
 
 
+class TestEqualVersionsDifferentStrings:
+    """One release whose wheel and sdist filenames stringify to equal but
+    different versions (``pkg-1.0-...`` vs ``pkg-1.0.0.tar.gz``).  The
+    validator matches listing files by Version, not by raw string.
+    """
+
+    def test_wheel_matched_when_pin_string_differs(self) -> None:
+        """Pin ``1.0.0`` finds the wheel filed as ``1.0`` rather than reporting sdist_only."""
+        wheel = _wheel("pkg-1.0-cp311-cp311-linux_x86_64.whl")
+        sdist = _sdist("pkg-1.0.0.tar.gz")
+        assert wheel.version == "1.0"
+        assert sdist.version == "1.0.0"
+        coordinator = _make_coordinator({"pkg": [wheel, sdist]})
+        coordinator.index.store_metadata("pkg", "1.0.0", _BASE_METADATA)
+        coordinator.index.store_metadata(
+            "pkg", f"1.0.0#{wheel.filename}", _BASE_METADATA
+        )
+        result = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[
+                TupleResult(
+                    tuple_=_linux_311(),
+                    success=True,
+                    pins={"pkg": Version("1.0.0")},
+                ),
+            ],
+        )
+        report = validate_lock(result, coordinator)
+        assert report.findings[0].status == "ok"
+
+    def test_sdist_matched_when_pin_string_differs(self) -> None:
+        """Pin ``1.0`` sees the sdist filed as ``1.0.0`` (buildable, not a hard error)."""
+        only_win = _wheel("pkg-1.0.0-cp311-cp311-win_amd64.whl")
+        sdist = _sdist("pkg-1.0.tar.gz")
+        assert only_win.version == "1.0.0"
+        assert sdist.version == "1.0"
+        coordinator = _make_coordinator({"pkg": [only_win, sdist]})
+        result = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[
+                TupleResult(
+                    tuple_=_linux_311(),
+                    success=True,
+                    pins={"pkg": Version("1.0")},
+                ),
+            ],
+        )
+        report = validate_lock(result, coordinator)
+        assert report.findings[0].status == "no_compatible_wheel_with_sdist"
+
+
 class TestNoCompatibleWheelWithSdist:
     """When wheels exist but none compatible, sdist availability matters."""
 

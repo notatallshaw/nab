@@ -28,11 +28,11 @@ from .._vendor.packaging.requirements import (
     Requirement,
 )
 from .._vendor.packaging.utils import canonicalize_name, canonicalize_version
+from .._vendor.packaging.version import Version
 from ..metadata import load_static_project, metadata_deps_are_static, parse_metadata
 from .wheel_selection import select_wheel_for_tuple
 
 if TYPE_CHECKING:
-    from .._vendor.packaging.version import Version
     from ..fetch import FetchCoordinator
     from .matrix import MatrixTuple
     from .resolve import UniversalResult
@@ -170,7 +170,7 @@ def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
     """Run the per-pin checks; emit a PinValidation outcome."""
     normalized = canonicalize_name(package)
     listing = coordinator.index.get_listing(normalized) or []
-    files_at_version = [f for f in listing if f.version == str(version)]
+    files_at_version = [f for f in listing if Version(f.version) == version]
     wheels_at_version = [f for f in files_at_version if isinstance(f, WheelFile)]
     has_sdist = any(not isinstance(f, WheelFile) for f in files_at_version)
     if not files_at_version:
