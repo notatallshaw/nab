@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from .._vendor.packaging.ranges import VersionRange
+from .metadata_resolver import refuse_url_dep
 
 if TYPE_CHECKING:
     from nab_resolver.types import RangeProtocol
@@ -186,6 +187,11 @@ def get_extra_dependencies(
         # metadata_cache on success or raises; this is defensive.
         msg = f"No metadata cached for {base}=={version}"
         raise MetadataError(msg)
+
+    deferred = provider.deferred_url_extras.get(base_cache_key, {}).get(extra)
+    if deferred:
+        req, url = deferred[0]
+        refuse_url_dep(provider, req, url)
 
     extra_map = provider.extra_deps_map.get(base_cache_key, {})
     if extra not in extra_map:

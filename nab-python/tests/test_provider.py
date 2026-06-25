@@ -1095,6 +1095,87 @@ class TestTransitiveDirectUrlDep:
         assert "bar" not in deps
         assert "baz" in deps
 
+    @staticmethod
+    def _provider_with_extra_url(
+        url: str,
+        *,
+        root_extras: set[tuple[str, str]] | None = None,
+        vcs_config: VcsConfig | None = None,
+    ) -> Provider:
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\n"
+                "Name: foo\n"
+                "Version: 1.0\n"
+                "Provides-Extra: uvloop\n"
+                f'Requires-Dist: bar @ {url} ; extra == "uvloop"\n'
+                "Requires-Dist: baz>=1.0\n"
+            ),
+            package="foo",
+        )
+        return Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_extras=root_extras,
+            vcs_config=vcs_config,
+        )
+
+    def test_unrequested_extra_url_dep_does_not_abort_base(self) -> None:
+        """A url dep gated on a provided-but-unrequested extra is skipped at base."""
+        provider = self._provider_with_extra_url("https://example.com/bar.whl")
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "bar" not in deps
+        assert "baz" in deps
+
+    def test_unrequested_extra_vcs_url_dep_does_not_abort_base(self) -> None:
+        """A VCS url under an unrequested extra is also skipped at base."""
+        provider = self._provider_with_extra_url(
+            "git+https://example.com/bar.git@" + "a" * 40
+        )
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "bar" not in deps
+        assert "baz" in deps
+
+    def test_selected_extra_url_dep_is_refused(self) -> None:
+        """Selecting the extra fires the deferred direct-URL refusal."""
+        provider = self._provider_with_extra_url("https://example.com/bar.whl")
+        provider.get_dependencies("foo", V("1.0"))
+        with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
+            provider.get_dependencies("foo[uvloop]", V("1.0"))
+
+    def test_selected_extra_vcs_url_dep_is_refused(self) -> None:
+        """Selecting the extra fires the deferred VCS refusal under BLOCK."""
+        provider = self._provider_with_extra_url(
+            "git+https://example.com/bar.git@" + "a" * 40
+        )
+        provider.get_dependencies("foo", V("1.0"))
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+            provider.get_dependencies("foo[uvloop]", V("1.0"))
+
+    def test_selected_extra_admitted_vcs_url_raises_not_implemented(self) -> None:
+        """An admitted VCS url under a selected extra raises NotImplementedError."""
+        provider = self._provider_with_extra_url(
+            "git+https://example.com/bar.git@" + "a" * 40,
+            vcs_config=VcsConfig(
+                policy=VcsPolicy.ALLOW,
+                allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
+            ),
+        )
+        provider.get_dependencies("foo", V("1.0"))
+        with pytest.raises(NotImplementedError, match="not implemented"):
+            provider.get_dependencies("foo[uvloop]", V("1.0"))
+
+    def test_root_requested_extra_url_dep_refused_eagerly(self) -> None:
+        """When the extra is a root extra, the url dep is refused at base parse."""
+        provider = self._provider_with_extra_url(
+            "https://example.com/bar.whl",
+            root_extras={("foo", "uvloop")},
+        )
+        with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
+            provider.get_dependencies("foo", V("1.0"))
+
 
 class TestAddClassifiedDep:
     """``add_classified_dep`` intersects duplicate dependency names."""
