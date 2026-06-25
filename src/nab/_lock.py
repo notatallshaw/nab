@@ -228,6 +228,21 @@ def _emit_specific(
     if provenance is not None:
         lock_input.provenance = provenance
 
+    try:
+        _write_specific(result, lock_input, format=format, output=output)
+    except _cli.MissingHashError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
+
+
+def _write_specific(
+    result: ResolutionResult,
+    lock_input: LockInput,
+    *,
+    format: str,  # noqa: A002 - shadows builtin by convention
+    output: Path | None,
+) -> None:
+    """Render ``lock_input`` in ``format``."""
     if _cli.is_stdout(output):
         if format == "pylock":
             sys.stdout.write(_cli.write_lock(lock_input))

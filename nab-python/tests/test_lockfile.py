@@ -2704,8 +2704,9 @@ class TestBuildLockInputFromProvider:
     def test_missing_acceptable_hash_raises(self) -> None:
         wheel = _wheel_file(sha256=None)
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
         with pytest.raises(MissingHashError, match="no acceptable hash"):
-            build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+            write_lock(lock_input)
 
     def test_unsupported_algorithm_raises(self) -> None:
         wheel_md5_only = WheelFile(
@@ -2719,8 +2720,9 @@ class TestBuildLockInputFromProvider:
             size=1234,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel_md5_only)]})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
         with pytest.raises(MissingHashError, match="no acceptable hash"):
-            build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+            write_lock(lock_input)
 
     def test_sha384_and_sha512_emit(self) -> None:
         wheel = WheelFile(
@@ -2795,8 +2797,9 @@ class TestBuildLockInputFromProvider:
             size=None,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
         with pytest.raises(MissingHashError, match="sha256"):
-            build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+            write_requirements_with_hashes(lock_input)
 
     def test_files_without_requires_python_drop_field(self) -> None:
         wheel = _wheel_file(requires_python=None)
@@ -2805,6 +2808,60 @@ class TestBuildLockInputFromProvider:
         pin = lock_input.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.requires_python is None
+
+
+class TestMissingHashFormatAware:
+    """The hash requirement is enforced per output format, not at build."""
+
+    def test_build_tolerates_hashless_artifact(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file(sha256=None))]}
+        )
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].hashes == ()
+
+    def test_build_drops_unacceptable_algorithm(self) -> None:
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://example.com/foo-1.0.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=False,
+            upload_time=None,
+            hashes=(("md5", "x" * 32),),
+            size=None,
+        )
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].hashes == ()
+
+    def test_without_hashes_emits_hashless_pin(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file(sha256=None))]}
+        )
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        text = write_requirements_without_hashes(lock_input)
+        assert text.strip() == "foo==1.0"
+
+    def test_with_hashes_raises_on_hashless_pin(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file(sha256=None))]}
+        )
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        with pytest.raises(MissingHashError, match="no acceptable hash"):
+            write_requirements_with_hashes(lock_input)
+
+    def test_pylock_raises_on_hashless_pin(self) -> None:
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file(sha256=None))]}
+        )
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        with pytest.raises(MissingHashError, match="no acceptable hash"):
+            write_lock(lock_input)
 
 
 class TestDirectoryFields:

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
+from .builder import require_artifact_hashes
+
 if TYPE_CHECKING:
     import os
     from collections.abc import Mapping
@@ -39,6 +41,7 @@ def write_requirements_with_hashes(
     ``#subdirectory=`` fragment.  Returns the text and, when
     ``output_path`` is provided, atomically writes it.
     """
+    require_artifact_hashes(lock_input)
     return _render_requirements(lock_input, with_hashes=True, output_path=output_path)
 
 

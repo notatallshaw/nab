@@ -31,6 +31,7 @@ from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import Version
 from ..config import conflict_exclusion_groups, conflict_member_groups
+from .builder import require_artifact_hashes
 from .disjointness import validate_marker_disjointness
 
 if TYPE_CHECKING:
@@ -81,6 +82,7 @@ def write_lock(
     machines (PEP 751 records those paths relative to the lock file).
     With no ``output_path`` the current directory is the base.
     """
+    require_artifact_hashes(lock_input)
     lock_dir = Path(output_path).parent if output_path is not None else None
     pylock = build_pylock(lock_input, lock_dir=lock_dir)
     pylock.validate()

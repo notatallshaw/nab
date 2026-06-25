@@ -26,7 +26,15 @@ from nab_python.config import (
     ConflictSet,
     conflict_forks,
 )
-from nab_python.lockfile import DisjointnessError, IndexPin, LockInput, build_pylock
+from nab_python.lockfile import (
+    DisjointnessError,
+    IndexPin,
+    LockInput,
+    MissingHashError,
+    build_pylock,
+    write_requirements_with_hashes,
+    write_requirements_without_hashes,
+)
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
@@ -874,8 +882,8 @@ class TestResolveOneTuple:
         assert tr.error is not None
         assert "ResolutionError" in tr.error
 
-    def test_missing_hash_reports_failed_tuple(self) -> None:
-        """An unhashed wheel resolves but the tuple fails with MissingHashError."""
+    def test_unhashed_tuple_defers_hash_check_to_emit(self) -> None:
+        """An unhashed wheel resolves; the hash check is per output format."""
         unhashed = WheelFile(
             filename="pkg-1.0-py3-none-any.whl",
             url="https://example.com/pkg-1.0.whl",
@@ -894,10 +902,15 @@ class TestResolveOneTuple:
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
         )
-        assert not tr.success
-        assert tr.error is not None
-        assert "MissingHashError" in tr.error
+        assert tr.success
         assert tr.pins == {"pkg": Version("1.0")}
+        assert tr.lock_input is not None
+        pin = tr.lock_input.pins["pkg"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].hashes == ()
+        assert write_requirements_without_hashes(tr.lock_input).strip() == "pkg==1.0"
+        with pytest.raises(MissingHashError, match="no acceptable hash"):
+            write_requirements_with_hashes(tr.lock_input)
 
     def test_sdist_install_without_sdist_reports_failed_tuple(self) -> None:
         """A wheel-only version under sdist-install fails the tuple."""

@@ -255,6 +255,65 @@ class TestLockCommandSpecific:
         text = out.read_text()
         assert text.strip() == "foo==1.0"
 
+    def test_hashless_pin_locks_without_hashes(self, tmp_path: Path) -> None:
+        """A pin whose artefact lacks a usable hash still locks plain pins."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "requirements.txt"
+        result = ResolutionResult(
+            pins={"foo": V("1.0")},
+            lock_input=LockInput(
+                pins={
+                    "foo": IndexPin(
+                        name="foo",
+                        version="1.0",
+                        index="pypi",
+                        wheels=(
+                            WheelArtifact(
+                                filename="foo-1.0-py3-none-any.whl",
+                                url="https://example.com/foo-1.0-py3-none-any.whl",
+                                hashes=(),
+                            ),
+                        ),
+                    )
+                }
+            ),
+        )
+        with patch("nab.cli.resolve_pyproject", return_value=result):
+            lock(pyproject, output=out, format="requirements-without-hashes")
+        assert out.read_text().strip() == "foo==1.0"
+
+    def test_hashless_pin_fails_pylock(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The same hashless pin is fatal for the hash-bearing pylock format."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        result = ResolutionResult(
+            pins={"foo": V("1.0")},
+            lock_input=LockInput(
+                pins={
+                    "foo": IndexPin(
+                        name="foo",
+                        version="1.0",
+                        index="pypi",
+                        wheels=(
+                            WheelArtifact(
+                                filename="foo-1.0-py3-none-any.whl",
+                                url="https://example.com/foo-1.0-py3-none-any.whl",
+                                hashes=(),
+                            ),
+                        ),
+                    )
+                }
+            ),
+        )
+        with (
+            patch("nab.cli.resolve_pyproject", return_value=result),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out, format="pylock")
+        assert "no acceptable hash" in capsys.readouterr().err
+
     def test_pylock_to_stdout(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

@@ -47,6 +47,7 @@ __all__ = [
     "build_lock_input_from_provider",
     "read_lockfile_anchor",
     "read_lockfile_packages",
+    "require_artifact_hashes",
 ]
 
 
@@ -377,15 +378,11 @@ def _index_pin_from_listing(
             raise MissingSdistError(msg)
 
     wheels = tuple(
-        _build_artifact(canonical, f, WheelArtifact)
-        for f in files
-        if isinstance(f, WheelFile)
+        _build_artifact(f, WheelArtifact) for f in files if isinstance(f, WheelFile)
     )
     sdist_file = next((f for f in files if isinstance(f, SdistFile)), None)
     sdist = (
-        _build_artifact(canonical, sdist_file, SdistArtifact)
-        if sdist_file is not None
-        else None
+        _build_artifact(sdist_file, SdistArtifact) if sdist_file is not None else None
     )
     requires_python = _common_requires_python(files)
     serving_name = provider.coordinator.index.get_listing_index(canonical)
@@ -414,22 +411,19 @@ def _index_pin_from_listing(
 
 @overload
 def _build_artifact(
-    canonical: str,
     source: WheelFile | SdistFile,
     cls: type[WheelArtifact],
 ) -> WheelArtifact: ...
 @overload
 def _build_artifact(
-    canonical: str,
     source: WheelFile | SdistFile,
     cls: type[SdistArtifact],
 ) -> SdistArtifact: ...
 def _build_artifact(
-    canonical: str,
     source: WheelFile | SdistFile,
     cls: type[WheelArtifact | SdistArtifact],
 ) -> WheelArtifact | SdistArtifact:
-    hashes = _filter_acceptable_hashes(canonical, source.filename, source.hashes)
+    hashes = _filter_acceptable_hashes(source.hashes)
     return cls(
         filename=source.filename,
         url=_strip_userinfo(source.url),
@@ -461,30 +455,50 @@ def _parse_upload_time(raw: str | None) -> datetime | None:
 
 
 def _filter_acceptable_hashes(
-    canonical: str, filename: str, hashes: tuple[tuple[str, str], ...]
+    hashes: tuple[tuple[str, str], ...],
 ) -> tuple[tuple[str, str], ...]:
     """Return the subset of ``hashes`` whose algorithm is consumable.
 
     Pip's hash-checking mode and PEP 751 both accept any of sha256,
     sha384, or sha512; nab forwards every recorded entry so consumers
-    can pick.  Raise :class:`MissingHashError` when none of the
-    acceptable algorithms are present.
+    can pick.  Unacceptable algorithms (e.g. md5) are dropped, so the
+    result may be empty.
     """
     from ..lockfile import ACCEPTED_HASH_ALGORITHMS
 
-    accepted = tuple(
+    return tuple(
         (algo, digest)
         for algo, digest in sorted(hashes)
         if algo in ACCEPTED_HASH_ALGORITHMS
     )
-    if not accepted:
-        algos = sorted({algo for algo, _ in hashes})
-        msg = (
-            f"{canonical}: artefact {filename!r} has no acceptable hash"
-            f" (need one of {list(ACCEPTED_HASH_ALGORITHMS)!r}, got {algos!r})"
-        )
-        raise MissingHashError(msg)
-    return accepted
+
+
+def require_artifact_hashes(lock_input: LockInput) -> None:
+    """Raise :class:`MissingHashError` if a pinned artefact has no hash.
+
+    PEP 751 and pip's hash-checking mode each need at least one of
+    sha256/sha384/sha512 per artefact.  The plain ``name==version``
+    writer records no hash and does not call this.
+    """
+    from ..lockfile import ACCEPTED_HASH_ALGORITHMS, IndexPin
+
+    pin_groups: Iterable[Mapping[str, PinShape]] = (
+        lock_input.pins,
+        *lock_input.per_tuple_pins.values(),
+    )
+    for pins in pin_groups:
+        for pin in pins.values():
+            if not isinstance(pin, IndexPin):
+                continue
+            artefacts = (*pin.wheels, *((pin.sdist,) if pin.sdist is not None else ()))
+            for artefact in artefacts:
+                if not artefact.hashes:
+                    msg = (
+                        f"{pin.name}: artefact {artefact.filename!r} has no "
+                        f"acceptable hash (need one of "
+                        f"{list(ACCEPTED_HASH_ALGORITHMS)!r})"
+                    )
+                    raise MissingHashError(msg)
 
 
 def _common_requires_python(files: Iterable[WheelFile | SdistFile]) -> str | None:
