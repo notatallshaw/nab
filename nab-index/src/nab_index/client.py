@@ -482,42 +482,61 @@ def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
 
 
 def _read_tar_sdist_files(data: bytes) -> tuple[str | None, str | None]:
-    pkg_info: str | None = None
-    pyproject_toml: str | None = None
+    pkg_infos: dict[str, str] = {}
+    pyprojects: dict[str, str] = {}
 
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
         for member in tar:
-            depth, basename = _sdist_member_top_level(member.name)
-            if depth > 1:
+            depth, top_dir, basename = _sdist_member_top_level(member.name)
+            if depth != 1:
                 continue
-            if pkg_info is None and basename == "PKG-INFO":
-                extracted = tar.extractfile(member)
-                if extracted is not None:
-                    pkg_info = extracted.read().decode("utf-8")
-            elif pyproject_toml is None and basename == "pyproject.toml":
-                extracted = tar.extractfile(member)
-                if extracted is not None:
-                    pyproject_toml = extracted.read().decode("utf-8")
+            target = (
+                pkg_infos
+                if basename == "PKG-INFO"
+                else pyprojects
+                if basename == "pyproject.toml"
+                else None
+            )
+            if target is None or top_dir in target:
+                continue
+            extracted = tar.extractfile(member)
+            if extracted is not None:
+                target[top_dir] = extracted.read().decode("utf-8")
 
-            if pkg_info is not None and pyproject_toml is not None:
-                break
-
-    return (pkg_info, pyproject_toml)
+    return _select_sdist_root(pkg_infos, pyprojects)
 
 
-def _sdist_member_top_level(name: str) -> tuple[int, str]:
-    """Return ``(depth, basename)`` for a tar member relative to the sdist root.
+def _select_sdist_root(
+    pkg_infos: dict[str, str], pyprojects: dict[str, str]
+) -> tuple[str | None, str | None]:
+    """Pick PKG-INFO and pyproject.toml from one ``<name>-<version>/`` root.
+
+    A conformant sdist has a single top-level directory holding both
+    files.  PKG-INFO is the defining file, so its directory is the root;
+    pyproject.toml counts only when it shares that directory.  If several
+    top-level directories carry a PKG-INFO the root is ambiguous, so both
+    return ``None`` rather than risk pairing files from different roots.
+    """
+    if len(pkg_infos) != 1:
+        return (None, None)
+    root, pkg_info = next(iter(pkg_infos.items()))
+    return (pkg_info, pyprojects.get(root))
+
+
+def _sdist_member_top_level(name: str) -> tuple[int, str, str]:
+    """Return ``(depth, top_dir, basename)`` for a tar member.
 
     Strips a single leading ``./``.  Depth 0 means the file sits at the
-    archive root (rare); depth 1 means it sits directly under the
-    conventional ``<name>-<version>/`` top-level directory.  Anything
+    archive root; depth 1 means it sits directly under a top-level
+    directory, whose name is ``top_dir`` (empty at depth 0).  Anything
     deeper is reported as-is so callers can ignore it.
     """
     stripped = name.removeprefix("./")
     if not stripped or stripped.startswith("/"):
-        return (-1, "")
+        return (-1, "", "")
     parts = stripped.split("/")
-    return (len(parts) - 1, parts[-1])
+    top_dir = parts[0] if len(parts) > 1 else ""
+    return (len(parts) - 1, top_dir, parts[-1])
 
 
 def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
