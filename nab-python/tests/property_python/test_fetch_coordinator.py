@@ -110,7 +110,11 @@ class FakeClient:
         return f"META:{package}:{version}"
 
     async def get_sdist_files(
-        self, package: str, version: str, url: str
+        self,
+        package: str,
+        version: str,
+        url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> tuple[str, str | None]:
         await self._common(("sdist", package, version))
         return (f"PKGINFO:{package}:{version}", f"PYPROJECT:{package}:{version}")

@@ -23,6 +23,7 @@ from nab_index.cached_client import (
 from nab_index.client import (
     MetadataHashMismatchError,
     SdistFile,
+    SdistHashMismatchError,
     WheelFile,
     _parse_files,
     _parse_sdist_filename,
@@ -464,6 +465,38 @@ class TestParseHashes:
         from nab_index.client import _parse_hashes
 
         assert _parse_hashes({}) == ()
+
+
+class TestSelectArtifactHash:
+    def test_prefers_sha256(self) -> None:
+        from nab_index.client import _select_artifact_hash
+
+        hashes = (("sha512", "f" * 128), ("sha256", "a" * 64))
+        assert _select_artifact_hash(hashes) == ("sha256", "a" * 64)
+
+    def test_falls_through_to_sha384(self) -> None:
+        from nab_index.client import _select_artifact_hash
+
+        hashes = (("sha512", "f" * 128), ("sha384", "b" * 96))
+        assert _select_artifact_hash(hashes) == ("sha384", "b" * 96)
+
+    def test_falls_through_to_sha512(self) -> None:
+        from nab_index.client import _select_artifact_hash
+
+        assert _select_artifact_hash((("sha512", "f" * 128),)) == (
+            "sha512",
+            "f" * 128,
+        )
+
+    def test_empty_returns_none(self) -> None:
+        from nab_index.client import _select_artifact_hash
+
+        assert _select_artifact_hash(()) is None
+
+    def test_only_unacceptable_returns_none(self) -> None:
+        from nab_index.client import _select_artifact_hash
+
+        assert _select_artifact_hash((("md5", "d" * 32),)) is None
 
 
 class TestParseMaxAge:
@@ -1011,6 +1044,93 @@ class TestGetSdistFiles:
 
         with pytest.raises(OfflineError, match="pkg==1.0"):
             asyncio.run(go())
+
+    def test_matching_hash_returns_and_caches(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        body = _build_tarball(
+            [("pkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: pkg\n")]
+        )
+        digest = hashlib.sha256(body).hexdigest()
+        transport = _FakeTransport([_FakeResponse(body)])
+
+        async def go() -> tuple[str | None, str | None]:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_sdist_files(
+                    "pkg", "1.0", "https://x/pkg.tar.gz", (("sha256", digest),)
+                )
+            finally:
+                await client.aclose()
+
+        pkg_info, _ = asyncio.run(go())
+        assert pkg_info is not None
+        assert "Name: pkg" in pkg_info
+        assert cache.get_sdist_pkginfo("pkg", "1.0") == pkg_info
+
+    def test_mismatching_hash_raises_and_skips_cache(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        published = _build_tarball(
+            [("pkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: pkg\n")]
+        )
+        digest = hashlib.sha256(published).hexdigest()
+        tampered = _build_tarball(
+            [("pkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: evil\n")]
+        )
+        transport = _FakeTransport([_FakeResponse(tampered)])
+
+        async def go() -> tuple[str | None, str | None]:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_sdist_files(
+                    "pkg", "1.0", "https://x/pkg.tar.gz", (("sha256", digest),)
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(SdistHashMismatchError):
+            asyncio.run(go())
+        assert cache.get_sdist_pkginfo("pkg", "1.0") is None
+        assert cache.get_sdist_pyproject("pkg", "1.0") is None
+
+    def test_no_published_hash_skips_verification(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        body = _build_tarball(
+            [("pkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: pkg\n")]
+        )
+        transport = _FakeTransport([_FakeResponse(body)])
+
+        async def go() -> tuple[str | None, str | None]:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_sdist_files(
+                    "pkg", "1.0", "https://x/pkg.tar.gz", ()
+                )
+            finally:
+                await client.aclose()
+
+        pkg_info, _ = asyncio.run(go())
+        assert pkg_info is not None
+        assert "Name: pkg" in pkg_info
+
+    def test_only_unacceptable_hash_skips_verification(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        body = _build_tarball(
+            [("pkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: pkg\n")]
+        )
+        transport = _FakeTransport([_FakeResponse(body)])
+
+        async def go() -> tuple[str | None, str | None]:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_sdist_files(
+                    "pkg", "1.0", "https://x/pkg.tar.gz", (("md5", "deadbeef"),)
+                )
+            finally:
+                await client.aclose()
+
+        pkg_info, _ = asyncio.run(go())
+        assert pkg_info is not None
+        assert "Name: pkg" in pkg_info
 
 
 class TestContextManager:

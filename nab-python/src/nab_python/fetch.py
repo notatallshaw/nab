@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING, Any
 
 from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
-from nab_index.client import MetadataHashMismatchError, SdistFile, WheelFile
+from nab_index.client import (
+    MetadataHashMismatchError,
+    SdistFile,
+    SdistHashMismatchError,
+    WheelFile,
+)
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 
@@ -100,6 +105,7 @@ class FetchRequest:
     version: str | None = None
     url: str | None = None
     metadata_hash: tuple[str, str] | None = None
+    sdist_hashes: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -257,6 +263,25 @@ class InMemoryIndex:
             pending = self._pending.get(key)
         if pending is not None:
             pending.result = data
+            pending.event.set()
+
+    def store_sdist_metadata_error(
+        self, package: str, version: str, error: BaseException
+    ) -> None:
+        """Record an sdist integrity failure and unblock the sdist waiter.
+
+        Parallels :meth:`store_metadata_error` for the wheel sidecar:
+        ``store_sdist_metadata(None)`` means the archive yielded no
+        PKG-INFO, while an error means the archive failed its published
+        hash and the resolve must abort rather than fall through.  The
+        error is keyed on ``(package, version)`` so :meth:`get_metadata_error`
+        surfaces it, and the ``sdist:`` pending event is fired.
+        """
+        key = f"sdist:{package}:{version}"
+        with self._lock:
+            self._metadata_errors[(package, version)] = error
+            pending = self._pending.get(key)
+        if pending is not None:
             pending.event.set()
 
     def metadata_from_sdist(self, package: str, version: str) -> bool:
@@ -581,12 +606,20 @@ class FetchCoordinator:
             )
         return pending.event
 
-    def request_sdist(self, package: str, version: str, url: str) -> threading.Event:
+    def request_sdist(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> threading.Event:
         """Request sdist PKG-INFO extraction.
 
         Uses a separate ``sdist:`` pending key so it can fire even
         when a prior wheel metadata fetch already cached ``None``
-        for the same ``(package, version)`` slot.
+        for the same ``(package, version)`` slot.  ``sdist_hashes`` is
+        the index-published digest set; the fetcher verifies the
+        downloaded archive against it before extraction.
         """
         self._check_alive()
         key = f"sdist:{package}:{version}"
@@ -598,6 +631,7 @@ class FetchCoordinator:
                     package=package,
                     version=version,
                     url=url,
+                    sdist_hashes=sdist_hashes,
                 )
             )
         return pending.event
@@ -821,7 +855,10 @@ class FetchCoordinator:
             else:
                 self.index.store_metadata(req.package, req.version, None)
         elif req.kind is FetchKind.SDIST:
-            self.index.store_sdist_metadata(req.package, req.version, None)
+            if isinstance(exc, SdistHashMismatchError):
+                self.index.store_sdist_metadata_error(req.package, req.version, exc)
+            else:
+                self.index.store_sdist_metadata(req.package, req.version, None)
         else:
             self.index.store_sdist_archive(req.package, req.version, None)
 
@@ -890,7 +927,7 @@ class FetchCoordinator:
         assert req.version is not None
         assert req.url is not None
         pkg_info, pyproject = await client.get_sdist_files(
-            req.package, req.version, req.url
+            req.package, req.version, req.url, req.sdist_hashes
         )
         # Store pyproject.toml first: store_sdist_metadata fires the
         # pending event, and a released waiter reads the pyproject slot

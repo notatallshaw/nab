@@ -83,9 +83,13 @@ class _Stub:
         return ""
 
     async def get_sdist_files(
-        self, package: str, version: str, sdist_url: str
+        self,
+        package: str,
+        version: str,
+        sdist_url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> tuple[str | None, str | None]:
-        del package, version, sdist_url
+        del package, version, sdist_url, sdist_hashes
         return (None, None)
 
     async def get_sdist_archive(

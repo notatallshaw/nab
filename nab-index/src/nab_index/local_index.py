@@ -321,8 +321,13 @@ class LocalIndexClient:
         package: str,  # noqa: ARG002 - matches CachedAsyncSimpleClient signature
         version: str,  # noqa: ARG002
         sdist_url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),  # noqa: ARG002
     ) -> tuple[str | None, str | None]:
-        """Return ``(pkg_info, pyproject_toml)`` extracted from the sdist."""
+        """Return ``(pkg_info, pyproject_toml)`` extracted from the sdist.
+
+        The on-disk archive is trusted, so ``sdist_hashes`` is accepted
+        only to match the remote client signature and is not verified.
+        """
         path = _parse_file_url(sdist_url)
         return _extract_sdist_files(path.read_bytes())
 
