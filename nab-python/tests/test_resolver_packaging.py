@@ -644,3 +644,30 @@ class TestComplementPrereleases:
         versions = [V("2.0b1"), V("1.5"), V("1.0")]
         assert list(r.filter(versions)) == versions
         assert list(r.complement().complement().filter(versions)) == versions
+
+
+class TestNoVersionsConstraintAttribution:
+    """A superset constraint must not steal the NO_VERSIONS cause.
+
+    A constraint naming a prerelease carries a prerelease policy the
+    dependency range lacks. The old structural ``current & constraint ==
+    current`` reported them unequal even though the constraint excluded
+    nothing, so a genuine no-versions failure was labeled CONSTRAINT.
+    """
+
+    def test_superset_prerelease_constraint_keeps_no_versions(self) -> None:
+        """``foo`` has no version in ``>=2.0``; ``>=1.0a1`` excluded nothing."""
+        provider = PackagingProvider(
+            {
+                "root": {V("1.0"): {"foo": SpecifierSet(">=2.0")}},
+                "foo": {V("1.0"): {}},
+            },
+        )
+        with pytest.raises(ResolutionError) as exc_info:
+            Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+                {"root": VersionRange.singleton(V("1.0"))},
+                constraints={"foo": SpecifierSet(">=1.0a1").to_range()},
+            )
+        message = str(exc_info.value)
+        assert "no versions of" in message
+        assert "the user constrained" not in message
