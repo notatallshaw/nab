@@ -399,6 +399,24 @@ class TestExpandSelfExtras:
         env = {"python_version": "3.12", "python_full_version": "3.12.0"}
         assert expand_self_extras(opt, "mypkg", ["all"], env) == ["all"]
 
+    def test_self_reference_extra_equals_own_extra_walked(self) -> None:
+        """A self-ref gated by ``extra == "<own-extra>"`` activates its extra."""
+        opt = {
+            "all": ['mypkg[fast]; extra == "all"'],
+            "fast": ["some-dep"],
+        }
+        env = {"python_version": "3.11", "python_full_version": "3.11.0"}
+        assert expand_self_extras(opt, "mypkg", ["all"], env) == ["all", "fast"]
+
+    def test_self_reference_extra_equals_other_extra_skipped(self) -> None:
+        """A self-ref gated by ``extra == "<other-extra>"`` does not activate."""
+        opt = {
+            "all": ['mypkg[fast]; extra == "other"'],
+            "fast": ["some-dep"],
+        }
+        env = {"python_version": "3.11", "python_full_version": "3.11.0"}
+        assert expand_self_extras(opt, "mypkg", ["all"], env) == ["all"]
+
 
 class TestExpandExtraRequirements:
     def test_empty_selection_returns_empty(self) -> None:
