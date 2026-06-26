@@ -319,6 +319,148 @@ def _and_markers(marker: Marker | None, gates: frozenset[str]) -> Marker:
     return Marker(" and ".join(f"({p})" for p in parts))
 
 
+def _decide_extra_conjunct(conjunct: str, extra: str) -> bool:
+    """Evaluate a single ``extra`` comparison under the bound value.
+
+    The caller only passes a lone comparison that references ``extra`` (and so
+    no environment variable), so packaging's public ``Marker.evaluate`` decides
+    it outright.
+    """
+    return Marker(conjunct).evaluate({"extra": extra})
+
+
+def _split_top_level(text: str, op: str) -> list[str]:
+    """Split ``text`` on its top-level `` op `` (quote- and paren-aware).
+
+    The scan skips the operator inside quoted operands (e.g. ``"android"``
+    contains ``and``) and inside parenthesised groups, so only the outermost
+    ``and`` / ``or`` operands split.
+    """
+    sep = f" {op} "
+    parts: list[str] = []
+    depth = 0
+    quote = ""
+    start = 0
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0 and text.startswith(sep, i):
+            parts.append(text[start:i].strip())
+            i += len(sep)
+            start = i
+            continue
+        i += 1
+    parts.append(text[start:].strip())
+    return parts
+
+
+def _strip_wrapping_parens(text: str) -> str:
+    """Remove parentheses that wrap the whole expression, repeatedly."""
+    while text.startswith("(") and text.endswith(")"):
+        depth = 0
+        quote = ""
+        wraps = True
+        for i, ch in enumerate(text):
+            if quote:
+                if ch == quote:
+                    quote = ""
+            elif ch in "'\"":
+                quote = ch
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0 and i != len(text) - 1:
+                    wraps = False
+                    break
+        if not wraps:
+            break
+        text = text[1:-1].strip()
+    return text
+
+
+def _wrap_for_and(text: str) -> str:
+    """Parenthesise ``text`` when it is a top-level ``or`` (precedence)."""
+    return f"({text})" if len(_split_top_level(text, "or")) > 1 else text
+
+
+def _reduce_conjunct(conjunct: str, extra: str) -> str | bool:
+    """Reduce one ``and`` conjunct under a bound ``extra``.
+
+    Returns ``True`` when the conjunct is satisfied (and drops out), ``False``
+    for a contradiction, or a residual string of environment conditions.
+    """
+    inner = _strip_wrapping_parens(conjunct)
+    is_group = len(_split_top_level(inner, "or")) > 1 or (
+        "extra" in inner and len(_split_top_level(inner, "and")) > 1
+    )
+    if is_group:
+        reduced = _reduce_marker_string(inner, extra)
+        return reduced if isinstance(reduced, bool) else _wrap_for_and(reduced)
+    if "extra" not in inner:
+        return inner
+    return _decide_extra_conjunct(inner, extra)
+
+
+def _reduce_marker_string(text: str, extra: str) -> str | bool:
+    """Reduce a marker string under a bound ``extra`` (interim, string-based).
+
+    Returns ``True`` (tautology), ``False`` (contradiction), or a residual
+    marker string of the surviving environment conditions.  Handles a
+    top-level ``or`` of ``and`` groups and recurses into parenthesised
+    subgroups; each conjunct that references only ``extra`` is decided
+    through packaging's public ``Marker.evaluate``.
+
+    This should move to a public packaging marker-reduction API once one
+    exists; nab deliberately does not reach into ``Marker._markers`` (see the
+    rejected-precedent note in :mod:`nab_python._lockfile.disjointness`).
+    """
+    text = _strip_wrapping_parens(text)
+    disjuncts = _split_top_level(text, "or")
+    if len(disjuncts) > 1:
+        surviving: list[str] = []
+        for disjunct in disjuncts:
+            reduced = _reduce_marker_string(disjunct, extra)
+            if reduced is True:
+                return True
+            if isinstance(reduced, str):
+                surviving.append(reduced)
+        if not surviving:
+            return False
+        return " or ".join(surviving)
+    residual: list[str] = []
+    for conjunct in _split_top_level(text, "and"):
+        reduced = _reduce_conjunct(conjunct, extra)
+        if reduced is False:
+            return False
+        if isinstance(reduced, str):
+            residual.append(reduced)
+    if not residual:
+        return True
+    return " and ".join(residual)
+
+
+def _environment_residual(marker: Marker, extra: str) -> str | bool:
+    """Reduce a self-ref activation marker against a bound ``extra``.
+
+    A self-reference is reached only because its extra is selected, so its
+    ``extra == "<extra>"`` clause is already decided at expansion.  Delegates
+    to :func:`_reduce_marker_string` over ``str(marker)``: returns ``True``
+    (tautology, a bare dep), ``False`` (contradiction, does not activate), or
+    a residual string of the surviving environment conditions.
+    """
+    return _reduce_marker_string(str(marker), extra)
+
+
 def expand_extra_requirements(
     optional_deps: Mapping[str, Sequence[str]],
     project_name: str | None,
@@ -367,13 +509,32 @@ def expand_extra_requirements(
             if canonical_project is not None and (
                 canonicalize_name(req.name) == canonical_project
             ):
-                edge = gates if req.marker is None else gates | {str(req.marker)}
-                worklist.extend((canonicalize_name(sub), edge) for sub in req.extras)
+                worklist.extend(_self_ref_edges(req, extra, gates))
                 continue
             if gates:
                 req.marker = _and_markers(req.marker, gates)
             out.append(req)
     return out
+
+
+def _self_ref_edges(
+    req: Requirement, extra: str, gates: frozenset[str]
+) -> list[tuple[str, frozenset[str]]]:
+    """Worklist entries for the extras a self-reference activates.
+
+    The self-ref's own marker is reduced against the walked ``extra``: a
+    contradiction means it does not activate (no entries), a tautology
+    propagates the inherited ``gates`` unchanged, and an environment
+    residual is added to the gate carried onto the reached extras.
+    """
+    edge = gates
+    if req.marker is not None:
+        residual = _environment_residual(req.marker, extra)
+        if residual is False:
+            return []
+        if isinstance(residual, str):
+            edge = gates | {residual}
+    return [(canonicalize_name(sub), edge) for sub in req.extras]
 
 
 def expand_group_includes(
