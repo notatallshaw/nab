@@ -119,7 +119,13 @@ class FakeClient:
         await self._common(("sdist", package, version))
         return (f"PKGINFO:{package}:{version}", f"PYPROJECT:{package}:{version}")
 
-    async def get_sdist_archive(self, package: str, version: str, url: str) -> bytes:
+    async def get_sdist_archive(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> bytes:
         await self._common(("sdist-archive", package, version))
         return f"BYTES:{package}:{version}".encode()
 

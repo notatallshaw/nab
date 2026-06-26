@@ -174,6 +174,22 @@ class TestInMemoryIndex:
         idx.store_sdist_archive("foo", "1.0", None)
         assert idx.get_sdist_archive("foo", "1.0") is None
 
+    def test_store_sdist_archive_error_fires_pending(self) -> None:
+        idx = InMemoryIndex()
+        pending, _ = idx.get_or_create_pending("sdist-archive:foo:1.0")
+        assert not pending.event.is_set()
+        err = SdistHashMismatchError("boom")
+        idx.store_sdist_archive_error("foo", "1.0", err)
+        assert pending.event.is_set()
+        assert idx.get_sdist_archive_error("foo", "1.0") is err
+        assert idx.get_sdist_archive("foo", "1.0") is None
+
+    def test_store_sdist_archive_error_without_pending(self) -> None:
+        idx = InMemoryIndex()
+        err = SdistHashMismatchError("boom")
+        idx.store_sdist_archive_error("foo", "1.0", err)
+        assert idx.get_sdist_archive_error("foo", "1.0") is err
+
     def test_parsed_metadata_roundtrip(self) -> None:
         """``store_parsed_metadata`` and ``get_parsed_metadata`` round-trip."""
         idx = InMemoryIndex()
@@ -1012,6 +1028,46 @@ class TestFetchCoordinator:
             )
             event.wait(timeout=5)
             assert coord.index.get_sdist_archive("pkg", "1.0") == b"archive-bytes"
+
+    @respx.mock
+    def test_request_sdist_archive_verifies_published_hash(self) -> None:
+        """A matching published hash lets the archive bytes through."""
+        body = b"archive-bytes"
+        digest = hashlib.sha256(body).hexdigest()
+        respx.get("https://files.example.com/pkg-1.0.tar.gz").mock(
+            return_value=httpx.Response(200, content=body),
+        )
+        with _coord() as coord:
+            event = coord.request_sdist_archive(
+                "pkg",
+                "1.0",
+                "https://files.example.com/pkg-1.0.tar.gz",
+                (("sha256", digest),),
+            )
+            event.wait(timeout=5)
+            assert coord.index.get_sdist_archive("pkg", "1.0") == body
+            assert coord.index.get_sdist_archive_error("pkg", "1.0") is None
+
+    @respx.mock
+    def test_request_sdist_archive_hash_mismatch_records_error(self) -> None:
+        """A tampered archive records an integrity error and stores no bytes."""
+        respx.get("https://files.example.com/pkg-1.0.tar.gz").mock(
+            return_value=httpx.Response(200, content=b"tampered"),
+        )
+        with _coord() as coord:
+            event = coord.request_sdist_archive(
+                "pkg",
+                "1.0",
+                "https://files.example.com/pkg-1.0.tar.gz",
+                (("sha256", "0" * 64),),
+            )
+            event.wait(timeout=5)
+            assert not coord._crashed
+            assert coord.index.get_sdist_archive("pkg", "1.0") is None
+            assert isinstance(
+                coord.index.get_sdist_archive_error("pkg", "1.0"),
+                SdistHashMismatchError,
+            )
 
     @respx.mock
     def test_request_sdist_archive_deduplicates(self) -> None:

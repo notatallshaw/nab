@@ -947,8 +947,7 @@ class TestGetDependencies:
         assert ("foo", V("1.0")) not in provider.deps_cache
 
     def test_sdist_hash_mismatch_aborts(self) -> None:
-        """A recorded sdist integrity failure aborts get_dependencies rather
-        than degrading to a generic no-metadata error."""
+        """A recorded sdist integrity failure raises from get_dependencies."""
         coordinator = make_coordinator(
             [make_sdist("1.0")],
             sdist_pkg_info=(
@@ -5153,7 +5152,12 @@ class TestEffectiveBuildPolicy:
         provider.versions_cache["pkg"] = [(_Version("1.0"), make_sdist("1.0"))]
         archive_bytes = b"sdist-archive-bytes"
 
-        def _request_archive(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _request_archive(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             coordinator.index.store_sdist_archive(pkg, ver, archive_bytes)
             return _done_event()
 
@@ -5614,7 +5618,12 @@ class TestStaticSdistMetadata:
         )
         archive_bytes = b"sdist-archive"
 
-        def _request_archive(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _request_archive(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             coordinator.index.store_sdist_archive(pkg, ver, archive_bytes)
             return _done_event()
 
@@ -5715,7 +5724,12 @@ class TestBuildRemoteFailureModes:
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _failed_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _failed_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, None)
             return _done_event()
 
@@ -5723,6 +5737,34 @@ class TestBuildRemoteFailureModes:
             "MagicMock", provider.coordinator
         ).request_sdist_archive.side_effect = _failed_fetch
         with pytest.raises(UnsupportedSdistError, match="archive.*fetch.*failed"):
+            build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+
+    def test_archive_hash_mismatch_aborts(self) -> None:
+        """A tampered archive raises the integrity error from the build.
+
+        The error must propagate, not degrade to ``UnsupportedSdistError``,
+        which the resolve treats as a skippable version.
+        """
+        from nab_python._provider import build_remote
+
+        provider = self._provider(with_sdist=True)
+        provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
+
+        def _tampered_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
+            provider.coordinator.index.store_sdist_archive_error(
+                pkg, ver, SdistHashMismatchError("sdist sha256 mismatch")
+            )
+            return _done_event()
+
+        cast(
+            "MagicMock", provider.coordinator
+        ).request_sdist_archive.side_effect = _tampered_fetch
+        with pytest.raises(SdistHashMismatchError):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
     def test_archive_extract_failure_raises(
@@ -5733,7 +5775,12 @@ class TestBuildRemoteFailureModes:
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _ok_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _ok_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"corrupt")
             return _done_event()
 
@@ -5757,7 +5804,12 @@ class TestBuildRemoteFailureModes:
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _ok_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _ok_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
             return _done_event()
 
@@ -5785,7 +5837,12 @@ class TestBuildRemoteFailureModes:
             (V("2.0"), make_sdist("2.0")),
         ]
 
-        def _ok_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _ok_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
             return _done_event()
 
@@ -5802,7 +5859,12 @@ class TestBuildRemoteFailureModes:
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _ok_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _ok_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
             return _done_event()
 

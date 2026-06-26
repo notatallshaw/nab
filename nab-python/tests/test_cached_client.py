@@ -27,6 +27,7 @@ from nab_index.client import (
     WheelFile,
     _parse_files,
     _parse_sdist_filename,
+    _select_artifact_hash,
 )
 
 LISTING = {
@@ -469,33 +470,23 @@ class TestParseHashes:
 
 class TestSelectArtifactHash:
     def test_prefers_sha256(self) -> None:
-        from nab_index.client import _select_artifact_hash
-
         hashes = (("sha512", "f" * 128), ("sha256", "a" * 64))
         assert _select_artifact_hash(hashes) == ("sha256", "a" * 64)
 
     def test_falls_through_to_sha384(self) -> None:
-        from nab_index.client import _select_artifact_hash
-
         hashes = (("sha512", "f" * 128), ("sha384", "b" * 96))
         assert _select_artifact_hash(hashes) == ("sha384", "b" * 96)
 
     def test_falls_through_to_sha512(self) -> None:
-        from nab_index.client import _select_artifact_hash
-
         assert _select_artifact_hash((("sha512", "f" * 128),)) == (
             "sha512",
             "f" * 128,
         )
 
     def test_empty_returns_none(self) -> None:
-        from nab_index.client import _select_artifact_hash
-
         assert _select_artifact_hash(()) is None
 
     def test_only_unacceptable_returns_none(self) -> None:
-        from nab_index.client import _select_artifact_hash
-
         assert _select_artifact_hash((("md5", "d" * 32),)) is None
 
 
@@ -1131,6 +1122,76 @@ class TestGetSdistFiles:
         pkg_info, _ = asyncio.run(go())
         assert pkg_info is not None
         assert "Name: pkg" in pkg_info
+
+
+class TestGetSdistArchive:
+    def test_matching_hash_returns_bytes(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        body = _build_tarball([("pkg-1.0/PKG-INFO", b"Name: pkg\n")])
+        digest = hashlib.sha256(body).hexdigest()
+        transport = _FakeTransport([_FakeResponse(body)])
+
+        async def go() -> bytes:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_sdist_archive(
+                    "pkg", "1.0", "https://x/pkg.tar.gz", (("sha256", digest),)
+                )
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == body
+
+    def test_mismatching_hash_raises(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        published = _build_tarball([("pkg-1.0/PKG-INFO", b"Name: pkg\n")])
+        digest = hashlib.sha256(published).hexdigest()
+        tampered = _build_tarball([("pkg-1.0/PKG-INFO", b"Name: evil\n")])
+        transport = _FakeTransport([_FakeResponse(tampered)])
+
+        async def go() -> bytes:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_sdist_archive(
+                    "pkg", "1.0", "https://x/pkg.tar.gz", (("sha256", digest),)
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(SdistHashMismatchError):
+            asyncio.run(go())
+
+    def test_no_published_hash_returns_bytes(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        body = _build_tarball([("pkg-1.0/PKG-INFO", b"Name: pkg\n")])
+        transport = _FakeTransport([_FakeResponse(body)])
+
+        async def go() -> bytes:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_sdist_archive(
+                    "pkg", "1.0", "https://x/pkg.tar.gz", ()
+                )
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == body
+
+    def test_offline_raises(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([])
+
+        async def go() -> bytes:
+            client = CachedAsyncSimpleClient(transport, cache, offline=True)
+            try:
+                return await client.get_sdist_archive(
+                    "pkg", "1.0", "https://x/pkg.tar.gz", ()
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(OfflineError):
+            asyncio.run(go())
 
 
 class TestContextManager:

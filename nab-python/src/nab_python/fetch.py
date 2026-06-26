@@ -134,6 +134,7 @@ class InMemoryIndex:
         self._metadata_from_sdist: set[tuple[str, str]] = set()
         self._sdist_pyproject: dict[tuple[str, str], str | None] = {}
         self._sdist_archives: dict[tuple[str, str], bytes | None] = {}
+        self._sdist_archive_errors: dict[tuple[str, str], BaseException] = {}
         self._pending: dict[str, _Pending] = {}
 
         # Parsed metadata is a pure function of the underlying text, so we
@@ -270,12 +271,9 @@ class InMemoryIndex:
     ) -> None:
         """Record an sdist integrity failure and unblock the sdist waiter.
 
-        Parallels :meth:`store_metadata_error` for the wheel sidecar:
-        ``store_sdist_metadata(None)`` means the archive yielded no
-        PKG-INFO, while an error means the archive failed its published
-        hash and the resolve must abort rather than fall through.  The
-        error is keyed on ``(package, version)`` so :meth:`get_metadata_error`
-        surfaces it, and the ``sdist:`` pending event is fired.
+        A recorded error is distinct from ``store_sdist_metadata(None)``: None
+        means the archive yielded no PKG-INFO, an error means the archive
+        failed its published hash and the resolve must abort, not fall through.
         """
         key = f"sdist:{package}:{version}"
         with self._lock:
@@ -327,6 +325,29 @@ class InMemoryIndex:
         """Return cached sdist archive bytes, or ``None`` if absent or failed."""
         with self._lock:
             return self._sdist_archives.get((package, version))
+
+    def store_sdist_archive_error(
+        self, package: str, version: str, error: BaseException
+    ) -> None:
+        """Record an sdist-archive integrity failure and unblock the waiter.
+
+        Kept in its own slot rather than ``store_sdist_archive(None)`` so
+        the ``BUILD_REMOTE`` path can tell a failed fetch (skip the
+        version) from a tampered archive (abort the resolve).
+        """
+        key = f"sdist-archive:{package}:{version}"
+        with self._lock:
+            self._sdist_archive_errors[(package, version)] = error
+            pending = self._pending.get(key)
+        if pending is not None:
+            pending.event.set()
+
+    def get_sdist_archive_error(
+        self, package: str, version: str
+    ) -> BaseException | None:
+        """Return a recorded sdist-archive integrity error, or ``None``."""
+        with self._lock:
+            return self._sdist_archive_errors.get((package, version))
 
     def get_or_create_pending(self, key: str) -> tuple[_Pending, bool]:
         """Return (pending, already_existed)."""
@@ -617,9 +638,8 @@ class FetchCoordinator:
 
         Uses a separate ``sdist:`` pending key so it can fire even
         when a prior wheel metadata fetch already cached ``None``
-        for the same ``(package, version)`` slot.  ``sdist_hashes`` is
-        the index-published digest set; the fetcher verifies the
-        downloaded archive against it before extraction.
+        for the same ``(package, version)`` slot. The fetcher verifies the
+        downloaded archive against ``sdist_hashes`` before extraction.
         """
         self._check_alive()
         key = f"sdist:{package}:{version}"
@@ -637,14 +657,20 @@ class FetchCoordinator:
         return pending.event
 
     def request_sdist_archive(
-        self, package: str, version: str, url: str
+        self,
+        package: str,
+        version: str,
+        url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> threading.Event:
         """Request the raw bytes of an sdist archive.
 
         Used by the :class:`~nab_python.provider.BuildPolicy.BUILD_REMOTE`
         path; the bytes are extracted to a temp dir and handed to a
         PEP 517 backend.  Stored under a separate pending key so it can
-        run concurrently with a PKG-INFO fetch for the same version.
+        run concurrently with a PKG-INFO fetch for the same version. The
+        fetcher verifies the downloaded archive against ``sdist_hashes``
+        before storing the bytes.
         """
         self._check_alive()
         key = f"sdist-archive:{package}:{version}"
@@ -656,6 +682,7 @@ class FetchCoordinator:
                     package=package,
                     version=version,
                     url=url,
+                    sdist_hashes=sdist_hashes,
                 )
             )
         return pending.event
@@ -859,6 +886,8 @@ class FetchCoordinator:
                 self.index.store_sdist_metadata_error(req.package, req.version, exc)
             else:
                 self.index.store_sdist_metadata(req.package, req.version, None)
+        elif isinstance(exc, SdistHashMismatchError):
+            self.index.store_sdist_archive_error(req.package, req.version, exc)
         else:
             self.index.store_sdist_archive(req.package, req.version, None)
 
@@ -945,5 +974,7 @@ class FetchCoordinator:
         if req.url is None:
             self.index.store_sdist_archive(req.package, req.version, None)
             return
-        data = await client.get_sdist_archive(req.package, req.version, req.url)
+        data = await client.get_sdist_archive(
+            req.package, req.version, req.url, req.sdist_hashes
+        )
         self.index.store_sdist_archive(req.package, req.version, data)

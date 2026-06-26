@@ -93,9 +93,13 @@ class _Stub:
         return (None, None)
 
     async def get_sdist_archive(
-        self, package: str, version: str, sdist_url: str
+        self,
+        package: str,
+        version: str,
+        sdist_url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> bytes:
-        del package, version, sdist_url
+        del package, version, sdist_url, sdist_hashes
         return b""
 
     async def aclose(self) -> None:

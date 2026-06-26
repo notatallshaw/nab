@@ -41,8 +41,7 @@ __all__ = [
     "extract_sdist_archive",
 ]
 
-# Preferred verification order (sha256 is pip's hash-checking baseline). Restated
-# here because nab_index sits below nab_python's ACCEPTED_HASH_ALGORITHMS.
+# Verification order; sha256 is pip's hash-checking baseline.
 _ACCEPTED_HASH_ALGORITHMS = ("sha256", "sha384", "sha512")
 
 
@@ -439,9 +438,9 @@ def _select_artifact_hash(
 ) -> tuple[str, str] | None:
     """Pick the preferred ``(algo, hex)`` to verify, or ``None`` if none qualify.
 
-    Walks :data:`_ACCEPTED_HASH_ALGORITHMS` in order so sha256 is preferred,
-    then sha384, then sha512.  Unacceptable algorithms (e.g. md5) and an
-    empty set yield ``None``, so no check runs.
+    Walks :data:`_ACCEPTED_HASH_ALGORITHMS` in order, so sha256 is preferred,
+    then sha384, then sha512. An empty set or only unaccepted algorithms (md5)
+    yields ``None``.
     """
     by_algo = {algo.lower(): digest.lower() for algo, digest in hashes}
     for algo in _ACCEPTED_HASH_ALGORITHMS:

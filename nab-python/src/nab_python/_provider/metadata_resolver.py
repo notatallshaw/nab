@@ -291,10 +291,8 @@ def fetch_sdist_metadata(
 ) -> str | None:
     """Block until the coordinator returns sdist PKG-INFO text.
 
-    The archive is verified against ``sdist.hashes`` before its PKG-INFO
-    is read; a hash mismatch is recorded as an integrity error and
-    re-raised here, the sdist parallel to the wheel-sidecar check in
-    :func:`resolve_metadata`.
+    The archive is verified against ``sdist.hashes`` before its PKG-INFO is
+    read. A hash mismatch is recorded as an integrity error and re-raised here.
     """
     event = provider.coordinator.request_sdist(
         package, version, sdist.url, sdist.hashes

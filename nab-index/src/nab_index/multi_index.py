@@ -72,7 +72,11 @@ class IndexClient(Protocol):
         ...
 
     async def get_sdist_archive(
-        self, package: str, version: str, sdist_url: str
+        self,
+        package: str,
+        version: str,
+        sdist_url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> bytes:
         """Return the raw sdist archive bytes."""
         ...
@@ -231,10 +235,11 @@ class MultiIndexClient:
         package: str,
         version: str,
         sdist_url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> bytes:
         """Forward to the routed client; presupposes ``get_files`` was called."""
         return await self._client_for(package).get_sdist_archive(
-            package, version, sdist_url
+            package, version, sdist_url, sdist_hashes
         )
 
     def _client_for(self, package: str) -> IndexClient:

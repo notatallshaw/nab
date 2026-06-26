@@ -216,11 +216,10 @@ class CachedAsyncSimpleClient:
         from the archive (or the archive cannot be parsed).  Both are
         treated as immutable: cached forever, never revalidated.
 
-        When ``sdist_hashes`` carries an acceptable published digest the
-        downloaded archive is verified against it before extraction; a
+        When ``sdist_hashes`` carries an acceptable published digest, the
+        downloaded archive is verified against it before extraction. A
         mismatch raises :class:`SdistHashMismatchError` and nothing is
-        cached.  This is the sdist-archive parallel to the PEP 658
-        metadata-sidecar check in :meth:`get_metadata_text`.
+        cached.
         """
         pkg_info = self._cache.get_sdist_pkginfo(package, version)
         pyproject_toml = self._cache.get_sdist_pyproject(package, version)
@@ -246,7 +245,11 @@ class CachedAsyncSimpleClient:
         return (pkg_info, pyproject_toml)
 
     async def get_sdist_archive(
-        self, package: str, version: str, sdist_url: str
+        self,
+        package: str,
+        version: str,
+        sdist_url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> bytes:
         """Return the raw bytes of an sdist archive.
 
@@ -255,6 +258,10 @@ class CachedAsyncSimpleClient:
         large, builds are rare, and the in-memory index already
         deduplicates within a single resolve.  Offline mode raises
         :class:`OfflineError` because there is no slot to read from.
+
+        When ``sdist_hashes`` carries an acceptable published digest, the
+        downloaded archive is verified before its bytes are returned. A
+        mismatch raises :class:`SdistHashMismatchError`.
         """
         del package, version  # offline check below is the only use
         if self._offline:
@@ -262,4 +269,7 @@ class CachedAsyncSimpleClient:
             raise OfflineError(msg)
         response = await self._transport.get(sdist_url)
         response.raise_for_status()
+        selected = _select_artifact_hash(sdist_hashes)
+        if selected is not None:
+            _verify_sdist_hash(response.content, selected)
         return response.content
