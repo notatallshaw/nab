@@ -507,6 +507,11 @@ def await_metadata_batch(
         if cache_key in provider.deps_cache:
             continue
         event.wait()
+        integrity_error = provider.coordinator.index.get_metadata_error(
+            package, ver_str
+        )
+        if integrity_error is not None:
+            raise integrity_error
         text = provider.coordinator.index.get_metadata(package, ver_str)
         if text is None:
             # No PEP 658 text arrived: leave the version un-cached so

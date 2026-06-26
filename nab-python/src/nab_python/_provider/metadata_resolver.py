@@ -67,6 +67,11 @@ def resolve_metadata(
             normalized, ver_str, dist.metadata_url, dist.metadata_hash
         )
         event.wait()
+        integrity_error = provider.coordinator.index.get_metadata_error(
+            normalized, ver_str
+        )
+        if integrity_error is not None:
+            raise integrity_error
         metadata_text = provider.coordinator.index.get_metadata(normalized, ver_str)
     else:
         metadata_text = None
