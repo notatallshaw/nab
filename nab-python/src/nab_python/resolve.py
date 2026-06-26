@@ -777,6 +777,32 @@ def _validate_universal_conflict_minimums(
             raise ConflictSelectionError(msg) from exc
 
 
+def _validate_universal_conflict_exclusions(
+    conflicts: Sequence[ConflictSet],
+    tables: _ForkTables,
+    active_extras: Sequence[str],
+    active_groups: Sequence[str],
+    tuples: Sequence[MatrixTuple],
+) -> None:
+    """Run the at-most-one exclusion check per tuple, marker-aware.
+
+    A self reference reaches its target only on tuples whose environment
+    satisfies its marker, so the self-extra closure is expanded against each
+    tuple's environment. Members reached under disjoint markers never share a
+    tuple and pass; two that co-activate on one tuple fail.
+    """
+    expanded_groups = expand_group_includes(tables.groups, active_groups)
+    for t in tuples:
+        expanded_extras = expand_self_extras(
+            tables.optional, tables.project_name, active_extras, t.environment
+        )
+        try:
+            validate_conflict_exclusions(conflicts, expanded_extras, expanded_groups)
+        except ConflictSelectionError as exc:
+            msg = f"{exc} (tuple {t.label})"
+            raise ConflictSelectionError(msg) from exc
+
+
 def resolve_universal_pyproject(
     path: Path,
     *,
@@ -861,15 +887,14 @@ def resolve_universal_pyproject(
     seen_group_selections: set[tuple[str, ...]] = set()
     for fork in conflict_fork_list:
         if config.conflicts:
-            # A fork that still reaches two members of one exclusive set
-            # (for example through an umbrella extra) has no disjoint
-            # resolution, so refuse rather than silently merge them.
-            validate_conflict_exclusions(
+            # Refuse a fork that reaches two members of one exclusive set on a
+            # single tuple (for example through an umbrella extra).
+            _validate_universal_conflict_exclusions(
                 config.conflicts,
-                expand_self_extras(
-                    tables.optional, tables.project_name, fork.active_extras
-                ),
-                expand_group_includes(tables.groups, fork.active_groups),
+                tables,
+                fork.active_extras,
+                fork.active_groups,
+                expanded_tuples,
             )
         if (
             len(fork.active_groups) > 1
