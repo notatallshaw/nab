@@ -80,6 +80,10 @@ class RangeProtocol(Protocol[VersionType_contra]):
         """Complement the range."""
         ...
 
+    def __sub__(self, other: object) -> Self:
+        """Set difference: versions in self but not in other."""
+        ...
+
     # __eq__ and __hash__ come from object; redeclaring them in the
     # Protocol adds no constraint and mypy and zuban disagree on @override.
 
@@ -128,16 +132,16 @@ class Term(Generic[PackageType, VersionType]):
         Negative: satisfied when assignment doesn't intersect constraint
         (no version in the assignment is in the constraint).
 
-        The subset test is ``(assignment & ~constraint).is_empty`` rather
+        The subset test is ``(assignment - constraint).is_empty`` rather
         than ``(assignment & constraint) == assignment``: range types may
         carry flags (the vendored packaging ranges mark specifier-built
         ranges as also admitting arbitrary ``===`` versions) under which
-        extensionally equal ranges compare unequal.  Emptiness of the
-        difference agrees with the algebra's own complement, which is what
-        PubGrub's conflict-resolution progress argument relies on.
+        extensionally equal ranges compare unequal.  Emptiness of the set
+        difference sidesteps that, which is what PubGrub's
+        conflict-resolution progress argument relies on.
         """
         if self._positive:
-            return (assignment & ~self.constraint).is_empty
+            return (assignment - self.constraint).is_empty
         return (assignment & self.constraint).is_empty
 
     def intersect(
@@ -165,10 +169,11 @@ class Term(Generic[PackageType, VersionType]):
                 positive=False,
             )
 
-        # positive AND not(negative) = positive minus negative
+        # positive AND not(negative) = positive minus negative (set
+        # difference, so the exclusion's pre-release policy does not leak).
         positive_term = self if self._positive else other
         negative_term = other if self._positive else self
-        difference = positive_term.constraint & ~negative_term.constraint
+        difference = positive_term.constraint - negative_term.constraint
         return Term(self.package, difference, positive=True)
 
     @override

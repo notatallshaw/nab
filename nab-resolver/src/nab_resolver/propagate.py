@@ -154,16 +154,16 @@ def classify_intersection(
     Negative term: satisfied when the intersection is empty; contradicted
     when the assignment falls entirely inside the forbidden range.
 
-    The subset test is emptiness of ``assignment & ~constraint``, not a
+    The subset test is emptiness of ``assignment - constraint``, not a
     range equality, so it agrees with :meth:`Term.satisfies` on flagged
     range types (see that docstring).
     """
     if term.is_positive():
-        covers = (assignment & ~term.constraint).is_empty
+        covers = (assignment - term.constraint).is_empty
         empty = intersection.is_empty
     else:
         covers = intersection.is_empty
-        empty = (assignment & ~term.constraint).is_empty
+        empty = (assignment - term.constraint).is_empty
 
     if covers:
         return SetRelation.SATISFIED
