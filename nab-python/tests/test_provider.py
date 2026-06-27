@@ -65,6 +65,7 @@ def make_wheel(
     requires_python: str | None = None,
     has_metadata: bool = True,
     upload_time: str | None = None,
+    local_path: Path | None = None,
 ) -> WheelFile:
     """Build a WheelFile for testing."""
     return WheelFile(
@@ -74,6 +75,7 @@ def make_wheel(
         requires_python=requires_python,
         has_metadata=has_metadata,
         upload_time=upload_time,
+        local_path=local_path,
     )
 
 
@@ -81,6 +83,7 @@ def make_sdist(
     version: str = "1.0",
     requires_python: str | None = None,
     upload_time: str | None = None,
+    local_path: Path | None = None,
 ) -> SdistFile:
     """Build a SdistFile for testing."""
     return SdistFile(
@@ -89,6 +92,7 @@ def make_sdist(
         version=version,
         requires_python=requires_python,
         upload_time=upload_time,
+        local_path=local_path,
     )
 
 
@@ -2536,6 +2540,37 @@ class TestUploadedPriorTo:
         wheels = [
             make_wheel("2.0", upload_time=None),
             make_wheel("1.0", upload_time="2024-01-01T00:00:00Z"),
+        ]
+        coordinator = make_coordinator(wheels, package="foo")
+        cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        provider = Provider(coordinator, uploaded_prior_to=cutoff)
+        versions = [v for v, _ in provider.fetch_versions("foo")]
+        assert versions == [V("1.0")]
+
+    def test_keeps_local_artifact_without_upload_time(self) -> None:
+        """A local file:// artifact carries no upload time and is kept."""
+        wheels = [
+            make_wheel(
+                "1.0",
+                upload_time=None,
+                local_path=Path("/wheelhouse/pkg-1.0-py3-none-any.whl"),
+            ),
+        ]
+        coordinator = make_coordinator(wheels, package="foo")
+        cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        provider = Provider(coordinator, uploaded_prior_to=cutoff)
+        versions = [v for v, _ in provider.fetch_versions("foo")]
+        assert versions == [V("1.0")]
+
+    def test_excludes_remote_but_keeps_local_without_upload_time(self) -> None:
+        """The cutoff drops a remote no-upload-time wheel but keeps a local one."""
+        wheels = [
+            make_wheel("2.0", upload_time=None),
+            make_wheel(
+                "1.0",
+                upload_time=None,
+                local_path=Path("/wheelhouse/pkg-1.0-py3-none-any.whl"),
+            ),
         ]
         coordinator = make_coordinator(wheels, package="foo")
         cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
