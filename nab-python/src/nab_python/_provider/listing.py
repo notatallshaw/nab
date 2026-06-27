@@ -381,6 +381,9 @@ def excluded_by_time(
     """
     if cutoff is None:
         return False
+    if dist.local_path is not None:
+        # A local file:// artifact has no upload time, so the cutoff cannot apply.
+        return False
     if dist.upload_time is None:
         provider.stats.excluded_by_time += 1
         return True
