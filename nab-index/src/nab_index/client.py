@@ -84,10 +84,9 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     not ``"2"``.
 
     This reproduces :func:`packaging.utils.parse_wheel_filename`'s
-    name/version validation but skips its ``parse_tag`` call, whose
-    ``frozenset[Tag]`` result nab discards. With ``validate_order=False``
-    (nab's default) ``parse_tag`` never raises, so the accepted filename
-    set is unchanged. A differential test guards against drift.
+    name/version validation and its rejection of empty tag components,
+    but discards the ``frozenset[Tag]`` that the tag parser builds and
+    nab does not use.
     """
     if not filename.endswith(".whl"):
         return None
@@ -107,7 +106,12 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     except InvalidVersion:
         return None
 
-    if dashes == _WHEEL_DASHES_WITH_BUILD and _BUILD_TAG_RE.match(parts[2]) is None:
+    bad_build = (
+        dashes == _WHEEL_DASHES_WITH_BUILD and _BUILD_TAG_RE.match(parts[2]) is None
+    )
+    # No tag component may be empty (the tag triple is parts[-1]).
+    empty_tag = any("" in component.split(".") for component in parts[-1].split("-"))
+    if bad_build or empty_tag:
         return None
 
     return (_intern_name(name_part), version)

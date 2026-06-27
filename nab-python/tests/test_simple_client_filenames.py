@@ -65,6 +65,22 @@ def test_matches_packaging(filename: str) -> None:
     assert _parse_wheel_filename(filename) == _packaging_result(filename)
 
 
+EMPTY_TAG_COMPONENT = [
+    "foo-1.0-py3--any.whl",
+    "foo-1.0--none-any.whl",
+    "foo-1.0-py3-none-.whl",
+    "foo-1.0-py2.-none-any.whl",
+    "foo-1.0-py3-none-.x86.whl",
+    "foo-1.0-1-py3--any.whl",
+    "foo-1.0-2-cp39-cp39-.whl",
+]
+
+
+@pytest.mark.parametrize("filename", EMPTY_TAG_COMPONENT)
+def test_rejects_empty_tag_component(filename: str) -> None:
+    assert _parse_wheel_filename(filename) is None
+
+
 def test_canonical_form_and_trailing_zeros() -> None:
     assert _parse_wheel_filename("Foo.Bar-2.0.0-py3-none-any.whl") == (
         canonicalize_name("Foo.Bar"),
