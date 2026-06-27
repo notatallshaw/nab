@@ -4429,6 +4429,71 @@ class TestExtras:
         version = provider.choose_version("foo[security]", spec.to_range())
         assert version == V("1.0")
 
+    def test_backtrack_mode_keeps_prerelease_that_provides_extra(self) -> None:
+        """A prerelease uniquely providing the extra stays a candidate.
+
+        ``foo`` ships a final 2.0 without the extra and a prerelease
+        2.0rc1 that declares it. The range filter would drop 2.0rc1, but
+        the proxy must still be able to choose it.
+        """
+        meta_final = "Metadata-Version: 2.1\nName: foo\nVersion: 2.0\n"
+        meta_pre = (
+            "Metadata-Version: 2.1\nName: foo\nVersion: 2.0rc1\n"
+            "Provides-Extra: security\n"
+            'Requires-Dist: cryptography; extra == "security"\n'
+        )
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("2.0rc1")],
+            metadata_by_version={"2.0": meta_final, "2.0rc1": meta_pre},
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            extras_mode=ExtrasMode.BACKTRACK,
+        )
+        version = provider.choose_version("foo[security]", VersionRange.full())
+        assert version == V("2.0rc1")
+
+    def test_full_resolve_prerelease_uniquely_provides_extra(self) -> None:
+        """End to end: a coexisting non-extra final must not hard-fail.
+
+        ``app`` requires ``foo[security]``. Only the prerelease
+        ``foo==2.0rc1`` declares the extra; the final ``foo==2.0`` does
+        not. The resolve must pin the prerelease and pull in its extra
+        dependency.
+        """
+        listings = {
+            "app": [make_wheel("1.0")],
+            "foo": [make_wheel("2.0"), make_wheel("2.0rc1")],
+            "cryptography": [make_wheel("9.0")],
+        }
+        metadata = {
+            "1.0": (
+                "Metadata-Version: 2.1\nName: app\nVersion: 1.0\n"
+                "Requires-Dist: foo[security]\n"
+            ),
+            "2.0": "Metadata-Version: 2.1\nName: foo\nVersion: 2.0\n",
+            "2.0rc1": (
+                "Metadata-Version: 2.1\nName: foo\nVersion: 2.0rc1\n"
+                "Provides-Extra: security\n"
+                'Requires-Dist: cryptography; extra == "security"\n'
+            ),
+            "9.0": "Metadata-Version: 2.1\nName: cryptography\nVersion: 9.0\n",
+        }
+        coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
+        root_reqs = {"app": SpecifierSet("==1.0").to_range()}
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            extras_mode=ExtrasMode.BACKTRACK,
+            root_requirements=root_reqs,
+        )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        pins = resolver.resolve(root_reqs)
+        assert pins["foo"] == V("2.0rc1")
+        assert pins["cryptography"] == V("9.0")
+
     def test_no_metadata_raises(self) -> None:
         """Extras on a package with no metadata raises MetadataError."""
         coordinator = make_coordinator(

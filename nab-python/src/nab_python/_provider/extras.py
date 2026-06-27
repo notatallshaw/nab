@@ -43,7 +43,10 @@ def choose_extra_version(
     _, _, normalized = provider.split_and_normalize(base)
     version_list = provider.fetch_versions(base)
     all_versions = provider.versions_only(normalized, version_list)
-    candidates = list(version_range.filter(all_versions))
+    # The proxy's satisfying set is the versions that declare the extra, not
+    # the version bounds, so a prerelease that uniquely provides it must
+    # survive the range filter.
+    candidates = list(version_range.filter(all_versions, prereleases=True))
 
     # Filter by base's positive range so we don't pick a proxy version
     # that would force base==V into a known-conflicting state.
@@ -98,26 +101,32 @@ def _pick_in_mode(
     _, _, normalized = provider.split_and_normalize(base)
     is_user = (normalized, extra) in provider.root_extras
     backtrack = provider.extras_mode == ExtrasMode.BACKTRACK
-    for version in candidates:
+
+    def qualifies(version: Version) -> bool:
         if provider.has_invalid_metadata(normalized, version):
-            continue
+            return False
         try:
             provider.get_dependencies(base, version)
         except UnsupportedSdistError:
-            continue
+            return False
         except MetadataError:
-            if not is_user or provider.has_invalid_metadata(normalized, version):
-                continue
-            return version
+            return is_user and not provider.has_invalid_metadata(normalized, version)
         if is_user or not backtrack:
-            return version
+            return True
         metadata = provider.metadata_cache.get((normalized, version))
         provided = (
             {_normalize_extra(e) for e in metadata.provides_extra}
             if metadata
             else set()
         )
-        if metadata is None or extra in provided:
+        return metadata is None or extra in provided
+
+    # Prefer a final over a prerelease only when both qualify, so a
+    # prerelease that uniquely provides the extra is still eligible.
+    finals = [v for v in candidates if not v.is_prerelease]
+    prereleases = [v for v in candidates if v.is_prerelease]
+    for version in (*finals, *prereleases):
+        if qualifies(version):
             return version
     return None
 
