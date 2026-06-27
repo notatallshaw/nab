@@ -63,8 +63,15 @@ def build_remote_sdist(
         raise UnsupportedSdistError(msg)
 
     ver_str = str(version)
-    event = provider.coordinator.request_sdist_archive(canonical, ver_str, sdist.url)
+    event = provider.coordinator.request_sdist_archive(
+        canonical, ver_str, sdist.url, sdist.hashes
+    )
     event.wait()
+    integrity_error = provider.coordinator.index.get_sdist_archive_error(
+        canonical, ver_str
+    )
+    if integrity_error is not None:
+        raise integrity_error
     data = provider.coordinator.index.get_sdist_archive(canonical, ver_str)
     if data is None:
         msg = (

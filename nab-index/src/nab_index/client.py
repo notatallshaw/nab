@@ -36,13 +36,21 @@ __all__ = [
     "AsyncSimpleClient",
     "MetadataHashMismatchError",
     "SdistFile",
+    "SdistHashMismatchError",
     "WheelFile",
     "extract_sdist_archive",
 ]
 
+# Verification order; sha256 is pip's hash-checking baseline.
+_ACCEPTED_HASH_ALGORITHMS = ("sha256", "sha384", "sha512")
+
 
 class MetadataHashMismatchError(Exception):
     """Fetched PEP 658 metadata did not match its published hash."""
+
+
+class SdistHashMismatchError(Exception):
+    """A fetched sdist archive did not match its published hash."""
 
 
 # Mirrors packaging.utils._build_tag_regex: PEP 427 build numbers start with a digit.
@@ -427,6 +435,32 @@ def _verify_metadata_hash(content: bytes, metadata_hash: tuple[str, str]) -> Non
     if actual != expected:
         msg = f"metadata {algo} mismatch: expected {expected}, got {actual}"
         raise MetadataHashMismatchError(msg)
+
+
+def _select_artifact_hash(
+    hashes: tuple[tuple[str, str], ...],
+) -> tuple[str, str] | None:
+    """Pick the preferred ``(algo, hex)`` to verify, or ``None`` if none qualify.
+
+    Walks :data:`_ACCEPTED_HASH_ALGORITHMS` in order, so sha256 is preferred,
+    then sha384, then sha512. An empty set or only unaccepted algorithms (md5)
+    yields ``None``.
+    """
+    by_algo = {algo.lower(): digest.lower() for algo, digest in hashes}
+    for algo in _ACCEPTED_HASH_ALGORITHMS:
+        digest = by_algo.get(algo)
+        if digest is not None:
+            return (algo, digest)
+    return None
+
+
+def _verify_sdist_hash(content: bytes, sdist_hash: tuple[str, str]) -> None:
+    """Raise :class:`SdistHashMismatchError` if ``content`` fails the hash."""
+    algo, expected = sdist_hash
+    actual = hashlib.new(algo, content).hexdigest()
+    if actual != expected:
+        msg = f"sdist {algo} mismatch: expected {expected}, got {actual}"
+        raise SdistHashMismatchError(msg)
 
 
 def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:

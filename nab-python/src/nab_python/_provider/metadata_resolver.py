@@ -289,10 +289,19 @@ def find_sdist(
 def fetch_sdist_metadata(
     provider: Provider, package: str, version: str, sdist: SdistFile
 ) -> str | None:
-    """Block until the coordinator returns sdist PKG-INFO text."""
-    event = provider.coordinator.request_sdist(package, version, sdist.url)
+    """Block until the coordinator returns sdist PKG-INFO text.
+
+    The archive is verified against ``sdist.hashes`` before its PKG-INFO is
+    read. A hash mismatch is recorded as an integrity error and re-raised here.
+    """
+    event = provider.coordinator.request_sdist(
+        package, version, sdist.url, sdist.hashes
+    )
     event.wait()
     provider.stats.sdist_pkg_info_fetched += 1
+    integrity_error = provider.coordinator.index.get_metadata_error(package, version)
+    if integrity_error is not None:
+        raise integrity_error
     return provider.coordinator.index.get_metadata(package, version)
 
 
