@@ -142,7 +142,12 @@ def _wire_sdist_side_effects(
 ) -> None:
     """Attach ``request_sdist`` and ``request_wheel_metadata`` side effects."""
 
-    def _request_sdist(pkg: str, ver: str, _url: str) -> threading.Event:
+    def _request_sdist(
+        pkg: str,
+        ver: str,
+        _url: str,
+        _hashes: tuple[tuple[str, str], ...] = (),
+    ) -> threading.Event:
         # ``store_sdist_metadata`` is always called; passing ``None``
         # poisons the cache slot, matching the original test_provider
         # helper's contract for sdist-fetch failures.

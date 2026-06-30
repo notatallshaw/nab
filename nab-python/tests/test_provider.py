@@ -10,7 +10,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nab_index.client import MetadataHashMismatchError, SdistFile, WheelFile
+from nab_index.client import (
+    MetadataHashMismatchError,
+    SdistFile,
+    SdistHashMismatchError,
+    WheelFile,
+)
 from nab_python._provider.metadata_resolver import (
     add_classified_dep,
     classify_requirement,
@@ -65,6 +70,7 @@ def make_wheel(
     requires_python: str | None = None,
     has_metadata: bool = True,
     upload_time: str | None = None,
+    local_path: Path | None = None,
 ) -> WheelFile:
     """Build a WheelFile for testing."""
     return WheelFile(
@@ -74,6 +80,7 @@ def make_wheel(
         requires_python=requires_python,
         has_metadata=has_metadata,
         upload_time=upload_time,
+        local_path=local_path,
     )
 
 
@@ -81,6 +88,7 @@ def make_sdist(
     version: str = "1.0",
     requires_python: str | None = None,
     upload_time: str | None = None,
+    local_path: Path | None = None,
 ) -> SdistFile:
     """Build a SdistFile for testing."""
     return SdistFile(
@@ -89,6 +97,7 @@ def make_sdist(
         version=version,
         requires_python=requires_python,
         upload_time=upload_time,
+        local_path=local_path,
     )
 
 
@@ -938,6 +947,36 @@ class TestGetDependencies:
         )
         provider = Provider(coordinator, python_version="3.12.0")
         with pytest.raises(MetadataHashMismatchError):
+            provider.get_dependencies("foo", V("1.0"))
+        assert ("foo", V("1.0")) not in provider.deps_cache
+
+    def test_sdist_hash_mismatch_aborts(self) -> None:
+        """A recorded sdist integrity failure raises from get_dependencies."""
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=(
+                "Metadata-Version: 2.2\n"
+                "Name: foo\n"
+                "Version: 1.0\n"
+                "Requires-Dist: from-sdist\n"
+            ),
+            package="foo",
+        )
+
+        def _poisoned_request_sdist(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
+            coordinator.index.store_sdist_metadata_error(
+                pkg, ver, SdistHashMismatchError("sdist sha256 mismatch")
+            )
+            return _done_event()
+
+        coordinator.request_sdist.side_effect = _poisoned_request_sdist
+        provider = Provider(coordinator, python_version="3.12.0")
+        with pytest.raises(SdistHashMismatchError):
             provider.get_dependencies("foo", V("1.0"))
         assert ("foo", V("1.0")) not in provider.deps_cache
 
@@ -2536,6 +2575,37 @@ class TestUploadedPriorTo:
         wheels = [
             make_wheel("2.0", upload_time=None),
             make_wheel("1.0", upload_time="2024-01-01T00:00:00Z"),
+        ]
+        coordinator = make_coordinator(wheels, package="foo")
+        cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        provider = Provider(coordinator, uploaded_prior_to=cutoff)
+        versions = [v for v, _ in provider.fetch_versions("foo")]
+        assert versions == [V("1.0")]
+
+    def test_keeps_local_artifact_without_upload_time(self) -> None:
+        """A local file:// artifact carries no upload time and is kept."""
+        wheels = [
+            make_wheel(
+                "1.0",
+                upload_time=None,
+                local_path=Path("/wheelhouse/pkg-1.0-py3-none-any.whl"),
+            ),
+        ]
+        coordinator = make_coordinator(wheels, package="foo")
+        cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        provider = Provider(coordinator, uploaded_prior_to=cutoff)
+        versions = [v for v, _ in provider.fetch_versions("foo")]
+        assert versions == [V("1.0")]
+
+    def test_excludes_remote_but_keeps_local_without_upload_time(self) -> None:
+        """The cutoff drops a remote no-upload-time wheel but keeps a local one."""
+        wheels = [
+            make_wheel("2.0", upload_time=None),
+            make_wheel(
+                "1.0",
+                upload_time=None,
+                local_path=Path("/wheelhouse/pkg-1.0-py3-none-any.whl"),
+            ),
         ]
         coordinator = make_coordinator(wheels, package="foo")
         cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
@@ -5117,7 +5187,12 @@ class TestEffectiveBuildPolicy:
         provider.versions_cache["pkg"] = [(_Version("1.0"), make_sdist("1.0"))]
         archive_bytes = b"sdist-archive-bytes"
 
-        def _request_archive(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _request_archive(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             coordinator.index.store_sdist_archive(pkg, ver, archive_bytes)
             return _done_event()
 
@@ -5578,7 +5653,12 @@ class TestStaticSdistMetadata:
         )
         archive_bytes = b"sdist-archive"
 
-        def _request_archive(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _request_archive(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             coordinator.index.store_sdist_archive(pkg, ver, archive_bytes)
             return _done_event()
 
@@ -5623,7 +5703,12 @@ class TestStaticSdistMetadata:
             metadata_by_version={"1.0": meta_v1, "2.0": None},
         )
 
-        def _request_sdist(pkg: str, ver: str, url: str) -> threading.Event:
+        def _request_sdist(
+            pkg: str,
+            ver: str,
+            url: str,
+            hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             coordinator.index.store_sdist_metadata(pkg, ver, PKG_INFO_DYNAMIC_DEPS)
             coordinator.index.store_sdist_pyproject(pkg, ver, None)
             return _done_event()
@@ -5674,7 +5759,12 @@ class TestBuildRemoteFailureModes:
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _failed_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _failed_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, None)
             return _done_event()
 
@@ -5682,6 +5772,34 @@ class TestBuildRemoteFailureModes:
             "MagicMock", provider.coordinator
         ).request_sdist_archive.side_effect = _failed_fetch
         with pytest.raises(UnsupportedSdistError, match="archive.*fetch.*failed"):
+            build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+
+    def test_archive_hash_mismatch_aborts(self) -> None:
+        """A tampered archive raises the integrity error from the build.
+
+        The error must propagate, not degrade to ``UnsupportedSdistError``,
+        which the resolve treats as a skippable version.
+        """
+        from nab_python._provider import build_remote
+
+        provider = self._provider(with_sdist=True)
+        provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
+
+        def _tampered_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
+            provider.coordinator.index.store_sdist_archive_error(
+                pkg, ver, SdistHashMismatchError("sdist sha256 mismatch")
+            )
+            return _done_event()
+
+        cast(
+            "MagicMock", provider.coordinator
+        ).request_sdist_archive.side_effect = _tampered_fetch
+        with pytest.raises(SdistHashMismatchError):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
     def test_archive_extract_failure_raises(
@@ -5692,7 +5810,12 @@ class TestBuildRemoteFailureModes:
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _ok_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _ok_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"corrupt")
             return _done_event()
 
@@ -5716,7 +5839,12 @@ class TestBuildRemoteFailureModes:
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _ok_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _ok_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
             return _done_event()
 
@@ -5744,7 +5872,12 @@ class TestBuildRemoteFailureModes:
             (V("2.0"), make_sdist("2.0")),
         ]
 
-        def _ok_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _ok_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
             return _done_event()
 
@@ -5761,7 +5894,12 @@ class TestBuildRemoteFailureModes:
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _ok_fetch(pkg: str, ver: str, _url: str) -> threading.Event:
+        def _ok_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
             return _done_event()
 

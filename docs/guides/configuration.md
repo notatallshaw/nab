@@ -26,7 +26,8 @@ requires-python = "3.12.0"
 
 # Reproducibility cutoff.  Distributions uploaded after this timestamp
 # are ignored.  Accepts ISO 8601 strings, native TOML datetimes, or a
-# "P<n>D" duration relative to the resolve anchor.
+# "P<n>D" duration relative to the resolve anchor.  Artifacts from a
+# local file:// index carry no upload time and are always kept.
 uploaded-prior-to = "2026-05-01T00:00:00Z"
 
 # Version selection within an allowed range.  Mirrors uv's --resolution.
