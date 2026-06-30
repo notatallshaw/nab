@@ -150,6 +150,20 @@ class ExtrasMode(enum.Enum):
     """Error for user-provided, backtrack for transitive."""
 
 
+class ResolveMode(enum.Enum):
+    """How the resolver interprets the project.
+
+    ``SPECIFIC`` runs the single-environment resolver against one
+    marker environment (host or impersonated).  ``UNIVERSAL`` runs the
+    matrix-based per-tuple resolver and is *experimental*: users
+    must opt in by setting ``[tool.nab].mode = "universal"`` and
+    declaring ``[tool.nab.matrix]``.
+    """
+
+    SPECIFIC = "specific"
+    UNIVERSAL = "universal"
+
+
 class DistPolicy(enum.Enum):
     """How to admit wheels and sdists during resolution."""
 

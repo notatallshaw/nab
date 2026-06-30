@@ -24,7 +24,12 @@ from ._lockfile.builder import (
     read_lockfile_packages,
 )
 from ._lockfile.disjointness import DisjointnessError
-from ._lockfile.pylock import DivergentBaseDependencyError, build_pylock, write_lock
+from ._lockfile.pylock import (
+    DivergentBaseDependencyError,
+    build_pylock,
+    render_lock,
+    write_lock,
+)
 from ._lockfile.requirements import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
@@ -61,6 +66,7 @@ __all__ = [
     "is_valid_pylock_path",
     "read_lockfile_anchor",
     "read_lockfile_packages",
+    "render_lock",
     "write_lock",
     "write_requirements_with_hashes",
     "write_requirements_without_hashes",
@@ -235,6 +241,10 @@ class Provenance:
     mode: str
     python_specifier: str | None = None
     platforms: tuple[str, ...] = ()
+    # The --project-* CLI overrides that shaped this lock, as
+    # ``(flag, rendered value)`` pairs.  Recorded so a reader can see the
+    # lock did not derive from the committed files alone.
+    cli_project_overrides: tuple[tuple[str, str], ...] = ()
 
     def to_block(self) -> dict[str, Any]:
         """Render to the dict the TOML writer drops under ``[tool.nab]``."""
@@ -249,6 +259,10 @@ class Provenance:
             block["python-specifier"] = self.python_specifier
         if self.platforms:
             block["platforms"] = list(self.platforms)
+        if self.cli_project_overrides:
+            block["cli-project-overrides"] = [
+                f"{flag}={value}" for flag, value in self.cli_project_overrides
+            ]
         return block
 
 

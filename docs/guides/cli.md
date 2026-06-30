@@ -1,8 +1,9 @@
 # CLI
 
-`nab` exposes two subcommands: `lock` and `download`. Both read
-project shape from `[tool.nab]` in the project's `pyproject.toml`;
-the CLI itself carries only runtime knobs.
+`nab` exposes three subcommands: `lock`, `download`, and `config`. The
+first two read project shape from `[tool.nab]` in the project's
+`pyproject.toml`; the CLI itself carries only runtime knobs. `config`
+inspects the layered configuration.
 
 ## Synopsis
 
@@ -10,12 +11,16 @@ the CLI itself carries only runtime knobs.
 nab [--version | -V]
 nab lock     [PATH] [RUNTIME OPTIONS] [--output PATH] [--format pylock|requirements|requirements-without-hashes]
 nab download [PATH] [RUNTIME OPTIONS] [--output DIR] [--max-concurrency N]
+nab config   {list | get <key> | explain <key>} [--path PATH]
 ```
 
 `PATH` is positional and defaults to `pyproject.toml` in the
 current directory. Run `nab lock --help` (or `-h`) for the full
 per-command flag list. Boolean flags render as a `--flag` /
-`--no-flag` pair (for example `--cache` / `--no-cache`).
+`--no-flag` pair (for example `--cache` / `--no-cache`). The one
+exception is `--offline`, which is layered and so takes an explicit
+value (`--offline True` / `--offline False`); a bare `--offline` is
+an error.
 
 ## `nab lock`
 
@@ -74,6 +79,25 @@ all three formats:
 Failed tuples render as `# {label}: FAILED` followed by the
 indented error and exit `1`.
 
+A project option can be overridden for one run with a `--project-<key>`
+flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
+`--project-uploaded-prior-to`, `--project-dist-policy`,
+`--project-build-policy`, and the repeatable `--project-constraint` and
+`--project-default-group`. Each changes the resolved set, so passing one
+prints a reproducibility notice on stderr and records the override in the
+lockfile's `[tool.nab]` block, since the lock no longer derives from the
+committed files alone. `--project-resolution` was previously named
+`--resolution`.
+
+`--locked` re-resolves and checks that the committed `pylock.toml` is
+already up to date, writing nothing. It exits non-zero if the lock would
+change or is missing, so CI can assert the lock is current. It covers
+`pylock` output to a file in single-environment mode.
+
+`--upgrade` re-anchors the `P<n>D` resolve window to the current time
+instead of reusing the timestamp recorded in an existing lockfile, and
+prints a notice naming the cutoff it dropped.
+
 ## `nab download`
 
 Resolve and download every wheel and sdist into a local
@@ -82,10 +106,40 @@ sha256 matches a local file are left alone. Local and VCS pins
 are skipped. Single-environment only.
 
 * `--output` defaults to `wheels/`.
-* `--max-concurrency` controls parallel HTTP fetches (default `8`).
+* `--max-concurrency` controls parallel HTTP fetches (default `8`,
+  minimum `1`). Layered, so it can also be set in an `nab.toml` or
+  `NAB_MAX_CONCURRENCY`.
+
+`--offline`, `--cache-dir`, `--http-backend`, `--max-concurrency` and the
+`--project-*` overrides flow through the same layered config sources `nab
+lock` uses, so a `NAB_*` variable or a system/user/project `nab.toml` is
+read for `nab download` as for `nab lock`.
 
 A summary of how many files were written and how many were
 already present is printed to stderr.
+
+## `nab config`
+
+Inspect the effective layered configuration (read-only). Three
+actions:
+
+* `nab config list` prints every option with its value, scope, and
+  the source it came from.
+* `nab config get <key>` prints one effective value.
+* `nab config explain <key>` prints the full source stack for one
+  key, the winning source marked with a `>`. Array options concatenate
+  every layer instead of one winning, so each source is shown as a
+  contribution and the merged effective value is printed on a trailing
+  `= effective:` line. Add `--include-rejected` to also list sources
+  that tried to set the key but were rejected by the category gate.
+
+The same per-option override flags the run commands accept (the
+`--project-*` overrides and the user knobs `--offline`, `--cache-dir`,
+`--http-backend`, `--max-concurrency`) layer a CLI value on top, so the
+inspector reflects the same effective values a run would see.
+
+See [Configuration](configuration.md) for the source ladder and the
+`NAB_*` environment variables.
 
 ## Runtime flags
 
@@ -95,8 +149,8 @@ Both subcommands accept the same runtime knobs:
 | ---- | ------- | ------ |
 | `--cache-dir PATH` | `~/.cache/nab` | Override the on-disk cache root. |
 | `--no-cache` | off | Disable cache for this run. Combine with `--offline` only if the cache already has every file. |
-| `--offline` | off | Use cache only, never hit the network. |
-| `--http-backend {urllib3,httpx}` | `urllib3` | Pick the async transport for fetches. `httpx` needs its extra (see [installation](installation.md)). |
+| `--offline {True,False}` | unset | Use cache only, never hit the network. Layered, so it takes an explicit value: `--offline True` forces offline, `--offline False` forces network even over a lower `offline = true`. A bare `--offline` is an error. |
+| `--http-backend {urllib3,httpx}` | `urllib3` | Pick the async transport for fetches. Layered, so it can also be set in an `nab.toml` or `NAB_HTTP_BACKEND`. `httpx` needs its extra (see [installation](installation.md)). |
 
 `urllib3` is the only backend pulled in by the base install. The
 others surface a helpful `ImportError` if selected without the
@@ -120,7 +174,7 @@ matching extra.
 | Code | Meaning |
 | ---- | ------- |
 | `0`  | Success. |
-| `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, or invalid `[tool.nab]` configuration. |
+| `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `Aborted.` and exits. |
 
 [PEP 751]: https://peps.python.org/pep-0751/

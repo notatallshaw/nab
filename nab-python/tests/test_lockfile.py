@@ -1147,6 +1147,26 @@ class TestProvenance:
         ]
         assert "python-specifier" not in data["tool"]["nab"]
         assert "platforms" not in data["tool"]["nab"]
+        assert "cli-project-overrides" not in data["tool"]["nab"]
+
+    def test_emits_cli_project_overrides(self) -> None:
+        prov = Provenance(
+            nab_version="9.9.9",
+            created_at=datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc),
+            command_line=("nab", "lock"),
+            input_path="pyproject.toml",
+            mode="specific",
+            cli_project_overrides=(
+                ("--project-resolution", "lowest"),
+                ("--project-constraint", "urllib3<2"),
+            ),
+        )
+        text = write_lock(LockInput(pins={"foo": _index_pin()}, provenance=prov))
+        data = tomllib.loads(text)
+        assert data["tool"]["nab"]["cli-project-overrides"] == [
+            "--project-resolution=lowest",
+            "--project-constraint=urllib3<2",
+        ]
 
     def test_emits_universal_matrix_fields(self) -> None:
         prov = Provenance(

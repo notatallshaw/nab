@@ -360,13 +360,106 @@ based on whether you want one lock or many.
 
 ```
 nab lock [PATH]
-  --output PATH           # output file (or "-" for stdout)
-  --format FORMAT         # pylock | requirements | requirements-without-hashes
-  --cache-dir PATH        # override on-disk cache location
-  --no-cache              # disable cache for this run
-  --offline               # use cache only, no network
-  --http-backend X        # urllib3 (default) | httpx
+  --output PATH                # output file (or "-" for stdout)
+  --format FORMAT              # pylock | requirements | requirements-without-hashes
+  --cache-dir PATH             # override on-disk cache location
+  --no-cache                   # disable cache for this run
+  --offline True|False         # use cache only, no network (layered value flag)
+  --http-backend X             # urllib3 (default) | httpx (layered)
+  --locked                     # verify the committed pylock is current; write nothing
+  --upgrade                    # re-anchor the P<n>D window to now
+  --project-<key> VALUE        # override a project option for this run
 ```
+
+A project option can be overridden for a single run with a
+`--project-<key>` flag (for example `--project-resolution`,
+`--project-dist-policy`, or the repeatable `--project-constraint`); the
+structured table options stay file-only. A `--project-*` override changes
+the resolved set, so it prints a notice and is recorded in the lockfile.
+`--project-dist-policy` takes a bare policy, so it replaces the whole
+`dist-policy` value and resets `trust-unverified-deps`; set the table form
+in a file to keep that flag.
 
 Anything that defines *what* gets resolved goes in `[tool.nab]`; the
 CLI only carries knobs about *how this run executes*.
+
+## Layered configuration sources
+
+A few options can be set from more than one place. Each option has a
+scope that fixes where it may come from:
+
+* Project-scope options describe the resolve itself, so they live with
+  the project. Every `[tool.nab]` key is project-scope (`mode`,
+  `indexes`, `constraints`, `vcs`, `workspace`, `dist-policy`,
+  `build-policy`, `marker-environment`, `conflicts`, `matrix`,
+  `packages`, `resolution`, and the rest), and each may be set in
+  either `pyproject.toml`'s `[tool.nab]` or a project-directory
+  `nab.toml`. They are never read from a user/system file or an
+  environment variable. Each project option with a scalar or list form
+  also takes a CLI override under a `--project-` prefix (for example
+  `--project-resolution`); the structured table options stay file-only.
+* User-scope options (`offline`, `cache-dir`, `http-backend`,
+  `max-concurrency`) describe how a run executes on this machine, so they
+  may come from a system, user, or project `nab.toml`, a `NAB_*`
+  environment variable, or the CLI. They are rejected in
+  `pyproject.toml`'s `[tool.nab]`, which is project-scope only.
+
+Sources are consulted low to high; a higher source wins:
+
+1. built-in default
+2. system `nab.toml` (`/etc/nab/nab.toml`)
+3. user `nab.toml` (`$XDG_CONFIG_HOME/nab/nab.toml`, else
+   `~/.config/nab/nab.toml`)
+4. `pyproject.toml` `[tool.nab]` and the project-directory `nab.toml`
+   (same precedence; setting one key to conflicting values across the two
+   files is a hard error, identical values are fine, and array options
+   from both files concatenate)
+5. `NAB_*` environment variables
+6. the CLI flag
+
+The standalone `nab.toml` files use the same key names as
+`[tool.nab]`, but at the top level (no `[tool.nab]` table):
+
+```toml
+# ~/.config/nab/nab.toml
+offline = true
+cache-dir = "/fast/disk/nab-cache"
+```
+
+A project-directory `nab.toml` may set any project-scope key the same
+way, so it can drive the resolve without touching `pyproject.toml`:
+
+```toml
+# nab.toml next to pyproject.toml
+mode = "universal"
+constraints = ["urllib3<2"]
+
+[[indexes]]
+name = "internal"
+url = "https://pypi.example.com/simple/"
+```
+
+Project-directory discovery is the directory of the `pyproject.toml`
+only; there is no walk-up.
+
+`nab config` reports the *configured* value for each key. Two keys take
+a value derived from other config at resolve time, so the resolved
+value can differ from what `nab config` shows: `build-policy` floors to
+`never` under `mode = "universal"` (and promotes workspace members to
+`build-local`), and `local-sources` gains the workspace members found
+by discovery. `nab config` shows the value as written, like
+`git config` reporting configured rather than derived state.
+
+### Environment variables
+
+| Variable | Option | Effect |
+| -------- | ------ | ------ |
+| `NAB_OFFLINE` | `offline` | `1`/`0`/`true`/`false`. |
+| `NAB_CACHE_DIR` | `cache-dir` | Cache root path. |
+| `NAB_HTTP_BACKEND` | `http-backend` | `urllib3` or `httpx`. |
+| `NAB_MAX_CONCURRENCY` | `max-concurrency` | Parallel HTTP fetches for `nab download` (at least `1`). |
+
+A `NAB_*` name that is not one of these (a typo, or `NAB_RESOLUTION`
+for a project-scope option) is an error rather than being silently
+ignored. Run `nab config list` to see every effective value and where
+it came from.
