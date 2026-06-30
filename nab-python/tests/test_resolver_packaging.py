@@ -13,8 +13,10 @@ from nab_python._packaging_provider import PackagingProvider
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
+from nab_resolver.partial_solution import PartialSolution
+from nab_resolver.report import union_terms
 from nab_resolver.resolver import ResolutionError, Resolver
-from nab_resolver.types import Term
+from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 V = Version
 
@@ -606,6 +608,181 @@ class _FilterProvider(PackagingProvider):
         return next(iter(version_range.filter(self._get_versions(package))), None)
 
 
+class TestExclusionComplementPrerelease:
+    """The vendored range algebra scopes a pre-release opt-in to its region.
+
+    The solver derives an effective range as ``positive & ~negative``. An
+    exclusion ``negative`` that names a pre-release must not carry that
+    pre-release admission onto the intersection: ``~negative`` keeps the
+    opt-in attached to ``negative``'s own versions, which the intersection
+    has already removed, so the result admits no pre-release of its own.
+    This is the leak the resolver hit, reproduced at the API it relies on.
+    """
+
+    def test_intersection_with_complement_drops_exclusion_prerelease(self) -> None:
+        """``>=1.0 & ~(>=2.0b1)`` admits no pre-release."""
+        positive = SpecifierSet(">=1.0").to_range()
+        negative = SpecifierSet(">=2.0b1").to_range()
+        effective = positive & ~negative
+        picked = list(effective.filter([V("2.0b1"), V("1.5a1"), V("1.0")]))
+        assert picked == [V("1.0")]
+
+    def test_intersection_with_complement_keeps_own_prerelease(self) -> None:
+        """A positive that names its own pre-release still admits it."""
+        positive = SpecifierSet(">=2.0b1").to_range()
+        negative = SpecifierSet(">=3.0").to_range()
+        effective = positive & ~negative
+        assert list(effective.filter([V("2.5"), V("2.0b1")])) == [V("2.5"), V("2.0b1")]
+
+
+class TestPrereleaseAuthorizationBacktracking:
+    """Pre-release admission follows the dependency edge that introduced it."""
+
+    def test_rejected_parent_does_not_leak_prerelease_admission(self) -> None:
+        """A rejected parent must not make an unrelated pre-release beat a final."""
+        provider = _FilterProvider(
+            {
+                "a": {
+                    V("1.0"): {"c": SpecifierSet(">=1.0")},
+                    V("2.0"): {"c": SpecifierSet(">=2.0b1")},
+                },
+                "c": {
+                    V("1.0"): {},
+                    V("1.5a1"): {},
+                    V("2.0b1"): {"d": SpecifierSet("==2.0")},
+                },
+                "d": {
+                    V("1.0"): {},
+                    V("2.0"): {},
+                },
+            }
+        )
+
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {
+                "a": VersionRange.full(),
+                "d": SpecifierSet("==1.0").to_range(),
+            }
+        )
+
+        assert result["a"] == V("1.0")
+        assert result["d"] == V("1.0")
+        assert result["c"] == V("1.0")
+
+    def test_capped_prerelease_exclusion_does_not_leak_above_cap(self) -> None:
+        """A backtracked ``>=2.0b1,<3`` edge must not admit a pre-release at 3.5.
+
+        The pre-release-naming edge caps ``c`` below 3, so once ``a 2.0`` is
+        backtracked away no requirement opts ``c`` into a pre-release. The final
+        ``c 1.0`` must win over ``c 3.5a1``.
+        """
+        provider = _FilterProvider(
+            {
+                "a": {
+                    V("2.0"): {"c": SpecifierSet(">=2.0b1,<3")},
+                    V("1.0"): {},
+                },
+                "c": {
+                    V("3.5a1"): {},
+                    V("2.0b1"): {"d": SpecifierSet("==2.0")},
+                    V("1.0"): {},
+                },
+                "d": {V("1.0"): {}, V("2.0"): {}},
+            }
+        )
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {
+                "a": VersionRange.full(),
+                "c": SpecifierSet(">=1.0").to_range(),
+                "d": SpecifierSet("==1.0").to_range(),
+            }
+        )
+        assert result["a"] == V("1.0")
+        assert result["c"] == V("1.0")
+
+
+class TestConflictPathPrereleaseAdmission:
+    """Conflict-resolution term algebra must not leak pre-release admission.
+
+    ``Term.intersect`` and ``union_terms`` subtract a negative (exclusion)
+    term from a positive one. The result must keep only the positive (or
+    negative-minuend) side's pre-release policy, so a learned exclusion
+    grants no pre-release admission when its negation is propagated back
+    into a positive range.
+    """
+
+    def test_intersect_positive_minus_negative_drops_prerelease(self) -> None:
+        """``c>=1.0`` AND not ``c>=2.0b1`` admits no pre-release."""
+        positive = Term("c", SpecifierSet(">=1.0").to_range(), positive=True)
+        negative = Term("c", SpecifierSet(">=2.0b1").to_range(), positive=False)
+        result = positive.intersect(negative)
+        assert result is not None
+        assert result.is_positive()
+        picked = list(result.constraint.filter([V("2.0b1"), V("1.5a1"), V("1.0")]))
+        assert picked == [V("1.0")]
+
+    def test_union_terms_negative_minus_positive_drops_prerelease(self) -> None:
+        """The mixed-term remainder keeps the negative term's policy only."""
+        negative = Term("c", SpecifierSet(">=1.0").to_range(), positive=False)
+        positive = Term("c", SpecifierSet(">=2.0b1").to_range(), positive=True)
+        result = union_terms(negative, positive)
+        assert result is not None
+        assert not result.is_positive()
+        picked = list(result.constraint.filter([V("1.5a1"), V("1.0")]))
+        assert picked == [V("1.0")]
+
+
+class TestNegativeOnlyEffectiveRange:
+    """A package holding only an exclusion grants no pre-release admission."""
+
+    def test_negative_only_get_drops_prerelease(self) -> None:
+        """``~negative`` keeps the neutral policy, not the exclusion's."""
+        solution = PartialSolution(range_type=VersionRange)
+        root = Incompatibility([], cause=IncompatibilityCause.ROOT)
+        solution.derive(
+            "foo", SpecifierSet(">=2.0b1").to_range(), positive=False, cause=root
+        )
+        effective = solution.get("foo")
+        assert effective is not None
+        picked = list(effective.filter([V("2.0b1"), V("1.5a1"), V("1.0")]))
+        assert picked == [V("1.0")]
+
+
+class TestExclusionFallbackPrerelease:
+    """A pre-release IS admitted when the only final cannot be used.
+
+    Intended behaviour: when backtracking excludes the only final that
+    satisfies a requirement, the surviving candidates are all pre-releases,
+    and nab admits one rather than failing. This is the PEP 440 default
+    (pre-releases are eligible when no final satisfies) applied to the
+    surviving range, and is deliberate; nab finds a solution here where pip
+    and uv give up. It is not the leaked-admission bug: the effective range's
+    policy stays neutral, and no usable final drop-in exists.
+    """
+
+    def test_admits_prerelease_when_only_final_is_unusable(self) -> None:
+        """``c``'s only final (1.0) forces ``a==2.0b1`` against ``a==1.0``."""
+        provider = _FilterProvider(
+            {
+                "a": {V("1.0"): {}, V("2.0"): {}},
+                "c": {
+                    V("1.0"): {"d": SpecifierSet("==2.0")},
+                    V("1.5a1"): {},
+                    V("2.0b1"): {"a": SpecifierSet(">=2.0")},
+                },
+                "d": {V("1.0"): {}, V("2.0"): {"a": SpecifierSet(">=2.0b1")}},
+            }
+        )
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {
+                "a": SpecifierSet("==1.0").to_range(),
+                "c": SpecifierSet(">=1.0").to_range(),
+            }
+        )
+        assert result["a"] == V("1.0")
+        assert result["c"] == V("1.5a1")
+
+
 class TestConstraintPrereleases:
     """A constraint that names a prerelease must enable that prerelease."""
 
@@ -631,19 +808,24 @@ class TestConstraintPrereleases:
 
 
 class TestComplementPrereleases:
-    """``VersionRange.complement`` preserves the prerelease policy."""
+    """``VersionRange.complement`` drops the autodetected opt-in region."""
 
-    def test_double_complement_keeps_prerelease_filtering(self) -> None:
-        """``~~r`` filters a named prerelease in, just as ``r`` does.
+    def test_double_complement_drops_prerelease_admission(self) -> None:
+        """``~~r`` keeps the versions but force-admits none of its prereleases.
 
-        Resetting the policy on complement made the double complement
-        that constraint injection performs buffer 2.0b1 out under the
-        PEP 440 default.
+        A complement is an exclusion and carries no opt-in, so the double
+        complement covers the same versions as ``r`` yet buffers ``2.0b1`` away
+        under the PEP 440 default. The resolver applies a user constraint by
+        intersection (``current_range & constraint``), which keeps the opt-in,
+        so a prerelease-naming constraint still resolves to its prerelease.
         """
         r = SpecifierSet("<=2.0b1").to_range()
         versions = [V("2.0b1"), V("1.5"), V("1.0")]
         assert list(r.filter(versions)) == versions
-        assert list(r.complement().complement().filter(versions)) == versions
+        assert list(r.complement().complement().filter(versions)) == [
+            V("1.5"),
+            V("1.0"),
+        ]
 
 
 class TestNoVersionsConstraintAttribution:
