@@ -9,8 +9,8 @@ published to PyPI.
 
 - Upstream repository: https://github.com/pypa/packaging
 - Source branch: `pypa/packaging:main`
-- Pinned commit: `e80f70f8b164ee4b0ef7634aafe8c6cc4ce00ca3`
-- Snapshot date: 2026-06-24
+- Pinned commit: `c7d859d1333887226f521f59b1304257c04eeca2`
+- Snapshot date: 2026-06-30
 
 The snapshot is the full `src/packaging/` tree at that commit, plus
 `LICENSE`, `LICENSE.APACHE`, and `LICENSE.BSD` from the repository
@@ -27,11 +27,14 @@ upstream texts; nothing here is relicensed.
 ## Why vendor instead of depending on it
 
 `packaging` now ships a public `VersionRange` class with set algebra
-(intersection, union, complement), `is_empty`, `filter`, and a
-`SpecifierSet.to_range()` factory that nab's PubGrub solver depends on.
-The class landed in `main` via
-https://github.com/pypa/packaging/pull/1267 but has not yet appeared in
-a PyPI release, so there is no version we can pin in `pyproject.toml`.
+(intersection, union, complement, difference), the `is_subset` /
+`is_superset` / `is_disjoint` relation predicates, `is_empty`, `filter`,
+and a `SpecifierSet.to_range()` factory that nab's PubGrub solver depends
+on. The class landed in `main` via
+https://github.com/pypa/packaging/pull/1267, and the difference operator
+(`-`) plus the relation predicates via
+https://github.com/pypa/packaging/pull/1298. None of this has appeared in
+a PyPI release yet, so there is no version we can pin in `pyproject.toml`.
 Vendoring is a temporary measure.
 
 ## Removal plan
