@@ -11,14 +11,14 @@ repos:
       - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: e05c5c0818279e5ac248ac9e954431ba58865e61  # frozen: v0.15.7
+    rev: 745be0411e3c150e246d527e531e5a221b8c3462  # frozen: v0.15.19
     hooks:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/crate-ci/typos
-    rev: 631208b7aac2daa8b707f55e7331f9112b0e062d  # frozen: v1.44.0
+    rev: 37bb98842b0d8c4ffebdb75301a13db0267cef89  # frozen: v1.47.2
     hooks:
       - id: typos
         # Benchmarks, CI lockfiles and vendored code are full of real
@@ -27,7 +27,7 @@ repos:
         args: []
 
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: ea2eb407b4cbce87cf0d502f36578950494f5ac9  # frozen: v1.23.1
+    rev: e3eebf65325ccc992422292cb7a4baee967cf815  # frozen: v1.26.1
     hooks:
       - id: zizmor
         files: "^\\.github"
