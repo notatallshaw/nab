@@ -342,6 +342,28 @@ class TestRangeIntersectionEdgeCases:
         assert Range.full().__or__(object()) is NotImplemented  # type: ignore[arg-type]
 
 
+class TestRangeDifference:
+    def test_difference_removes_subtrahend(self) -> None:
+        a = Range.at_least(1)
+        b = Range.at_least(5)
+        c = a - b
+        assert 1 in c
+        assert 4 in c
+        assert 5 not in c
+        assert c == a & ~b
+
+    def test_difference_with_empty_is_self(self) -> None:
+        a = Range.between(2, 5)
+        assert (a - Range.empty()) == a
+
+    def test_difference_with_full_is_empty(self) -> None:
+        a = Range.between(2, 5)
+        assert (a - Range.full()).is_empty
+
+    def test_sub_not_implemented(self) -> None:
+        assert Range.full().__sub__(object()) is NotImplemented  # type: ignore[arg-type]
+
+
 class TestRangeStr:
     def test_any_str(self) -> None:
         assert str(Range.full()) == "*"

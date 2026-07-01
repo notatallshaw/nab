@@ -13,6 +13,7 @@ from nab_python._packaging_provider import PackagingProvider
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
+from nab_resolver.report import union_terms
 from nab_resolver.resolver import ResolutionError, Resolver
 from nab_resolver.types import Term
 
@@ -606,6 +607,107 @@ class _FilterProvider(PackagingProvider):
         return next(iter(version_range.filter(self._get_versions(package))), None)
 
 
+class TestPrereleaseAuthorizationBacktracking:
+    """Pre-release admission follows the dependency edge that introduced it."""
+
+    def test_rejected_parent_does_not_leak_prerelease_admission(self) -> None:
+        """A rejected parent must not make an unrelated pre-release beat a final."""
+        provider = _FilterProvider(
+            {
+                "a": {
+                    V("1.0"): {"c": SpecifierSet(">=1.0")},
+                    V("2.0"): {"c": SpecifierSet(">=2.0b1")},
+                },
+                "c": {
+                    V("1.0"): {},
+                    V("1.5a1"): {},
+                    V("2.0b1"): {"d": SpecifierSet("==2.0")},
+                },
+                "d": {
+                    V("1.0"): {},
+                    V("2.0"): {},
+                },
+            }
+        )
+
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {
+                "a": VersionRange.full(),
+                "d": SpecifierSet("==1.0").to_range(),
+            }
+        )
+
+        assert result["a"] == V("1.0")
+        assert result["d"] == V("1.0")
+        assert result["c"] == V("1.0")
+
+
+class TestConflictPathPrereleaseAdmission:
+    """Conflict-resolution term algebra must not leak pre-release admission.
+
+    ``Term.intersect`` and ``union_terms`` subtract a negative (exclusion)
+    term from a positive one. The result must keep only the positive (or
+    negative-minuend) side's pre-release policy, so a learned exclusion
+    grants no pre-release admission when its negation is propagated back
+    into a positive range.
+    """
+
+    def test_intersect_positive_minus_negative_drops_prerelease(self) -> None:
+        """``c>=1.0`` AND not ``c>=2.0b1`` admits no pre-release."""
+        positive = Term("c", SpecifierSet(">=1.0").to_range(), positive=True)
+        negative = Term("c", SpecifierSet(">=2.0b1").to_range(), positive=False)
+        result = positive.intersect(negative)
+        assert result is not None
+        assert result.is_positive()
+        picked = list(result.constraint.filter([V("2.0b1"), V("1.5a1"), V("1.0")]))
+        assert picked == [V("1.0")]
+
+    def test_union_terms_negative_minus_positive_drops_prerelease(self) -> None:
+        """The mixed-term remainder keeps the negative term's policy only."""
+        negative = Term("c", SpecifierSet(">=1.0").to_range(), positive=False)
+        positive = Term("c", SpecifierSet(">=2.0b1").to_range(), positive=True)
+        result = union_terms(negative, positive)
+        assert result is not None
+        assert not result.is_positive()
+        picked = list(result.constraint.filter([V("1.5a1"), V("1.0")]))
+        assert picked == [V("1.0")]
+
+
+class TestExclusionFallbackPrerelease:
+    """A pre-release IS admitted when the only final cannot be used.
+
+    When backtracking excludes the only final that satisfies a requirement,
+    every surviving candidate is a pre-release, and nab admits one rather
+    than failing. This is the PEP 440 default (pre-releases are eligible
+    when no final satisfies) applied to the surviving range; pip and uv
+    reject the case instead. It is not the leaked-admission bug: the
+    effective range's policy stays neutral and no usable final drop-in
+    exists.
+    """
+
+    def test_admits_prerelease_when_only_final_is_unusable(self) -> None:
+        """``c``'s only final (1.0) forces ``a>=2.0b1`` against ``a==1.0``."""
+        provider = _FilterProvider(
+            {
+                "a": {V("1.0"): {}, V("2.0"): {}},
+                "c": {
+                    V("1.0"): {"d": SpecifierSet("==2.0")},
+                    V("1.5a1"): {},
+                    V("2.0b1"): {"a": SpecifierSet(">=2.0")},
+                },
+                "d": {V("1.0"): {}, V("2.0"): {"a": SpecifierSet(">=2.0b1")}},
+            }
+        )
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {
+                "a": SpecifierSet("==1.0").to_range(),
+                "c": SpecifierSet(">=1.0").to_range(),
+            }
+        )
+        assert result["a"] == V("1.0")
+        assert result["c"] == V("1.5a1")
+
+
 class TestConstraintPrereleases:
     """A constraint that names a prerelease must enable that prerelease."""
 
@@ -671,3 +773,72 @@ class TestNoVersionsConstraintAttribution:
         message = str(exc_info.value)
         assert "no versions of" in message
         assert "the user constrained" not in message
+
+
+class TestVersionRangeDifference:
+    """``A - B`` keeps only the minuend's pre-release policy."""
+
+    def test_difference_selects_versions_in_self_not_other(self) -> None:
+        """``a - b`` selects the same versions as ``a & ~b``."""
+        a = SpecifierSet(">=1.0").to_range()
+        b = SpecifierSet(">=2.0").to_range()
+        diff = a - b
+        assert V("1.5") in diff
+        assert V("1.0") in diff
+        assert V("2.0") not in diff
+        assert V("2.5") not in diff
+        assert diff == a & ~b
+
+    def test_difference_with_empty_is_self(self) -> None:
+        a = SpecifierSet(">=1.0,<2.0").to_range()
+        assert (a - VersionRange.empty()) == a
+
+    def test_difference_with_full_is_empty(self) -> None:
+        assert (SpecifierSet(">=1.0").to_range() - VersionRange.full()).is_empty
+
+    def test_difference_drops_subtrahend_prerelease_policy(self) -> None:
+        """A final-only requirement minus a prerelease exclusion admits no pre.
+
+        ``>=1.0`` admits no prereleases; subtracting ``>=2.0b1`` (which on its
+        own admits 2.0b1) must NOT grant prerelease admission to the result.
+        This is the resolver leak in miniature.
+        """
+        result = SpecifierSet(">=1.0").to_range() - SpecifierSet(">=2.0b1").to_range()
+        assert list(result.filter([V("2.0b1"), V("1.5a1"), V("1.0")])) == [V("1.0")]
+
+    def test_difference_keeps_minuend_prerelease_policy(self) -> None:
+        """A prerelease-naming requirement keeps admitting its prerelease."""
+        result = SpecifierSet(">=2.0b1").to_range() - SpecifierSet(">=3.0").to_range()
+        assert list(result.filter([V("2.5"), V("2.0b1")])) == [V("2.5"), V("2.0b1")]
+
+    def test_difference_keeps_explicit_minuend_policy(self) -> None:
+        """An explicit ``prereleases`` policy on the minuend survives."""
+        allow = SpecifierSet(">=1.0", prereleases=True).to_range()
+        deny = SpecifierSet(">=1.0", prereleases=False).to_range()
+        sub = SpecifierSet(">=2.0").to_range()
+        assert list((allow - sub).filter([V("1.5a1"), V("1.0")])) == [
+            V("1.5a1"),
+            V("1.0"),
+        ]
+        assert list((deny - sub).filter([V("1.5a1"), V("1.0")])) == [V("1.0")]
+
+    def test_difference_over_arbitrary_literals(self) -> None:
+        """Difference handles ``===`` literal ranges on both sides."""
+        a = SpecifierSet("===1.0").to_range()
+        assert V("1.0") in (a - SpecifierSet("===2.0").to_range())
+        assert V("2.0") not in (a - SpecifierSet("===2.0").to_range())
+        assert V("1.0") in (a - SpecifierSet(">=2.0").to_range())
+
+    def test_difference_allows_mismatched_configured_policy(self) -> None:
+        """Unlike intersection, difference drops the subtrahend's policy, so
+        operands need not share a configured policy."""
+        a = SpecifierSet(">=1.0").to_range()
+        explicit_true = SpecifierSet(">=2.0", prereleases=True).to_range()
+        explicit_false = SpecifierSet(">=2.0", prereleases=False).to_range()
+        assert list((a - explicit_true).filter([V("2.0b1"), V("1.5a1"), V("1.0")])) == [
+            V("1.0")
+        ]
+        assert list((a - explicit_false).filter([V("1.5a1"), V("1.0")])) == [V("1.0")]
+
+    def test_sub_not_implemented_for_non_range(self) -> None:
+        assert VersionRange.full().__sub__(object()) is NotImplemented  # type: ignore[arg-type]

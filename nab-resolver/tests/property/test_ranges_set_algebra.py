@@ -425,3 +425,58 @@ class TestNAryChain:
                 if version in range_:
                     assert version in union
                     break
+
+
+class TestDifference:
+    """Set difference ``A - B`` contains exactly the versions in ``A`` but
+    not in ``B``.
+
+    The solver computes a package's effective range as ``positive -
+    negative`` instead of ``positive & ~negative`` so an exclusion can
+    never grant pre-release admission.  On the policy-free ``Range[int]``
+    the two are identical sets, which these laws pin down.
+    """
+
+    @given(left=version_ranges(), right=version_ranges())
+    @DEEP_SETTINGS
+    def test_difference_is_intersection_with_complement(
+        self, left: Range[int], right: Range[int]
+    ) -> None:
+        """``v in (A - B)`` iff ``v in A and v not in B``."""
+        difference = left - right
+        for version in VERSION_RANGE:
+            assert (version in difference) == (version in left and version not in right)
+
+    @given(left=version_ranges(), right=version_ranges())
+    @DEEP_SETTINGS
+    def test_difference_equals_and_complement(
+        self, left: Range[int], right: Range[int]
+    ) -> None:
+        """``A - B == A & ~B`` (no pre-release policy on ``Range[int]``)."""
+        assert (left - right) == (left & ~right)
+
+    @given(left=version_ranges(), right=version_ranges())
+    @DEEP_SETTINGS
+    def test_difference_disjoint_from_subtrahend(
+        self, left: Range[int], right: Range[int]
+    ) -> None:
+        """``(A - B) ∩ B == ∅``."""
+        assert ((left - right) & right).is_empty
+
+    @given(range_=version_ranges())
+    @DEEP_SETTINGS
+    def test_self_difference_is_empty(self, range_: Range[int]) -> None:
+        """``A - A == ∅``."""
+        assert (range_ - range_).is_empty
+
+    @given(range_=version_ranges())
+    @DEEP_SETTINGS
+    def test_difference_identity_with_empty(self, range_: Range[int]) -> None:
+        """``A - ∅ == A`` (Empty is the right identity)."""
+        assert (range_ - Range.empty()) == range_
+
+    @given(range_=version_ranges())
+    @DEEP_SETTINGS
+    def test_difference_full_is_empty(self, range_: Range[int]) -> None:
+        """``A - Universe == ∅`` (Universe is the absorbing subtrahend)."""
+        assert (range_ - Range.full()).is_empty

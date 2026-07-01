@@ -94,7 +94,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
         # Incrementally maintained as set(positive) - set(decided).
         self._undecided: set[PackageType] = set()
 
-        # Memoises positive & ~negative per package.
+        # Memoises positive - negative per package.
         self._effective_range_cache: dict[
             PackageType, RangeProtocol[VersionType] | None
         ] = {}
@@ -124,7 +124,10 @@ class PartialSolution(Generic[PackageType, VersionType]):
     def get(self, package: PackageType) -> RangeProtocol[VersionType] | None:
         """Get the combined allowed range for a package, or None if unassigned.
 
-        Computes ``positive & ~negative``, cached per package.
+        Computes ``positive - negative``, cached per package. Difference
+        (not ``positive & ~negative``) keeps the requirement's pre-release
+        policy and drops the exclusion's, which ``& ~`` would leak into the
+        range offered for selection.
         """
         cached = self._effective_range_cache.get(package, _UNSET)
         if cached is not _UNSET:
@@ -136,12 +139,14 @@ class PartialSolution(Generic[PackageType, VersionType]):
         if positive is None and negative is None:
             result: RangeProtocol[VersionType] | None = None
         elif positive is None:
+            # No requirement to subtract from. An exclusion-only package is
+            # never offered for selection, so the plain complement is enough.
             assert negative is not None
             result = ~negative
         elif negative is None:
             result = positive
         else:
-            result = positive & ~negative
+            result = positive - negative
 
         self._effective_range_cache[package] = result
         return result
@@ -340,7 +345,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
         elif assignment.cum_negative is None:
             effective = cum_positive
         else:
-            effective = cum_positive & ~assignment.cum_negative
+            effective = cum_positive - assignment.cum_negative
 
         return term.satisfies(effective)
 

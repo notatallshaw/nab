@@ -329,6 +329,12 @@ class Range(Generic[VersionType]):
 
         return Range(tuple(result))
 
+    def __sub__(self, other: object) -> Range[VersionType]:
+        """Set difference: versions in self but not in other."""
+        if not isinstance(other, Range):
+            return NotImplemented
+        return self & ~other
+
     @override
     def __eq__(self, other: object) -> bool:
         """Test equality by comparing interval tuples."""
