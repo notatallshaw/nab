@@ -16,20 +16,23 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelFile,
 )
+from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider.metadata_resolver import (
     add_classified_dep,
+    cache_deps_from_metadata,
     classify_requirement,
     pick_dist_for_metadata,
 )
 from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import InvalidVersion, Version
 from nab_python.config import IndexOverride, OverrideConflictError, PackageOverride
 from nab_python.fetch import InMemoryIndex
+from nab_python.metadata import WheelMetadata
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
@@ -48,21 +51,11 @@ from nab_python.provider import (
     _add_extra_marker,
     python_axis_environment,
 )
-from nab_resolver.resolver import Resolver
+from nab_python.resolve import _raise_for_local_vcs_python
+from nab_resolver.resolver import ResolutionError, Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 V = Version
-
-
-def pkg_override(req_str: str, **body: object) -> PackageOverride:
-    """Build a :class:`PackageOverride` from a PEP 508 requirement string."""
-    requirement = Requirement(req_str)
-    return PackageOverride(
-        requirement=requirement,
-        name=canonicalize_name(requirement.name),
-        version_range=requirement.specifier.to_range(),
-        **body,  # type: ignore[arg-type]
-    )
 
 
 def make_wheel(
@@ -2835,6 +2828,645 @@ class TestEffectiveTrustUnverified:
         assert provider.effective_trust_unverified("foo", V("1.0"), "pypi") is False
 
 
+class TestDependenciesOverride:
+    """A per-package ``dependencies`` override replaces runtime deps."""
+
+    def test_effective_dependencies_version_scoped(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            package_overrides=(
+                pkg_override("foo <= 2", dependencies=(Requirement("bar>=1"),)),
+            ),
+        )
+        in_range = provider.effective_dependencies("foo", V("1.0"))
+        assert in_range is not None
+        assert [str(r) for r in in_range] == ["bar>=1"]
+        # Out of range and unknown package both fall through to None.
+        assert provider.effective_dependencies("foo", V("5.0")) is None
+        assert provider.effective_dependencies("other", V("1.0")) is None
+
+    def test_effective_dependencies_none_without_override(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        assert provider.effective_dependencies("foo", V("1.0")) is None
+
+    def test_substitution_replaces_base_deps(self) -> None:
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+                "Requires-Dist: original>=1\n"
+            ),
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            package_overrides=(
+                pkg_override("foo", dependencies=(Requirement("replacement>=2"),)),
+            ),
+        )
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "replacement" in deps
+        assert "original" not in deps
+
+    def test_empty_list_yields_zero_deps(self) -> None:
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+                "Requires-Dist: original>=1\n"
+            ),
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            package_overrides=(pkg_override("foo", dependencies=()),),
+        )
+        assert provider.get_dependencies("foo", V("1.0")) == {}
+
+    def test_undeclared_extra_request_raises(self) -> None:
+        # The override declares no ``provides-extra``, so the parsed
+        # ``security`` extra no longer exists; requesting it raises.
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+                "Provides-Extra: security\n"
+                'Requires-Dist: cryptography>=2.0; extra == "security"\n'
+            ),
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            extras_mode=ExtrasMode.ERROR_USER,
+            root_extras={("foo", "security")},
+            package_overrides=(
+                pkg_override("foo", dependencies=(Requirement("bar>=1"),)),
+            ),
+        )
+        with pytest.raises(MissingExtraError):
+            provider.get_dependencies("foo[security]", V("1.0"))
+
+    def test_funnel_does_not_mutate_shared_metadata(self) -> None:
+        # The raw parse is shared across tuples via ``store_parsed_metadata``,
+        # so the funnel must build a fresh record, never mutate the input.
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator,
+            package_overrides=(
+                pkg_override("foo", dependencies=(Requirement("replacement>=2"),)),
+            ),
+        )
+        shared = WheelMetadata(
+            name="foo",
+            version=V("1.0"),
+            requires_dist=[Requirement("original>=1")],
+            provides_extra=["security"],
+        )
+        cache_key = ("foo", V("1.0"))
+        cache_deps_from_metadata(provider, cache_key, shared)
+        # The shared input object is untouched.
+        assert [str(r) for r in shared.requires_dist] == ["original>=1"]
+        assert shared.provides_extra == ["security"]
+        # The cached record is a fresh, overridden object.
+        cached = provider.metadata_cache[cache_key]
+        assert cached is not shared
+        assert [str(r) for r in cached.requires_dist] == ["replacement>=2"]
+        assert cached.provides_extra == []
+        assert "replacement" in provider.deps_cache[cache_key]
+        assert "original" not in provider.deps_cache[cache_key]
+
+
+class TestEffectiveMetadataOverrideFields:
+    """``effective_requires_python`` / ``effective_provides_extra`` lookups."""
+
+    def test_requires_python_version_scoped(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            package_overrides=(pkg_override("foo <= 2", requires_python=">=3.6"),),
+        )
+        assert provider.effective_requires_python("foo", V("1.0")) == ">=3.6"
+        assert provider.effective_requires_python("foo", V("5.0")) is None
+
+    def test_requires_python_none_without_override(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        assert provider.effective_requires_python("foo", V("1.0")) is None
+
+    def test_provides_extra_version_scoped(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            package_overrides=(pkg_override("foo <= 2", provides_extra=("dotenv",)),),
+        )
+        assert provider.effective_provides_extra("foo", V("1.0")) == ("dotenv",)
+        assert provider.effective_provides_extra("foo", V("5.0")) is None
+
+    def test_provides_extra_none_without_override(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        assert provider.effective_provides_extra("foo", V("1.0")) is None
+
+
+class TestMetadataOverrideForSource:
+    """Local/VCS sources select bare-name-only metadata overrides."""
+
+    def _provider(self, *overrides: PackageOverride) -> Provider:
+        coordinator = make_coordinator([], package="foo")
+        return Provider(
+            coordinator,
+            local_sources=[LocalSource("foo", "/nonexistent")],
+            package_overrides=overrides,
+            build_policy=BuildPolicy.NEVER,
+        )
+
+    def test_bare_name_dependencies_apply(self) -> None:
+        provider = self._provider(
+            pkg_override("foo", dependencies=(Requirement("dep-a>=1"),))
+        )
+        deps, rp, pe = provider.effective_metadata_override("foo", V("1.0"))
+        assert [str(r) for r in deps or ()] == ["dep-a>=1"]
+        assert rp is None
+        assert pe is None
+
+    def test_version_scoped_does_not_apply(self) -> None:
+        # A version-scoped metadata override does not govern a source: the
+        # materialised version is not knowable when writing the selector.
+        provider = self._provider(
+            pkg_override("foo <= 2", dependencies=(Requirement("dep-a>=1"),))
+        )
+        assert provider.effective_metadata_override("foo", V("1.0")) == (
+            None,
+            None,
+            None,
+        )
+
+    def test_other_package_does_not_apply(self) -> None:
+        provider = self._provider(
+            pkg_override("other", dependencies=(Requirement("dep-a>=1"),))
+        )
+        assert provider.effective_metadata_override("foo", V("1.0")) == (
+            None,
+            None,
+            None,
+        )
+
+    def test_bare_name_setting_only_one_field(self) -> None:
+        # A bare-name override that sets only requires-python leaves the other
+        # two fields unset.
+        provider = self._provider(pkg_override("foo", requires_python=">=3.6"))
+        deps, rp, pe = provider.effective_metadata_override("foo", V("1.0"))
+        assert deps is None
+        assert rp == ">=3.6"
+        assert pe is None
+
+    def test_bare_name_setting_no_metadata_field(self) -> None:
+        # A bare-name override that sets only a policy field contributes no
+        # metadata override for the source.
+        provider = self._provider(pkg_override("foo", build_policy=BuildPolicy.NEVER))
+        assert provider.effective_metadata_override("foo", V("1.0")) == (
+            None,
+            None,
+            None,
+        )
+
+    def test_provides_extra_applies(self) -> None:
+        provider = self._provider(pkg_override("foo", provides_extra=("dotenv",)))
+        deps, rp, pe = provider.effective_metadata_override("foo", V("1.0"))
+        assert deps is None
+        assert rp is None
+        assert pe == ("dotenv",)
+
+    def test_fields_from_different_bare_entries(self) -> None:
+        # Two bare-name entries setting different fields: each field is
+        # taken from the entry that sets it.
+        provider = self._provider(
+            pkg_override("foo", dependencies=(Requirement("dep-a>=1"),)),
+            pkg_override("foo", requires_python=">=3.6"),
+        )
+        deps, rp, pe = provider.effective_metadata_override("foo", V("1.0"))
+        assert [str(r) for r in deps or ()] == ["dep-a>=1"]
+        assert rp == ">=3.6"
+        assert pe is None
+
+    def test_metadata_override_source_branch(self) -> None:
+        provider = self._provider(
+            pkg_override(
+                "foo",
+                dependencies=(Requirement("dep-a"),),
+                requires_python=">=3.6",
+                provides_extra=("dotenv",),
+            )
+        )
+        deps, rp, pe = provider.effective_metadata_override("foo", V("1.0"))
+        assert [str(r) for r in deps or ()] == ["dep-a"]
+        assert rp == ">=3.6"
+        assert pe == ("dotenv",)
+
+    def test_metadata_override_index_branch(self) -> None:
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            package_overrides=(
+                pkg_override("foo <= 2", dependencies=(Requirement("dep-a"),)),
+            ),
+        )
+        deps, rp, pe = provider.effective_metadata_override("foo", V("1.0"))
+        assert [str(r) for r in deps or ()] == ["dep-a"]
+        assert rp is None
+        assert pe is None
+
+
+class TestMetadataFunnelBundle:
+    """The funnel replaces each of the three metadata fields per-field."""
+
+    @staticmethod
+    def _parsed() -> WheelMetadata:
+        return WheelMetadata(
+            name="foo",
+            version=V("1.0"),
+            requires_python=SpecifierSet(">=3.8"),
+            requires_dist=[
+                Requirement("original>=1"),
+                Requirement('sec-dep; extra == "security"'),
+            ],
+            provides_extra=["security"],
+        )
+
+    def _apply(self, **body: object) -> Provider:
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator,
+            package_overrides=(pkg_override("foo", **body),),
+        )
+        cache_deps_from_metadata(provider, ("foo", V("1.0")), self._parsed())
+        return provider
+
+    def test_dependencies_only(self) -> None:
+        # deps set, rp/pe unset: requires_dist replaced, requires_python
+        # kept from parsed, provides_extra emptied.
+        cached = self._apply(
+            dependencies=(Requirement("replacement>=2"),)
+        ).metadata_cache[("foo", V("1.0"))]
+        assert [str(r) for r in cached.requires_dist] == ["replacement>=2"]
+        assert cached.requires_python == SpecifierSet(">=3.8")
+        assert cached.provides_extra == []
+
+    def test_requires_python_only(self) -> None:
+        # rp set, deps/pe unset: requires_python replaced, requires_dist and
+        # provides_extra kept from parsed.  A non-deps override leaves the dep
+        # list intact, so the parsed extras stay coherent and must survive.
+        provider = self._apply(requires_python=">=3.6")
+        cache_key = ("foo", V("1.0"))
+        cached = provider.metadata_cache[cache_key]
+        assert cached.requires_python == SpecifierSet(">=3.6")
+        assert [str(r) for r in cached.requires_dist] == [
+            "original>=1",
+            'sec-dep; extra == "security"',
+        ]
+        assert cached.provides_extra == ["security"]
+        # The parsed extra's dep is still reachable under that extra.
+        assert "sec-dep" in provider.extra_deps_map[cache_key]["security"]
+
+    def test_provides_extra_only(self) -> None:
+        # pe set, deps/rp unset: provides_extra replaced, requires_dist and
+        # requires_python kept from parsed.
+        provider = self._apply(provides_extra=("security",))
+        cached = provider.metadata_cache[("foo", V("1.0"))]
+        assert cached.provides_extra == ["security"]
+        assert cached.requires_python == SpecifierSet(">=3.8")
+        assert [str(r) for r in cached.requires_dist] == [
+            "original>=1",
+            'sec-dep; extra == "security"',
+        ]
+        # The declared extra keeps its extra-markered dep.
+        assert "sec-dep" in provider.extra_deps_map[("foo", V("1.0"))]["security"]
+
+    def test_full_bundle_extras_coherent(self) -> None:
+        provider = self._apply(
+            dependencies=(
+                Requirement("werkzeug>=0.14"),
+                Requirement('click>=5.1; extra == "dotenv"'),
+            ),
+            requires_python=">=3.6",
+            provides_extra=("dotenv",),
+        )
+        cache_key = ("foo", V("1.0"))
+        cached = provider.metadata_cache[cache_key]
+        assert cached.requires_python == SpecifierSet(">=3.6")
+        assert cached.provides_extra == ["dotenv"]
+        # werkzeug is a base dep; click lives under the declared dotenv extra.
+        assert "werkzeug" in provider.deps_cache[cache_key]
+        assert "click" not in provider.deps_cache[cache_key]
+        assert "click" in provider.extra_deps_map[cache_key]["dotenv"]
+        # The parsed ``security`` extra is gone (override is authoritative).
+        assert "security" not in provider.extra_deps_map[cache_key]
+
+
+class TestRequiresPythonListingGate:
+    """``excluded_by_python`` consults the requires-python override."""
+
+    def test_widen_admits_across_minor_boundary(self) -> None:
+        # Real >=3.10 would exclude a 3.9 target; the override widens to
+        # >=3.9, so the version is admitted.
+        coordinator = make_coordinator(
+            [make_wheel("1.0", requires_python=">=3.10")], package="foo"
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.9.0",
+            package_overrides=(pkg_override("foo", requires_python=">=3.9"),),
+        )
+        assert [v for v, _ in provider.fetch_versions("foo")] == [V("1.0")]
+
+    def test_narrow_rejects_across_minor_boundary(self) -> None:
+        # Real >=3.6 would admit a 3.10 target; the override narrows to
+        # >=3.11, so the version is rejected.
+        coordinator = make_coordinator(
+            [make_wheel("1.0", requires_python=">=3.6")], package="foo"
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.10.0",
+            package_overrides=(pkg_override("foo", requires_python=">=3.11"),),
+        )
+        assert provider.fetch_versions("foo") == []
+
+    def test_empty_specifier_admits(self) -> None:
+        # An override of "" (no Python requirement) widens to admit anything.
+        coordinator = make_coordinator(
+            [make_wheel("1.0", requires_python=">=3.99")], package="foo"
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.9.0",
+            package_overrides=(pkg_override("foo", requires_python=""),),
+        )
+        assert [v for v, _ in provider.fetch_versions("foo")] == [V("1.0")]
+
+    def test_override_does_not_poison_shared_cache(self) -> None:
+        # foo and bar both declare >=3.11 (same raw string). foo widens to
+        # >=3.0; bar has no override. On 3.10, foo is admitted and bar stays
+        # excluded.  The override shares the string-keyed cache under its own
+        # ">=3.0" key, so it never poisons the ">=3.11" entry bar reads.
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel("1.0", requires_python=">=3.11")],
+                "bar": [make_wheel("1.0", requires_python=">=3.11")],
+            },
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.10.0",
+            package_overrides=(pkg_override("foo", requires_python=">=3.0"),),
+        )
+        assert [v for v, _ in provider.fetch_versions("foo")] == [V("1.0")]
+        assert provider.fetch_versions("bar") == []
+        assert provider.requires_python_cache == {">=3.0": False, ">=3.11": True}
+
+    def test_override_without_python_version_not_excluded(self) -> None:
+        # With no Python target the override cannot compare, so it does not
+        # exclude the version.
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator,
+            python_version=None,
+            package_overrides=(pkg_override("foo", requires_python=">=3.11"),),
+        )
+        assert len(provider.fetch_versions("foo")) == 1
+
+
+class TestSkipFetch:
+    """A complete ``dependencies`` override skips the metadata fetch/build."""
+
+    def test_fires_when_dependencies_present(self) -> None:
+        # No metadata is available, so a real fetch would raise; the
+        # override resolves the version from declared deps alone.
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            package_overrides=(
+                pkg_override("foo", dependencies=(Requirement("dep-a>=1"),)),
+            ),
+        )
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "dep-a" in deps
+
+    def test_fires_with_empty_dependencies(self) -> None:
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            package_overrides=(pkg_override("foo", dependencies=()),),
+        )
+        assert provider.get_dependencies("foo", V("1.0")) == {}
+
+    def test_prefetches_override_dependencies(self) -> None:
+        # The override introduces dep-a, so its listing is background-fetched
+        # even though foo itself skips the metadata fetch.
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            package_overrides=(
+                pkg_override("foo", dependencies=(Requirement("dep-a>=1"),)),
+            ),
+        )
+        provider.get_dependencies("foo", V("1.0"))
+        coordinator.request_listing.assert_any_call("dep-a")
+
+    def test_does_not_fire_for_requires_python_only(self) -> None:
+        # A partial override (only requires-python) still needs the artifact
+        # for deps, so with no metadata available it raises.
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            package_overrides=(pkg_override("foo", requires_python=">=3.0"),),
+        )
+        with pytest.raises(MetadataError):
+            provider.get_dependencies("foo", V("1.0"))
+
+    def test_sdist_only_under_never_resolves_via_scan(self) -> None:
+        # Strict PEP 643 x BuildPolicy.NEVER: dynamic-deps sdists are
+        # unresolvable without a build (see the no-override companion in
+        # TestNoVersionsReasons).  A complete override rescues them, reached
+        # through the look-ahead scan in choose_version.
+        coordinator = make_coordinator(
+            [make_sdist("1.0"), make_sdist("2.0")],
+            sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+            package="pkg",
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+            root_requirements={"pkg": VersionRange.full()},
+            package_overrides=(
+                pkg_override("pkg", dependencies=(Requirement("dep-a>=1"),)),
+            ),
+        )
+        assert provider.choose_version("pkg", VersionRange.full()) == V("2.0")
+        assert "dep-a" in provider.deps_cache[("pkg", V("2.0"))]
+
+    def test_corrupt_wheel_resolves_via_scan(self) -> None:
+        # A corrupt-metadata wheel would make await_metadata_batch raise in
+        # the prefetch path.  A complete override short-circuits submission,
+        # so the scan reaches get_dependencies (skip-fetch) and resolves.
+        coordinator = make_coordinator(
+            [make_wheel("3.0"), make_wheel("2.0")],
+            metadata_by_version={
+                "3.0": (
+                    "Metadata-Version: 2.1\nName: pkg\nVersion: 3.0\n"
+                    "Requires-Dist: bar==2.0\n"
+                ),
+            },
+            package="pkg",
+        )
+        coordinator.index.store_metadata_error(
+            "pkg", "2.0", MetadataHashMismatchError("metadata sha256 mismatch")
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_requirements={"pkg": VersionRange.full()},
+            package_overrides=(
+                pkg_override("pkg == 2.0", dependencies=(Requirement("dep-a>=1"),)),
+            ),
+        )
+        # 3.0's real deps conflict with this decision, forcing the scan past
+        # 3.0 into the prefetch batch that would fetch the corrupt 2.0 wheel.
+        provider.solution_decisions["bar"] = V("1.0")
+        assert provider.choose_version("pkg", VersionRange.full()) == V("2.0")
+        assert "dep-a" in provider.deps_cache[("pkg", V("2.0"))]
+
+    def test_prefetch_batch_skips_complete_override(self) -> None:
+        # Direct check: prefetch_batch submits nothing for a version with a
+        # complete override, even though its wheel advertises PEP 658.
+        coordinator = make_coordinator(
+            [make_wheel("1.0"), make_wheel("2.0")], package="pkg"
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            package_overrides=(
+                pkg_override("pkg", dependencies=(Requirement("dep-a"),)),
+            ),
+        )
+        version_list = provider.fetch_versions("pkg")
+        wheel_by_version = provider._wheel_by_version("pkg", version_list)
+        submitted = provider._prefetch_batch(
+            "pkg", [V("2.0"), V("1.0")], wheel_by_version
+        )
+        assert submitted == []
+
+    def test_prefetch_root_batch_skips_complete_override(self) -> None:
+        # The root-range batch prefetch skips a version whose complete
+        # override replaces its metadata, but still submits the sibling.
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("1.0")], package="pkg"
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_requirements={"pkg": SpecifierSet(">=1.0").to_range()},
+            package_overrides=(
+                pkg_override("pkg == 2.0", dependencies=(Requirement("dep-a"),)),
+            ),
+        )
+        provider.fetch_versions("pkg")
+        items = coordinator.request_metadata_batch.call_args[0][0]
+        versions = [ver for _, ver, _, _ in items]
+        assert "2.0" not in versions
+        assert "1.0" in versions
+
+    def test_prefetch_transitive_best_skips_complete_override(self) -> None:
+        # The single-best transitive prefetch submits nothing when the best
+        # candidate's metadata is replaced by a complete override.
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("1.0")], package="pkg"
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            package_overrides=(
+                pkg_override("pkg", dependencies=(Requirement("dep-a"),)),
+            ),
+        )
+        provider.fetch_versions("pkg")
+        coordinator.request_metadata.assert_not_called()
+        coordinator.request_metadata_batch.assert_not_called()
+
+    def test_prefetch_walk_ahead_skips_complete_override(self) -> None:
+        # The walk-ahead batch excludes a version whose complete override
+        # replaces its metadata, but keeps the un-overridden sibling.
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("1.0")], package="pkg"
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            package_overrides=(
+                pkg_override("pkg == 2.0", dependencies=(Requirement("dep-a"),)),
+            ),
+        )
+        provider.fetch_versions("pkg")
+        coordinator.reset_mock()
+        provider.prefetch_walk_ahead("pkg")
+        items = coordinator.request_metadata_batch.call_args[0][0]
+        versions = [ver for _, ver, _, _ in items]
+        assert "2.0" not in versions
+        assert "1.0" in versions
+
+
+class TestLocalVcsPythonGuardOverride:
+    """The local/VCS python guard reads the overridden requires-python."""
+
+    def _local_provider(
+        self, tmp_path: Path, pyproject_rp: str, override_rp: str
+    ) -> Provider:
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\n"
+            'name = "foo"\n'
+            'version = "1.0"\n'
+            f'requires-python = "{pyproject_rp}"\n'
+            'dependencies = ["dep-a>=1"]\n',
+            encoding="utf-8",
+        )
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            python_version="3.9.0",
+            local_sources=[LocalSource("foo", str(tmp_path))],
+            build_policy=BuildPolicy.NEVER,
+            package_overrides=(pkg_override("foo", requires_python=override_rp),),
+        )
+        provider.get_dependencies("foo", V("1.0"))
+        return provider
+
+    def test_widen_admits(self, tmp_path: Path) -> None:
+        # pyproject demands >=3.11 (would reject 3.9); the bare-name override
+        # widens to >=3.0, so the guard admits the 3.9 target.
+        provider = self._local_provider(tmp_path, ">=3.11", ">=3.0")
+        stamped = provider.metadata_cache[("foo", V("1.0"))].requires_python
+        assert stamped == SpecifierSet(">=3.0")
+        _raise_for_local_vcs_python(provider, {"foo": V("1.0")}, V("3.9"))
+
+    def test_narrow_rejects(self, tmp_path: Path) -> None:
+        # pyproject allows >=3.0; the override narrows to >=3.11, so the
+        # guard rejects the 3.9 target.
+        provider = self._local_provider(tmp_path, ">=3.0", ">=3.11")
+        stamped = provider.metadata_cache[("foo", V("1.0"))].requires_python
+        assert stamped == SpecifierSet(">=3.11")
+        with pytest.raises(ResolutionError):
+            _raise_for_local_vcs_python(provider, {"foo": V("1.0")}, V("3.9"))
+
+
 class TestEffectiveFieldResolution:
     """Per-package vs per-index resolution and cross-surface conflicts."""
 
@@ -5165,9 +5797,7 @@ class TestEffectiveBuildPolicy:
         build backend (mocked here).  The previous silent-passthrough
         behaviour (return dynamic metadata as-is) is gone.
         """
-        from nab_python._provider import build_remote, metadata_resolver
         from nab_python._vendor.packaging.version import Version as _Version
-        from nab_python.metadata import WheelMetadata as _WheelMetadata
 
         coordinator = make_coordinator(
             [make_sdist("1.0")],
@@ -5204,7 +5834,7 @@ class TestEffectiveBuildPolicy:
             captured["bytes"] = data
             return target
 
-        built_meta = _WheelMetadata(
+        built_meta = WheelMetadata(
             name="pkg",
             version=_Version("1.0"),
             requires_python=None,
@@ -5214,7 +5844,7 @@ class TestEffectiveBuildPolicy:
 
         def fake_build(
             _path: object, *, config: object, python_version: object
-        ) -> _WheelMetadata:
+        ) -> WheelMetadata:
             captured["config"] = config
             captured["python_version"] = python_version
             return built_meta
@@ -5222,7 +5852,7 @@ class TestEffectiveBuildPolicy:
         monkeypatch.setattr(build_remote, "extract_sdist_archive", fake_extract)
         monkeypatch.setattr("nab_python.build_backend.extract_metadata", fake_build)
 
-        starting = _WheelMetadata(
+        starting = WheelMetadata(
             name="pkg",
             version=_Version("1.0"),
             requires_python=None,
@@ -5245,13 +5875,11 @@ class TestEffectiveBuildPolicy:
         importantly, re-building) the same sdist for every tuple.  The
         cache key is the canonical name + version string.
         """
-        from nab_python._provider import metadata_resolver
         from nab_python._vendor.packaging.version import Version as _Version
-        from nab_python.metadata import WheelMetadata as _WheelMetadata
 
         coordinator = make_coordinator([make_sdist("1.0")], package="pkg")
         provider = Provider(coordinator, python_version="3.12.0")
-        cached_meta = _WheelMetadata(
+        cached_meta = WheelMetadata(
             name="pkg",
             version=_Version("1.0"),
             requires_python=None,
@@ -5260,7 +5888,7 @@ class TestEffectiveBuildPolicy:
         )
         coordinator.index.store_resolved_sdist_metadata("pkg", "1.0", cached_meta)
 
-        starting = _WheelMetadata(
+        starting = WheelMetadata(
             name="pkg",
             version=_Version("1.0"),
             requires_python=None,
@@ -5644,9 +6272,6 @@ class TestStaticSdistMetadata:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``BUILD_REMOTE`` fetches the sdist, extracts, and builds it."""
-        from nab_python._provider import build_remote
-        from nab_python.metadata import WheelMetadata as _WheelMetadata
-
         coordinator = make_coordinator(
             [make_sdist("1.0")],
             sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
@@ -5664,7 +6289,7 @@ class TestStaticSdistMetadata:
 
         coordinator.request_sdist_archive.side_effect = _request_archive
 
-        built = _WheelMetadata(
+        built = WheelMetadata(
             name="pkg",
             version=V("1.0"),
             requires_python=None,
@@ -5734,7 +6359,12 @@ class TestBuildRemoteFailureModes:
     message into the eventual no-versions diagnostic.
     """
 
-    def _provider(self, *, with_sdist: bool) -> Provider:
+    def _provider(
+        self,
+        *,
+        with_sdist: bool,
+        overrides: tuple[PackageOverride, ...] = (),
+    ) -> Provider:
         files = [make_sdist("1.0")] if with_sdist else [make_wheel("1.0")]
         coordinator = make_coordinator(files, package="pkg")
         return Provider(
@@ -5742,11 +6372,10 @@ class TestBuildRemoteFailureModes:
             python_version="3.12.0",
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_REMOTE,
+            package_overrides=overrides,
         )
 
     def test_missing_sdist_in_listing_raises(self) -> None:
-        from nab_python._provider import build_remote
-
         provider = self._provider(with_sdist=False)
         # Listing only has a wheel; build_remote_sdist needs an sdist.
         provider.versions_cache["pkg"] = [(V("1.0"), make_wheel("1.0"))]
@@ -5754,8 +6383,6 @@ class TestBuildRemoteFailureModes:
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
     def test_archive_fetch_failure_raises(self) -> None:
-        from nab_python._provider import build_remote
-
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
@@ -5780,8 +6407,6 @@ class TestBuildRemoteFailureModes:
         The error must propagate, not degrade to ``UnsupportedSdistError``,
         which the resolve treats as a skippable version.
         """
-        from nab_python._provider import build_remote
-
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
@@ -5805,8 +6430,6 @@ class TestBuildRemoteFailureModes:
     def test_archive_extract_failure_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from nab_python._provider import build_remote
-
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
@@ -5834,7 +6457,6 @@ class TestBuildRemoteFailureModes:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from nab_python import build_backend
-        from nab_python._provider import build_remote
 
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
@@ -5863,8 +6485,6 @@ class TestBuildRemoteFailureModes:
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
     def test_find_sdist_skips_non_matching_versions(self) -> None:
-        from nab_python._provider import build_remote
-
         provider = self._provider(with_sdist=True)
         # Two versions, only 2.0 has an sdist.
         provider.versions_cache["pkg"] = [
@@ -5888,10 +6508,14 @@ class TestBuildRemoteFailureModes:
         with pytest.raises(UnsupportedSdistError, match="no sdist is available"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
-    def _build_into(self, monkeypatch: pytest.MonkeyPatch, built: object) -> Provider:
-        from nab_python._provider import build_remote
-
-        provider = self._provider(with_sdist=True)
+    def _build_into(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        built: object,
+        *,
+        overrides: tuple[PackageOverride, ...] = (),
+    ) -> Provider:
+        provider = self._provider(with_sdist=True, overrides=overrides)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
         def _ok_fetch(
@@ -5917,10 +6541,7 @@ class TestBuildRemoteFailureModes:
     def test_built_requires_python_excludes_target_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from nab_python._provider import build_remote
-        from nab_python.metadata import WheelMetadata as _WheelMetadata
-
-        built = _WheelMetadata(
+        built = WheelMetadata(
             name="pkg",
             version=V("1.0"),
             requires_python=SpecifierSet(">=3.13"),
@@ -5934,10 +6555,7 @@ class TestBuildRemoteFailureModes:
     def test_built_requires_python_compatible_accepted(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from nab_python._provider import build_remote
-        from nab_python.metadata import WheelMetadata as _WheelMetadata
-
-        built = _WheelMetadata(
+        built = WheelMetadata(
             name="pkg",
             version=V("1.0"),
             requires_python=SpecifierSet(">=3.10"),
@@ -5951,10 +6569,7 @@ class TestBuildRemoteFailureModes:
     def test_built_requires_python_no_target_skips_check(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from nab_python._provider import build_remote
-        from nab_python.metadata import WheelMetadata as _WheelMetadata
-
-        built = _WheelMetadata(
+        built = WheelMetadata(
             name="pkg",
             version=V("1.0"),
             requires_python=SpecifierSet(">=3.13"),
@@ -5966,11 +6581,48 @@ class TestBuildRemoteFailureModes:
         result = build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
         assert result is built
 
-    def test_built_name_mismatch_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from nab_python._provider import build_remote
-        from nab_python.metadata import WheelMetadata as _WheelMetadata
+    def test_override_widens_requires_python_accepts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The built value excludes the 3.12 target; a widening override
+        # admits it, matching what the listing gate already accepted.
+        built = WheelMetadata(
+            name="pkg",
+            version=V("1.0"),
+            requires_python=SpecifierSet(">=3.13"),
+            requires_dist=[Requirement("dep-a>=1")],
+            provides_extra=[],
+        )
+        provider = self._build_into(
+            monkeypatch,
+            built,
+            overrides=(pkg_override("pkg", requires_python=">=3.9"),),
+        )
+        result = build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+        assert result is built
 
-        wrong = _WheelMetadata(
+    def test_override_narrows_requires_python_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The built value admits the 3.12 target; a narrowing override
+        # excludes it, so the build is rejected.
+        built = WheelMetadata(
+            name="pkg",
+            version=V("1.0"),
+            requires_python=SpecifierSet(">=3.10"),
+            requires_dist=[Requirement("dep-a>=1")],
+            provides_extra=[],
+        )
+        provider = self._build_into(
+            monkeypatch,
+            built,
+            overrides=(pkg_override("pkg", requires_python=">=3.13"),),
+        )
+        with pytest.raises(UnsupportedSdistError, match="requires Python"):
+            build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+
+    def test_built_name_mismatch_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        wrong = WheelMetadata(
             name="other-pkg",
             version=V("1.0"),
             requires_python=None,
@@ -5984,10 +6636,7 @@ class TestBuildRemoteFailureModes:
     def test_built_version_mismatch_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from nab_python._provider import build_remote
-        from nab_python.metadata import WheelMetadata as _WheelMetadata
-
-        wrong = _WheelMetadata(
+        wrong = WheelMetadata(
             name="pkg",
             version=V("2.0"),
             requires_python=None,

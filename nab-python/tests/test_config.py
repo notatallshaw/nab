@@ -1620,8 +1620,21 @@ class TestPackageSugar:
 
     def test_deferred_key_rejected(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab.packages.foo]\nresolution = "lowest"\n')
-        with pytest.raises(ConfigError, match="deferred to a later PR"):
+        with pytest.raises(ConfigError, match="are not supported") as excinfo:
             read_pyproject_config(path, discover_workspace=False)
+        # A non-metadata deferred key carries no flat-body advice.
+        assert "flat body keys" not in str(excinfo.value)
+
+    def test_metadata_key_advises_flat_body(self, tmp_path: Path) -> None:
+        # The nested ``metadata`` table is rejected with a hint pointing at
+        # the flat body keys the package surface accepts.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.foo]\nmetadata = { requires-python = ">=3.6" }\n',
+        )
+        with pytest.raises(ConfigError, match="flat body keys") as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+        assert "are not supported" in str(excinfo.value)
 
     def test_marker_in_key_rejected(self, tmp_path: Path) -> None:
         path = write(
@@ -1787,7 +1800,7 @@ class TestPackageRules:
         path = write(
             tmp_path, '[[tool.nab.package-rules]]\nmatch = ["foo"]\nmarker = "x"\n'
         )
-        with pytest.raises(ConfigError, match="deferred to a later PR"):
+        with pytest.raises(ConfigError, match="are not supported"):
             read_pyproject_config(path, discover_workspace=False)
 
     def test_match_with_marker_rejected(self, tmp_path: Path) -> None:
@@ -1990,6 +2003,275 @@ class TestPackageOverrideConflicts:
         assert len(config.package_overrides) == 2
 
 
+class TestPackageOverrideDependencies:
+    """The ``dependencies`` metadata override replaces a package's deps."""
+
+    def test_parses_a_list_of_requirements(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.packages.chumpy]\n"
+            'dependencies = ["numpy>=1.8.1", "six>=1.11.0 ; python_version < \'3\'"]\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.name == "chumpy"
+        assert override.dependencies is not None
+        rendered = [str(r) for r in override.dependencies]
+        assert rendered == ["numpy>=1.8.1", 'six>=1.11.0; python_version < "3"']
+
+    def test_empty_list_stored_as_empty_tuple(self, tmp_path: Path) -> None:
+        # An empty list is a first-class value (replace with zero deps),
+        # distinct from the key being absent, and lifts the empty-body gate.
+        path = write(tmp_path, "[tool.nab.packages.broken]\ndependencies = []\n")
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.dependencies == ()
+        assert override.dist_policy is None
+
+    def test_only_dependencies_is_a_valid_body(self, tmp_path: Path) -> None:
+        # A body carrying only ``dependencies`` is not rejected as empty.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.foo]\ndependencies = ["bar"]\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert [str(r) for r in override.dependencies or ()] == ["bar"]
+
+    def test_bad_pep508_string_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.foo]\ndependencies = ["not a valid == req =="]\n',
+        )
+        with pytest.raises(ConfigError, match="not a valid PEP 508"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_non_list_value_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab.packages.foo]\ndependencies = "bar"\n')
+        with pytest.raises(ConfigError, match="must be a list of PEP 508"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_non_string_item_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab.packages.foo]\ndependencies = [1]\n")
+        with pytest.raises(ConfigError, match=r"dependencies\[0\] must be a string"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_via_package_rules(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.package-rules]]\n"
+            'match = ["some-pkg <= 2.0"]\n'
+            'dependencies = ["requests>=2"]\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.name == "some-pkg"
+        assert [str(r) for r in override.dependencies or ()] == ["requests>=2"]
+
+    def test_overlapping_dependencies_entries_rejected(self, tmp_path: Path) -> None:
+        # Two entries both setting ``dependencies`` over non-disjoint ranges
+        # is a parse error: which list wins for a version in the overlap is
+        # ambiguous.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo <= 2"]\ndependencies = ["a"]\n'
+            '[tool.nab.packages."foo >= 1"]\ndependencies = ["b"]\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_disjoint_dependencies_entries_ok(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo <= 2"]\ndependencies = ["a"]\n'
+            '[tool.nab.packages."foo >= 3"]\ndependencies = ["b"]\n',
+        )
+        low, high = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert [str(r) for r in low.dependencies or ()] == ["a"]
+        assert [str(r) for r in high.dependencies or ()] == ["b"]
+
+    def test_empty_and_populated_overlap_still_rejected(self, tmp_path: Path) -> None:
+        # An empty list counts as set, so it overlaps a populated entry.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo <= 2"]\ndependencies = []\n'
+            '[tool.nab.packages."foo >= 1"]\ndependencies = ["b"]\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_dependencies_and_dist_policy_co_set(self, tmp_path: Path) -> None:
+        # Distinct fields, so both may sit on one entry with no conflict.
+        path = write(
+            tmp_path,
+            "[tool.nab.packages.foo]\n"
+            'dist-policy = "sdist-only"\n'
+            'dependencies = ["bar>=1"]\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.dist_policy is DistPolicy.SDIST_ONLY
+        assert [str(r) for r in override.dependencies or ()] == ["bar>=1"]
+
+    def test_dependencies_key_rejected_on_index_surface(self, tmp_path: Path) -> None:
+        # Metadata fields live only on the per-package surface; the index
+        # body's own unknown-key check rejects ``dependencies``.
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "internal"\n'
+            'url = "https://pkgs.example.com/simple/"\n'
+            '[tool.nab.index.internal]\ndependencies = ["bar"]\n',
+        )
+        with pytest.raises(ConfigError):
+            read_pyproject_config(path, discover_workspace=False)
+
+
+class TestPackageOverrideRequiresPython:
+    """The ``requires-python`` metadata override replaces the Python spec."""
+
+    def test_parses_a_specifier(self, tmp_path: Path) -> None:
+        # A body carrying only ``requires-python`` is a valid (non-empty)
+        # body, and the specifier stores raw like the top-level field.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.flask]\nrequires-python = ">=3.6"\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.requires_python == ">=3.6"
+        assert override.dependencies is None
+
+    def test_absent_key_is_none(self, tmp_path: Path) -> None:
+        # An absent requires-python parses to None, like the sibling fields.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.flask]\ndist-policy = "wheel-only"\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.requires_python is None
+
+    def test_bare_version_rejected_names_the_entry(self, tmp_path: Path) -> None:
+        # A bare "3.13" is not a specifier: the rejection names the entry
+        # selector and reuses the top-level "Did you mean" suggestion.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.flask]\nrequires-python = "3.13"\n',
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"packages\.'flask'\.requires-python must be.*Did you mean",
+        ):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_non_string_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.packages.flask]\nrequires-python = 3\n",
+        )
+        with pytest.raises(ConfigError, match="must be a string"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_overlapping_entries_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo <= 2"]\nrequires-python = ">=3.6"\n'
+            '[tool.nab.packages."foo >= 1"]\nrequires-python = ">=3.7"\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
+            read_pyproject_config(path, discover_workspace=False)
+
+
+class TestPackageOverrideProvidesExtra:
+    """The ``provides-extra`` metadata override replaces the declared extras."""
+
+    def test_parses_and_normalises(self, tmp_path: Path) -> None:
+        # PEP 685: the names normalise, so spelling does not matter.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages.flask]\nprovides-extra = ["Dot_Env", "async"]\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.provides_extra == ("dot-env", "async")
+
+    def test_empty_list_stored_as_empty_tuple(self, tmp_path: Path) -> None:
+        # A present-but-empty list declares no extras, distinct from absent,
+        # and lifts the empty-body gate.
+        path = write(tmp_path, "[tool.nab.packages.flask]\nprovides-extra = []\n")
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert override.provides_extra == ()
+
+    def test_non_list_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab.packages.flask]\nprovides-extra = "x"\n')
+        with pytest.raises(ConfigError, match="must be a list of extra names"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_non_string_item_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab.packages.flask]\nprovides-extra = [1]\n")
+        with pytest.raises(ConfigError, match=r"provides-extra\[0\] must be a string"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_overlapping_entries_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo <= 2"]\nprovides-extra = ["a"]\n'
+            '[tool.nab.packages."foo >= 1"]\nprovides-extra = ["b"]\n',
+        )
+        with pytest.raises(ConfigError, match="overlapping versions"):
+            read_pyproject_config(path, discover_workspace=False)
+
+
+class TestPackageMetadataBundle:
+    """All three metadata fields sit together on one entry (uv parity)."""
+
+    def test_full_bundle_parses(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.packages.flask]\n"
+            'dependencies = ["werkzeug>=0.14", "click>=5.1 ; extra == \'dotenv\'"]\n'
+            'requires-python = ">=3.6"\n'
+            'provides-extra = ["dotenv"]\n',
+        )
+        (override,) = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert [str(r) for r in override.dependencies or ()] == [
+            "werkzeug>=0.14",
+            'click>=5.1; extra == "dotenv"',
+        ]
+        assert override.requires_python == ">=3.6"
+        assert override.provides_extra == ("dotenv",)
+
+    def test_distinct_fields_do_not_overlap(self, tmp_path: Path) -> None:
+        # Different metadata fields over overlapping ranges are legal: the
+        # overlap check is per field, so deps on one range and
+        # requires-python on another (overlapping) range coexist.
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo <= 2"]\ndependencies = ["a"]\n'
+            '[tool.nab.packages."foo >= 1"]\nrequires-python = ">=3.7"\n',
+        )
+        low, high = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert [str(r) for r in low.dependencies or ()] == ["a"]
+        assert high.requires_python == ">=3.7"
+
+
 class TestIndexOverrides:
     """``[tool.nab.index.<name>]`` parses into a name-keyed policy map."""
 
@@ -2083,8 +2365,20 @@ class TestIndexOverrides:
             tmp_path,
             self._two_indexes() + '[tool.nab.index.internal]\nmarker = "x"\n',
         )
-        with pytest.raises(ConfigError, match="deferred to a later PR"):
+        with pytest.raises(ConfigError, match="are not supported"):
             read_pyproject_config(path, discover_workspace=False)
+
+    def test_metadata_key_rejected_without_flat_advice(self, tmp_path: Path) -> None:
+        # The flat body keys are rejected here too, so the nested ``metadata``
+        # table drops the package surface's flat-body hint.
+        path = write(
+            tmp_path,
+            self._two_indexes()
+            + '[tool.nab.index.internal]\nmetadata = { requires-python = ">=3.6" }\n',
+        )
+        with pytest.raises(ConfigError, match="are not supported") as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+        assert "flat body keys" not in str(excinfo.value)
 
 
 class TestMatrix:

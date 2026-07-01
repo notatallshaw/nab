@@ -16,7 +16,9 @@ import pytest
 
 from nab_index.client import SdistFile, WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.ranges import VersionRange
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
 from nab_python.fetch import InMemoryIndex
@@ -79,6 +81,73 @@ _LINUX_ENV: dict[str, str] = {
     "platform_version": "",
     "sys_platform": "linux",
 }
+
+
+class TestPerTupleRequiresPythonOverride:
+    """A requires-python override participates in per-tuple python filtering."""
+
+    @staticmethod
+    def _env(py: str) -> dict[str, str]:
+        env = dict(_LINUX_ENV)
+        env["python_version"] = py
+        env["python_full_version"] = f"{py}.0"
+        return env
+
+    def _provider(self, py: str) -> UniversalProvider:
+        coordinator = make_coordinator(
+            [_make_wheel("1.0", requires_python=">=3.6")],
+            package="pkg",
+            auto_metadata=True,
+        )
+        return UniversalProvider(
+            coordinator,
+            marker_environment=self._env(py),
+            package_overrides=(pkg_override("pkg", requires_python=">=3.11"),),
+        )
+
+    def test_tuple_below_override_rejects(self) -> None:
+        # Real >=3.6 admits 3.10, but the override narrows to >=3.11.
+        provider = self._provider("3.10")
+        assert provider.fetch_versions("pkg") == []
+
+    def test_tuple_meeting_override_admits(self) -> None:
+        provider = self._provider("3.11")
+        assert [v for v, _ in provider.fetch_versions("pkg")] == [Version("1.0")]
+
+
+class TestProvidesExtraDependenciesOverride:
+    """A dependencies + provides-extra override gates deps behind the extra."""
+
+    def _provider(self) -> UniversalProvider:
+        coordinator = make_coordinator(
+            [_make_wheel("1.0")],
+            package="pkg",
+            auto_metadata=True,
+        )
+        return UniversalProvider(
+            coordinator,
+            marker_environment=_LINUX_ENV,
+            package_overrides=(
+                pkg_override(
+                    "pkg",
+                    dependencies=(Requirement('dep ; extra == "cli"'),),
+                    provides_extra=("cli",),
+                ),
+            ),
+        )
+
+    def test_base_pkg_does_not_carry_extra_dep(self) -> None:
+        """The extra-gated dep is absent from the base package's deps."""
+        provider = self._provider()
+        base_deps = provider.get_dependencies("pkg", Version("1.0"))
+        assert "dep" not in base_deps
+
+    def test_extra_proxy_carries_gated_dep(self) -> None:
+        """Requesting ``pkg[cli]`` yields the extra-gated dep plus the base pin."""
+        provider = self._provider()
+        extra_deps = provider.get_dependencies("pkg[cli]", Version("1.0"))
+        assert "dep" in extra_deps
+        assert "pkg" in extra_deps
 
 
 class TestEnvironmentOverlay:

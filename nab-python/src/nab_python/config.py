@@ -50,6 +50,7 @@ from .provider import (
     VcsConfig,
     VcsPolicy,
     VcsSource,
+    _normalize_extra,
 )
 from .universal.matrix import Matrix
 from .workspace import (
@@ -245,10 +246,20 @@ class PackageOverride:
     candidate versions inside it.  The *body* sets any combination of
     ``dist_policy`` (with ``dist_trust_unverified_deps`` folding in the
     sdist-trust flag), ``build_policy``, the ``uploaded_prior_to`` cutoff
-    (or ``uploaded_prior_to_disabled`` for the ``false`` form), and the
-    routing ``index``.  An entry that sets ``index`` must use a bare-name
-    requirement (full range), because routing decides where to fetch a
-    listing before any version is known.
+    (or ``uploaded_prior_to_disabled`` for the ``false`` form), the
+    routing ``index``, and the metadata-override fields.  An entry that
+    sets ``index`` must use a bare-name requirement (full range), because
+    routing decides where to fetch a listing before any version is known.
+
+    The metadata-override fields ``dependencies``, ``requires_python``, and
+    ``provides_extra`` substitute for what nab would parse from the
+    distribution, keyed to the matched version range (uv
+    ``dependency-metadata`` parity).  Each replaces its field independently:
+    ``dependencies`` becomes the whole runtime ``Requires-Dist`` list,
+    ``requires_python`` the Python specifier, and ``provides_extra`` the
+    declared extras.  For every one, ``None`` means the entry does not set
+    it; a present-but-empty value (``()`` for the two tuples) is a distinct,
+    first-class value meaning "replace with nothing".
     """
 
     requirement: Requirement
@@ -260,6 +271,9 @@ class PackageOverride:
     uploaded_prior_to: datetime | None = None
     uploaded_prior_to_disabled: bool = False
     index: str | None = None
+    dependencies: tuple[Requirement, ...] | None = None
+    requires_python: str | None = None
+    provides_extra: tuple[str, ...] | None = None
     # The config surface this entry was declared on (e.g. "packages.'numpy'"
     # or "package-rules[0]").  Only used to name the source in an error that
     # is raised after the two project files merge, so it is excluded from
@@ -1110,12 +1124,22 @@ def _check_index_name_uniqueness(indexes: Sequence[IndexConfig]) -> None:
 
 
 _PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
-    {"dist-policy", "build-policy", "uploaded-prior-to", "index", "strict"}
+    {
+        "dist-policy",
+        "build-policy",
+        "uploaded-prior-to",
+        "index",
+        "strict",
+        "dependencies",
+        "requires-python",
+        "provides-extra",
+    }
 )
 # A [[tool.nab.package-rules]] entry carries a ``match`` selector plus body keys.
 _PACKAGE_RULE_KEYS = frozenset({"match"}) | _PACKAGE_OVERRIDE_BODY_KEYS
 _INDEX_OVERRIDE_KEYS = frozenset({"dist-policy", "build-policy", "uploaded-prior-to"})
-# Body keys deferred to later PRs; rejected so nothing inert ships.
+# Override-body keys not supported yet; rejected so nothing inert ships.
+# ``metadata`` is the nested-table form the flat body keys replace.
 _OVERRIDE_DEFERRED_KEYS = frozenset(
     {"resolution", "prereleases", "source", "vcs", "metadata", "marker"}
 )
@@ -1129,6 +1153,9 @@ _PACKAGE_POLICY_FIELDS = (
     ("build-policy", "build_policy"),
     ("uploaded-prior-to", "uploaded_prior_to"),
     ("index", "index"),
+    ("dependencies", "dependencies"),
+    ("requires-python", "requires_python"),
+    ("provides-extra", "provides_extra"),
 )
 
 
@@ -1263,6 +1290,11 @@ def _build_package_overrides(
         present="uploaded-prior-to" in body,
     )
     route = _parse_override_index(body, where)
+    dependencies = _parse_override_dependencies(body.get("dependencies"), where)
+    requires_python = _parse_override_requires_python(
+        body.get("requires-python"), where
+    )
+    provides_extra = _parse_override_provides_extra(body.get("provides-extra"), where)
     has_body = (
         dist_policy is not None
         or dist_trust is not None
@@ -1270,6 +1302,9 @@ def _build_package_overrides(
         or uploaded_prior_to is not None
         or uploaded_disabled
         or route is not None
+        or dependencies is not None
+        or requires_python is not None
+        or provides_extra is not None
     )
     if not has_body:
         msg = (
@@ -1299,6 +1334,9 @@ def _build_package_overrides(
             uploaded_prior_to=uploaded_prior_to,
             uploaded_prior_to_disabled=uploaded_disabled,
             index=route,
+            dependencies=dependencies,
+            requires_python=requires_python,
+            provides_extra=provides_extra,
             source_label=where,
         )
         for requirement in requirements
@@ -1369,15 +1407,23 @@ def _override_sets(override: PackageOverride, attr: str) -> bool:
     return getattr(override, attr) is not None
 
 
-def _reject_deferred(entry: dict[str, Any], where: str) -> None:
-    """Reject override-body keys deferred to a later release."""
+def _reject_deferred(
+    entry: dict[str, Any], where: str, *, flat_metadata_advice: bool = True
+) -> None:
+    """Reject override-body keys that are not supported.
+
+    ``flat_metadata_advice`` gates the package-surface hint to set metadata
+    via the flat body keys; the index surface passes ``False`` since those
+    keys are rejected there too.
+    """
     deferred = sorted(set(entry) & _OVERRIDE_DEFERRED_KEYS)
     if deferred:
-        msg = (
-            f"{where}: key(s) {deferred!r} are not supported in this release;"
-            " marker / resolution / prereleases / source / vcs / metadata"
-            " override bodies are deferred to a later PR"
-        )
+        msg = f"{where}: key(s) {deferred!r} are not supported"
+        if flat_metadata_advice and "metadata" in deferred:
+            msg += (
+                "; set metadata as the flat body keys 'dependencies',"
+                " 'requires-python', and 'provides-extra' instead"
+            )
         raise ConfigError(msg)
 
 
@@ -1415,7 +1461,7 @@ def _parse_index_override_body(
     if not isinstance(body, dict):
         msg = f"{where} must be a table, got {type(body).__name__}"
         raise ConfigError(msg)
-    _reject_deferred(body, where)
+    _reject_deferred(body, where, flat_metadata_advice=False)
     unknown = sorted(set(body) - _INDEX_OVERRIDE_KEYS)
     if unknown:
         msg = (
@@ -1543,6 +1589,95 @@ def _parse_override_uploaded_prior_to(
         msg = f"{where}.uploaded-prior-to: {exc}"
         raise ConfigError(msg) from exc
     return (cutoff, False)
+
+
+def _parse_override_requires_python(value: object, where: str) -> str | None:
+    """Parse a per-package ``requires-python`` override, naming the entry.
+
+    An absent key (``None``) means no override; a present value delegates
+    to :func:`_parse_requires_python` for PEP 440 validation, prefixing the
+    ``where`` selector on failure so the message names the offending entry.
+    """
+    if value is None:
+        return None
+
+    try:
+        return _parse_requires_python(value)
+    except ConfigError as exc:
+        msg = f"{where}.{exc}"
+        raise ConfigError(msg) from exc
+
+
+def _parse_override_dependencies(
+    value: object, where: str
+) -> tuple[Requirement, ...] | None:
+    """Parse the ``dependencies`` body: PEP 508 strings that replace deps.
+
+    The list replaces a package's declared runtime dependencies for the
+    matched version range.  Each item is a full PEP 508 dependency
+    *value*, so extras, markers, and version specifiers are all legal
+    (unlike the override *key*, which :func:`_requirement_from_selector`
+    restricts to a name plus specifier).  A present-but-empty list is
+    stored as ``()`` (replace with zero deps), distinct from the key
+    being absent (``None``).
+    """
+    if value is None:
+        return None
+
+    if not isinstance(value, list):
+        msg = (
+            f"{where}.dependencies must be a list of PEP 508 requirement"
+            f" strings, got {type(value).__name__}"
+        )
+        raise ConfigError(msg)
+
+    out: list[Requirement] = []
+    for i, item in enumerate(value):
+        if not isinstance(item, str):
+            msg = (
+                f"{where}.dependencies[{i}] must be a string, got {type(item).__name__}"
+            )
+            raise ConfigError(msg)
+        try:
+            out.append(Requirement(item))
+        except InvalidRequirement as exc:
+            msg = (
+                f"{where}.dependencies[{i}] is not a valid PEP 508"
+                f" requirement: {item!r}"
+            )
+            raise ConfigError(msg) from exc
+    return tuple(out)
+
+
+def _parse_override_provides_extra(value: object, where: str) -> tuple[str, ...] | None:
+    """Parse the ``provides-extra`` body: the extras the override declares.
+
+    A TOML array of extra names, each normalised per PEP 685 (the same
+    rule :func:`nab_python.provider._normalize_extra` applies to parsed
+    ``Provides-Extra``), so an extra compares equal regardless of spelling.
+    A present-but-empty list is stored as ``()`` (declares no extras),
+    distinct from the key being absent (``None``).
+    """
+    if value is None:
+        return None
+
+    if not isinstance(value, list):
+        msg = (
+            f"{where}.provides-extra must be a list of extra names, got"
+            f" {type(value).__name__}"
+        )
+        raise ConfigError(msg)
+
+    out: list[str] = []
+    for i, item in enumerate(value):
+        if not isinstance(item, str):
+            msg = (
+                f"{where}.provides-extra[{i}] must be a string, got"
+                f" {type(item).__name__}"
+            )
+            raise ConfigError(msg)
+        out.append(_normalize_extra(item))
+    return tuple(out)
 
 
 def _parse_override_index(entry: dict[str, Any], where: str) -> str | None:

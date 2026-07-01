@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.version import Version
 from nab_python.provider import BuildPolicy, DistPolicy
 from nab_python.universal import reresolve as reresolve_module
@@ -255,6 +256,54 @@ class TestReresolveDivergentTuples:
             diffs = reresolve_divergent_tuples(coordinator, ["pkg"], original, report)
         diff = diffs["py311-linux_x86_64"]
         assert diff.removed == {"pkg": "1.0"}
+
+    def test_dependencies_override_skips_reresolve(self) -> None:
+        """A divergent pin under a dependencies override is not re-resolved.
+
+        The metadata is cached (so without the override the pin would
+        re-resolve), but the override would reapply on any re-resolve, so
+        the pass skips it and does no work.
+        """
+        wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        coordinator = _make_coordinator(
+            {"pkg": [wheel]},
+            per_wheel_metadata={
+                wheel.filename: "Name: pkg\nVersion: 1.0\nRequires-Dist: foo\n\n"
+            },
+        )
+        original = UniversalResult(
+            matrix=MagicMock(),
+            tuple_results=[
+                TupleResult(
+                    tuple_=_linux_311(),
+                    success=True,
+                    pins={"pkg": Version("1.0")},
+                ),
+            ],
+        )
+        report = ValidationReport(
+            findings=[
+                PinValidation(
+                    tuple_label="py311-linux_x86_64",
+                    package="pkg",
+                    version="1.0",
+                    status="divergent",
+                    chosen_wheel=wheel.filename,
+                ),
+            ],
+        )
+        with patch.object(
+            reresolve_module, "_resolve_one_tuple_with_overrides"
+        ) as inner:
+            diffs = reresolve_divergent_tuples(
+                coordinator,
+                ["pkg"],
+                original,
+                report,
+                package_overrides=(pkg_override("pkg", dependencies=()),),
+            )
+        assert diffs == {}
+        inner.assert_not_called()
 
 
 class TestCollectWheelMetadataOverrides:

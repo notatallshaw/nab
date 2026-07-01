@@ -37,12 +37,12 @@ from ._lockfile.requirements import (
 from ._vendor.packaging.pylock import is_valid_pylock_path
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
 
     from ._vendor.packaging.markers import Marker
-    from .config import ConflictSet
+    from .config import ConflictSet, PackageOverride
 
 
 __all__ = [
@@ -64,6 +64,7 @@ __all__ = [
     "build_lock_input_from_provider",
     "build_pylock",
     "is_valid_pylock_path",
+    "package_metadata_override_records",
     "read_lockfile_anchor",
     "read_lockfile_packages",
     "render_lock",
@@ -245,6 +246,9 @@ class Provenance:
     # ``(flag, rendered value)`` pairs.  Recorded so a reader can see the
     # lock did not derive from the committed files alone.
     cli_project_overrides: tuple[tuple[str, str], ...] = ()
+    # The configured ``[tool.nab]`` per-package metadata overrides as
+    # ``(requirement, (field, ...))`` pairs; input provenance, audit-only.
+    package_metadata_overrides: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     def to_block(self) -> dict[str, Any]:
         """Render to the dict the TOML writer drops under ``[tool.nab]``."""
@@ -263,7 +267,40 @@ class Provenance:
             block["cli-project-overrides"] = [
                 f"{flag}={value}" for flag, value in self.cli_project_overrides
             ]
+        if self.package_metadata_overrides:
+            block["package-metadata-overrides"] = [
+                f"{requirement}: {', '.join(fields)}"
+                for requirement, fields in self.package_metadata_overrides
+            ]
         return block
+
+
+def package_metadata_override_records(
+    overrides: Sequence[PackageOverride],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Summarise the configured per-package metadata overrides for provenance.
+
+    Each returned pair is a requirement string and the metadata fields the
+    entry set (``dependencies``, ``requires-python``, ``provides-extra``).
+    Entries that set no metadata field are skipped.  This records every
+    configured override as input provenance, including any scoped to a
+    version no candidate has (a documented no-op), so an entry here is not a
+    claim that it shaped the lock.  Strictly informational: the reader must
+    not feed it into the install path.
+    """
+    records: list[tuple[str, tuple[str, ...]]] = []
+    for override in overrides:
+        fields: list[str] = []
+        if override.dependencies is not None:
+            fields.append("dependencies")
+        if override.requires_python is not None:
+            fields.append("requires-python")
+        if override.provides_extra is not None:
+            fields.append("provides-extra")
+
+        if fields:
+            records.append((str(override.requirement), tuple(fields)))
+    return tuple(records)
 
 
 @dataclass

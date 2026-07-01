@@ -26,8 +26,11 @@ from nab_python._lockfile.pylock import (
     _pin_to_package,
     _relativize_path,
 )
+from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.pylock import Package, PackageWheel, Pylock
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
@@ -54,13 +57,22 @@ from nab_python.lockfile import (
     WheelArtifact,
     build_lock_input_from_provider,
     build_pylock,
+    package_metadata_override_records,
     read_lockfile_anchor,
     read_lockfile_packages,
     write_lock,
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
-from nab_python.provider import DistPolicy, LocalSource, VcsConfig, VcsPolicy, VcsSource
+from nab_python.provider import (
+    BuildPolicy,
+    DistPolicy,
+    LocalSource,
+    Provider,
+    VcsConfig,
+    VcsPolicy,
+    VcsSource,
+)
 
 
 def _wheel(name: str = "foo", version: str = "1.0") -> WheelArtifact:
@@ -1187,10 +1199,88 @@ class TestProvenance:
             "macos_arm64",
         ]
 
+    def test_emits_package_metadata_overrides(self) -> None:
+        prov = Provenance(
+            nab_version="9.9.9",
+            created_at=datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc),
+            command_line=("nab", "lock"),
+            input_path="pyproject.toml",
+            mode="specific",
+            package_metadata_overrides=(
+                ("chumpy", ("dependencies",)),
+                ("broken<=1.0", ("dependencies",)),
+            ),
+        )
+        text = write_lock(LockInput(pins={"foo": _index_pin()}, provenance=prov))
+        data = tomllib.loads(text)
+        assert data["tool"]["nab"]["package-metadata-overrides"] == [
+            "chumpy: dependencies",
+            "broken<=1.0: dependencies",
+        ]
+
+    def test_no_package_metadata_overrides_key_when_empty(self) -> None:
+        prov = Provenance(
+            nab_version="9.9.9",
+            created_at=datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc),
+            command_line=("nab", "lock"),
+            input_path="pyproject.toml",
+            mode="specific",
+        )
+        text = write_lock(LockInput(pins={"foo": _index_pin()}, provenance=prov))
+        data = tomllib.loads(text)
+        assert "package-metadata-overrides" not in data["tool"]["nab"]
+
     def test_absent_provenance_means_no_tool_block(self) -> None:
         text = write_lock(LockInput(pins={"foo": _index_pin()}))
         data = tomllib.loads(text)
         assert "tool" not in data
+
+
+class TestPackageMetadataOverrideRecords:
+    """``package_metadata_override_records`` summarises metadata overrides."""
+
+    def test_records_dependencies_override(self) -> None:
+        overrides = (pkg_override("foo <= 2", dependencies=(Requirement("bar"),)),)
+        assert package_metadata_override_records(overrides) == (
+            ("foo<=2", ("dependencies",)),
+        )
+
+    def test_empty_dependencies_still_recorded(self) -> None:
+        # An empty tuple is set (not None), so it is recorded.
+        overrides = (pkg_override("foo", dependencies=()),)
+        assert package_metadata_override_records(overrides) == (
+            ("foo", ("dependencies",)),
+        )
+
+    def test_non_metadata_override_skipped(self) -> None:
+        # A policy-only entry sets no metadata field and is not recorded.
+        overrides = (pkg_override("foo", dist_policy=DistPolicy.SDIST_ONLY),)
+        assert package_metadata_override_records(overrides) == ()
+
+    def test_records_requires_python_override(self) -> None:
+        overrides = (pkg_override("foo", requires_python=">=3.6"),)
+        assert package_metadata_override_records(overrides) == (
+            ("foo", ("requires-python",)),
+        )
+
+    def test_records_provides_extra_override(self) -> None:
+        overrides = (pkg_override("foo", provides_extra=("dotenv",)),)
+        assert package_metadata_override_records(overrides) == (
+            ("foo", ("provides-extra",)),
+        )
+
+    def test_records_full_bundle_in_field_order(self) -> None:
+        overrides = (
+            pkg_override(
+                "foo",
+                dependencies=(Requirement("bar"),),
+                requires_python=">=3.6",
+                provides_extra=("dotenv",),
+            ),
+        )
+        assert package_metadata_override_records(overrides) == (
+            ("foo", ("dependencies", "requires-python", "provides-extra")),
+        )
 
 
 class TestReadLockfileAnchor:
@@ -1989,6 +2079,7 @@ class _FakeProvider:
         vcs_pins: dict[str, str] | None = None,
         listing_indexes: dict[str, str] | None = None,
         dist_policy_overrides: dict[str, DistPolicy] | None = None,
+        requires_python_overrides: dict[str, str] | None = None,
         deps_cache: dict[tuple[str, Version], dict[str, object]] | None = None,
         extra_deps_map: (
             dict[tuple[str, Version], dict[str, dict[str, object]]] | None
@@ -1999,6 +2090,7 @@ class _FakeProvider:
         self._vcs = vcs_sources or {}
         self._vcs_pins = vcs_pins or {}
         self._dist_policy_overrides = dist_policy_overrides or {}
+        self._requires_python_overrides = requires_python_overrides or {}
         self.coordinator = _FakeCoordinator(listing_indexes)
         self.deps_cache = deps_cache or {}
         self.extra_deps_map = extra_deps_map or {}
@@ -2021,6 +2113,9 @@ class _FakeProvider:
         self, canonical: str, version: Version, index_name: str | None = None
     ) -> DistPolicy:
         return self._dist_policy_overrides.get(canonical, DistPolicy.WHEEL_OR_SDIST)
+
+    def effective_requires_python(self, canonical: str, version: Version) -> str | None:
+        return self._requires_python_overrides.get(canonical)
 
 
 def _wheel_file(
@@ -2080,6 +2175,77 @@ class TestBuildLockInputFromProvider:
         assert len(pin.wheels) == 1
         assert pin.wheels[0].hashes == (("sha256", "a" * 64),)
         assert lock_input.requires_python == ">=3.10"
+
+    def test_index_pin_prefers_requires_python_override(self) -> None:
+        """A widened requires-python override is what the pin records.
+
+        The Simple-API files say ``>=3.10``; the user widened the package
+        to ``>=3.9``.  The pin must carry the overridden specifier so a
+        conforming PEP 751 installer does not reject a pin the resolver
+        admitted against the wider floor.
+        """
+        provider = _FakeProvider(
+            listings={
+                "foo": [
+                    (Version("1.0"), _wheel_file(requires_python=">=3.10")),
+                    (Version("1.0"), _sdist_file()),
+                ]
+            },
+            requires_python_overrides={"foo": ">=3.9"},
+        )
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.requires_python == ">=3.9"
+
+    def test_empty_requires_python_override_omits_lock_key(self) -> None:
+        """An empty-string override records verbatim and drops the lock key.
+
+        The files declare ``>=3.10``; the override clears the specifier to
+        ``""``.  The pin carries the empty string, and the writer's
+        truthiness check leaves ``requires-python`` out of the rendered lock.
+        """
+        provider = _FakeProvider(
+            listings={
+                "foo": [
+                    (Version("1.0"), _wheel_file(requires_python=">=3.10")),
+                    (Version("1.0"), _sdist_file()),
+                ]
+            },
+            requires_python_overrides={"foo": ""},
+        )
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.requires_python == ""
+        assert "requires-python" not in write_lock(lock_input)
+
+    def test_skip_fetch_override_pins_sdist_without_metadata(self) -> None:
+        """A skip-fetch package still produces a complete sdist lock pin.
+
+        A complete ``dependencies`` override resolves the version without a
+        METADATA fetch or build; the sdist listing (its hash recorded during
+        ``fetch_versions``) still flows into the pin and the rendered lock.
+        """
+        coordinator = make_coordinator([_sdist_file("pkg", "2.0")], package="pkg")
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            build_policy=BuildPolicy.NEVER,
+            package_overrides=(
+                pkg_override("pkg", dependencies=(Requirement("dep-a>=1"),)),
+            ),
+        )
+        provider.fetch_versions("pkg")
+        deps = provider.get_dependencies("pkg", Version("2.0"))
+        assert "dep-a" in deps
+        coordinator.request_metadata.assert_not_called()
+        coordinator.request_metadata_batch.assert_not_called()
+
+        lock_input = build_lock_input_from_provider(provider, {"pkg": Version("2.0")})
+        text = write_lock(lock_input)
+        assert "pkg-2.0.tar.gz" in text
+        assert "b" * 64 in text
 
     def test_local_path_threads_to_artifact(self, tmp_path: Path) -> None:
         """A WheelFile.local_path reaches the emitted WheelArtifact."""

@@ -33,6 +33,7 @@ from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
+from .metadata import WheelMetadata
 
 if TYPE_CHECKING:
     import threading
@@ -44,7 +45,6 @@ if TYPE_CHECKING:
 
     from .config import IndexOverride, NabProjectConfig, PackageOverride
     from .fetch import FetchCoordinator
-    from .metadata import WheelMetadata
 
 __all__ = [
     "BuildPolicy",
@@ -797,6 +797,111 @@ class Provider:
         assert isinstance(result, bool)
         return result
 
+    def effective_dependencies(
+        self, canonical_name: str, version: Version
+    ) -> tuple[Requirement, ...] | None:
+        """Return the ``dependencies`` metadata override for ``name==version``.
+
+        Metadata overrides live only on the per-package surface, so this
+        is a single-surface lookup with no per-index arbitration and no
+        :class:`OverrideConflictError`.  Returns the replacement
+        requirement tuple (possibly empty, meaning "no runtime deps")
+        when a range-matching override sets ``dependencies``, else
+        ``None`` when nothing overrides them.
+        """
+        override = self._matching_package_override(
+            canonical_name,
+            version,
+            lambda o: _unset_if_none(o.dependencies),
+        )
+        if override is None:
+            return None
+        return override.dependencies
+
+    def effective_requires_python(
+        self, canonical_name: str, version: Version
+    ) -> str | None:
+        """Return the ``requires-python`` metadata override for ``name==version``.
+
+        Single-surface (per-package only), like
+        :meth:`effective_dependencies`.  Returns the raw specifier string a
+        range-matching override sets (which may be ``""``, meaning "no Python
+        requirement"), else ``None`` when nothing overrides it.
+        """
+        override = self._matching_package_override(
+            canonical_name,
+            version,
+            lambda o: _unset_if_none(o.requires_python),
+        )
+        if override is None:
+            return None
+        return override.requires_python
+
+    def effective_provides_extra(
+        self, canonical_name: str, version: Version
+    ) -> tuple[str, ...] | None:
+        """Return the ``provides-extra`` metadata override for ``name==version``.
+
+        Single-surface (per-package only).  Returns the declared extras
+        (possibly empty, meaning "no extras") a range-matching override
+        sets, else ``None`` when nothing overrides them.
+        """
+        override = self._matching_package_override(
+            canonical_name,
+            version,
+            lambda o: _unset_if_none(o.provides_extra),
+        )
+        if override is None:
+            return None
+        return override.provides_extra
+
+    def _source_metadata_override(
+        self, canonical_name: str
+    ) -> tuple[tuple[Requirement, ...] | None, str | None, tuple[str, ...] | None]:
+        """Resolve a local/VCS source's metadata override bundle.
+
+        Local/VCS sources have no listing and their version is not known
+        until materialised, so a metadata override governs them only through
+        a bare-name requirement (full range); a version-scoped override does
+        not match a source.  Mirrors
+        :meth:`effective_build_policy_for_source`.  Each field is taken from
+        the first bare-name entry that sets it (a present ``""`` or ``()`` is
+        a set value); the parse-time overlap rules make that entry unique.
+        """
+        deps: tuple[Requirement, ...] | None = None
+        requires_python: str | None = None
+        provides_extra: tuple[str, ...] | None = None
+        for override in self._package_overrides:
+            if override.name != canonical_name:
+                continue
+            if str(override.requirement.specifier):
+                continue
+            if deps is None and override.dependencies is not None:
+                deps = override.dependencies
+            if requires_python is None and override.requires_python is not None:
+                requires_python = override.requires_python
+            if provides_extra is None and override.provides_extra is not None:
+                provides_extra = override.provides_extra
+        return (deps, requires_python, provides_extra)
+
+    def effective_metadata_override(
+        self, canonical_name: str, version: Version
+    ) -> tuple[tuple[Requirement, ...] | None, str | None, tuple[str, ...] | None]:
+        """Resolve the ``(dependencies, requires_python, provides_extra)`` override.
+
+        A local/VCS source selects bare-name-only (its materialised version
+        is not knowable to the user when writing the selector); every other
+        candidate selects version-scoped.  Each field resolves
+        independently, so the three may come from different entries.
+        """
+        if canonical_name in self.local_sources or canonical_name in self.vcs_sources:
+            return self._source_metadata_override(canonical_name)
+        return (
+            self.effective_dependencies(canonical_name, version),
+            self.effective_requires_python(canonical_name, version),
+            self.effective_provides_extra(canonical_name, version),
+        )
+
     @staticmethod
     def _package_uploaded_prior_to(override: PackageOverride) -> object:
         """Per-package upload-time value: a datetime, ``None`` (disabled), or unset."""
@@ -1405,6 +1510,18 @@ class Provider:
             normalized in self.local_sources or normalized in self.vcs_sources
         ):
             self._cache_deps_from_metadata(cache_key, self.metadata_cache[cache_key])
+            return self.deps_cache[cache_key]
+
+        # Skip-fetch: a complete ``dependencies`` override (even an empty
+        # tuple) supplies the deps, so no METADATA fetch or build is needed.
+        # After the local/VCS branch so sources still materialise;
+        # ``_cache_deps_from_metadata`` stamps the remaining override fields
+        # onto the bare record.
+        if self.effective_dependencies(normalized, version) is not None:
+            self._cache_deps_from_metadata(
+                cache_key, WheelMetadata(name=normalized, version=version)
+            )
+            self.prefetch_new_deps(self.deps_cache[cache_key])
             return self.deps_cache[cache_key]
 
         metadata_text, from_sdist = self._resolve_metadata(versions, package, version)
