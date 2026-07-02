@@ -31,6 +31,7 @@ from nab._lock import (
 from nab.cli import (
     _default_cache_dir,
     _make_transport,
+    _normalize_layered_bool_flags,
     app,
     main,
 )
@@ -2710,19 +2711,22 @@ class TestHelpText:
 
 
 class TestOfflineFlagContract:
-    """Pin the tyro argv contract for the tri-state ``--offline`` flag.
+    """Pin the tyro argv contract for the layered ``--offline`` flag.
 
     ``offline`` is layered (env / nab.toml may set it) and the CLI is the
     top rung, so the flag has to distinguish ``--offline True`` /
     ``--offline False`` from being absent (``None``, let the lower layers
-    decide).  tyro renders that tri-state as a value-taking choice rather
-    than an ``--offline`` / ``--no-offline`` pair; these tests lock that
-    surface so it cannot drift unnoticed.
+    decide).  tyro renders that tri-state as a value-taking choice, so the
+    value form is the canonical surface app.cli parses; :func:`main`
+    rewrites the bare ``--offline`` / ``--no-offline`` forms into it (see
+    :class:`TestMainNormalizesOfflineFlag`).
     """
 
-    def test_offline_renders_as_tristate_choice(self) -> None:
-        help_text = _command_help("lock")
-        assert "--offline {None,True,False}" in help_text
+    @pytest.mark.parametrize("command", ["lock", "download", "config"])
+    def test_offline_help_shows_value_and_bare_forms(self, command: str) -> None:
+        help_text = _command_help(command)
+        assert "--offline {True,False}" in help_text
+        assert "--no-offline" in help_text
 
     def _run_offline_argv(self, tmp_path: Path, value: str) -> object:
         pyproject = _make_pyproject(tmp_path)
@@ -2752,7 +2756,8 @@ class TestOfflineFlagContract:
     def test_offline_false_parses(self, tmp_path: Path) -> None:
         assert self._run_offline_argv(tmp_path, "False") is False
 
-    def test_bare_offline_without_value_exits_2(self, tmp_path: Path) -> None:
+    def test_bare_offline_needs_value_at_tyro_layer(self, tmp_path: Path) -> None:
+        """The value form is required below main(); main() bridges the gap."""
         pyproject = _make_pyproject(tmp_path)
         with (
             contextlib.redirect_stderr(io.StringIO()),
@@ -2760,6 +2765,84 @@ class TestOfflineFlagContract:
         ):
             app.cli(args=["lock", str(pyproject), "--offline"], prog="nab")
         assert exc.value.code == 2
+
+
+class TestNormalizeLayeredBoolFlags:
+    """Unit-test the argv rewrite that gives ``--offline`` its bare forms."""
+
+    @pytest.mark.parametrize(
+        ("argv", "expected"),
+        [
+            ([], []),
+            (["lock"], ["lock"]),
+            (["lock", "--offline"], ["lock", "--offline", "True"]),
+            (["lock", "--offline", "True"], ["lock", "--offline", "True"]),
+            (["lock", "--offline", "False"], ["lock", "--offline", "False"]),
+            (["lock", "--offline", "None"], ["lock", "--offline", "None"]),
+            (["lock", "--no-offline"], ["lock", "--offline", "False"]),
+            (
+                ["lock", "--offline", "--output", "pylock.toml"],
+                ["lock", "--offline", "True", "--output", "pylock.toml"],
+            ),
+            (
+                ["lock", "--no-cache", "--offline"],
+                ["lock", "--no-cache", "--offline", "True"],
+            ),
+        ],
+    )
+    def test_rewrites(self, argv: list[str], expected: list[str]) -> None:
+        assert _normalize_layered_bool_flags(argv) == expected
+
+
+class TestMainNormalizesOfflineFlag:
+    """main() applies the bare-form rewrite before tyro parses."""
+
+    def _offline_seen_by_resolve(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *offline_args: str
+    ) -> object:
+        pyproject = _make_pyproject(tmp_path)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "nab",
+                "lock",
+                str(pyproject),
+                "--output",
+                str(tmp_path / "pylock.toml"),
+                *offline_args,
+            ],
+        )
+        with (
+            patch(
+                "nab.cli.resolve_pyproject",
+                return_value=_stub_resolution_result(pins={}),
+            ) as mock_resolve,
+            patch("nab.cli.write_lock"),
+        ):
+            main()
+        return mock_resolve.call_args.kwargs["offline"]
+
+    def test_bare_offline_forces_offline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert self._offline_seen_by_resolve(tmp_path, monkeypatch, "--offline") is True
+
+    def test_no_offline_forces_network(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert (
+            self._offline_seen_by_resolve(tmp_path, monkeypatch, "--no-offline")
+            is False
+        )
+
+    def test_explicit_value_survives(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert (
+            self._offline_seen_by_resolve(tmp_path, monkeypatch, "--offline", "False")
+            is False
+        )
 
 
 class TestLayeredRunKnobFlagContract:
@@ -2851,11 +2934,11 @@ class TestMain:
     """Tests for the main() entry point."""
 
     def test_calls_app_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """main() delegates to app.cli()."""
+        """main() delegates to app.cli() with the normalized argv."""
         monkeypatch.setattr(sys, "argv", ["nab"])
         with patch("nab.cli.app") as mock_app:
             main()
-        mock_app.cli.assert_called_once_with(prog="nab")
+        mock_app.cli.assert_called_once_with(prog="nab", args=[])
 
     def test_version_flag_prints_and_returns(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

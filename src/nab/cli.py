@@ -97,6 +97,18 @@ DistPolicyFlag = Literal[
 ]
 BuildPolicyFlag = Literal["never", "build-local", "build-remote"]
 
+# --offline is layered (an nab.toml or NAB_OFFLINE may set it), so it stays
+# tri-state: an explicit value overrides the lower layers while an absent flag
+# defers to them.  tyro renders that as a value-taking choice; main() also
+# accepts the bare --offline / --no-offline forms (_normalize_layered_bool_flags).
+OfflineFlag = Annotated[
+    bool | None,
+    tyro.conf.arg(
+        metavar="{True,False}",
+        help="never hit the network; bare --offline / --no-offline also work",
+    ),
+]
+
 _DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.toml",
     "requirements": "requirements.txt",
@@ -552,6 +564,52 @@ def _print_universal_blocks(result: UniversalResult) -> None:
     sys.stdout.write("\n".join(blocks) + "\n")
 
 
+# Layered boolean flags (currently just --offline) are tri-state, which tyro
+# renders as a value-taking --flag {True,False} rather than a --flag / --no-flag
+# pair.  main() rewrites the bare forms into that value form before tyro parses.
+_LAYERED_BOOL_FLAGS = frozenset({"offline"})
+
+# The tokens that count as a value already spelled out after the flag.
+_BOOL_FLAG_VALUES = frozenset({"True", "False", "None"})
+
+
+def _normalize_layered_bool_flags(argv: list[str]) -> list[str]:
+    """Rewrite bare ``--offline`` / ``--no-offline`` into tyro's value form.
+
+    A layered boolean then reads like ``--cache`` / ``--no-cache`` at the
+    CLI: ``--offline`` becomes ``--offline True`` and ``--no-offline`` becomes
+    ``--offline False``.  An absent flag is left alone and still defers to the
+    config layers, and an explicit ``--offline True`` / ``--offline False`` is
+    passed through unchanged.
+    """
+    normalized: list[str] = []
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+
+        # --offline [value]: keep an explicit True/False/None, else it is bare.
+        if token.startswith("--") and token[2:] in _LAYERED_BOOL_FLAGS:
+            following = argv[i + 1] if i + 1 < len(argv) else None
+            if following in _BOOL_FLAG_VALUES:
+                normalized += [token, following]
+                i += 2
+            else:
+                normalized += [token, "True"]
+                i += 1
+
+        # --no-offline is shorthand for --offline False.
+        elif token.startswith("--no-") and token[5:] in _LAYERED_BOOL_FLAGS:
+            normalized += [f"--{token[5:]}", "False"]
+            i += 1
+
+        # Any other token (subcommand, path, unrelated flag) passes through.
+        else:
+            normalized.append(token)
+            i += 1
+
+    return normalized
+
+
 # Side-effect imports: each module's @app.command decorators register the
 # subcommand.  Placed at the bottom so helpers above bind before
 # nab._lock / nab._download import back from this module.
@@ -570,7 +628,7 @@ def main() -> None:
         return
 
     try:
-        app.cli(prog="nab")
+        app.cli(prog="nab", args=_normalize_layered_bool_flags(argv))
     except KeyboardInterrupt:
         sys.stderr.write("Aborted.\n")
         sys.exit(_SIGINT_EXIT_CODE)

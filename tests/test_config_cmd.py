@@ -430,7 +430,9 @@ class TestTyroConformance:
 
     def test_param_types_match_registry(self) -> None:
         sig = inspect.signature(config_command)
-        assert "bool" in str(sig.parameters["offline"].annotation)
+        # offline carries the shared OfflineFlag alias, like lock/download, so
+        # the layered tri-state flag presents identically across subcommands.
+        assert "OfflineFlag" in str(sig.parameters["offline"].annotation)
         assert "Path" in str(sig.parameters["cache_dir"].annotation)
         # project_resolution carries the same constrained ResolutionFlag
         # type as lock/download, so tyro rejects a bad choice identically
