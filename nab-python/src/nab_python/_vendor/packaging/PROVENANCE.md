@@ -1,9 +1,8 @@
 # Vendored `packaging` snapshot
 
-This directory holds an unmodified copy of the `packaging` library taken
-from `pypa/packaging:main`, vendored so nab can use the public
-`VersionRange` API before a `packaging` release containing it is
-published to PyPI.
+This directory holds a copy of the `packaging` library taken from
+`pypa/packaging:main`, vendored so nab can use the public `VersionRange`
+API before a `packaging` release containing it is published to PyPI.
 
 ## Source
 
@@ -14,9 +13,22 @@ published to PyPI.
 
 The snapshot is the full `src/packaging/` tree at that commit, plus
 `LICENSE`, `LICENSE.APACHE`, and `LICENSE.BSD` from the repository
-root. No code changes were made; relative imports inside `packaging`
-(`from .version import Version`, etc.) keep working when the package
-is loaded as `nab_python._vendor.packaging`.
+root, except that `ranges.py` and `_ranges.py` diverge from the pinned
+commit (see "Pre-release opt-in change" below). Relative imports inside
+`packaging` (`from .version import Version`, etc.) keep working when the
+package is loaded as `nab_python._vendor.packaging`.
+
+## Pre-release opt-in change
+
+`ranges.py` and `_ranges.py` carry the clipped pre-release opt-in region
+proposed as the successor to packaging PR #1304, rebased on the
+difference-policy guard of PR #1306. `VersionRange` scopes the
+autodetected pre-release opt-in to a per-specifier region clipped to the
+bounds, so union and difference never force-admit a pre-release no
+operand asked for. This closes the whole-range opt-in leak that the flag
+model on `pypa/packaging:main` reaches through nab's conflict-resolution
+union path. Refresh both files from that branch until the change lands
+upstream, then snapshot plain `main` again.
 
 ## License
 
@@ -63,6 +75,9 @@ NEW_SHA=$(git rev-parse upstream/main)
 DEST=/path/to/nab/nab-python/src/nab_python/_vendor/packaging
 for f in $(git ls-tree -r --name-only upstream/main -- src/packaging); do
     rel=${f#src/packaging/}
+    # ranges.py/_ranges.py carry the clip change; refresh them from the clip
+    # successor branch, not plain main (see "Pre-release opt-in change").
+    case "$rel" in ranges.py | _ranges.py) continue ;; esac
     mkdir -p "$(dirname "$DEST/$rel")"
     git show "upstream/main:$f" > "$DEST/$rel"
 done
@@ -71,4 +86,7 @@ for f in LICENSE LICENSE.APACHE LICENSE.BSD; do
 done
 ```
 
-Then update the **Pinned commit** and **Snapshot date** lines above.
+Refresh `ranges.py` and `_ranges.py` from the clip successor branch until
+the change lands upstream; overwriting them from plain `main` reintroduces
+the whole-range opt-in leak. Then update the **Pinned commit** and
+**Snapshot date** lines above.
