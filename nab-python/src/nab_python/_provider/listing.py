@@ -157,6 +157,17 @@ def speculative_prefetch(
         prefetch_transitive_best(provider, normalized, versions)
 
 
+def _has_complete_override(
+    provider: Provider, normalized: str, version: Version
+) -> bool:
+    """Whether a complete ``dependencies`` override replaces this version's metadata.
+
+    Callers skip prefetching such a candidate: ``get_dependencies`` synthesizes
+    its deps without a METADATA fetch, so any prefetch would be wasted.
+    """
+    return provider.effective_dependencies(normalized, version) is not None
+
+
 def prefetch_root_batch(
     provider: Provider,
     normalized: str,
@@ -175,6 +186,8 @@ def prefetch_root_batch(
         if version not in root_range:
             continue
         if (normalized, version) in provider.deps_cache:
+            continue
+        if _has_complete_override(provider, normalized, version):
             continue
         if isinstance(dist, WheelFile) and dist.metadata_url is not None:
             items.append(
@@ -197,6 +210,8 @@ def prefetch_transitive_best(
     if best is None:
         return
     version, dist = best
+    if _has_complete_override(provider, normalized, version):
+        return
     cache_key = (normalized, version)
     if (
         cache_key not in provider.deps_cache
@@ -287,7 +302,7 @@ def filter_distributions(
         if effective_dist_policy in (DistPolicy.PREFER_WHEEL, DistPolicy.SDIST_INSTALL):
             sort_with_wheel_first = True
 
-        if excluded_by_python(provider, dist):
+        if excluded_by_python(provider, normalized, version, dist):
             continue
         if time_filter_active:
             cutoff = provider.effective_uploaded_prior_to(
@@ -349,22 +364,31 @@ def _excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
     return False
 
 
-def excluded_by_python(provider: Provider, dist: DistFile) -> bool:
-    """Return True when ``dist``'s Requires-Python excludes the target Python."""
-    requires_python = dist.requires_python
-    if not requires_python or not provider.python_version:
+def excluded_by_python(
+    provider: Provider, normalized: str, version: Version, dist: DistFile
+) -> bool:
+    """Return True when the target Python is excluded for this candidate.
+
+    A per-package ``requires-python`` override substitutes for
+    ``dist.requires_python`` and goes through the same cached comparison,
+    keyed by the specifier string; the verdict depends only on that string
+    and the fixed ``provider.python_version``.
+    """
+    override_rp = provider.effective_requires_python(normalized, version)
+    effective = override_rp if override_rp is not None else dist.requires_python
+    if not effective or not provider.python_version:
         return False
-    cached = provider.requires_python_cache.get(requires_python)
+    cached = provider.requires_python_cache.get(effective)
     if cached is None:
         try:
-            spec = SpecifierSet(requires_python)
+            spec = SpecifierSet(effective)
             cached = Version(provider.python_version) not in spec
         except InvalidSpecifier:
             # Malformed Requires-Python on the dist: treat as
             # not-excluded, let downstream logic decide.  Our own
             # python_version is validated at Provider construction.
             cached = False
-        provider.requires_python_cache[requires_python] = cached
+        provider.requires_python_cache[effective] = cached
     if cached:
         provider.stats.excluded_by_python += 1
     return cached
@@ -455,6 +479,8 @@ def prefetch_walk_ahead(
         wheel = wheel_for_v.get(version)
         if wheel is None or (normalized, version) in provider.deps_cache:
             continue
+        if _has_complete_override(provider, normalized, version):
+            continue
         if coordinator_index.has_metadata(normalized, wheel.version):
             continue
         # ``_first_wheel_per_version`` filters out wheels without metadata_url.
@@ -481,6 +507,10 @@ def prefetch_batch(
     version_map: list[tuple[Version, str]] = []
     for v in versions:
         if (package, v) in provider.deps_cache or v not in wheel_by_version_map:
+            continue
+        # On a corrupt-metadata wheel ``await_metadata_batch`` would otherwise
+        # raise on the very metadata this override replaces.
+        if _has_complete_override(provider, package, v):
             continue
         wheel = wheel_by_version_map[v]
         if isinstance(wheel, WheelFile) and wheel.metadata_url is not None:

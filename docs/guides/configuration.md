@@ -162,6 +162,12 @@ A body sets any combination of:
   strict pin: only that index is consulted).  Routing requires
   bare-name selectors, because the routing decision happens before any
   version is known; a version specifier alongside `index` is rejected.
+* `dependencies`: a list of PEP 508 requirement strings that replaces
+  the package's declared runtime dependencies (see below).
+* `requires-python`: a PEP 440 specifier that replaces the package's
+  declared Python requirement for the selected versions (see below).
+* `provides-extra`: a list of extra names that replaces the package's
+  declared extras for the selected versions (see below).
 
 A selector is a name plus an optional version specifier, with no extras,
 marker, or URL.  Package names are canonicalised, so `Foo-Bar`,
@@ -185,6 +191,164 @@ By that guarantee, at most one per-package entry governs a given
 (package, version) for a given field.  Two routes for one package always
 overlap (routing needs the full range), so a package may have at most
 one route.
+
+#### Overriding a package's metadata
+
+`dependencies`, `requires-python`, and `provides-extra` substitute for
+what nab would otherwise read from a distribution's metadata, scoped to
+the selected version range.  Together they mirror uv's
+`dependency-metadata`: you state a package's metadata directly instead of
+fetching or building it.  Use them when a package's published metadata is
+wrong, absent, dynamic, or unbuildable on your target.  You take
+responsibility for correctness: nab trusts the values as written and does
+not verify them against the artifact.
+
+Each field replaces its own field independently, so a `dependencies`
+override on one range and a `requires-python` override on another
+(overlapping) range coexist; only two entries setting the **same** field
+over overlapping ranges are an error.
+
+##### `dependencies`
+
+`dependencies` states the runtime dependencies for the selected
+versions, replacing whatever the distribution declares.  Each item
+is a full PEP 508 requirement, so extras, markers, and version
+specifiers are all allowed on a value (unlike the selector key, which
+takes only a name and an optional specifier).
+
+```toml
+# Replace chumpy's declared runtime deps for every version.
+[tool.nab.packages.chumpy]
+dependencies = ["numpy>=1.8.1", "scipy>=0.13.0", "six>=1.11.0"]
+
+# Version-scoped: only versions <= 1.0.
+[tool.nab.packages."broken-pkg <= 1.0"]
+dependencies = ["requests>=2"]
+
+# The many-packages spelling.
+[[tool.nab.package-rules]]
+match = ["some-pkg <= 2.0"]
+dependencies = ["requests>=2"]
+```
+
+The list is the complete replacement, not an addition: the declared
+dependencies for the matched versions are dropped and the override's
+list is used instead.  An empty list removes all runtime dependencies:
+
+```toml
+# Resolve broken-pkg <= 1.0 with no runtime dependencies at all.
+[tool.nab.packages."broken-pkg <= 1.0"]
+dependencies = []
+```
+
+An empty list is distinct from omitting the key: the key absent means
+the declared dependencies stand, while `[]` means "replace with zero
+dependencies."  Both count as setting the field, so both take part in
+the same-field overlap rule above (two entries setting `dependencies`
+over overlapping ranges are a parse-time error).
+
+##### `requires-python`
+
+`requires-python` is a single PEP 440 specifier that replaces the
+package's declared Python requirement for the selected versions.  A bare
+version like `"3.13"` is rejected (it is not a specifier); write
+`">=3.13"` or `"==3.13"`.
+
+```toml
+[tool.nab.packages.flask]
+requires-python = ">=3.6"
+```
+
+The override applies at the point that filters candidates by Python, so
+it both widens and narrows:
+
+* Widen: a package that declares `>=3.10` but actually runs on `3.9` can
+  be admitted for a `3.9` resolve with `requires-python = ">=3.9"`.
+* Narrow: a package that declares `>=3.6` can be held to `>=3.11` so
+  older Pythons reject it.
+
+The override goes through the same comparison a declared
+`Requires-Python` value takes (the full target Python version against
+the specifier), so it admits or rejects a version exactly as a declared
+value would.  An empty string (`requires-python = ""`) removes
+the Python requirement entirely (admits every target).  For an index pin
+the lock records the overridden specifier, so a widened pin stays
+installable by a conforming PEP 751 installer.  A local-path or VCS pin
+has no `requires-python` field, but the override is still what its Python
+check enforces.
+
+##### `provides-extra`
+
+`provides-extra` is the list of extra names the package declares for the
+selected versions, normalised per PEP 685 (so spelling does not matter).
+
+```toml
+[tool.nab.packages.flask]
+dependencies = ["werkzeug>=0.14", "click>=5.1 ; extra == 'dotenv'"]
+provides-extra = ["dotenv"]
+```
+
+When `provides-extra` is set it is authoritative for the whole extra set:
+it is never merged with the package's declared extras.  An extra then
+exists iff `provides-extra` lists it, and its dependencies are exactly
+the dependency lines carrying that extra's `; extra == "name"` marker
+(the override's `dependencies` when set, else the parsed
+`Requires-Dist`).
+
+* When `provides-extra` is absent, the extras fall back to the package's
+  parsed extras, unless `dependencies` is also replaced.  A
+  `requires-python`-only override therefore keeps the package's declared
+  extras and their dependencies.  Replacing `dependencies` without
+  declaring `provides-extra` drops the extras, since the parsed
+  extra-gated dependency lines are gone once the list is replaced.
+* A dropped extra has no effect unless it is requested.  Requesting a
+  dropped extra directly (a root/user `flask[async]`) raises in the
+  error-user and backtrack extras modes; a transitive request (another
+  package depending on `flask[async]`) warns and drops the extra's
+  dependencies, except in the backtrack mode, which skips versions
+  that lack the extra instead.
+* An empty list (`provides-extra = []`) declares no extras and is
+  distinct from omitting the key.
+
+##### Skip-fetch: resolving without the artifact
+
+When an entry sets `dependencies` (an empty list counts), nab resolves
+the matched versions from the declared metadata alone: the resolver
+computes their dependencies without fetching or building the per-version
+metadata.  This is what lets a package that nab cannot fetch or
+build (an sdist-only or dynamic-metadata package under
+`build-policy = "never"`) still resolve:
+
+```toml
+# Resolve a dynamic-metadata, sdist-only package without building it.
+[tool.nab.packages.legacy-pkg]
+dependencies = ["numpy>=1.8.1"]
+```
+
+The package listing is still fetched (the lock needs the files, hashes,
+and upload times, and the Python filter still runs), but the resolver
+does not fetch or build the per-version metadata to compute
+dependencies.  A partial override that sets only `requires-python`
+still needs the artifact for its dependencies and does not skip.  Under
+skip-fetch a co-set `trust-unverified-deps` becomes moot, since no
+sdist is parsed.  A co-set `dist-policy` is not: it still filters the
+candidate listing, so `dist-policy = "wheel-only"` on an sdist-only
+package removes every version before the override can apply.
+
+##### Scope and the per-index rule
+
+These are per-package fields with no per-index form: an index serves many
+packages, so a single dependency list, Python requirement, or extra set
+for all of them is meaningless.  Writing any of them under
+`[tool.nab.index.<name>]` is rejected.
+
+A metadata override annotates versions the resolve already reaches; it
+never introduces a version.  An override scoped to a version no candidate
+has, or a package the resolve never visits, does nothing.  Local-path and
+VCS sources have no listing and their version is not known until the
+source is materialised, so a metadata override governs a source only when
+it uses a bare-name selector (full range); a version-scoped override does
+not match a source.
 
 ### Per-index overrides
 

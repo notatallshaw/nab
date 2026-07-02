@@ -89,7 +89,10 @@ build-policy = "build-remote"
 ```
 
 That keeps the rest of the graph in the hermetic default while
-permitting the one package you actually need to build.
+permitting the one package you actually need to build.  When you
+know the package's dependencies, a `dependencies` metadata override
+(see the [configuration guide](configuration.md)) resolves it under
+`never` without building at all.
 
 ## Overrides
 

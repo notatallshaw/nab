@@ -19,12 +19,15 @@ import pytest
 
 from nab_index.client import MetadataHashMismatchError, SdistFile, WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.overrides import pkg_override
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.universal.matrix import MatrixTuple
 from nab_python.universal.resolve import TupleResult, UniversalResult
 from nab_python.universal.validate import (
     PinValidation,
     ValidationReport,
+    _dependencies_override_for,
     _evaluate_metadata_deps_by_extra,
     validate_lock,
 )
@@ -1221,3 +1224,107 @@ class TestSpecifierDivergence:
         )
         finding = self._validate_single(baseline, chosen)
         assert finding.status == "divergent"
+
+
+def _single_linux_result() -> UniversalResult:
+    """A one-tuple result pinning ``pkg==1.0`` on linux/py311."""
+    return UniversalResult(
+        matrix=MagicMock(),
+        tuple_results=[
+            TupleResult(
+                tuple_=_linux_311(),
+                success=True,
+                pins={"pkg": Version("1.0")},
+            ),
+        ],
+    )
+
+
+class TestDependenciesOverrideFor:
+    """Branch coverage for the ``dependencies`` override predicate."""
+
+    def test_matches_when_dependencies_set(self) -> None:
+        """A dependencies override covering the version matches."""
+        overrides = (pkg_override("pkg", dependencies=()),)
+        assert _dependencies_override_for(overrides, "pkg", Version("1.0")) is True
+
+    def test_name_mismatch_does_not_match(self) -> None:
+        """An override for a different package does not match."""
+        overrides = (pkg_override("other", dependencies=()),)
+        assert _dependencies_override_for(overrides, "pkg", Version("1.0")) is False
+
+    def test_version_outside_range_does_not_match(self) -> None:
+        """An override scoped to another version does not match."""
+        overrides = (pkg_override("pkg==2.0", dependencies=()),)
+        assert _dependencies_override_for(overrides, "pkg", Version("1.0")) is False
+
+    def test_requires_python_only_does_not_match(self) -> None:
+        """A requires-python-only override leaves the baseline in place."""
+        overrides = (pkg_override("pkg", requires_python=">=3.11"),)
+        assert _dependencies_override_for(overrides, "pkg", Version("1.0")) is False
+
+
+class TestDependenciesOverrideValidation:
+    """A ``dependencies`` override makes the pin metadata-override-aware."""
+
+    def test_overridden_pin_reports_metadata_overridden(self) -> None:
+        """A would-be divergent pin becomes ``metadata_overridden`` and is sound."""
+        wheel = _wheel("pkg-1.0-cp311-cp311-linux_x86_64.whl")
+        coordinator = _make_coordinator(
+            {"pkg": [wheel]},
+            baseline_metadata={"pkg": _BASE_METADATA},
+            per_wheel_metadata={wheel.filename: _DIVERGENT_METADATA},
+        )
+        result = _single_linux_result()
+        # Without the override the chosen wheel diverges from the baseline.
+        assert validate_lock(result, coordinator).findings[0].status == "divergent"
+        overrides = (pkg_override("pkg", dependencies=(Requirement("newdep"),)),)
+        report = validate_lock(result, coordinator, overrides)
+        finding = report.findings[0]
+        assert finding.status == "metadata_overridden"
+        assert finding.chosen_wheel == wheel.filename
+        assert report.pins_ok == 1
+        assert report.fatal_findings(build_allowed=False) == []
+
+    def test_corrupt_wheel_metadata_under_override_does_not_raise(self) -> None:
+        """A metadata integrity error is bypassed by the skip-fetch override."""
+        wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        coordinator = _make_coordinator(
+            {"pkg": [wheel]},
+            baseline_metadata={"pkg": _BASE_METADATA},
+        )
+        coordinator.index.store_metadata_error(
+            "pkg",
+            f"1.0#{wheel.filename}",
+            MetadataHashMismatchError("metadata sha256 mismatch"),
+        )
+        result = _single_linux_result()
+        overrides = (pkg_override("pkg", dependencies=()),)
+        report = validate_lock(result, coordinator, overrides)
+        assert report.findings[0].status == "metadata_overridden"
+
+    def test_override_on_different_version_falls_through(self) -> None:
+        """An override scoped to another version runs normal validation."""
+        wheel = _wheel("pkg-1.0-cp311-cp311-linux_x86_64.whl")
+        coordinator = _make_coordinator(
+            {"pkg": [wheel]},
+            baseline_metadata={"pkg": _BASE_METADATA},
+            per_wheel_metadata={wheel.filename: _BASE_METADATA},
+        )
+        result = _single_linux_result()
+        overrides = (pkg_override("pkg==2.0", dependencies=()),)
+        report = validate_lock(result, coordinator, overrides)
+        assert report.findings[0].status == "ok"
+
+    def test_requires_python_only_override_falls_through(self) -> None:
+        """A requires-python-only override does not skip metadata comparison."""
+        wheel = _wheel("pkg-1.0-cp311-cp311-linux_x86_64.whl")
+        coordinator = _make_coordinator(
+            {"pkg": [wheel]},
+            baseline_metadata={"pkg": _BASE_METADATA},
+            per_wheel_metadata={wheel.filename: _DIVERGENT_METADATA},
+        )
+        result = _single_linux_result()
+        overrides = (pkg_override("pkg", requires_python=">=3.11"),)
+        report = validate_lock(result, coordinator, overrides)
+        assert report.findings[0].status == "divergent"

@@ -111,6 +111,12 @@ class LockInputProvider(Protocol):
         """Return the effective :class:`DistPolicy` for ``canonical_name==version``."""
         ...
 
+    def effective_requires_python(
+        self, canonical_name: str, version: Version, /
+    ) -> str | None:
+        """Return the ``requires-python`` override for ``canonical_name==version``."""
+        ...
+
 
 class MissingHashError(ValueError):
     """A distribution chosen by the resolver has no usable hash.
@@ -357,6 +363,12 @@ def _index_pin_from_listing(
     package's wheels stayed in ``versions_cache`` as a possible
     metadata source for the resolver; only the sdist is emitted
     into the lock so installers download and build that archive.
+
+    A ``requires-python`` metadata override takes precedence over the
+    Simple-API value so the pin records the specifier the resolver
+    actually admitted against; a conforming :pep:`751` installer would
+    otherwise reject a widened pin whose lock still carried the narrow
+    artefact value.
     """
     from ..fetch import DEFAULT_INDEX_URL
     from ..lockfile import IndexPin, SdistArtifact, WheelArtifact
@@ -384,7 +396,12 @@ def _index_pin_from_listing(
     sdist = (
         _build_artifact(sdist_file, SdistArtifact) if sdist_file is not None else None
     )
-    requires_python = _common_requires_python(files)
+
+    override_rp = provider.effective_requires_python(canonical, version)
+    requires_python = (
+        override_rp if override_rp is not None else _common_requires_python(files)
+    )
+
     serving_name = provider.coordinator.index.get_listing_index(canonical)
     by_name = {ix.name: ix.url for ix in indexes}
     index_url = by_name.get(serving_name) if serving_name is not None else None

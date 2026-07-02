@@ -16,15 +16,20 @@ from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .._vcs_admission import admit_vcs_url
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
+from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
-from ..metadata import DEPENDENCY_FIELDS, metadata_deps_are_static, parse_metadata
+from ..metadata import (
+    DEPENDENCY_FIELDS,
+    WheelMetadata,
+    metadata_deps_are_static,
+    parse_metadata,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from .._vendor.packaging.markers import Marker
     from .._vendor.packaging.version import Version
-    from ..metadata import WheelMetadata
     from ..provider import DistFile, Provider
 
 
@@ -423,15 +428,58 @@ def cache_deps_from_metadata(
     """Populate ``deps_cache`` + ``extra_deps_map`` from a parsed metadata.
 
     Shared by the wheel/sdist path (which calls
-    :func:`parse_and_cache_metadata` after parsing METADATA text)
-    and the local-source path (which already has a
-    :class:`WheelMetadata` from
-    :func:`nab_python.build_backend.extract_static_metadata`).
+    :func:`parse_and_cache_metadata` after parsing METADATA text), the
+    local-source path (which already has a :class:`WheelMetadata` from
+    :func:`nab_python.build_backend.extract_static_metadata`), and the
+    skip-fetch branch of
+    :meth:`nab_python.provider.Provider.get_dependencies` (which hands in a
+    bare :class:`WheelMetadata` for a complete ``dependencies`` override).
     """
     # Late import: ``pypi`` imports this module at module load.
     from ..provider import _normalize_extra
 
-    package, _ = cache_key
+    package, version = cache_key
+    override_deps, override_rp, override_pe = provider.effective_metadata_override(
+        package, version
+    )
+    if override_deps is not None or override_rp is not None or override_pe is not None:
+        # Build a fresh record rather than mutate the input: the raw parse is
+        # shared across tuples via ``store_parsed_metadata``, so mutating it
+        # would leak one tuple's override into another.  Each field falls back
+        # to the parsed value when the override leaves it unset.
+        requires_python = (
+            SpecifierSet(override_rp)
+            if override_rp is not None
+            else metadata.requires_python
+        )
+        requires_dist = (
+            list(override_deps)
+            if override_deps is not None
+            else list(metadata.requires_dist)
+        )
+
+        # An explicit provides-extra wins; else keep the parsed extras, unless
+        # the dep list was replaced, which strips their extra-gated lines and
+        # leaves them incoherent, so declare none.
+        if override_pe is not None:
+            provides_extra = list(override_pe)
+        elif override_deps is not None:
+            provides_extra = []
+        else:
+            provides_extra = list(metadata.provides_extra)
+
+        metadata = WheelMetadata(
+            name=metadata.name,
+            version=metadata.version,
+            requires_python=requires_python,
+            requires_dist=requires_dist,
+            provides_extra=provides_extra,
+            metadata_version=metadata.metadata_version,
+            dynamic=metadata.dynamic,
+        )
+
+    # Split the (possibly overridden) requirements into base deps and
+    # per-extra deps, deferring any direct-URL deps that aren't yet active.
     provider.metadata_cache[cache_key] = metadata
     provided_extras = {_normalize_extra(e) for e in metadata.provides_extra}
     base_deps: dict[str, VersionRange] = {}

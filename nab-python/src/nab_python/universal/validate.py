@@ -33,6 +33,9 @@ from ..metadata import load_static_project, metadata_deps_are_static, parse_meta
 from .wheel_selection import select_wheel_for_tuple
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from ..config import PackageOverride
     from ..fetch import FetchCoordinator
     from .matrix import MatrixTuple
     from .resolve import UniversalResult
@@ -95,6 +98,10 @@ class PinValidation:
     - ``static_sdist_authoritative``: the sdist's PEP 621 or PEP 643
       metadata guarantees every wheel of this version shares the same
       dep-affecting metadata, so per-wheel fetches were skipped.
+    - ``metadata_overridden``: a ``dependencies`` metadata override
+      replaced this version's deps (skip-fetch), so there is no baseline
+      or wheel metadata to compare; the override reapplies on any
+      resolve, so nothing can diverge.
     """
 
     tuple_label: str
@@ -138,22 +145,29 @@ class ValidationReport:
 def validate_lock(
     result: UniversalResult,
     coordinator: FetchCoordinator,
+    package_overrides: Sequence[PackageOverride] = (),
 ) -> ValidationReport:
     """Validate every pin in ``result`` against its per-tuple wheel metadata.
 
     ``coordinator`` is the same FetchCoordinator the resolver used.
-    Re-using it keeps cached metadata warm.
+    Re-using it keeps cached metadata warm.  ``package_overrides`` are the
+    same metadata overrides the resolver ran with: a ``dependencies``
+    override made the resolver skip-fetch that version, so there is no
+    baseline or wheel metadata to compare against.
     """
     report = ValidationReport()
-    # ``pins_ok`` counts both per-wheel-validated successes and
-    # static-sdist-authoritative pins; both mean "the lock is sound
-    # for this pin", just established via different evidence.
-    ok_statuses = {"ok", "static_sdist_authoritative"}
+    # ``pins_ok`` counts per-wheel-validated successes, static-sdist-
+    # authoritative pins, and dependencies-overridden pins; all mean
+    # "the lock is sound for this pin", just established via different
+    # evidence.
+    ok_statuses = {"ok", "static_sdist_authoritative", "metadata_overridden"}
     for tr in result.tuple_results:
         if not tr.success:
             continue
         for pkg, version in tr.pins.items():
-            finding = _validate_pin(coordinator, tr.tuple_, pkg, version)
+            finding = _validate_pin(
+                coordinator, tr.tuple_, pkg, version, package_overrides
+            )
             report.findings.append(finding)
             report.pins_checked += 1
             if finding.status in ok_statuses:
@@ -161,11 +175,35 @@ def validate_lock(
     return report
 
 
+def _dependencies_override_for(
+    package_overrides: Sequence[PackageOverride],
+    canonical_name: str,
+    version: Version,
+) -> bool:
+    """Whether a ``dependencies`` override covers ``canonical_name==version``.
+
+    Only a ``dependencies`` override drives skip-fetch: it replaces the
+    version's deps and suppresses the metadata fetch, so no listing
+    baseline or wheel metadata exists to compare.  A requires-python-only
+    or provides-extra-only override leaves the baseline in place, so it
+    does not match here.
+    """
+    for override in package_overrides:
+        if override.name != canonical_name:
+            continue
+        if version not in override.version_range:
+            continue
+        if override.dependencies is not None:
+            return True
+    return False
+
+
 def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
     coordinator: FetchCoordinator,
     tup: MatrixTuple,
     package: str,
     version: Version,
+    package_overrides: Sequence[PackageOverride] = (),
 ) -> PinValidation:
     """Run the per-pin checks; emit a PinValidation outcome."""
     normalized = canonicalize_name(package)
@@ -213,6 +251,22 @@ def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
                 f"{len(wheels_at_version)} wheels at this version but none "
                 f"compatible with {tup.python_version}/{tup.platform_id}"
                 + detail_suffix
+            ),
+        )
+    # A skip-fetch pin has no baseline or wheel metadata, so any comparison
+    # below would spuriously diverge; report the deliberate override instead.
+    # Placed after the artifact-availability checks (an override changes
+    # metadata, not which files exist) and before any fetch.
+    if _dependencies_override_for(package_overrides, normalized, version):
+        return PinValidation(
+            tuple_label=tup.label,
+            package=package,
+            version=str(version),
+            status="metadata_overridden",
+            chosen_wheel=chosen.filename,
+            detail=(
+                "dependencies replaced by a metadata override; "
+                "wheel metadata not compared"
             ),
         )
     # PEP 643 fast path: if the resolver's baseline metadata declares

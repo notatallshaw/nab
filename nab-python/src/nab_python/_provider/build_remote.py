@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile, extract_sdist_archive
 
+from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import Version
 
@@ -43,9 +44,11 @@ def build_remote_sdist(
     entry in ``provider.versions_cache``.  A built sdist whose
     ``Requires-Python`` excludes the resolve target is rejected, since the
     Simple-API listing filter only sees the listing's own (possibly absent)
-    Requires-Python, not the value the build produces.  A built sdist whose
-    declared name or version disagrees with the requested candidate is also
-    rejected rather than used for the wrong package.
+    Requires-Python, not the value the build produces.  A per-package
+    ``requires-python`` metadata override substitutes for the built value
+    here, matching the listing gate.  A built sdist whose declared name or
+    version disagrees with the requested candidate is also rejected rather
+    than used for the wrong package.
     """
     # Late imports: ``provider`` imports this module at module load.
     from .. import build_backend
@@ -97,7 +100,10 @@ def build_remote_sdist(
             raise UnsupportedSdistError(msg) from exc
 
     target = provider.python_version
-    spec = built.requires_python
+    override_rp = provider.effective_requires_python(canonical, version)
+    spec = (
+        SpecifierSet(override_rp) if override_rp is not None else built.requires_python
+    )
     if spec is not None and target and Version(target) not in spec:
         msg = (
             f"{package}=={version} built sdist requires Python {spec} but the"

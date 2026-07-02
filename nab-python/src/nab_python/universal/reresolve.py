@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .._vendor.packaging.utils import canonicalize_name
+from .._vendor.packaging.version import Version
 from ..provider import (
     BuildPolicy,
     DistPolicy,
@@ -25,6 +26,7 @@ from ..provider import (
 )
 from .matrix import Matrix as _Matrix
 from .resolve import resolve_with_coordinator
+from .validate import _dependencies_override_for
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -148,7 +150,17 @@ def _reresolve_one_step(  # noqa: PLR0913
         if not tr.success:
             continue
         findings = by_tuple.get(tr.tuple_.label, [])
-        divergent = [f for f in findings if f.status == "divergent"]
+        # A pin whose deps came from a ``dependencies`` override would
+        # re-resolve identically (the override reapplies), so skip it: the
+        # diff would be empty and the fetch wasted.
+        divergent = [
+            f
+            for f in findings
+            if f.status == "divergent"
+            and not _dependencies_override_for(
+                package_overrides, canonicalize_name(f.package), Version(f.version)
+            )
+        ]
         if not divergent:
             continue
         wheel_metadata = _collect_wheel_metadata_overrides(coordinator, divergent)

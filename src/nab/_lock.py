@@ -35,6 +35,7 @@ from nab_python.lockfile import (
     LockInput,
     Provenance,
     is_valid_pylock_path,
+    package_metadata_override_records,
     read_lockfile_anchor,
     read_lockfile_packages,
 )
@@ -774,6 +775,9 @@ def _build_provenance(
         python_specifier=python_specifier,
         platforms=platforms,
         cli_project_overrides=cli_project_overrides,
+        package_metadata_overrides=package_metadata_override_records(
+            config.package_overrides
+        ),
     )
 
 
