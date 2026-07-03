@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import tarfile
+import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
@@ -26,6 +27,26 @@ _T = TypeVar("_T")
 
 def run(coro: Coroutine[Any, Any, _T]) -> _T:
     return asyncio.run(coro)
+
+
+def _write_wheel(
+    path: Path,
+    name: str,
+    version: str,
+    requires_python: str | None = None,
+    *,
+    with_metadata: bool = True,
+) -> None:
+    """Write a real (zip) wheel whose METADATA carries ``requires_python``."""
+    dist = f"{name}-{version}"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(f"{name}/__init__.py", b"")
+        if with_metadata:
+            rp = f"Requires-Python: {requires_python}\n" if requires_python else ""
+            zf.writestr(
+                f"{dist}.dist-info/METADATA",
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n{rp}",
+            )
 
 
 class TestParseFileUrl:
@@ -106,6 +127,43 @@ class TestFlatWheelhouse:
         missing = tmp_path / "does-not-exist"
         client = LocalIndexClient(missing.as_uri())
         assert run(client.get_files("foo")) == []
+
+    def test_requires_python_read_from_wheel_metadata(self, tmp_path: Path) -> None:
+        # Requires-Python is absent from the filename; it comes from METADATA.
+        _write_wheel(tmp_path / "foo-2.0-py3-none-any.whl", "foo", "2.0", ">=3.12")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python == ">=3.12"
+
+    def test_requires_python_none_when_metadata_omits_it(self, tmp_path: Path) -> None:
+        _write_wheel(tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert files[0].requires_python is None
+
+    def test_requires_python_none_without_metadata_member(self, tmp_path: Path) -> None:
+        _write_wheel(
+            tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0", with_metadata=False
+        )
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert files[0].requires_python is None
+
+    def test_requires_python_none_for_unreadable_zip(self, tmp_path: Path) -> None:
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"not a zip")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
+    def test_foreign_wheel_metadata_not_read(self, tmp_path: Path) -> None:
+        # A sibling package's Requires-Python must not leak onto foo.
+        _write_wheel(tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0", ">=3.8")
+        _write_wheel(tmp_path / "bar-1.0-py3-none-any.whl", "bar", "1.0", ">=3.12")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert [f.requires_python for f in files] == [">=3.8"]
 
 
 class TestPep503Directory:

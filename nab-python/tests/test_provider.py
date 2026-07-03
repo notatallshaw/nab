@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -16,6 +18,7 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelFile,
 )
+from nab_index.local_index import LocalIndexClient
 from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider.metadata_resolver import (
     add_classified_dep,
@@ -365,6 +368,25 @@ class TestFetchVersions:
             },
         )
         versions = [v for v, _ in provider.fetch_versions("foo")]
+        assert versions == [V("1.0")]
+
+    def test_flat_wheelhouse_requires_python_excludes_candidate(
+        self, tmp_path: Path
+    ) -> None:
+        """A flat find-links wheel's METADATA Requires-Python filters candidates."""
+        for version, requires_python in (("2.0", ">=3.12"), ("1.0", ">=3.8")):
+            wheel = tmp_path / f"foo-{version}-py3-none-any.whl"
+            with zipfile.ZipFile(wheel, "w") as zf:
+                zf.writestr("foo/__init__.py", b"")
+                zf.writestr(
+                    f"foo-{version}.dist-info/METADATA",
+                    f"Metadata-Version: 2.1\nName: foo\nVersion: {version}\n"
+                    f"Requires-Python: {requires_python}\n",
+                )
+        records = asyncio.run(LocalIndexClient(tmp_path.as_uri()).get_files("foo"))
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator, python_version="3.8.0")
+        versions = [v for v, _ in provider.filter_distributions("foo", records)]
         assert versions == [V("1.0")]
 
     def test_sorted_descending(self) -> None:
