@@ -1427,6 +1427,40 @@ class TestLockCommandUniversal:
             lock(pyproject, format="requirements-without-hashes", output=out)
         assert "not a valid template" in capsys.readouterr().err
 
+    def test_template_invalid_format_spec_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A bad format spec on a tuple var exits 1 instead of a raw ValueError."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}-{platform_id:d}.txt"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_universal_result(success=True),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        assert "not a valid template" in capsys.readouterr().err
+        assert not (tmp_path / "req-3.11-linux_x86_64.txt").exists()
+
+    def test_template_conversion_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A ``!r`` conversion exits 1 instead of writing a quoted filename."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{platform_id}-{python_version!r}.txt"
+        with (
+            patch(
+                "nab.cli.resolve_universal_pyproject",
+                return_value=_universal_result(success=True),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        assert "not a valid template" in capsys.readouterr().err
+        assert list(tmp_path.glob("req-*.txt")) == []
+
     def test_template_with_one_tuple_writes_one_file(self, tmp_path: Path) -> None:
         """A template with a single-tuple matrix still works."""
         pyproject = _universal_pyproject(tmp_path)
