@@ -456,8 +456,9 @@ def _merge_pins_in_group(pins: list[PinShape]) -> PinShape:
 
     For :class:`IndexPin`, accumulates every distinct wheel filename
     across the contributing tuples and keeps the first non-``None``
-    sdist.  ``requires_python`` survives only when every tuple agreed,
-    matching :func:`_common_requires_python`'s rule.
+    sdist.  ``requires_python`` survives only when every tuple carried
+    the same value and none was unconstrained, matching
+    :func:`_common_requires_python`'s rule.
     Non-IndexPin shapes are already fully discriminated, so the first
     pin is returned unchanged.
     """
@@ -469,16 +470,21 @@ def _merge_pins_in_group(pins: list[PinShape]) -> PinShape:
     seen_wheels: dict[str, WheelArtifact] = {}
     sdist = head.sdist
     requires_python_set: set[str] = set()
+    any_unconstrained = False
     for pin in pins:
         assert isinstance(pin, IndexPin)
         for wheel in pin.wheels:
             seen_wheels.setdefault(wheel.filename, wheel)
         if sdist is None and pin.sdist is not None:
             sdist = pin.sdist
-        if pin.requires_python is not None:
+        if pin.requires_python is None:
+            any_unconstrained = True
+        else:
             requires_python_set.add(pin.requires_python)
     requires_python = (
-        next(iter(requires_python_set)) if len(requires_python_set) == 1 else None
+        next(iter(requires_python_set))
+        if not any_unconstrained and len(requires_python_set) == 1
+        else None
     )
     return IndexPin(
         name=head.name,

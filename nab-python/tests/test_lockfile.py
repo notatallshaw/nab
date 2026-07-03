@@ -1004,6 +1004,13 @@ class TestConflictForkRequiresPythonMerge:
         assert foo.requires_python is not None
         assert str(foo.requires_python) == ">=3.10"
 
+    def test_unconstrained_fork_drops_requires_python(self) -> None:
+        """A fork with no Requires-Python imposes no Python floor, so a
+        merge that mixes it with a constrained fork records ``None``."""
+        pylock = build_pylock(self._build(">=3.10", None))
+        foo = next(p for p in pylock.packages if str(p.name) == "foo")
+        assert foo.requires_python is None
+
 
 class TestConflictForkByteStability:
     """``write_lock`` is deterministic across multiple conflict forks.
@@ -2197,6 +2204,35 @@ class TestBuildLockInputFromProvider:
         pin = lock_input.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.requires_python == ">=3.9"
+
+    def test_unconstrained_wheel_drops_requires_python(self) -> None:
+        """A version that mixes a Requires-Python wheel with an
+        unconstrained ``py3-none-any`` wheel records ``None``: the
+        unconstrained wheel installs everywhere, so there is no floor.
+        """
+        constrained = WheelFile(
+            filename="foo-1.0-cp312-cp312-linux_x86_64.whl",
+            url="https://pypi.org/simple/foo/foo-1.0-cp312-cp312-linux_x86_64.whl",
+            version="1.0",
+            requires_python=">=3.10",
+            has_metadata=False,
+            upload_time=None,
+            hashes=(("sha256", "a" * 64),),
+            size=1234,
+            local_path=None,
+        )
+        provider = _FakeProvider(
+            listings={
+                "foo": [
+                    (Version("1.0"), constrained),
+                    (Version("1.0"), _wheel_file(requires_python=None)),
+                ]
+            },
+        )
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.requires_python is None
 
     def test_empty_requires_python_override_omits_lock_key(self) -> None:
         """An empty-string override records verbatim and drops the lock key.
