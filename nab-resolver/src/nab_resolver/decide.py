@@ -114,7 +114,7 @@ def record_no_versions(
     # When a constraint narrowed the searched range it is the reason no
     # acceptable version was found, so attribute the clause to it.
     constraint = resolver.constraints.get(package)
-    constrained = constraint is not None and not (current_range & ~constraint).is_empty
+    constrained = constraint is not None and not current_range.is_subset(constraint)
     cause = (
         IncompatibilityCause.CONSTRAINT
         if constrained

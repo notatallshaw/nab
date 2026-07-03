@@ -364,6 +364,29 @@ class TestRangeDifference:
         assert Range.full().__sub__(object()) is NotImplemented  # type: ignore[arg-type]
 
 
+class TestRangeSetRelations:
+    def test_is_subset_true(self) -> None:
+        assert Range.between(2, 4).is_subset(Range.between(1, 5))
+
+    def test_is_subset_false(self) -> None:
+        assert not Range.between(1, 5).is_subset(Range.between(2, 4))
+
+    def test_empty_is_subset_of_any(self) -> None:
+        assert Range.empty().is_subset(Range.between(2, 4))
+
+    def test_is_superset_true(self) -> None:
+        assert Range.between(1, 5).is_superset(Range.between(2, 4))
+
+    def test_is_superset_false(self) -> None:
+        assert not Range.between(2, 4).is_superset(Range.between(1, 5))
+
+    def test_is_disjoint_true(self) -> None:
+        assert Range.between(1, 3).is_disjoint(Range.between(3, 5))
+
+    def test_is_disjoint_false(self) -> None:
+        assert not Range.between(1, 4).is_disjoint(Range.between(2, 5))
+
+
 class TestRangeStr:
     def test_any_str(self) -> None:
         assert str(Range.full()) == "*"

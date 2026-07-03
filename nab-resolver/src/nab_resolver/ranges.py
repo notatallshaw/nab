@@ -335,6 +335,18 @@ class Range(Generic[VersionType]):
             return NotImplemented
         return self & ~other
 
+    def is_subset(self, other: Range[VersionType]) -> bool:
+        """Return whether every version in self is also in other."""
+        return (self - other).is_empty
+
+    def is_superset(self, other: Range[VersionType]) -> bool:
+        """Return whether every version in other is also in self."""
+        return other.is_subset(self)
+
+    def is_disjoint(self, other: Range[VersionType]) -> bool:
+        """Return whether self and other share no version."""
+        return (self & other).is_empty
+
     @override
     def __eq__(self, other: object) -> bool:
         """Test equality by comparing interval tuples."""

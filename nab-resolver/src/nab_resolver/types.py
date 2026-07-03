@@ -84,6 +84,18 @@ class RangeProtocol(Protocol[VersionType_contra]):
         """Set difference: versions in self but not in other."""
         ...
 
+    def is_subset(self, other: Self) -> bool:
+        """Return whether every version in self is also in other."""
+        ...
+
+    def is_superset(self, other: Self) -> bool:
+        """Return whether every version in other is also in self."""
+        ...
+
+    def is_disjoint(self, other: Self) -> bool:
+        """Return whether self and other share no version."""
+        ...
+
     # __eq__ and __hash__ come from object; redeclaring them in the
     # Protocol adds no constraint and mypy and zuban disagree on @override.
 
@@ -129,20 +141,12 @@ class Term(Generic[PackageType, VersionType]):
         Positive: satisfied when assignment is a subset of constraint
         (every version in the assignment is also in the constraint).
 
-        Negative: satisfied when assignment doesn't intersect constraint
+        Negative: satisfied when assignment is disjoint from constraint
         (no version in the assignment is in the constraint).
-
-        The subset test is ``(assignment - constraint).is_empty`` rather
-        than ``(assignment & constraint) == assignment``: range types may
-        carry flags (the vendored packaging ranges mark specifier-built
-        ranges as also admitting arbitrary ``===`` versions) under which
-        extensionally equal ranges compare unequal.  Emptiness of the set
-        difference sidesteps that, which is what PubGrub's
-        conflict-resolution progress argument relies on.
         """
         if self._positive:
-            return (assignment - self.constraint).is_empty
-        return (assignment & self.constraint).is_empty
+            return assignment.is_subset(self.constraint)
+        return assignment.is_disjoint(self.constraint)
 
     def intersect(
         self, other: Term[PackageType, VersionType]
