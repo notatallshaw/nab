@@ -12,13 +12,14 @@ from typing import TYPE_CHECKING, Any
 
 from .incompat_index import add_incompatibility
 from .root import ROOT
-from .types import Incompatibility, IncompatibilityCause, Term
+from .types import Incompatibility, IncompatibilityCause, RangeProtocol, Term
 
 if TYPE_CHECKING:
     from .resolver import Resolver
 
 __all__ = [
     "absorb_pending_clauses",
+    "absorb_redundant_requirement",
     "choose_package_to_decide",
     "choose_version",
     "record_no_versions",
@@ -94,6 +95,34 @@ def absorb_pending_clauses(resolver: Resolver[Any, Any]) -> bool:
     for incompatibility in clauses:
         add_incompatibility(resolver, incompatibility)
     return bool(clauses)
+
+
+def absorb_redundant_requirement(
+    resolver: Resolver[Any, Any],
+    package: Any,
+    requirement: RangeProtocol[Any],
+    cause: Incompatibility[Any, Any],
+) -> None:
+    """Derive a requirement that refines a package's range without narrowing it.
+
+    Unit propagation acts only on requirements that narrow a package's version
+    set. When a version-set-redundant requirement still yields a different
+    range, that difference is a refinement the range type carries (such as a
+    pre-release opt-in), so derive it onto the package. The derivation rides the
+    parent decision level, is undone on backtracking, and leaves every term
+    relation unchanged, so nothing re-propagates.
+    """
+    positive = resolver.solution.positive_range(package)
+    if positive is None:
+        return
+
+    # Intersect first: an unchanged range short-circuits before the costlier
+    # subset test, which then separates a refinement from a narrowing.
+    folded = positive & requirement
+    if folded != positive and positive.is_subset(requirement):
+        resolver.solution.derive(package, requirement, positive=True, cause=cause)
+        resolver.stats.derivations += 1
+        resolver.observer.on_derivation(package, positive=True, cause=cause)
 
 
 def record_no_versions(

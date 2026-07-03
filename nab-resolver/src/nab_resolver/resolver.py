@@ -397,7 +397,8 @@ class Resolver(Generic[PackageType, VersionType]):
                 self.range_type.singleton(chosen_version),
                 positive=True,
             )
-            if dependency_package == next_package:
+            cross_package = dependency_package != next_package
+            if not cross_package:
                 # An incompatibility holds at most one term per package,
                 # so self-dependency terms merge to {v} & ~range: empty
                 # (a vacuous clause) when the range contains the chosen
@@ -410,10 +411,15 @@ class Resolver(Generic[PackageType, VersionType]):
                     package_term,
                     Term(dependency_package, dependency_range, positive=False),
                 ]
-            incompat_index.add_incompatibility(
-                self,
-                Incompatibility(terms, cause=IncompatibilityCause.DEPENDENCY),
+            incompatibility = Incompatibility(
+                terms, cause=IncompatibilityCause.DEPENDENCY
             )
+            incompat_index.add_incompatibility(self, incompatibility)
+
+            if cross_package:
+                decide.absorb_redundant_requirement(
+                    self, dependency_package, dependency_range, incompatibility
+                )
         return next_package
 
     def _build_result(self) -> dict[PackageType, VersionType]:
