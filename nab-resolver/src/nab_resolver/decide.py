@@ -12,13 +12,14 @@ from typing import TYPE_CHECKING, Any
 
 from .incompat_index import add_incompatibility
 from .root import ROOT
-from .types import Incompatibility, IncompatibilityCause, Term
+from .types import Incompatibility, IncompatibilityCause, RangeProtocol, Term
 
 if TYPE_CHECKING:
     from .resolver import Resolver
 
 __all__ = [
     "absorb_pending_clauses",
+    "absorb_redundant_requirement",
     "choose_package_to_decide",
     "choose_version",
     "record_no_versions",
@@ -94,6 +95,36 @@ def absorb_pending_clauses(resolver: Resolver[Any, Any]) -> bool:
     for incompatibility in clauses:
         add_incompatibility(resolver, incompatibility)
     return bool(clauses)
+
+
+def absorb_redundant_requirement(
+    resolver: Resolver[Any, Any],
+    package: Any,
+    requirement: RangeProtocol[Any],
+    cause: Incompatibility[Any, Any],
+) -> None:
+    """Re-derive a requirement that refines a package's range without narrowing it.
+
+    Unit propagation fires only when a requirement narrows a package's version
+    set, so a requirement already implied by a tighter bound is skipped. A range
+    can carry a refinement that rides set algebra without changing the version
+    set, and that refinement is dropped along with the skipped requirement. When
+    a version-set-redundant requirement still changes the range, the difference
+    is such a refinement, so derive it onto the package. The derivation rides the
+    parent's decision level and is undone on backtracking. It changes only the
+    range offered for selection, not any term relation, so nothing re-propagates.
+    """
+    positive = resolver.solution.positive_range(package)
+    if positive is None:
+        return
+
+    # Intersect first so an unchanged range (the common case) skips the subset
+    # test; is_subset then tells a refinement (redundant bound) from a narrowing.
+    folded = positive & requirement
+    if folded != positive and positive.is_subset(requirement):
+        resolver.solution.derive(package, requirement, positive=True, cause=cause)
+        resolver.stats.derivations += 1
+        resolver.observer.on_derivation(package, positive=True, cause=cause)
 
 
 def record_no_versions(

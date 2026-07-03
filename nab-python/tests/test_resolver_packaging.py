@@ -743,6 +743,73 @@ class TestConflictUnionPrereleaseLeak:
         assert result["c"] == V("3.5")
 
 
+class TestRedundantTransitivePrereleaseOptIn:
+    """A transitive pre-release specifier authorizes its pre-release even when
+    its bound is already implied by another requirement.
+
+    ``a`` requires ``c>=0.5a1`` while the root requires ``c>=1.0``. ``>=1.0``
+    already implies ``>=0.5a1``, so unit propagation never folds ``a``'s
+    requirement into ``c`` and the opt-in it carries would be dropped, wrongly
+    leaving the stable ``1.0.0`` to win over the authorized ``2.0.0a1``.
+    """
+
+    def test_redundant_specifier_authorizes_prerelease(self) -> None:
+        """The redundant ``c>=0.5a1`` still opts ``c`` into its pre-release."""
+        provider = _FilterProvider(
+            {
+                "a": {V("1.0.0"): {"c": SpecifierSet(">=0.5a1")}},
+                "c": {V("1.0.0"): {}, V("2.0.0a1"): {}},
+            }
+        )
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {
+                "a": SpecifierSet("==1.0.0").to_range(),
+                "c": SpecifierSet(">=1.0").to_range(),
+            }
+        )
+        assert result["c"] == V("2.0.0a1")
+
+    def test_redundant_opt_in_still_prefers_newer_final(self) -> None:
+        """The opt-in admits its pre-release but does not beat a newer final."""
+        provider = _FilterProvider(
+            {
+                "a": {V("1.0.0"): {"c": SpecifierSet(">=0.5a1")}},
+                "c": {V("1.0.0"): {}, V("2.0.0a1"): {}, V("3.0.0"): {}},
+            }
+        )
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {
+                "a": SpecifierSet("==1.0.0").to_range(),
+                "c": SpecifierSet(">=1.0").to_range(),
+            }
+        )
+        assert result["c"] == V("3.0.0")
+
+    def test_redundant_opt_in_from_rejected_parent_does_not_leak(self) -> None:
+        """A rejected parent's redundant opt-in is undone on backtracking."""
+        provider = _FilterProvider(
+            {
+                "a": {
+                    V("2.0.0"): {
+                        "c": SpecifierSet(">=0.5a1"),
+                        "e": SpecifierSet("==2.0"),
+                    },
+                    V("1.0.0"): {},
+                },
+                "e": {V("1.0"): {}},
+                "c": {V("1.0.0"): {}, V("2.0.0a1"): {}},
+            }
+        )
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {
+                "a": VersionRange.full(),
+                "c": SpecifierSet(">=1.0").to_range(),
+            }
+        )
+        assert result["a"] == V("1.0.0")
+        assert result["c"] == V("1.0.0")
+
+
 class TestExclusionFallbackPrerelease:
     """A pre-release IS admitted when the only final cannot be used.
 

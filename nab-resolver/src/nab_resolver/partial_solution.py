@@ -320,6 +320,10 @@ class PartialSolution(Generic[PackageType, VersionType]):
         """Return a copy of the positive-range map for each package."""
         return dict(self._positive_ranges)
 
+    def positive_range(self, package: PackageType) -> RangeProtocol[VersionType] | None:
+        """Return the package's accumulated positive range, or None if unset."""
+        return self._positive_ranges.get(package)
+
     def _satisfied_at(
         self,
         assignment: Assignment[PackageType, VersionType],
