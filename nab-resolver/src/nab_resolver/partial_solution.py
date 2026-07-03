@@ -124,10 +124,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
     def get(self, package: PackageType) -> RangeProtocol[VersionType] | None:
         """Get the combined allowed range for a package, or None if unassigned.
 
-        Computes ``positive - negative``, cached per package. Difference
-        (not ``positive & ~negative``) keeps the requirement's pre-release
-        policy and drops the exclusion's, which ``& ~`` would leak into the
-        range offered for selection.
+        Computes ``positive - negative``, cached per package.
         """
         cached = self._effective_range_cache.get(package, _UNSET)
         if cached is not _UNSET:

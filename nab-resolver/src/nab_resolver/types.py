@@ -169,8 +169,7 @@ class Term(Generic[PackageType, VersionType]):
                 positive=False,
             )
 
-        # positive AND not(negative) = positive minus negative (set
-        # difference, so the exclusion's pre-release policy does not leak).
+        # positive AND not(negative) = positive minus negative.
         positive_term = self if self._positive else other
         negative_term = other if self._positive else self
         difference = positive_term.constraint - negative_term.constraint
