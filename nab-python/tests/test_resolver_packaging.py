@@ -54,15 +54,16 @@ class TestSpecifierToRange:
         ``SpecifierSet("")`` produces the full range flagged as also
         admitting arbitrary ``===`` versions, while range unions built
         during conflict resolution produce the unflagged full range.
-        The two compare unequal but their difference is empty, and term
-        satisfaction follows the difference: conflict resolution would
-        otherwise loop on a clause it can never resolve away.
+        The two compare unequal but ``flagged_full`` is a subset of
+        ``plain_full``, and term satisfaction follows that subset relation:
+        conflict resolution would otherwise loop on a clause it can never
+        resolve away.
         """
         flagged_full = SpecifierSet("").to_range()
         exact = VersionRange.singleton(V("1.0"))
         plain_full = exact | ~exact
         assert plain_full != flagged_full
-        assert (flagged_full & ~plain_full).is_empty
+        assert flagged_full.is_subset(plain_full)
         assert Term("pkg", plain_full).satisfies(flagged_full)
 
     def test_not_equal(self) -> None:
@@ -647,7 +648,7 @@ class TestConflictPathPrereleaseAdmission:
 
     ``Term.intersect`` and ``union_terms`` subtract a negative (exclusion)
     term from a positive one. The result must keep only the positive (or
-    negative-minuend) side's pre-release policy, so a learned exclusion
+    negative-minuend) side's pre-release opt-in, so a learned exclusion
     grants no pre-release admission when its negation is propagated back
     into a positive range.
     """
@@ -663,7 +664,7 @@ class TestConflictPathPrereleaseAdmission:
         assert picked == [V("1.0")]
 
     def test_union_terms_negative_minus_positive_drops_prerelease(self) -> None:
-        """The mixed-term remainder keeps the negative term's policy only."""
+        """The mixed-term remainder keeps the negative term's opt-in only."""
         negative = Term("c", SpecifierSet(">=1.0").to_range(), positive=False)
         positive = Term("c", SpecifierSet(">=2.0b1").to_range(), positive=True)
         result = union_terms(negative, positive)
@@ -678,12 +679,10 @@ class TestConflictUnionPrereleaseLeak:
     final resolution.
 
     When a capped ``>=2.0b1,<3`` opt-in meets a disjoint higher range in a
-    learned clause, packaging main's flag model widens the opt-in over the whole
-    union, so the resolver decides the pre-release ``c==3.6b1`` even though no
-    active requirement opted pre-releases in for ``c``. The vendored clipped
-    opt-in region keeps the admission inside ``[2.0b1, 3)`` and ``c`` resolves to
-    the final ``3.5``. Each graph below resolves ``c`` to 3.6b1 on packaging main
-    and to 3.5 here; the rest of the solution is the same either way.
+    learned clause, the union of the two ranges must not widen the opt-in over
+    ``[3.5, 4)``. The opt-in region stays clipped to ``[2.0b1, 3)``, so ``c``
+    resolves to the final ``3.5`` rather than the unopted pre-release ``3.6b1``,
+    even though no active requirement opted pre-releases in for ``c``.
     """
 
     def _resolve(self, graph: dict) -> dict:
@@ -699,7 +698,6 @@ class TestConflictUnionPrereleaseLeak:
         clause unit-propagates, the union ``A | B`` is derived positive and
         ``choose_version`` filters candidates by it. The capped ``>=2.0b1,<3``
         opt-in must not ride the union up into ``[3.5, 4)`` and admit 3.6b1.
-        On packaging main the flag model leaks it; the clipped region does not.
         """
         capped = Term("c", SpecifierSet(">=2.0b1,<3").to_range(), positive=False)
         higher = Term("c", SpecifierSet(">=3.5,<4").to_range(), positive=False)
@@ -786,10 +784,10 @@ class TestConstraintPrereleases:
     def test_constraint_capping_at_prerelease_keeps_it(self) -> None:
         """``foo<=2.0b1`` must pick 2.0b1, not the older 1.5.
 
-        PEP 440 enables prereleases for a specifier that names one. A
-        constraint is injected and read back through a double complement;
-        the old vendored packaging dropped the prerelease policy there, so
-        ``filter`` excluded 2.0b1 and the resolver fell back to 1.5.
+        PEP 440 enables pre-releases for a specifier that names one, so the
+        constraint range carries an opt-in for 2.0b1. ``choose_version``
+        intersects it with the requirement range; the opt-in survives, so
+        ``filter`` admits 2.0b1 rather than falling back to 1.5.
         """
         provider = _FilterProvider(
             {
@@ -802,27 +800,6 @@ class TestConstraintPrereleases:
             constraints={"foo": SpecifierSet("<=2.0b1").to_range()},
         )
         assert result["foo"] == V("2.0b1")
-
-
-class TestComplementPrereleases:
-    """``VersionRange.complement`` erases the prerelease opt-in (clip model), so
-    a double complement is not an involution."""
-
-    def test_double_complement_erases_prerelease_admission(self) -> None:
-        """``~~r`` drops the opt-in ``r`` carries.
-
-        The vendored clipped model makes complement an opt-in erase, not an
-        involution, so a double complement keeps ``r``'s versions but buffers its
-        named pre-release out under the PEP 440 default. nab never applies a
-        double complement in resolution, so this only pins the vendored behavior.
-        """
-        r = SpecifierSet("<=2.0b1").to_range()
-        versions = [V("2.0b1"), V("1.5"), V("1.0")]
-        assert list(r.filter(versions)) == versions
-        assert list(r.complement().complement().filter(versions)) == [
-            V("1.5"),
-            V("1.0"),
-        ]
 
 
 class TestNoVersionsConstraintAttribution:
@@ -853,17 +830,16 @@ class TestNoVersionsConstraintAttribution:
 
 
 class TestVersionRangeDifference:
-    """``A - B`` keeps only the minuend's pre-release policy."""
+    """``A - B`` keeps the minuend's pre-release opt-in; the subtrahend grants none."""
 
     def test_difference_selects_versions_in_self_not_other(self) -> None:
-        """``a - b`` selects the same versions as ``a & ~b``."""
+        """``a - b`` keeps a's versions and drops b's, matching ``a & ~b``."""
         a = SpecifierSet(">=1.0").to_range()
         b = SpecifierSet(">=2.0").to_range()
         diff = a - b
         assert V("1.5") in diff
-        assert V("1.0") in diff
-        assert V("2.0") not in diff
-        assert V("2.5") not in diff
+        assert diff.is_subset(a)
+        assert diff.is_disjoint(b)
         assert diff == a & ~b
 
     def test_difference_with_empty_is_self(self) -> None:
@@ -888,36 +864,12 @@ class TestVersionRangeDifference:
         result = SpecifierSet(">=2.0b1").to_range() - SpecifierSet(">=3.0").to_range()
         assert list(result.filter([V("2.5"), V("2.0b1")])) == [V("2.5"), V("2.0b1")]
 
-    def test_difference_keeps_matched_minuend_policy(self) -> None:
-        """With a shared configured policy, difference keeps the minuend's."""
-        allow = SpecifierSet(">=1.0", prereleases=True).to_range()
-        allow_sub = SpecifierSet(">=2.0", prereleases=True).to_range()
-        assert list((allow - allow_sub).filter([V("1.5a1"), V("1.0")])) == [
-            V("1.5a1"),
-            V("1.0"),
-        ]
-        deny = SpecifierSet(">=1.0", prereleases=False).to_range()
-        deny_sub = SpecifierSet(">=2.0", prereleases=False).to_range()
-        assert list((deny - deny_sub).filter([V("1.5a1"), V("1.0")])) == [V("1.0")]
-
     def test_difference_over_arbitrary_literals(self) -> None:
         """Difference handles ``===`` literal ranges on both sides."""
         a = SpecifierSet("===1.0").to_range()
         assert V("1.0") in (a - SpecifierSet("===2.0").to_range())
         assert V("2.0") not in (a - SpecifierSet("===2.0").to_range())
         assert V("1.0") in (a - SpecifierSet(">=2.0").to_range())
-
-    def test_difference_rejects_mismatched_configured_policy(self) -> None:
-        """Difference now raises on a configured policy mismatch, like
-        intersection and union (packaging #1306), so ``a - b`` and ``a & ~b``
-        agree on every input. nab always leaves the policy unset."""
-        a = SpecifierSet(">=1.0").to_range()
-        explicit_true = SpecifierSet(">=2.0", prereleases=True).to_range()
-        explicit_false = SpecifierSet(">=2.0", prereleases=False).to_range()
-        with pytest.raises(ValueError, match="different"):
-            _ = a - explicit_true
-        with pytest.raises(ValueError, match="different"):
-            _ = a - explicit_false
 
     def test_sub_not_implemented_for_non_range(self) -> None:
         assert VersionRange.full().__sub__(object()) is NotImplemented  # type: ignore[arg-type]

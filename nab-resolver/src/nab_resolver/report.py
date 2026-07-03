@@ -172,8 +172,7 @@ def union_terms(
             return None
         return Term(first.package, merged, positive=False)
 
-    # Mixed: the negative's range minus the positive's (set difference, so
-    # the subtracted positive's pre-release policy does not leak).
+    # Mixed: the negative's range minus the positive's.
     positive_term = first if first.is_positive() else second
     negative_term = second if first.is_positive() else first
     remainder = negative_term.constraint - positive_term.constraint
