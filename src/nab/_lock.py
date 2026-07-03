@@ -528,7 +528,13 @@ def _emit_universal_pylock(
 
 
 def _check_output_template(output: Path, template: str) -> None:
-    """Reject unknown placeholders in --output before str.format is called."""
+    """Reject an --output template that ``str.format`` cannot render.
+
+    Only bare ``{python_version}`` and ``{platform_id}`` fields are
+    accepted. An unbalanced brace, an unknown field name, or a field
+    carrying a format spec (``{platform_id:d}``) or conversion
+    (``{python_version!r}``) is rejected here.
+    """
     allowed_vars = _cli.TUPLE_TEMPLATE_VARS
     allowed = {
         name
@@ -537,18 +543,30 @@ def _check_output_template(output: Path, template: str) -> None:
         if name is not None
     }
     try:
-        fields = {
-            name for _, name, _, _ in Formatter().parse(template) if name is not None
-        }
+        fields = [
+            (name, spec, conversion)
+            for _, name, spec, conversion in Formatter().parse(template)
+            if name is not None
+        ]
     except ValueError as e:
         sys.stderr.write(f"Error: --output {output} is not a valid template: {e}\n")
         sys.exit(1)
-    unknown = sorted(f"{{{name}}}" for name in fields if name not in allowed)
+    supported = " and ".join(allowed_vars)
+    unknown = sorted(f"{{{name}}}" for name, _, _ in fields if name not in allowed)
     if unknown:
-        supported = " and ".join(allowed_vars)
         sys.stderr.write(
             f"Error: --output {output} has unknown template placeholder(s)"
             f" {', '.join(unknown)}; only {supported} are supported.\n"
+        )
+        sys.exit(1)
+    decorated = sorted(
+        {f"{{{name}}}" for name, spec, conversion in fields if spec or conversion}
+    )
+    if decorated:
+        sys.stderr.write(
+            f"Error: --output {output} is not a valid template:"
+            f" {', '.join(decorated)} may not carry a format spec or conversion;"
+            f" only bare {supported} are supported.\n"
         )
         sys.exit(1)
 
