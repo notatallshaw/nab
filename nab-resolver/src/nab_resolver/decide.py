@@ -103,23 +103,21 @@ def absorb_redundant_requirement(
     requirement: RangeProtocol[Any],
     cause: Incompatibility[Any, Any],
 ) -> None:
-    """Re-derive a requirement that refines a package's range without narrowing it.
+    """Derive a requirement that refines a package's range without narrowing it.
 
-    Unit propagation fires only when a requirement narrows a package's version
-    set, so a requirement already implied by a tighter bound is skipped. A range
-    can carry a refinement that rides set algebra without changing the version
-    set, and that refinement is dropped along with the skipped requirement. When
-    a version-set-redundant requirement still changes the range, the difference
-    is such a refinement, so derive it onto the package. The derivation rides the
-    parent's decision level and is undone on backtracking. It changes only the
-    range offered for selection, not any term relation, so nothing re-propagates.
+    Unit propagation acts only on requirements that narrow a package's version
+    set. When a version-set-redundant requirement still yields a different
+    range, that difference is a refinement the range type carries (such as a
+    pre-release opt-in), so derive it onto the package. The derivation rides the
+    parent decision level, is undone on backtracking, and leaves every term
+    relation unchanged, so nothing re-propagates.
     """
     positive = resolver.solution.positive_range(package)
     if positive is None:
         return
 
-    # Intersect first so an unchanged range (the common case) skips the subset
-    # test; is_subset then tells a refinement (redundant bound) from a narrowing.
+    # Intersect first: an unchanged range short-circuits before the costlier
+    # subset test, which then separates a refinement from a narrowing.
     folded = positive & requirement
     if folded != positive and positive.is_subset(requirement):
         resolver.solution.derive(package, requirement, positive=True, cause=cause)

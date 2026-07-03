@@ -748,13 +748,13 @@ class TestRedundantTransitivePrereleaseOptIn:
     its bound is already implied by another requirement.
 
     ``a`` requires ``c>=0.5a1`` while the root requires ``c>=1.0``. ``>=1.0``
-    already implies ``>=0.5a1``, so unit propagation never folds ``a``'s
-    requirement into ``c`` and the opt-in it carries would be dropped, wrongly
-    leaving the stable ``1.0.0`` to win over the authorized ``2.0.0a1``.
+    implies ``>=0.5a1``, so the requirement is redundant on ``c``'s version
+    set, yet the pre-release opt-in it carries admits ``c`` version
+    ``2.0.0a1`` over stable ``1.0.0``.
     """
 
     def test_redundant_specifier_authorizes_prerelease(self) -> None:
-        """The redundant ``c>=0.5a1`` still opts ``c`` into its pre-release."""
+        """A redundant ``c>=0.5a1`` opts ``c`` into pre-release ``2.0.0a1``."""
         provider = _FilterProvider(
             {
                 "a": {V("1.0.0"): {"c": SpecifierSet(">=0.5a1")}},
