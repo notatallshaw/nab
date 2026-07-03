@@ -528,7 +528,7 @@ nab lock [PATH]
   --format FORMAT              # pylock | requirements | requirements-without-hashes
   --cache-dir PATH             # override on-disk cache location
   --no-cache                   # disable cache for this run
-  --offline True|False         # use cache only, no network (layered value flag)
+  --offline True|False         # use cache only, no network (or bare --offline / --no-offline)
   --http-backend X             # urllib3 (default) | httpx (layered)
   --locked                     # verify the committed pylock is current; write nothing
   --upgrade                    # re-anchor the P<n>D window to now

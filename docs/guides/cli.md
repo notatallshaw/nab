@@ -17,10 +17,10 @@ nab config   {list | get <key> | explain <key>} [--path PATH]
 `PATH` is positional and defaults to `pyproject.toml` in the
 current directory. Run `nab lock --help` (or `-h`) for the full
 per-command flag list. Boolean flags render as a `--flag` /
-`--no-flag` pair (for example `--cache` / `--no-cache`). The one
-exception is `--offline`, which is layered and so takes an explicit
-value (`--offline True` / `--offline False`); a bare `--offline` is
-an error.
+`--no-flag` pair (for example `--cache` / `--no-cache`). `--offline`
+is layered, so an explicit `--offline True` / `--offline False`
+overrides the config layers; bare `--offline` / `--no-offline` are
+shorthands for those two values.
 
 ## `nab lock`
 
@@ -149,7 +149,7 @@ Both subcommands accept the same runtime knobs:
 | ---- | ------- | ------ |
 | `--cache-dir PATH` | `~/.cache/nab` | Override the on-disk cache root. |
 | `--no-cache` | off | Disable cache for this run. Combine with `--offline` only if the cache already has every file. |
-| `--offline {True,False}` | unset | Use cache only, never hit the network. Layered, so it takes an explicit value: `--offline True` forces offline, `--offline False` forces network even over a lower `offline = true`. A bare `--offline` is an error. |
+| `--offline {True,False}` | unset | Use cache only, never hit the network. Layered: `--offline True` forces offline, `--offline False` forces network even over a lower `offline = true`. Bare `--offline` / `--no-offline` are shorthands for `True` / `False`. |
 | `--http-backend {urllib3,httpx}` | `urllib3` | Pick the async transport for fetches. Layered, so it can also be set in an `nab.toml` or `NAB_HTTP_BACKEND`. `httpx` needs its extra (see [installation](installation.md)). |
 
 `urllib3` is the only backend pulled in by the base install. The
