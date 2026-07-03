@@ -16,6 +16,7 @@ from nab_index.local_index import (
     LocalIndexClient,
     _make_record,
     _parse_file_url,
+    read_wheel_metadata,
 )
 
 if TYPE_CHECKING:
@@ -476,6 +477,31 @@ class TestMakeRecord:
             )
             is None
         )
+
+
+class TestReadWheelMetadata:
+    def test_reads_metadata_from_wheel_zip(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as zf:
+            zf.writestr(
+                "foo-1.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n",
+            )
+        text = read_wheel_metadata(wheel)
+        assert text is not None
+        assert text.startswith("Metadata-Version: 2.1")
+
+    def test_returns_none_when_no_metadata_member(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as zf:
+            zf.writestr("foo/__init__.py", "")
+            zf.writestr("foo-1.0.dist-info/WHEEL", "Wheel-Version: 1.0\n")
+        assert read_wheel_metadata(wheel) is None
+
+    def test_returns_none_for_non_zip(self, tmp_path: Path) -> None:
+        not_a_wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        not_a_wheel.write_bytes(b"not a zip archive")
+        assert read_wheel_metadata(not_a_wheel) is None
 
 
 class TestContextManager:
