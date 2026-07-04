@@ -519,11 +519,17 @@ def require_artifact_hashes(lock_input: LockInput) -> None:
 
 
 def _common_requires_python(files: Iterable[WheelFile | SdistFile]) -> str | None:
-    """Return a single Requires-Python value if all files agree, else ``None``."""
+    """Return the package-level Requires-Python value, or ``None``.
+
+    An artefact with no Requires-Python is unconstrained, so a single
+    such artefact leaves the whole package unconstrained. Otherwise the
+    value survives only when every artefact agrees.
+    """
     seen: set[str] = set()
     for f in files:
-        if f.requires_python is not None:
-            seen.add(f.requires_python)
+        if f.requires_python is None:
+            return None
+        seen.add(f.requires_python)
     if len(seen) == 1:
         return next(iter(seen))
     return None
