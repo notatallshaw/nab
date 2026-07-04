@@ -122,6 +122,32 @@ def _pick_in_mode(
     return None
 
 
+def version_provides_extra(
+    provider: Provider,
+    base: str,
+    extra: str,
+    version: Version,
+) -> bool:
+    """Whether ``version`` of ``base`` declares ``extra`` and yields metadata here.
+
+    Honoring a cross-tuple preference for a ``base[extra]`` proxy is only
+    safe when the preferred version both provides the extra and has
+    extractable metadata in this tuple.
+    """
+    # Late import: provider imports this module at module load.
+    from ..provider import MetadataError, _normalize_extra
+
+    _, _, normalized = provider.split_and_normalize(base)
+    try:
+        provider.get_dependencies(base, version)
+    except MetadataError:
+        return False
+
+    metadata = provider.metadata_cache[(normalized, version)]
+    provided = {_normalize_extra(e) for e in metadata.provides_extra}
+    return extra in provided
+
+
 def _record_base_range_blocks(
     provider: Provider,
     proxy_pkg: str,
