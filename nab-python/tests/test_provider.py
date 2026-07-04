@@ -1092,6 +1092,27 @@ class TestGetDependencies:
         with pytest.raises(MetadataError):
             provider.get_dependencies("foo", V("1.0"))
 
+    def test_local_wheel_without_sidecar_reads_metadata_from_zip(
+        self, tmp_path: Path
+    ) -> None:
+        """A local wheel with no sidecar resolves by reading METADATA from the .whl."""
+        wheel_path = tmp_path / "foo-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as zf:
+            zf.writestr(
+                "foo-1.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+                "Requires-Dist: bar>=2\n",
+            )
+        coordinator = make_coordinator(
+            [make_wheel("1.0", has_metadata=False, local_path=wheel_path)],
+            package="foo",
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "bar" in deps
+        assert V("2.0") in deps["bar"]
+        assert V("1.0") not in deps["bar"]
+
     def test_filters_deps_by_marker(self) -> None:
         """Dependencies with non-matching markers are excluded."""
         coordinator = make_coordinator(

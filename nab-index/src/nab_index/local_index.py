@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "LocalIndexClient",
+    "read_wheel_metadata",
 ]
 
 
@@ -309,6 +310,30 @@ def _make_record(
             hashes=hashes,
             local_path=local_path,
         )
+    return None
+
+
+def read_wheel_metadata(wheel_path: Path) -> str | None:
+    """Return a wheel's ``<name>-<version>.dist-info/METADATA`` text.
+
+    Returns ``None`` if the file is not a readable zip or has no METADATA member.
+    """
+    try:
+        with zipfile.ZipFile(wheel_path) as zf:
+            member = _wheel_metadata_member(zf.namelist())
+            if member is None:
+                return None
+            return zf.read(member).decode("utf-8")
+    except (zipfile.BadZipFile, OSError, UnicodeDecodeError):
+        return None
+
+
+def _wheel_metadata_member(names: list[str]) -> str | None:
+    """Return the top-level ``*.dist-info/METADATA`` member name, or ``None``."""
+    for name in names:
+        head, sep, tail = name.partition("/")
+        if sep and tail == "METADATA" and head.endswith(".dist-info"):
+            return name
     return None
 
 
