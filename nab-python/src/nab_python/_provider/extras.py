@@ -77,23 +77,15 @@ def _pick_in_mode(
 ) -> Version | None:
     """Pick a candidate honoring ``ExtrasMode``.
 
-    Fetches base metadata so an extraction failure (unparseable
-    PKG-INFO, or an sdist build the policy disallows) becomes a
-    candidate skip instead of a fatal error during the later
-    dependency fetch.  BACKTRACK mode additionally checks
-    ``Provides-Extra`` for transitive extras.
-
-    Missing-metadata cases (no PEP 658, no sdist) skip transitive
-    extras but fall through for user-requested ones; mock test
-    coordinators rely on this.
+    Fetches base metadata so an extraction failure (unparseable PKG-INFO,
+    a disallowed sdist build, or no metadata source at all) skips the
+    candidate rather than raising later, when the proxy refetches the base
+    to expand the extra. This applies to user-requested extras too, since
+    the proxy always needs the base metadata. BACKTRACK mode additionally
+    checks ``Provides-Extra`` for transitive extras.
     """
     # Late import: ``pypi`` imports this module at module load.
-    from ..provider import (
-        ExtrasMode,
-        MetadataError,
-        UnsupportedSdistError,
-        _normalize_extra,
-    )
+    from ..provider import ExtrasMode, MetadataError, _normalize_extra
 
     _, _, normalized = provider.split_and_normalize(base)
     is_user = (normalized, extra) in provider.root_extras
@@ -103,12 +95,8 @@ def _pick_in_mode(
             continue
         try:
             provider.get_dependencies(base, version)
-        except UnsupportedSdistError:
-            continue
         except MetadataError:
-            if not is_user or provider.has_invalid_metadata(normalized, version):
-                continue
-            return version
+            continue
         if is_user or not backtrack:
             return version
         metadata = provider.metadata_cache.get((normalized, version))
