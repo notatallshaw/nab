@@ -37,3 +37,28 @@ guides/conflicts
 * Mutually-exclusive extras and dependency groups via
   `[tool.nab].conflicts`: fail fast in specific mode, fork the resolve
   in universal mode.  See [conflicts](guides/conflicts.md).
+
+## Extras are additive
+
+nab treats extras additively: requesting `pkg[gpu]` installs everything a
+plain `pkg` installs, plus the dependencies `pkg` gates on the `gpu` extra.
+
+One consequence is that a dependency guarded by a negative extra marker is
+kept even when the extra is requested. Given
+
+```
+Requires-Dist: onnxruntime ; extra != "gpu"
+Provides-Extra: gpu
+Requires-Dist: onnxruntime-gpu ; extra == "gpu"
+```
+
+`extra != "gpu"` is true for a plain install, so `onnxruntime` is a base
+dependency of `pkg`. Installing `pkg[gpu]` therefore keeps `onnxruntime`
+alongside `onnxruntime-gpu`, even where the author meant the extra to
+replace it. For the same reason, requesting `pkg` and `pkg[gpu]` together
+installs the union of both, not the dependencies of the merged extra set.
+
+This is a property of the additive-extra model. pip's default resolver and
+uv behave the same way. `extra` comparisons themselves follow the
+dependency-specifiers specification: `==` is membership in the requested
+extras, `!=` is non-membership, and any other operator is treated as false.
