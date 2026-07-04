@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from nab_index.client import SdistFile, WheelFile
 from nab_index.local_index import read_wheel_metadata
 
-from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
+from .._marker_extras import references_extra, rewrite_extra_markers
 from .._vcs_admission import admit_vcs_url
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
@@ -323,35 +323,74 @@ def classify_requirement(
     Returns None if the marker doesn't match the environment.
     Returns an empty set if the requirement is a base dep (no extra gating).
     Returns a set of normalized extra names if extra-gated.
+
+    ``extra`` comparisons resolve as set membership per the
+    dependency-specifiers spec (see :mod:`nab_python._marker_extras`):
+    ``extra == "x"`` gates on ``x``, ``extra != "x"`` holds for the base
+    plus every other extra, and any other operator on ``extra`` never
+    matches.  A marker with no ``extra`` comparison is a plain environment
+    marker: it is a base dep when it holds, else dropped.
     """
     marker = req.marker
     if marker is None:
         return set()
     marker_id = id(marker)
+    if not marker_refs_extra(provider, marker, marker_id):
+        return set() if env_marker_holds(provider, marker, marker_id) else None
     if marker_matches_base(provider, marker, marker_id):
         return set()
-    if "extra" not in marker_text(provider, marker, marker_id):
-        return None
     matched_extras = marker_matched_extras(provider, marker, marker_id, provided_extras)
     return matched_extras or None
 
 
-def marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> bool:
-    """Evaluate ``marker`` against the env without ``extra`` set, cached."""
+def marker_refs_extra(provider: Provider, marker: Marker, marker_id: int) -> bool:
+    """Whether ``marker`` compares against ``extra`` at all, cached."""
+    result = provider.marker_refs_extra_cache.get(marker_id)
+    if result is None:
+        result = references_extra(marker)
+        provider.marker_refs_extra_cache[marker_id] = result
+    return result
+
+
+def env_marker_holds(provider: Provider, marker: Marker, marker_id: int) -> bool:
+    """Evaluate a non-``extra`` marker against the environment, cached.
+
+    The plural lockfile-only set variables (``extras``,
+    ``dependency_groups``) are empty at resolve time, so a marker testing
+    one drops its dep.
+    """
     result = provider.marker_base_cache.get(marker_id)
     if result is None:
-        result = marker.evaluate({**provider.environment, **EMPTY_MEMBERSHIP_SETS})
+        env = provider.env_with_extra
+        env["extras"] = frozenset()
+        result = bool(marker.evaluate(env))
         provider.marker_base_cache[marker_id] = result
     return result
 
 
-def marker_text(provider: Provider, marker: Marker, marker_id: int) -> str:
-    """Return ``str(marker)``, cached. Walks the AST on big graphs."""
-    text = provider.marker_text_cache.get(marker_id)
-    if text is None:
-        text = str(marker)
-        provider.marker_text_cache[marker_id] = text
-    return text
+def rewritten_marker(provider: Provider, marker: Marker, marker_id: int) -> Marker:
+    """Return the ``extras``-membership rewrite of ``marker``, cached.
+
+    The rewrite is independent of which extras are requested, so it is built
+    once per marker and evaluated against different ``extras`` bindings.
+    """
+    cached = provider.rewritten_marker_cache.get(marker_id)
+    if cached is None:
+        cached = provider.rewritten_marker_cache[marker_id] = rewrite_extra_markers(
+            marker
+        )
+    return cached
+
+
+def marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> bool:
+    """Whether an ``extra`` marker holds for the base (empty) extras set, cached."""
+    result = provider.marker_base_cache.get(marker_id)
+    if result is None:
+        env = provider.env_with_extra
+        env["extras"] = frozenset()
+        result = bool(rewritten_marker(provider, marker, marker_id).evaluate(env))
+        provider.marker_base_cache[marker_id] = result
+    return result
 
 
 def marker_matched_extras(
@@ -360,17 +399,23 @@ def marker_matched_extras(
     marker_id: int,
     provided_extras: set[str],
 ) -> set[str]:
-    """Return the extras for which the marker evaluates to True."""
+    """Return the provided extras whose singleton set satisfies the marker.
+
+    Each extra ``x`` is evaluated as the full requested set ``{x}``, so a
+    ``extra == "x"`` line lands on ``x``; a line that also holds for the
+    empty set is already classified base and never reaches here.
+    """
     per_marker = provider.marker_extra_cache.get(marker_id)
     if per_marker is None:
         per_marker = provider.marker_extra_cache[marker_id] = {}
+    rewritten = rewritten_marker(provider, marker, marker_id)
     env = provider.env_with_extra
     matched: set[str] = set()
     for extra_name in provided_extras:
         result = per_marker.get(extra_name)
         if result is None:
-            env["extra"] = extra_name
-            result = marker.evaluate(env)
+            env["extras"] = frozenset((canonicalize_name(extra_name),))
+            result = bool(rewritten.evaluate(env))
             per_marker[extra_name] = result
         if result:
             matched.add(extra_name)

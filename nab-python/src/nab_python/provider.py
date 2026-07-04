@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
     from nab_resolver.types import Incompatibility, RangeProtocol
 
+    from ._vendor.packaging.markers import Marker
     from .config import IndexOverride, NabProjectConfig, PackageOverride
     from .fetch import FetchCoordinator
 
@@ -556,11 +557,17 @@ class Provider:
         # alive (see its note above).
         self.marker_base_cache: dict[int, bool] = {}
         self.marker_extra_cache: dict[int, dict[str, bool]] = {}
-        # Memoised str(marker) for the cheap "extra" in marker_text gate.
-        self.marker_text_cache: dict[int, str] = {}
-        # Reused per-evaluation environment dict (avoids a copy per requirement),
-        # seeded with the empty lockfile-only set variables (see
-        # EMPTY_MEMBERSHIP_SETS) so a marker testing one evaluates False.
+        # Whether a marker references ``extra`` at all; gates the per-extra
+        # membership pass in ``classify_requirement``.
+        self.marker_refs_extra_cache: dict[int, bool] = {}
+        # ``extra`` markers rewritten to ``extras`` set-membership tests, cached
+        # per marker so the rewrite/reparse happens once and is evaluated against
+        # different ``extras`` bindings.
+        self.rewritten_marker_cache: dict[int, Marker] = {}
+        # Environment for marker evaluation, seeded with the empty lockfile-only
+        # set variables (see EMPTY_MEMBERSHIP_SETS).  ``classify_requirement``
+        # rebinds the ``extras`` key per evaluation to answer ``extra``
+        # comparisons as set membership (see ``_marker_extras``).
         self.env_with_extra: dict[str, str | frozenset[str]] = {
             **self.environment,
             **EMPTY_MEMBERSHIP_SETS,

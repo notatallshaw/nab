@@ -4116,6 +4116,43 @@ class TestExtras:
         assert "cryptography" not in base_deps
         assert "cryptography" not in sec_deps
 
+    def test_undefined_extra_operator_never_matches(self) -> None:
+        """An ``extra`` operator other than ==/!= gates nothing (spec: False).
+
+        The vendored packaging evaluator treats ``extra <= "gpu"`` like
+        ``extra == "gpu"``; the set-correct classifier drops it from the
+        base deps and from every extra.
+        """
+        metadata = (
+            "Metadata-Version: 2.1\n"
+            "Name: foo\n"
+            "Version: 1.0\n"
+            "Provides-Extra: gpu\n"
+            'Requires-Dist: weirddep; extra <= "gpu"\n'
+        )
+        coordinator = make_coordinator(
+            [make_wheel("1.0")], metadata_text=metadata, package="foo"
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        assert "weirddep" not in provider.get_dependencies("foo", V("1.0"))
+        assert "weirddep" not in provider.get_dependencies("foo[gpu]", V("1.0"))
+
+    def test_negative_extra_marker_is_a_base_dep(self) -> None:
+        """``extra != "gpu"`` holds for the base install, so it is a base dep."""
+        metadata = (
+            "Metadata-Version: 2.1\n"
+            "Name: foo\n"
+            "Version: 1.0\n"
+            "Provides-Extra: gpu\n"
+            'Requires-Dist: defaultdep; extra != "gpu"\n'
+        )
+        coordinator = make_coordinator(
+            [make_wheel("1.0")], metadata_text=metadata, package="foo"
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        req = Requirement('defaultdep; extra != "gpu"')
+        assert classify_requirement(provider, req, {"gpu"}) == set()
+
     def test_multiple_extras_same_package(self) -> None:
         """Different extras on the same package get separate deps."""
         metadata = (
