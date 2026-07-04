@@ -21,6 +21,8 @@ multi-index router can treat local and remote indexes uniformly.
 from __future__ import annotations
 
 import re
+import zipfile
+from email.parser import BytesParser
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -210,12 +212,56 @@ def _scan_flat_wheelhouse(
             continue
         if _FLAT_EXTS.search(entry.name) is None:
             continue
+        requires_python = _flat_wheel_requires_python(entry, canonical)
         record = _make_record(
-            entry.name, entry.as_uri(), entry, None, (), canonical, has_metadata=False
+            entry.name,
+            entry.as_uri(),
+            entry,
+            requires_python,
+            (),
+            canonical,
+            has_metadata=False,
         )
         if record is not None:
             files.append(record)
     return files
+
+
+def _flat_wheel_requires_python(entry: Path, canonical: str) -> str | None:
+    """Read a matching wheel's ``Requires-Python``; the filename cannot encode it."""
+    parsed = _parse_wheel_filename(entry.name)
+    if parsed is None or parsed[0] != canonical:
+        return None
+    return _read_wheel_requires_python(entry)
+
+
+def _read_wheel_requires_python(wheel_path: Path) -> str | None:
+    """Return ``Requires-Python`` from a wheel's METADATA, or ``None``."""
+    try:
+        with zipfile.ZipFile(wheel_path) as archive:
+            member = _metadata_member(archive.namelist())
+            if member is None:
+                return None
+            raw = archive.read(member)
+    except (zipfile.BadZipFile, OSError):
+        return None
+
+    value = BytesParser().parsebytes(raw, headersonly=True).get("Requires-Python")
+    return value if isinstance(value, str) else None
+
+
+def _metadata_member(names: list[str]) -> str | None:
+    """Return the top-level ``*.dist-info/METADATA`` member name, or ``None``."""
+    for name in names:
+        head, sep, tail = name.rpartition("/")
+        if (
+            sep
+            and tail == "METADATA"
+            and head.endswith(".dist-info")
+            and "/" not in head
+        ):
+            return name
+    return None
 
 
 def _make_record(
