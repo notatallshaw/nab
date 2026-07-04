@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 from nab_index.client import SdistFile, WheelFile
 
 from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
+from .._provider.extras import version_provides_extra
 from .._vendor.packaging.markers import default_environment
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
@@ -157,18 +158,18 @@ class UniversalProvider(Provider):
     ) -> Version | None:
         """Pick a version under the configured strategy, honoring preferences."""
         assert isinstance(version_range, VersionRange)
-        _, _, normalized = self.split_and_normalize(package)
+        base, extra, normalized = self.split_and_normalize(package)
 
-        # Preferences win when the version is still in range AND its metadata
-        # is extractable in this tuple; the look-ahead gate matters for
-        # cross-tuple alignment (a candidate that worked elsewhere may be
-        # tag-incompatible or unbuildable here).
+        # Honor a preference only when the version is in range and usable
+        # here: a base version needs extractable metadata, an extras proxy
+        # additionally needs to declare the extra.
         preferred = self._preferences.get(normalized)
         if preferred is not None:
             all_versions = self.versions_only(normalized, self.fetch_versions(package))
             if preferred in set(version_range.filter(all_versions)) and (
-                self.split_and_normalize(package)[1] is not None
-                or self._look_ahead_ok(normalized, preferred, check_decisions=True)
+                version_provides_extra(self, base, extra, preferred)
+                if extra is not None
+                else self._look_ahead_ok(normalized, preferred, check_decisions=True)
             ):
                 self._flush_pending_blocks()
                 return preferred

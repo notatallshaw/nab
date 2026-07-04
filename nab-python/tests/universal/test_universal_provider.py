@@ -254,6 +254,77 @@ class TestPreferences:
         assert result == Version("3.0")
 
 
+class TestExtrasProxyPreference:
+    """A cross-tuple preference for an extras proxy respects Provides-Extra."""
+
+    _NO_EXTRA = "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\n\n"
+    _WITH_EXTRA = (
+        "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\n"
+        'Provides-Extra: bar\nRequires-Dist: cryptography; extra == "bar"\n\n'
+    )
+
+    def _provider(
+        self,
+        *,
+        versions: Sequence[str],
+        metadata_by_version: dict[str, str | None],
+        preferred: str,
+    ) -> UniversalProvider:
+        wheels = [_make_wheel(v, package="foo") for v in versions]
+        coordinator = make_coordinator(
+            wheels,
+            package="foo",
+            metadata_by_version=metadata_by_version,
+        )
+        return UniversalProvider(
+            coordinator,
+            marker_environment=_LINUX_ENV,
+            root_extras={("foo", "bar")},
+            preferences={"foo": Version(preferred)},
+        )
+
+    def test_non_providing_preference_falls_through(self) -> None:
+        """A preferred base version lacking the extra yields the providing one."""
+        provider = self._provider(
+            versions=("1.5", "2.0"),
+            metadata_by_version={
+                "1.5": self._NO_EXTRA.format(ver="1.5"),
+                "2.0": self._WITH_EXTRA.format(ver="2.0"),
+            },
+            preferred="1.5",
+        )
+        chosen = provider.choose_version("foo[bar]", VersionRange.full())
+        assert chosen == Version("2.0")
+        deps = provider.get_dependencies("foo[bar]", Version("2.0"))
+        assert "cryptography" in deps
+
+    def test_unreadable_preference_falls_through(self) -> None:
+        """A preferred version whose metadata cannot be read is not honored."""
+        provider = self._provider(
+            versions=("1.5", "2.0"),
+            metadata_by_version={
+                "1.5": None,
+                "2.0": self._WITH_EXTRA.format(ver="2.0"),
+            },
+            preferred="1.5",
+        )
+        chosen = provider.choose_version("foo[bar]", VersionRange.full())
+        assert chosen == Version("2.0")
+
+    def test_providing_preference_wins_over_highest(self) -> None:
+        """A preferred version that declares the extra beats the highest one."""
+        provider = self._provider(
+            versions=("2.0", "3.0"),
+            metadata_by_version={
+                "2.0": self._WITH_EXTRA.format(ver="2.0"),
+                "3.0": self._WITH_EXTRA.format(ver="3.0"),
+            },
+            preferred="2.0",
+        )
+        chosen = provider.choose_version("foo[bar]", VersionRange.full())
+        assert chosen == Version("2.0")
+
+
 class TestStrategyChoiceVersion:
     """``choose_version`` honors the resolution_strategy flag."""
 
