@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import tarfile
 import threading
 import zipfile
 from datetime import datetime, timezone
@@ -383,6 +385,27 @@ class TestFetchVersions:
                     f"Metadata-Version: 2.1\nName: foo\nVersion: {version}\n"
                     f"Requires-Python: {requires_python}\n",
                 )
+        records = asyncio.run(LocalIndexClient(tmp_path.as_uri()).get_files("foo"))
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator, python_version="3.8.0")
+        versions = [v for v, _ in provider.filter_distributions("foo", records)]
+        assert versions == [V("1.0")]
+
+    def test_flat_wheelhouse_sdist_requires_python_excludes_candidate(
+        self, tmp_path: Path
+    ) -> None:
+        """A flat find-links sdist's PKG-INFO Requires-Python filters candidates."""
+        for version, requires_python in (("2.0", ">=3.12"), ("1.0", ">=3.8")):
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+                body = (
+                    f"Metadata-Version: 2.2\nName: foo\nVersion: {version}\n"
+                    f"Requires-Python: {requires_python}\n"
+                ).encode()
+                info = tarfile.TarInfo(name=f"foo-{version}/PKG-INFO")
+                info.size = len(body)
+                tar.addfile(info, io.BytesIO(body))
+            (tmp_path / f"foo-{version}.tar.gz").write_bytes(buf.getvalue())
         records = asyncio.run(LocalIndexClient(tmp_path.as_uri()).get_files("foo"))
         coordinator = make_coordinator([], package="foo")
         provider = Provider(coordinator, python_version="3.8.0")

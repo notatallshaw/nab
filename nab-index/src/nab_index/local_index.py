@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 import zipfile
-from email.parser import BytesParser
+from email.parser import BytesParser, Parser
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -213,7 +213,7 @@ def _scan_flat_wheelhouse(
             continue
         if _FLAT_EXTS.search(entry.name) is None:
             continue
-        requires_python = _flat_wheel_requires_python(entry, canonical)
+        requires_python = _flat_requires_python(entry, canonical)
         record = _make_record(
             entry.name,
             entry.as_uri(),
@@ -228,12 +228,30 @@ def _scan_flat_wheelhouse(
     return files
 
 
-def _flat_wheel_requires_python(entry: Path, canonical: str) -> str | None:
-    """Read a matching wheel's ``Requires-Python``; the filename cannot encode it."""
-    parsed = _parse_wheel_filename(entry.name)
-    if parsed is None or parsed[0] != canonical:
+def _flat_requires_python(entry: Path, canonical: str) -> str | None:
+    """Read a flat-wheelhouse dist's ``Requires-Python``; not in the filename."""
+    wheel = _parse_wheel_filename(entry.name)
+    if wheel is not None:
+        return _read_wheel_requires_python(entry) if wheel[0] == canonical else None
+    sdist = _parse_sdist_filename(entry.name)
+    if sdist is not None and sdist[0] == canonical:
+        return _read_sdist_requires_python(entry)
+    return None
+
+
+def _read_sdist_requires_python(sdist_path: Path) -> str | None:
+    """Return ``Requires-Python`` from an sdist's PKG-INFO, or ``None``."""
+    try:
+        data = sdist_path.read_bytes()
+    except OSError:
         return None
-    return _read_wheel_requires_python(entry)
+
+    pkg_info, _ = _extract_sdist_files(data)
+    if pkg_info is None:
+        return None
+
+    value = Parser().parsestr(pkg_info, headersonly=True).get("Requires-Python")
+    return value if isinstance(value, str) else None
 
 
 def _read_wheel_requires_python(wheel_path: Path) -> str | None:
