@@ -442,6 +442,28 @@ class TestLockCommandSpecific:
             lock(pyproject)
         assert "no [project].dependencies" in capsys.readouterr().err
 
+    def test_string_project_table_exits_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A non-table [project] exits 1 with a diagnostic, not a traceback."""
+        pyproject = _make_pyproject(tmp_path, 'project = "hello"\n')
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject)
+        err = capsys.readouterr().err
+        assert "[project] must be a table" in err
+        assert "Traceback" not in err
+
+    def test_array_project_table_exits_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An array [project] exits 1 with a diagnostic, not a traceback."""
+        pyproject = _make_pyproject(tmp_path, 'project = ["a", "b"]\n')
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject)
+        err = capsys.readouterr().err
+        assert "[project] must be a table" in err
+        assert "Traceback" not in err
+
     def test_missing_hash_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -777,6 +799,25 @@ class TestLockCommandUniversal:
             lock(pyproject, output=out)
         assert "resolver path is not implemented" in capsys.readouterr().err
 
+    def test_string_project_table_exits_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A non-table [project] in universal mode exits 1, not a traceback."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            'project = "hello"\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        err = capsys.readouterr().err
+        assert "[project] must be a table" in err
+        assert "Traceback" not in err
+
     def test_pylock_writes_universal_lock(self, tmp_path: Path) -> None:
         """Universal + pylock format runs the real merge + write pipeline."""
         pyproject = _universal_pyproject(tmp_path)
@@ -908,9 +949,6 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
-        # The full hint is asserted above; the validator's own hint
-        # text is covered against the real implementation in
-        # nab-python/tests/test_lockfile.py.
         err = capsys.readouterr().err
         assert f"Error: {hint}\n" in err
 
@@ -1309,7 +1347,6 @@ class TestLockCommandUniversal:
         b = tmp_path / "constraints-3.12.txt"
         assert a.read_text().strip() == "foo==1.0"
         assert b.read_text().strip() == "foo==1.0"
-        # The literal templated path is NOT written.
         assert not (tmp_path / "constraints-{python_version}.txt").exists()
 
     def test_template_with_platform_id(self, tmp_path: Path) -> None:
@@ -1527,9 +1564,6 @@ class TestLockCommandUniversal:
             tuple_results=[good_tr, bad_tr],
         )
         out = tmp_path / "constraints-{python_version}.txt"
-        # The lock fails because the matrix has a failure; check the file
-        # for the successful tuple is still printed via the stdout
-        # multi-block path (not via this test).
         with (
             patch("nab.cli.resolve_universal_pyproject", return_value=mixed),
             pytest.raises(SystemExit, match="1"),

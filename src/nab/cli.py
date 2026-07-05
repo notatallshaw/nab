@@ -59,7 +59,10 @@ from nab_python.lockfile import (
     write_requirements_without_hashes,  # noqa: F401 - re-exported for tests
 )
 from nab_python.provider import InvalidUploadTimeError, UnsupportedVcsError
-from nab_python.requirements_file import InvalidProjectRequirementError
+from nab_python.requirements_file import (
+    InvalidProjectRequirementError,
+    InvalidProjectTableError,
+)
 from nab_python.resolve import (
     resolve_pyproject,
     resolve_universal_pyproject,
@@ -462,6 +465,9 @@ def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyprojec
     except KeyError:
         sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
         sys.exit(1)
+    except InvalidProjectTableError as e:
+        sys.stderr.write(f"Error in {path}: {e}\n")
+        sys.exit(1)
     except InvalidProjectRequirementError as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
@@ -482,7 +488,7 @@ def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyprojec
         sys.exit(1)
 
 
-def _resolve_universal(
+def _resolve_universal(  # noqa: C901 - one except per exit-mapped error
     path: Path,
     *,
     config: NabProjectConfig,
@@ -515,6 +521,9 @@ def _resolve_universal(
         sys.exit(1)
     except KeyError:
         sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
+        sys.exit(1)
+    except InvalidProjectTableError as e:
+        sys.stderr.write(f"Error in {path}: {e}\n")
         sys.exit(1)
     except InvalidProjectRequirementError as e:
         sys.stderr.write(f"Error: {e}\n")

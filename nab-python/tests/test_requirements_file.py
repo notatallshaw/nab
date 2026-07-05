@@ -155,6 +155,20 @@ class TestReadPyprojectDependencies:
         ):
             read_pyproject_dependencies(p)
 
+    def test_string_project_table_raises(self, tmp_path: object) -> None:
+        """A [project] that is a string is rejected, not subscripted."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('project = "hello"\n')
+        with pytest.raises(TypeError, match=r"\[project\] must be a table"):
+            read_pyproject_dependencies(p)
+
+    def test_array_project_table_raises(self, tmp_path: object) -> None:
+        """A [project] that is an array is rejected, not subscripted."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('project = ["a", "b"]\n')
+        with pytest.raises(TypeError, match=r"\[project\] must be a table"):
+            read_pyproject_dependencies(p)
+
 
 class TestReadPyprojectGroups:
     def test_reads_groups_table(self, tmp_path: object) -> None:
@@ -260,6 +274,13 @@ class TestReadPyprojectOptionalDependencies:
         with pytest.raises(TypeError, match="must be a table"):
             read_pyproject_optional_dependencies(p)
 
+    def test_string_project_table_raises(self, tmp_path: object) -> None:
+        """A [project] that is a string is rejected before the .get."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('project = "hello"\n')
+        with pytest.raises(TypeError, match=r"\[project\] must be a table"):
+            read_pyproject_optional_dependencies(p)
+
 
 class TestSelectOptionalDependencies:
     def test_returns_empty_when_nothing_selected(self) -> None:
@@ -316,6 +337,13 @@ class TestReadPyprojectName:
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('[project]\nversion = "1.0"\n')
         assert read_pyproject_name(p) is None
+
+    def test_string_project_table_raises(self, tmp_path: object) -> None:
+        """A [project] that is a string is rejected before the .get."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('project = "hello"\n')
+        with pytest.raises(TypeError, match=r"\[project\] must be a table"):
+            read_pyproject_name(p)
 
 
 class TestExpandSelfExtras:
