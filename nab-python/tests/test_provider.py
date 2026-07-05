@@ -4586,9 +4586,14 @@ class TestExtras:
         assert provider.choose_version("foo[security]", spec.to_range()) is None
 
     def test_backtrack_mode_user_extra_returns_first(self) -> None:
-        """BACKTRACK mode returns first candidate for user-provided extras."""
+        """BACKTRACK mode returns first candidate for user-provided extras.
+
+        A user extra skips the ``Provides-Extra`` gating that transitive
+        extras get in BACKTRACK mode, so 2.0 is returned even though its
+        minimal metadata declares no extras.
+        """
         wheels = [make_wheel("2.0"), make_wheel("1.0")]
-        coordinator = make_coordinator(wheels, package="foo")
+        coordinator = make_coordinator(wheels, package="foo", auto_metadata=True)
         provider = Provider(
             coordinator,
             extras_mode=ExtrasMode.BACKTRACK,
@@ -6929,6 +6934,55 @@ class TestExtrasInvalidMetadata:
         )
         version = provider.choose_version("foo[security]", VersionRange.full())
         assert version == V("1.0")
+
+    def test_user_extra_skips_version_with_no_metadata_source(self) -> None:
+        """A user extra skips a version with no PEP 658 metadata and no sdist.
+
+        resolve_metadata raises a generic MetadataError before
+        get_dependencies records the version, so has_invalid_metadata stays
+        False. The pick must still skip 2.0 and choose 1.0.
+        """
+        wheels = [make_wheel("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(
+            wheels,
+            metadata_by_version={"1.0": EXTRA_METADATA},
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_extras={("foo", "security")},
+        )
+        version = provider.choose_version("foo[security]", VersionRange.full())
+        assert version == V("1.0")
+
+    def test_user_extra_no_metadata_resolves_end_to_end(self) -> None:
+        """A user extra whose top version lacks metadata still resolves.
+
+        The extras proxy sorts before its base, so pkg[feature] is decided
+        first. With 2.0 unreadable, the proxy must fall to 1.0.
+        """
+        metadata = (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nProvides-Extra: feature\n"
+        )
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("1.0")],
+            metadata_by_version={"1.0": metadata},
+            package="pkg",
+        )
+        root_reqs = {
+            "pkg": VersionRange.full(),
+            "pkg[feature]": VersionRange.full(),
+        }
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            root_requirements=root_reqs,
+            root_extras={("pkg", "feature")},
+        )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        pins = resolver.resolve(root_reqs)
+        assert pins["pkg"] == V("1.0")
 
 
 class TestScanBatchNoFirstCandidate:
