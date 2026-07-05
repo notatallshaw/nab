@@ -1,8 +1,9 @@
 """Property tests for :mod:`nab_index` sdist archive handling and file URLs.
 
 ``_extract_sdist_files`` never raises on arbitrary bytes; for well-formed
-sdists it returns PKG-INFO and pyproject.toml contents exactly when they
-sit at depth <= 1.  ``extract_sdist_archive`` must never write outside the
+sdists it returns PKG-INFO and pyproject.toml from the single top-level
+directory that carries a PKG-INFO, and only for files one level below it.
+``extract_sdist_archive`` must never write outside the
 target directory, whatever the member names are (``..``, absolute,
 backslash, ``./.`` prefixes, symlink members); it either raises or
 extracts safely.  ``_parse_file_url`` round-trips ``Path.as_uri()`` for
@@ -46,53 +47,65 @@ def make_targz(members: list[tuple[str, bytes | None]]) -> bytes:
 
 texts = st.text(min_size=0, max_size=30)
 depths = st.integers(min_value=0, max_value=3)
+roots = st.sampled_from(["pkg-1.0", "other-2.0"])
+kinds = st.sampled_from(["PKG-INFO", "pyproject.toml"])
+
+
+def _member_path(root: str, depth: int, kind: str) -> str:
+    """Path for ``kind`` sitting ``depth`` levels below the archive root.
+
+    Depth 0 is the bare archive root (no directory); depth 1 is directly
+    under ``root``; deeper values nest extra ``sub`` levels.
+    """
+    if depth == 0:
+        return kind
+    return "/".join([root] + ["sub"] * (depth - 1) + [kind])
 
 
 @st.composite
-def benign_archives(draw: st.DrawFn) -> tuple[bytes, str | None, str | None]:
-    """Archive plus the expected (pkg_info, pyproject) extraction result."""
-    members: list[tuple[str, bytes | None]] = [("pkg-1.0", None)]
-    expected_pkginfo: str | None = None
-    expected_pyproject: str | None = None
+def sdist_archives(draw: st.DrawFn) -> tuple[bytes, str | None, str | None]:
+    """Archive plus the expected ``(pkg_info, pyproject)`` extraction result.
 
-    pkginfo_depth = draw(depths)
-    if draw(st.booleans()):
+    Models the single-root contract of ``_select_sdist_root``: only files
+    one level below a top-level directory count, the root is the lone
+    directory carrying a PKG-INFO, pyproject counts only inside that same
+    root, and zero or several PKG-INFO roots yield ``(None, None)``.
+    """
+    members: list[tuple[str, bytes | None]] = []
+    seen: set[str] = set()
+    depth1: dict[tuple[str, str], str] = {}
+
+    for _ in range(draw(st.integers(min_value=0, max_value=5))):
+        root = draw(roots)
+        kind = draw(kinds)
+        depth = draw(depths)
         content = draw(texts)
-        path = (
-            "/".join(["pkg-1.0"] * pkginfo_depth + ["PKG-INFO"])
-            if pkginfo_depth
-            else "PKG-INFO"
-        )
+        path = _member_path(root, depth, kind)
+        if path in seen:
+            continue
+        seen.add(path)
         members.append((path, content.encode()))
-        if pkginfo_depth <= 1:
-            expected_pkginfo = content
+        if depth == 1:
+            depth1[(root, kind)] = content
 
-    pyproject_depth = draw(depths)
-    if draw(st.booleans()):
-        content = draw(texts)
-        path = (
-            "/".join(["pkg-1.0"] * pyproject_depth + ["pyproject.toml"])
-            if pyproject_depth
-            else "pyproject.toml"
-        )
-        members.append((path, content.encode()))
-        if pyproject_depth <= 1:
-            expected_pyproject = content
-
-    # Decoys deeper in the tree must be ignored.
-    if draw(st.booleans()):
-        members.append(("pkg-1.0/sub/dir/PKG-INFO", b"DECOY"))
-        members.append(("pkg-1.0/sub/dir/pyproject.toml", b"DECOY"))
+    pkg_roots = [r for (r, k) in depth1 if k == "PKG-INFO"]
+    if len(pkg_roots) == 1:
+        (root,) = pkg_roots
+        expected_pkginfo: str | None = depth1[(root, "PKG-INFO")]
+        expected_pyproject: str | None = depth1.get((root, "pyproject.toml"))
+    else:
+        expected_pkginfo = None
+        expected_pyproject = None
 
     return make_targz(members), expected_pkginfo, expected_pyproject
 
 
-@given(data=benign_archives())
+@given(data=sdist_archives())
 @PROPERTY_SETTINGS
-def test_extract_sdist_files_depth_rule(
+def test_extract_sdist_files_single_root_rule(
     data: tuple[bytes, str | None, str | None],
 ) -> None:
-    """PKG-INFO and pyproject.toml are picked up at depth <= 1 only."""
+    """PKG-INFO and pyproject.toml come from one top-level root, depth 1."""
     archive, expected_pkginfo, expected_pyproject = data
     pkg_info, pyproject = _extract_sdist_files(archive)
     assert pkg_info == expected_pkginfo
