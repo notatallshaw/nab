@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
@@ -393,6 +394,20 @@ def _wrap_for_and(text: str) -> str:
     return f"({text})" if len(_split_top_level(text, "or")) > 1 else text
 
 
+_QUOTED_LITERAL = re.compile(r"'[^']*'|\"[^\"]*\"")
+_EXTRA_VARIABLE = re.compile(r"\bextra\b")
+
+
+def _references_extra_variable(text: str) -> bool:
+    """Whether ``text`` uses the ``extra`` marker variable.
+
+    Quoted values are dropped and a word boundary applied so neither a value
+    that contains ``extra`` (``sys_platform == "extraos"``) nor the distinct
+    ``extras`` set variable is mistaken for it.
+    """
+    return bool(_EXTRA_VARIABLE.search(_QUOTED_LITERAL.sub("", text)))
+
+
 def _reduce_conjunct(conjunct: str, extra: str) -> str | bool:
     """Reduce one ``and`` conjunct under a bound ``extra``.
 
@@ -400,13 +415,14 @@ def _reduce_conjunct(conjunct: str, extra: str) -> str | bool:
     for a contradiction, or a residual string of environment conditions.
     """
     inner = _strip_wrapping_parens(conjunct)
+    references_extra = _references_extra_variable(inner)
     is_group = len(_split_top_level(inner, "or")) > 1 or (
-        "extra" in inner and len(_split_top_level(inner, "and")) > 1
+        references_extra and len(_split_top_level(inner, "and")) > 1
     )
     if is_group:
         reduced = _reduce_marker_string(inner, extra)
         return reduced if isinstance(reduced, bool) else _wrap_for_and(reduced)
-    if "extra" not in inner:
+    if not references_extra:
         return inner
     return _decide_extra_conjunct(inner, extra)
 

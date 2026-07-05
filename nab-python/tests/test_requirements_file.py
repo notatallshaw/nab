@@ -795,6 +795,67 @@ class TestExpandExtraRequirements:
         names = {r.name for r in expand_extra_requirements(opt, "mypkg", ["all"])}
         assert "some-dep" not in names
 
+    def test_self_ref_extras_set_marker_carried_as_residual(self) -> None:
+        """A self-ref gated on the ``extras`` set variable (distinct from the
+        ``extra`` scalar) is carried onto the reached dep as a residual gate,
+        not routed through ``extra`` evaluation, which raises on ``extras``."""
+        opt = {
+            "all": ['mypkg[fast]; "docs" in extras'],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"extras": frozenset({"docs"})}, context="lock_file")
+        assert not dep.marker.evaluate({"extras": frozenset()}, context="lock_file")
+
+    def test_self_ref_env_value_containing_extra_substring_kept(self) -> None:
+        """A self-ref env gate whose value contains the substring ``extra``
+        (``sys_platform == "extraos"``) is kept as a residual, not decided
+        against the walked extra and dropped."""
+        opt = {
+            "all": ['mypkg[fast]; sys_platform == "extraos"'],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"sys_platform": "extraos"})
+        assert not dep.marker.evaluate({"sys_platform": "linux"})
+
+    def test_self_ref_extras_set_marker_group_gate_kept(self) -> None:
+        """A grouped gate mixing the ``extras`` set variable with an environment
+        condition is kept whole; the ``extras`` clause is not decided as an
+        ``extra`` comparison."""
+        opt = {
+            "all": ['mypkg[fast]; ("docs" in extras and python_version < "3.10")'],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate(
+            {"extras": frozenset({"docs"}), "python_version": "3.9"},
+            context="lock_file",
+        )
+        assert not dep.marker.evaluate(
+            {"extras": frozenset(), "python_version": "3.9"},
+            context="lock_file",
+        )
+        assert not dep.marker.evaluate(
+            {"extras": frozenset({"docs"}), "python_version": "3.11"},
+            context="lock_file",
+        )
+
     def test_unknown_extra_raises(self) -> None:
         with pytest.raises(LookupError, match="not declared"):
             expand_extra_requirements({"a": ["depA"]}, "mypkg", ["missing"])
