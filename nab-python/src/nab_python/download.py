@@ -1,11 +1,11 @@
 """Download every distribution referenced by a finished resolve.
 
 Consumes a :class:`~nab_python.lockfile.LockInput` and writes every
-recorded wheel and sdist into a target directory, verifying the
-recorded hash.  Local and VCS pins are skipped: their contents live
-elsewhere on disk and the lockfile carries no ``sha256`` for them.
-An artefact from a local ``file://`` (find-links) index is copied
-from its on-disk path rather than fetched over HTTP.
+recorded wheel, sdist, and direct-URL archive into a target directory,
+verifying the recorded hash.  Local and VCS pins are skipped: their
+contents live elsewhere on disk and the lockfile carries no ``sha256``
+for them.  An artefact from a local ``file://`` (find-links) index is
+copied from its on-disk path rather than fetched over HTTP.
 
 Use as a one-shot from the CLI ``nab download`` command, or
 programmatically after :func:`~nab_python.resolve.resolve_pyproject_to_lock`.
@@ -16,14 +16,16 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import posixpath
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from nab_index.client import AsyncSimpleClient
 from nab_index.transport import HttpError
 
-from .lockfile import IndexPin, LocalPin, LockInput, VcsPin
+from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -100,9 +102,20 @@ def iter_artifacts(lock_input: LockInput) -> Iterable[DownloadEntry]:
 
 
 def _entries_for_pin(canonical: str, pin: PinShape) -> Iterable[DownloadEntry]:
-    # Only index pins have downloadable artefacts; local and VCS pins are skipped.
+    # Index and archive pins carry a downloadable, hash-verified URL; local and
+    # VCS pins live elsewhere on disk and carry no hash, so they are skipped.
     if isinstance(pin, IndexPin):
         yield from _iter_index_pin(canonical, pin)
+    elif isinstance(pin, ArchivePin):
+        algo, digest = pin.primary_digest
+        yield DownloadEntry(
+            package=canonical,
+            version=pin.version,
+            filename=posixpath.basename(urlsplit(pin.url).path),
+            url=pin.url,
+            hash_algo=algo,
+            digest=digest.lower(),
+        )
     elif isinstance(pin, (LocalPin, VcsPin)):
         return
     else:  # pragma: no cover - exhaustive

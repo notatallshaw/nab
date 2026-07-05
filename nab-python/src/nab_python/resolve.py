@@ -223,6 +223,10 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             local_sources=list(config.local_sources) or None,
             vcs_sources=list(config.vcs_sources) or None,
             vcs_cache_dir=cache_dir / "vcs" if cache_dir is not None else None,
+            archive_sources=list(config.archive_sources) or None,
+            archive_cache_dir=(
+                cache_dir / "archive" if cache_dir is not None else None
+            ),
             build_config=config,
             resolution_strategy=effective_strategy,
             direct_packages=direct_packages,
@@ -239,7 +243,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             _augment_resolution_error(exc, provider)
             raise
         pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
-        if config.local_sources or config.vcs_sources:
+        if config.local_sources or config.vcs_sources or config.archive_sources:
             _raise_for_local_vcs_python(
                 provider, pins, Version(marker_environment["python_full_version"])
             )
@@ -739,7 +743,11 @@ def _raise_for_local_vcs_python(
     target could otherwise reach the lock. Mirrors the per-tuple check in
     :mod:`nab_python.universal.resolve`.
     """
-    managed = provider.local_sources.keys() | provider.vcs_sources.keys()
+    managed = (
+        provider.local_sources.keys()
+        | provider.vcs_sources.keys()
+        | provider.archive_sources.keys()
+    )
     for name, version in pins.items():
         normalized = canonicalize_name(name)
         if normalized not in managed:
@@ -947,6 +955,8 @@ def resolve_universal_pyproject(
         local_sources=list(config.local_sources) or None,
         vcs_sources=list(config.vcs_sources) or None,
         vcs_cache_dir=cache_dir / "vcs" if cache_dir is not None else None,
+        archive_sources=list(config.archive_sources) or None,
+        archive_cache_dir=cache_dir / "archive" if cache_dir is not None else None,
         build_config=config,
         indexes=list(config.indexes),
         index_routes=index_routes_from_config(config) or None,

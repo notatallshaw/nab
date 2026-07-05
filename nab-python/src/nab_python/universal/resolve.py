@@ -40,6 +40,7 @@ from ..lockfile import (
     build_lock_input_from_provider,
 )
 from ..provider import (
+    ArchiveSource,
     BuildPolicy,
     DistPolicy,
     LocalSource,
@@ -246,6 +247,8 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
     local_sources: list[LocalSource] | None = None,
     vcs_sources: list[VcsSource] | None = None,
     vcs_cache_dir: Path | None = None,
+    archive_sources: list[ArchiveSource] | None = None,
+    archive_cache_dir: Path | None = None,
     build_config: NabProjectConfig | None = None,
     indexes: list[IndexConfig] | None = None,
     index_routes: list[IndexRoute] | None = None,
@@ -301,6 +304,8 @@ def resolve_universal(  # noqa: PLR0913 - surface area mirrors uv's resolution k
             local_sources=local_sources,
             vcs_sources=vcs_sources,
             vcs_cache_dir=vcs_cache_dir,
+            archive_sources=archive_sources,
+            archive_cache_dir=archive_cache_dir,
             build_config=build_config,
             resolution_strategy=resolution_strategy,
             align_across_tuples=align_across_tuples,
@@ -325,6 +330,8 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
     local_sources: list[LocalSource] | None = None,
     vcs_sources: list[VcsSource] | None = None,
     vcs_cache_dir: Path | None = None,
+    archive_sources: list[ArchiveSource] | None = None,
+    archive_cache_dir: Path | None = None,
     build_config: NabProjectConfig | None = None,
     resolution_strategy: str = "highest",
     align_across_tuples: bool = True,
@@ -381,6 +388,8 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
             local_sources=local_sources,
             vcs_sources=vcs_sources,
             vcs_cache_dir=vcs_cache_dir,
+            archive_sources=archive_sources,
+            archive_cache_dir=archive_cache_dir,
             build_config=build_config,
             resolution_strategy=resolution_strategy,
             direct_packages=frozenset(_direct_package_names(reqs)),
@@ -448,6 +457,8 @@ def _run_pass(  # noqa: PLR0913
     local_sources: list[LocalSource] | None = None,
     vcs_sources: list[VcsSource] | None = None,
     vcs_cache_dir: Path | None = None,
+    archive_sources: list[ArchiveSource] | None = None,
+    archive_cache_dir: Path | None = None,
     build_config: NabProjectConfig | None = None,
     resolution_strategy: str,
     direct_packages: frozenset[str],
@@ -486,6 +497,8 @@ def _run_pass(  # noqa: PLR0913
             local_sources=local_sources,
             vcs_sources=vcs_sources,
             vcs_cache_dir=vcs_cache_dir,
+            archive_sources=archive_sources,
+            archive_cache_dir=archive_cache_dir,
             build_config=build_config,
             resolution_strategy=resolution_strategy,
             preferences=dict(current_prefs),
@@ -645,7 +658,11 @@ def _raise_for_local_vcs_python(
     local-path and VCS sources skip that filter, so a checkout that
     rejects this tuple's Python could otherwise reach the lockfile.
     """
-    managed = provider.local_sources.keys() | provider.vcs_sources.keys()
+    managed = (
+        provider.local_sources.keys()
+        | provider.vcs_sources.keys()
+        | provider.archive_sources.keys()
+    )
     if not managed:
         return
     target = Version(t.environment["python_full_version"])
@@ -691,6 +708,8 @@ def _resolve_one_tuple(  # noqa: PLR0913
     local_sources: list[LocalSource] | None = None,
     vcs_sources: list[VcsSource] | None = None,
     vcs_cache_dir: Path | None = None,
+    archive_sources: list[ArchiveSource] | None = None,
+    archive_cache_dir: Path | None = None,
     build_config: NabProjectConfig | None = None,
     resolution_strategy: str = "highest",
     preferences: dict[str, Version] | None = None,
@@ -710,6 +729,8 @@ def _resolve_one_tuple(  # noqa: PLR0913
         local_sources=local_sources,
         vcs_sources=vcs_sources,
         vcs_cache_dir=vcs_cache_dir,
+        archive_sources=archive_sources,
+        archive_cache_dir=archive_cache_dir,
         build_config=build_config,
         build_policy=build_policy,
         preferences=preferences,

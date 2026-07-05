@@ -94,7 +94,7 @@ def _render_per_tuple_requirements(lock_input: LockInput, *, with_hashes: bool) 
 
 def _render_pins(pins: Mapping[str, PinShape], *, with_hashes: bool) -> list[str]:
     """Render a flat ``{name: pin}`` mapping in alphabetical order."""
-    from ..lockfile import IndexPin, LocalPin, VcsPin
+    from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
 
     lines: list[str] = []
     for canonical in sorted(pins):
@@ -112,6 +112,14 @@ def _render_pins(pins: Mapping[str, PinShape], *, with_hashes: bool) -> list[str
                 lines.append(f"{pin.name} @ {url}")
         elif isinstance(pin, VcsPin):
             lines.append(f"{pin.name} @ {pin.repo_url}")
+        elif isinstance(pin, ArchivePin):
+            # The hash is the archive's identity, so carry it (and any
+            # subdirectory) in the fragment for a reproducible, hash-checkable
+            # install line, mirroring how VcsPin pins its commit in the URL.
+            fragment = "&".join(f"{algo}={digest}" for algo, digest in pin.hashes)
+            if pin.subdirectory is not None:
+                fragment += f"&subdirectory={quote(pin.subdirectory, safe='/')}"
+            lines.append(f"{pin.name} @ {pin.url}#{fragment}")
         else:  # pragma: no cover - exhaustive
             msg = f"unknown pin shape: {pin!r}"
             raise TypeError(msg)

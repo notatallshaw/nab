@@ -21,6 +21,7 @@ import tomli_w
 from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.pylock import (
     Package,
+    PackageArchive,
     PackageDirectory,
     PackageSdist,
     PackageVcs,
@@ -214,7 +215,7 @@ def _pin_to_package(
     lock_dir: Path,
     dependencies: list[dict[str, str]] | None = None,
 ) -> Package:
-    from ..lockfile import IndexPin, LocalPin, VcsPin
+    from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
 
     if isinstance(pin, IndexPin):
         return Package(
@@ -265,6 +266,20 @@ def _pin_to_package(
                 commit_id=pin.commit_id,
                 subdirectory=pin.subdirectory,
                 requested_revision=pin.requested_revision,
+            ),
+        )
+    if isinstance(pin, ArchivePin):
+        # An archive is content-pinned by its hash, so the version is
+        # stable and recorded (unlike the directory/VCS cases above).
+        return Package(
+            name=canonicalize_name(pin.name),
+            version=Version(pin.version),
+            marker=marker,
+            dependencies=dependencies,
+            archive=PackageArchive(
+                url=pin.url,
+                hashes=dict(pin.hashes),
+                subdirectory=pin.subdirectory,
             ),
         )
     msg = f"unknown pin shape: {pin!r}"
@@ -423,7 +438,7 @@ def _group_pins_by_pin(
 
 def _pin_discriminator(pin: PinShape) -> tuple:
     """Return a hashable key that identifies the source + version of ``pin``."""
-    from ..lockfile import IndexPin, LocalPin, VcsPin
+    from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
 
     if isinstance(pin, IndexPin):
         return ("index", pin.version, pin.index)
@@ -447,6 +462,8 @@ def _pin_discriminator(pin: PinShape) -> tuple:
             pin.repo_url,
             pin.subdirectory or "",
         )
+    if isinstance(pin, ArchivePin):
+        return ("archive", pin.version, pin.url, pin.hashes, pin.subdirectory or "")
     msg = f"unknown pin shape: {pin!r}"
     raise TypeError(msg)
 

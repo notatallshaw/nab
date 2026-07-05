@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ACCEPTED_HASH_ALGORITHMS",
     "LOCK_VERSION",
+    "ArchivePin",
     "DisjointnessError",
     "DivergentBaseDependencyError",
     "IndexPin",
@@ -219,7 +220,37 @@ class VcsPin:
     vcs_type: str = "git"
 
 
-PinShape = IndexPin | LocalPin | VcsPin
+@dataclass(frozen=True, slots=True)
+class ArchivePin:
+    """A package resolved from a direct-URL archive.
+
+    ``url`` is the archive URL with the hash fragment stripped, written
+    to PEP 751 ``packages.archive.url``.  ``hashes`` are the verified
+    ``(algorithm, digest)`` pairs; PEP 751 requires at least one, and
+    nab verifies the download against them before the archive is used.
+
+    Unlike a VCS or directory source, an archive is content-pinned by
+    its hash, so the pin carries a real ``version`` and the emitter
+    records it (see :func:`_pin_to_package`).
+    """
+
+    name: str
+    version: str
+    url: str
+    hashes: tuple[tuple[str, str], ...]
+    subdirectory: str | None = None
+
+    @property
+    def primary_digest(self) -> tuple[str, str]:
+        """Return ``(algo, digest)`` for the first acceptable algorithm present."""
+        chosen = _select_primary_digest(self.hashes)
+        if chosen is None:
+            msg = f"{self.name} archive has no acceptable hash"
+            raise ValueError(msg)
+        return chosen
+
+
+PinShape = IndexPin | LocalPin | VcsPin | ArchivePin
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,17 +1,21 @@
-"""Local-source and VCS-source materialisation for the provider.
+"""Local-source, VCS-source, and archive-source materialisation.
 
 A ``LocalSource`` becomes the only candidate for a package: PyPI is
-not consulted.  A ``VcsSource`` clones the repo and reuses the
-``LocalSource`` extraction path.  Both produce a single synthetic
+not consulted.  A ``VcsSource`` clones the repo and an ``ArchiveSource``
+downloads and hash-verifies a ``.tar.gz`` and extracts it; both reuse the
+``LocalSource`` extraction path.  Each produces a single synthetic
 ``SdistFile`` whose version is read from ``[project].version``.
 """
 
 from __future__ import annotations
 
+import shutil
+import tarfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nab_index.client import SdistFile
+from nab_index.archive import ArchiveRequest
+from nab_index.client import SdistFile, extract_sdist_archive
 from nab_index.vcs import VcsCloneError, VcsRequest
 
 from .._vendor.packaging.utils import canonicalize_name
@@ -19,7 +23,7 @@ from .._vendor.packaging.utils import canonicalize_name
 if TYPE_CHECKING:
     from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
-    from ..provider import LocalSource, Provider, VcsSource
+    from ..provider import ArchiveSource, LocalSource, Provider, VcsSource
 
 
 def index_local_sources(
@@ -80,9 +84,10 @@ def extract_source_metadata(
     """Read metadata from a directory; gates the backend path on policy.
 
     ``kind`` is ``"local"`` for :class:`LocalSource` directories
-    (admitted at :attr:`BuildPolicy.BUILD_LOCAL` and above) or
-    ``"vcs"`` for :class:`VcsSource` clones (admitted only at
-    :attr:`BuildPolicy.BUILD_REMOTE`).
+    (admitted at :attr:`BuildPolicy.BUILD_LOCAL` and above); ``"vcs"``
+    for :class:`VcsSource` clones and ``"archive"`` for extracted
+    :class:`ArchiveSource` trees both build only at
+    :attr:`BuildPolicy.BUILD_REMOTE`, like a remote sdist.
     """
     # Imported in-function so tests can patch the module attribute.
     from .. import build_backend
@@ -221,3 +226,132 @@ def materialize_vcs_source(
         kind="vcs",
     )
     return seed_synthetic_listing(provider, normalized, path, metadata)
+
+
+def index_archive_sources(
+    provider: Provider,
+    sources: list[ArchiveSource],
+) -> dict[str, ArchiveSource]:
+    """Validate archive sources and return a canonical-name map.
+
+    Admitted at every :class:`~nab_python.provider.BuildPolicy` level; the
+    policy only governs whether the backend may run on the extracted tree
+    (see :func:`extract_source_metadata`).  There is no ``VcsPolicy``-style
+    gate: the download is hash-verified, and which archive URLs are
+    permitted is decided at config parse.
+    """
+    if not sources:
+        return {}
+    out: dict[str, ArchiveSource] = {}
+    for src in sources:
+        # Guarantee a hash at the provider layer (config parse already checks
+        # it, but a directly-built Provider would otherwise IndexError when
+        # materialisation reads the first digest).
+        if not ArchiveRequest.parse(src.url).hashes:
+            msg = f"archive source {src.name!r} has no hash in its URL: {src.url!r}"
+            raise ValueError(msg)
+        canonical = canonicalize_name(src.name)
+        if (
+            canonical in out
+            or canonical in provider.local_sources
+            or canonical in provider.vcs_sources
+        ):
+            msg = f"duplicate source declared for {src.name!r}"
+            raise ValueError(msg)
+        out[canonical] = src
+    return out
+
+
+def materialize_archive_source(
+    provider: Provider,
+    normalized: str,
+    source: ArchiveSource,
+) -> list[tuple[Version, SdistFile]]:
+    """Download and hash-verify ``source``, extract it, then materialise it.
+
+    The download and hash check reuse the remote-sdist fetch path, so a
+    tampered archive surfaces as a hard :class:`SdistHashMismatchError`
+    (not an :class:`UnsupportedSdistError` the look-ahead would swallow):
+    a declared archive that fails its hash fails the resolve loudly.  The
+    extracted tree then takes the same extraction path as a LocalSource.
+    """
+    from ..provider import UnsupportedSdistError
+
+    if provider.archive_cache_dir is None:
+        msg = (
+            f"archive source {source.name!r} declared but no"
+            f" archive_cache_dir was supplied to Provider"
+        )
+        raise UnsupportedSdistError(msg)
+
+    request = ArchiveRequest.parse(source.url)
+    canonical = canonicalize_name(source.name)
+
+    # The version is unknown until the tree is extracted, so key the download
+    # by the declared digest: unique and known up-front.
+    _, digest = request.hashes[0]
+
+    # Reuse the remote-sdist fetch path; it downloads and hash-verifies, storing
+    # a hard SdistHashMismatchError on a tampered archive.
+    event = provider.coordinator.request_sdist_archive(
+        canonical, digest, request.url, request.hashes
+    )
+    event.wait()
+    error = provider.coordinator.index.get_sdist_archive_error(canonical, digest)
+    if error is not None:
+        raise error
+    data = provider.coordinator.index.get_sdist_archive(canonical, digest)
+    if data is None:
+        msg = f"archive source {source.name!r}: download from {request.url} failed"
+        raise UnsupportedSdistError(msg)
+
+    # Extract the verified bytes and read metadata as if it were a local tree.
+    root = _extract_archive(provider.archive_cache_dir, digest, data)
+    path = root / request.subdirectory if request.subdirectory else root
+    metadata = extract_source_metadata(
+        provider,
+        path,
+        descriptor=f"archive source {source.name!r}",
+        package=canonical,
+        kind="archive",
+    )
+    return seed_synthetic_listing(provider, normalized, path, metadata)
+
+
+def _extract_archive(cache_dir: Path, digest: str, data: bytes) -> Path:
+    """Extract ``data`` under ``cache_dir`` keyed by ``digest``; return the root.
+
+    Idempotent, like :func:`prepare_clone`: a digest already extracted in a
+    prior resolve is reused rather than re-extracted, since the tree is
+    content-addressed by its verified hash.  The completion marker also
+    distinguishes a finished tree from a partial one left by a crashed run,
+    which is discarded and redone.
+    """
+    from ..provider import UnsupportedSdistError
+
+    target = cache_dir / digest
+    marker = target / ".nab-extracted"
+    if marker.is_file():
+        root_name = marker.read_text(encoding="utf-8").strip()
+        # Return a resolved path, matching the fresh-extract branch, so the
+        # synthetic listing's file URI works even for a relative cache dir.
+        base = target / root_name if root_name else target
+        return base.resolve()
+
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
+    try:
+        root = extract_sdist_archive(data, target)
+    except (OSError, ValueError, tarfile.TarError) as exc:
+        shutil.rmtree(target, ignore_errors=True)
+        msg = f"archive could not be extracted: {exc}"
+        raise UnsupportedSdistError(msg) from exc
+
+    # Record the root (its name under target, empty for a flat archive) so the
+    # next resolve reuses the tree without re-reading the bytes.  extract_sdist_archive
+    # returns a resolved path, so compare against the resolved target: a symlinked or
+    # relative cache dir would otherwise misrecord a flat archive's root.
+    root_name = root.name if root != target.resolve() else ""
+    marker.write_text(root_name, encoding="utf-8")
+    return root

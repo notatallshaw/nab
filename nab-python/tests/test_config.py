@@ -1403,6 +1403,93 @@ class TestVcsSources:
             read_pyproject_config(path)
 
 
+class TestArchiveSources:
+    _URL = "https://ex.com/foo-1.0.tar.gz#sha256=" + "e" * 64
+
+    def test_round_trip(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            f'[[tool.nab.archive-sources]]\nname = "foo"\nurl = "{self._URL}"\n',
+        )
+        (source,) = read_pyproject_config(path).archive_sources
+        assert source.name == "foo"
+        assert source.url == self._URL
+
+    def test_must_be_array(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\narchive-sources = "x"\n')
+        with pytest.raises(ConfigError, match="archive-sources must be an array"):
+            read_pyproject_config(path)
+
+    def test_entry_must_be_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\narchive-sources = ["x"]\n')
+        with pytest.raises(ConfigError, match=r"archive-sources\[0\] must be a table"):
+            read_pyproject_config(path)
+
+    def test_missing_keys(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[[tool.nab.archive-sources]]\nname = "x"\n')
+        with pytest.raises(ConfigError, match="missing required key 'url'"):
+            read_pyproject_config(path)
+
+    def test_field_types(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[[tool.nab.archive-sources]]\nname = 1\nurl = 2\n")
+        with pytest.raises(ConfigError, match="name and url must be strings"):
+            read_pyproject_config(path)
+
+    def test_unknown_key_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            f'[[tool.nab.archive-sources]]\nname = "x"\nurl = "{self._URL}"\nbogus = 1\n',
+        )
+        with pytest.raises(ConfigError, match="unknown archive-sources"):
+            read_pyproject_config(path)
+
+    def test_no_hash_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.archive-sources]]\nname = "x"\n'
+            'url = "https://ex.com/foo-1.0.tar.gz"\n',
+        )
+        with pytest.raises(ConfigError, match="has no hash"):
+            read_pyproject_config(path)
+
+    def test_empty_digest_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.archive-sources]]\nname = "x"\n'
+            'url = "https://ex.com/foo-1.0.tar.gz#sha256="\n',
+        )
+        with pytest.raises(ConfigError, match="has no hash"):
+            read_pyproject_config(path)
+
+    def test_non_targz_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.archive-sources]]\nname = "x"\n'
+            'url = "https://ex.com/foo-1.0.whl#sha256=' + "e" * 64 + '"\n',
+        )
+        with pytest.raises(ConfigError, match="not a .tar.gz archive"):
+            read_pyproject_config(path)
+
+    def test_malformed_fragment_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.archive-sources]]\nname = "x"\n'
+            'url = "https://ex.com/foo-1.0.tar.gz#egg=foo"\n',
+        )
+        with pytest.raises(ConfigError, match="unknown archive URL fragment"):
+            read_pyproject_config(path)
+
+    def test_duplicate_collides_with_vcs_source(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.vcs-sources]]\nname = "Foo-Bar"\n'
+            'url = "git+https://github.com/me/b.git@abc"\n'
+            f'[[tool.nab.archive-sources]]\nname = "foo_bar"\nurl = "{self._URL}"\n',
+        )
+        with pytest.raises(ConfigError, match="duplicate canonical name"):
+            read_pyproject_config(path)
+
+
 class TestPackageSugar:
     """``[tool.nab.packages.<name>]`` parses into per-package overrides."""
 

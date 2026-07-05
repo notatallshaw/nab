@@ -50,6 +50,12 @@ def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, Dist
         provider.versions_cache[normalized] = result
         return result
 
+    archive = provider.archive_sources.get(normalized)
+    if archive is not None:
+        result = provider.materialize_archive_source(normalized, archive)
+        provider.versions_cache[normalized] = result
+        return result
+
     files = provider.coordinator.index.get_listing(normalized)
     if files is None:
         event = provider.coordinator.request_listing(normalized)
@@ -578,7 +584,11 @@ def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> N
     """
     for dep in deps:
         _, _, normalized = provider.split_and_normalize(dep)
-        if normalized in provider.local_sources or normalized in provider.vcs_sources:
+        if (
+            normalized in provider.local_sources
+            or normalized in provider.vcs_sources
+            or normalized in provider.archive_sources
+        ):
             continue
         if normalized not in provider.versions_cache:
             # Listing not cached: request it. When it arrives,
