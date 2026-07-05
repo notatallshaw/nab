@@ -580,6 +580,221 @@ class TestExpandExtraRequirements:
         assert any(d.marker.evaluate(win_only) for d in deps)
         assert not any(d.marker.evaluate(neither) for d in deps)
 
+    def test_self_ref_extra_gate_does_not_survive_as_marker(self) -> None:
+        """An ``extra ==`` self-ref gate is satisfied at expansion, so the
+        flattened dep is bare; carrying ``extra == "all"`` forward would
+        drop it on every universal tuple, where ``extra`` is unbound."""
+        opt = {
+            "all": ['mypkg[fast]; extra == "all"'],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is None
+
+    def test_self_ref_combined_gate_keeps_only_env_residual(self) -> None:
+        """A gate of ``extra == "all" and python_version < "3.10"`` drops the
+        tautological extra clause and keeps the environment condition, so the
+        dep survives on 3.9 and not on 3.11."""
+        opt = {
+            "all": ['mypkg[fast]; extra == "all" and python_version < "3.10"'],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"python_version": "3.9"})
+        assert not dep.marker.evaluate({"python_version": "3.11"})
+
+    def test_self_ref_combined_gate_keeps_two_anded_env_residuals(self) -> None:
+        """Two environment conditions joined by ``and`` alongside the extra
+        clause both survive: the residual must keep the ``and`` between them so
+        it stays parseable, not collapse to two adjacent comparisons."""
+        opt = {
+            "all": [
+                'mypkg[fast]; extra == "all" and python_version < "3.10"'
+                ' and sys_platform == "linux"'
+            ],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"python_version": "3.9", "sys_platform": "linux"})
+        assert not dep.marker.evaluate(
+            {"python_version": "3.9", "sys_platform": "win32"}
+        )
+        assert not dep.marker.evaluate(
+            {"python_version": "3.11", "sys_platform": "linux"}
+        )
+
+    def test_self_ref_combined_gate_keeps_or_of_two_anded_env_groups(self) -> None:
+        """An OR of two multi-conjunct AND-groups keeps each group's inner
+        ``and`` and wraps the groups so ``and``/``or`` precedence holds across
+        both surviving OR branches."""
+        opt = {
+            "all": [
+                'mypkg[fast]; (extra == "all" and python_version < "3.10"'
+                ' and sys_platform == "linux") or (extra == "all"'
+                ' and python_version >= "3.12" and sys_platform == "win32")'
+            ],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"python_version": "3.9", "sys_platform": "linux"})
+        assert dep.marker.evaluate({"python_version": "3.12", "sys_platform": "win32"})
+        assert not dep.marker.evaluate(
+            {"python_version": "3.9", "sys_platform": "win32"}
+        )
+        assert not dep.marker.evaluate(
+            {"python_version": "3.12", "sys_platform": "linux"}
+        )
+
+    def test_self_ref_combined_gate_keeps_env_then_nested_disjunction(self) -> None:
+        """A plain env conjunct followed by a surviving nested disjunction keeps
+        the ``and`` between them, so the residual is ``env and (a or b)``."""
+        opt = {
+            "all": [
+                'mypkg[fast]; extra == "all" and python_version < "3.10"'
+                ' and (sys_platform == "linux" or sys_platform == "darwin")'
+            ],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"python_version": "3.9", "sys_platform": "linux"})
+        assert dep.marker.evaluate({"python_version": "3.9", "sys_platform": "darwin"})
+        assert not dep.marker.evaluate(
+            {"python_version": "3.9", "sys_platform": "win32"}
+        )
+        assert not dep.marker.evaluate(
+            {"python_version": "3.11", "sys_platform": "linux"}
+        )
+
+    def test_self_ref_extra_gate_combined_with_dep_marker(self) -> None:
+        """The dep's own marker survives when the self-ref gate is a pure
+        ``extra ==``: the gate drops out and only the dep marker remains."""
+        opt = {
+            "all": ['mypkg[fast]; extra == "all"'],
+            "fast": ["some-dep; sys_platform == 'linux'"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"sys_platform": "linux"})
+        assert not dep.marker.evaluate({"sys_platform": "win32"})
+
+    def test_self_ref_extra_gate_for_other_extra_does_not_activate(self) -> None:
+        """A self-ref gated by ``extra == "<other>"`` than the one being walked
+        never activates, so its extras are not flattened in."""
+        opt = {
+            "all": ['mypkg[fast]; extra == "other"'],
+            "fast": ["some-dep"],
+        }
+        names = {r.name for r in expand_extra_requirements(opt, "mypkg", ["all"])}
+        assert "some-dep" not in names
+
+    def test_self_ref_extra_gate_or_env_is_unconditional(self) -> None:
+        """``extra == "all" or python_version`` is a tautology when ``all`` is
+        the walked extra, so the dep is required on every environment."""
+        opt = {
+            "all": ['mypkg[fast]; extra == "all" or python_version < "3.10"'],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is None
+
+    def test_self_ref_extra_gate_nested_keeps_env_disjunction(self) -> None:
+        """A nested ``extra == "all" and (env_a or env_b)`` keeps the env
+        disjunction after the satisfied extra clause drops."""
+        opt = {
+            "all": [
+                'mypkg[fast]; extra == "all" and '
+                '(python_version < "3.10" or sys_platform == "win32")'
+            ],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"python_version": "3.9", "sys_platform": "linux"})
+        assert dep.marker.evaluate({"python_version": "3.11", "sys_platform": "win32"})
+        assert not dep.marker.evaluate(
+            {"python_version": "3.11", "sys_platform": "linux"}
+        )
+
+    def test_self_ref_extra_gate_chain_drops_each_link(self) -> None:
+        """A chain of ``extra ==`` self-refs flattens to a bare dep: every
+        link's gate is satisfied at expansion."""
+        opt = {
+            "all": ['mypkg[mid]; extra == "all"'],
+            "mid": ['mypkg[leaf]; extra == "mid"'],
+            "leaf": ["dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "dep"
+        )
+        assert dep.marker is None
+
+    def test_self_ref_parenthesised_extra_clause_drops(self) -> None:
+        """A bracketed ``(extra == "all")`` conjunct is a satisfied nested
+        group, so only the environment condition survives."""
+        opt = {
+            "all": ['mypkg[fast]; (extra == "all") and python_version < "3.10"'],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"python_version": "3.9"})
+        assert not dep.marker.evaluate({"python_version": "3.11"})
+
+    def test_self_ref_parenthesised_other_extras_do_not_activate(self) -> None:
+        """A bracketed disjunction of non-matching ``extra`` clauses is a
+        contradiction, so the self-reference does not activate."""
+        opt = {
+            "all": [
+                'mypkg[fast]; (extra == "other" or extra == "x") '
+                'and python_version < "3.10"'
+            ],
+            "fast": ["some-dep"],
+        }
+        names = {r.name for r in expand_extra_requirements(opt, "mypkg", ["all"])}
+        assert "some-dep" not in names
+
     def test_unknown_extra_raises(self) -> None:
         with pytest.raises(LookupError, match="not declared"):
             expand_extra_requirements({"a": ["depA"]}, "mypkg", ["missing"])
