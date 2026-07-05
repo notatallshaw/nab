@@ -23,6 +23,7 @@ from nab_index.multi_index import IndexConfig
 
 from ._conflict_kind import KIND_EXTRA, KIND_GROUP
 from ._toml import tool_nab_section
+from ._vcs_admission import known_vcs_schemes
 from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import InvalidName, canonicalize_name
@@ -1736,6 +1737,13 @@ def _parse_vcs(value: object) -> VcsConfig:
     allowed_schemes = _parse_string_list(
         "vcs.allowed-schemes", value.get("allowed-schemes", [])
     )
+    unknown_schemes = sorted(set(allowed_schemes) - known_vcs_schemes())
+    if unknown_schemes:
+        msg = (
+            f"unknown vcs.allowed-schemes: {unknown_schemes!r}; nab recognises"
+            f" {sorted(known_vcs_schemes())!r}"
+        )
+        raise ConfigError(msg)
     allowed_repos = _parse_string_list(
         "vcs.allowed-repos", value.get("allowed-repos", [])
     )

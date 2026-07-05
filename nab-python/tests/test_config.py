@@ -1210,6 +1210,17 @@ class TestVcs:
         with pytest.raises(ConfigError, match="vcs.require-pin must be a boolean"):
             read_pyproject_config(path)
 
+    def test_unknown_scheme_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.vcs]\npolicy = "allow"\nallowed-schemes = ["git+htps"]\n',
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"unknown vcs.allowed-schemes: \['git\+htps'\]; nab recognises",
+        ):
+            read_pyproject_config(path)
+
 
 class TestLocalSources:
     def test_relative_path_resolved_against_pyproject(self, tmp_path: Path) -> None:
@@ -2944,11 +2955,11 @@ class TestProjectNabTomlConfiguresResolve:
         path = self._write(
             tmp_path,
             '[project]\nname = "x"\nversion = "0"\n',
-            '[vcs]\npolicy = "allow"\nallowed-schemes = ["https"]\n',
+            '[vcs]\npolicy = "allow"\nallowed-schemes = ["git+https"]\n',
         )
         config = read_pyproject_config(path, discover_workspace=False)
         assert config.vcs.policy is VcsPolicy.ALLOW
-        assert config.vcs.allowed_schemes == frozenset({"https"})
+        assert config.vcs.allowed_schemes == frozenset({"git+https"})
         assert "policy=allow" in _inspect(path, "vcs")
 
     def test_table_marker_environment(self, tmp_path: Path) -> None:
