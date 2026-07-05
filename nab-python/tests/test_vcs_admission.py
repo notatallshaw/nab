@@ -21,7 +21,7 @@ _FORTY = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _allow_https() -> VcsConfig:
-    # An empty allowed-repos now denies all, so list a permissive prefix
+    # An empty allowed-repos denies all, so list a permissive prefix
     # for the scheme/pin tests that are not about repo filtering.
     return VcsConfig(
         policy=VcsPolicy.ALLOW,
@@ -223,7 +223,7 @@ class TestAdmitVcsUrlRepo:
         )
         with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
             admit_vcs_url(
-                f"git+https://github.com/evil/airflow.git@{_FORTY}",
+                f"git+https://github.com/other/airflow.git@{_FORTY}",
                 config,
             )
 
@@ -275,9 +275,88 @@ class TestAdmitVcsUrlRepo:
         )
         with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
             admit_vcs_url(
-                f"git+https://user:pass@github.com/evil/fork.git@{_FORTY}",
+                f"git+https://user:pass@github.com/other/fork.git@{_FORTY}",
                 config,
             )
+
+    def test_sibling_repo_extending_full_repo_prefix_refused(self) -> None:
+        """A repo whose path extends an allowed full-repo URL is refused."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/apache/airflow.git",),
+        )
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url(
+                f"git+https://github.com/apache/airflow.git.other@{_FORTY}",
+                config,
+            )
+
+    def test_sibling_org_extending_org_name_refused(self) -> None:
+        """An org whose name extends an allowed org (no slash) is refused."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/apache",),
+        )
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url(
+                f"git+https://github.com/apache-other/airflow.git@{_FORTY}",
+                config,
+            )
+
+    def test_full_repo_prefix_with_ref_passes(self) -> None:
+        """An exact full-repo URL followed by an ``@<sha>`` ref is admitted."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/apache/airflow.git",),
+        )
+        scheme = admit_vcs_url(
+            f"git+https://github.com/apache/airflow.git@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+https"
+
+    def test_full_repo_prefix_with_subdir_under_repo_passes(self) -> None:
+        """A subdirectory path under an allowed full-repo URL stays in-repo."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/apache/airflow",),
+        )
+        scheme = admit_vcs_url(
+            f"git+https://github.com/apache/airflow/sub.git@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+https"
+
+    def test_org_without_trailing_slash_matches_repo_under_org(self) -> None:
+        """An org prefix with no trailing slash admits a repo at a ``/``."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/apache",),
+        )
+        scheme = admit_vcs_url(
+            f"git+https://github.com/apache/airflow.git@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+https"
+
+    def test_full_repo_prefix_with_fragment_passes(self) -> None:
+        """A fragment directly after an allowed full-repo URL stays in-repo."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/apache/airflow.git",),
+            require_pin=False,
+        )
+        scheme = admit_vcs_url(
+            "git+https://github.com/apache/airflow.git#subdirectory=sub",
+            config,
+        )
+        assert scheme == "git+https"
 
 
 class TestAdmitVcsUrlRequirePin:
