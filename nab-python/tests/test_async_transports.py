@@ -475,6 +475,69 @@ class TestExtractSdistFiles:
         _, pyproject = _extract_sdist_files(body)
         assert pyproject is None
 
+    def test_ignores_pkg_info_at_archive_root(self) -> None:
+        """A PKG-INFO at archive root never shadows the real one under the root dir."""
+        body = _build_tarball(
+            [
+                ("PKG-INFO", b"Metadata-Version: 2.1\nName: stray\n"),
+                ("realpkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: realpkg\n"),
+            ]
+        )
+        pkg_info, _ = _extract_sdist_files(body)
+        assert pkg_info is not None
+        assert "Name: realpkg" in pkg_info
+
+    def test_drops_metadata_when_top_level_dir_is_ambiguous(self) -> None:
+        """Two sibling top-level dirs each with a PKG-INFO has no canonical root."""
+        body = _build_tarball(
+            [
+                ("zzz/PKG-INFO", b"Metadata-Version: 2.1\nName: wrong\n"),
+                ("realpkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: realpkg\n"),
+                ("realpkg-1.0/pyproject.toml", b"[project]\nname = 'realpkg'\n"),
+            ]
+        )
+        pkg_info, pyproject = _extract_sdist_files(body)
+        assert pkg_info is None
+        assert pyproject is None
+
+    def test_pyproject_must_share_pkg_info_top_level_dir(self) -> None:
+        """A pyproject.toml from a sibling dir does not pair with the real PKG-INFO."""
+        body = _build_tarball(
+            [
+                ("realpkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: realpkg\n"),
+                ("other-2.0/pyproject.toml", b"[project]\nname = 'other'\n"),
+            ]
+        )
+        pkg_info, pyproject = _extract_sdist_files(body)
+        assert pkg_info is not None
+        assert "Name: realpkg" in pkg_info
+        assert pyproject is None
+
+    def test_first_member_wins_within_one_root(self) -> None:
+        """A duplicate basename in the same root keeps the first occurrence."""
+        body = _build_tarball(
+            [
+                ("realpkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: first\n"),
+                ("realpkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: second\n"),
+            ]
+        )
+        pkg_info, _ = _extract_sdist_files(body)
+        assert pkg_info is not None
+        assert "Name: first" in pkg_info
+
+    def test_pairs_pkg_info_and_pyproject_from_same_root(self) -> None:
+        """PKG-INFO and pyproject.toml under one root pair normally."""
+        body = _build_tarball(
+            [
+                ("realpkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: realpkg\n"),
+                ("realpkg-1.0/pyproject.toml", b"[project]\nname = 'realpkg'\n"),
+            ]
+        )
+        pkg_info, pyproject = _extract_sdist_files(body)
+        assert pkg_info is not None
+        assert "Name: realpkg" in pkg_info
+        assert pyproject == "[project]\nname = 'realpkg'\n"
+
     def test_returns_none_on_tar_error(self) -> None:
         assert _extract_sdist_files(b"not-a-tarball") == (None, None)
 
