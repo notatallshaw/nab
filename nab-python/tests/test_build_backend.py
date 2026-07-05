@@ -165,9 +165,8 @@ class TestExtractStaticMetadata:
         )
         assert extract_static_metadata(tmp_path) is None
 
-    def test_unparseable_dep_skipped_with_warning(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_unparseable_dep_raises(self, tmp_path: Path) -> None:
+        """A dep string that is not valid PEP 508 is invalid metadata; raise."""
         _write_pyproject(
             tmp_path,
             """
@@ -177,15 +176,11 @@ class TestExtractStaticMetadata:
             dependencies = ["requests>=2.0", "this is not a valid req"]
             """,
         )
-        meta = extract_static_metadata(tmp_path)
-        assert meta is not None
-        names = [r.name for r in meta.requires_dist]
-        assert "requests" in names
-        assert any("unparseable" in rec.message for rec in caplog.records)
+        with pytest.raises(InvalidProjectRequirementError, match="invalid requirement"):
+            extract_static_metadata(tmp_path)
 
-    def test_unparseable_optional_dep_skipped(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_unparseable_optional_dep_raises(self, tmp_path: Path) -> None:
+        """An optional dep that is not valid PEP 508 is invalid metadata; raise."""
         _write_pyproject(
             tmp_path,
             """
@@ -197,11 +192,8 @@ class TestExtractStaticMetadata:
             ok = ["requests"]
             """,
         )
-        meta = extract_static_metadata(tmp_path)
-        assert meta is not None
-        names = [r.name for r in meta.requires_dist]
-        assert "requests" in names
-        assert any("unparseable" in rec.message for rec in caplog.records)
+        with pytest.raises(InvalidProjectRequirementError, match="invalid requirement"):
+            extract_static_metadata(tmp_path)
 
     def test_dependencies_with_non_string_entries_raises(self, tmp_path: Path) -> None:
         """A non-string entry is a structural error that raises."""
@@ -488,9 +480,13 @@ class TestStaticExtractAugmentParity:
         assert bar.url == "https://h/a;b/p.tar.gz"
         assert str(bar.marker) == 'extra == "net"'
 
-    def test_malformed_static_dep_dropped_like_augment_index_refuses(
-        self, tmp_path: Path
-    ) -> None:
+    def test_malformed_static_dep_raises_like_metadata(self, tmp_path: Path) -> None:
+        """Every dep reader rejects a malformed dependency, not drops it.
+
+        The static build-backend reader, the pyproject augment path, and the
+        METADATA parser each raise on an invalid PEP 508 string, so the version
+        is rejected rather than resolved with the dependency dropped.
+        """
         deps = ["requests>=2", "this is not a valid !! req"]
         _write_pyproject(
             tmp_path,
@@ -504,11 +500,10 @@ class TestStaticExtractAugmentParity:
             ]
             """,
         )
-        meta = extract_static_metadata(tmp_path)
-        assert meta is not None
-        bb_names = [r.name for r in meta.requires_dist]
-        aug_names = [r.name for r in parse_pyproject_deps(deps)]
-        assert bb_names == aug_names == ["requests"]
+        with pytest.raises(InvalidProjectRequirementError, match="invalid requirement"):
+            extract_static_metadata(tmp_path)
+        with pytest.raises(InvalidProjectRequirementError, match="invalid requirement"):
+            parse_pyproject_deps(deps)
 
         md = (
             "Metadata-Version: 2.3\nName: foo\nVersion: 1.0\n"
