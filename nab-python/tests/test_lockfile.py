@@ -16,6 +16,7 @@ else:
 
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_python._lockfile.builder import _common_requires_python
 from nab_python._lockfile.disjointness import (
     _restrict_to_referenced,
     validate_marker_disjointness,
@@ -2255,6 +2256,37 @@ class TestBuildLockInputFromProvider:
         assert isinstance(pin, IndexPin)
         assert pin.requires_python == ""
         assert "requires-python" not in write_lock(lock_input)
+
+    def test_malformed_requires_python_dropped_and_emittable(self) -> None:
+        """A malformed listing Requires-Python is dropped, so the lock still emits.
+
+        ``excluded_by_python`` admits a dist whose Requires-Python is an invalid
+        PEP 440 specifier, so the pin must not carry it into ``write_lock``,
+        whose ``SpecifierSet`` parse would otherwise crash.
+        """
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file(requires_python=">=3.6.*"))]}
+        )
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.requires_python is None
+        text = write_lock(lock_input)
+        assert ">=3.6.*" not in text
+
+    def test_common_requires_python_malformed_with_valid_stays_unconstrained(
+        self,
+    ) -> None:
+        """A malformed value leaves the pin unconstrained beside a valid one.
+
+        ``excluded_by_python`` admits the malformed artefact on any Python, so
+        emitting the sibling's floor would over-constrain the pin below it.
+        """
+        files = [
+            _wheel_file(requires_python=">=3.6.*"),
+            _wheel_file(requires_python=">=3.7"),
+        ]
+        assert _common_requires_python(files) is None
 
     def test_skip_fetch_override_pins_sdist_without_metadata(self) -> None:
         """A skip-fetch package still produces a complete sdist lock pin.
