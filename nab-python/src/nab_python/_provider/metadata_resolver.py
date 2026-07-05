@@ -8,6 +8,7 @@ each ``Requires-Dist`` entry into base deps vs per-extra deps.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
@@ -25,6 +26,7 @@ from ..metadata import (
     metadata_deps_are_static,
     parse_metadata,
 )
+from ..requirements_file import InvalidProjectRequirementError, _require_string_list
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -32,6 +34,9 @@ if TYPE_CHECKING:
     from .._vendor.packaging.markers import Marker
     from .._vendor.packaging.version import Version
     from ..provider import DistFile, Provider
+
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_metadata(
@@ -48,7 +53,7 @@ def resolve_metadata(
     only sdist values are subject to the :pep:`643` Dynamic
     guarantees and may need a ``pyproject.toml`` fallback.
     """
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from ..provider import MetadataError
 
     _, _, normalized = provider.split_and_normalize(package)
@@ -213,8 +218,15 @@ def augment_from_pyproject(
     """Replace dynamic deps with statically-declared pyproject deps.
 
     Returns the augmented metadata, or ``None`` if pyproject.toml
-    is missing, malformed, or itself marks deps dynamic via
+    is missing, unparseable, or itself marks deps dynamic via
     ``[project].dynamic``.
+
+    Raises :class:`InvalidProjectRequirementError` when ``dependencies``
+    or ``optional-dependencies`` is present but structurally wrong (not
+    an array of strings / not a table), rather than silently dropping the
+    declared dependencies.  ``get_dependencies`` catches it and rejects the
+    candidate version.  A well-typed entry that is not valid PEP 508 is
+    dropped with a warning.
     """
     # Late import keeps the resolver-time path off ``WheelMetadata``
     # construction unless the dynamic-deps pyproject fallback fires.
@@ -226,15 +238,16 @@ def augment_from_pyproject(
     if project is None:
         return None
 
-    deps_field = project.get("dependencies")
-    if deps_field is not None and not isinstance(deps_field, list):
-        return None
-    optional = project.get("optional-dependencies")
-    if optional is not None and not isinstance(optional, dict):
-        return None
+    deps = _require_string_list(
+        project.get("dependencies", []), "[project].dependencies"
+    )
+    optional = project.get("optional-dependencies", {})
+    if not isinstance(optional, dict):
+        msg = "[project].optional-dependencies must be a table"
+        raise InvalidProjectRequirementError(msg)
 
-    requires_dist = list(parse_pyproject_deps(deps_field or []))
-    provides_extra = extend_with_extras(requires_dist, optional or {})
+    requires_dist = list(parse_pyproject_deps(deps))
+    provides_extra = extend_with_extras(requires_dist, optional)
 
     provider.stats.sdist_pyproject_fallbacks += 1
     return _WheelMetadata(
@@ -249,38 +262,52 @@ def augment_from_pyproject(
 
 
 def extend_with_extras(requires_dist: list[Requirement], optional: dict) -> list[str]:
-    """Append extras-gated requirements and return Provides-Extra names."""
-    # Late import: ``pypi`` imports this module at module load.
-    from ..provider import _add_extra_marker
+    """Append extras-gated requirements and return Provides-Extra names.
 
+    A per-extra value that is not an array of strings raises
+    :class:`InvalidProjectRequirementError`; a well-typed entry that is
+    not valid PEP 508 is dropped with a warning.
+    """
     provides_extra: list[str] = []
     for extra_name, extra_deps in optional.items():
-        if not isinstance(extra_deps, list):
-            continue
+        source = f"[project].optional-dependencies extra {extra_name!r}"
         provides_extra.append(extra_name)
-        for dep_str in extra_deps:
-            if not isinstance(dep_str, str):
-                continue
-            try:
-                requires_dist.append(
-                    Requirement(_add_extra_marker(dep_str, extra_name))
-                )
-            except InvalidRequirement:
-                continue
+        for dep_str in _require_string_list(extra_deps, source):
+            req = _parse_dep(dep_str, extra_name)
+            if req is not None:
+                requires_dist.append(req)
     return provides_extra
 
 
 def parse_pyproject_deps(deps: list) -> list[Requirement]:
-    """Parse a ``project.dependencies`` list, dropping malformed entries."""
+    """Parse a ``project.dependencies`` list, dropping unparseable entries.
+
+    Entries are already validated as strings by :func:`_require_string_list`;
+    a string that is not valid PEP 508 is dropped with a warning.
+    """
     out: list[Requirement] = []
     for dep_str in deps:
-        if not isinstance(dep_str, str):
-            continue
-        try:
-            out.append(Requirement(dep_str))
-        except InvalidRequirement:
-            continue
+        req = _parse_dep(dep_str, None)
+        if req is not None:
+            out.append(req)
     return out
+
+
+def _parse_dep(dep_str: str, extra_name: str | None) -> Requirement | None:
+    """Parse one PEP 508 string, warning and dropping if it is malformed."""
+    # Late import: ``pypi`` imports this module at module load.
+    from ..provider import _add_extra_marker
+
+    try:
+        text = (
+            _add_extra_marker(dep_str, extra_name)
+            if extra_name is not None
+            else dep_str
+        )
+        return Requirement(text)
+    except InvalidRequirement:
+        logger.warning("skipping unparseable requirement: %s", dep_str)
+        return None
 
 
 def find_sdist(

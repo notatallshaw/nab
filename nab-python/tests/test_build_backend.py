@@ -25,6 +25,7 @@ from nab_python.build_backend import (
     extract_static_metadata,
 )
 from nab_python.metadata import parse_metadata
+from nab_python.requirements_file import InvalidProjectRequirementError
 
 
 def _write_pyproject(tmp: Path, body: str) -> Path:
@@ -73,7 +74,6 @@ class TestExtractStaticMetadata:
         assert "pytest" in names
         assert "sphinx" in names
         assert sorted(meta.provides_extra) == ["dev", "docs"]
-        # The pytest entry has an extra marker
         pytest_req = next(r for r in meta.requires_dist if r.name == "pytest")
         assert pytest_req.marker is not None
         assert 'extra == "dev"' in str(pytest_req.marker)
@@ -203,8 +203,8 @@ class TestExtractStaticMetadata:
         assert "requests" in names
         assert any("unparseable" in rec.message for rec in caplog.records)
 
-    def test_dependencies_with_non_string_entries_skipped(self, tmp_path: Path) -> None:
-        """A TOML array with mixed types skips the non-string entries."""
+    def test_dependencies_with_non_string_entries_raises(self, tmp_path: Path) -> None:
+        """A non-string entry is a structural error that raises."""
         _write_pyproject(
             tmp_path,
             """
@@ -214,21 +214,41 @@ class TestExtractStaticMetadata:
             dependencies = ["valid", 42]
             """,
         )
-        meta = extract_static_metadata(tmp_path)
-        assert meta is not None
-        names = [r.name for r in meta.requires_dist]
-        assert names == ["valid"]
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[project\]\.dependencies must be an array of strings",
+        ):
+            extract_static_metadata(tmp_path)
 
-    def test_dependencies_not_list_ignored(self, tmp_path: Path) -> None:
+    def test_dependencies_not_list_raises(self, tmp_path: Path) -> None:
         _write_pyproject(
             tmp_path,
             '[project]\nname = "foo"\nversion = "1.0"\ndependencies = "not-a-list"\n',
         )
-        meta = extract_static_metadata(tmp_path)
-        assert meta is not None
-        assert meta.requires_dist == []
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[project\]\.dependencies must be an array of strings",
+        ):
+            extract_static_metadata(tmp_path)
 
-    def test_optional_deps_not_dict_ignored(self, tmp_path: Path) -> None:
+    def test_dependencies_table_raises(self, tmp_path: Path) -> None:
+        _write_pyproject(
+            tmp_path,
+            """
+            [project]
+            name = "foo"
+            version = "1.0"
+            [project.dependencies]
+            a = "b"
+            """,
+        )
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[project\]\.dependencies must be an array of strings",
+        ):
+            extract_static_metadata(tmp_path)
+
+    def test_optional_deps_not_dict_raises(self, tmp_path: Path) -> None:
         _write_pyproject(
             tmp_path,
             """
@@ -238,11 +258,13 @@ class TestExtractStaticMetadata:
             optional-dependencies = "not-a-dict"
             """,
         )
-        meta = extract_static_metadata(tmp_path)
-        assert meta is not None
-        assert meta.provides_extra == []
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[project\]\.optional-dependencies must be a table",
+        ):
+            extract_static_metadata(tmp_path)
 
-    def test_optional_deps_value_not_list_ignored(self, tmp_path: Path) -> None:
+    def test_optional_deps_value_not_list_raises(self, tmp_path: Path) -> None:
         _write_pyproject(
             tmp_path,
             """
@@ -254,10 +276,11 @@ class TestExtractStaticMetadata:
             ok = ["pytest"]
             """,
         )
-        meta = extract_static_metadata(tmp_path)
-        assert meta is not None
-        names = [r.name for r in meta.requires_dist]
-        assert "pytest" in names
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"extra 'dev' must be an array of strings",
+        ):
+            extract_static_metadata(tmp_path)
 
     def test_requires_python_not_str_ignored(self, tmp_path: Path) -> None:
         _write_pyproject(
