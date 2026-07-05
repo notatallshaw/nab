@@ -269,10 +269,9 @@ def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
                 "wheel metadata not compared"
             ),
         )
-    # PEP 643 fast path: if the resolver's baseline metadata declares
-    # all dependency-affecting fields static (no Dynamic), every wheel
-    # built from the sdist MUST have the same Requires-Dist /
-    # Provides-Extra.  Skip the per-wheel fetch.
+    # Static-deps fast path: skip the per-wheel fetch when the
+    # baseline metadata is authoritative for every wheel of this
+    # version.
     if _baseline_has_static_deps(coordinator, normalized, version):
         return PinValidation(
             tuple_label=tup.label,
@@ -390,7 +389,12 @@ def _baseline_has_static_deps(
 
     1. PEP 643: the METADATA is Version 2.2+ and ``Dynamic`` does not
        include ``Requires-Dist`` or ``Provides-Extra``. Every wheel
-       built from this sdist must share those fields.
+       built from this sdist must share those fields. PEP 643 anchors
+       the guarantee on sdist metadata; ``Dynamic`` never appears in a
+       wheel's METADATA, which is final for that wheel alone. Wheel and
+       sdist fetches share the ``(name, version)`` cache slot, so this
+       route applies only when :meth:`InMemoryIndex.metadata_from_sdist`
+       reports the slot holds the sdist's PKG-INFO.
     2. PEP 621 pyproject.toml: the sdist contains a ``pyproject.toml``
        with a ``[project]`` table that defines ``dependencies`` (and
        ``optional-dependencies`` if used) statically (not listed in
@@ -401,7 +405,8 @@ def _baseline_has_static_deps(
 
     Returns False when neither route qualifies.
     """
-    if _metadata_is_pep643_static(coordinator, normalized, version):
+    from_sdist = coordinator.index.metadata_from_sdist(normalized, str(version))
+    if from_sdist and _metadata_is_pep643_static(coordinator, normalized, version):
         return True
     return _pyproject_is_pep621_static(coordinator, normalized, version)
 
