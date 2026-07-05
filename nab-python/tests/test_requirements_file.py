@@ -795,6 +795,41 @@ class TestExpandExtraRequirements:
         names = {r.name for r in expand_extra_requirements(opt, "mypkg", ["all"])}
         assert "some-dep" not in names
 
+    def test_self_ref_extras_membership_gate_survives_as_residual(self) -> None:
+        """A PEP 685 ``"x" in extras`` gate is set membership over an
+        environment variable, not an ``extra ==`` comparison. The substring
+        ``extra`` inside ``extras`` must not route it to the extra decider; it
+        survives as a residual marker."""
+        opt = {
+            "all": ['mypkg[fast]; "widget" in extras'],
+            "fast": ["cowsay>=5"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "cowsay"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"extras": frozenset({"widget"})})
+        assert not dep.marker.evaluate({"extras": frozenset()})
+
+    def test_self_ref_extras_membership_combined_with_extra_gate(self) -> None:
+        """When an ``extra ==`` clause and an ``"x" in extras`` clause are
+        joined by ``and``, the extra clause is decided at expansion and the
+        membership survives as the residual."""
+        opt = {
+            "all": ['mypkg[fast]; extra == "all" and "widget" in extras'],
+            "fast": ["cowsay>=5"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "cowsay"
+        )
+        assert dep.marker is not None
+        assert dep.marker.evaluate({"extras": frozenset({"widget"})})
+        assert not dep.marker.evaluate({"extras": frozenset()})
+
     def test_unknown_extra_raises(self) -> None:
         with pytest.raises(LookupError, match="not declared"):
             expand_extra_requirements({"a": ["depA"]}, "mypkg", ["missing"])

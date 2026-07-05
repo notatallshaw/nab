@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
@@ -319,6 +320,20 @@ def _and_markers(marker: Marker | None, gates: frozenset[str]) -> Marker:
     return Marker(" and ".join(f"({p})" for p in parts))
 
 
+_QUOTED_LITERAL = re.compile(r"'[^']*'|\"[^\"]*\"")
+_EXTRA_VARIABLE = re.compile(r"\bextra\b")
+
+
+def _references_extra(text: str) -> bool:
+    """Whether ``text`` references the singular ``extra`` marker variable.
+
+    Quoted literals are stripped first so ``"extras"`` or a PEP 685 membership
+    such as ``"widget" in extras`` is not misread as ``extra``: both contain the
+    substring ``extra`` that a plain containment test would match.
+    """
+    return bool(_EXTRA_VARIABLE.search(_QUOTED_LITERAL.sub("", text)))
+
+
 def _decide_extra_conjunct(conjunct: str, extra: str) -> bool:
     """Evaluate a single ``extra`` comparison under the bound value.
 
@@ -401,12 +416,12 @@ def _reduce_conjunct(conjunct: str, extra: str) -> str | bool:
     """
     inner = _strip_wrapping_parens(conjunct)
     is_group = len(_split_top_level(inner, "or")) > 1 or (
-        "extra" in inner and len(_split_top_level(inner, "and")) > 1
+        _references_extra(inner) and len(_split_top_level(inner, "and")) > 1
     )
     if is_group:
         reduced = _reduce_marker_string(inner, extra)
         return reduced if isinstance(reduced, bool) else _wrap_for_and(reduced)
-    if "extra" not in inner:
+    if not _references_extra(inner):
         return inner
     return _decide_extra_conjunct(inner, extra)
 
