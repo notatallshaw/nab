@@ -1070,6 +1070,26 @@ class TestGetDependencies:
         with pytest.raises(MetadataError, match="Invalid metadata"):
             provider.get_dependencies("foo", V("1.0"))
 
+    def test_malformed_requires_python_drops_candidate(self) -> None:
+        """A version whose METADATA Requires-Python is invalid is refused.
+
+        ``!=3.3*`` is not a valid PEP 440 specifier, so the metadata is
+        invalid and ``get_dependencies`` raises ``MetadataError`` instead of
+        pinning the version with the Python constraint silently ignored.
+        """
+        bad_metadata = (
+            "Metadata-Version: 2.1\n"
+            "Name: foo\n"
+            "Version: 1.0\n"
+            "Requires-Python: >=2.7, !=3.3*\n"
+        )
+        coordinator = make_coordinator(
+            [make_wheel("1.0")], metadata_text=bad_metadata, package="foo"
+        )
+        provider = Provider(coordinator, python_version="3.12.0")
+        with pytest.raises(MetadataError, match="invalid Requires-Python"):
+            provider.get_dependencies("foo", V("1.0"))
+
     def test_invalid_metadata_is_negatively_cached(self) -> None:
         """Repeating a parse-failed lookup short-circuits to the cached error.
 
