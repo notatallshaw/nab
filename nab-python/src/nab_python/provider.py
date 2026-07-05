@@ -63,6 +63,7 @@ __all__ = [
     "VcsConfig",
     "VcsPolicy",
     "VcsSource",
+    "apply_python_axis_overlay",
     "join_extra",
     "python_axis_environment",
     "split_extra",
@@ -107,6 +108,25 @@ def python_axis_environment(python_version: str) -> dict[str, str]:
         suffix = str(parsed)[len(parsed.base_version) :]
         full = f"{epoch}{padded}{suffix}"
     return {"python_version": minor, "python_full_version": full}
+
+
+def apply_python_axis_overlay(
+    environment: dict[str, str], overlay: Mapping[str, str]
+) -> None:
+    """Merge ``overlay`` into ``environment``, keeping the python axis in sync.
+
+    When the overlay moves only ``python_version`` (or only
+    ``python_full_version``) the untouched key would keep the host patch
+    level and the two would describe different interpreters. Re-derive both
+    from whichever axis key the overlay supplies (``python_full_version``
+    wins when both are present), so an overlay of ``python_version`` ``3.8``
+    yields ``python_full_version`` ``3.8.0`` like the universal matrix. Keys
+    the overlay sets explicitly are kept verbatim.
+    """
+    source = overlay.get("python_full_version") or overlay.get("python_version")
+    if source is not None:
+        environment.update(python_axis_environment(source))
+    environment.update(overlay)
 
 
 def _normalize_extra(extra: str) -> str:
@@ -442,13 +462,17 @@ class Provider:
         if marker_environment:
             # The Requires-Python candidate filter reads self.python_version, so
             # an impersonated target Python in the overlay must move it too,
-            # keeping the filter aligned with marker evaluation. Mirrors
-            # UniversalProvider.
-            self.python_version = (
-                marker_environment.get("python_full_version")
-                or marker_environment.get("python_version")
-                or python_version
-            )
+            # keeping the filter aligned with marker evaluation. It parses a
+            # full Version, so pad to the full release like the environment does
+            # (overlay python_version "3.8" gives "3.8.0", not the host patch
+            # level). Mirrors UniversalProvider.
+            overlay_python = marker_environment.get(
+                "python_full_version"
+            ) or marker_environment.get("python_version")
+            if overlay_python is not None:
+                self.python_version = python_axis_environment(overlay_python)[
+                    "python_full_version"
+                ]
         self.uploaded_prior_to = uploaded_prior_to
 
         # Passed through to the build env when extract_source_metadata
@@ -496,8 +520,7 @@ class Provider:
         if python_version is not None:
             self.environment.update(python_axis_environment(python_version))
         if marker_environment:
-            for key, value in marker_environment.items():
-                self.environment[key] = value
+            apply_python_axis_overlay(self.environment, marker_environment)
 
         self.root_requirements = root_requirements or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}

@@ -763,6 +763,47 @@ class TestResolvePyproject:
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
+    def test_python_version_overlay_keeps_full_version_gated_dep(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A python_full_version-gated dep follows the impersonated Python.
+
+        Overlaying only ``python_version = "3.8"`` on a 3.12 host must keep
+        ``legacy; python_full_version < '3.10'``: the user is impersonating
+        Python 3.8, so the marker holds. The host patch level must not leak
+        in through ``python_full_version``.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[project]\n"
+            "dependencies = ["
+            '"foo", "legacy; python_full_version < \'3.10\'"]\n'
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'python_version = "3.8"\n',
+        )
+        mock_coord_cls.return_value.__enter__ = lambda s: s
+        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_resolver_cls.return_value.resolve.return_value = {
+            "foo": V("1.0"),
+            "legacy": V("1.0"),
+        }
+
+        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
+        assert "foo" in requirements
+        assert "legacy" in requirements
+
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
     def test_root_marker_true_keeps_requirement(
         self,
         mock_coord_cls: MagicMock,
@@ -2519,6 +2560,46 @@ class TestBuildMarkerEnvironment:
     def test_full_python_version_preserved(self) -> None:
         env = _build_marker_environment(python_version="3.11.5", overrides={})
         assert env["python_full_version"] == "3.11.5"
+
+    def test_overlay_python_version_alone_syncs_full_version(self) -> None:
+        """An overlay python_version drives python_full_version too.
+
+        Setting only ``python_version`` moves ``python_full_version`` off
+        the host patch level to ``{minor}.0``, so a
+        ``python_full_version``-gated marker no longer reads the host
+        interpreter.
+        """
+        env = _build_marker_environment(
+            python_version="3.12.3", overrides={"python_version": "3.8"}
+        )
+        assert env["python_version"] == "3.8"
+        assert env["python_full_version"] == "3.8.0"
+
+    def test_overlay_full_version_alone_syncs_minor(self) -> None:
+        """An overlay python_full_version drives python_version too."""
+        env = _build_marker_environment(
+            python_version="3.12.3", overrides={"python_full_version": "3.8.7"}
+        )
+        assert env["python_version"] == "3.8"
+        assert env["python_full_version"] == "3.8.7"
+
+    def test_overlay_both_axis_values_respected(self) -> None:
+        """When the overlay sets both axis keys, both win verbatim."""
+        env = _build_marker_environment(
+            python_version="3.12.3",
+            overrides={"python_version": "3.8", "python_full_version": "3.8.7"},
+        )
+        assert env["python_version"] == "3.8"
+        assert env["python_full_version"] == "3.8.7"
+
+    def test_overlay_without_python_keeps_host_axis(self) -> None:
+        """A non-python overlay leaves both python-axis values alone."""
+        env = _build_marker_environment(
+            python_version="3.12.3", overrides={"sys_platform": "win32"}
+        )
+        assert env["python_version"] == "3.12"
+        assert env["python_full_version"] == "3.12.3"
+        assert env["sys_platform"] == "win32"
 
 
 class TestCheckGroupDisjointnessAcrossTuples:
