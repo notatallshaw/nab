@@ -223,7 +223,7 @@ class TestAdmitVcsUrlRepo:
         )
         with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
             admit_vcs_url(
-                f"git+https://github.com/evil/airflow.git@{_FORTY}",
+                f"git+https://github.com/other/airflow.git@{_FORTY}",
                 config,
             )
 
@@ -275,7 +275,7 @@ class TestAdmitVcsUrlRepo:
         )
         with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
             admit_vcs_url(
-                f"git+https://user:pass@github.com/evil/fork.git@{_FORTY}",
+                f"git+https://user:pass@github.com/other/fork.git@{_FORTY}",
                 config,
             )
 
@@ -288,7 +288,7 @@ class TestAdmitVcsUrlRepo:
         )
         with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
             admit_vcs_url(
-                f"git+https://github.com/apache/airflow.git.evil@{_FORTY}",
+                f"git+https://github.com/apache/airflow.git.other@{_FORTY}",
                 config,
             )
 
@@ -301,7 +301,7 @@ class TestAdmitVcsUrlRepo:
         )
         with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
             admit_vcs_url(
-                f"git+https://github.com/apache-evil/airflow.git@{_FORTY}",
+                f"git+https://github.com/apache-other/airflow.git@{_FORTY}",
                 config,
             )
 

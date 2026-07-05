@@ -138,7 +138,7 @@ def _prefix_under_repo(inner: str, prefix: str) -> bool:
 
     A candidate is under an allowed prefix only when the prefix ends at a
     path-segment boundary, so a sibling repo whose URL merely begins with
-    the prefix (``.../airflow.git`` vs ``.../airflow.git.evil``) is refused.
+    the prefix (``.../airflow.git`` vs ``.../airflow.git.other``) is refused.
     """
     if not inner.startswith(prefix):
         return False

@@ -123,7 +123,7 @@ def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
 
     A bare :meth:`str.startswith` would admit a sibling repo whose URL
     merely begins with an allowed entry (``.../airflow.git`` would admit
-    ``.../airflow.git.evil``).  The match here requires the prefix to end
+    ``.../airflow.git.other``).  The match here requires the prefix to end
     at a path-segment boundary: the candidate must equal the prefix, the
     prefix must already end in a separator, or the next candidate
     character must be ``/`` (path), ``@`` (ref) or ``#`` (fragment).
