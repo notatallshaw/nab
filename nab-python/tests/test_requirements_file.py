@@ -52,6 +52,22 @@ class TestAddExtraMarker:
         assert req.url == "https://h/a;b/p.tar.gz"
         assert str(req.marker) == 'python_version >= "3.10" and extra == "bar"'
 
+    def test_nested_double_paren_or_group_precedence_kept(self) -> None:
+        """Folding must keep the parens around a nested double-paren or group.
+
+        The dep needs ``python_version < "3.10"``, so on 3.12 it stays inactive
+        only if the or group cannot leak past the and gate.
+        """
+        out = _add_extra_marker(
+            'pkg ; python_version < "3.10" '
+            'and ((sys_platform == "linux" or sys_platform == "darwin"))',
+            "cli",
+        )
+        marker = Requirement(out).marker
+        assert marker is not None
+        env = {"python_version": "3.12", "sys_platform": "darwin", "extra": "cli"}
+        assert marker.evaluate(env) is False
+
 
 class TestReadPyprojectDependencies:
     def test_reads_dependencies(self, tmp_path: object) -> None:

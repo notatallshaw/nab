@@ -30,6 +30,18 @@ model on `pypa/packaging:main` reaches through nab's conflict-resolution
 union path. Refresh both files from that branch until the change lands
 upstream, then snapshot plain `main` again.
 
+## Local divergences
+
+`markers.py` carries one fix on top of the pinned snapshot. When
+`_format_marker` unwraps a redundant `[[...]]` wrapper list it passes
+`first=first` instead of dropping the nesting context, so a nested
+double-parenthesized group keeps the one pair of parentheses its and/or
+precedence needs. The snapshot drops those parentheses unconditionally, so
+`str(Marker(...))` does not round-trip when such a group is nested. Re-apply
+or verify this on any re-vendor that predates the equivalent upstream fix.
+Regression tests: `tests/test_marker_evaluation.py::TestSerializationRoundTrip`,
+`tests/test_requirements_file.py::TestAddExtraMarker`.
+
 ## License
 
 `packaging` is dual-licensed under the Apache License 2.0 and the
