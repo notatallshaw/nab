@@ -19,6 +19,7 @@ from nab_index.client import (
     SdistFile,
     SdistHashMismatchError,
     WheelFile,
+    _parse_files,
 )
 from nab_index.local_index import LocalIndexClient
 from nab_python._provider import build_remote, metadata_resolver
@@ -314,6 +315,28 @@ class TestFetchVersions:
         coordinator = make_coordinator(
             [make_wheel("1.0", requires_python=">>>invalid")], package="foo"
         )
+        provider = Provider(coordinator, python_version="3.12.0")
+        assert len(provider.fetch_versions("foo")) == 1
+
+    def test_non_string_requires_python_admitted_without_crash(self) -> None:
+        """A numeric requires-python from a non-conformant index is dropped.
+
+        PEP 691 mandates a string; a JSON number would reach SpecifierSet and
+        raise an uncaught TypeError that aborts the resolve. The parser coerces
+        it to None, so the wheel is admitted with no Python constraint.
+        """
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": "https://example.com/foo/foo-1.0-py3-none-any.whl",
+                    "requires-python": 3.7,
+                }
+            ]
+        }
+        files = _parse_files(data, "https://example.com/", "foo")
+        assert files[0].requires_python is None
+        coordinator = make_coordinator(files, package="foo")
         provider = Provider(coordinator, python_version="3.12.0")
         assert len(provider.fetch_versions("foo")) == 1
 
