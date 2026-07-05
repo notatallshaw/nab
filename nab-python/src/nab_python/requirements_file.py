@@ -198,9 +198,11 @@ def expand_self_extras(
 
     A self-reference carrying a PEP 508 marker (``{name}[fast];
     python_version < "3.10"``) activates its extra only when the marker
-    evaluates true under ``environment``.  ``environment`` ``None`` skips
-    that check and walks every self-reference, which is what the
-    universal path wants (it defers marker evaluation to each tuple).
+    evaluates true under ``environment``.  ``extra`` is bound to the
+    extra being walked so a marker like ``extra == "all"`` resolves
+    against it.  ``environment`` ``None`` skips that check and walks
+    every self-reference, which is what the universal path wants (it
+    defers marker evaluation to each tuple).
 
     The original ``selected`` order is preserved at the front of the
     result; reachable extras are appended in BFS order without
@@ -233,7 +235,9 @@ def expand_self_extras(
             if (
                 environment is not None
                 and req.marker is not None
-                and not dependency_marker_holds(req.marker, environment)
+                and not dependency_marker_holds(
+                    req.marker, {**environment, "extra": extra}
+                )
             ):
                 continue
             worklist.extend(
