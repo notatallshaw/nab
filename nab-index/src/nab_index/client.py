@@ -259,7 +259,7 @@ class AsyncSimpleClient:
 
 
 def _parse_files(
-    data: dict, index_url: str, package: str
+    data: object, index_url: str, package: str
 ) -> list[WheelFile | SdistFile]:
     """Parse distribution files from a Simple API JSON response.
 
@@ -273,89 +273,124 @@ def _parse_files(
     show up in the resolved lockfile as ``cffi==2``.
 
     PEP 592 ``yanked`` files are dropped unconditionally.
+
+    A single malformed *entry* (non-dict, or missing string ``filename``
+    / ``url``) is skipped so the usable entries in the same listing are
+    kept.  A malformed *body* (not a JSON object, or a ``files`` value
+    that is not a list) is a broken response, not an empty one, so it
+    raises :class:`TypeError` rather than returning no files: an empty
+    result means "package absent" to the multi-index router, which would
+    otherwise fall through to a lower-priority index and risk pinning a
+    different version.
     """
     expected = canonicalize_name(package)
     # PEP 691: relative URLs resolve against the package page, not the index root.
     base_url = f"{index_url}{package}/"
     files: list[WheelFile | SdistFile] = []
-    for file_info in data.get("files", []):
+    if not isinstance(data, dict):
+        msg = (
+            f"{index_url} served a malformed Simple-API response for "
+            f"{package!r}: body is {type(data).__name__}, expected a JSON object"
+        )
+        raise TypeError(msg)
+    raw_files = data.get("files")
+    if not isinstance(raw_files, list):
+        msg = (
+            f"{index_url} served a malformed Simple-API response for "
+            f"{package!r}: 'files' is {type(raw_files).__name__}, expected a list"
+        )
+        raise TypeError(msg)
+    for file_info in raw_files:
+        if not isinstance(file_info, dict):
+            continue
         # PEP 592: ``true`` or a non-empty reason string means yanked.
         if file_info.get("yanked"):
             continue
         filename = file_info.get("filename")
         raw_url = file_info.get("url")
-        # PEP 691 requires both keys. Drop a malformed entry that lacks
-        # either and keep the rest of the listing, rather than letting one
-        # bad file abort the whole resolve.
         if not isinstance(filename, str) or not isinstance(raw_url, str):
             continue
-
-        # PyPI and most indexes emit absolute file URLs; urljoin then re-parses
-        # both sides only to return the URL unchanged. Skip it for the common
-        # absolute case; relative URLs still resolve against the page below.
-        if raw_url.startswith(("https://", "http://")):
-            file_url = raw_url
-        else:
-            file_url = urljoin(base_url, raw_url)
-
-        hashes = _parse_hashes(file_info.get("hashes"))
-        size = _parse_size(file_info.get("size"))
-        # ``requires-python`` has only a few dozen distinct values across
-        # all of PyPI (``>=3.7``, ``>=3.8`` etc.) but appears once per
-        # wheel.  Interning collapses the duplicates into one shared
-        # string per distinct specifier.
-        requires_python_raw = file_info.get("requires-python")
-        # PEP 691 mandates a string; a non-conformant index serving a number
-        # would otherwise crash SpecifierSet downstream. Treat it as absent.
-        requires_python = (
-            sys.intern(requires_python_raw)
-            if isinstance(requires_python_raw, str)
-            else None
-        )
-        # A non-conformant index may serve a non-string ``upload-time``
-        # (a JSON number or bool); drop it so the downstream datetime
-        # parse never crashes.
-        upload_time_raw = file_info.get("upload-time")
-        upload_time = upload_time_raw if isinstance(upload_time_raw, str) else None
-
-        wheel_parsed = _parse_wheel_filename(filename)
-        if wheel_parsed is not None:
-            parsed_name, version = wheel_parsed
-            if parsed_name != expected:
-                continue
-            files.append(
-                WheelFile(
-                    filename=filename,
-                    url=file_url,
-                    version=version,
-                    requires_python=requires_python,
-                    has_metadata=_has_metadata(file_info),
-                    upload_time=upload_time,
-                    hashes=hashes,
-                    size=size,
-                    metadata_hash=_metadata_hash(file_info),
-                )
-            )
-            continue
-
-        sdist_parsed = _parse_sdist_filename(filename)
-        if sdist_parsed is not None:
-            parsed_name, version = sdist_parsed
-            if parsed_name != expected:
-                continue
-            files.append(
-                SdistFile(
-                    filename=filename,
-                    url=file_url,
-                    version=version,
-                    requires_python=requires_python,
-                    upload_time=upload_time,
-                    hashes=hashes,
-                    size=size,
-                )
-            )
+        parsed = _parse_file_entry(file_info, filename, raw_url, base_url, expected)
+        if parsed is not None:
+            files.append(parsed)
 
     return files
+
+
+def _parse_file_entry(
+    file_info: dict,
+    filename: str,
+    raw_url: str,
+    base_url: str,
+    expected: NormalizedName,
+) -> WheelFile | SdistFile | None:
+    """Build a file record from a validated PEP 691 entry, or None to drop it.
+
+    ``filename`` and ``raw_url`` are the entry's already-validated string
+    fields.  ``expected`` is the queried package's canonical name; files
+    whose parsed name differs, or whose filename packaging does not
+    recognise, are dropped (see :func:`_parse_files`).
+    """
+    # PyPI and most indexes emit absolute file URLs; urljoin then re-parses
+    # both sides only to return the URL unchanged. Skip it for the common
+    # absolute case; relative URLs still resolve against the page below.
+    if raw_url.startswith(("https://", "http://")):
+        file_url = raw_url
+    else:
+        file_url = urljoin(base_url, raw_url)
+
+    hashes = _parse_hashes(file_info.get("hashes"))
+    size = _parse_size(file_info.get("size"))
+    # ``requires-python`` has only a few dozen distinct values across
+    # all of PyPI (``>=3.7``, ``>=3.8`` etc.) but appears once per
+    # wheel.  Interning collapses the duplicates into one shared
+    # string per distinct specifier.
+    requires_python_raw = file_info.get("requires-python")
+    # PEP 691 mandates a string; a non-conformant index serving a number
+    # would otherwise crash SpecifierSet downstream. Treat it as absent.
+    requires_python = (
+        sys.intern(requires_python_raw)
+        if isinstance(requires_python_raw, str)
+        else None
+    )
+    # A non-conformant index may serve a non-string ``upload-time``
+    # (a JSON number or bool); drop it so the downstream datetime
+    # parse never crashes.
+    upload_time_raw = file_info.get("upload-time")
+    upload_time = upload_time_raw if isinstance(upload_time_raw, str) else None
+
+    wheel_parsed = _parse_wheel_filename(filename)
+    if wheel_parsed is not None:
+        parsed_name, version = wheel_parsed
+        if parsed_name != expected:
+            return None
+        return WheelFile(
+            filename=filename,
+            url=file_url,
+            version=version,
+            requires_python=requires_python,
+            has_metadata=_has_metadata(file_info),
+            upload_time=upload_time,
+            hashes=hashes,
+            size=size,
+            metadata_hash=_metadata_hash(file_info),
+        )
+
+    sdist_parsed = _parse_sdist_filename(filename)
+    if sdist_parsed is None:
+        return None
+    parsed_name, version = sdist_parsed
+    if parsed_name != expected:
+        return None
+    return SdistFile(
+        filename=filename,
+        url=file_url,
+        version=version,
+        requires_python=requires_python,
+        upload_time=upload_time,
+        hashes=hashes,
+        size=size,
+    )
 
 
 def _parse_hashes(value: object) -> tuple[tuple[str, str], ...]:
