@@ -9,23 +9,26 @@ dynamic path needs a :class:`NabProjectConfig`.
 
 from __future__ import annotations
 
-import logging
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from ._build.errors import (
     BuildBackendError as BuildBackendError,  # noqa: PLC0414  (public re-export)
 )
-from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
 from .metadata import WheelMetadata, load_static_project
-from .requirements_file import InvalidProjectRequirementError, _require_string_list
+from .requirements_file import (
+    InvalidProjectRequirementError,
+    _parse_project_requirement,
+    _require_string_list,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ._vendor.packaging.requirements import Requirement
     from .config import NabProjectConfig
 
 __all__ = [
@@ -33,9 +36,6 @@ __all__ = [
     "extract_metadata",
     "extract_static_metadata",
 ]
-
-
-logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=4096)
@@ -149,23 +149,10 @@ def _extend_with_dep_strings(
     source: str,
     extra: str | None = None,
 ) -> None:
-    for dep in _require_string_list(raw, source):
-        req = _parse_dep(dep, extra)
-        if req is not None:
-            out.append(req)
-
-
-def _parse_dep(dep: str, extra: str | None) -> Requirement | None:
-    """Parse one PEP 508 string, warning and dropping if it is malformed."""
-    # Late import: avoids a circular import with ``provider``.
-    from .provider import _add_extra_marker  # noqa: PLC0415
-
-    try:
-        text = _add_extra_marker(dep, extra) if extra is not None else dep
-        return Requirement(text)
-    except (ValueError, TypeError):
-        logger.warning("skipping unparseable requirement: %s", dep)
-        return None
+    out.extend(
+        _parse_project_requirement(dep, source, extra=extra)
+        for dep in _require_string_list(raw, source)
+    )
 
 
 def _require_optional_dependencies(project: dict) -> dict:

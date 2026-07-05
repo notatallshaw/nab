@@ -50,6 +50,41 @@ def _parse_requirements(strings: Sequence[str], source: str) -> list[Requirement
         raise InvalidProjectRequirementError(msg) from exc
 
 
+def _add_extra_marker(dep_str: str, extra_name: str) -> str:
+    """Append ``extra == "name"`` to a :pep:`508` dep string.
+
+    Parses with :class:`Requirement` rather than splitting on the first
+    ``;`` so a semicolon inside a direct-reference URL is not mistaken
+    for the marker separator; an existing marker is combined with ``and``.
+    """
+    req = Requirement(dep_str)
+    extra_marker = f'extra == "{extra_name}"'
+    if req.marker is not None:
+        marker = f"({req.marker}) and {extra_marker}"
+    else:
+        marker = extra_marker
+    req.marker = None
+    return f"{req} ; {marker}"
+
+
+def _parse_project_requirement(
+    dep_str: str, source: str, *, extra: str | None = None
+) -> Requirement:
+    """Parse one PEP 508 dependency string, raising if it is malformed.
+
+    An ``extra`` name is folded in as an ``extra == "name"`` marker. A string
+    that is not valid PEP 508 raises :class:`InvalidProjectRequirementError`,
+    so a candidate declaring one malformed dependency is rejected whole rather
+    than resolved with the dependency silently dropped.
+    """
+    try:
+        text = _add_extra_marker(dep_str, extra) if extra is not None else dep_str
+        return Requirement(text)
+    except InvalidRequirement as exc:
+        msg = f"invalid requirement in {source}: {exc}"
+        raise InvalidProjectRequirementError(msg) from exc
+
+
 def _require_string_list(value: object, source: str) -> list[str]:
     """Validate that a PEP 621 dependency value is an array of strings.
 

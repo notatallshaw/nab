@@ -30,7 +30,6 @@ from ._vcs_admission import (
 )
 from ._vendor.packaging.markers import default_environment
 from ._vendor.packaging.ranges import VersionRange
-from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
 from .metadata import WheelMetadata
@@ -43,6 +42,7 @@ if TYPE_CHECKING:
 
     from nab_resolver.types import Incompatibility, RangeProtocol
 
+    from ._vendor.packaging.requirements import Requirement
     from .config import IndexOverride, NabProjectConfig, PackageOverride
     from .fetch import FetchCoordinator
 
@@ -301,23 +301,6 @@ class UnsupportedSdistError(MetadataError):
 # and would silently reject the version; a naive upload-time is a hard error.
 class InvalidUploadTimeError(Exception):
     """Raised when an index upload-time is not the timezone-aware UTC PEP 700 needs."""
-
-
-def _add_extra_marker(dep_str: str, extra_name: str) -> str:
-    """Append ``extra == "name"`` to a :pep:`508` dep string.
-
-    Parses with :class:`Requirement` rather than splitting on the first
-    ``;`` so a semicolon inside a direct-reference URL is not mistaken
-    for the marker separator; an existing marker is combined with ``and``.
-    """
-    req = Requirement(dep_str)
-    extra_marker = f'extra == "{extra_name}"'
-    if req.marker is not None:
-        marker = f"({req.marker}) and {extra_marker}"
-    else:
-        marker = extra_marker
-    req.marker = None
-    return f"{req} ; {marker}"
 
 
 @dataclass

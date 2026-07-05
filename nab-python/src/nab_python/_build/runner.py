@@ -33,12 +33,12 @@ import build
 import pyproject_hooks
 import tomli
 
-from .._vendor.packaging.requirements import Requirement
+from nab_resolver.resolver import ResolutionError
+
+from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import InvalidVersion, Version
-from nab_resolver.resolver import ResolutionError
-
 from ..metadata import WheelMetadata
 from .env import BuildEnvError, NabBuildEnv
 from .errors import BuildBackendError
@@ -238,15 +238,19 @@ def _parse_metadata(metadata_path: Path) -> WheelMetadata:
             SpecifierSet(requires_python_raw) if requires_python_raw else None
         )
     except InvalidSpecifier as exc:
-        msg = f"backend METADATA has invalid Requires-Python {requires_python_raw!r}: {exc}"
+        msg = (
+            f"backend METADATA has invalid Requires-Python "
+            f"{requires_python_raw!r}: {exc}"
+        )
         raise BuildBackendError(msg) from exc
 
-    requires_dist: list[Requirement] = []
-    for raw in msg_obj.get_all("Requires-Dist") or ():
-        try:
-            requires_dist.append(Requirement(raw))
-        except (ValueError, TypeError):  # noqa: PERF203
-            logger.warning("skipping unparseable Requires-Dist: %s", raw)
+    try:
+        requires_dist: list[Requirement] = [
+            Requirement(raw) for raw in msg_obj.get_all("Requires-Dist") or ()
+        ]
+    except InvalidRequirement as exc:
+        msg = f"backend METADATA has an invalid Requires-Dist: {exc}"
+        raise BuildBackendError(msg) from exc
 
     provides_extra: list[str] = sorted(
         {

@@ -8,7 +8,6 @@ each ``Requires-Dist`` entry into base deps vs per-extra deps.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
@@ -17,7 +16,6 @@ from nab_index.local_index import read_wheel_metadata
 from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .._vcs_admission import admit_vcs_url
 from .._vendor.packaging.ranges import VersionRange
-from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 from ..metadata import (
@@ -26,17 +24,20 @@ from ..metadata import (
     metadata_deps_are_static,
     parse_metadata,
 )
-from ..requirements_file import InvalidProjectRequirementError, _require_string_list
+from ..requirements_file import (
+    InvalidProjectRequirementError,
+    _parse_project_requirement,
+    _parse_requirements,
+    _require_string_list,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from .._vendor.packaging.markers import Marker
+    from .._vendor.packaging.requirements import Requirement
     from .._vendor.packaging.version import Version
     from ..provider import DistFile, Provider
-
-
-logger = logging.getLogger(__name__)
 
 
 def resolve_metadata(
@@ -264,50 +265,30 @@ def augment_from_pyproject(
 def extend_with_extras(requires_dist: list[Requirement], optional: dict) -> list[str]:
     """Append extras-gated requirements and return Provides-Extra names.
 
-    A per-extra value that is not an array of strings raises
-    :class:`InvalidProjectRequirementError`; a well-typed entry that is
-    not valid PEP 508 is dropped with a warning.
+    A per-extra value that is not an array of strings, or a per-extra entry
+    that is not valid PEP 508, raises :class:`InvalidProjectRequirementError`,
+    so the version is rejected rather than resolved with the entry dropped.
     """
     provides_extra: list[str] = []
     for extra_name, extra_deps in optional.items():
         source = f"[project].optional-dependencies extra {extra_name!r}"
         provides_extra.append(extra_name)
-        for dep_str in _require_string_list(extra_deps, source):
-            req = _parse_dep(dep_str, extra_name)
-            if req is not None:
-                requires_dist.append(req)
+        requires_dist.extend(
+            _parse_project_requirement(dep_str, source, extra=extra_name)
+            for dep_str in _require_string_list(extra_deps, source)
+        )
     return provides_extra
 
 
 def parse_pyproject_deps(deps: list) -> list[Requirement]:
-    """Parse a ``project.dependencies`` list, dropping unparseable entries.
+    """Parse a ``project.dependencies`` list, raising on a malformed entry.
 
     Entries are already validated as strings by :func:`_require_string_list`;
-    a string that is not valid PEP 508 is dropped with a warning.
+    a string that is not valid PEP 508 raises
+    :class:`InvalidProjectRequirementError`, so the whole version is rejected
+    rather than resolved with the dependency dropped.
     """
-    out: list[Requirement] = []
-    for dep_str in deps:
-        req = _parse_dep(dep_str, None)
-        if req is not None:
-            out.append(req)
-    return out
-
-
-def _parse_dep(dep_str: str, extra_name: str | None) -> Requirement | None:
-    """Parse one PEP 508 string, warning and dropping if it is malformed."""
-    # Late import: ``pypi`` imports this module at module load.
-    from ..provider import _add_extra_marker
-
-    try:
-        text = (
-            _add_extra_marker(dep_str, extra_name)
-            if extra_name is not None
-            else dep_str
-        )
-        return Requirement(text)
-    except InvalidRequirement:
-        logger.warning("skipping unparseable requirement: %s", dep_str)
-        return None
+    return _parse_requirements(deps, "[project].dependencies")
 
 
 def find_sdist(
