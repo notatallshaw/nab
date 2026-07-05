@@ -1,0 +1,316 @@
+"""Differential property tests: nab wheel selection vs upstream ``packaging.tags``.
+
+:mod:`nab_python.universal.wheel_selection` implements `PEP 425`_
+wheel-tag preference on top of the vendored ``packaging.tags``.
+Each test here re-derives one layer with the upstream ``packaging``
+distribution as the oracle and requires agreement:
+
+1. The tag order built by ``_tags_in_order`` must match the same
+   order rebuilt with upstream ``cpython_tags``/``compatible_tags``.
+2. The vendored ``mac_platforms`` must match upstream for identical
+   inputs.
+3. ``parse_tag`` must expand compressed tag sets identically.
+4. ``wheel_tag_set`` must agree with upstream
+   ``parse_wheel_filename`` on every spec-valid filename.
+5. ``select_wheel_for_tuple`` must pick a wheel whose best upstream
+   rank is the minimum over all candidate wheels.
+
+.. _PEP 425: https://peps.python.org/pep-0425/
+"""
+
+from __future__ import annotations
+
+import pytest
+from hypothesis import assume, given
+from hypothesis import strategies as st
+from packaging import tags as upstream_tags
+from packaging import utils as upstream_utils
+from packaging.utils import InvalidWheelFilename
+from packaging.version import InvalidVersion
+
+from nab_index.client import WheelFile
+from nab_python._vendor.packaging import tags as vendored_tags
+from nab_python.universal.wheel_selection import (
+    PlatformSpec,
+    _platform_tags_for_spec,
+    _tags_in_order,
+    select_wheel_for_tuple,
+    wheel_tag_set,
+)
+
+from .strategies import PROPERTY_SETTINGS
+
+pytestmark = pytest.mark.property
+
+PY_VERSIONS = ("3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14")
+PLATFORM_IDS = (
+    "linux_x86_64",
+    "linux_aarch64",
+    "macos_arm64",
+    "macos_x86_64",
+    "windows_amd64",
+)
+
+specs = st.builds(
+    PlatformSpec,
+    platform_id=st.sampled_from(PLATFORM_IDS),
+    manylinux_floor=st.tuples(st.just(2), st.integers(0, 35)),
+    musllinux_floor=st.tuples(st.just(1), st.integers(0, 4)),
+    macos_min=st.none() | st.tuples(st.integers(10, 14), st.integers(0, 15)),
+)
+
+
+def _triples(tag_iter: object) -> list[tuple[str, str, str]]:
+    """Flatten an iterable of ``Tag`` into (interpreter, abi, platform) triples."""
+    return [(t.interpreter, t.abi, t.platform) for t in tag_iter]  # type: ignore[attr-defined]
+
+
+def _oracle_tags_in_order(
+    python_version: str, platforms: list[str], implementation: str
+) -> list[tuple[str, str, str]]:
+    """Rebuild ``wheel_selection._tags_in_order`` with upstream ``packaging.tags``."""
+    major, minor = (int(p) for p in python_version.split("."))
+    py = (major, minor)
+    out: list[tuple[str, str, str]] = []
+    if implementation == "pypy":
+        interpreter = f"pp{major}{minor}"
+        abi = f"pypy{major}{minor}_pp73"
+        out += [(interpreter, abi, p) for p in platforms]
+        out += [(interpreter, "none", p) for p in platforms]
+    else:
+        interpreter = f"cp{major}{minor}"
+        out += _triples(
+            upstream_tags.cpython_tags(
+                python_version=py, abis=[interpreter], platforms=platforms
+            )
+        )
+    out += _triples(
+        upstream_tags.compatible_tags(
+            python_version=py, interpreter=interpreter, platforms=platforms
+        )
+    )
+    return out
+
+
+class TestTagOrderMatchesUpstream:
+    """``_tags_in_order`` defines the install-preference ranking every
+    wheel choice hangs off.  Rebuilding the same order with upstream
+    ``cpython_tags``/``compatible_tags`` over the same platform list
+    must agree exactly: a divergence reorders wheel preference.
+    """
+
+    @given(
+        python_version=st.sampled_from(PY_VERSIONS),
+        spec=specs,
+        implementation=st.sampled_from(["cpython", "pypy"]),
+    )
+    @PROPERTY_SETTINGS
+    def test_tag_order_matches_upstream(
+        self, python_version: str, spec: PlatformSpec, implementation: str
+    ) -> None:
+        """Vendored tag order equals the upstream-rebuilt order."""
+        platforms = _platform_tags_for_spec(spec)
+        # An empty platform list falls back to host tags, which drifted upstream after 26.2.
+        assume(platforms)
+        got = _triples(_tags_in_order(python_version, spec, implementation))
+        expected = _oracle_tags_in_order(python_version, platforms, implementation)
+        assert got == expected
+
+
+class TestMacPlatformsMatchesUpstream:
+    """The vendored ``mac_platforms`` drives the macOS platform-tag
+    axis of every matrix tuple; it must yield the same tags in the
+    same order as upstream ``packaging.tags.mac_platforms``.
+    """
+
+    @given(
+        version=st.tuples(st.integers(10, 15), st.integers(0, 16)),
+        arch=st.sampled_from(["x86_64", "arm64"]),
+    )
+    @PROPERTY_SETTINGS
+    def test_mac_platforms_matches_upstream(
+        self, version: tuple[int, int], arch: str
+    ) -> None:
+        """Vendored ``mac_platforms`` equals upstream for identical inputs."""
+        got = list(vendored_tags.mac_platforms(version=version, arch=arch))
+        expected = list(upstream_tags.mac_platforms(version=version, arch=arch))
+        # packaging 26.2 predates the fat32 -> fat3 tag fix the vendored copy carries.
+        expected = [p.replace("fat32", "fat3") for p in expected]
+        assert got == expected
+
+
+tag_part = st.text(alphabet="abcdefgh0123456789_", min_size=1, max_size=8)
+compressed = st.lists(tag_part, min_size=1, max_size=3, unique=True).map(".".join)
+
+
+class TestParseTagMatchesUpstream:
+    """`PEP 425`_ compressed tag sets expand to a cross product;
+    vendored ``parse_tag`` must produce the same set as upstream for
+    any dotted tag string.
+
+    .. _PEP 425: https://peps.python.org/pep-0425/#compressed-tag-sets
+    """
+
+    @given(py=compressed, abi=compressed, plat=compressed)
+    @PROPERTY_SETTINGS
+    def test_parse_tag_matches_upstream(self, py: str, abi: str, plat: str) -> None:
+        """Vendored and upstream ``parse_tag`` expand identically."""
+        s = f"{py}-{abi}-{plat}"
+        got = {(t.interpreter, t.abi, t.platform) for t in vendored_tags.parse_tag(s)}
+        expected = {
+            (t.interpreter, t.abi, t.platform) for t in upstream_tags.parse_tag(s)
+        }
+        assert got == expected
+
+
+name_strategy = st.text(alphabet="abcxyz0123456789_", min_size=1, max_size=8)
+version_strategy = st.sampled_from(
+    ["1.0", "2.1.3", "0.9a1", "1!2.0", "3.0.post1", "1.0+local"]
+)
+build_strategy = st.none() | st.integers(0, 99).map(str)
+
+
+@st.composite
+def wheel_filenames(draw: st.DrawFn) -> str:
+    """Generate a wheel filename with optional build tag and random tag parts."""
+    name = draw(name_strategy)
+    version = draw(version_strategy)
+    build = draw(build_strategy)
+    parts = [name, version]
+    if build is not None:
+        parts.append(build)
+    parts += [draw(compressed), draw(compressed), draw(compressed)]
+    return "-".join(parts) + ".whl"
+
+
+class TestWheelTagSetMatchesUpstream:
+    """``wheel_tag_set`` parses the tag suffix out of wheel filenames;
+    on every filename upstream ``parse_wheel_filename`` accepts, the
+    extracted tag set must agree.  Filenames upstream rejects are out
+    of scope: nab is intentionally permissive there.
+    """
+
+    @given(filename=wheel_filenames())
+    @PROPERTY_SETTINGS
+    def test_wheel_tag_set_matches_upstream_parse_wheel_filename(
+        self, filename: str
+    ) -> None:
+        """``wheel_tag_set`` agrees with upstream on spec-valid filenames."""
+        try:
+            _, _, _, expected = upstream_utils.parse_wheel_filename(filename)
+        except (InvalidWheelFilename, InvalidVersion):
+            return  # upstream rejects; nab is intentionally permissive
+        got = wheel_tag_set(filename)
+        assert got is not None
+        assert {(t.interpreter, t.abi, t.platform) for t in got} == {
+            (t.interpreter, t.abi, t.platform) for t in expected
+        }
+
+
+def _wheel(filename: str) -> WheelFile:
+    """Build a minimal ``WheelFile`` for a literal filename."""
+    return WheelFile(
+        filename=filename,
+        url=f"https://example.com/{filename}",
+        version="1.0",
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+    )
+
+
+KNOWN_PLATS = (
+    "any",
+    "manylinux_2_17_x86_64",
+    "manylinux2014_x86_64",
+    "manylinux_2_28_x86_64",
+    "manylinux1_x86_64",
+    "musllinux_1_2_x86_64",
+    "linux_x86_64",
+    "macosx_11_0_arm64",
+    "macosx_10_13_x86_64",
+    "macosx_10_9_universal2",
+    "win_amd64",
+    "manylinux_2_17_aarch64",
+)
+KNOWN_PYS = (
+    "py3",
+    "py2.py3",
+    "cp38",
+    "cp39",
+    "cp310",
+    "cp311",
+    "cp312",
+    "cp313",
+    "pp310",
+)
+KNOWN_ABIS = ("none", "abi3", "cp310", "cp311", "cp312", "pypy310_pp73")
+
+
+@st.composite
+def realistic_wheels(draw: st.DrawFn) -> WheelFile:
+    """Generate a wheel with realistic interpreter/abi/platform tags."""
+    py = draw(st.sampled_from(KNOWN_PYS))
+    abi = draw(st.sampled_from(KNOWN_ABIS))
+    plat = draw(st.sampled_from(KNOWN_PLATS))
+    return _wheel(f"pkg-1.0-{py}-{abi}-{plat}.whl")
+
+
+class TestSelectWheelMinimizesUpstreamRank:
+    """`PEP 425`_ preference: installers pick the wheel matching the
+    earliest tag in the compatibility order.  The selected wheel's
+    best tag rank, computed entirely with upstream packaging (parse
+    the filename's tags with upstream ``parse_tag``, rank against the
+    tuple's tag order rebuilt with upstream
+    ``cpython_tags``/``compatible_tags``), must equal the minimum
+    over all candidate wheels.
+
+    .. _PEP 425: https://peps.python.org/pep-0425/#use
+    """
+
+    @given(
+        wheels=st.lists(realistic_wheels(), min_size=0, max_size=8),
+        python_version=st.sampled_from(PY_VERSIONS),
+        spec=specs,
+        implementation=st.sampled_from(["cpython", "pypy"]),
+    )
+    @PROPERTY_SETTINGS
+    def test_select_wheel_minimizes_upstream_rank(
+        self,
+        wheels: list[WheelFile],
+        python_version: str,
+        spec: PlatformSpec,
+        implementation: str,
+    ) -> None:
+        """The selected wheel's best upstream rank is the minimum over all wheels."""
+        platforms = _platform_tags_for_spec(spec)
+        # An empty platform list falls back to host tags, which drifted upstream after 26.2.
+        assume(platforms)
+        order = _oracle_tags_in_order(python_version, platforms, implementation)
+        rank = {t: i for i, t in enumerate(order)}
+
+        def best_rank(w: WheelFile) -> int | None:
+            stem = w.filename[:-4]
+            tag_str = "-".join(stem.split("-")[-3:])
+            triples = {
+                (t.interpreter, t.abi, t.platform)
+                for t in upstream_tags.parse_tag(tag_str)
+            }
+            ranks = [rank[t] for t in triples if t in rank]
+            return min(ranks) if ranks else None
+
+        oracle_ranks = [r for w in wheels if (r := best_rank(w)) is not None]
+        chosen = select_wheel_for_tuple(
+            wheels,
+            python_version=python_version,
+            spec=spec,
+            implementation=implementation,
+        )
+        if not oracle_ranks:
+            assert chosen is None
+            return
+        assert chosen is not None
+        assert best_rank(chosen) == min(oracle_ranks), (
+            f"chose {chosen.filename} rank {best_rank(chosen)}; "
+            f"best available {min(oracle_ranks)}"
+        )
