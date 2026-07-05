@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "InvalidProjectRequirementError",
+    "InvalidProjectTableError",
     "expand_extra_requirements",
     "expand_group_includes",
     "expand_self_extras",
@@ -39,6 +40,16 @@ __all__ = [
 
 class InvalidProjectRequirementError(ValueError):
     """A requirement string in pyproject.toml is not valid PEP 508."""
+
+
+class InvalidProjectTableError(TypeError):
+    """A pyproject.toml table such as ``[project]`` is not a table.
+
+    A subclass of :class:`TypeError`, so existing ``except TypeError`` and
+    ``pytest.raises(TypeError)`` sites keep working, but the CLI catches it
+    specifically so an unrelated internal ``TypeError`` is not mislabelled
+    as a user-file error.
+    """
 
 
 def _parse_requirements(strings: Sequence[str], source: str) -> list[Requirement]:
@@ -112,7 +123,7 @@ def _load_project_table(path: Path) -> Mapping[str, object]:
     project = data.get("project", {})
     if not isinstance(project, dict):
         msg = f"[project] must be a table, got {type(project).__name__}"
-        raise TypeError(msg)
+        raise InvalidProjectTableError(msg)
     return project
 
 
@@ -133,7 +144,7 @@ def read_pyproject_dependencies(path: Path) -> list[Requirement]:
     project = data["project"]
     if not isinstance(project, dict):
         msg = f"[project] must be a table, got {type(project).__name__}"
-        raise TypeError(msg)
+        raise InvalidProjectTableError(msg)
 
     source = "[project].dependencies"
     if "dependencies" not in project:
@@ -174,7 +185,7 @@ def read_pyproject_optional_dependencies(
         msg = (
             f"[project.optional-dependencies] must be a table, got {type(raw).__name__}"
         )
-        raise TypeError(msg)
+        raise InvalidProjectTableError(msg)
     return raw
 
 
@@ -420,7 +431,7 @@ def read_pyproject_groups(
     raw = data.get("dependency-groups", {})
     if not isinstance(raw, dict):
         msg = f"[dependency-groups] must be a table, got {type(raw).__name__}"
-        raise TypeError(msg)
+        raise InvalidProjectTableError(msg)
     return raw
 
 
