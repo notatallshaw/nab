@@ -142,7 +142,7 @@ class TestHasMetadataFlag:
 
 
 class TestMetadataHashParsing:
-    """``_metadata_hash`` carries the published sha256 to verify, or None."""
+    """``_metadata_hash`` carries the published hash to verify, or None."""
 
     def test_sha256_lowercased(self) -> None:
         from nab_index.client import _metadata_hash
@@ -177,6 +177,43 @@ class TestMetadataHashParsing:
         from nab_index.client import _metadata_hash
 
         assert _metadata_hash({"core-metadata": {"blake2b": "ab"}}) is None
+
+    def test_sha512_only_verified(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({"core-metadata": {"sha512": "ABCD"}}) == (
+            "sha512",
+            "abcd",
+        )
+
+    def test_sha384_only_verified(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({"core-metadata": {"sha384": "ABCD"}}) == (
+            "sha384",
+            "abcd",
+        )
+
+    def test_sha256_preferred_over_sha512(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash(
+            {"core-metadata": {"sha512": "aaaa", "sha256": "bbbb"}}
+        ) == ("sha256", "bbbb")
+
+    def test_sha384_preferred_over_sha512(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash(
+            {"core-metadata": {"sha512": "aaaa", "sha384": "bbbb"}}
+        ) == ("sha384", "bbbb")
+
+    def test_unsupported_with_supported_skips_unsupported(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash(
+            {"core-metadata": {"blake2b": "aaaa", "sha512": "bbbb"}}
+        ) == ("sha512", "bbbb")
 
     def test_missing_field_yields_none(self) -> None:
         from nab_index.client import _metadata_hash
