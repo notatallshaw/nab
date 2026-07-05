@@ -81,6 +81,17 @@ _VCS_SCHEMES: frozenset[str] = frozenset(
     }
 )
 
+
+def known_vcs_schemes() -> frozenset[str]:
+    """Return the VCS URL schemes nab recognises (e.g. ``git+https``).
+
+    nab is git-only, so every entry is a ``git+`` scheme.  Exposed so
+    config parsing can reject an unknown ``vcs.allowed-schemes`` entry
+    without importing the private scheme set.
+    """
+    return _VCS_SCHEMES
+
+
 _VCS_INSECURE_SCHEMES: frozenset[str] = frozenset({"git+git", "git+http"})
 
 
