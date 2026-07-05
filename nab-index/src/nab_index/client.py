@@ -282,12 +282,17 @@ def _parse_files(
         # PEP 592: ``true`` or a non-empty reason string means yanked.
         if file_info.get("yanked"):
             continue
-        filename = file_info["filename"]
+        filename = file_info.get("filename")
+        raw_url = file_info.get("url")
+        # PEP 691 requires both keys. Drop a malformed entry that lacks
+        # either and keep the rest of the listing, rather than letting one
+        # bad file abort the whole resolve.
+        if not isinstance(filename, str) or not isinstance(raw_url, str):
+            continue
 
         # PyPI and most indexes emit absolute file URLs; urljoin then re-parses
         # both sides only to return the URL unchanged. Skip it for the common
         # absolute case; relative URLs still resolve against the page below.
-        raw_url = file_info["url"]
         if raw_url.startswith(("https://", "http://")):
             file_url = raw_url
         else:
