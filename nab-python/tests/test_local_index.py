@@ -16,6 +16,7 @@ from nab_index.local_index import (
     LocalIndexClient,
     _make_record,
     _parse_file_url,
+    _read_sdist_requires_python,
     read_wheel_metadata,
 )
 
@@ -48,6 +49,29 @@ def _write_wheel(
                 f"{dist}.dist-info/METADATA",
                 f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n{rp}",
             )
+
+
+def _write_sdist(
+    path: Path,
+    name: str,
+    version: str,
+    requires_python: str | None = None,
+    *,
+    with_pkg_info: bool = True,
+) -> None:
+    """Write a real (tar.gz) sdist whose PKG-INFO carries ``requires_python``."""
+    dist = f"{name}-{version}"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        if with_pkg_info:
+            rp = f"Requires-Python: {requires_python}\n" if requires_python else ""
+            body = (
+                f"Metadata-Version: 2.2\nName: {name}\nVersion: {version}\n{rp}"
+            ).encode()
+            info = tarfile.TarInfo(name=f"{dist}/PKG-INFO")
+            info.size = len(body)
+            tar.addfile(info, io.BytesIO(body))
+    path.write_bytes(buf.getvalue())
 
 
 class TestParseFileUrl:
@@ -165,6 +189,43 @@ class TestFlatWheelhouse:
         client = LocalIndexClient(tmp_path.as_uri())
         files = run(client.get_files("foo"))
         assert [f.requires_python for f in files] == [">=3.8"]
+
+    def test_sdist_requires_python_read_from_pkg_info(self, tmp_path: Path) -> None:
+        # Requires-Python is absent from the filename; it comes from PKG-INFO.
+        _write_sdist(tmp_path / "foo-1.0.tar.gz", "foo", "1.0", ">=3.12")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert isinstance(files[0], SdistFile)
+        assert files[0].requires_python == ">=3.12"
+
+    def test_sdist_requires_python_none_when_pkg_info_omits_it(
+        self, tmp_path: Path
+    ) -> None:
+        _write_sdist(tmp_path / "foo-1.0.tar.gz", "foo", "1.0")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert files[0].requires_python is None
+
+    def test_sdist_requires_python_none_for_unreadable_archive(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "foo-1.0.tar.gz").write_bytes(b"not a gzip")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
+    def test_foreign_sdist_metadata_not_read(self, tmp_path: Path) -> None:
+        # A sibling package's sdist Requires-Python must not leak onto foo.
+        _write_sdist(tmp_path / "foo-1.0.tar.gz", "foo", "1.0", ">=3.8")
+        _write_sdist(tmp_path / "bar-1.0.tar.gz", "bar", "1.0", ">=3.12")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert [f.requires_python for f in files] == [">=3.8"]
+
+    def test_read_sdist_requires_python_missing_file(self, tmp_path: Path) -> None:
+        assert _read_sdist_requires_python(tmp_path / "absent.tar.gz") is None
 
 
 class TestPep503Directory:
