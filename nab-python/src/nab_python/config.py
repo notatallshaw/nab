@@ -112,6 +112,9 @@ _PEP508_MARKER_VARIABLES = frozenset(
     },
 )
 
+# Marker variables whose values must parse as PEP 440 versions.
+_VERSION_MARKER_VARIABLES = frozenset({"python_version", "python_full_version"})
+
 
 @dataclass(frozen=True, slots=True)
 class MatrixConfig:
@@ -1066,6 +1069,12 @@ def _parse_marker_environment(value: object) -> dict[str, str]:
                 f" marker variable, one of {valid!r}"
             )
             raise ConfigError(msg)
+        if k in _VERSION_MARKER_VARIABLES:
+            try:
+                Version(v)
+            except InvalidVersion as exc:
+                msg = f"marker-environment.{k} must be a PEP 440 version, got {v!r}"
+                raise ConfigError(msg) from exc
         out[k] = v
     return out
 
