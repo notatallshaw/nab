@@ -2070,6 +2070,30 @@ class TestApplyPythonAxisOverlay:
             == provider.environment["python_full_version"]
         )
 
+    def test_patch_precision_python_version_normalizes_to_minor(self) -> None:
+        """A patch-precision python_version overlay normalizes to major.minor."""
+        env = {
+            "implementation_name": "cpython",
+            "python_version": "3.11",
+            "python_full_version": "3.11.5",
+            "implementation_version": "3.11.5",
+        }
+        apply_python_axis_overlay(env, {"python_version": "3.10.5"})
+        assert env["python_version"] == "3.10"
+        assert env["python_full_version"] == "3.10.5"
+        assert Marker('python_version == "3.10"').evaluate(env) is True
+
+    def test_provider_marker_env_patch_python_version_normalizes(self) -> None:
+        """A marker-env python_version like 3.10.5 normalizes to major.minor."""
+        provider = Provider(
+            make_coordinator(),
+            python_version="3.12.3",
+            build_policy=BuildPolicy.NEVER,
+            marker_environment={"python_version": "3.10.5"},
+        )
+        assert provider.environment["python_version"] == "3.10"
+        assert provider.environment["python_full_version"] == "3.10.5"
+
 
 class TestLookAhead:
     def test_skips_version_conflicting_with_root(self) -> None:
