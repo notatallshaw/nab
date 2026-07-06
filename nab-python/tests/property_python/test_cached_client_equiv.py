@@ -91,8 +91,7 @@ class DictCache:
     def __init__(self) -> None:
         self.simple: dict[str, tuple[bytes, CachePolicy]] = {}
         self.metadata: dict[tuple[str, str], str] = {}
-        self.pkginfo: dict[tuple[str, str], str] = {}
-        self.pyproject: dict[tuple[str, str], str] = {}
+        self.sdist: dict[tuple[str, str], tuple[str | None, str | None]] = {}
 
     def get_simple(self, package: str) -> tuple[bytes, CachePolicy] | None:
         return self.simple.get(package)
@@ -110,17 +109,19 @@ class DictCache:
     def put_metadata(self, package: str, version: str, text: str) -> None:
         self.metadata[(package, version)] = text
 
-    def get_sdist_pkginfo(self, package: str, version: str) -> str | None:
-        return self.pkginfo.get((package, version))
+    def get_sdist_files(
+        self, package: str, version: str
+    ) -> tuple[str | None, str | None] | None:
+        return self.sdist.get((package, version))
 
-    def put_sdist_pkginfo(self, package: str, version: str, text: str) -> None:
-        self.pkginfo[(package, version)] = text
-
-    def get_sdist_pyproject(self, package: str, version: str) -> str | None:
-        return self.pyproject.get((package, version))
-
-    def put_sdist_pyproject(self, package: str, version: str, text: str) -> None:
-        self.pyproject[(package, version)] = text
+    def put_sdist_files(
+        self,
+        package: str,
+        version: str,
+        pkg_info: str | None,
+        pyproject_toml: str | None,
+    ) -> None:
+        self.sdist[(package, version)] = (pkg_info, pyproject_toml)
 
 
 def run(coro: Coroutine[Any, Any, _T]) -> _T:
