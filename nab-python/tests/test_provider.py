@@ -55,6 +55,7 @@ from nab_python.provider import (
     MissingExtraError,
     Provider,
     ResolutionStrategy,
+    SourceNameMismatchError,
     UnsupportedSdistError,
     UnsupportedVcsError,
     VcsConfig,
@@ -1953,6 +1954,28 @@ class TestLocalSources:
         )
         versions = provider.fetch_versions("Foo.Bar")
         assert len(versions) == 1
+
+    def test_local_source_name_mismatch_refused(self, tmp_path: Path) -> None:
+        """A source declared for one name backed by a different project is refused.
+
+        The directory's ``[project].name`` (``bar``) does not canonicalise to the
+        declared source name (``foo``), so materialising it would pin ``foo`` with
+        ``bar``'s version and dependencies.
+        """
+        self._write_local(
+            tmp_path,
+            '[project]\nname = "bar"\nversion = "9.9.9"\n'
+            'dependencies = ["unrelated-dep==6.6.6"]\n',
+        )
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            local_sources=[LocalSource("foo", str(tmp_path))],
+            build_policy=BuildPolicy.NEVER,
+        )
+        with pytest.raises(SourceNameMismatchError, match="bar") as excinfo:
+            provider.fetch_versions("foo")
+        assert "foo" in str(excinfo.value)
 
     def test_build_local_source_failure_propagates(
         self,
