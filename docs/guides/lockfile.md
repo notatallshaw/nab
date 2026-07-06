@@ -146,6 +146,24 @@ identical inputs are byte-for-byte identical. A relative `P<n>D`
 cutoff is anchored to the wall clock, so `created-at` stays the
 run time; `--upgrade` always re-anchors to now.
 
+## Checking the lock in CI
+
+`nab lock --locked` re-resolves from your project inputs,
+checks that the committed `pylock.toml` already matches, and
+writes nothing. It exits non-zero if the lock would change or
+is missing, so a CI step can assert the lock is current:
+
+```bash
+nab lock --locked
+```
+
+The committed pins are never seeded into the resolve, so the
+check confirms the lock still reflects those inputs rather than
+that it round-trips through itself. Only a real change to the
+locked packages fails it; volatile provenance metadata is
+ignored. `--locked` applies to a `pylock.toml` file in
+single-environment mode.
+
 ## `nab download`
 
 `nab download` walks the same pin set, fetches every wheel and
