@@ -51,7 +51,7 @@ def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, Dist
         return result
 
     archive = provider.archive_sources.get(normalized)
-    if archive is not None:
+    if archive is not None:  # pragma: no cover (tar data filter; see sources.py)
         result = provider.materialize_archive_source(normalized, archive)
         provider.versions_cache[normalized] = result
         return result

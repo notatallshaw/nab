@@ -1053,7 +1053,7 @@ class Provider:
         self,
         normalized: str,
         source: ArchiveSource,
-    ) -> list[tuple[Version, DistFile]]:
+    ) -> list[tuple[Version, DistFile]]:  # pragma: no cover (see sources.py)
         """See :func:`nab_python._provider.sources.materialize_archive_source`."""
         result: list[tuple[Version, DistFile]] = []
         for version, sdist in _sources.materialize_archive_source(

@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nab_index.archive import ArchiveRequest, ArchiveRequestError
-from nab_index.client import SdistHashMismatchError
+from nab_index.client import SdistHashMismatchError, extract_sdist_archive
 from nab_python.download import iter_artifacts
 from nab_python.fetch import InMemoryIndex
 from nab_python.lockfile import ArchivePin, LockInput
@@ -66,6 +66,14 @@ def _provider(archive_sources: list[ArchiveSource], cache_dir: Path | None) -> P
         archive_cache_dir=cache_dir,
         build_policy=BuildPolicy.NEVER,
     )
+
+
+# Extraction requires the tar data filter (PEP 706), so skip the paths that
+# actually extract on a Python that lacks it (before 3.10.12 / 3.11.4 / 3.12).
+requires_data_filter = pytest.mark.skipif(
+    not hasattr(tarfile, "data_filter"),
+    reason="sdist extraction requires the tar data filter (PEP 706)",
+)
 
 
 class TestArchiveRequestParse:
@@ -128,6 +136,13 @@ class TestArchiveIndexing:
                 None,
             )
 
+    def test_valid_source_is_registered(self) -> None:
+        source = ArchiveSource(
+            name="Foo-Bar", url=f"https://ex.com/foo-1.0.tar.gz#sha256={'a' * 64}"
+        )
+        provider = _provider([source], None)
+        assert provider.archive_source_for("foo_bar") is source
+
     def test_hashless_url_rejected_at_index(self) -> None:
         # config parse also rejects this, but a directly-built Provider must
         # not slip through to an IndexError at materialisation.
@@ -157,6 +172,7 @@ class TestArchiveIndexing:
             )
 
 
+@requires_data_filter
 class TestArchiveMaterialize:
     def test_resolves_and_seeds_single_version(self, tmp_path: Path) -> None:
         data = _make_sdist("foo", "1.0.0", _PYPROJECT)
@@ -314,3 +330,29 @@ class TestArchiveDownload:
         pin = ArchivePin(name="foo", version="1.0", url="u", hashes=(("md5", "x"),))
         with pytest.raises(ValueError, match="no acceptable hash"):
             _ = pin.primary_digest
+
+
+class TestExtractArchive:
+    """extract_sdist_archive requires and defers safety to the tar data filter."""
+
+    def test_requires_data_filter(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("nab_index.client._SUPPORTS_DATA_FILTER", False)
+        out = tmp_path / "out"
+        out.mkdir()
+        with pytest.raises(ValueError, match="requires the tar data filter"):
+            extract_sdist_archive(_make_sdist("foo", "1.0.0", _PYPROJECT), out)
+
+    @requires_data_filter
+    def test_rejects_escaping_symlink_member(self, tmp_path: Path) -> None:
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo("foo-1.0.0/evil")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "/etc/passwd"
+            tar.addfile(info)
+        out = tmp_path / "out"
+        out.mkdir()
+        with pytest.raises(ValueError, match="unsafe sdist member"):
+            extract_sdist_archive(buf.getvalue(), out)

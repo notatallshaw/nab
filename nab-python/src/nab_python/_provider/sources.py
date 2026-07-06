@@ -262,11 +262,21 @@ def index_archive_sources(
     return out
 
 
+# The archive extraction path (this function and _extract_archive) is excluded
+# from coverage.  It requires the PEP 706 tar data filter (Python 3.10.12+), but
+# GitHub Actions setup-python installs 3.10.11 on macOS (arm64) and Windows:
+# python.org stopped shipping 3.10 binary installers after 3.10.11 and
+# actions/python-versions builds those OSes from installers, so no 3.10.12+
+# artifact exists for them.  The archive extraction tests skip there, leaving
+# these lines unhit on only those two runners (covered on every other runner).
+# Remove the pragmas when that 3.10 cell is dropped, sourced from
+# uv/python-build-standalone (which ships 3.10.20 with the filter), or 3.10
+# reaches EOL (2026-10).
 def materialize_archive_source(
     provider: Provider,
     normalized: str,
     source: ArchiveSource,
-) -> list[tuple[Version, SdistFile]]:
+) -> list[tuple[Version, SdistFile]]:  # pragma: no cover
     """Download and hash-verify ``source``, extract it, then materialise it.
 
     The download and hash check reuse the remote-sdist fetch path, so a
@@ -318,7 +328,9 @@ def materialize_archive_source(
     return seed_synthetic_listing(provider, normalized, path, metadata)
 
 
-def _extract_archive(cache_dir: Path, digest: str, data: bytes) -> Path:
+def _extract_archive(
+    cache_dir: Path, digest: str, data: bytes
+) -> Path:  # pragma: no cover (tar data filter; see materialize_archive_source)
     """Extract ``data`` under ``cache_dir`` keyed by ``digest``; return the root.
 
     Idempotent, like :func:`prepare_clone`: a digest already extracted in a
