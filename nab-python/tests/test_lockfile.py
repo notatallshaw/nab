@@ -3632,6 +3632,41 @@ class TestDependencyGraph:
         )
         assert lock_input.dependencies == {"foo": ("plugin",)}
 
+    def test_umbrella_extra_drops_self_edge(self) -> None:
+        # ``all`` pulls ``mypkg[graphviz]`` and ``mypkg[otel]``, so its recorded
+        # deps name ``mypkg`` itself; the graph keeps only the transitive deps.
+        provider = _FakeProvider(
+            listings={
+                name: [(Version("1.0"), _wheel_file(name))]
+                for name in ("mypkg", "graphviz-lib", "otel-lib")
+            },
+            deps_cache={("mypkg", Version("1.0")): {}},
+            extra_deps_map={
+                ("mypkg", Version("1.0")): {
+                    "all": dict.fromkeys(["mypkg[graphviz]", "mypkg[otel]"]),
+                    "graphviz": dict.fromkeys(["graphviz-lib"]),
+                    "otel": dict.fromkeys(["otel-lib"]),
+                }
+            },
+        )
+        lock_input = build_lock_input_from_provider(
+            provider,
+            {
+                "mypkg": Version("1.0"),
+                "graphviz-lib": Version("1.0"),
+                "otel-lib": Version("1.0"),
+            },
+            resolved_keys=(
+                "mypkg",
+                "mypkg[all]",
+                "mypkg[graphviz]",
+                "mypkg[otel]",
+                "graphviz-lib",
+                "otel-lib",
+            ),
+        )
+        assert lock_input.dependencies == {"mypkg": ("graphviz-lib", "otel-lib")}
+
     def test_emitted_as_pep751_dependencies(self) -> None:
         text = write_lock(
             LockInput(

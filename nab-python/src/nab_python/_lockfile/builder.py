@@ -340,6 +340,9 @@ def _forward_dependency_graph(
                 for dep in extra_map.get(extra, {})
             )
         dep_names &= pinned
+        # An umbrella extra (pkg[all] pulling pkg[graphviz]) can name its own
+        # package; drop it so pkg is never an edge to itself.
+        dep_names.discard(canonical)
         if dep_names:
             graph[canonical] = tuple(sorted(dep_names))
     return graph
