@@ -14,6 +14,7 @@ from urllib.parse import urljoin
 
 import pytest
 
+import nab_index.cache as cache_mod
 from nab_index.cache import CachePolicy, OfflineError, OnDiskCache
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
@@ -1015,13 +1016,13 @@ class TestGetSdistFiles:
         assert "Name: pkg" in pkg_info
         assert pyproject is not None
         assert "[project]" in pyproject
-        assert cache.get_sdist_pkginfo("pkg", "1.0") == pkg_info
-        assert cache.get_sdist_pyproject("pkg", "1.0") == pyproject
+        assert cache.get_sdist_files("pkg", "1.0") == (pkg_info, pyproject)
 
     def test_warm_cache_skips_network(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_sdist_pkginfo("pkg", "1.0", "Name: cached\n")
-        cache.put_sdist_pyproject("pkg", "1.0", "[project]\nname = 'cached'\n")
+        cache.put_sdist_files(
+            "pkg", "1.0", "Name: cached\n", "[project]\nname = 'cached'\n"
+        )
         transport = _FakeTransport()
 
         async def go() -> tuple[str | None, str | None]:
@@ -1054,8 +1055,7 @@ class TestGetSdistFiles:
                 await client.aclose()
 
         assert asyncio.run(go()) == (None, None)
-        assert cache.get_sdist_pkginfo("pkg", "1.0") is None
-        assert cache.get_sdist_pyproject("pkg", "1.0") is None
+        assert cache.get_sdist_files("pkg", "1.0") is None
 
     def test_offline_miss_raises(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -1072,6 +1072,55 @@ class TestGetSdistFiles:
 
         with pytest.raises(OfflineError, match="pkg==1.0"):
             asyncio.run(go())
+
+    def test_partial_write_does_not_poison_cache(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A crash while writing the entry must not leave a partial cache.
+
+        The first fetch fails as the single record is committed; the second
+        must still recover the full PKG-INFO plus pyproject.toml pair.
+        """
+        cache = _make_cache(tmp_path)
+        marker = b"partial-write-marker"
+        pyproject = b"[project]\nname = 'pkg'\n# " + marker + b"\n"
+        body = _build_tarball(
+            [
+                ("pkg-1.0/PKG-INFO", b"Metadata-Version: 2.1\nName: pkg\n"),
+                ("pkg-1.0/pyproject.toml", pyproject),
+            ]
+        )
+        transport = _FakeTransport([_FakeResponse(body), _FakeResponse(body)])
+
+        real_atomic_write = cache_mod._atomic_write
+        fail = {"active": True}
+
+        def flaky_atomic_write(path: Path, data: bytes) -> None:
+            if fail["active"] and marker in data:
+                msg = "simulated crash committing pyproject"
+                raise OSError(msg)
+            real_atomic_write(path, data)
+
+        monkeypatch.setattr(cache_mod, "_atomic_write", flaky_atomic_write)
+
+        async def fetch() -> tuple[str | None, str | None]:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_sdist_files(
+                    "pkg", "1.0", "https://x/pkg.tar.gz"
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(OSError, match="simulated crash"):
+            asyncio.run(fetch())
+
+        fail["active"] = False
+        pkg_info, recovered_pyproject = asyncio.run(fetch())
+        assert pkg_info is not None
+        assert "Name: pkg" in pkg_info
+        assert recovered_pyproject is not None
+        assert "[project]" in recovered_pyproject
 
     def test_matching_hash_returns_and_caches(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -1093,7 +1142,7 @@ class TestGetSdistFiles:
         pkg_info, _ = asyncio.run(go())
         assert pkg_info is not None
         assert "Name: pkg" in pkg_info
-        assert cache.get_sdist_pkginfo("pkg", "1.0") == pkg_info
+        assert cache.get_sdist_files("pkg", "1.0") == (pkg_info, None)
 
     def test_mismatching_hash_raises_and_skips_cache(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -1117,8 +1166,7 @@ class TestGetSdistFiles:
 
         with pytest.raises(SdistHashMismatchError):
             asyncio.run(go())
-        assert cache.get_sdist_pkginfo("pkg", "1.0") is None
-        assert cache.get_sdist_pyproject("pkg", "1.0") is None
+        assert cache.get_sdist_files("pkg", "1.0") is None
 
     def test_no_published_hash_skips_verification(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)

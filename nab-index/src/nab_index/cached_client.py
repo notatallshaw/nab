@@ -221,10 +221,9 @@ class CachedAsyncSimpleClient:
         mismatch raises :class:`SdistHashMismatchError` and nothing is
         cached.
         """
-        pkg_info = self._cache.get_sdist_pkginfo(package, version)
-        pyproject_toml = self._cache.get_sdist_pyproject(package, version)
-        if pkg_info is not None or pyproject_toml is not None:
-            return (pkg_info, pyproject_toml)
+        cached = self._cache.get_sdist_files(package, version)
+        if cached is not None:
+            return cached
 
         if self._offline:
             msg = f"No cached sdist PKG-INFO for {package}=={version} (offline mode)"
@@ -237,10 +236,8 @@ class CachedAsyncSimpleClient:
             _verify_sdist_hash(response.content, selected)
         pkg_info, pyproject_toml = _extract_sdist_files(response.content)
 
-        if pkg_info is not None:
-            self._cache.put_sdist_pkginfo(package, version, pkg_info)
-        if pyproject_toml is not None:
-            self._cache.put_sdist_pyproject(package, version, pyproject_toml)
+        if pkg_info is not None or pyproject_toml is not None:
+            self._cache.put_sdist_files(package, version, pkg_info, pyproject_toml)
 
         return (pkg_info, pyproject_toml)
 

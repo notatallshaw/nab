@@ -10,7 +10,7 @@ Layout under ``root``:
     simple-v0/<index>/<package>.json       <- raw PyPI JSON body
     simple-v0/<index>/<package>.policy     <- {fetched_at, max_age, etag}
     metadata-v0/<index>/<package>/<version>.metadata
-    sdist-pkginfo-v0/<index>/<package>/<version>.txt
+    sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
 
 A versioned bucket name (``simple-v0``) gives zero-cost schema
 migration: when the on-disk format changes, bump the suffix and the
@@ -40,7 +40,7 @@ __all__ = [
 
 CACHE_VERSION_SIMPLE = "v0"
 CACHE_VERSION_METADATA = "v0"
-CACHE_VERSION_SDIST = "v0"
+CACHE_VERSION_SDIST = "v1"
 
 DEFAULT_PYPI_URLS = frozenset(
     [
@@ -132,10 +132,7 @@ class OnDiskCache:
         self._index = _index_dirname(index_url)
         self._simple_dir = root / f"simple-{CACHE_VERSION_SIMPLE}" / self._index
         self._metadata_dir = root / f"metadata-{CACHE_VERSION_METADATA}" / self._index
-        self._sdist_dir = root / f"sdist-pkginfo-{CACHE_VERSION_SDIST}" / self._index
-        self._sdist_pyproject_dir = (
-            root / f"sdist-pyproject-{CACHE_VERSION_SDIST}" / self._index
-        )
+        self._sdist_dir = root / f"sdist-{CACHE_VERSION_SDIST}" / self._index
 
     def _simple_paths(self, package: str) -> tuple[Path, Path]:
         segment = _require_single_segment(package)
@@ -195,28 +192,37 @@ class OnDiskCache:
             text.encode("utf-8"),
         )
 
-    def get_sdist_pkginfo(self, package: str, version: str) -> str | None:
-        """Return cached sdist PKG-INFO text, or ``None`` on miss."""
-        return _read_text(self._entry_path(self._sdist_dir, package, version, ".txt"))
+    def get_sdist_files(
+        self, package: str, version: str
+    ) -> tuple[str | None, str | None] | None:
+        """Return the cached ``(pkg_info, pyproject_toml)`` pair, or ``None`` on miss.
 
-    def put_sdist_pkginfo(self, package: str, version: str, text: str) -> None:
-        """Write sdist PKG-INFO text. Treated as immutable."""
+        Written as one record, so a hit is always the complete pair. A hit
+        whose ``pyproject_toml`` is ``None`` means the sdist ships no
+        pyproject.toml, which is not the same as a miss.
+        """
+        text = _read_text(self._entry_path(self._sdist_dir, package, version, ".json"))
+        if text is None:
+            return None
+        try:
+            doc = json.loads(text)
+            return (doc["pkg_info"], doc["pyproject"])
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    def put_sdist_files(
+        self,
+        package: str,
+        version: str,
+        pkg_info: str | None,
+        pyproject_toml: str | None,
+    ) -> None:
+        """Write the ``(pkg_info, pyproject_toml)`` pair as one record."""
         _atomic_write(
-            self._entry_path(self._sdist_dir, package, version, ".txt"),
-            text.encode("utf-8"),
-        )
-
-    def get_sdist_pyproject(self, package: str, version: str) -> str | None:
-        """Return cached sdist pyproject.toml text, or ``None`` on miss."""
-        return _read_text(
-            self._entry_path(self._sdist_pyproject_dir, package, version, ".toml")
-        )
-
-    def put_sdist_pyproject(self, package: str, version: str, text: str) -> None:
-        """Write sdist pyproject.toml text. Treated as immutable."""
-        _atomic_write(
-            self._entry_path(self._sdist_pyproject_dir, package, version, ".toml"),
-            text.encode("utf-8"),
+            self._entry_path(self._sdist_dir, package, version, ".json"),
+            json.dumps({"pkg_info": pkg_info, "pyproject": pyproject_toml}).encode(
+                "utf-8"
+            ),
         )
 
 
@@ -253,20 +259,20 @@ class CacheBackend(Protocol):
         """Store PEP 658 metadata text. Treated as immutable."""
         ...
 
-    def get_sdist_pkginfo(self, package: str, version: str) -> str | None:
-        """Return cached sdist PKG-INFO text, or ``None`` on miss."""
+    def get_sdist_files(
+        self, package: str, version: str
+    ) -> tuple[str | None, str | None] | None:
+        """Return the cached ``(pkg_info, pyproject_toml)`` pair, or ``None``."""
         ...
 
-    def put_sdist_pkginfo(self, package: str, version: str, text: str) -> None:
-        """Store sdist PKG-INFO text. Treated as immutable."""
-        ...
-
-    def get_sdist_pyproject(self, package: str, version: str) -> str | None:
-        """Return cached sdist pyproject.toml text, or ``None`` on miss."""
-        ...
-
-    def put_sdist_pyproject(self, package: str, version: str, text: str) -> None:
-        """Store sdist pyproject.toml text. Treated as immutable."""
+    def put_sdist_files(
+        self,
+        package: str,
+        version: str,
+        pkg_info: str | None,
+        pyproject_toml: str | None,
+    ) -> None:
+        """Store the ``(pkg_info, pyproject_toml)`` pair as one record."""
         ...
 
 
@@ -295,14 +301,16 @@ class NullCache:
     def put_metadata(self, package: str, version: str, text: str) -> None:
         """Discard the entry."""
 
-    def get_sdist_pkginfo(self, package: str, version: str) -> str | None:
+    def get_sdist_files(
+        self, package: str, version: str
+    ) -> tuple[str | None, str | None] | None:
         """Return ``None`` (always a miss)."""
 
-    def put_sdist_pkginfo(self, package: str, version: str, text: str) -> None:
-        """Discard the entry."""
-
-    def get_sdist_pyproject(self, package: str, version: str) -> str | None:
-        """Return ``None`` (always a miss)."""
-
-    def put_sdist_pyproject(self, package: str, version: str, text: str) -> None:
+    def put_sdist_files(
+        self,
+        package: str,
+        version: str,
+        pkg_info: str | None,
+        pyproject_toml: str | None,
+    ) -> None:
         """Discard the entry."""

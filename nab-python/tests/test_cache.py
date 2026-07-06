@@ -224,12 +224,24 @@ class TestOnDiskCache:
 
     def test_sdist_round_trip(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
-        cache.put_sdist_pkginfo("foo", "1.0", "Name: foo\n")
-        assert cache.get_sdist_pkginfo("foo", "1.0") == "Name: foo\n"
+        cache.put_sdist_files("foo", "1.0", "Name: foo\n", "[project]\n")
+        assert cache.get_sdist_files("foo", "1.0") == ("Name: foo\n", "[project]\n")
 
     def test_sdist_miss(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
-        assert cache.get_sdist_pkginfo("foo", "1.0") is None
+        assert cache.get_sdist_files("foo", "1.0") is None
+
+    def test_sdist_no_pyproject_is_a_hit_not_a_miss(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        cache.put_sdist_files("foo", "1.0", "Name: foo\n", None)
+        assert cache.get_sdist_files("foo", "1.0") == ("Name: foo\n", None)
+
+    def test_sdist_corrupt_record_is_a_miss(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        path = cache._entry_path(cache._sdist_dir, "foo", "1.0", ".json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("not-json", encoding="utf-8")
+        assert cache.get_sdist_files("foo", "1.0") is None
 
     def test_put_metadata_rejects_multi_segment_sentinel(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
@@ -250,13 +262,13 @@ class TestNullCache:
         cache = NullCache()
         assert cache.get_simple("foo") is None
         assert cache.get_metadata("foo", "1.0") is None
-        assert cache.get_sdist_pkginfo("foo", "1.0") is None
+        assert cache.get_sdist_files("foo", "1.0") is None
         # Puts must be no-ops with no return value.
         policy = CachePolicy(fetched_at=0, max_age=0, etag=None)
         assert cache.put_simple("foo", b"", policy) is None
         assert cache.refresh_simple_policy("foo", policy) is None
         assert cache.put_metadata("foo", "1.0", "x") is None
-        assert cache.put_sdist_pkginfo("foo", "1.0", "x") is None
+        assert cache.put_sdist_files("foo", "1.0", "x", None) is None
         # And subsequent gets still miss.
         assert cache.get_simple("foo") is None
 
