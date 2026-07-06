@@ -37,7 +37,9 @@ from nab_python.lockfile import ArchivePin, LockInput, TargetLock
 from nab_python.provider import (
     ArchiveSource,
     BuildPolicy,
+    MetadataError,
     Provider,
+    SourceNameMismatchError,
     UnsupportedSdistError,
 )
 from nab_python.target import ResolveTarget
@@ -290,6 +292,29 @@ class TestArchiveMaterialize:
 
         assert len(versions) == 1
         assert str(versions[0][0]) == "1.0.0"
+
+    @requires_data_filter
+    def test_name_mismatch_is_hard_error(self, tmp_path: Path) -> None:
+        # Archive declared for "foo" but its tree is the project "bar".  Hash
+        # and extraction pass, so only the [project].name check catches the swap.
+        pyproject = (
+            '[project]\nname = "bar"\nversion = "2.0.0"'
+            '\ndependencies = ["some-other-dep>=5"]\n'
+        )
+        data = _make_sdist("bar", "2.0.0", pyproject)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/bar-2.0.0.tar.gz#sha256={digest}"
+        )
+        provider = _provider([source], tmp_path / "arch")
+        provider.coordinator.index.store_sdist_archive("foo", digest, data)
+        with pytest.raises(SourceNameMismatchError) as excinfo:
+            provider.fetch_versions("foo")
+        message = str(excinfo.value)
+        assert "foo" in message
+        assert "bar" in message
+        # Must not be a MetadataError, or the look-ahead swallows it as a skip.
+        assert not isinstance(excinfo.value, MetadataError)
 
     def test_missing_cache_dir_raises(self) -> None:
         digest = "a" * 64

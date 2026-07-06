@@ -55,6 +55,7 @@ from nab_python.provider import (
     MissingExtraError,
     Provider,
     ResolutionStrategy,
+    SourceNameMismatchError,
     UnsupportedSdistError,
     UnsupportedVcsError,
     VcsConfig,
@@ -1953,6 +1954,27 @@ class TestLocalSources:
         )
         versions = provider.fetch_versions("Foo.Bar")
         assert len(versions) == 1
+
+    def test_local_source_name_mismatch_raises(self, tmp_path: Path) -> None:
+        """A source whose [project].name differs is refused, not silently pinned."""
+        self._write_local(
+            tmp_path,
+            '[project]\nname = "bar"\nversion = "9.9.9"'
+            '\ndependencies = ["some-other-dep>=5"]\n',
+        )
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            local_sources=[LocalSource("foo", str(tmp_path))],
+            build_policy=BuildPolicy.NEVER,
+        )
+        with pytest.raises(SourceNameMismatchError) as excinfo:
+            provider.fetch_versions("foo")
+        message = str(excinfo.value)
+        assert "foo" in message
+        assert "bar" in message
+        # Must not be a MetadataError, or the look-ahead swallows it as a skip.
+        assert not isinstance(excinfo.value, MetadataError)
 
     def test_build_local_source_failure_propagates(
         self,
