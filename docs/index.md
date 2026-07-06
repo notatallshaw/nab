@@ -6,20 +6,51 @@ nab is resolve-only: it produces a pinned set of versions (or a
 PEP 751 lockfile) but never installs.  Hand the lockfile to whatever
 installer you trust.
 
+## Where to start
+
+The guides are grouped by what you came to do:
+
+* New to nab? Follow the [getting-started tutorial](guides/getting-started.md).
+* Have a task in mind? The how-to guides cover installation, local and
+  VCS sources, multiple indexes, and workspaces.
+* Looking something up? The reference documents the
+  [configuration](guides/configuration.md) keys and the
+  [CLI](guides/cli.md).
+* Want the concepts? The explanations cover the lockfile, build policy,
+  universal resolution, and conflicts.
+
 ```{toctree}
 :maxdepth: 2
-:caption: Guides
+:caption: Tutorials
+
+guides/getting-started
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: How-to guides
 
 guides/installation
-guides/getting-started
-guides/configuration
-guides/cli
-guides/lockfile
-guides/build-policy
 guides/local-sources
 guides/vcs
 guides/multi-index
 guides/workspaces
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Reference
+
+guides/configuration
+guides/cli
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Explanation
+
+guides/lockfile
+guides/build-policy
 guides/universal
 guides/conflicts
 ```
