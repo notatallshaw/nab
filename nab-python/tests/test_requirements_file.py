@@ -8,9 +8,11 @@ import pytest
 
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
+from nab_python._vendor.packaging.utils import InvalidName
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
     _add_extra_marker,
+    _parse_project_requirement,
     expand_extra_requirements,
     expand_group_includes,
     expand_self_extras,
@@ -51,6 +53,31 @@ class TestAddExtraMarker:
         req = Requirement(out)
         assert req.url == "https://h/a;b/p.tar.gz"
         assert str(req.marker) == 'python_version >= "3.10" and extra == "bar"'
+
+    def test_non_canonical_extra_name_normalized(self) -> None:
+        """A non-canonical extra name is normalised (PEP 685) in the gate."""
+        out = _add_extra_marker("numpy", "My.Extra")
+        assert out == 'numpy ; extra == "my-extra"'
+
+    def test_extra_name_with_marker_syntax_rejected(self) -> None:
+        """A name that is not a valid PEP 685 name is rejected.
+
+        A ``[project.optional-dependencies]`` key like
+        ``a" or os_name != "x`` would otherwise close the quote and leave
+        the dep gated on a marker that is always true.
+        """
+        with pytest.raises(InvalidName):
+            _add_extra_marker("pkg", 'a" or os_name != "x')
+
+    def test_invalid_extra_name_rejected_as_project_requirement(self) -> None:
+        """An invalid extra name is rejected by the synthesis path, not
+        folded into a dependency with a marker that is always true."""
+        with pytest.raises(InvalidProjectRequirementError):
+            _parse_project_requirement(
+                "pkg",
+                "[project.optional-dependencies] extra 'x'",
+                extra='a" or os_name != "x',
+            )
 
 
 class TestReadPyprojectDependencies:
