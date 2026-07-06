@@ -2601,6 +2601,27 @@ class TestBuildMarkerEnvironment:
         assert env["python_full_version"] == "3.12.3"
         assert env["sys_platform"] == "win32"
 
+    def test_target_python_moves_implementation_version(self) -> None:
+        """implementation_version follows a non-host target on CPython."""
+        env = _build_marker_environment(python_version="3.9.0", overrides={})
+        assert env["implementation_version"] == "3.9.0"
+        assert env["implementation_version"] == env["python_full_version"]
+
+    def test_overlay_python_moves_implementation_version(self) -> None:
+        """An overlay python-axis move drags implementation_version along."""
+        env = _build_marker_environment(
+            python_version="3.12.3", overrides={"python_version": "3.8"}
+        )
+        assert env["implementation_version"] == "3.8.0"
+
+    def test_explicit_implementation_version_override_wins(self) -> None:
+        """An explicit implementation_version override is kept verbatim."""
+        env = _build_marker_environment(
+            python_version="3.9.0",
+            overrides={"implementation_version": "3.9.7"},
+        )
+        assert env["implementation_version"] == "3.9.7"
+
 
 class TestCheckGroupDisjointnessAcrossTuples:
     """``_check_group_disjointness_across_tuples`` runs the per-group
