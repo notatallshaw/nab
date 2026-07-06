@@ -60,6 +60,9 @@ Builds extend to VCS clones and remote PyPI sdists.  On top of
 
 * VCS-cloned trees with dynamic deps have the backend invoked on
   the clone.
+* Archive sources declared via `[[tool.nab.archive-sources]]` with
+  dynamic deps have the backend invoked on the extracted tree; the
+  bytes are network-fetched, so they count as remote.
 * PyPI sdists whose `PKG-INFO` is dynamic and which have no
   static `pyproject.toml` fallback are downloaded, extracted to a
   temp directory, and built.

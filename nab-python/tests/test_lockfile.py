@@ -44,6 +44,7 @@ from nab_python.config import (
 )
 from nab_python.lockfile import (
     LOCK_VERSION,
+    ArchivePin,
     DisjointnessError,
     DivergentBaseDependencyError,
     IndexPin,
@@ -66,6 +67,7 @@ from nab_python.lockfile import (
     write_requirements_without_hashes,
 )
 from nab_python.provider import (
+    ArchiveSource,
     BuildPolicy,
     DistPolicy,
     LocalSource,
@@ -182,6 +184,59 @@ class TestSingleTuple:
         )
         data = tomllib.loads(text)
         assert data["packages"][0]["vcs"]["type"] == "hg"
+
+    def test_archive_pin(self) -> None:
+        text = write_lock(
+            LockInput(
+                pins={
+                    "foo": ArchivePin(
+                        name="foo",
+                        version="1.0",
+                        url="https://ex.com/foo-1.0.tar.gz",
+                        hashes=(("sha256", "e" * 64),),
+                        subdirectory="pkg",
+                    ),
+                },
+            )
+        )
+        data = tomllib.loads(text)
+        package = data["packages"][0]
+        archive = package["archive"]
+        assert archive["url"] == "https://ex.com/foo-1.0.tar.gz"
+        assert archive["hashes"] == {"sha256": "e" * 64}
+        assert archive["subdirectory"] == "pkg"
+        # An archive is content-pinned, so unlike vcs/directory it keeps a version.
+        assert package["version"] == "1.0"
+
+    def test_archive_pin_requirements_line(self) -> None:
+        pins = {
+            "foo": ArchivePin(
+                name="foo",
+                version="1.0",
+                url="https://ex.com/foo-1.0.tar.gz",
+                hashes=(("sha256", "e" * 64),),
+                subdirectory="pkg",
+            ),
+        }
+        text = write_requirements_with_hashes(LockInput(pins=pins))
+        assert (
+            "foo @ https://ex.com/foo-1.0.tar.gz#sha256="
+            + "e" * 64
+            + "&subdirectory=pkg"
+        ) in text
+
+    def test_archive_pin_requirements_line_no_subdirectory(self) -> None:
+        pins = {
+            "foo": ArchivePin(
+                name="foo",
+                version="1.0",
+                url="https://ex.com/foo-1.0.tar.gz",
+                hashes=(("sha256", "e" * 64),),
+            ),
+        }
+        text = write_requirements_with_hashes(LockInput(pins=pins))
+        assert "foo @ https://ex.com/foo-1.0.tar.gz#sha256=" + "e" * 64 in text
+        assert "subdirectory" not in text
 
     def test_multiple_packages_sorted_by_name(self) -> None:
         text = write_lock(
@@ -446,6 +501,26 @@ class TestPerTupleMarkerSimplification:
         data = tomllib.loads(text)
         # Same VCS commit -> single group -> one package
         assert len(data["packages"]) == 1
+
+    def test_archive_pin_per_tuple(self) -> None:
+        # ArchivePin merged across tuples: same archive -> one group -> one package.
+        pin = ArchivePin(
+            name="foo",
+            version="1.0",
+            url="https://ex.com/foo-1.0.tar.gz",
+            hashes=(("sha256", "e" * 64),),
+        )
+        per_tuple = {"py310": {"foo": pin}, "py311": {"foo": pin}}
+        tuple_markers = {
+            "py310": Marker('python_version == "3.10"'),
+            "py311": Marker('python_version == "3.11"'),
+        }
+        text = write_lock(
+            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+        )
+        data = tomllib.loads(text)
+        assert len(data["packages"]) == 1
+        assert data["packages"][0]["archive"]["url"] == "https://ex.com/foo-1.0.tar.gz"
 
     def test_vcs_pin_per_tuple_diverging_commit(self) -> None:
         # Diverging commit -> two groups -> two packages
@@ -2084,6 +2159,7 @@ class _FakeProvider:
         listings: dict[str, list[tuple[Version, WheelFile | SdistFile]]] | None = None,
         local_sources: dict[str, LocalSource] | None = None,
         vcs_sources: dict[str, VcsSource] | None = None,
+        archive_sources: dict[str, ArchiveSource] | None = None,
         vcs_pins: dict[str, str] | None = None,
         listing_indexes: dict[str, str] | None = None,
         dist_policy_overrides: dict[str, DistPolicy] | None = None,
@@ -2096,6 +2172,7 @@ class _FakeProvider:
         self._listings = listings or {}
         self._local = local_sources or {}
         self._vcs = vcs_sources or {}
+        self._archive = archive_sources or {}
         self._vcs_pins = vcs_pins or {}
         self._dist_policy_overrides = dist_policy_overrides or {}
         self._requires_python_overrides = requires_python_overrides or {}
@@ -2108,6 +2185,9 @@ class _FakeProvider:
 
     def vcs_source_for(self, canonical: str) -> VcsSource | None:
         return self._vcs.get(canonical)
+
+    def archive_source_for(self, canonical: str) -> ArchiveSource | None:
+        return self._archive.get(canonical)
 
     def vcs_pin_for(self, canonical: str) -> str | None:
         return self._vcs_pins.get(canonical)
@@ -2314,6 +2394,37 @@ class TestBuildLockInputFromProvider:
         text = write_lock(lock_input)
         assert "pkg-2.0.tar.gz" in text
         assert "b" * 64 in text
+
+    def test_archive_source_emits_archive_pin(self) -> None:
+        """A configured ArchiveSource builds an ArchivePin from its URL + hash."""
+        source = ArchiveSource(
+            name="foo",
+            url=(
+                "https://ex.com/foo-1.0.tar.gz#sha256=" + "e" * 64 + "&subdirectory=pkg"
+            ),
+        )
+        provider = _FakeProvider(archive_sources={"foo": source})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, ArchivePin)
+        assert pin.url == "https://ex.com/foo-1.0.tar.gz"
+        assert pin.hashes == (("sha256", "e" * 64),)
+        assert pin.subdirectory == "pkg"
+        assert pin.version == "1.0"
+
+    def test_archive_source_strips_credentials(self) -> None:
+        """An archive on an authenticated host keeps its token out of the lock."""
+        source = ArchiveSource(
+            name="foo",
+            url="https://user:token@private.example/foo-1.0.tar.gz#sha256=" + "e" * 64,
+        )
+        provider = _FakeProvider(archive_sources={"foo": source})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, ArchivePin)
+        assert pin.url == "https://private.example/foo-1.0.tar.gz"
+        assert "user:token@" not in write_lock(lock_input)
+        assert "user:token@" not in write_requirements_with_hashes(lock_input)
 
     def test_local_path_threads_to_artifact(self, tmp_path: Path) -> None:
         """A WheelFile.local_path reaches the emitted WheelArtifact."""

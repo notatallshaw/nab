@@ -30,6 +30,8 @@ guides/conflicts
 * Multiple indexes, per-package routing, and local-checkout sources
 * VCS dependency admission with policy controls (Layer 2: clone +
   static metadata)
+* Direct-URL `.tar.gz` archive sources, hash-verified and pinned as
+  PEP 751 `packages.archive`
 * PEP 751 lockfile emission via the upstream `packaging` library
 * Universal resolution across a user-declared `(python, platform)`
   matrix.  Opt-in via `[tool.nab].mode = "universal"`; the API and

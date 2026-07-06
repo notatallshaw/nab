@@ -15,10 +15,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import tomli
 from typing_extensions import override
 
+from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.multi_index import IndexConfig
 
 from ._conflict_kind import KIND_EXTRA, KIND_GROUP
@@ -43,6 +45,7 @@ from .config_sources import (
 )
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from .provider import (
+    ArchiveSource,
     BuildPolicy,
     DistPolicy,
     LocalSource,
@@ -392,6 +395,7 @@ class NabProjectConfig:
     vcs: VcsConfig = field(default_factory=VcsConfig)
     local_sources: tuple[LocalSource, ...] = ()
     vcs_sources: tuple[VcsSource, ...] = ()
+    archive_sources: tuple[ArchiveSource, ...] = ()
     matrix: MatrixConfig | None = None
     resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST
     workspace: WorkspaceConfig | None = None
@@ -661,7 +665,8 @@ def _config_from_effective(
 
     local_sources = effective["local-sources"].value
     vcs_sources = effective["vcs-sources"].value
-    _reject_duplicate_source_names(local_sources, vcs_sources)
+    archive_sources = effective["archive-sources"].value
+    _reject_duplicate_source_names(local_sources, vcs_sources, archive_sources)
 
     del pyproject_dir  # paths were resolved per-layer by the registry.
     return NabProjectConfig(
@@ -678,6 +683,7 @@ def _config_from_effective(
         vcs=effective["vcs"].value,
         local_sources=local_sources,
         vcs_sources=vcs_sources,
+        archive_sources=archive_sources,
         matrix=matrix,
         resolution=effective["resolution"].value,
         workspace=effective["workspace"].value,
@@ -1841,23 +1847,87 @@ def _parse_vcs_sources(value: object) -> tuple[VcsSource, ...]:
     return tuple(out)
 
 
+_ARCHIVE_SOURCE_KEYS = frozenset({"name", "url"})
+
+
+def _parse_archive_sources(value: object) -> tuple[ArchiveSource, ...]:
+    if not isinstance(value, list):
+        msg = f"archive-sources must be an array of tables, got {type(value).__name__}"
+        raise ConfigError(msg)
+    out: list[ArchiveSource] = []
+    for i, entry in enumerate(value):
+        if not isinstance(entry, dict):
+            msg = f"archive-sources[{i}] must be a table, got {type(entry).__name__}"
+            raise ConfigError(msg)
+        unknown = sorted(set(entry) - _ARCHIVE_SOURCE_KEYS)
+        if unknown:
+            msg = (
+                f"unknown archive-sources[{i}] keys: {unknown!r};"
+                f" expected {sorted(_ARCHIVE_SOURCE_KEYS)!r}"
+            )
+            raise ConfigError(msg)
+        try:
+            name = entry["name"]
+            url = entry["url"]
+        except KeyError as missing:
+            msg = f"archive-sources[{i}] missing required key {missing!s}"
+            raise ConfigError(msg) from None
+        if not isinstance(name, str) or not isinstance(url, str):
+            msg = f"archive-sources[{i}] name and url must be strings"
+            raise ConfigError(msg)
+        _validate_archive_url(i, url)
+        out.append(ArchiveSource(name=name, url=url))
+    return tuple(out)
+
+
+def _validate_archive_url(index: int, url: str) -> None:
+    """Reject an archive URL with no hash or an unsupported format.
+
+    PEP 751 ``packages.archive.hashes`` is required, so nab requires the
+    hash in the URL fragment and verifies the download against it.  Only
+    ``.tar.gz`` source archives are supported today; wheels and zips are
+    refused loudly rather than mis-handled.
+    """
+    try:
+        request = ArchiveRequest.parse(url)
+    except ArchiveRequestError as exc:
+        msg = f"archive-sources[{index}] url: {exc}"
+        raise ConfigError(msg) from exc
+
+    if not request.has_usable_hash:
+        msg = (
+            f"archive-sources[{index}] url {url!r} has no hash; add a"
+            " '#sha256=<hex>' fragment (PEP 751 requires an archive hash)"
+        )
+        raise ConfigError(msg)
+
+    if not urlsplit(request.url).path.endswith(".tar.gz"):
+        msg = (
+            f"archive-sources[{index}] url {url!r} is not a .tar.gz archive;"
+            " only .tar.gz source archives are supported"
+        )
+        raise ConfigError(msg)
+
+
 def _reject_duplicate_source_names(
     local_sources: tuple[LocalSource, ...],
     vcs_sources: tuple[VcsSource, ...],
+    archive_sources: tuple[ArchiveSource, ...],
 ) -> None:
-    """Reject a canonical name claimed by more than one local/VCS source.
+    """Reject a canonical name claimed by more than one declared source.
 
     The provider enforces this while indexing, but as a bare ValueError raised
     after the resolve starts; raising ConfigError here surfaces it at parse
     time like every other config error.
     """
     seen: dict[str, str] = {}
-    for source in (*local_sources, *vcs_sources):
+    for source in (*local_sources, *vcs_sources, *archive_sources):
         canonical = canonicalize_name(source.name)
         if canonical in seen:
             msg = (
-                "[tool.nab] local-sources/vcs-sources declare duplicate canonical"
-                f" name {canonical!r} via {seen[canonical]!r} and {source.name!r}"
+                "[tool.nab] local-sources/vcs-sources/archive-sources declare"
+                f" duplicate canonical name {canonical!r} via {seen[canonical]!r}"
+                f" and {source.name!r}"
             )
             raise ConfigError(msg)
         seen[canonical] = source.name

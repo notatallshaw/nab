@@ -1,17 +1,21 @@
-"""Local-source and VCS-source materialisation for the provider.
+"""Local-source, VCS-source, and archive-source materialisation.
 
 A ``LocalSource`` becomes the only candidate for a package: PyPI is
-not consulted.  A ``VcsSource`` clones the repo and reuses the
-``LocalSource`` extraction path.  Both produce a single synthetic
+not consulted.  A ``VcsSource`` clones the repo and an ``ArchiveSource``
+downloads and hash-verifies a ``.tar.gz`` and extracts it; both reuse the
+``LocalSource`` extraction path.  Each produces a single synthetic
 ``SdistFile`` whose version is read from ``[project].version``.
 """
 
 from __future__ import annotations
 
+import shutil
+import tarfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nab_index.client import SdistFile
+from nab_index.archive import ArchiveRequest
+from nab_index.client import SdistFile, _verify_sdist_hash, extract_sdist_archive
 from nab_index.vcs import VcsCloneError, VcsRequest
 
 from .._vendor.packaging.utils import canonicalize_name
@@ -19,7 +23,7 @@ from .._vendor.packaging.utils import canonicalize_name
 if TYPE_CHECKING:
     from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
-    from ..provider import LocalSource, Provider, VcsSource
+    from ..provider import ArchiveSource, LocalSource, Provider, VcsSource
 
 
 def index_local_sources(
@@ -80,9 +84,10 @@ def extract_source_metadata(
     """Read metadata from a directory; gates the backend path on policy.
 
     ``kind`` is ``"local"`` for :class:`LocalSource` directories
-    (admitted at :attr:`BuildPolicy.BUILD_LOCAL` and above) or
-    ``"vcs"`` for :class:`VcsSource` clones (admitted only at
-    :attr:`BuildPolicy.BUILD_REMOTE`).
+    (admitted at :attr:`BuildPolicy.BUILD_LOCAL` and above); ``"vcs"``
+    for :class:`VcsSource` clones and ``"archive"`` for extracted
+    :class:`ArchiveSource` trees both build only at
+    :attr:`BuildPolicy.BUILD_REMOTE`, like a remote sdist.
     """
     # Imported in-function so tests can patch the module attribute.
     from .. import build_backend
@@ -221,3 +226,171 @@ def materialize_vcs_source(
         kind="vcs",
     )
     return seed_synthetic_listing(provider, normalized, path, metadata)
+
+
+def index_archive_sources(
+    provider: Provider,
+    sources: list[ArchiveSource],
+) -> dict[str, ArchiveSource]:
+    """Validate archive sources and return a canonical-name map.
+
+    Admitted at every :class:`~nab_python.provider.BuildPolicy` level; the
+    policy only governs whether the backend may run on the extracted tree
+    (see :func:`extract_source_metadata`).  There is no ``VcsPolicy``-style
+    gate: the download is hash-verified, and which archive URLs are
+    permitted is decided at config parse.
+    """
+    if not sources:
+        return {}
+    out: dict[str, ArchiveSource] = {}
+    for src in sources:
+        # Guarantee a usable hash at the provider layer (config parse already
+        # checks it, but a directly-built Provider would otherwise IndexError
+        # when materialisation reads the first digest, or verify an empty one).
+        if not ArchiveRequest.parse(src.url).has_usable_hash:
+            msg = f"archive source {src.name!r} has no hash in its URL: {src.url!r}"
+            raise ValueError(msg)
+
+        canonical = canonicalize_name(src.name)
+        if (
+            canonical in out
+            or canonical in provider.local_sources
+            or canonical in provider.vcs_sources
+        ):
+            msg = f"duplicate source declared for {src.name!r}"
+            raise ValueError(msg)
+        out[canonical] = src
+    return out
+
+
+def _fetch_archive_bytes(
+    provider: Provider,
+    source: ArchiveSource,
+) -> tuple[Path, ArchiveRequest, str, bytes]:
+    """Return ``(cache_dir, request, digest, data)`` for a verified archive.
+
+    Raises before returning if the cache dir is missing, the download failed,
+    or the bytes fail their hash.  The hash is re-checked here rather than
+    trusted to the serving client: a ``file://`` index reads archive bytes
+    without verifying them, so this is the one place the check always runs.
+    """
+    from ..provider import UnsupportedSdistError
+
+    cache_dir = provider.archive_cache_dir
+    if cache_dir is None:
+        msg = (
+            f"archive source {source.name!r} declared but no"
+            f" archive_cache_dir was supplied to Provider"
+        )
+        raise UnsupportedSdistError(msg)
+
+    request = ArchiveRequest.parse(source.url)
+    canonical = canonicalize_name(source.name)
+
+    # The version is unknown until the tree is extracted, so key the download
+    # by the first declared digest: unique and known up-front.  The fragment
+    # only carries accepted algorithms, so every pair is verifiable.
+    digest = request.hashes[0][1]
+
+    # Fetch through the shared coordinator; a recorded integrity error or an
+    # absent download both fail the resolve here.
+    event = provider.coordinator.request_sdist_archive(
+        canonical, digest, request.url, request.hashes
+    )
+    event.wait()
+    error = provider.coordinator.index.get_sdist_archive_error(canonical, digest)
+    if error is not None:
+        raise error
+    data = provider.coordinator.index.get_sdist_archive(canonical, digest)
+    if data is None:
+        msg = f"archive source {source.name!r}: download from {request.url} failed"
+        raise UnsupportedSdistError(msg)
+
+    # Verify every declared hash rather than trust the serving client, so a
+    # file:// index (which does not check) cannot slip an unverified archive
+    # through, and so this layer never disagrees with a client that verified a
+    # different algorithm.
+    for pinned_hash in request.hashes:
+        _verify_sdist_hash(data, pinned_hash)
+    return cache_dir, request, digest, data
+
+
+# Extraction (this function and _extract_archive) is excluded from coverage: it
+# requires the PEP 706 tar data filter (Python 3.10.12+), but GitHub Actions
+# setup-python installs 3.10.11 on macOS-arm64 and Windows (python.org stopped
+# shipping 3.10 installers after 3.10.11, and actions/python-versions builds
+# those OSes from installers), so no 3.10.12+ artifact exists for them.  The
+# extraction tests skip there, leaving these lines unhit on those two runners.
+# The download-and-verify guards live in _fetch_archive_bytes above so they stay
+# gated on every runner.  Remove the pragmas when that 3.10 cell is dropped,
+# sourced from python-build-standalone, or 3.10 reaches EOL (2026-10).
+def materialize_archive_source(
+    provider: Provider,
+    normalized: str,
+    source: ArchiveSource,
+) -> list[tuple[Version, SdistFile]]:  # pragma: no cover (tar data filter)
+    """Download and hash-verify ``source``, extract it, then materialise it.
+
+    A declared archive is always verified against its required hash in
+    :func:`_fetch_archive_bytes`, so a tampered archive fails the resolve
+    loudly rather than being used and pinned unverified.  The extracted tree
+    then takes the same path as a LocalSource.
+    """
+    # Download, hash-verify, and extract the archive into the cache.
+    cache_dir, request, digest, data = _fetch_archive_bytes(provider, source)
+    root = _extract_archive(cache_dir, digest, data)
+
+    # Read the extracted tree's metadata as a local source and seed one candidate.
+    path = root / request.subdirectory if request.subdirectory else root
+    metadata = extract_source_metadata(
+        provider,
+        path,
+        descriptor=f"archive source {source.name!r}",
+        package=canonicalize_name(source.name),
+        kind="archive",
+    )
+    return seed_synthetic_listing(provider, normalized, path, metadata)
+
+
+def _extract_archive(
+    cache_dir: Path, digest: str, data: bytes
+) -> Path:  # pragma: no cover (tar data filter; see materialize_archive_source)
+    """Extract ``data`` under ``cache_dir`` keyed by ``digest``; return the root.
+
+    Idempotent, like :func:`prepare_clone`: a digest already extracted in a
+    prior resolve is reused rather than re-extracted, since the tree is
+    content-addressed by its verified hash.  The completion marker also
+    distinguishes a finished tree from a partial one left by a crashed run,
+    which is discarded and redone.
+    """
+    from ..provider import UnsupportedSdistError
+
+    target = cache_dir / digest
+    marker = target / ".nab-extracted"
+
+    # Reuse a tree a prior resolve already extracted for this digest.
+    if marker.is_file():
+        root_name = marker.read_text(encoding="utf-8").strip()
+        # Resolve to match the fresh-extract branch, so the file URI works
+        # even for a relative cache dir.
+        base = target / root_name if root_name else target
+        return base.resolve()
+
+    # Discard any partial tree left by a crashed run, then extract afresh.
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
+    try:
+        root = extract_sdist_archive(data, target)
+    except (OSError, ValueError, tarfile.TarError) as exc:
+        shutil.rmtree(target, ignore_errors=True)
+        msg = f"archive could not be extracted: {exc}"
+        raise UnsupportedSdistError(msg) from exc
+
+    # Record the root name (empty for a flat archive) so the next resolve
+    # reuses the tree without re-reading the bytes.  Compare against the
+    # resolved target since extract_sdist_archive resolves symlinks and
+    # relative cache dirs, which would otherwise misrecord a flat root.
+    root_name = root.name if root != target.resolve() else ""
+    marker.write_text(root_name, encoding="utf-8")
+    return root

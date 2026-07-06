@@ -38,7 +38,7 @@ from nab_python.resolve import (
     _load_extra_requirements,
     _load_group_requirements,
     _load_group_requirements_by_group,
-    _raise_for_local_vcs_python,
+    _raise_for_source_python,
     _resolve_target_python,
     _walk_no_versions_packages,
     resolve_pyproject,
@@ -2857,28 +2857,28 @@ class TestLocalVcsRequiresPython:
             '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n',
         )
         with pytest.raises(ResolutionError, match="foo 1.0 requires Python"):
-            _raise_for_local_vcs_python(provider, {"foo": V("1.0")}, V("3.10.0"))
+            _raise_for_source_python(provider, {"foo": V("1.0")}, V("3.10.0"))
 
     def test_compatible_python_does_not_raise(self, tmp_path: Path) -> None:
         provider = self._provider_with_local(
             tmp_path,
             '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.10"\n',
         )
-        _raise_for_local_vcs_python(provider, {"foo": V("1.0")}, V("3.10.0"))
+        _raise_for_source_python(provider, {"foo": V("1.0")}, V("3.10.0"))
 
     def test_no_requires_python_does_not_raise(self, tmp_path: Path) -> None:
         provider = self._provider_with_local(
             tmp_path,
             '[project]\nname = "foo"\nversion = "1.0"\n',
         )
-        _raise_for_local_vcs_python(provider, {"foo": V("1.0")}, V("3.10.0"))
+        _raise_for_source_python(provider, {"foo": V("1.0")}, V("3.10.0"))
 
     def test_non_managed_pin_is_skipped(self, tmp_path: Path) -> None:
         provider = self._provider_with_local(
             tmp_path,
             '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n',
         )
-        _raise_for_local_vcs_python(provider, {"bar": V("9.0")}, V("3.10.0"))
+        _raise_for_source_python(provider, {"bar": V("9.0")}, V("3.10.0"))
 
     def test_resolve_pyproject_excluding_python_raises(self, tmp_path: Path) -> None:
         member = tmp_path / "foo"

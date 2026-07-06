@@ -38,8 +38,11 @@ def write_requirements_with_hashes(
     accepts.  Local and VCS pins are emitted as ``name @ <url>`` lines
     without hashes (pip does not hash-check those forms); an editable
     local pin renders as ``-e <url>`` and a ``subdirectory`` as a
-    ``#subdirectory=`` fragment.  Returns the text and, when
-    ``output_path`` is provided, atomically writes it.
+    ``#subdirectory=`` fragment.  An archive pin is a third form, ``name @
+    <url>#sha256=...``, carrying its hash in the fragment;
+    :func:`require_artifact_hashes` skips it because that hash is guaranteed
+    at config parse.  Returns the text and, when ``output_path`` is provided,
+    atomically writes it.
     """
     require_artifact_hashes(lock_input)
     return _render_requirements(lock_input, with_hashes=True, output_path=output_path)
@@ -51,8 +54,8 @@ def write_requirements_without_hashes(
     """Render ``lock_input`` as a plain ``name==version`` list.
 
     Same shape as :func:`write_requirements_with_hashes` but without
-    the ``--hash=sha256:...`` lines.  Local and VCS pins render the
-    same in both variants.  Returns the text and, when ``output_path``
+    the ``--hash=sha256:...`` lines.  Local, VCS, and archive pins render
+    the same in both variants.  Returns the text and, when ``output_path``
     is provided, atomically writes it.
     """
     return _render_requirements(lock_input, with_hashes=False, output_path=output_path)
@@ -94,7 +97,7 @@ def _render_per_tuple_requirements(lock_input: LockInput, *, with_hashes: bool) 
 
 def _render_pins(pins: Mapping[str, PinShape], *, with_hashes: bool) -> list[str]:
     """Render a flat ``{name: pin}`` mapping in alphabetical order."""
-    from ..lockfile import IndexPin, LocalPin, VcsPin
+    from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
 
     lines: list[str] = []
     for canonical in sorted(pins):
@@ -112,6 +115,14 @@ def _render_pins(pins: Mapping[str, PinShape], *, with_hashes: bool) -> list[str
                 lines.append(f"{pin.name} @ {url}")
         elif isinstance(pin, VcsPin):
             lines.append(f"{pin.name} @ {pin.repo_url}")
+        elif isinstance(pin, ArchivePin):
+            # The hash is the archive's identity, so carry it (and any
+            # subdirectory) in the fragment for a reproducible, hash-checkable
+            # install line, mirroring how VcsPin pins its commit in the URL.
+            fragment = "&".join(f"{algo}={digest}" for algo, digest in pin.hashes)
+            if pin.subdirectory is not None:
+                fragment += f"&subdirectory={quote(pin.subdirectory, safe='/')}"
+            lines.append(f"{pin.name} @ {pin.url}#{fragment}")
         else:  # pragma: no cover - exhaustive
             msg = f"unknown pin shape: {pin!r}"
             raise TypeError(msg)

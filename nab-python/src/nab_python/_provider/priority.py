@@ -74,10 +74,12 @@ def compute_matching(
         if cached is not None:
             return cached
 
-    # Local/VCS sources short-circuit the listing path; their synthetic
+    # Local/VCS/archive sources short-circuit the listing path; their synthetic
     # listing is materialised lazily by fetch_versions.
     has_local_source = (
-        normalized in provider.local_sources or normalized in provider.vcs_sources
+        normalized in provider.local_sources
+        or normalized in provider.vcs_sources
+        or normalized in provider.archive_sources
     )
     if normalized not in provider.versions_cache and not has_local_source:
         files = provider.coordinator.index.get_listing(normalized)

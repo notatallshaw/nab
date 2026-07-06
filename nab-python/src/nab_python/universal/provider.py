@@ -34,6 +34,7 @@ from .._vendor.packaging.markers import default_environment
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
 from ..provider import (
+    ArchiveSource,
     BuildPolicy,
     DistPolicy,
     ExtrasMode,
@@ -86,6 +87,8 @@ class UniversalProvider(Provider):
         vcs_cache_dir: Path | None = None,
         local_sources: list[LocalSource] | None = None,
         vcs_sources: list[VcsSource] | None = None,
+        archive_sources: list[ArchiveSource] | None = None,
+        archive_cache_dir: Path | None = None,
         build_config: NabProjectConfig | None = None,
         preferences: dict[str, Version] | None = None,
         resolution_strategy: ResolutionStrategy | str = ResolutionStrategy.HIGHEST,
@@ -130,6 +133,8 @@ class UniversalProvider(Provider):
             local_sources=local_sources,
             vcs_sources=vcs_sources,
             vcs_cache_dir=vcs_cache_dir,
+            archive_sources=archive_sources,
+            archive_cache_dir=archive_cache_dir,
             build_config=build_config,
             resolution_strategy=resolution_strategy,
             direct_packages=direct_packages,

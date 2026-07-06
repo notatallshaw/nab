@@ -14,7 +14,6 @@ import sys
 import tarfile
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
@@ -26,6 +25,8 @@ from packaging.utils import (
 from packaging.version import InvalidVersion, Version
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from packaging.utils import NormalizedName
     from typing_extensions import Self
 
@@ -43,6 +44,11 @@ __all__ = [
 
 # Verification order; sha256 is pip's hash-checking baseline.
 _ACCEPTED_HASH_ALGORITHMS = ("sha256", "sha384", "sha512")
+
+# The tar ``data`` filter (PEP 706) landed in 3.12 and was backported to
+# 3.10.12 / 3.11.4; sdist extraction requires it (see extract_sdist_archive).
+# data_filter appears with the same change, so its presence detects support.
+_SUPPORTS_DATA_FILTER = hasattr(tarfile, "data_filter")
 
 
 class MetadataHashMismatchError(Exception):
@@ -590,38 +596,39 @@ def _sdist_member_top_level(name: str) -> tuple[int, str, str]:
 def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
     """Extract a .tar.gz sdist into ``target_dir`` and return the source root.
 
-    Sdists wrap their contents in a single top-level directory
-    (``<name>-<version>/``).  The function refuses absolute paths and
-    members whose normalised path escapes ``target_dir``; sdists from
-    PyPI conform to this convention but mirrors and forks occasionally
-    do not, and silently writing outside the intended directory is
-    unsafe.  The first directory found at depth 1 is returned as the
-    source root, falling back to ``target_dir`` itself when the archive
-    is flat.
+    Extraction goes through the tar ``data`` filter (:pep:`706`), which refuses
+    any member that would write outside ``target_dir`` (absolute paths, ``..``,
+    escaping links) or is a special file (device node, FIFO); a rejected member
+    surfaces as a :class:`ValueError`.  The single extracted top-level directory
+    is the source root, falling back to ``target_dir`` when the archive has no
+    single top-level directory.
+
+    The data filter is required; a Python that lacks it (before 3.10.12 /
+    3.11.4 / 3.12) is unsupported and extraction raises.
     """
+    if not _SUPPORTS_DATA_FILTER:
+        msg = (
+            "extracting an sdist archive requires the tar data filter;"
+            " upgrade to Python 3.10.12+ / 3.11.4+ / 3.12+"
+        )
+        raise ValueError(msg)
+
     target_dir = target_dir.resolve()
-    root: Path | None = None
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-        for member in tar:
-            raw_name = member.name
-            if not raw_name or raw_name.startswith(("/", "./.")) or "\\" in raw_name:
-                msg = f"unsafe sdist member: {raw_name!r}"
-                raise ValueError(msg)
-            member_name = raw_name.removeprefix("./")
-            if not member_name or member_name.startswith("/"):
-                msg = f"unsafe sdist member: {raw_name!r}"
-                raise ValueError(msg)
-            parts = Path(member_name).parts
-            if any(p in ("..", "") for p in parts):
-                msg = f"unsafe sdist member: {raw_name!r}"
-                raise ValueError(msg)
-            tar.extract(member, target_dir, filter="data")
-            if root is None and member.isdir() and len(parts) == 1:
-                root = target_dir / parts[0]
-            elif root is None and len(parts) >= 1:
-                top = target_dir / parts[0]
-                if top.is_dir():
-                    root = top
-    if root is None:
-        return target_dir
-    return root
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            tar.extractall(target_dir, filter="data")
+    except tarfile.FilterError as exc:
+        msg = f"unsafe sdist member: {exc}"
+        raise ValueError(msg) from exc
+
+    # The source root is the single extracted top-level directory, read from
+    # the extracted tree so a sanitised member name cannot mislead it.  A
+    # symlink is not followed here: only a real directory counts as the root.
+    subdirs = [
+        entry
+        for entry in target_dir.iterdir()
+        if entry.is_dir() and not entry.is_symlink()
+    ]
+    if len(subdirs) == 1:
+        return subdirs[0]
+    return target_dir

@@ -1,11 +1,11 @@
 """Download every distribution referenced by a finished resolve.
 
 Consumes a :class:`~nab_python.lockfile.LockInput` and writes every
-recorded wheel and sdist into a target directory, verifying the
-recorded hash.  Local and VCS pins are skipped: their contents live
-elsewhere on disk and the lockfile carries no ``sha256`` for them.
-An artefact from a local ``file://`` (find-links) index is copied
-from its on-disk path rather than fetched over HTTP.
+recorded wheel, sdist, and direct-URL archive into a target directory,
+verifying the recorded hash.  Local and VCS pins are skipped: their
+contents live elsewhere on disk and the lockfile carries no ``sha256``
+for them.  An artefact from a local ``file://`` (find-links) index is
+copied from its on-disk path rather than fetched over HTTP.
 
 Use as a one-shot from the CLI ``nab download`` command, or
 programmatically after :func:`~nab_python.resolve.resolve_pyproject_to_lock`.
@@ -16,14 +16,16 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import posixpath
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from nab_index.client import AsyncSimpleClient
 from nab_index.transport import HttpError
 
-from .lockfile import IndexPin, LocalPin, LockInput, VcsPin
+from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -100,9 +102,20 @@ def iter_artifacts(lock_input: LockInput) -> Iterable[DownloadEntry]:
 
 
 def _entries_for_pin(canonical: str, pin: PinShape) -> Iterable[DownloadEntry]:
-    # Only index pins have downloadable artefacts; local and VCS pins are skipped.
+    # Index and archive pins carry a downloadable, hash-verified URL; local and
+    # VCS pins live elsewhere on disk and carry no hash, so they are skipped.
     if isinstance(pin, IndexPin):
         yield from _iter_index_pin(canonical, pin)
+    elif isinstance(pin, ArchivePin):
+        algo, digest = pin.primary_digest
+        yield DownloadEntry(
+            package=canonical,
+            version=pin.version,
+            filename=posixpath.basename(urlsplit(pin.url).path),
+            url=pin.url,
+            hash_algo=algo,
+            digest=digest.lower(),
+        )
     elif isinstance(pin, (LocalPin, VcsPin)):
         return
     else:  # pragma: no cover - exhaustive
@@ -137,6 +150,30 @@ def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:
         )
 
 
+def _reject_colliding_targets(artefacts: list[DownloadEntry]) -> None:
+    """Refuse two distinct artefacts that would write to one output filename.
+
+    Index sdist/wheel filenames embed the package name and version, so they
+    never collide.  A direct-URL archive's filename is the bare basename of
+    its URL, which is arbitrary: two archives from different repositories
+    commonly share one (e.g. a GitHub ``v1.0.0.tar.gz`` tag tarball).  Two
+    artefacts with different digests but the same basename would clobber each
+    other in the flat output dir, silently dropping one, so refuse it loudly.
+    """
+    by_name: dict[str, DownloadEntry] = {}
+    for entry in artefacts:
+        prior = by_name.get(entry.filename)
+        if prior is not None and prior.digest != entry.digest:
+            msg = (
+                f"artefacts collide on output filename {entry.filename!r}:"
+                f" {prior.package}=={prior.version} and"
+                f" {entry.package}=={entry.version} differ."
+                " Download them to separate directories."
+            )
+            raise DownloadError(msg)
+        by_name[entry.filename] = entry
+
+
 def download_lock(
     lock_input: LockInput,
     transport: AsyncHttpTransport,
@@ -154,6 +191,7 @@ def download_lock(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     artefacts = list(iter_artifacts(lock_input))
+    _reject_colliding_targets(artefacts)
     return asyncio.run(
         _run_downloads(artefacts, transport, output_dir, max_concurrency)
     )
@@ -172,8 +210,9 @@ async def _run_downloads(
 
     async def _one(entry: DownloadEntry) -> None:
         async with sem:
-            # The filename is index-controlled; reject anything but a plain
-            # basename so a crafted name cannot escape output_dir on write.
+            # The filename comes from the index or an archive URL; reject
+            # anything but a plain basename so a crafted name cannot escape
+            # output_dir on write.
             if not entry.filename or Path(entry.filename).name != entry.filename:
                 msg = (
                     f"{entry.package}=={entry.version}:"

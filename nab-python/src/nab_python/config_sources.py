@@ -41,6 +41,7 @@ from nab_index.multi_index import IndexConfig
 
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from .provider import (
+    ArchiveSource,
     BuildPolicy,
     DistPolicy,
     LocalSource,
@@ -555,8 +556,9 @@ def _parse_local_sources(value: Any, where: str) -> tuple[LocalSource, ...]:
     # One file's array-of-tables (name, path, editable, subdirectory).  Paths
     # resolve relative to the declaring file's directory (both legal sources
     # share the project dir).  There is no within-key duplicate check (the
-    # cross-source local/vcs name check is a whole-config pass on the resolve
-    # path), so the concatenation passes through unchanged (merge_check=tuple).
+    # cross-source local/vcs/archive name check is a whole-config pass on the
+    # resolve path), so the concatenation passes through unchanged
+    # (merge_check=tuple).
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_local_sources as _impl,
@@ -584,6 +586,17 @@ def _parse_vcs_sources(value: Any, where: str) -> tuple[VcsSource, ...]:
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_vcs_sources as _impl,
+    )
+
+    return _delegate(lambda: _impl(value))
+
+
+def _parse_archive_sources(value: Any, where: str) -> tuple[ArchiveSource, ...]:
+    # One file's array-of-tables (name, url); same passthrough shape as
+    # vcs-sources (merge_check=tuple).
+    del where
+    from .config import (  # noqa: PLC0415 (config import cycle)
+        _parse_archive_sources as _impl,
     )
 
     return _delegate(lambda: _impl(value))
@@ -735,6 +748,12 @@ def _render_local_sources(value: Sequence[LocalSource]) -> str:
 
 
 def _render_vcs_sources(value: Sequence[VcsSource]) -> str:
+    if not value:
+        return "<none>"
+    return ", ".join(f"{s.name}@{s.url}" for s in value)
+
+
+def _render_archive_sources(value: Sequence[ArchiveSource]) -> str:
     if not value:
         return "<none>"
     return ", ".join(f"{s.name}@{s.url}" for s in value)
@@ -945,6 +964,19 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_vcs_sources,
         render=_render_vcs_sources,
+        is_array=True,
+        merge_check=tuple,
+    ),
+    OptionSpec(
+        key="archive-sources",
+        scope=Scope.PROJECT,
+        type_label="array-of-tables(name,url)",
+        default=(),
+        env_var=None,
+        cli_flag=None,
+        cli_param=None,
+        parse=_parse_archive_sources,
+        render=_render_archive_sources,
         is_array=True,
         merge_check=tuple,
     ),

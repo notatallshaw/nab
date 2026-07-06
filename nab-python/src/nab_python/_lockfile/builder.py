@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
     from .._vendor.packaging.version import Version
     from ..lockfile import (
+        ArchivePin,
         IndexPin,
         LockInput,
         PinShape,
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
         VcsPin,
         WheelArtifact,
     )
-    from ..provider import DistPolicy, LocalSource, VcsSource
+    from ..provider import ArchiveSource, DistPolicy, LocalSource, VcsSource
 
 
 __all__ = [
@@ -94,6 +95,10 @@ class LockInputProvider(Protocol):
 
     def vcs_source_for(self, canonical_name: str, /) -> VcsSource | None:
         """Return the configured VcsSource for ``canonical_name`` or None."""
+        ...
+
+    def archive_source_for(self, canonical_name: str, /) -> ArchiveSource | None:
+        """Return the configured ArchiveSource for ``canonical_name`` or None."""
         ...
 
     def vcs_pin_for(self, canonical_name: str, /) -> str | None:
@@ -286,6 +291,12 @@ def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a disti
                 version,
                 vcs_source,
                 resolved_sha=provider.vcs_pin_for(canonical),
+            )
+            continue
+        archive_source = provider.archive_source_for(canonical)
+        if archive_source is not None:
+            lock_pins[canonical] = _archive_pin_from_source(
+                canonical, version, archive_source
             )
             continue
         lock_pins[canonical] = _index_pin_from_listing(
@@ -612,4 +623,31 @@ def _vcs_pin_from_source(
         subdirectory=parsed.subdirectory or None,
         requested_revision=requested_revision,
         vcs_type=parsed.scheme,
+    )
+
+
+def _archive_pin_from_source(
+    canonical: str,
+    version: Version,
+    source: ArchiveSource,
+) -> ArchivePin:
+    """Build an :class:`ArchivePin` from an :class:`ArchiveSource`.
+
+    The URL, hashes, and subdirectory come from the source declaration,
+    which config parse validated (a hash is required), so the pin records
+    the exact archive the resolve used.  The URL is stripped of any
+    credential userinfo, like every other pin, so a committed lockfile
+    never carries a token.
+    """
+    from nab_index.archive import ArchiveRequest
+
+    from ..lockfile import ArchivePin
+
+    request = ArchiveRequest.parse(source.url)
+    return ArchivePin(
+        name=canonical,
+        version=str(version),
+        url=_strip_userinfo(request.url),
+        hashes=request.hashes,
+        subdirectory=request.subdirectory or None,
     )

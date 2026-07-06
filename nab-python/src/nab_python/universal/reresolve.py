@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import Version
 from ..provider import (
+    ArchiveSource,
     BuildPolicy,
     DistPolicy,
     LocalSource,
@@ -72,6 +73,8 @@ def reresolve_divergent_tuples(  # noqa: PLR0913 - mirrors the original resolve
     local_sources: list[LocalSource] | None = None,
     vcs_sources: list[VcsSource] | None = None,
     vcs_cache_dir: Path | None = None,
+    archive_sources: list[ArchiveSource] | None = None,
+    archive_cache_dir: Path | None = None,
     build_config: NabProjectConfig | None = None,
     resolution_strategy: str = "highest",
 ) -> dict[str, ReresolveDiff]:
@@ -100,6 +103,8 @@ def reresolve_divergent_tuples(  # noqa: PLR0913 - mirrors the original resolve
         local_sources=local_sources,
         vcs_sources=vcs_sources,
         vcs_cache_dir=vcs_cache_dir,
+        archive_sources=archive_sources,
+        archive_cache_dir=archive_cache_dir,
         build_config=build_config,
         resolution_strategy=resolution_strategy,
     )
@@ -134,6 +139,8 @@ def _reresolve_one_step(  # noqa: PLR0913
     local_sources: list[LocalSource] | None = None,
     vcs_sources: list[VcsSource] | None = None,
     vcs_cache_dir: Path | None = None,
+    archive_sources: list[ArchiveSource] | None = None,
+    archive_cache_dir: Path | None = None,
     build_config: NabProjectConfig | None = None,
     resolution_strategy: str,
 ) -> dict[str, dict[str, str]]:
@@ -181,6 +188,8 @@ def _reresolve_one_step(  # noqa: PLR0913
             local_sources=local_sources,
             vcs_sources=vcs_sources,
             vcs_cache_dir=vcs_cache_dir,
+            archive_sources=archive_sources,
+            archive_cache_dir=archive_cache_dir,
             build_config=build_config,
             resolution_strategy=resolution_strategy,
         )
@@ -204,6 +213,8 @@ def _resolve_one_tuple_with_overrides(  # noqa: PLR0913
     local_sources: list[LocalSource] | None = None,
     vcs_sources: list[VcsSource] | None = None,
     vcs_cache_dir: Path | None = None,
+    archive_sources: list[ArchiveSource] | None = None,
+    archive_cache_dir: Path | None = None,
     build_config: NabProjectConfig | None = None,
     resolution_strategy: str,
 ) -> dict[str, str]:
@@ -231,6 +242,8 @@ def _resolve_one_tuple_with_overrides(  # noqa: PLR0913
             local_sources=local_sources,
             vcs_sources=vcs_sources,
             vcs_cache_dir=vcs_cache_dir,
+            archive_sources=archive_sources,
+            archive_cache_dir=archive_cache_dir,
             build_config=build_config,
             resolution_strategy=resolution_strategy,
         )

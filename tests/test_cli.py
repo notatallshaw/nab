@@ -44,6 +44,7 @@ from nab_python.config import ConfigError
 from nab_python.config_sources import SourceRoots
 from nab_python.download import DownloadError
 from nab_python.lockfile import (
+    ArchivePin,
     DisjointnessError,
     DivergentBaseDependencyError,
     IndexPin,
@@ -1878,6 +1879,31 @@ class TestRelockDiffSummary:
                 provenance=None,
             )
         assert capsys.readouterr().err.strip().endswith("(2 packages)")
+
+    def test_relock_unchanged_with_archive_pin_prints_plain_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An archive pin records a version, so an unchanged relock must
+        diff it (not count it as removed)."""
+        out = tmp_path / "pylock.toml"
+        lock_input = LockInput(
+            pins={
+                "foo": ArchivePin(
+                    name="foo",
+                    version="1.0",
+                    url="https://ex.com/foo-1.0.tar.gz",
+                    hashes=(("sha256", "e" * 64),),
+                ),
+            }
+        )
+        for _ in range(2):
+            _emit_specific(
+                ResolutionResult(pins={"foo": V("1.0")}, lock_input=lock_input),
+                format="pylock",
+                output=out,
+                provenance=None,
+            )
+        assert capsys.readouterr().err.strip().endswith("(1 packages)")
 
     def test_unparseable_prior_falls_back_to_plain_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

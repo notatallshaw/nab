@@ -49,6 +49,7 @@ from nab_python.config_sources import (
     resolve_config,
 )
 from nab_python.provider import (
+    ArchiveSource,
     BuildPolicy,
     DistPolicy,
     ResolutionStrategy,
@@ -788,6 +789,7 @@ class TestParserFoldHelpers:
                 "indexes",
                 "local-sources",
                 "vcs-sources",
+                "archive-sources",
                 "packages",
                 "package-rules",
                 "index",
@@ -1767,6 +1769,13 @@ class TestArrayOfTablesSources:
         assert spec.render(()) == "<none>"
         rendered = spec.render((VcsSource(name="pkg", url="git+https://e/p.git@a"),))
         assert rendered == "pkg@git+https://e/p.git@a"
+
+    def test_archive_sources_render(self) -> None:
+        spec = next(s for s in OPTIONS if s.key == "archive-sources")
+        assert spec.render(()) == "<none>"
+        url = "https://e/p.tar.gz#sha256=abc"
+        rendered = spec.render((ArchiveSource(name="pkg", url=url),))
+        assert rendered == f"pkg@{url}"
 
     def test_array_of_tables_rows_are_file_only_arrays(self) -> None:
         for key in ("indexes", "local-sources", "vcs-sources"):

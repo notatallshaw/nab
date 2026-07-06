@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from .fetch import FetchCoordinator
 
 __all__ = [
+    "ArchiveSource",
     "BuildPolicy",
     "DistFile",
     "DistPolicy",
@@ -300,6 +301,21 @@ class VcsSource:
     url: str
 
 
+@dataclass(frozen=True, slots=True)
+class ArchiveSource:
+    """A direct-URL archive used as the only candidate for a package.
+
+    ``name`` is the package name; ``url`` is the archive URL carrying its
+    hash (and optional subdirectory) in the fragment, e.g.
+    ``https://example.com/x-1.0.tar.gz#sha256=<hex>``.  The provider
+    downloads and hash-verifies the archive, then extracts and treats it
+    as a :class:`LocalSource` for metadata extraction.
+    """
+
+    name: str
+    url: str
+
+
 class MetadataError(Exception):
     """Raised when dependency metadata cannot be extracted."""
 
@@ -450,6 +466,8 @@ class Provider:
         local_sources: list[LocalSource] | None = None,
         vcs_sources: list[VcsSource] | None = None,
         vcs_cache_dir: Path | None = None,
+        archive_sources: list[ArchiveSource] | None = None,
+        archive_cache_dir: Path | None = None,
         build_config: NabProjectConfig | None = None,
         resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
         direct_packages: frozenset[str] | None = None,
@@ -507,6 +525,10 @@ class Provider:
         self.vcs_cache_dir = vcs_cache_dir
         self.vcs_pins: dict[str, str] = {}
         self.vcs_sources = _sources.index_vcs_sources(self, vcs_sources or [])
+        self.archive_cache_dir = archive_cache_dir
+        self.archive_sources = _sources.index_archive_sources(
+            self, archive_sources or []
+        )
 
         # default_environment() returns a TypedDict whose ``.items()`` view
         # widens values to ``object``; rebuild as a concrete ``dict[str, str]``
@@ -641,7 +663,11 @@ class Provider:
         if self.root_requirements:
             for pkg in self.root_requirements:
                 _, _, normalized = self.split_and_normalize(pkg)
-                if normalized in self.local_sources or normalized in self.vcs_sources:
+                if (
+                    normalized in self.local_sources
+                    or normalized in self.vcs_sources
+                    or normalized in self.archive_sources
+                ):
                     continue
                 self.coordinator.request_listing(normalized)
 
@@ -687,7 +713,7 @@ class Provider:
 
         Drawn from the coordinator's record of which configured index a
         package's listing came from; ``None`` before any listing resolves
-        or for synthetic (local / VCS) sources.
+        or for synthetic (local / VCS / archive) sources.
         """
         return self.coordinator.index.get_listing_index(canonical_name)
 
@@ -718,13 +744,13 @@ class Provider:
         return result
 
     def effective_build_policy_for_source(self, canonical_name: str) -> BuildPolicy:
-        """Return the build policy for a synthetic local/VCS source.
+        """Return the build policy for a synthetic local/VCS/archive source.
 
         These sources have no serving index and their version is not
         known until the backend runs, so the version-scoped lookup does
         not apply.  A per-package override is honoured only when it uses a
         bare-name requirement (full range); a version-scoped override does
-        not govern a local/VCS source's build decision.
+        not govern such a source's build decision.
         """
         for override in self._package_overrides:
             if (
@@ -864,9 +890,9 @@ class Provider:
     def _source_metadata_override(
         self, canonical_name: str
     ) -> tuple[tuple[Requirement, ...] | None, str | None, tuple[str, ...] | None]:
-        """Resolve a local/VCS source's metadata override bundle.
+        """Resolve a local/VCS/archive source's metadata override bundle.
 
-        Local/VCS sources have no listing and their version is not known
+        These sources have no listing and their version is not known
         until materialised, so a metadata override governs them only through
         a bare-name requirement (full range); a version-scoped override does
         not match a source.  Mirrors
@@ -895,12 +921,16 @@ class Provider:
     ) -> tuple[tuple[Requirement, ...] | None, str | None, tuple[str, ...] | None]:
         """Resolve the ``(dependencies, requires_python, provides_extra)`` override.
 
-        A local/VCS source selects bare-name-only (its materialised version
-        is not knowable to the user when writing the selector); every other
-        candidate selects version-scoped.  Each field resolves
+        A local/VCS/archive source selects bare-name-only (its materialised
+        version is not knowable to the user when writing the selector); every
+        other candidate selects version-scoped.  Each field resolves
         independently, so the three may come from different entries.
         """
-        if canonical_name in self.local_sources or canonical_name in self.vcs_sources:
+        if (
+            canonical_name in self.local_sources
+            or canonical_name in self.vcs_sources
+            or canonical_name in self.archive_sources
+        ):
             return self._source_metadata_override(canonical_name)
         return (
             self.effective_dependencies(canonical_name, version),
@@ -1016,6 +1046,19 @@ class Provider:
         """See :func:`nab_python._provider.sources.materialize_vcs_source`."""
         result: list[tuple[Version, DistFile]] = []
         for version, sdist in _sources.materialize_vcs_source(self, normalized, source):
+            result.append((version, sdist))
+        return result
+
+    def materialize_archive_source(
+        self,
+        normalized: str,
+        source: ArchiveSource,
+    ) -> list[tuple[Version, DistFile]]:  # pragma: no cover (see sources.py)
+        """See :func:`nab_python._provider.sources.materialize_archive_source`."""
+        result: list[tuple[Version, DistFile]] = []
+        for version, sdist in _sources.materialize_archive_source(
+            self, normalized, source
+        ):
             result.append((version, sdist))
         return result
 
@@ -1511,16 +1554,19 @@ class Provider:
 
         versions = self.fetch_versions(package)
 
-        # Local + VCS sources pre-populate metadata during fetch_versions.
+        # Local, VCS, and archive sources pre-populate metadata during
+        # fetch_versions.
         if cache_key in self.metadata_cache and (
-            normalized in self.local_sources or normalized in self.vcs_sources
+            normalized in self.local_sources
+            or normalized in self.vcs_sources
+            or normalized in self.archive_sources
         ):
             self._cache_deps_from_metadata(cache_key, self.metadata_cache[cache_key])
             return self.deps_cache[cache_key]
 
         # Skip-fetch: a complete ``dependencies`` override (even an empty
         # tuple) supplies the deps, so no METADATA fetch or build is needed.
-        # After the local/VCS branch so sources still materialise;
+        # After the local/VCS/archive branch so sources still materialise;
         # ``_cache_deps_from_metadata`` stamps the remaining override fields
         # onto the bare record.
         if self.effective_dependencies(normalized, version) is not None:
@@ -1654,6 +1700,10 @@ class Provider:
     def vcs_source_for(self, canonical_name: str) -> VcsSource | None:
         """Return the VCS source registered under ``canonical_name`` or None."""
         return self.vcs_sources.get(canonicalize_name(canonical_name))
+
+    def archive_source_for(self, canonical_name: str) -> ArchiveSource | None:
+        """Return the archive source registered under ``canonical_name`` or None."""
+        return self.archive_sources.get(canonicalize_name(canonical_name))
 
     def vcs_pin_for(self, canonical_name: str) -> str | None:
         """Return the post-clone commit SHA for ``canonical_name``, or None.
