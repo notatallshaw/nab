@@ -1886,7 +1886,7 @@ def _validate_archive_url(index: int, url: str) -> None:
         msg = f"archive-sources[{index}] url: {exc}"
         raise ConfigError(msg) from exc
 
-    if not request.hashes or any(not digest for _, digest in request.hashes):
+    if not request.has_usable_hash:
         msg = (
             f"archive-sources[{index}] url {url!r} has no hash; add a"
             " '#sha256=<hex>' fragment (PEP 751 requires an archive hash)"

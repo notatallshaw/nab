@@ -556,8 +556,9 @@ def _parse_local_sources(value: Any, where: str) -> tuple[LocalSource, ...]:
     # One file's array-of-tables (name, path, editable, subdirectory).  Paths
     # resolve relative to the declaring file's directory (both legal sources
     # share the project dir).  There is no within-key duplicate check (the
-    # cross-source local/vcs name check is a whole-config pass on the resolve
-    # path), so the concatenation passes through unchanged (merge_check=tuple).
+    # cross-source local/vcs/archive name check is a whole-config pass on the
+    # resolve path), so the concatenation passes through unchanged
+    # (merge_check=tuple).
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_local_sources as _impl,

@@ -8,7 +8,10 @@ exercise.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import logging
+import tarfile
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -36,6 +39,7 @@ from nab_python.lockfile import (
     write_requirements_without_hashes,
 )
 from nab_python.provider import (
+    ArchiveSource,
     BuildPolicy,
     DistPolicy,
     LocalSource,
@@ -1494,6 +1498,86 @@ class TestLocalVcsRequiresPython:
             ["foo"],
             local_sources=[local],
         )
+        assert not result.success
+        error = result.tuple_results[0].error
+        assert error is not None
+        assert "foo 1.0 requires Python" in error
+
+
+def _archive_bytes(name: str, version: str, pyproject: str) -> bytes:
+    """Return ``.tar.gz`` bytes for a one-file sdist rooted at name-version."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        body = pyproject.encode("utf-8")
+        info = tarfile.TarInfo(f"{name}-{version}/pyproject.toml")
+        info.size = len(body)
+        tar.addfile(info, io.BytesIO(body))
+    return buf.getvalue()
+
+
+# Materialising an archive extracts it, so the tar data filter is required.
+requires_data_filter = pytest.mark.skipif(
+    not hasattr(tarfile, "data_filter"),
+    reason="sdist extraction requires the tar data filter (PEP 706)",
+)
+
+
+@requires_data_filter
+class TestArchiveSourceUniversal:
+    """An archive source threads through universal resolution across tuples."""
+
+    def test_resolves_and_pins_across_tuples(self, tmp_path: Path) -> None:
+        pyproject = (
+            '[project]\nname = "foo"\nversion = "1.0"\n'
+            'requires-python = ">=3.11"\ndependencies = ["bar"]\n'
+        )
+        data = _archive_bytes("foo", "1.0", pyproject)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.tar.gz#sha256={digest}"
+        )
+        coord = make_coordinator(
+            listings={"bar": [_make_wheel("2.0", package="bar")]},
+            auto_metadata=True,
+        )
+        coord.index.store_sdist_archive("foo", digest, data)
+
+        result = resolve_with_coordinator(
+            coord,
+            Matrix(python=">=3.11, <3.13", platforms=("linux_x86_64",)),
+            ["foo"],
+            archive_sources=[source],
+            archive_cache_dir=tmp_path / "arch",
+        )
+
+        assert result.success
+        assert len(result.tuple_results) == 2
+        for tuple_result in result.tuple_results:
+            assert str(tuple_result.pins["foo"]) == "1.0"
+            assert str(tuple_result.pins["bar"]) == "2.0"
+
+    def test_requires_python_excluding_target_fails(self, tmp_path: Path) -> None:
+        # An archive skips the listing Requires-Python filter, so the source
+        # guard must reject one that excludes the tuple's Python.
+        pyproject = (
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n'
+        )
+        data = _archive_bytes("foo", "1.0", pyproject)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.tar.gz#sha256={digest}"
+        )
+        coord = make_coordinator([], package="foo")
+        coord.index.store_sdist_archive("foo", digest, data)
+
+        result = resolve_with_coordinator(
+            coord,
+            Matrix(python="==3.10", platforms=("linux_x86_64",)),
+            ["foo"],
+            archive_sources=[source],
+            archive_cache_dir=tmp_path / "arch",
+        )
+
         assert not result.success
         error = result.tuple_results[0].error
         assert error is not None

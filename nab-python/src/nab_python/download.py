@@ -150,6 +150,30 @@ def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:
         )
 
 
+def _reject_colliding_targets(artefacts: list[DownloadEntry]) -> None:
+    """Refuse two distinct artefacts that would write to one output filename.
+
+    Index sdist/wheel filenames embed the package name and version, so they
+    never collide.  A direct-URL archive's filename is the bare basename of
+    its URL, which is arbitrary: two archives from different repositories
+    commonly share one (e.g. a GitHub ``v1.0.0.tar.gz`` tag tarball).  Two
+    artefacts with different digests but the same basename would clobber each
+    other in the flat output dir, silently dropping one, so refuse it loudly.
+    """
+    by_name: dict[str, DownloadEntry] = {}
+    for entry in artefacts:
+        prior = by_name.get(entry.filename)
+        if prior is not None and prior.digest != entry.digest:
+            msg = (
+                f"artefacts collide on output filename {entry.filename!r}:"
+                f" {prior.package}=={prior.version} and"
+                f" {entry.package}=={entry.version} differ."
+                " Download them to separate directories."
+            )
+            raise DownloadError(msg)
+        by_name[entry.filename] = entry
+
+
 def download_lock(
     lock_input: LockInput,
     transport: AsyncHttpTransport,
@@ -167,6 +191,7 @@ def download_lock(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     artefacts = list(iter_artifacts(lock_input))
+    _reject_colliding_targets(artefacts)
     return asyncio.run(
         _run_downloads(artefacts, transport, output_dir, max_concurrency)
     )
@@ -185,8 +210,9 @@ async def _run_downloads(
 
     async def _one(entry: DownloadEntry) -> None:
         async with sem:
-            # The filename is index-controlled; reject anything but a plain
-            # basename so a crafted name cannot escape output_dir on write.
+            # The filename comes from the index or an archive URL; reject
+            # anything but a plain basename so a crafted name cannot escape
+            # output_dir on write.
             if not entry.filename or Path(entry.filename).name != entry.filename:
                 msg = (
                     f"{entry.package}=={entry.version}:"

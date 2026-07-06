@@ -51,10 +51,12 @@ def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, Dist
         return result
 
     archive = provider.archive_sources.get(normalized)
-    if archive is not None:  # pragma: no cover (tar data filter; see sources.py)
+    if archive is not None:
+        # The download-and-verify guards are gated everywhere; only the
+        # post-extraction success tail needs the tar data filter (see sources.py).
         result = provider.materialize_archive_source(normalized, archive)
-        provider.versions_cache[normalized] = result
-        return result
+        provider.versions_cache[normalized] = result  # pragma: no cover
+        return result  # pragma: no cover
 
     files = provider.coordinator.index.get_listing(normalized)
     if files is None:
@@ -578,9 +580,9 @@ def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> N
     candidate. This deepens the prefetch cascade so metadata is
     ready before the resolver asks for it.
 
-    Local and VCS sources are skipped; they have no PyPI listing
-    and the materialise path in ``fetch_versions`` will surface
-    them when the resolver asks.
+    Local, VCS, and archive sources are skipped; they have no PyPI
+    listing and the materialise path in ``fetch_versions`` will
+    surface them when the resolver asks.
     """
     for dep in deps:
         _, _, normalized = provider.split_and_normalize(dep)

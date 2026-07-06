@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nab_index.archive import ArchiveRequest
-from nab_index.client import SdistFile, extract_sdist_archive
+from nab_index.client import SdistFile, _verify_sdist_hash, extract_sdist_archive
 from nab_index.vcs import VcsCloneError, VcsRequest
 
 from .._vendor.packaging.utils import canonicalize_name
@@ -244,10 +244,10 @@ def index_archive_sources(
         return {}
     out: dict[str, ArchiveSource] = {}
     for src in sources:
-        # Guarantee a hash at the provider layer (config parse already checks
-        # it, but a directly-built Provider would otherwise IndexError when
-        # materialisation reads the first digest).
-        if not ArchiveRequest.parse(src.url).hashes:
+        # Guarantee a usable hash at the provider layer (config parse already
+        # checks it, but a directly-built Provider would otherwise IndexError
+        # when materialisation reads the first digest, or verify an empty one).
+        if not ArchiveRequest.parse(src.url).has_usable_hash:
             msg = f"archive source {src.name!r} has no hash in its URL: {src.url!r}"
             raise ValueError(msg)
         canonical = canonicalize_name(src.name)
@@ -262,32 +262,21 @@ def index_archive_sources(
     return out
 
 
-# The archive extraction path (this function and _extract_archive) is excluded
-# from coverage.  It requires the PEP 706 tar data filter (Python 3.10.12+), but
-# GitHub Actions setup-python installs 3.10.11 on macOS (arm64) and Windows:
-# python.org stopped shipping 3.10 binary installers after 3.10.11 and
-# actions/python-versions builds those OSes from installers, so no 3.10.12+
-# artifact exists for them.  The archive extraction tests skip there, leaving
-# these lines unhit on only those two runners (covered on every other runner).
-# Remove the pragmas when that 3.10 cell is dropped, sourced from
-# uv/python-build-standalone (which ships 3.10.20 with the filter), or 3.10
-# reaches EOL (2026-10).
-def materialize_archive_source(
+def _fetch_archive_bytes(
     provider: Provider,
-    normalized: str,
     source: ArchiveSource,
-) -> list[tuple[Version, SdistFile]]:  # pragma: no cover
-    """Download and hash-verify ``source``, extract it, then materialise it.
+) -> tuple[Path, ArchiveRequest, str, bytes]:
+    """Return ``(cache_dir, request, digest, data)`` for a verified archive.
 
-    The download and hash check reuse the remote-sdist fetch path, so a
-    tampered archive surfaces as a hard :class:`SdistHashMismatchError`
-    (not an :class:`UnsupportedSdistError` the look-ahead would swallow):
-    a declared archive that fails its hash fails the resolve loudly.  The
-    extracted tree then takes the same extraction path as a LocalSource.
+    Raises before returning if the cache dir is missing, the download failed,
+    or the bytes fail their hash.  The hash is re-checked here rather than
+    trusted to the serving client: a ``file://`` index reads archive bytes
+    without verifying them, so this is the one place the check always runs.
     """
     from ..provider import UnsupportedSdistError
 
-    if provider.archive_cache_dir is None:
+    cache_dir = provider.archive_cache_dir
+    if cache_dir is None:
         msg = (
             f"archive source {source.name!r} declared but no"
             f" archive_cache_dir was supplied to Provider"
@@ -298,11 +287,12 @@ def materialize_archive_source(
     canonical = canonicalize_name(source.name)
 
     # The version is unknown until the tree is extracted, so key the download
-    # by the declared digest: unique and known up-front.
-    _, digest = request.hashes[0]
+    # by the first declared digest: unique and known up-front.  The fragment
+    # only carries accepted algorithms, so every pair is verifiable.
+    digest = request.hashes[0][1]
 
-    # Reuse the remote-sdist fetch path; it downloads and hash-verifies, storing
-    # a hard SdistHashMismatchError on a tampered archive.
+    # Fetch through the shared coordinator; a recorded integrity error or an
+    # absent download both fail the resolve here.
     event = provider.coordinator.request_sdist_archive(
         canonical, digest, request.url, request.hashes
     )
@@ -315,14 +305,47 @@ def materialize_archive_source(
         msg = f"archive source {source.name!r}: download from {request.url} failed"
         raise UnsupportedSdistError(msg)
 
-    # Extract the verified bytes and read metadata as if it were a local tree.
-    root = _extract_archive(provider.archive_cache_dir, digest, data)
+    # Verify every declared hash rather than trust the serving client, so a
+    # file:// index (which does not check) cannot slip an unverified archive
+    # through, and so this layer never disagrees with a client that verified a
+    # different algorithm.
+    for pinned_hash in request.hashes:
+        _verify_sdist_hash(data, pinned_hash)
+    return cache_dir, request, digest, data
+
+
+# Extraction (this function and _extract_archive) is excluded from coverage: it
+# requires the PEP 706 tar data filter (Python 3.10.12+), but GitHub Actions
+# setup-python installs 3.10.11 on macOS-arm64 and Windows (python.org stopped
+# shipping 3.10 installers after 3.10.11, and actions/python-versions builds
+# those OSes from installers), so no 3.10.12+ artifact exists for them.  The
+# extraction tests skip there, leaving these lines unhit on those two runners.
+# The download-and-verify guards live in _fetch_archive_bytes above so they stay
+# gated on every runner.  Remove the pragmas when that 3.10 cell is dropped,
+# sourced from python-build-standalone, or 3.10 reaches EOL (2026-10).
+def materialize_archive_source(
+    provider: Provider,
+    normalized: str,
+    source: ArchiveSource,
+) -> list[tuple[Version, SdistFile]]:  # pragma: no cover (tar data filter)
+    """Download and hash-verify ``source``, extract it, then materialise it.
+
+    A declared archive is always verified against its required hash in
+    :func:`_fetch_archive_bytes`, so a tampered archive fails the resolve
+    loudly rather than being used and pinned unverified.  The extracted tree
+    then takes the same path as a LocalSource.
+    """
+    # Download, hash-verify, and extract the archive into the cache.
+    cache_dir, request, digest, data = _fetch_archive_bytes(provider, source)
+    root = _extract_archive(cache_dir, digest, data)
+
+    # Read the extracted tree's metadata as a local source and seed one candidate.
     path = root / request.subdirectory if request.subdirectory else root
     metadata = extract_source_metadata(
         provider,
         path,
         descriptor=f"archive source {source.name!r}",
-        package=canonical,
+        package=canonicalize_name(source.name),
         kind="archive",
     )
     return seed_synthetic_listing(provider, normalized, path, metadata)
@@ -343,13 +366,16 @@ def _extract_archive(
 
     target = cache_dir / digest
     marker = target / ".nab-extracted"
+
+    # Reuse a tree a prior resolve already extracted for this digest.
     if marker.is_file():
         root_name = marker.read_text(encoding="utf-8").strip()
-        # Return a resolved path, matching the fresh-extract branch, so the
-        # synthetic listing's file URI works even for a relative cache dir.
+        # Resolve to match the fresh-extract branch, so the file URI works
+        # even for a relative cache dir.
         base = target / root_name if root_name else target
         return base.resolve()
 
+    # Discard any partial tree left by a crashed run, then extract afresh.
     if target.exists():
         shutil.rmtree(target)
     target.mkdir(parents=True)
@@ -360,10 +386,10 @@ def _extract_archive(
         msg = f"archive could not be extracted: {exc}"
         raise UnsupportedSdistError(msg) from exc
 
-    # Record the root (its name under target, empty for a flat archive) so the
-    # next resolve reuses the tree without re-reading the bytes.  extract_sdist_archive
-    # returns a resolved path, so compare against the resolved target: a symlinked or
-    # relative cache dir would otherwise misrecord a flat archive's root.
+    # Record the root name (empty for a flat archive) so the next resolve
+    # reuses the tree without re-reading the bytes.  Compare against the
+    # resolved target since extract_sdist_archive resolves symlinks and
+    # relative cache dirs, which would otherwise misrecord a flat root.
     root_name = root.name if root != target.resolve() else ""
     marker.write_text(root_name, encoding="utf-8")
     return root

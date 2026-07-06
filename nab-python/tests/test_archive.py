@@ -18,7 +18,11 @@ import pytest
 
 from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.client import SdistHashMismatchError, extract_sdist_archive
-from nab_python.download import iter_artifacts
+from nab_python.download import (
+    DownloadError,
+    _reject_colliding_targets,
+    iter_artifacts,
+)
 from nab_python.fetch import InMemoryIndex
 from nab_python.lockfile import ArchivePin, LockInput
 from nab_python.provider import (
@@ -122,6 +126,27 @@ class TestArchiveRequestParse:
         )
         assert req.subdirectory == "a/../b"
 
+    def test_backslash_escape_rejected(self) -> None:
+        # The join is native, so a backslash escapes on Windows; the ntpath
+        # containment check rejects it on every platform.
+        with pytest.raises(ArchiveRequestError, match="unsafe archive subdirectory"):
+            ArchiveRequest.parse(
+                "https://ex.com/foo.tar.gz#sha256=abc&subdirectory=..\\..\\etc"
+            )
+
+    def test_drive_subdirectory_rejected(self) -> None:
+        with pytest.raises(ArchiveRequestError, match="unsafe archive subdirectory"):
+            ArchiveRequest.parse(
+                "https://ex.com/foo.tar.gz#sha256=abc&subdirectory=C:\\evil"
+            )
+
+    def test_contained_backslash_subdirectory_allowed(self) -> None:
+        # A backslash-separated path that stays inside the tree is kept.
+        req = ArchiveRequest.parse(
+            "https://ex.com/foo.tar.gz#sha256=abc&subdirectory=sub\\deeper"
+        )
+        assert req.subdirectory == "sub\\deeper"
+
 
 class TestArchiveIndexing:
     def test_duplicate_archive_source_rejected(self) -> None:
@@ -172,8 +197,11 @@ class TestArchiveIndexing:
             )
 
 
-@requires_data_filter
 class TestArchiveMaterialize:
+    # The download-and-verify guards need no tar filter and run on every runner;
+    # only the tests that actually extract carry @requires_data_filter.
+
+    @requires_data_filter
     def test_resolves_and_seeds_single_version(self, tmp_path: Path) -> None:
         data = _make_sdist("foo", "1.0.0", _PYPROJECT)
         digest = hashlib.sha256(data).hexdigest()
@@ -221,16 +249,33 @@ class TestArchiveMaterialize:
         with pytest.raises(UnsupportedSdistError, match="download.*failed"):
             provider.fetch_versions("foo")
 
-    def test_unextractable_archive_raises(self, tmp_path: Path) -> None:
+    def test_local_source_hash_verified(self, tmp_path: Path) -> None:
+        # A file:// index reads bytes without verifying, so materialisation
+        # re-checks the hash: tampered bytes present (and no recorded error)
+        # still fail the resolve loudly.
         digest = "a" * 64
         source = ArchiveSource(
             name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
         )
         provider = _provider([source], tmp_path / "arch")
-        provider.coordinator.index.store_sdist_archive("foo", digest, b"not a tarball")
+        provider.coordinator.index.store_sdist_archive("foo", digest, b"tampered")
+        with pytest.raises(SdistHashMismatchError):
+            provider.fetch_versions("foo")
+
+    def test_unextractable_archive_raises(self, tmp_path: Path) -> None:
+        # Bytes whose hash matches (so verification passes) but which are not a
+        # valid tarball: the failure is extraction, not the hash check.
+        data = b"not a tarball"
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        provider = _provider([source], tmp_path / "arch")
+        provider.coordinator.index.store_sdist_archive("foo", digest, data)
         with pytest.raises(UnsupportedSdistError, match="could not be extracted"):
             provider.fetch_versions("foo")
 
+    @requires_data_filter
     def test_reextraction_replaces_stale_partial_tree(self, tmp_path: Path) -> None:
         data = _make_sdist("foo", "1.0.0", _PYPROJECT)
         digest = hashlib.sha256(data).hexdigest()
@@ -249,6 +294,7 @@ class TestArchiveMaterialize:
         assert str(versions[0][0]) == "1.0.0"
         assert not (stale / "stale.txt").exists()
 
+    @requires_data_filter
     def test_second_resolve_reuses_extracted_tree(self, tmp_path: Path) -> None:
         data = _make_sdist("foo", "1.0.0", _PYPROJECT)
         digest = hashlib.sha256(data).hexdigest()
@@ -272,6 +318,7 @@ class TestArchiveMaterialize:
         assert str(versions[0][0]) == "1.0.0"
         assert sentinel.exists()
 
+    @requires_data_filter
     def test_flat_archive_without_root_dir(self, tmp_path: Path) -> None:
         # A flat archive (pyproject.toml at the top level) extracts to the
         # target dir itself, with no single root subdirectory.
@@ -286,6 +333,7 @@ class TestArchiveMaterialize:
         versions = provider.fetch_versions("foo")
         assert str(versions[0][0]) == "1.0.0"
 
+    @requires_data_filter
     def test_flat_archive_reuse_through_symlinked_cache(self, tmp_path: Path) -> None:
         # When the cache dir resolves to a different path (a symlink component),
         # a flat archive's reuse marker must still record "no root subdir", or the
@@ -330,6 +378,42 @@ class TestArchiveDownload:
         pin = ArchivePin(name="foo", version="1.0", url="u", hashes=(("md5", "x"),))
         with pytest.raises(ValueError, match="no acceptable hash"):
             _ = pin.primary_digest
+
+    def test_colliding_basenames_rejected(self) -> None:
+        # Two archives from different repos sharing a URL basename would clobber
+        # each other in the flat output dir, so the collision is refused.
+        pins = {
+            "foo": ArchivePin(
+                name="foo",
+                version="1.0",
+                url="https://a.example.com/dist/v1.0.0.tar.gz",
+                hashes=(("sha256", "a" * 64),),
+            ),
+            "bar": ArchivePin(
+                name="bar",
+                version="2.0",
+                url="https://b.example.com/dist/v1.0.0.tar.gz",
+                hashes=(("sha256", "b" * 64),),
+            ),
+        }
+        entries = list(iter_artifacts(LockInput(pins=pins)))
+        with pytest.raises(DownloadError, match="collide on output filename"):
+            _reject_colliding_targets(entries)
+
+    def test_same_basename_same_digest_allowed(self) -> None:
+        # The same archive pinned under two names writes identical bytes, so it
+        # is not a collision.
+        url = "https://a.example.com/dist/v1.0.0.tar.gz"
+        pins = {
+            "foo": ArchivePin(
+                name="foo", version="1.0", url=url, hashes=(("sha256", "a" * 64),)
+            ),
+            "bar": ArchivePin(
+                name="bar", version="1.0", url=url, hashes=(("sha256", "a" * 64),)
+            ),
+        }
+        entries = list(iter_artifacts(LockInput(pins=pins)))
+        _reject_colliding_targets(entries)
 
 
 class TestExtractArchive:

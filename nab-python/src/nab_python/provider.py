@@ -713,7 +713,7 @@ class Provider:
 
         Drawn from the coordinator's record of which configured index a
         package's listing came from; ``None`` before any listing resolves
-        or for synthetic (local / VCS) sources.
+        or for synthetic (local / VCS / archive) sources.
         """
         return self.coordinator.index.get_listing_index(canonical_name)
 
@@ -744,13 +744,13 @@ class Provider:
         return result
 
     def effective_build_policy_for_source(self, canonical_name: str) -> BuildPolicy:
-        """Return the build policy for a synthetic local/VCS source.
+        """Return the build policy for a synthetic local/VCS/archive source.
 
         These sources have no serving index and their version is not
         known until the backend runs, so the version-scoped lookup does
         not apply.  A per-package override is honoured only when it uses a
         bare-name requirement (full range); a version-scoped override does
-        not govern a local/VCS source's build decision.
+        not govern such a source's build decision.
         """
         for override in self._package_overrides:
             if (
@@ -890,9 +890,9 @@ class Provider:
     def _source_metadata_override(
         self, canonical_name: str
     ) -> tuple[tuple[Requirement, ...] | None, str | None, tuple[str, ...] | None]:
-        """Resolve a local/VCS source's metadata override bundle.
+        """Resolve a local/VCS/archive source's metadata override bundle.
 
-        Local/VCS sources have no listing and their version is not known
+        These sources have no listing and their version is not known
         until materialised, so a metadata override governs them only through
         a bare-name requirement (full range); a version-scoped override does
         not match a source.  Mirrors
@@ -921,9 +921,9 @@ class Provider:
     ) -> tuple[tuple[Requirement, ...] | None, str | None, tuple[str, ...] | None]:
         """Resolve the ``(dependencies, requires_python, provides_extra)`` override.
 
-        A local/VCS source selects bare-name-only (its materialised version
-        is not knowable to the user when writing the selector); every other
-        candidate selects version-scoped.  Each field resolves
+        A local/VCS/archive source selects bare-name-only (its materialised
+        version is not knowable to the user when writing the selector); every
+        other candidate selects version-scoped.  Each field resolves
         independently, so the three may come from different entries.
         """
         if (
@@ -1566,7 +1566,7 @@ class Provider:
 
         # Skip-fetch: a complete ``dependencies`` override (even an empty
         # tuple) supplies the deps, so no METADATA fetch or build is needed.
-        # After the local/VCS branch so sources still materialise;
+        # After the local/VCS/archive branch so sources still materialise;
         # ``_cache_deps_from_metadata`` stamps the remaining override fields
         # onto the bare record.
         if self.effective_dependencies(normalized, version) is not None:

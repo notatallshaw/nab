@@ -31,6 +31,7 @@ from nab_python.config import (
     ResolveMode,
 )
 from nab_python.lockfile import (
+    ArchivePin,
     IndexPin,
     LockInput,
     Provenance,
@@ -370,13 +371,13 @@ def _write_specific(
         # Read the prior pins before write_lock overwrites the file.
         prior = read_lockfile_packages(target)
         _cli.write_lock(lock_input, output_path=target)
-        # Only index pins record a version; local and VCS pins emit
+        # Index and archive pins record a version; local and VCS pins emit
         # version=None, so read_lockfile_packages never returns them.
         # Diff against the same set or they read as added every relock.
         versioned = {
             name: version
             for name, version in emitted_pins.items()
-            if isinstance(lock_input.pins[name], IndexPin)
+            if isinstance(lock_input.pins[name], (IndexPin, ArchivePin))
         }
         diff = _diff_summary(prior, versioned)
     elif format == "requirements":

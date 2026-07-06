@@ -244,7 +244,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             raise
         pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
         if config.local_sources or config.vcs_sources or config.archive_sources:
-            _raise_for_local_vcs_python(
+            _raise_for_source_python(
                 provider, pins, Version(marker_environment["python_full_version"])
             )
         lock_input = build_lock_input_from_provider(
@@ -731,17 +731,17 @@ def _build_marker_environment(
     return env
 
 
-def _raise_for_local_vcs_python(
+def _raise_for_source_python(
     provider: Provider,
     pins: Mapping[str, Version],
     target: Version,
 ) -> None:
-    """Reject a local or VCS pin whose Requires-Python excludes ``target``.
+    """Reject a local, VCS, or archive pin whose Requires-Python excludes ``target``.
 
-    Index candidates are filtered by Requires-Python while listing; local
-    and VCS sources skip that filter, so a source that rejects the resolve
-    target could otherwise reach the lock. Mirrors the per-tuple check in
-    :mod:`nab_python.universal.resolve`.
+    Index candidates are filtered by Requires-Python while listing; local,
+    VCS, and archive sources skip that filter, so a source that rejects the
+    resolve target could otherwise reach the lock. Mirrors the per-tuple check
+    in :mod:`nab_python.universal.resolve`.
     """
     managed = (
         provider.local_sources.keys()

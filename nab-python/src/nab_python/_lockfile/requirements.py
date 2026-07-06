@@ -38,8 +38,11 @@ def write_requirements_with_hashes(
     accepts.  Local and VCS pins are emitted as ``name @ <url>`` lines
     without hashes (pip does not hash-check those forms); an editable
     local pin renders as ``-e <url>`` and a ``subdirectory`` as a
-    ``#subdirectory=`` fragment.  Returns the text and, when
-    ``output_path`` is provided, atomically writes it.
+    ``#subdirectory=`` fragment.  An archive pin is a third form, ``name @
+    <url>#sha256=...``, carrying its hash in the fragment;
+    :func:`require_artifact_hashes` skips it because that hash is guaranteed
+    at config parse.  Returns the text and, when ``output_path`` is provided,
+    atomically writes it.
     """
     require_artifact_hashes(lock_input)
     return _render_requirements(lock_input, with_hashes=True, output_path=output_path)
@@ -51,8 +54,8 @@ def write_requirements_without_hashes(
     """Render ``lock_input`` as a plain ``name==version`` list.
 
     Same shape as :func:`write_requirements_with_hashes` but without
-    the ``--hash=sha256:...`` lines.  Local and VCS pins render the
-    same in both variants.  Returns the text and, when ``output_path``
+    the ``--hash=sha256:...`` lines.  Local, VCS, and archive pins render
+    the same in both variants.  Returns the text and, when ``output_path``
     is provided, atomically writes it.
     """
     return _render_requirements(lock_input, with_hashes=False, output_path=output_path)

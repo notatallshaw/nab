@@ -647,15 +647,15 @@ def _parse_tuple_inputs(
     return parsed_requirements, parsed_constraints
 
 
-def _raise_for_local_vcs_python(
+def _raise_for_source_python(
     provider: UniversalProvider,
     t: MatrixTuple,
     pins: Mapping[str, Version],
 ) -> None:
-    """Reject a local or VCS pin whose Requires-Python excludes the tuple.
+    """Reject a local, VCS, or archive pin whose Requires-Python excludes the tuple.
 
     Index candidates are filtered by Requires-Python while listing, but
-    local-path and VCS sources skip that filter, so a checkout that
+    local-path, VCS, and archive sources skip that filter, so a source that
     rejects this tuple's Python could otherwise reach the lockfile.
     """
     managed = (
@@ -748,7 +748,7 @@ def _resolve_one_tuple(  # noqa: PLR0913
     try:
         raw = resolver.resolve(requirements, constraints=constraints)
         pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
-        _raise_for_local_vcs_python(provider, t, pins)
+        _raise_for_source_python(provider, t, pins)
     except ResolutionError as exc:
         return TupleResult(
             tuple_=t,

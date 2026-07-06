@@ -11,7 +11,7 @@ policy decision in :mod:`nab_python.config`.
 
 from __future__ import annotations
 
-import posixpath
+import ntpath
 from dataclasses import dataclass
 
 from .client import _ACCEPTED_HASH_ALGORITHMS
@@ -39,6 +39,15 @@ class ArchiveRequest:
     url: str
     hashes: tuple[tuple[str, str], ...]
     subdirectory: str = ""
+
+    @property
+    def has_usable_hash(self) -> bool:
+        """Whether every declared hash carries a non-empty digest.
+
+        PEP 751 requires an archive hash, so a URL with no hash fragment or a
+        present algorithm with an empty digest (``#sha256=``) has none.
+        """
+        return bool(self.hashes) and all(digest for _, digest in self.hashes)
 
     @classmethod
     def parse(cls, raw_url: str) -> ArchiveRequest:
@@ -77,20 +86,27 @@ class ArchiveRequest:
         return cls(url=url, hashes=tuple(hashes), subdirectory=subdirectory)
 
 
-_SUBDIR_ROOT = "/archive-root"
+_SUBDIR_ROOT = ntpath.normpath("/archive-root")
 
 
 def _reject_unsafe_subdirectory(subdirectory: str, raw_url: str) -> None:
     """Refuse a subdirectory that escapes the extracted tree.
 
-    The join ``root / subdirectory`` would otherwise let an absolute path or
-    a ``..`` component read a project outside the archive.  Rather than
-    blocklist characters, normalise the join under a sentinel root and check
-    containment; PEP 751 subdirectories are portable posix paths.
+    At materialise time the project root is selected with ``root /
+    subdirectory``, so an absolute path, a ``..`` component, or a drive
+    letter could read a project outside the archive.  Containment is checked
+    with :mod:`ntpath`, which treats both forward and back slashes as
+    separators, so a value that stays inside the tree on POSIX but escapes it
+    on Windows (the join is native) is caught on every platform.
     """
     if not subdirectory:
         return
-    resolved = posixpath.normpath(posixpath.join(_SUBDIR_ROOT, subdirectory))
-    if posixpath.commonpath((_SUBDIR_ROOT, resolved)) != _SUBDIR_ROOT:
+    resolved = ntpath.normpath(ntpath.join(_SUBDIR_ROOT, subdirectory))
+    try:
+        contained = ntpath.commonpath((_SUBDIR_ROOT, resolved)) == _SUBDIR_ROOT
+    except ValueError:
+        # Different drives (e.g. a ``C:\\`` subdirectory) have no common path.
+        contained = False
+    if not contained:
         msg = f"unsafe archive subdirectory {subdirectory!r} in {raw_url!r}"
         raise ArchiveRequestError(msg)
