@@ -15,7 +15,7 @@ from ._vendor.packaging.dependency_groups import resolve_dependency_groups
 from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.requirements import InvalidRequirement, Requirement
-from ._vendor.packaging.utils import canonicalize_name
+from ._vendor.packaging.utils import InvalidName, canonicalize_name
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,9 +68,16 @@ def _add_extra_marker(dep_str: str, extra_name: str) -> str:
     Parses with :class:`Requirement` rather than splitting on the first
     ``;`` so a semicolon inside a direct-reference URL is not mistaken
     for the marker separator; an existing marker is combined with ``and``.
+
+    ``extra_name`` is a table key interpolated into the quoted marker, so
+    it is canonicalised with ``validate=True`` (PEP 685). A key that is
+    not a valid name (say one containing a quote) then raises
+    :class:`InvalidName` instead of producing a marker that gates the dep
+    wrongly.
     """
     req = Requirement(dep_str)
-    extra_marker = f'extra == "{extra_name}"'
+    canonical_extra = canonicalize_name(extra_name, validate=True)
+    extra_marker = f'extra == "{canonical_extra}"'
     if req.marker is not None:
         marker = f"({req.marker}) and {extra_marker}"
     else:
@@ -92,7 +99,7 @@ def _parse_project_requirement(
     try:
         text = _add_extra_marker(dep_str, extra) if extra is not None else dep_str
         return Requirement(text)
-    except InvalidRequirement as exc:
+    except (InvalidRequirement, InvalidName) as exc:
         msg = f"invalid requirement in {source}: {exc}"
         raise InvalidProjectRequirementError(msg) from exc
 
