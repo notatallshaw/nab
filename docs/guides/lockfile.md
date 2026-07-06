@@ -21,9 +21,10 @@ Pass `--output -` to write to stdout instead of a file.
 Each pinned package carries:
 
 * its name and version,
-* one of three pin shapes: an `IndexPin` (PyPI or another simple
-  index), a `LocalPin` (a directory on disk), or a `VcsPin` (a
-  git URL with a commit pin),
+* one of four pin shapes: an `IndexPin` (PyPI or another simple
+  index), a `LocalPin` (a directory on disk), a `VcsPin` (a
+  git URL with a commit pin), or an `ArchivePin` (a `.tar.gz` URL
+  content-pinned by a required `sha256`),
 * every artefact downloaded for that pin (`sdist` and `wheels`),
   each with its filename, URL, `sha256`, and optional size.
 

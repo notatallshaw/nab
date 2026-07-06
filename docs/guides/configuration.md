@@ -473,6 +473,25 @@ name = "my-fork"
 url  = "git+https://github.com/me/x.git@<sha>"
 ```
 
+## Archive sources
+
+`[[tool.nab.archive-sources]]` pins a package to a direct `.tar.gz`
+URL.  The URL fragment must carry a `sha256` (or `sha384`/`sha512`)
+hash; nab downloads the archive, verifies it against the hash, and
+fails the resolve on a mismatch.
+
+```toml
+[[tool.nab.archive-sources]]
+name = "my-fork"
+url  = "https://example.com/my-fork-1.0.tar.gz#sha256=<hex>"
+```
+
+Only `.tar.gz` source archives are supported; a wheel or other
+format is refused at parse.  A `&subdirectory=` fragment locates the
+package below the archive root, for monorepo layouts.  Reading static
+dependencies works at any `build-policy`; dynamic dependencies require
+`build-policy = "build-remote"`, like a remote sdist.
+
 ## Universal mode (experimental)
 
 Universal resolution runs the single-environment resolver once per
