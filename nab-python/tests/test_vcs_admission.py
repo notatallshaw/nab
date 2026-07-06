@@ -344,6 +344,45 @@ class TestAdmitVcsUrlRepo:
         )
         assert scheme == "git+https"
 
+    def test_exact_repo_prefix_matches_dot_git_clone_url(self) -> None:
+        """An exact-repo prefix admits git's canonical ``.git`` clone URL."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/myorg/myrepo",),
+        )
+        scheme = admit_vcs_url(
+            f"git+https://github.com/myorg/myrepo.git@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+https"
+
+    def test_dot_git_prefix_matches_url_without_git_suffix(self) -> None:
+        """A ``.git`` prefix admits the same repo written without ``.git``."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/myorg/myrepo.git",),
+        )
+        scheme = admit_vcs_url(
+            f"git+https://github.com/myorg/myrepo@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+https"
+
+    def test_dot_git_strip_does_not_admit_sibling_repo(self) -> None:
+        """Treating ``.git`` as optional must not admit a distinct sibling."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/myorg/myrepo",),
+        )
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url(
+                f"git+https://github.com/myorg/myrepo.gitother@{_FORTY}",
+                config,
+            )
+
     def test_full_repo_prefix_with_fragment_passes(self) -> None:
         """A fragment directly after an allowed full-repo URL stays in-repo."""
         config = VcsConfig(
