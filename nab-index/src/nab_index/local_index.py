@@ -21,6 +21,7 @@ multi-index router can treat local and remote indexes uniformly.
 from __future__ import annotations
 
 import re
+import sys
 import zipfile
 import zlib
 from email.parser import BytesParser, Parser
@@ -77,16 +78,25 @@ def parse_file_url(url: str) -> Path:
 
     Uses :func:`urllib.request.url2pathname` so Windows-style drive
     paths (``file:///C:/...``) and percent-encoded characters round-trip
-    cleanly across platforms.
+    cleanly across platforms. An empty or ``localhost`` authority (RFC
+    8089) means the local machine; any other host becomes a UNC share on
+    Windows and is rejected elsewhere.
     """
     parsed = urlparse(url)
     if parsed.scheme != "file":
         msg = f"expected file:// URL, got {url!r}"
         raise ValueError(msg)
-    raw = parsed.path
-    if parsed.netloc:
-        raw = f"//{parsed.netloc}{raw}"
-    return Path(url2pathname(raw))
+
+    netloc = parsed.netloc
+    if not netloc or netloc == "localhost":
+        netloc = ""
+    elif sys.platform == "win32":
+        netloc = "\\\\" + netloc
+    else:
+        msg = f"non-local file:// URL is not supported on this platform: {url!r}"
+        raise ValueError(msg)
+
+    return Path(url2pathname(netloc + parsed.path))
 
 
 _REQUIRES_PYTHON_ATTR = "data-requires-python"

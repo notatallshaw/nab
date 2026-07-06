@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import struct
+import sys
 import tarfile
 import zipfile
 import zlib
@@ -149,6 +150,27 @@ class TestParseFileUrl:
     def test_rejects_non_file_scheme(self) -> None:
         with pytest.raises(ValueError, match="expected file:// URL"):
             parse_file_url("https://example.com/")
+
+    def test_localhost_authority_is_local(self, tmp_path: Path) -> None:
+        # RFC 8089: a "localhost" authority resolves like an empty one.
+        with_host = tmp_path.as_uri().replace("file://", "file://localhost", 1)
+        assert parse_file_url(with_host) == tmp_path
+
+    def test_remote_authority_rejected_off_windows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")
+        with pytest.raises(ValueError, match="non-local file://"):
+            parse_file_url("file://otherhost/srv/wheels")
+
+    def test_remote_authority_is_unc_on_windows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        with_host = str(parse_file_url("file://server/srv/wheels"))
+        without_host = str(parse_file_url("file:///srv/wheels"))
+        assert "server" in with_host
+        assert "server" not in without_host
 
 
 class TestFlatWheelhouse:
