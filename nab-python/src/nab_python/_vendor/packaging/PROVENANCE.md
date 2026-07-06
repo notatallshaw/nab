@@ -8,8 +8,8 @@ API before a `packaging` release containing it is published to PyPI.
 
 - Upstream repository: https://github.com/pypa/packaging
 - Source branch: `pypa/packaging:main`
-- Pinned commit: `c7d859d1333887226f521f59b1304257c04eeca2`
-- Snapshot date: 2026-06-30
+- Pinned commit: `0a85b41e24c9b55b83f05ae696d73e8294a5b094`
+- Snapshot date: 2026-07-06
 
 The snapshot is the full `src/packaging/` tree at that commit, plus
 `LICENSE`, `LICENSE.APACHE`, and `LICENSE.BSD` from the repository

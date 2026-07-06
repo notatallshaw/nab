@@ -195,6 +195,44 @@ class TestExtraNormalization:
         assert _ev(text, {**LINUX_CP311, "extra": extra_value}) is expected
 
 
+class TestSerializationRoundTrip:
+    """``str(Marker(...))`` must re-parse to a marker that evaluates the same.
+
+    A double-parenthesized group nested inside an and/or expression needs its
+    parentheses for precedence, so serialization has to keep them.
+    """
+
+    @pytest.mark.parametrize(
+        ("text", "env", "expected"),
+        [
+            (
+                'python_version < "3.10" and '
+                '((sys_platform == "linux" or sys_platform == "darwin"))',
+                {"python_version": "3.12", "sys_platform": "darwin"},
+                False,
+            ),
+            (
+                'python_version < "3.10" and '
+                '((sys_platform == "linux" or sys_platform == "darwin"))',
+                {"python_version": "3.9", "sys_platform": "darwin"},
+                True,
+            ),
+            (
+                'extra != "c" or ((python_version > "3.8") and extra != "c") '
+                'and ((python_version != "3.10" or (extra != "a")))',
+                {"python_version": "3.8", "extra": "c"},
+                False,
+            ),
+        ],
+    )
+    def test_nested_double_parens_round_trip(
+        self, text: str, env: dict[str, str], expected: bool
+    ) -> None:
+        marker = Marker(text)
+        assert marker.evaluate(env) is expected
+        assert Marker(str(marker)).evaluate(env) is expected
+
+
 class TestSetMarkers:
     """lock_file-context set membership (extras / dependency_groups)."""
 
