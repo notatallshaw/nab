@@ -2922,6 +2922,45 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(member)
         assert config.workspace_member_names == frozenset()
 
+    def test_member_colliding_with_vcs_source_rejected(self, tmp_path: Path) -> None:
+        """A discovered member sharing a vcs-source name is rejected at parse."""
+        root = tmp_path / "pyproject.toml"
+        root.write_text(
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n'
+            "[[tool.nab.vcs-sources]]\n"
+            'name = "Alpha"\n'
+            'url = "git+https://github.com/me/alpha.git@abc"\n',
+        )
+        member_dir = tmp_path / "pkg"
+        member_dir.mkdir()
+        (member_dir / "pyproject.toml").write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n',
+        )
+        with pytest.raises(ConfigError, match="duplicate canonical name"):
+            read_pyproject_config(root)
+
+    def test_member_colliding_with_archive_source_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "pyproject.toml"
+        root.write_text(
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n'
+            "[[tool.nab.archive-sources]]\n"
+            'name = "alpha"\n'
+            'url = "https://ex.com/alpha-1.0.tar.gz#sha256=' + "e" * 64 + '"\n',
+        )
+        member_dir = tmp_path / "pkg"
+        member_dir.mkdir()
+        (member_dir / "pyproject.toml").write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n',
+        )
+        with pytest.raises(ConfigError, match="duplicate canonical name"):
+            read_pyproject_config(root)
+
     def test_workspace_promotes_never_to_build_local_and_logs(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
