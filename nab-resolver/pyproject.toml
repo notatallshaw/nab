@@ -1,6 +1,6 @@
 [project]
 name = "nab-resolver"
-version = "0.0.7.dev0"
+version = "0.0.8.dev0"
 description = "Generic PubGrub dependency-resolver core"
 readme = "README.md"
 license = "MIT"
