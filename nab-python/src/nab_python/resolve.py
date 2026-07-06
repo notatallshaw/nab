@@ -722,7 +722,7 @@ def _build_marker_environment(
         for key, value in default_environment().items()
         if isinstance(value, str)
     }
-    env.update(python_axis_environment(python_version))
+    apply_python_axis_overlay(env, python_axis_environment(python_version))
     apply_python_axis_overlay(env, overrides)
     return env
 

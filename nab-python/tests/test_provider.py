@@ -54,6 +54,7 @@ from nab_python.provider import (
     VcsConfig,
     VcsPolicy,
     VcsSource,
+    apply_python_axis_overlay,
     python_axis_environment,
 )
 from nab_python.resolve import _raise_for_local_vcs_python
@@ -1930,6 +1931,41 @@ class TestPythonAxisEnvironment:
         env = python_axis_environment("3.14rc1")
         assert Marker('python_full_version >= "3.14.0"').evaluate(env) is False
         assert Marker('python_full_version == "3.14.0"').evaluate(env) is False
+
+
+class TestApplyPythonAxisOverlay:
+    def test_cpython_moves_implementation_version_with_axis(self) -> None:
+        """On CPython the axis move drags implementation_version along."""
+        env = {
+            "implementation_name": "cpython",
+            "python_version": "3.11",
+            "python_full_version": "3.11.5",
+            "implementation_version": "3.11.5",
+        }
+        apply_python_axis_overlay(env, {"python_version": "3.8"})
+        assert env["python_full_version"] == "3.8.0"
+        assert env["implementation_version"] == "3.8.0"
+
+    def test_non_cpython_keeps_its_implementation_version(self) -> None:
+        """A PyPy axis move keeps the interpreter's own release version."""
+        env = {
+            "implementation_name": "pypy",
+            "python_version": "3.9",
+            "python_full_version": "3.9.18",
+            "implementation_version": "7.3.13",
+        }
+        apply_python_axis_overlay(env, {"python_version": "3.10"})
+        assert env["python_full_version"] == "3.10.0"
+        assert env["implementation_version"] == "7.3.13"
+
+    def test_provider_target_python_moves_implementation_version(self) -> None:
+        """A Provider target Python moves implementation_version too."""
+        provider = Provider(make_coordinator(), python_version="3.9.0")
+        assert provider.environment["implementation_version"] == "3.9.0"
+        assert (
+            provider.environment["implementation_version"]
+            == provider.environment["python_full_version"]
+        )
 
 
 class TestLookAhead:
