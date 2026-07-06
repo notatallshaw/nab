@@ -632,7 +632,9 @@ def _archive_pin_from_source(
 
     The URL, hashes, and subdirectory come from the source declaration,
     which config parse validated (a hash is required), so the pin records
-    the exact archive the resolve used.
+    the exact archive the resolve used.  The URL is stripped of any
+    credential userinfo, like every other pin, so a committed lockfile
+    never carries a token.
     """
     from nab_index.archive import ArchiveRequest
 
@@ -642,7 +644,7 @@ def _archive_pin_from_source(
     return ArchivePin(
         name=canonical,
         version=str(version),
-        url=request.url,
+        url=_strip_userinfo(request.url),
         hashes=request.hashes,
         subdirectory=request.subdirectory or None,
     )

@@ -2412,6 +2412,20 @@ class TestBuildLockInputFromProvider:
         assert pin.subdirectory == "pkg"
         assert pin.version == "1.0"
 
+    def test_archive_source_strips_credentials(self) -> None:
+        """An archive on an authenticated host keeps its token out of the lock."""
+        source = ArchiveSource(
+            name="foo",
+            url="https://user:token@private.example/foo-1.0.tar.gz#sha256=" + "e" * 64,
+        )
+        provider = _FakeProvider(archive_sources={"foo": source})
+        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        pin = lock_input.pins["foo"]
+        assert isinstance(pin, ArchivePin)
+        assert pin.url == "https://private.example/foo-1.0.tar.gz"
+        assert "user:token@" not in write_lock(lock_input)
+        assert "user:token@" not in write_requirements_with_hashes(lock_input)
+
     def test_local_path_threads_to_artifact(self, tmp_path: Path) -> None:
         """A WheelFile.local_path reaches the emitted WheelArtifact."""
         wheel_path = tmp_path / "foo-1.0-py3-none-any.whl"

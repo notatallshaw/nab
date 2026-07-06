@@ -250,6 +250,7 @@ def index_archive_sources(
         if not ArchiveRequest.parse(src.url).has_usable_hash:
             msg = f"archive source {src.name!r} has no hash in its URL: {src.url!r}"
             raise ValueError(msg)
+
         canonical = canonicalize_name(src.name)
         if (
             canonical in out

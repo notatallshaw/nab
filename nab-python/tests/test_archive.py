@@ -137,7 +137,7 @@ class TestArchiveRequestParse:
     def test_drive_subdirectory_rejected(self) -> None:
         with pytest.raises(ArchiveRequestError, match="unsafe archive subdirectory"):
             ArchiveRequest.parse(
-                "https://ex.com/foo.tar.gz#sha256=abc&subdirectory=C:\\evil"
+                "https://ex.com/foo.tar.gz#sha256=abc&subdirectory=C:\\other"
             )
 
     def test_contained_backslash_subdirectory_allowed(self) -> None:
@@ -432,7 +432,7 @@ class TestExtractArchive:
     def test_rejects_escaping_symlink_member(self, tmp_path: Path) -> None:
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            info = tarfile.TarInfo("foo-1.0.0/evil")
+            info = tarfile.TarInfo("foo-1.0.0/link")
             info.type = tarfile.SYMTYPE
             info.linkname = "/etc/passwd"
             tar.addfile(info)
