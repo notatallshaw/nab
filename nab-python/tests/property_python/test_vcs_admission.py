@@ -139,10 +139,14 @@ def _prefix_under_repo(inner: str, prefix: str) -> bool:
     A candidate is under an allowed prefix only when the prefix ends at a
     path-segment boundary, so a sibling repo whose URL merely begins with
     the prefix (``.../airflow.git`` vs ``.../airflow.git.other``) is refused.
+    Git's optional ``.git`` suffix is stripped from the prefix and skipped
+    once on the candidate so an exact-repo prefix and the ``.git`` clone URL
+    match either way round.
     """
+    prefix = prefix.removesuffix(".git")
     if not inner.startswith(prefix):
         return False
-    rest = inner[len(prefix) :]
+    rest = inner[len(prefix) :].removeprefix(".git")
     if not rest or not prefix or prefix[-1] in "/@#":
         return True
     return rest[0] in "/@#"

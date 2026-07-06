@@ -138,12 +138,15 @@ def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
     at a path-segment boundary: the candidate must equal the prefix, the
     prefix must already end in a separator, or the next candidate
     character must be ``/`` (path), ``@`` (ref) or ``#`` (fragment).
+    Git treats the ``.git`` suffix as optional, so it is stripped from the
+    prefix and skipped once on the candidate before the boundary check.
     Both URLs have their authority ``user[:pass]@`` / ``git@`` stripped
     by the caller.
     """
+    prefix = prefix.removesuffix(".git")
     if not inner_url.startswith(prefix):
         return False
-    rest = inner_url[len(prefix) :]
+    rest = inner_url[len(prefix) :].removeprefix(".git")
     if not rest or not prefix or prefix[-1] in _REPO_BOUNDARY_CHARS:
         return True
     return rest[0] in _REPO_BOUNDARY_CHARS
