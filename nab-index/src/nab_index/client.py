@@ -423,7 +423,8 @@ def _parse_hashes(value: object) -> tuple[tuple[str, str], ...]:
 
 
 def _parse_size(value: object) -> int | None:
-    if isinstance(value, int) and value >= 0:
+    # bool is an int subclass, so reject it explicitly rather than read True as 1.
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
     return None
 
