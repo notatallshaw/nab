@@ -165,6 +165,14 @@ class TestExtractStaticMetadata:
         )
         assert extract_static_metadata(tmp_path) is None
 
+    def test_invalid_requires_python_returns_none(self, tmp_path: Path) -> None:
+        # A bare "3.11" has no operator, so it is not a valid PEP 440 specifier.
+        _write_pyproject(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = "3.11"\n',
+        )
+        assert extract_static_metadata(tmp_path) is None
+
     def test_unparseable_dep_raises(self, tmp_path: Path) -> None:
         """A dep string that is not valid PEP 508 is invalid metadata; raise."""
         _write_pyproject(

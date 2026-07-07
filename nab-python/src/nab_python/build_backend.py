@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from ._build.errors import (
     BuildBackendError as BuildBackendError,  # noqa: PLC0414  (public re-export)
 )
-from ._vendor.packaging.specifiers import SpecifierSet
+from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
 from .metadata import WheelMetadata, load_static_project
@@ -99,11 +99,13 @@ def _project_to_metadata(project: dict) -> WheelMetadata | None:
     except InvalidVersion:
         return None
     requires_python_raw = project.get("requires-python")
-    requires_python = (
-        SpecifierSet(requires_python_raw)
-        if isinstance(requires_python_raw, str)
-        else None
-    )
+    if isinstance(requires_python_raw, str):
+        try:
+            requires_python = SpecifierSet(requires_python_raw)
+        except InvalidSpecifier:
+            return None
+    else:
+        requires_python = None
     return WheelMetadata(
         name=canonicalize_name(name),
         version=version,
