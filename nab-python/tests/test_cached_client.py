@@ -550,6 +550,23 @@ class TestParseHashes:
 
         assert _parse_hashes({}) == ()
 
+    def test_single_empty_digest_dropped(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": ""}) == ()
+
+    def test_empty_digest_falls_through_to_valid(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": "", "sha512": "f" * 128}) == (
+            ("sha512", "f" * 128),
+        )
+
+    def test_empty_digest_yields_no_sdist_check(self) -> None:
+        from nab_index.client import _parse_hashes, _select_artifact_hash
+
+        assert _select_artifact_hash(_parse_hashes({"sha256": ""})) is None
+
 
 class TestSelectArtifactHash:
     def test_prefers_sha256(self) -> None:
