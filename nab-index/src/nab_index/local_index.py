@@ -43,8 +43,18 @@ if TYPE_CHECKING:
 
 __all__ = [
     "LocalIndexClient",
+    "UnsupportedWheelError",
     "read_wheel_metadata",
 ]
+
+
+class UnsupportedWheelError(Exception):
+    """A local wheel's ``.dist-info`` contradicts its own filename.
+
+    Raised when a wheel carries more than one top-level ``.dist-info``
+    directory, or a single one whose name does not canonicalise to the
+    distribution named by the wheel's filename.
+    """
 
 
 def _parse_file_url(url: str) -> Path:
@@ -232,7 +242,9 @@ def _flat_requires_python(entry: Path, canonical: str) -> str | None:
     """Read a flat-wheelhouse dist's ``Requires-Python``; not in the filename."""
     wheel = _parse_wheel_filename(entry.name)
     if wheel is not None:
-        return _read_wheel_requires_python(entry) if wheel[0] == canonical else None
+        if wheel[0] != canonical:
+            return None
+        return _read_wheel_requires_python(entry, canonical)
     sdist = _parse_sdist_filename(entry.name)
     if sdist is not None and sdist[0] == canonical:
         return _read_sdist_requires_python(entry)
@@ -254,33 +266,19 @@ def _read_sdist_requires_python(sdist_path: Path) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _read_wheel_requires_python(wheel_path: Path) -> str | None:
+def _read_wheel_requires_python(wheel_path: Path, expected: str) -> str | None:
     """Return ``Requires-Python`` from a wheel's METADATA, or ``None``."""
     try:
         with zipfile.ZipFile(wheel_path) as archive:
-            member = _metadata_member(archive.namelist())
+            member = _wheel_metadata_member(archive.namelist(), expected)
             if member is None:
                 return None
             raw = archive.read(member)
-    except (zipfile.BadZipFile, OSError):
+    except (zipfile.BadZipFile, OSError, UnsupportedWheelError):
         return None
 
     value = BytesParser().parsebytes(raw, headersonly=True).get("Requires-Python")
     return value if isinstance(value, str) else None
-
-
-def _metadata_member(names: list[str]) -> str | None:
-    """Return the top-level ``*.dist-info/METADATA`` member name, or ``None``."""
-    for name in names:
-        head, sep, tail = name.rpartition("/")
-        if (
-            sep
-            and tail == "METADATA"
-            and head.endswith(".dist-info")
-            and "/" not in head
-        ):
-            return name
-    return None
 
 
 def _make_record(
@@ -334,11 +332,19 @@ def _make_record(
 def read_wheel_metadata(wheel_path: Path) -> str | None:
     """Return a wheel's ``<name>-<version>.dist-info/METADATA`` text.
 
-    Returns ``None`` if the file is not a readable zip or has no METADATA member.
+    The ``.dist-info`` directory must name the wheel's own distribution
+    (taken from its filename); a wheel with several top-level ``.dist-info``
+    directories, or one naming a different distribution, raises
+    :class:`UnsupportedWheelError` rather than reading another package's
+    metadata.  Returns ``None`` when the file is not a readable zip, its name
+    is not a wheel filename, or it carries no METADATA member.
     """
+    parsed = _parse_wheel_filename(wheel_path.name)
+    if parsed is None:
+        return None
     try:
         with zipfile.ZipFile(wheel_path) as zf:
-            member = _wheel_metadata_member(zf.namelist())
+            member = _wheel_metadata_member(zf.namelist(), parsed[0])
             if member is None:
                 return None
             return zf.read(member).decode("utf-8")
@@ -346,13 +352,46 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
         return None
 
 
-def _wheel_metadata_member(names: list[str]) -> str | None:
-    """Return the top-level ``*.dist-info/METADATA`` member name, or ``None``."""
-    for name in names:
-        head, sep, tail = name.partition("/")
-        if sep and tail == "METADATA" and head.endswith(".dist-info"):
-            return name
-    return None
+def _wheel_metadata_member(names: list[str], expected: str) -> str | None:
+    """Return ``expected``'s own top-level ``*.dist-info/METADATA`` member.
+
+    ``expected`` is the wheel's canonical name from its filename.  Returns
+    ``None`` when no top-level ``.dist-info`` holds a METADATA file.  Raises
+    :class:`UnsupportedWheelError` when the wheel carries several top-level
+    ``.dist-info`` directories, or a single one whose name does not
+    canonicalise to ``expected``.
+    """
+    info_dirs = sorted(
+        {
+            head
+            for head, sep, _ in (name.partition("/") for name in names)
+            if sep and head.endswith(".dist-info")
+        }
+    )
+    if not info_dirs:
+        return None
+
+    if len(info_dirs) > 1:
+        joined = ", ".join(info_dirs)
+        msg = f"wheel for {expected!r} has multiple .dist-info directories: {joined}"
+        raise UnsupportedWheelError(msg)
+
+    info_dir = info_dirs[0]
+    if _dist_info_name(info_dir) != expected:
+        msg = (
+            f"wheel for {expected!r} carries .dist-info directory {info_dir!r} "
+            f"for a different distribution"
+        )
+        raise UnsupportedWheelError(msg)
+
+    member = f"{info_dir}/METADATA"
+    return member if member in names else None
+
+
+def _dist_info_name(info_dir: str) -> str:
+    """Return the canonical distribution name from a ``.dist-info`` dir name."""
+    stem = info_dir.removesuffix(".dist-info")
+    return _canonical(stem.rsplit("-", 1)[0])
 
 
 class LocalIndexClient:
