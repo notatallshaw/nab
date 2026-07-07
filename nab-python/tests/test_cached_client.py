@@ -28,6 +28,7 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelFile,
     _parse_files,
+    _parse_hashes,
     _parse_sdist_filename,
     _select_artifact_hash,
 )
@@ -538,6 +539,13 @@ class TestParseHashes:
         from nab_index.client import _parse_hashes
 
         result = _parse_hashes({"sha256": "a" * 64, "md5": 123})
+        assert result == (("sha256", "a" * 64),)
+
+    def test_single_entry_empty_digest(self) -> None:
+        assert _parse_hashes({"sha256": ""}) == ()
+
+    def test_multiple_entries_skips_empty_digest(self) -> None:
+        result = _parse_hashes({"sha256": "a" * 64, "sha512": ""})
         assert result == (("sha256", "a" * 64),)
 
     def test_non_dict(self) -> None:

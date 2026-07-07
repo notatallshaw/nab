@@ -422,13 +422,14 @@ def _parse_hashes(value: object) -> tuple[tuple[str, str], ...]:
     # The common case is a single hash; skip the list build.
     if len(value) == 1:
         ((algo, digest),) = value.items()
-        if isinstance(algo, str) and isinstance(digest, str):
+        # An empty digest is not a valid hash; PEP 691 requires a hex string.
+        if isinstance(algo, str) and isinstance(digest, str) and digest:
             return ((sys.intern(algo.lower()), digest.lower()),)
         return ()
 
     out: list[tuple[str, str]] = []
     for algo, digest in value.items():
-        if isinstance(algo, str) and isinstance(digest, str):
+        if isinstance(algo, str) and isinstance(digest, str) and digest:
             out.append((sys.intern(algo.lower()), digest.lower()))
 
     return tuple(out)
