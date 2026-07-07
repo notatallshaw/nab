@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 import tomli
 from typing_extensions import override
 
+from nab_index._subdir import subdirectory_escapes
 from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.multi_index import IndexConfig
 
@@ -1802,6 +1803,12 @@ def _parse_local_sources(
         subdirectory = entry.get("subdirectory")
         if subdirectory is not None and not isinstance(subdirectory, str):
             msg = f"local-sources[{i}] subdirectory must be a string"
+            raise ConfigError(msg)
+        if subdirectory is not None and subdirectory_escapes(subdirectory):
+            msg = (
+                f"local-sources[{i}] subdirectory {subdirectory!r}"
+                " escapes the source tree"
+            )
             raise ConfigError(msg)
         resolved = str((pyproject_dir / path_value).resolve())
         out.append(

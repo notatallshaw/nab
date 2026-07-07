@@ -92,6 +92,24 @@ class TestVcsRequestParse:
         assert req.repo_url == "git@github.com:x/y.git"
         assert req.ref == "c" * 40
 
+    def test_parent_subdirectory_rejected(self) -> None:
+        with pytest.raises(VcsCloneError, match="unsafe VCS subdirectory"):
+            VcsRequest.parse(
+                "git+https://ex.com/r.git@" + "a" * 40 + "#subdirectory=../../../../etc"
+            )
+
+    def test_absolute_subdirectory_rejected(self) -> None:
+        with pytest.raises(VcsCloneError, match="unsafe VCS subdirectory"):
+            VcsRequest.parse(
+                "git+https://ex.com/r.git@" + "a" * 40 + "#subdirectory=/etc/secrets"
+            )
+
+    def test_contained_internal_dotdot_allowed(self) -> None:
+        req = VcsRequest.parse(
+            "git+https://ex.com/r.git@" + "a" * 40 + "#subdirectory=a/../b"
+        )
+        assert req.subdirectory == "a/../b"
+
 
 class TestSplitRepoRef:
     def test_url_with_ref(self) -> None:

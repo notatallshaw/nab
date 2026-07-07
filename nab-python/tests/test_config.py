@@ -1333,6 +1333,24 @@ class TestLocalSources:
         with pytest.raises(ConfigError, match="subdirectory must be a string"):
             read_pyproject_config(path)
 
+    def test_subdirectory_parent_escape_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.local-sources]]\n"
+            'name = "x"\npath = "../x"\nsubdirectory = "../../../../etc"\n',
+        )
+        with pytest.raises(ConfigError, match="escapes the source tree"):
+            read_pyproject_config(path)
+
+    def test_subdirectory_absolute_escape_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.local-sources]]\n"
+            'name = "x"\npath = "../x"\nsubdirectory = "/etc/secrets"\n',
+        )
+        with pytest.raises(ConfigError, match="escapes the source tree"):
+            read_pyproject_config(path)
+
     def test_unknown_key_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
