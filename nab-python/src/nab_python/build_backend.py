@@ -50,10 +50,13 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     authoritative, populating ``name``, ``version``,
     ``requires_python``, ``requires_dist``, and ``provides_extra``.
 
-    Raises :class:`InvalidProjectRequirementError` when ``dependencies``
-    or ``optional-dependencies`` is present but structurally wrong (not
-    an array of strings / not a table), rather than silently dropping the
-    declared dependencies.
+    Raises :class:`InvalidProjectRequirementError` when a static field is
+    present but corrupt: ``dependencies`` or ``optional-dependencies`` that
+    is structurally wrong (not an array of strings / not a table), a
+    ``version`` that is not a valid :pep:`440` version, or a
+    ``requires-python`` that is not a valid specifier.  A corrupt static
+    value is not something the build backend can compute, so it raises
+    rather than falling through to a build that reads the same broken file.
 
     The returned ``provides_extra`` includes both the lower-cased
     keys of ``project.optional-dependencies`` and any extras declared
@@ -94,16 +97,23 @@ def _project_to_metadata(project: dict) -> WheelMetadata | None:
         # A dynamic field is computed by the build backend; a static
         # value alongside it is a stale placeholder, not authoritative.
         return None
+    # ``version`` and ``requires-python`` are present as static strings here
+    # (the dynamic case returned above), so an unparseable value is corrupt
+    # metadata, not a field the build backend can compute. Raise rather than
+    # fall through to a build that reads the same broken file, matching
+    # ``metadata.parse_metadata`` and ``_build.runner._parse_metadata``.
     try:
         version = Version(version_raw)
-    except InvalidVersion:
-        return None
+    except InvalidVersion as exc:
+        msg = f"invalid [project].version {version_raw!r}: {exc}"
+        raise InvalidProjectRequirementError(msg) from exc
     requires_python_raw = project.get("requires-python")
     if isinstance(requires_python_raw, str):
         try:
             requires_python = SpecifierSet(requires_python_raw)
-        except InvalidSpecifier:
-            return None
+        except InvalidSpecifier as exc:
+            msg = f"invalid [project].requires-python {requires_python_raw!r}: {exc}"
+            raise InvalidProjectRequirementError(msg) from exc
     else:
         requires_python = None
     return WheelMetadata(
