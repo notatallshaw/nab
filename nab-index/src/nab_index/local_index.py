@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 __all__ = [
     "LocalIndexClient",
     "UnsupportedWheelError",
+    "parse_file_url",
     "read_wheel_metadata",
 ]
 
@@ -57,7 +58,7 @@ class UnsupportedWheelError(Exception):
     """
 
 
-def _parse_file_url(url: str) -> Path:
+def parse_file_url(url: str) -> Path:
     """Resolve a ``file://`` URL to an absolute filesystem path.
 
     Uses :func:`urllib.request.url2pathname` so Windows-style drive
@@ -191,7 +192,7 @@ def _resolve_local_link(
         filename = unquote(parsed.path.rsplit("/", 1)[-1]) or None
         return (filename, href_no_frag, None, hashes)
     if parsed.scheme == "file":
-        path = _parse_file_url(href_no_frag)
+        path = parse_file_url(href_no_frag)
         return (path.name, href_no_frag, path, hashes)
 
     # A relative href resolves against the package page wherever it points;
@@ -406,7 +407,7 @@ class LocalIndexClient:
 
     def __init__(self, index_url: str) -> None:
         """Hold the resolved root path for ``index_url``."""
-        self._root = _parse_file_url(index_url)
+        self._root = parse_file_url(index_url)
 
     async def aclose(self) -> None:
         """No-op; nothing to release."""
@@ -441,7 +442,7 @@ class LocalIndexClient:
         The on-disk sidecar is trusted, so ``metadata_hash`` is accepted
         only to match the remote client signature and is not verified.
         """
-        path = _parse_file_url(metadata_url)
+        path = parse_file_url(metadata_url)
         return path.read_text(encoding="utf-8")
 
     async def get_sdist_files(
@@ -456,7 +457,7 @@ class LocalIndexClient:
         On-disk archives are trusted, so ``sdist_hashes`` matches the remote
         client signature but is not verified.
         """
-        path = _parse_file_url(sdist_url)
+        path = parse_file_url(sdist_url)
         return _extract_sdist_files(path.read_bytes())
 
     async def get_sdist_archive(
@@ -471,5 +472,5 @@ class LocalIndexClient:
         On-disk archives are trusted, so ``sdist_hashes`` matches the remote
         client signature but is not verified.
         """
-        path = _parse_file_url(sdist_url)
+        path = parse_file_url(sdist_url)
         return path.read_bytes()

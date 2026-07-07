@@ -16,8 +16,8 @@ from nab_index.local_index import (
     LocalIndexClient,
     UnsupportedWheelError,
     _make_record,
-    _parse_file_url,
     _read_sdist_requires_python,
+    parse_file_url,
     read_wheel_metadata,
 )
 
@@ -78,7 +78,7 @@ def _write_sdist(
 class TestParseFileUrl:
     def test_absolute_path(self, tmp_path: Path) -> None:
         url = tmp_path.as_uri()
-        assert _parse_file_url(url) == tmp_path
+        assert parse_file_url(url) == tmp_path
 
     def test_url_encoding_round_trip(self, tmp_path: Path) -> None:
         # Spaces and unicode in the path must round-trip cleanly.
@@ -87,11 +87,11 @@ class TestParseFileUrl:
         path.parent.mkdir(parents=True)
         path.touch()
         url = path.as_uri()
-        assert _parse_file_url(url) == path
+        assert parse_file_url(url) == path
 
     def test_rejects_non_file_scheme(self) -> None:
         with pytest.raises(ValueError, match="expected file:// URL"):
-            _parse_file_url("https://example.com/")
+            parse_file_url("https://example.com/")
 
 
 class TestFlatWheelhouse:

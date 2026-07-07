@@ -391,6 +391,19 @@ class TestArchiveDownload:
         assert entry.digest == "e" * 64
         assert entry.local_path is None
 
+    def test_file_url_archive_pin_carries_local_path(self, tmp_path: Path) -> None:
+        archive = tmp_path / "foo-1.0.0.tar.gz"
+        archive.write_bytes(b"ARCHIVE")
+        pin = ArchivePin(
+            name="foo",
+            version="1.0.0",
+            url=archive.as_uri(),
+            hashes=(("sha256", hashlib.sha256(b"ARCHIVE").hexdigest()),),
+        )
+        (entry,) = list(iter_artifacts(LockInput(pins={"foo": pin})))
+        assert entry.filename == "foo-1.0.0.tar.gz"
+        assert entry.local_path == archive
+
     def test_primary_digest_no_acceptable_hash_raises(self) -> None:
         pin = ArchivePin(name="foo", version="1.0", url="u", hashes=(("md5", "x"),))
         with pytest.raises(ValueError, match="no acceptable hash"):
