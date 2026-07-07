@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -258,6 +259,33 @@ class TestReadWorkspaceMembers:
         )
         with pytest.raises(
             WorkspaceDiscoveryError, match=r"\[project\] must be a table"
+        ):
+            read_workspace_members(root)
+
+    def test_member_malformed_toml_raises(self, tmp_path: Path) -> None:
+        root = _write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n',
+        )
+        member = _write(
+            tmp_path / "pkg" / "pyproject.toml",
+            "name = 'pkg-b\n",
+        )
+        with pytest.raises(
+            WorkspaceDiscoveryError,
+            match=rf"{re.escape(str(member))} is not valid TOML",
+        ):
+            read_workspace_members(root)
+
+    def test_root_malformed_toml_raises(self, tmp_path: Path) -> None:
+        root = _write(
+            tmp_path / "pyproject.toml",
+            "name = 'ws\n",
+        )
+        with pytest.raises(
+            WorkspaceDiscoveryError, match=rf"{re.escape(str(root))} is not valid TOML"
         ):
             read_workspace_members(root)
 
