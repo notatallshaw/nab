@@ -14,6 +14,7 @@ import pytest
 from nab_index.client import SdistFile, WheelFile
 from nab_index.local_index import (
     LocalIndexClient,
+    UnsupportedWheelError,
     _make_record,
     _parse_file_url,
     _read_sdist_requires_python,
@@ -189,6 +190,23 @@ class TestFlatWheelhouse:
         client = LocalIndexClient(tmp_path.as_uri())
         files = run(client.get_files("foo"))
         assert [f.requires_python for f in files] == [">=3.8"]
+
+    def test_flat_wheelhouse_skips_mismatched_dist_info(self, tmp_path: Path) -> None:
+        # A foo wheel carrying a bar .dist-info has no readable Requires-Python;
+        # the good sibling still lists.
+        mismatched = tmp_path / "foo-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(mismatched, "w") as zf:
+            zf.writestr(
+                "bar-2.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: bar\nRequires-Python: >=3.12\n",
+            )
+        _write_wheel(tmp_path / "foo-2.0-py3-none-any.whl", "foo", "2.0", ">=3.8")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert {f.version: f.requires_python for f in files} == {
+            "1.0": None,
+            "2.0": ">=3.8",
+        }
 
     def test_sdist_requires_python_read_from_pkg_info(self, tmp_path: Path) -> None:
         # Requires-Python is absent from the filename; it comes from PKG-INFO.
@@ -563,6 +581,45 @@ class TestReadWheelMetadata:
         not_a_wheel = tmp_path / "foo-1.0-py3-none-any.whl"
         not_a_wheel.write_bytes(b"not a zip archive")
         assert read_wheel_metadata(not_a_wheel) is None
+
+    def test_returns_none_for_non_wheel_filename(self, tmp_path: Path) -> None:
+        assert read_wheel_metadata(tmp_path / "notes.txt") is None
+
+    def test_rejects_multiple_dist_info_dirs(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as zf:
+            zf.writestr(
+                "bar-2.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: bar\nRequires-Dist: wrong-dep\n",
+            )
+            zf.writestr(
+                "foo-1.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: foo\nRequires-Dist: real-dep\n",
+            )
+            zf.writestr("foo/__init__.py", b"")
+        with pytest.raises(UnsupportedWheelError):
+            read_wheel_metadata(wheel)
+
+    def test_rejects_mismatched_dist_info_name(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as zf:
+            zf.writestr(
+                "bar-2.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: bar\nRequires-Dist: wrong-dep\n",
+            )
+        with pytest.raises(UnsupportedWheelError):
+            read_wheel_metadata(wheel)
+
+    def test_reads_matching_dist_info_with_dashed_name(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "zope.interface-5.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as zf:
+            zf.writestr(
+                "zope_interface-5.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: zope.interface\nVersion: 5.0\n",
+            )
+        text = read_wheel_metadata(wheel)
+        assert text is not None
+        assert "Name: zope.interface" in text
 
 
 class TestContextManager:

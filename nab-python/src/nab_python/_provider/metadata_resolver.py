@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
-from nab_index.local_index import read_wheel_metadata
+from nab_index.local_index import UnsupportedWheelError, read_wheel_metadata
 
 from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .._vcs_admission import admit_vcs_url
@@ -86,7 +86,11 @@ def resolve_metadata(
             raise integrity_error
         metadata_text = provider.coordinator.index.get_metadata(normalized, ver_str)
     elif isinstance(dist, WheelFile) and dist.local_path is not None:
-        metadata_text = read_wheel_metadata(dist.local_path)
+        try:
+            metadata_text = read_wheel_metadata(dist.local_path)
+        except UnsupportedWheelError:
+            # A contradictory .dist-info is unusable, like an unreadable wheel.
+            metadata_text = None
     else:
         metadata_text = None
 
