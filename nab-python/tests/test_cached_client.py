@@ -556,6 +556,13 @@ class TestSelectArtifactHash:
     def test_only_unacceptable_returns_none(self) -> None:
         assert _select_artifact_hash((("md5", "d" * 32),)) is None
 
+    def test_empty_digest_returns_none(self) -> None:
+        assert _select_artifact_hash((("sha256", ""),)) is None
+
+    def test_empty_digest_falls_through_to_valid_algo(self) -> None:
+        hashes = (("sha256", ""), ("sha512", "f" * 128))
+        assert _select_artifact_hash(hashes) == ("sha512", "f" * 128)
+
 
 class TestParseMaxAge:
     def test_default_when_none(self) -> None:

@@ -498,13 +498,13 @@ def _select_artifact_hash(
     """Pick the preferred ``(algo, hex)`` to verify, or ``None`` if none qualify.
 
     Walks :data:`_ACCEPTED_HASH_ALGORITHMS` in order, so sha256 is preferred,
-    then sha384, then sha512. An empty set or only unaccepted algorithms (md5)
-    yields ``None``.
+    then sha384, then sha512. An empty set, an empty digest, or only unaccepted
+    algorithms (md5) yields ``None``.
     """
     by_algo = {algo.lower(): digest.lower() for algo, digest in hashes}
     for algo in _ACCEPTED_HASH_ALGORITHMS:
         digest = by_algo.get(algo)
-        if digest is not None:
+        if digest:
             return (algo, digest)
     return None
 
