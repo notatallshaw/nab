@@ -25,6 +25,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ._subdir import subdirectory_escapes
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -98,6 +100,9 @@ class VcsRequest:
             key, _, value = fragment_part.partition("=")
             if key == "subdirectory":
                 subdirectory = value
+        if subdirectory_escapes(subdirectory):
+            msg = f"unsafe VCS subdirectory {subdirectory!r} in {url!r}"
+            raise VcsCloneError(msg)
         return cls(scheme="git", repo_url=repo, ref=ref, subdirectory=subdirectory)
 
 

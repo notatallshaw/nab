@@ -11,9 +11,9 @@ policy decision in :mod:`nab_python.config`.
 
 from __future__ import annotations
 
-import ntpath
 from dataclasses import dataclass
 
+from ._subdir import subdirectory_escapes
 from .client import _ACCEPTED_HASH_ALGORITHMS
 
 __all__ = [
@@ -86,27 +86,8 @@ class ArchiveRequest:
         return cls(url=url, hashes=tuple(hashes), subdirectory=subdirectory)
 
 
-_SUBDIR_ROOT = ntpath.normpath("/archive-root")
-
-
 def _reject_unsafe_subdirectory(subdirectory: str, raw_url: str) -> None:
-    """Refuse a subdirectory that escapes the extracted tree.
-
-    At materialise time the project root is selected with ``root /
-    subdirectory``, so an absolute path, a ``..`` component, or a drive
-    letter could read a project outside the archive.  Containment is checked
-    with :mod:`ntpath`, which treats both forward and back slashes as
-    separators, so a value that stays inside the tree on POSIX but escapes it
-    on Windows (the join is native) is caught on every platform.
-    """
-    if not subdirectory:
-        return
-    resolved = ntpath.normpath(ntpath.join(_SUBDIR_ROOT, subdirectory))
-    try:
-        contained = ntpath.commonpath((_SUBDIR_ROOT, resolved)) == _SUBDIR_ROOT
-    except ValueError:
-        # Different drives (e.g. a ``C:\\`` subdirectory) have no common path.
-        contained = False
-    if not contained:
+    """Refuse a subdirectory that escapes the extracted tree."""
+    if subdirectory_escapes(subdirectory):
         msg = f"unsafe archive subdirectory {subdirectory!r} in {raw_url!r}"
         raise ArchiveRequestError(msg)
