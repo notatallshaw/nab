@@ -14,7 +14,12 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from nab_index.client import SdistFile, WheelFile
+from nab_index.client import (
+    MetadataHashMismatchError,
+    SdistFile,
+    SdistHashMismatchError,
+    WheelFile,
+)
 
 from ._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from ._provider import extras as _extras
@@ -1592,8 +1597,13 @@ class Provider:
         except UnsupportedSdistError:
             self._unsupported_sdists.add(cache_key)
             raise
-        except (UnsupportedVcsError, NotImplementedError):
-            # A refused direct-URL dep is a hard error, not a parse skip.
+        except (
+            SdistHashMismatchError,
+            MetadataHashMismatchError,
+            UnsupportedVcsError,
+            NotImplementedError,
+        ):
+            # A hash mismatch or refused direct-URL dep is a hard error, not a skip.
             raise
         except Exception as exc:
             logger.warning(
