@@ -5260,6 +5260,29 @@ class TestDistPolicy:
         with pytest.raises(UnsupportedSdistError):
             provider.get_dependencies("pkg", V("1.0"))
 
+    def test_cross_surface_trust_conflict_aborts_get_dependencies(self) -> None:
+        """Matching per-package and per-index trust overrides raise
+        OverrideConflictError instead of being swallowed as invalid metadata.
+        """
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PRE_22_SDIST_PKG_INFO,
+        )
+        coordinator.index.store_listing_index("pkg", "internal")
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
+            package_overrides=(pkg_override("pkg", dist_trust_unverified_deps=True),),
+            index_overrides={
+                "internal": IndexOverride(dist_trust_unverified_deps=True)
+            },
+        )
+        with pytest.raises(OverrideConflictError, match="override conflict for pkg"):
+            provider.get_dependencies("pkg", V("1.0"))
+        assert not provider.has_invalid_metadata("pkg", V("1.0"))
+
     def test_sdist_no_pkg_info_raises(self) -> None:
         """Raise MetadataError when PKG-INFO cannot be extracted."""
         coordinator = make_coordinator(

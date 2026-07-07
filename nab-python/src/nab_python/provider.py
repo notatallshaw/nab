@@ -1720,6 +1720,8 @@ class Provider:
 
         metadata_text, from_sdist = self._resolve_metadata(versions, package, version)
 
+        from .config import OverrideConflictError  # noqa: PLC0415 (config import cycle)
+
         try:
             self.parse_and_cache_metadata(
                 cache_key, metadata_text, from_sdist=from_sdist
@@ -1733,9 +1735,11 @@ class Provider:
             UnsupportedVcsError,
             NotImplementedError,
             InvalidUploadTimeError,
+            OverrideConflictError,
         ):
-            # A hash mismatch, refused direct-URL dep, or naive upload-time hit
-            # while building an sdist is a hard error, not a skip.
+            # A hash mismatch, refused direct-URL dep, naive upload-time hit, or
+            # a contradictory config override while building an sdist is a hard
+            # error, not a skip.
             raise
         except Exception as exc:
             logger.warning(
