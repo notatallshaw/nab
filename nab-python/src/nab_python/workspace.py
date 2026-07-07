@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import tomli
 
@@ -52,6 +52,21 @@ _PERMISSIVENESS = {
 
 class WorkspaceDiscoveryError(ValueError):
     """Raised when a workspace member or root is structurally invalid."""
+
+
+def _load_member_toml(pyproject: Path) -> dict[str, Any]:
+    """Parse ``pyproject``, raising :class:`WorkspaceDiscoveryError` on bad TOML.
+
+    :func:`discover_workspace_root` swallows parse errors while walking,
+    but a chosen root and its declared members must parse, so malformed
+    TOML here is a hard error.
+    """
+    try:
+        with pyproject.open("rb") as f:
+            return tomli.load(f)
+    except tomli.TOMLDecodeError as exc:
+        msg = f"{pyproject} is not valid TOML: {exc}"
+        raise WorkspaceDiscoveryError(msg) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,8 +130,7 @@ def read_workspace_members(root_pyproject: Path) -> tuple[LocalSource, ...]:
     editably by default, matching uv.  Explicit
     ``[[tool.nab.local-sources]]`` entries default to non-editable.
     """
-    with root_pyproject.open("rb") as f:
-        root_data = tomli.load(f)
+    root_data = _load_member_toml(root_pyproject)
     raw_workspace = root_data.get("tool", {}).get("nab", {}).get("workspace")
     if not isinstance(raw_workspace, dict):
         msg = (
@@ -156,8 +170,7 @@ def read_workspace_members(root_pyproject: Path) -> tuple[LocalSource, ...]:
                 f" pyproject.toml at {member_pyproject}"
             )
             raise WorkspaceDiscoveryError(msg)
-        with member_pyproject.open("rb") as f:
-            member_data = tomli.load(f)
+        member_data = _load_member_toml(member_pyproject)
         project_table = member_data.get("project", {})
         if not isinstance(project_table, dict):
             msg = (
