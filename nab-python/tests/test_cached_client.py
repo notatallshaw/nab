@@ -267,6 +267,35 @@ class TestMetadataHashParsing:
         assert isinstance(wheel, WheelFile)
         assert wheel.metadata_hash == ("sha256", "dead")
 
+    def test_empty_digest_yields_none(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({"core-metadata": {"sha256": ""}}) is None
+
+    def test_empty_digest_falls_through_to_valid_algo(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash(
+            {"core-metadata": {"sha256": "", "sha512": "a" * 128}}
+        ) == ("sha512", "a" * 128)
+
+    def test_parse_files_empty_digest_leaves_metadata_unverified(self) -> None:
+        from nab_index.client import WheelFile, _parse_files
+
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": "https://example.com/foo-1.0-py3-none-any.whl",
+                    "core-metadata": {"sha256": ""},
+                },
+            ],
+        }
+        (wheel,) = _parse_files(data, "https://example.com/", "foo")
+        assert isinstance(wheel, WheelFile)
+        assert wheel.has_metadata
+        assert wheel.metadata_hash is None
+
 
 class TestYankedFiltering:
     """PEP 592 ``yanked`` files are dropped from the listing."""

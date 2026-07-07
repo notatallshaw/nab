@@ -465,8 +465,8 @@ def _metadata_hash(file_info: dict) -> tuple[str, str] | None:
 
     Prefers sha256, then sha384, then sha512, so a sidecar published with
     only a stronger digest is still verified. Algorithm names match
-    case-insensitively. A bare ``true`` (sidecar exists, no hash) or a table
-    with no accepted algorithm yields None, so no check runs.
+    case-insensitively. A bare ``true`` (sidecar exists, no hash), an empty
+    digest, or a table with no accepted algorithm yields None, so no check runs.
     """
     value = _metadata_value(file_info)
     if not isinstance(value, dict):
@@ -478,7 +478,7 @@ def _metadata_hash(file_info: dict) -> tuple[str, str] | None:
     }
     for algo in _ACCEPTED_METADATA_HASHES:
         digest = published.get(algo)
-        if digest is not None:
+        if digest:
             return (algo, digest.lower())
     return None
 
