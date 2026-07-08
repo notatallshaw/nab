@@ -30,6 +30,7 @@ from nab_index.client import (
     _parse_sdist_filename,
     _select_artifact_hash,
 )
+from nab_python.metadata import parse_metadata
 
 LISTING = {
     "meta": {"api-version": "1.0"},
@@ -67,6 +68,19 @@ class _FakeResponse:
         if self.status_code >= 400:
             msg = f"status {self.status_code}"
             raise RuntimeError(msg)
+
+
+class _MischarsetResponse(_FakeResponse):
+    """Response whose ``.text`` decodes the body as utf-16, not utf-8.
+
+    Mimics a transport that decodes ``.text`` under the response
+    Content-Type charset, so ``.text`` and the hash-verified ``.content``
+    disagree.
+    """
+
+    @property
+    def text(self) -> str:
+        return self.content.decode("utf-16", errors="replace")
 
 
 class _FakeTransport:
@@ -1025,6 +1039,35 @@ class TestGetMetadataText:
         with pytest.raises(MetadataHashMismatchError):
             asyncio.run(go())
         assert cache.get_metadata("pkg", "1.0") is None
+
+    def test_returns_utf8_decode_of_verified_bytes(self, tmp_path: Path) -> None:
+        """The result is the utf-8 decode of the hash-verified bytes.
+
+        When the transport's ``.text`` would decode the body under a
+        different charset, the returned metadata still matches the bytes
+        the hash covers.
+        """
+        cache = _make_cache(tmp_path)
+        body = (
+            b"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar>=2\n"
+        )
+        digest = hashlib.sha256(body).hexdigest()
+        transport = _FakeTransport([_MischarsetResponse(body)])
+
+        async def go() -> str:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_metadata_text(
+                    "foo", "1.0", "https://x/foo.metadata", ("sha256", digest)
+                )
+            finally:
+                await client.aclose()
+
+        text = asyncio.run(go())
+        assert text == body.decode("utf-8")
+        assert cache.get_metadata("foo", "1.0") == text
+        parsed = parse_metadata(text)
+        assert [str(req) for req in parsed.requires_dist] == ["bar>=2"]
 
 
 class TestGetSdistFiles:

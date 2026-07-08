@@ -185,6 +185,11 @@ class CachedAsyncSimpleClient:
         :class:`OfflineError`.  When ``metadata_hash`` is given, the
         fetched bytes are verified against it and a mismatch raises
         :class:`MetadataHashMismatchError` before anything is cached.
+
+        Metadata is decoded from the hash-verified bytes as utf-8 rather
+        than the transport's ``.text``, which a backend may decode under
+        the response Content-Type charset. This keeps the parsed text
+        tied to the bytes the hash covers.
         """
         cached = self._cache.get_metadata(package, version)
         if cached is not None:
@@ -196,9 +201,10 @@ class CachedAsyncSimpleClient:
 
         response = await self._transport.get(metadata_url)
         response.raise_for_status()
+        content = response.content
         if metadata_hash is not None:
-            _verify_metadata_hash(response.content, metadata_hash)
-        text = response.text
+            _verify_metadata_hash(content, metadata_hash)
+        text = content.decode("utf-8")
         self._cache.put_metadata(package, version, text)
         return text
 
