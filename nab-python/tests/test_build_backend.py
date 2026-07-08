@@ -291,7 +291,8 @@ class TestExtractStaticMetadata:
         ):
             extract_static_metadata(tmp_path)
 
-    def test_requires_python_not_str_ignored(self, tmp_path: Path) -> None:
+    def test_requires_python_not_str_raises(self, tmp_path: Path) -> None:
+        """A non-string requires-python is corrupt, not "no constraint"; raise."""
         _write_pyproject(
             tmp_path,
             """
@@ -301,9 +302,11 @@ class TestExtractStaticMetadata:
             requires-python = 42
             """,
         )
-        meta = extract_static_metadata(tmp_path)
-        assert meta is not None
-        assert meta.requires_python is None
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[project\]\.requires-python must be a string, got int",
+        ):
+            extract_static_metadata(tmp_path)
 
     def test_pyproject_unreadable_returns_none(self, tmp_path: Path) -> None:
         # A directory in place of pyproject.toml: ``is_file`` is False so

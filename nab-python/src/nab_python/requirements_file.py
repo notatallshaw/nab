@@ -40,7 +40,7 @@ __all__ = [
 
 
 class InvalidProjectRequirementError(ValueError):
-    """A requirement string in pyproject.toml is not valid PEP 508."""
+    """A pyproject.toml dependency or metadata value is invalid or unresolvable."""
 
 
 class InvalidProjectTableError(TypeError):
