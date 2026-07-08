@@ -15,6 +15,7 @@ after admission lets the URL through.
 from __future__ import annotations
 
 import enum
+import posixpath
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
@@ -142,7 +143,15 @@ def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
     prefix and skipped once on the candidate before the boundary check.
     Both URLs have their authority ``user[:pass]@`` / ``git@`` stripped
     by the caller.
+
+    A path git would rewrite is refused first: git applies RFC 3986
+    dot-segment removal at fetch time, so a raw ``..`` path could pass the
+    string match while git fetches a repo outside the prefix.
     """
+    path = urlsplit(inner_url).path
+    if path and posixpath.normpath(path) != path:
+        return False
+
     prefix = prefix.removesuffix(".git")
     if not inner_url.startswith(prefix):
         return False
