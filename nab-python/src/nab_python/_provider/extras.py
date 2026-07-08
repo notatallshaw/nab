@@ -43,26 +43,31 @@ def choose_extra_version(
     _, _, normalized = provider.split_and_normalize(base)
     version_list = provider.fetch_versions(base)
     all_versions = provider.versions_only(normalized, version_list)
-    candidates = list(version_range.filter(all_versions))
 
-    # Filter by base's positive range so we don't pick a proxy version
-    # that would force base==V into a known-conflicting state.
+    # Filter by the base's positive range so we don't pick a proxy version
+    # that would force base==V into a known-conflicting state.  Intersect
+    # rather than test membership: the base's range carries the pre-release
+    # admission granted by the requirement that named the extra, while the
+    # proxy's own range is built full.
     base_range = provider.solution_ranges.get(normalized)
-    excluded_by_base: list[Version] = []
-    if base_range is not None:
-        kept: list[Version] = []
-        for v in candidates:
-            if v in base_range:
-                kept.append(v)
-            else:
-                excluded_by_base.append(v)
-        candidates = kept
+    if base_range is None:
+        candidates = list(version_range.filter(all_versions))
+    else:
+        candidates = list((version_range & base_range).filter(all_versions))
 
     if provider.wants_lowest(normalized):
         candidates = list(reversed(candidates))
 
     chosen = _pick_in_mode(provider, base, extra, candidates)
-    if chosen is None and excluded_by_base and base_range is not None:
+    if (
+        chosen is None
+        and base_range is not None
+        and (
+            excluded_by_base := [
+                v for v in version_range.filter(all_versions) if v not in base_range
+            ]
+        )
+    ):
         _record_base_range_blocks(
             provider, package, normalized, base_range, excluded_by_base
         )

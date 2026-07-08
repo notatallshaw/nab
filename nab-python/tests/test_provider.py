@@ -36,7 +36,12 @@ from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import InvalidVersion, Version
-from nab_python.config import IndexOverride, OverrideConflictError, PackageOverride
+from nab_python.config import (
+    IndexOverride,
+    NabProjectConfig,
+    OverrideConflictError,
+    PackageOverride,
+)
 from nab_python.fetch import InMemoryIndex
 from nab_python.metadata import WheelMetadata
 from nab_python.provider import (
@@ -57,7 +62,7 @@ from nab_python.provider import (
     apply_python_axis_overlay,
     python_axis_environment,
 )
-from nab_python.resolve import _raise_for_source_python
+from nab_python.resolve import _build_resolver_inputs, _raise_for_source_python
 from nab_resolver.resolver import ResolutionError, Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
@@ -4715,6 +4720,107 @@ class TestExtras:
         )
         spec = SpecifierSet("")
         assert provider.choose_version("foo[missing]", spec.to_range()) is None
+
+
+class TestExtrasPrereleaseAdmission:
+    """An extras proxy must not drop the base range's pre-release admission.
+
+    The proxy delegates to the base's version list, so the admission a
+    specifier grants must survive the proxy hop: ``c[extra]>=0.5a1`` and
+    ``c>=0.5a1`` select the same base version.
+    """
+
+    C_META = "Metadata-Version: 2.1\nName: c\nVersion: {v}\nProvides-Extra: extra\n\n"
+
+    def _coordinator_for_c(self) -> MagicMock:
+        listings = {"c": [make_wheel("2.0.0a1"), make_wheel("1.0.0")]}
+        metadata = {v: self.C_META.format(v=v) for v in ("1.0.0", "2.0.0a1")}
+        return make_coordinator(listings=listings, metadata_by_version=metadata)
+
+    def _resolve(self, requirements: list[str]) -> dict[str, Version]:
+        root_reqs, root_extras = _build_resolver_inputs(
+            [Requirement(r) for r in requirements],
+            NabProjectConfig(),
+            environment={},
+        )
+        provider = Provider(
+            self._coordinator_for_c(),
+            python_version="3.12.0",
+            root_requirements=root_reqs,
+            root_extras=root_extras,
+        )
+        return Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            root_reqs
+        )
+
+    def test_extra_requirement_prerelease_admits(self) -> None:
+        """``c[extra]>=0.5a1`` admits the pre-release exactly like ``c>=0.5a1``."""
+        pins = self._resolve(["c[extra]>=0.5a1"])
+        assert pins["c"] == V("2.0.0a1")
+
+    @pytest.mark.parametrize(
+        "requirements",
+        [
+            ["c[extra]>=0.5a1", "c>=1.0"],
+            ["c>=1.0", "c[extra]>=0.5a1"],
+            ["c>=0.5a1", "c[extra]>=1.0"],
+        ],
+    )
+    def test_base_and_extra_requirements_share_admission(
+        self, requirements: list[str]
+    ) -> None:
+        """Plain and extra requirements share the admission, from either side."""
+        pins = self._resolve(requirements)
+        assert pins["c"] == V("2.0.0a1")
+
+    def test_extra_admission_survives_backtrack(self) -> None:
+        """A dep-declared ``c[extra]>=0.5a1`` admits after its parent is repicked.
+
+        b has three versions to a's two, so a is decided first. a 2.0 needs
+        e==6.0, which conflicts with b's e==5.0 only once b is decided,
+        forcing a real backjump to a 1.5. That a 1.5 names the extra, and its
+        admission must reach c.
+        """
+        listings = {
+            "a": [make_wheel("2.0"), make_wheel("1.5")],
+            "b": [make_wheel("30.0"), make_wheel("20.0"), make_wheel("10.0")],
+            "c": [make_wheel("2.0.0a1"), make_wheel("1.0.0")],
+            "e": [make_wheel("6.0"), make_wheel("5.0")],
+        }
+        b_meta = (
+            "Metadata-Version: 2.1\nName: b\nVersion: {v}\nRequires-Dist: e==5.0\n\n"
+        )
+        metadata = {
+            "2.0": (
+                "Metadata-Version: 2.1\nName: a\nVersion: 2.0\n"
+                "Requires-Dist: c>=1.0\nRequires-Dist: e==6.0\n\n"
+            ),
+            "1.5": (
+                "Metadata-Version: 2.1\nName: a\nVersion: 1.5\n"
+                "Requires-Dist: c>=1.0\nRequires-Dist: c[extra]>=0.5a1\n\n"
+            ),
+            "30.0": b_meta.format(v="30.0"),
+            "20.0": b_meta.format(v="20.0"),
+            "10.0": b_meta.format(v="10.0"),
+            "1.0.0": self.C_META.format(v="1.0.0"),
+            "2.0.0a1": self.C_META.format(v="2.0.0a1"),
+            "5.0": "Metadata-Version: 2.1\nName: e\nVersion: 5.0\n\n",
+            "6.0": "Metadata-Version: 2.1\nName: e\nVersion: 6.0\n\n",
+        }
+        coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
+        root_reqs = {
+            "a": VersionRange.full(),
+            "b": VersionRange.full(),
+        }
+        provider = Provider(
+            coordinator, python_version="3.12.0", root_requirements=root_reqs
+        )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        pins = resolver.resolve(root_reqs)
+        assert resolver.stats.backjumps > 0
+        assert pins["a"] == V("1.5")
+        assert pins["e"] == V("5.0")
+        assert pins["c"] == V("2.0.0a1")
 
 
 SDIST_PKG_INFO = (
