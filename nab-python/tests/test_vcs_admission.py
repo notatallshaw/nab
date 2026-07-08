@@ -383,6 +383,32 @@ class TestAdmitVcsUrlRepo:
                 config,
             )
 
+    def test_dot_segment_escape_above_prefix_refused(self) -> None:
+        """A ``../`` path git resolves outside the prefix is refused."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/trusted/repo",),
+        )
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url(
+                f"git+https://github.com/trusted/repo/../../other/repo@{_FORTY}",
+                config,
+            )
+
+    def test_plain_repo_under_same_prefix_still_admits(self) -> None:
+        """A plain in-repo URL under that prefix still admits."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/trusted/repo",),
+        )
+        scheme = admit_vcs_url(
+            f"git+https://github.com/trusted/repo@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+https"
+
     def test_full_repo_prefix_with_fragment_passes(self) -> None:
         """A fragment directly after an allowed full-repo URL stays in-repo."""
         config = VcsConfig(

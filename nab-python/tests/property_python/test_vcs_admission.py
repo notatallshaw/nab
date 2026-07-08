@@ -21,6 +21,7 @@ Invariants:
 
 from __future__ import annotations
 
+import posixpath
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
@@ -141,8 +142,13 @@ def _prefix_under_repo(inner: str, prefix: str) -> bool:
     the prefix (``.../airflow.git`` vs ``.../airflow.git.other``) is refused.
     Git's optional ``.git`` suffix is stripped from the prefix and skipped
     once on the candidate so an exact-repo prefix and the ``.git`` clone URL
-    match either way round.
+    match either way round.  A candidate whose path git would rewrite (its
+    dot-segment-normalised form differs from the raw path) is refused first.
     """
+    path = urlsplit(inner).path
+    if path and posixpath.normpath(path) != path:
+        return False
+
     prefix = prefix.removesuffix(".git")
     if not inner.startswith(prefix):
         return False
