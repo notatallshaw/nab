@@ -159,11 +159,28 @@ class TestExtractStaticMetadata:
         _write_pyproject(tmp_path, '[project]\nname = "foo"\n')
         assert extract_static_metadata(tmp_path) is None
 
-    def test_invalid_version_returns_none(self, tmp_path: Path) -> None:
+    def test_invalid_version_raises(self, tmp_path: Path) -> None:
+        """A static version that is not valid PEP 440 is corrupt; raise."""
         _write_pyproject(
             tmp_path, '[project]\nname = "foo"\nversion = "not.a.version!"\n'
         )
-        assert extract_static_metadata(tmp_path) is None
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"invalid \[project\]\.version 'not.a.version!'",
+        ):
+            extract_static_metadata(tmp_path)
+
+    def test_invalid_requires_python_raises(self, tmp_path: Path) -> None:
+        """A bare "3.11" has no operator, so it is not a valid specifier; raise."""
+        _write_pyproject(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = "3.11"\n',
+        )
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"invalid \[project\]\.requires-python '3.11'",
+        ):
+            extract_static_metadata(tmp_path)
 
     def test_unparseable_dep_raises(self, tmp_path: Path) -> None:
         """A dep string that is not valid PEP 508 is invalid metadata; raise."""
@@ -274,7 +291,8 @@ class TestExtractStaticMetadata:
         ):
             extract_static_metadata(tmp_path)
 
-    def test_requires_python_not_str_ignored(self, tmp_path: Path) -> None:
+    def test_requires_python_not_str_raises(self, tmp_path: Path) -> None:
+        """A non-string requires-python is corrupt, not "no constraint"; raise."""
         _write_pyproject(
             tmp_path,
             """
@@ -284,9 +302,11 @@ class TestExtractStaticMetadata:
             requires-python = 42
             """,
         )
-        meta = extract_static_metadata(tmp_path)
-        assert meta is not None
-        assert meta.requires_python is None
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[project\]\.requires-python must be a string, got int",
+        ):
+            extract_static_metadata(tmp_path)
 
     def test_pyproject_unreadable_returns_none(self, tmp_path: Path) -> None:
         # A directory in place of pyproject.toml: ``is_file`` is False so

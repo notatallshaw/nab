@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from ._build.errors import (
     BuildBackendError as BuildBackendError,  # noqa: PLC0414  (public re-export)
 )
-from ._vendor.packaging.specifiers import SpecifierSet
+from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import InvalidVersion, Version
 from .metadata import WheelMetadata, load_static_project
@@ -50,10 +50,13 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     authoritative, populating ``name``, ``version``,
     ``requires_python``, ``requires_dist``, and ``provides_extra``.
 
-    Raises :class:`InvalidProjectRequirementError` when ``dependencies``
-    or ``optional-dependencies`` is present but structurally wrong (not
-    an array of strings / not a table), rather than silently dropping the
-    declared dependencies.
+    Raises :class:`InvalidProjectRequirementError` when a present,
+    non-dynamic field is corrupt: a structurally wrong ``dependencies`` /
+    ``optional-dependencies`` (not an array of strings / not a table), a
+    ``version`` string that is not valid :pep:`440`, or a
+    ``requires-python`` that is not a string or not a valid specifier.  A
+    corrupt static value is not something the build backend can compute,
+    so it raises rather than deferring to a build of the same broken file.
 
     The returned ``provides_extra`` includes both the lower-cased
     keys of ``project.optional-dependencies`` and any extras declared
@@ -87,23 +90,25 @@ def _project_to_metadata(project: dict) -> WheelMetadata | None:
     version_raw = project.get("version")
     if not isinstance(name, str) or not isinstance(version_raw, str):
         return None
+
+    # A dynamic field is computed by the build backend; a static value
+    # alongside it is a stale placeholder, not authoritative.
     dynamic = project.get("dynamic")
     if isinstance(dynamic, list) and (
         "version" in dynamic or "requires-python" in dynamic
     ):
-        # A dynamic field is computed by the build backend; a static
-        # value alongside it is a stale placeholder, not authoritative.
         return None
+
+    # Past the dynamic guard, version is authoritative, so a corrupt value
+    # raises instead of returning None.
     try:
         version = Version(version_raw)
-    except InvalidVersion:
-        return None
-    requires_python_raw = project.get("requires-python")
-    requires_python = (
-        SpecifierSet(requires_python_raw)
-        if isinstance(requires_python_raw, str)
-        else None
-    )
+    except InvalidVersion as exc:
+        msg = f"invalid [project].version {version_raw!r}: {exc}"
+        raise InvalidProjectRequirementError(msg) from exc
+
+    requires_python = _static_requires_python(project.get("requires-python"))
+
     return WheelMetadata(
         name=canonicalize_name(name),
         version=version,
@@ -111,6 +116,25 @@ def _project_to_metadata(project: dict) -> WheelMetadata | None:
         requires_dist=_collect_requires_dist(project),
         provides_extra=sorted(_collect_provides_extra(project)),
     )
+
+
+def _static_requires_python(raw: object) -> SpecifierSet | None:
+    """Parse a static ``requires-python``, raising when it is corrupt.
+
+    Absent is a valid "no constraint". A non-string or an unparseable
+    specifier is corrupt: it raises rather than silently dropping the
+    Python bound, which would admit candidates the bound excludes.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        msg = f"[project].requires-python must be a string, got {type(raw).__name__}"
+        raise InvalidProjectRequirementError(msg)
+    try:
+        return SpecifierSet(raw)
+    except InvalidSpecifier as exc:
+        msg = f"invalid [project].requires-python {raw!r}: {exc}"
+        raise InvalidProjectRequirementError(msg) from exc
 
 
 def _collect_requires_dist(project: dict) -> list[Requirement]:
