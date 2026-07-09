@@ -51,6 +51,11 @@ def choose_extra_version(
     # proxy's own range is built full.
     base_range = provider.solution_ranges.get(normalized)
     if base_range is None:
+        logger.debug(
+            "no base range for %s; base admission cannot be applied to %s",
+            normalized,
+            package,
+        )
         candidates = list(version_range.filter(all_versions))
     else:
         candidates = list((version_range & base_range).filter(all_versions))
@@ -59,12 +64,19 @@ def choose_extra_version(
         candidates = list(reversed(candidates))
 
     chosen = _pick_in_mode(provider, base, extra, candidates)
+    # Enumerate pre-releases too: default filtering buffers a pre-release
+    # behind any matching final and would drop one the base's bounds
+    # exclude, so it would never be recorded and the proxy would keep a
+    # permanent NO_VERSIONS clause past the backjump lifting the base
+    # decision.  Membership below is bounds-only, so the blocks stay sound.
     if (
         chosen is None
         and base_range is not None
         and (
             excluded_by_base := [
-                v for v in version_range.filter(all_versions) if v not in base_range
+                v
+                for v in version_range.filter(all_versions, prereleases=True)
+                if v not in base_range
             ]
         )
     ):
