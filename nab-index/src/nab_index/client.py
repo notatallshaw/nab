@@ -532,7 +532,7 @@ def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
     """
     try:
         return _read_tar_sdist_files(data)
-    except (tarfile.TarError, OSError, UnicodeDecodeError):
+    except (tarfile.TarError, OSError, UnicodeDecodeError, KeyError):
         return (None, None)
 
 
