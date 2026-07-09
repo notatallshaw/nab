@@ -67,6 +67,11 @@ class DictProvider:
                 return version
         return None
 
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> bool:
+        return any(v in version_range for v in self._get_versions(package))
+
     def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
         return self._packages.get(package, {}).get(version, {})
 

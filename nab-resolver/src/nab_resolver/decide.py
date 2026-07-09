@@ -131,17 +131,12 @@ def _constraint_hid_a_version(
     """Return whether a user constraint is why ``choose_version`` found nothing.
 
     ``choose_version`` already returned None over the constraint-narrowed range.
-    Re-probe the un-narrowed ``current_range``: a hit means the constraint
-    clipped away the version that would otherwise have been chosen, so the
-    constraint is the cause; a miss means the package fails on its own (no
+    Ask whether the un-narrowed ``current_range`` would still yield a version: a
+    hit means the constraint clipped away what would otherwise have been chosen,
+    so the constraint is the cause; a miss means the package fails on its own (no
     versions, or none satisfy the requirement) and the constraint is irrelevant.
-    The probe's queued clauses and force-backtrack targets are drained so the
-    diagnostic look-ahead never leaks into the next decision.
     """
-    found = resolver.provider.choose_version(package, current_range) is not None
-    resolver.provider.consume_pending_clauses()
-    resolver.provider.consume_force_backtrack_targets()
-    return found
+    return resolver.provider.has_satisfying_version(package, current_range)
 
 
 def record_no_versions(

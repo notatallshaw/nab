@@ -47,6 +47,12 @@ class PackagingProvider:
                 return version
         return None
 
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[Version]
+    ) -> bool:
+        """Report whether any available version falls in the range."""
+        return any(v in version_range for v in self._get_versions(package))
+
     def get_dependencies(
         self, package: str, version: Version
     ) -> dict[str, VersionRange]:
