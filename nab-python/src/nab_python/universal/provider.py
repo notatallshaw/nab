@@ -171,7 +171,18 @@ class UniversalProvider(Provider):
         preferred = self._preferences.get(normalized)
         if preferred is not None:
             all_versions = self.versions_only(normalized, self.fetch_versions(package))
-            if preferred in set(version_range.filter(all_versions)) and (
+
+            # The proxy's range is built full(), so intersect it with the
+            # base's positive range, which carries the pre-release admission
+            # granted by the requirement that named the extra.  This mirrors
+            # choose_extra_version.
+            admit_range = version_range
+            if extra is not None:
+                base_range = self.solution_ranges.get(normalized)
+                if base_range is not None:
+                    admit_range = version_range & base_range
+
+            if preferred in set(admit_range.filter(all_versions)) and (
                 version_provides_extra(self, base, extra, preferred)
                 if extra is not None
                 else self._look_ahead_ok(normalized, preferred, check_decisions=True)
