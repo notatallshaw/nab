@@ -4823,6 +4823,118 @@ class TestExtrasPrereleaseAdmission:
         assert pins["c"] == V("2.0.0a1")
 
 
+class TestExtrasPrereleaseBaseRangeBlocks:
+    """Bounds-excluded pre-releases must be recorded as base-range blocks.
+
+    The proxy's own range is built full, and PEP 440 default filtering
+    buffers a pre-release whenever a final in range matches.  A pre-release
+    that only the base's bounds exclude therefore never reached the block
+    recompute, so the resolver baked a permanent NO_VERSIONS clause over
+    the proxy that outlived the backjump lifting the base decision.
+    """
+
+    C_META_WITH_X = (
+        "Metadata-Version: 2.1\nName: c\nVersion: {v}\nProvides-Extra: x\n\n"
+    )
+    C_META_NO_X = "Metadata-Version: 2.1\nName: c\nVersion: {v}\n\n"
+
+    def _s2_coordinator(self, *, with_escape: bool) -> MagicMock:
+        r_wheels = [make_wheel("2.0"), make_wheel("1.0")]
+        if with_escape:
+            r_wheels.append(make_wheel("0.5"))
+        listings = {
+            "r": r_wheels,
+            "c": [make_wheel("2.0.0a1"), make_wheel("1.0.0")],
+        }
+        metadata = {
+            "2.0": (
+                "Metadata-Version: 2.1\nName: r\nVersion: 2.0\n"
+                "Requires-Dist: c[x]>=1.0,<1.5\n\n"
+            ),
+            "1.0": (
+                "Metadata-Version: 2.1\nName: r\nVersion: 1.0\n"
+                "Requires-Dist: c[x]>=1.5a0\n\n"
+            ),
+            "0.5": "Metadata-Version: 2.1\nName: r\nVersion: 0.5\n\n",
+            "1.0.0": self.C_META_NO_X.format(v="1.0.0"),
+            "2.0.0a1": self.C_META_WITH_X.format(v="2.0.0a1"),
+        }
+        return make_coordinator(listings=listings, metadata_by_version=metadata)
+
+    def _resolve_r(
+        self, coordinator: MagicMock
+    ) -> tuple[dict[str, Version], Resolver[str, Version]]:
+        root_reqs = {"r": VersionRange.full()}
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            extras_mode=ExtrasMode.BACKTRACK,
+            root_requirements=root_reqs,
+        )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        return resolver.resolve(root_reqs), resolver
+
+    def test_bounds_excluded_prerelease_repins_over_escape_hatch(self) -> None:
+        """r=2.0 needs c[x]<1.5 (final only), r=1.0 needs the c pre-release.
+
+        The bounds-excluded pre-release c 2.0.0a1 must be recorded as a
+        conditional base-range block, not a permanent proxy NO_VERSIONS
+        clause, so the resolver backs off r=2.0 to r=1.0 instead of
+        settling on the depless r=0.5 escape hatch.
+        """
+        pins, resolver = self._resolve_r(self._s2_coordinator(with_escape=True))
+        assert pins["r"] == V("1.0")
+        assert pins["c"] == V("2.0.0a1")
+        assert pins["c[x]"] == V("2.0.0a1")
+        assert resolver.stats.backjumps > 0
+
+    def test_bounds_excluded_prerelease_resolves_without_escape_hatch(self) -> None:
+        """Same shape without r=0.5 still resolves to r=1.0.
+
+        A permanent proxy clause would make the resolve spuriously
+        impossible; the conditional block lets it settle.
+        """
+        pins, _ = self._resolve_r(self._s2_coordinator(with_escape=False))
+        assert pins["r"] == V("1.0")
+        assert pins["c"] == V("2.0.0a1")
+
+    def test_recorded_block_includes_bounds_excluded_prerelease(self) -> None:
+        """A recorded block names the bounds-excluded pre-release.
+
+        Default filtering buffers and drops it once the final 1.0.0
+        matches, so the block naming c 2.0.0a1 appears only when the
+        recompute admits pre-releases.
+        """
+        listings = {"c": [make_wheel("2.0.0a1"), make_wheel("1.0.0")]}
+        metadata = {
+            "2.0.0a1": self.C_META_WITH_X.format(v="2.0.0a1"),
+            "1.0.0": self.C_META_NO_X.format(v="1.0.0"),
+        }
+        coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
+        provider = Provider(
+            coordinator, python_version="3.12.0", extras_mode=ExtrasMode.BACKTRACK
+        )
+        # Base decided to the final 1.0.0, which does not provide x, so the
+        # proxy has no candidate; the pre-release 2.0.0a1 is excluded only
+        # by the base's bounds.
+        provider.receive_partial_solution_hint(
+            {"c": SpecifierSet("==1.0.0").to_range()},
+            {"c": V("1.0.0")},
+        )
+        result = provider.choose_version("c[x]", VersionRange.full())
+        assert result is None
+        clauses = provider.consume_pending_clauses()
+        assert len(clauses) == 1
+        terms = clauses[0].terms
+        proxy_terms = [t for t in terms if t.package == "c[x]"]
+        base_terms = [t for t in terms if t.package == "c"]
+        assert len(proxy_terms) == 1
+        assert len(base_terms) == 1
+        assert proxy_terms[0].is_positive()
+        assert V("2.0.0a1") in proxy_terms[0].constraint
+        assert V("1.0.0") in base_terms[0].constraint
+
+
 SDIST_PKG_INFO = (
     "Metadata-Version: 2.2\n"
     "Name: pkg\n"
