@@ -4889,18 +4889,20 @@ class TestExtrasPrereleaseBaseRangeBlocks:
         assert resolver.stats.backjumps > 0
 
     def test_bounds_excluded_prerelease_resolves_without_escape_hatch(self) -> None:
-        """Same shape without r=0.5: a permanent proxy clause would make
-        the resolve spuriously impossible; the conditional block lets it
-        settle on r=1.0.
+        """Same shape without r=0.5 still resolves to r=1.0.
+
+        A permanent proxy clause would make the resolve spuriously
+        impossible; the conditional block lets it settle.
         """
         pins, _ = self._resolve_r(self._s2_coordinator(with_escape=False))
         assert pins["r"] == V("1.0")
         assert pins["c"] == V("2.0.0a1")
 
     def test_recorded_block_includes_bounds_excluded_prerelease(self) -> None:
-        """The recompute records the pre-release only the base's bounds
-        exclude.  Default filtering buffers and drops it once the final
-        1.0.0 matches, so the block naming c 2.0.0a1 appears only when the
+        """A recorded block names the bounds-excluded pre-release.
+
+        Default filtering buffers and drops it once the final 1.0.0
+        matches, so the block naming c 2.0.0a1 appears only when the
         recompute admits pre-releases.
         """
         listings = {"c": [make_wheel("2.0.0a1"), make_wheel("1.0.0")]}

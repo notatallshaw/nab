@@ -65,7 +65,7 @@ def choose_extra_version(
 
     chosen = _pick_in_mode(provider, base, extra, candidates)
     # Enumerate pre-releases too: default filtering buffers a pre-release
-    # behind any matching final and would drop one the base's bounds
+    # behind any matching final and would drop one that the base's bounds
     # exclude, so it would never be recorded and the proxy would keep a
     # permanent NO_VERSIONS clause past the backjump lifting the base
     # decision.  Membership below is bounds-only, so the blocks stay sound.
