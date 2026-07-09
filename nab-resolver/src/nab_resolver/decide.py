@@ -125,6 +125,25 @@ def absorb_redundant_requirement(
         resolver.observer.on_derivation(package, positive=True, cause=cause)
 
 
+def _constraint_hid_a_version(
+    resolver: Resolver[Any, Any], package: Any, current_range: RangeProtocol[Any]
+) -> bool:
+    """Return whether a user constraint is why ``choose_version`` found nothing.
+
+    ``choose_version`` already returned None over the constraint-narrowed range.
+    Re-probe the un-narrowed ``current_range``: a hit means the constraint
+    clipped away the version that would otherwise have been chosen, so the
+    constraint is the cause; a miss means the package fails on its own (no
+    versions, or none satisfy the requirement) and the constraint is irrelevant.
+    The probe's queued clauses and force-backtrack targets are drained so the
+    diagnostic look-ahead never leaks into the next decision.
+    """
+    found = resolver.provider.choose_version(package, current_range) is not None
+    resolver.provider.consume_pending_clauses()
+    resolver.provider.consume_force_backtrack_targets()
+    return found
+
+
 def record_no_versions(
     resolver: Resolver[Any, Any], package: Any, *, had_pending: bool
 ) -> None:
@@ -140,10 +159,10 @@ def record_no_versions(
     current_range = resolver.solution.get(package) or resolver.range_type.full()
     resolver.observer.on_no_versions(package, current_range)
 
-    # When a constraint narrowed the searched range it is the reason no
-    # acceptable version was found, so attribute the clause to it.
     constraint = resolver.constraints.get(package)
-    constrained = constraint is not None and not current_range.is_subset(constraint)
+    constrained = constraint is not None and _constraint_hid_a_version(
+        resolver, package, current_range
+    )
     cause = (
         IncompatibilityCause.CONSTRAINT
         if constrained
