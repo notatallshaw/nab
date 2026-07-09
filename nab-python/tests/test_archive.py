@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nab_index._subdir import subdirectory_escapes
 from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.client import SdistHashMismatchError, extract_sdist_archive
 from nab_python.download import (
@@ -146,6 +147,22 @@ class TestArchiveRequestParse:
             "https://ex.com/foo.tar.gz#sha256=abc&subdirectory=sub\\deeper"
         )
         assert req.subdirectory == "sub\\deeper"
+
+    def test_posix_backslash_parent_escape_rejected(self) -> None:
+        # On POSIX ``c\d`` is a single segment, so ``c\d/../..`` climbs above
+        # the source root even though ntpath alone reports it contained.
+        with pytest.raises(ArchiveRequestError, match="unsafe archive subdirectory"):
+            ArchiveRequest.parse(
+                "https://ex.com/foo.tar.gz#sha256=abc&subdirectory=c\\d/../.."
+            )
+
+
+class TestSubdirectoryEscapes:
+    def test_posix_backslash_parent_escapes(self) -> None:
+        assert subdirectory_escapes("c\\d/../..") is True
+
+    def test_backslash_segment_stays_contained(self) -> None:
+        assert subdirectory_escapes("sub\\deeper") is False
 
 
 class TestArchiveIndexing:

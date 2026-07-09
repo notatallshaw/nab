@@ -104,6 +104,12 @@ class TestVcsRequestParse:
                 "git+https://ex.com/r.git@" + "a" * 40 + "#subdirectory=/etc/secrets"
             )
 
+    def test_posix_backslash_parent_escape_rejected(self) -> None:
+        with pytest.raises(VcsCloneError, match="unsafe VCS subdirectory"):
+            VcsRequest.parse(
+                "git+https://ex.com/r.git@" + "a" * 40 + "#subdirectory=c\\d/../.."
+            )
+
     def test_contained_internal_dotdot_allowed(self) -> None:
         req = VcsRequest.parse(
             "git+https://ex.com/r.git@" + "a" * 40 + "#subdirectory=a/../b"
