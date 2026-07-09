@@ -440,3 +440,16 @@ class TestExtractArchive:
         out.mkdir()
         with pytest.raises(ValueError, match="unsafe sdist member"):
             extract_sdist_archive(buf.getvalue(), out)
+
+    @requires_data_filter
+    def test_broken_hard_link_member_raises_value_error(self, tmp_path: Path) -> None:
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo("foo-1.0.0/PKG-INFO")
+            info.type = tarfile.LNKTYPE
+            info.linkname = "foo-1.0.0/absent"
+            tar.addfile(info)
+        out = tmp_path / "out"
+        out.mkdir()
+        with pytest.raises(ValueError, match="broken link in sdist member"):
+            extract_sdist_archive(buf.getvalue(), out)
