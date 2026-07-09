@@ -6726,6 +6726,52 @@ class TestStaticSdistMetadata:
         assert ("pkg", V("1.0")) not in provider.deps_cache
         assert ("pkg", V("1.0")) not in provider._invalid_metadata
 
+    def test_build_naive_upload_time_aborts_get_dependencies(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A naive upload-time hit while building an sdist aborts, not skips."""
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+        )
+
+        def _request_archive(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
+            coordinator.index.store_sdist_archive(pkg, ver, b"sdist-archive-bytes")
+            return _done_event()
+
+        coordinator.request_sdist_archive.side_effect = _request_archive
+
+        def _naive_build(
+            _path: object, *, config: object, python_version: object
+        ) -> WheelMetadata:
+            raise InvalidUploadTimeError(
+                "setuptools 68.0.0 has a timezone-naive upload time"
+                " '2025-06-01T00:00:00'; the Simple API requires"
+                " timezone-aware (UTC) upload times"
+            )
+
+        monkeypatch.setattr(
+            build_remote, "extract_sdist_archive", lambda data, target: target
+        )
+        monkeypatch.setattr("nab_python.build_backend.extract_metadata", _naive_build)
+
+        provider = Provider(
+            coordinator,
+            python_version="3.12.0",
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.BUILD_REMOTE,
+        )
+        with pytest.raises(InvalidUploadTimeError, match="timezone-naive"):
+            provider.get_dependencies("pkg", V("1.0"))
+        assert ("pkg", V("1.0")) not in provider.deps_cache
+        assert ("pkg", V("1.0")) not in provider._invalid_metadata
+
     def test_look_ahead_skips_unsupported_sdist(self) -> None:
         """A dynamic sdist is rejected by look-ahead, not raised."""
         # Two versions: 2.0 has a dynamic sdist, 1.0 has a usable wheel.
