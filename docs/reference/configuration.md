@@ -472,7 +472,10 @@ PEP 658 when one is published, falling back to the sdist's
 PKG-INFO (with the usual PEP 643 and `pyproject.toml` fallbacks)
 when no wheel exists.  Equivalent in spirit to pip's
 `--no-binary <pkg>` for the install side, without paying the
-build cost on the resolve side.
+build cost on the resolve side.  A version that publishes no sdist
+has no source to install, so it is skipped the way `sdist-only`
+skips a wheel-only release and the resolver settles on the newest
+version that ships one.
 
 Scope the policy to a subset of packages with a per-package override:
 

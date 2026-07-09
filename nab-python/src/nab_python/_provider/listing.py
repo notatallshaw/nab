@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from nab_resolver.types import RangeProtocol
 
     from .._vendor.packaging.ranges import VersionRange
-    from ..provider import DistFile, Provider
+    from ..provider import DistFile, DistPolicy, Provider
     from ..tags import TagSet
 
 
@@ -294,11 +294,12 @@ def filter_distributions(
     requirement's range, so each version's policy is evaluated against
     its own :class:`Version`.
 
-    :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` is *not*
-    filtered here: both wheels and sdists stay in ``versions_cache``
-    so the resolver can read whichever source is cheapest at the
-    chosen version.  The wheels are dropped later, at lock
-    construction time, so only the sdist ends up pinned.
+    Under :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` a
+    version keeps its wheels in ``versions_cache`` as a cheap metadata
+    source only when it also publishes an sdist; a version whose only
+    surviving artifact is a wheel has no source to install, so it is
+    dropped and never becomes a candidate.  The kept wheels are dropped
+    later, at lock construction time, so only the sdist is pinned.
 
     The filter runs in two passes.  :func:`base_distributions` applies
     everything that has no platform axis (dist policy, Requires-Python,
@@ -349,6 +350,13 @@ def _filter_base(
     same list back.  Canonicalized here, ahead of the tag pass, so the
     representative version of an equal group is picked from the whole
     listing and does not vary with what a target's tags keep.
+
+    The :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` drop of a
+    wheel-only version belongs here rather than in the tag pass: it asks
+    whether the version publishes an installable source, and an sdist
+    carries no tags, so no target can lose the sdist that keeps the
+    version alive.  The answer is the same for every target that shares
+    the listing and the policy config, which is what the memo assumes.
     """
     # Late import: ``provider`` imports this module at module load.
     from ..provider import DistPolicy
@@ -362,6 +370,7 @@ def _filter_base(
 
     result: list[tuple[Version, DistFile]] = []
     sort_with_wheel_first = False
+    policy_by_version: dict[Version, DistPolicy] = {}
     for dist in files:
         provider.stats.distributions_seen += 1
         if isinstance(dist, WheelFile):
@@ -383,6 +392,7 @@ def _filter_base(
         if _excluded_by_dist_policy(dist, effective_dist_policy):
             provider.stats.excluded_by_dist_policy += 1
             continue
+        policy_by_version[version] = effective_dist_policy
         if effective_dist_policy in (DistPolicy.PREFER_WHEEL, DistPolicy.SDIST_INSTALL):
             sort_with_wheel_first = True
 
@@ -397,6 +407,8 @@ def _filter_base(
             continue
 
         result.append((version, dist))
+
+    result = _drop_sdist_install_wheel_only(result, policy_by_version)
 
     if sort_with_wheel_first:
         result.sort(
@@ -489,6 +501,30 @@ def excluded_by_wheel_tags(
         provider.tag_excluded_wheels.get(normalized, 0) + 1
     )
     return True
+
+
+def _drop_sdist_install_wheel_only(
+    result: list[tuple[Version, DistFile]],
+    policy_by_version: Mapping[Version, DistPolicy],
+) -> list[tuple[Version, DistFile]]:
+    """Drop SDIST_INSTALL versions whose surviving artifacts are all wheels.
+
+    Such a version has no source to install, so it must not reach the
+    resolver even though its wheels stay as a cheap metadata source.
+    """
+    # Late import: ``provider`` imports this module at module load.
+    from ..provider import DistPolicy
+
+    versions_with_sdist = {v for v, d in result if isinstance(d, SdistFile)}
+    drop = {
+        v
+        for v in policy_by_version
+        if policy_by_version[v] is DistPolicy.SDIST_INSTALL
+        and v not in versions_with_sdist
+    }
+    if not drop:
+        return result
+    return [pair for pair in result if pair[0] not in drop]
 
 
 def _canonicalize_equal_versions(

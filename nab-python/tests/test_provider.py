@@ -5223,6 +5223,24 @@ class TestDistPolicy:
         assert isinstance(versions[0][1], WheelFile)
         assert isinstance(versions[1][1], SdistFile)
 
+    def test_sdist_install_drops_wheel_only_version(self) -> None:
+        """A wheel-only version is not a candidate under SDIST_INSTALL.
+
+        The newest release (2.0) publishes only a wheel, so it has no
+        source to install and is dropped before the resolver sees it.
+        The older 1.0 ships a wheel and an sdist, so it stays: the
+        wheel as the cheap metadata source, sorted before the sdist.
+        """
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("1.0"), make_sdist("1.0")],
+            metadata_text="Metadata-Version: 2.1\nName: pkg\nVersion: 2.0\n",
+        )
+        provider = Provider(coordinator, dist_policy=DistPolicy.SDIST_INSTALL)
+        versions = provider.fetch_versions("pkg")
+        assert [str(v) for v, _ in versions] == ["1.0", "1.0"]
+        assert isinstance(versions[0][1], WheelFile)
+        assert isinstance(versions[1][1], SdistFile)
+
     def test_sdist_install_resolves_from_wheel_metadata(self) -> None:
         """A dynamic-deps sdist is not built when a wheel publishes the deps.
 
