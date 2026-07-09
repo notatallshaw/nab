@@ -1602,8 +1602,10 @@ class Provider:
             MetadataHashMismatchError,
             UnsupportedVcsError,
             NotImplementedError,
+            InvalidUploadTimeError,
         ):
-            # A hash mismatch or refused direct-URL dep is a hard error, not a skip.
+            # A hash mismatch, refused direct-URL dep, or naive upload-time hit
+            # while building an sdist is a hard error, not a skip.
             raise
         except Exception as exc:
             logger.warning(
