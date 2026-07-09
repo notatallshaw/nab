@@ -749,10 +749,13 @@ def _apply_workspace_discovery(
         return config
     merged = merge_workspace_local_sources(config.local_sources, discovered)
     explicit_names = {canonicalize_name(src.name) for src in config.local_sources}
-    # Universal mode forbids host builds (see _enforce_universal_build_policy),
-    # so the workspace BUILD_LOCAL floor does not apply: keep its never.
+    # A universal matrix or a marker-environment overlay both forbid host
+    # builds, so the workspace BUILD_LOCAL floor does not apply: keep never.
+    forbids_host_builds = config.mode is ResolveMode.UNIVERSAL or bool(
+        config.marker_environment
+    )
     promoted_policy = config.build_policy
-    if config.mode is not ResolveMode.UNIVERSAL:
+    if not forbids_host_builds:
         promoted_policy = auto_promote_build_policy_for_workspace(config.build_policy)
     if promoted_policy is not config.build_policy:
         _logger.info(

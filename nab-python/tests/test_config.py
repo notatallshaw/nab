@@ -2967,6 +2967,23 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(member)
         assert config.build_policy is BuildPolicy.NEVER
 
+    def test_marker_environment_member_not_promoted(self, tmp_path: Path) -> None:
+        """A marker overlay keeps never; discovery does not promote it.
+
+        A host build cannot reflect the impersonated marker target, so the
+        BUILD_LOCAL floor applied to workspace members is skipped.
+        """
+        member = self._ws(tmp_path)
+        member.write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n'
+            "[tool.nab]\n"
+            'build-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'python_version = "3.9"\n',
+        )
+        config = read_pyproject_config(member)
+        assert config.build_policy is BuildPolicy.NEVER
+
     def test_no_discovery_skips_walk(self, tmp_path: Path) -> None:
         member = self._ws(tmp_path)
         config = read_pyproject_config(member, discover_workspace=False)
