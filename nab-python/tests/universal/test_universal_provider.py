@@ -327,13 +327,7 @@ class TestExtrasProxyPreference:
 
 
 class TestExtrasProxyPreferenceAdmission:
-    """A preferred pre-release survives the extras-proxy preference gate.
-
-    The proxy's range is built full, so a pre-release the base range admits is
-    dropped by ``filter`` unless the gate intersects with the base's positive
-    range first.  The proxy must then honor the preference exactly as the base
-    node does.
-    """
+    """A preferred pre-release survives the extras-proxy preference gate."""
 
     _WITH_EXTRA = (
         "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\n"
@@ -382,12 +376,7 @@ class TestExtrasProxyPreferenceAdmission:
 
 
 class TestCrossTupleProxyAlignment:
-    """Two tuples with divergent pools pin the same extras-proxy pre-release.
-
-    Tuple 1 pins the pre-release; tuple 2 prefers it but carries a newer
-    admitted pre-release its pool alone has.  The proxy gate must honor the
-    preference rather than drifting to the newer pin.
-    """
+    """Two tuples with divergent pools pin the same extras-proxy pre-release."""
 
     _A_META = (
         "Metadata-Version: 2.1\nName: a\nVersion: 1.0\nRequires-Dist: c[bar]>=0.5a1\n\n"
