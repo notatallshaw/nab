@@ -31,6 +31,7 @@ from nab_python.provider import (
 )
 from nab_python.universal.provider import UniversalProvider
 from nab_python.universal.wheel_selection import PlatformSpec
+from nab_resolver.resolver import Resolver
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -323,6 +324,102 @@ class TestExtrasProxyPreference:
         )
         chosen = provider.choose_version("foo[bar]", VersionRange.full())
         assert chosen == Version("2.0")
+
+
+class TestExtrasProxyPreferenceAdmission:
+    """A preferred pre-release survives the extras-proxy preference gate.
+
+    The proxy's range is built full, so a pre-release the base range admits is
+    dropped by ``filter`` unless the gate intersects with the base's positive
+    range first.  The proxy must then honor the preference exactly as the base
+    node does.
+    """
+
+    _WITH_EXTRA = (
+        "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\n"
+        'Provides-Extra: bar\nRequires-Dist: cryptography; extra == "bar"\n\n'
+    )
+
+    def _provider(
+        self, *, versions: Sequence[str], preferred: str
+    ) -> UniversalProvider:
+        wheels = [_make_wheel(v, package="foo") for v in versions]
+        metadata = {v: self._WITH_EXTRA.format(ver=v) for v in versions}
+        coordinator = make_coordinator(
+            wheels, package="foo", metadata_by_version=metadata
+        )
+        return UniversalProvider(
+            coordinator,
+            marker_environment=_LINUX_ENV,
+            root_extras={("foo", "bar")},
+            preferences={"foo": Version(preferred)},
+        )
+
+    def test_prerelease_honored_for_proxy_with_base_admission(self) -> None:
+        """A base admission range lets the preferred pre-release win for the proxy."""
+        provider = self._provider(
+            versions=("2.0.0a2", "2.0.0a1", "1.0.0"), preferred="2.0.0a1"
+        )
+        admit = Requirement("foo>=0.5a1").specifier.to_range()
+        provider.solution_ranges = {"foo": admit}
+        chosen = provider.choose_version("foo[bar]", VersionRange.full())
+        assert chosen == Version("2.0.0a1")
+
+    def test_base_node_honors_same_prerelease(self) -> None:
+        """The base node honors the same preference identically to the proxy."""
+        provider = self._provider(
+            versions=("2.0.0a2", "2.0.0a1", "1.0.0"), preferred="2.0.0a1"
+        )
+        admit = Requirement("foo>=0.5a1").specifier.to_range()
+        provider.solution_ranges = {"foo": admit}
+        assert provider.choose_version("foo", admit) == Version("2.0.0a1")
+
+    def test_prerelease_skipped_without_base_admission(self) -> None:
+        """Without a base admission entry the preferred pre-release is skipped."""
+        provider = self._provider(versions=("2.0.0a1", "1.0.0"), preferred="2.0.0a1")
+        chosen = provider.choose_version("foo[bar]", VersionRange.full())
+        assert chosen == Version("1.0.0")
+
+
+class TestCrossTupleProxyAlignment:
+    """Two tuples with divergent pools pin the same extras-proxy pre-release.
+
+    Tuple 1 pins the pre-release; tuple 2 prefers it but carries a newer
+    admitted pre-release its pool alone has.  The proxy gate must honor the
+    preference rather than drifting to the newer pin.
+    """
+
+    _A_META = (
+        "Metadata-Version: 2.1\nName: a\nVersion: 1.0\nRequires-Dist: c[bar]>=0.5a1\n\n"
+    )
+    _C_META = "Metadata-Version: 2.1\nName: c\nVersion: {v}\nProvides-Extra: bar\n\n"
+
+    def _resolve(
+        self, c_versions: Sequence[str], preferences: dict[str, Version] | None
+    ) -> dict[str, Version]:
+        listings = {
+            "a": [_make_wheel("1.0", package="a")],
+            "c": [_make_wheel(v, package="c") for v in c_versions],
+        }
+        metadata = {"1.0": self._A_META}
+        metadata.update({v: self._C_META.format(v=v) for v in c_versions})
+        coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
+        root_reqs = {"a": VersionRange.full()}
+        provider = UniversalProvider(
+            coordinator,
+            marker_environment=_LINUX_ENV,
+            root_requirements=root_reqs,
+            preferences=preferences,
+        )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        return resolver.resolve(root_reqs)
+
+    def test_tuple_two_aligns_to_tuple_one_prerelease(self) -> None:
+        """The second tuple honors the first tuple's pre-release pin."""
+        pins1 = self._resolve(["2.0.0a1", "1.0.0"], None)
+        assert pins1["c"] == Version("2.0.0a1")
+        pins2 = self._resolve(["2.0.0a2", "2.0.0a1", "1.0.0"], dict(pins1))
+        assert pins2["c"] == Version("2.0.0a1")
 
 
 class TestStrategyChoiceVersion:
