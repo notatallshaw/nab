@@ -1877,6 +1877,32 @@ class TestConstraints:
         message = str(exc_info.value)
         assert "the user constrained" in message
 
+    def test_constraint_conflict_message_shows_user_constraint(self) -> None:
+        """The CONSTRAINT line names the user's constraint, not the requirement.
+
+        The user constrains bar<2 while foo depends on bar>=3. The line that
+        attributes a range to the user must show bar<2, never foo's bar>=3.
+        """
+        provider = DictProvider(
+            {
+                "root": {1: {"foo": Range.at_least(1)}},
+                "foo": {1: {"bar": Range.at_least(3)}},
+                "bar": {3: {}, 2: {}, 1: {}},
+            }
+        )
+        resolver = Resolver(provider)
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(
+                {"root": Range.singleton(1)},
+                constraints={"bar": Range.less_than(2)},
+            )
+        message = str(exc_info.value)
+        constraint_line = next(
+            line for line in message.splitlines() if "the user constrained" in line
+        )
+        assert str(Range.less_than(2)) in constraint_line
+        assert str(Range.at_least(3)) not in constraint_line
+
     def test_constraint_with_matching_requirement(self) -> None:
         """A constraint on a root requirement narrows the range."""
         provider = DictProvider(

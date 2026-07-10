@@ -240,10 +240,14 @@ class Incompatibility(Generic[PackageType, VersionType]):
     The ``cause_left`` and ``cause_right`` fields form a derivation tree
     (a DAG) that can be walked to produce human-readable error messages.
 
+    ``constraint_range`` holds the user's constraint for a ``CONSTRAINT``
+    clause. The clause's term carries the requirement range that backtracking
+    needs, so the user's constraint is kept here for the message.
+
     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#incompatibility
     """
 
-    __slots__ = ("cause", "cause_left", "cause_right", "terms")
+    __slots__ = ("cause", "cause_left", "cause_right", "constraint_range", "terms")
 
     def __init__(
         self,
@@ -251,12 +255,14 @@ class Incompatibility(Generic[PackageType, VersionType]):
         cause: IncompatibilityCause,
         cause_left: Incompatibility[PackageType, VersionType] | None = None,
         cause_right: Incompatibility[PackageType, VersionType] | None = None,
+        constraint_range: RangeProtocol[VersionType] | None = None,
     ) -> None:
         """Create an incompatibility with terms and a cause."""
         self.terms = terms
         self.cause = cause
         self.cause_left = cause_left
         self.cause_right = cause_right
+        self.constraint_range = constraint_range
 
     @override
     def __repr__(self) -> str:

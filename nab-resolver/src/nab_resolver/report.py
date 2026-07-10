@@ -75,9 +75,15 @@ def _render_line(incompatibility: Incompatibility[Any, Any]) -> str:
         positive_dep = dep if dep.is_positive() else dep.negate()
         return f"because your project depends on {format_term(positive_dep)}"
 
+    if cause is IncompatibilityCause.CONSTRAINT:
+        (term,) = terms
+        return (
+            f"because the user constrained "
+            f"{term.package} {incompatibility.constraint_range}"
+        )
+
     prefix = {
         IncompatibilityCause.ROOT: "because root requires",
-        IncompatibilityCause.CONSTRAINT: "because the user constrained",
         IncompatibilityCause.DEPENDENCY: "because",
         IncompatibilityCause.NO_VERSIONS: "because no versions of",
         IncompatibilityCause.DERIVED: "so",
