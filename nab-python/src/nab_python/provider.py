@@ -1151,6 +1151,32 @@ class Provider:
             normalized, candidates, wheel_by_version, package, all_versions
         )
 
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[Version]
+    ) -> bool:
+        """Report whether ``choose_version`` would pick a version, side-effect-free.
+
+        Runs the real ``choose_version`` over ``version_range`` so look-ahead
+        rejections are honored, then rolls back the state it records: the queued
+        clauses and force-backtrack signal are drained, and the per-package abort
+        markers, force-backtrack budget, and no-versions reasons are restored to
+        their pre-probe values.  A failed-resolve attribution probe therefore
+        cannot alter a later decision.
+        """
+        saved_aborted = dict(self._lookahead_aborted)
+        saved_counts = dict(self._force_backtrack_counts)
+        saved_reasons = dict(self._no_versions_reasons)
+
+        found = self.choose_version(package, version_range) is not None
+
+        self.consume_pending_clauses()
+        self.consume_force_backtrack_targets()
+        self._lookahead_aborted = saved_aborted
+        self._force_backtrack_counts = saved_counts
+        self._no_versions_reasons = saved_reasons
+
+        return found
+
     def _try_abort_skip(self, normalized: str, first: Version) -> Version | None:
         """Return the first candidate when a prior abort is still valid.
 

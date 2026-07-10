@@ -72,6 +72,19 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         """Pick a version for package within version_range, or None."""
         ...
 
+    def has_satisfying_version(
+        self, package: PackageType, version_range: RangeProtocol[VersionType]
+    ) -> bool:
+        """Return whether ``choose_version`` would pick a version in ``version_range``.
+
+        A diagnostic query with no lasting side effect: it is used to attribute a
+        ``NO_VERSIONS`` failure to a user constraint only when the un-narrowed
+        range still offers a version the constraint clipped away.  Providers that
+        queue clauses or record state during ``choose_version`` must not let any
+        of that escape here.
+        """
+        ...
+
     def get_dependencies(
         self, package: PackageType, version: VersionType
     ) -> Mapping[PackageType, RangeProtocol[VersionType]]:

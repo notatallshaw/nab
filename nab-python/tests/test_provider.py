@@ -508,6 +508,53 @@ class TestChooseVersion:
         assert provider.choose_version("foo", spec.to_range()) is None
 
 
+class TestHasSatisfyingVersion:
+    def test_true_when_a_version_is_in_range(self) -> None:
+        """A candidate inside the range reports True."""
+        wheels = [make_wheel(v) for v in ("1.0", "2.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        assert provider.has_satisfying_version("foo", SpecifierSet(">=1.0").to_range())
+
+    def test_false_when_no_version_in_range(self) -> None:
+        """No candidate inside the range reports False."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(coordinator)
+        assert not provider.has_satisfying_version(
+            "foo", SpecifierSet(">=5.0").to_range()
+        )
+
+    def test_false_for_empty_index(self) -> None:
+        """A package with no versions reports False."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        assert not provider.has_satisfying_version("foo", VersionRange.full())
+
+    def test_restores_recorded_no_versions_reason(self) -> None:
+        """The probe reverts the no-versions reason its own scan records.
+
+        A miss over ``>=5.0`` would otherwise overwrite the stored reason for
+        ``foo``; the restore keeps the pre-probe value.
+        """
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(coordinator)
+        provider._no_versions_reasons["foo"] = "sentinel"
+        assert not provider.has_satisfying_version(
+            "foo", SpecifierSet(">=5.0").to_range()
+        )
+        assert provider.get_no_versions_reason("foo") == "sentinel"
+
+    def test_preserves_prior_abort_state(self) -> None:
+        """Abort markers and force-backtrack counts survive the probe."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(coordinator)
+        provider._lookahead_aborted["bar"] = ("baz", V("1.0"))
+        provider._force_backtrack_counts["baz"] = 2
+        provider.has_satisfying_version("foo", VersionRange.full())
+        assert provider._lookahead_aborted == {"bar": ("baz", V("1.0"))}
+        assert provider._force_backtrack_counts == {"baz": 2}
+
+
 class TestResolutionStrategy:
     """``choose_version`` honours ``ResolutionStrategy``."""
 

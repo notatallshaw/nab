@@ -607,6 +607,9 @@ class _FilterProvider(PackagingProvider):
     ) -> Version | None:
         return next(iter(version_range.filter(self._get_versions(package))), None)
 
+    def has_satisfying_version(self, package: str, version_range: VersionRange) -> bool:
+        return self.choose_version(package, version_range) is not None
+
 
 class TestPrereleaseAuthorizationBacktracking:
     """Pre-release admission follows the dependency edge that introduced it."""

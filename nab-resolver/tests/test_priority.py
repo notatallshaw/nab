@@ -47,6 +47,11 @@ class _TrackingProvider:
         versions = list(self._packages.get(package, {}).keys())
         return sum(1 for v in versions if v in version_range)
 
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> bool:
+        return any(v in version_range for v in self._packages.get(package, {}))
+
     def is_ready(self, package: str) -> bool:
         """All packages are immediately decidable in tests."""
         return True
@@ -100,6 +105,11 @@ class _PromotingProvider:
         versions = list(self._packages.get(package, {}).keys())
         count = sum(1 for v in versions if v in version_range)
         return (promoted, count)
+
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> bool:
+        return any(v in version_range for v in self._packages.get(package, {}))
 
     def is_ready(self, package: str) -> bool:
         """All packages are immediately decidable in tests."""

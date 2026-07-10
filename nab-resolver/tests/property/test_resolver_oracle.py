@@ -106,6 +106,12 @@ class ConstantPriorityProvider:
                 best = version
         return best
 
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> bool:
+        """Report whether any available version falls in the range."""
+        return any(v in version_range for v in self._versions.get(package, []))
+
     def get_dependencies(self, package: str, version: int) -> dict[str, Range[int]]:
         """Return dependencies for a specific version."""
         return self._deps.get((package, version), {})
@@ -193,6 +199,12 @@ class LookaheadProvider:
                 if self._blockers_seen % self._force_every == 0:
                     self._force_targets.append(dep)
         return None
+
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> bool:
+        """Report whether any available version falls in the range."""
+        return any(v in version_range for v in self._versions.get(package, []))
 
     def get_dependencies(self, package: str, version: int) -> dict[str, Range[int]]:
         """Return dependencies for a specific version."""

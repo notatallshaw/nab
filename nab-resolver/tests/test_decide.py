@@ -95,6 +95,11 @@ class _InertProvider:
     ) -> int | None:
         return None
 
+    def has_satisfying_version(
+        self, package: Any, version_range: RangeProtocol[int]
+    ) -> bool:
+        return False
+
     def get_dependencies(
         self, package: Any, version: int
     ) -> Mapping[Any, RangeProtocol[int]]:

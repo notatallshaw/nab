@@ -67,6 +67,11 @@ class DictProvider:
                 return version
         return None
 
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> bool:
+        return any(v in version_range for v in self._get_versions(package))
+
     def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
         return self._packages.get(package, {}).get(version, {})
 
@@ -2012,6 +2017,61 @@ class TestConstraints:
                 constraints={"foo": Range.at_least(1)},
             )
         assert "the user constrained" not in str(exc_info.value)
+
+    def test_missing_package_not_blamed_on_clipping_constraint(self) -> None:
+        """A package with zero versions fails as NO_VERSIONS even when a
+        benign constraint clips the searched range.
+
+        The constraint narrows ``*`` to ``< 100`` but is not why no version
+        was found, so it must not take the blame nor have its range printed.
+        """
+        provider = DictProvider({"root": {1: {"foo": Range.full()}}})
+        resolver = Resolver(provider)
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(
+                {"root": Range.singleton(1)},
+                constraints={"foo": Range.less_than(100)},
+            )
+        message = str(exc_info.value)
+        assert "the user constrained" not in message
+        assert "no versions of foo * are available" in message
+
+    def test_out_of_range_version_not_blamed_on_constraint(self) -> None:
+        """foo publishes only v5 but is required ``>= 10``. A ``!= 50``
+        constraint cannot exclude a candidate that never fell in range, so
+        the failure stays NO_VERSIONS over the requirement range."""
+        provider = DictProvider(
+            {
+                "root": {1: {"foo": Range.at_least(10)}},
+                "foo": {5: {}},
+            }
+        )
+        resolver = Resolver(provider)
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(
+                {"root": Range.singleton(1)},
+                constraints={"foo": ~Range.singleton(50)},
+            )
+        message = str(exc_info.value)
+        assert "the user constrained" not in message
+        assert "no versions of foo [10, +inf) are available" in message
+
+    def test_constraint_that_excludes_only_candidate_is_blamed(self) -> None:
+        """When the sole in-range version is the one the constraint excludes,
+        the constraint is the genuine cause and keeps the blame."""
+        provider = DictProvider(
+            {
+                "root": {1: {"foo": Range.at_least(10)}},
+                "foo": {50: {}},
+            }
+        )
+        resolver = Resolver(provider)
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(
+                {"root": Range.singleton(1)},
+                constraints={"foo": ~Range.singleton(50)},
+            )
+        assert "the user constrained" in str(exc_info.value)
 
 
 class TestForceResolutionStep:
