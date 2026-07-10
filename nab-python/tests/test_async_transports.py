@@ -546,3 +546,19 @@ class TestExtractSdistFiles:
         pkg_info, pyproject = _extract_sdist_files(body)
         assert pkg_info is None
         assert pyproject is None
+
+    @pytest.mark.parametrize("link_type", [tarfile.SYMTYPE, tarfile.LNKTYPE])
+    def test_returns_none_when_pkg_info_is_a_broken_link(
+        self, link_type: bytes
+    ) -> None:
+        """A PKG-INFO that is a link to an absent member is treated as absent."""
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            directory = tarfile.TarInfo("pkg-1.0")
+            directory.type = tarfile.DIRTYPE
+            tar.addfile(directory)
+            link = tarfile.TarInfo("pkg-1.0/PKG-INFO")
+            link.type = link_type
+            link.linkname = "pkg-1.0/absent"
+            tar.addfile(link)
+        assert _extract_sdist_files(buf.getvalue()) == (None, None)

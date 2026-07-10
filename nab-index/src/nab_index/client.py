@@ -532,7 +532,7 @@ def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
     """
     try:
         return _read_tar_sdist_files(data)
-    except (tarfile.TarError, OSError, UnicodeDecodeError):
+    except (tarfile.TarError, OSError, UnicodeDecodeError, KeyError):
         return (None, None)
 
 
@@ -600,9 +600,10 @@ def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
     Extraction goes through the tar ``data`` filter (:pep:`706`), which refuses
     any member that would write outside ``target_dir`` (absolute paths, ``..``,
     escaping links) or is a special file (device node, FIFO); a rejected member
-    surfaces as a :class:`ValueError`.  The single extracted top-level directory
-    is the source root, falling back to ``target_dir`` when the archive has no
-    single top-level directory.
+    surfaces as a :class:`ValueError`.  A hard link whose target is not present
+    in the archive surfaces the same way.  The single extracted top-level
+    directory is the source root, falling back to ``target_dir`` when the
+    archive has no single top-level directory.
 
     The data filter is required; a Python that lacks it (before 3.10.12 /
     3.11.4 / 3.12) is unsupported and extraction raises.
@@ -620,6 +621,9 @@ def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
             tar.extractall(target_dir, filter="data")
     except tarfile.FilterError as exc:
         msg = f"unsafe sdist member: {exc}"
+        raise ValueError(msg) from exc
+    except KeyError as exc:
+        msg = f"broken link in sdist member: {exc}"
         raise ValueError(msg) from exc
 
     # The source root is the single extracted top-level directory, read from
