@@ -158,16 +158,18 @@ def record_no_versions(
     constrained = constraint is not None and _constraint_hid_a_version(
         resolver, package, current_range
     )
-    cause = (
-        IncompatibilityCause.CONSTRAINT
-        if constrained
-        else IncompatibilityCause.NO_VERSIONS
-    )
+    if constrained:
+        cause = IncompatibilityCause.CONSTRAINT
+        constraint_range = constraint
+    else:
+        cause = IncompatibilityCause.NO_VERSIONS
+        constraint_range = None
 
     add_incompatibility(
         resolver,
         Incompatibility(
             [Term(package, current_range, positive=True)],
             cause=cause,
+            constraint_range=constraint_range,
         ),
     )
