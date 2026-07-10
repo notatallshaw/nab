@@ -9,23 +9,34 @@ that join land outside the tree.
 from __future__ import annotations
 
 import ntpath
+import posixpath
 
 __all__ = ["subdirectory_escapes"]
 
-# ntpath treats both slash kinds as separators, so a value that stays
-# inside on POSIX but escapes on Windows (the real join is native) is
-# caught on every platform.
-_SUBDIR_ROOT = ntpath.normpath("/source-root")
-
 
 def subdirectory_escapes(subdirectory: str) -> bool:
-    """Return True if ``subdirectory`` would resolve outside the source tree."""
+    r"""Return True if ``subdirectory`` would resolve outside the source tree.
+
+    The materialisation join is native, so the value must stay contained
+    under both separator conventions. ntpath catches Windows escapes such
+    as drive letters and backslash separators. posixpath catches an escape
+    a literal backslash hides from ntpath: ``c\d`` is one segment on POSIX
+    but two under ntpath, which would then absorb a trailing ``..``.
+    """
     if not subdirectory:
         return False
 
-    resolved = ntpath.normpath(ntpath.join(_SUBDIR_ROOT, subdirectory))
-    try:
-        return ntpath.commonpath((_SUBDIR_ROOT, resolved)) != _SUBDIR_ROOT
-    except ValueError:
-        # Different drives (e.g. a ``C:\\`` subdirectory) have no common path.
-        return True
+    for normpath, join, commonpath in (
+        (ntpath.normpath, ntpath.join, ntpath.commonpath),
+        (posixpath.normpath, posixpath.join, posixpath.commonpath),
+    ):
+        root = normpath("/source-root")
+        resolved = normpath(join(root, subdirectory))
+        try:
+            escapes = commonpath((root, resolved)) != root
+        except ValueError:
+            # Different drives (e.g. a ``C:\\`` subdirectory) have no common path.
+            return True
+        if escapes:
+            return True
+    return False
