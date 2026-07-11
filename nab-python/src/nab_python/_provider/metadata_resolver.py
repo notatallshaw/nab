@@ -558,16 +558,22 @@ def add_classified_dep(
     from ..provider import join_extra
 
     name = canonicalize_name(req.name)
-    vi = req.specifier.to_range()
+    # A bare dependency enters the solver without arbitrary-string admission;
+    # the accumulator identities stay arbitrary-admitting for === literals.
+    vi = (
+        req.specifier.to_range()
+        if req.specifier
+        else VersionRange.full(admit_arbitrary=False)
+    )
     dep_extras: set[str] = req.extras
 
     if not req_extras:
         base_deps[name] = base_deps.get(name, VersionRange.full()) & vi
         for re in dep_extras:
-            base_deps[join_extra(name, re)] = VersionRange.full()
+            base_deps[join_extra(name, re)] = VersionRange.full(admit_arbitrary=False)
     else:
         for extra_name in req_extras:
             edeps = extra_deps_map[extra_name]
             edeps[name] = edeps.get(name, VersionRange.full()) & vi
             for re in dep_extras:
-                edeps[join_extra(name, re)] = VersionRange.full()
+                edeps[join_extra(name, re)] = VersionRange.full(admit_arbitrary=False)
