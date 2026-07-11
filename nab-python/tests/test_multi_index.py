@@ -8,12 +8,16 @@ from typing import TYPE_CHECKING, TypeVar
 import pytest
 
 from nab_index._naming import canonical as _normalise_name
+from nab_index.cache import OfflineError, OnDiskCache
+from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import SdistFile, WheelFile
+from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
-    from typing import Any
+    from pathlib import Path
+    from typing import Any, NoReturn
 
 _T = TypeVar("_T")
 
@@ -78,6 +82,24 @@ class FakeClient:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+class _NoNetworkTransport:
+    """Transport that fails the test on any request."""
+
+    async def get(self, url: str, *, headers: dict[str, str] | None = None) -> NoReturn:
+        msg = f"unexpected network call: {url}"
+        raise AssertionError(msg)
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _offline_client(tmp_path: Path, name: str) -> CachedAsyncSimpleClient:
+    """Real cached client in offline mode with a cold on-disk cache."""
+    url = f"https://{name}.example/simple/"
+    cache = OnDiskCache(tmp_path / name, url)
+    return CachedAsyncSimpleClient(_NoNetworkTransport(), cache, url, offline=True)
 
 
 class TestIndexConfig:
@@ -146,6 +168,58 @@ class TestPresenceBased:
         run(client.get_files("foo"))
         assert first.get_files_calls == ["foo"]
         assert second.get_files_calls == ["foo", "foo"]
+
+
+class TestOfflinePresenceWalk:
+    """A cold offline index must not mask later indexes in the walk."""
+
+    def test_cold_offline_index_falls_through_to_local(self, tmp_path: Path) -> None:
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+
+        client = MultiIndexClient(
+            {
+                "pypi": _offline_client(tmp_path, "pypi"),
+                "local": LocalIndexClient(wheelhouse.as_uri()),
+            },
+            ["pypi", "local"],
+            {},
+        )
+
+        files = run(client.get_files("foo"))
+        assert [f.filename for f in files] == ["foo-1.0-py3-none-any.whl"]
+        assert client.route_for("foo") == "local"
+
+    def test_cold_offline_all_indexes_returns_empty(self, tmp_path: Path) -> None:
+        client = MultiIndexClient(
+            {
+                "a": _offline_client(tmp_path, "a"),
+                "b": _offline_client(tmp_path, "b"),
+            },
+            ["a", "b"],
+            {},
+        )
+
+        assert run(client.get_files("foo")) == []
+        assert client.route_for("foo") == "a"
+
+    def test_override_pin_to_cold_offline_index_raises(self, tmp_path: Path) -> None:
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+
+        client = MultiIndexClient(
+            {
+                "pypi": _offline_client(tmp_path, "pypi"),
+                "local": LocalIndexClient(wheelhouse.as_uri()),
+            },
+            ["pypi", "local"],
+            {"foo": "pypi"},
+        )
+
+        with pytest.raises(OfflineError):
+            run(client.get_files("foo"))
 
 
 class TestOverrides:
