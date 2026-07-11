@@ -652,6 +652,67 @@ class TestFetchCoordinator:
         coord._run_loop()
         assert coord._crashed is True
 
+    def test_shutdown_completes_after_startup_crash(self) -> None:
+        """shutdown() tears down cleanly when the fetcher crashed at startup."""
+        coord = _coord(index_routes=[IndexRoute(name="foo", index="missing")])
+        coord.start()
+        assert coord._thread is not None
+        coord._thread.join(timeout=5)
+        assert coord._crashed
+
+        coord.shutdown()
+        assert coord._thread is None
+        assert not coord._started
+        assert coord._loop is None
+        assert coord._async_q is None
+
+    def test_startup_crash_surfaces_from_with_block(self) -> None:
+        """The with form raises the crash error, not a teardown error."""
+
+        def request_from_crashed_fetcher() -> None:
+            routes = [IndexRoute(name="foo", index="missing")]
+            with _coord(index_routes=routes) as coord:
+                assert coord._thread is not None
+                coord._thread.join(timeout=5)
+                coord.request_listing("foo")
+
+        with pytest.raises(RuntimeError, match="crashed"):
+            request_from_crashed_fetcher()
+
+    def _crashed_coord_in_race_window(self) -> FetchCoordinator:
+        """Return a crashed coordinator caught before _crashed is visible."""
+        coord = _coord(index_routes=[IndexRoute(name="foo", index="missing")])
+        coord.start()
+        assert coord._thread is not None
+        coord._thread.join(timeout=5)
+        coord._crashed = False
+        return coord
+
+    def test_refused_listing_submit_releases_waiter(self) -> None:
+        """A listing request refused by a closed loop fails instead of hanging."""
+        coord = self._crashed_coord_in_race_window()
+        event = coord.request_listing("foo")
+        assert event.is_set()
+        assert isinstance(coord.index.get_listing_error("foo"), RuntimeError)
+
+    def test_refused_submit_releases_all_request_kinds(self) -> None:
+        """Refused metadata, sdist, archive, and batch requests all fail loudly."""
+        coord = self._crashed_coord_in_race_window()
+        meta = coord.request_metadata("a", "1.0", "https://f.com/a")
+        sdist = coord.request_sdist("b", "1.0", "https://f.com/b.tar.gz")
+        archive = coord.request_sdist_archive("c", "1.0", "https://f.com/c.tar.gz")
+        batch = coord.request_metadata_batch([("d", "1.0", "https://f.com/d", None)])
+
+        assert meta.is_set()
+        assert sdist.is_set()
+        assert archive.is_set()
+        assert batch[0][2].is_set()
+
+        assert isinstance(coord.index.get_metadata_error("a", "1.0"), RuntimeError)
+        assert isinstance(coord.index.get_metadata_error("b", "1.0"), RuntimeError)
+        assert isinstance(coord.index.get_sdist_archive_error("c", "1.0"), RuntimeError)
+        assert isinstance(coord.index.get_metadata_error("d", "1.0"), RuntimeError)
+
     @respx.mock
     def test_drain_queue_empty_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """QueueEmpty during drain loop breaks out of the loop."""

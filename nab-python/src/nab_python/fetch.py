@@ -538,12 +538,41 @@ class FetchCoordinator:
         self._queue_ready.clear()
 
     def _submit(self, item: _QueueItem) -> None:
-        """Schedule ``item`` on the fetcher loop's queue from any thread."""
+        """Schedule ``item`` on the fetcher loop's queue from any thread.
+
+        Requests the loop cannot take are recorded as failures so their
+        waiters unblock instead of hanging.
+        """
         loop = self._loop
         queue = self._async_q
         if loop is None or queue is None:
+            self._refuse(item)
             return
-        loop.call_soon_threadsafe(queue.put_nowait, item)
+        try:
+            loop.call_soon_threadsafe(queue.put_nowait, item)
+        except RuntimeError:
+            # call_soon_threadsafe raises RuntimeError once the loop is closed.
+            self._refuse(item)
+
+    def _refuse(self, item: _QueueItem) -> None:
+        """Record a failure for each request in ``item``, unblocking waiters."""
+        # None is the shutdown sentinel; it has no waiters.
+        if item is None:
+            return
+
+        requests = item if isinstance(item, list) else [item]
+        for req in requests:
+            error = RuntimeError("Fetcher loop is not running, request refused")
+            if req.kind is FetchKind.LISTING:
+                self.index.store_listing_error(req.package, error)
+                continue
+            assert req.version is not None
+            if req.kind is FetchKind.METADATA:
+                self.index.store_metadata_error(req.package, req.version, error)
+            elif req.kind is FetchKind.SDIST:
+                self.index.store_sdist_metadata_error(req.package, req.version, error)
+            else:
+                self.index.store_sdist_archive_error(req.package, req.version, error)
 
     def _check_alive(self) -> None:
         if self._crashed:
@@ -726,8 +755,8 @@ class FetchCoordinator:
         try:
             asyncio.run(self._async_fetcher())
         except Exception:
-            logger.exception("Fetcher thread crashed")
             self._crashed = True
+            logger.exception("Fetcher thread crashed")
 
     def _build_client(
         self,
