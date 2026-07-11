@@ -215,14 +215,28 @@ class InMemoryIndex:
             return (package, version) in self._metadata
 
     def store_metadata(self, package: str, version: str, data: str | None) -> None:
-        """Cache metadata text (or ``None`` for a failed fetch)."""
+        """Cache metadata text (or ``None`` for a failed fetch).
+
+        ``None`` means no PEP 658 sidecar arrived and readers fall back to
+        the sdist, so it never overwrites sdist PKG-INFO already in the slot.
+        """
         key = f"metadata:{package}:{version}"
+        slot = (package, version)
         with self._lock:
-            self._metadata[(package, version)] = data
-            self._metadata_from_sdist.discard((package, version))
+            keep_sdist_text = (
+                data is None
+                and slot in self._metadata_from_sdist
+                and self._metadata[slot] is not None
+            )
+            if not keep_sdist_text:
+                self._metadata[slot] = data
+                self._metadata_from_sdist.discard(slot)
+
+            # the waiter gets whatever the slot holds, which may be kept text
+            result = self._metadata[slot]
             pending = self._pending.get(key)
         if pending is not None:
-            pending.result = data
+            pending.result = result
             pending.event.set()
 
     def store_metadata_error(
