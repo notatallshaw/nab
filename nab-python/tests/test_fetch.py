@@ -1592,6 +1592,28 @@ class TestMultiIndexCoordinator:
         with pytest.raises(ValueError, match="at least one"):
             FetchCoordinator(transport=HttpxAsyncTransport(), indexes=[])
 
+    @respx.mock
+    def test_offline_cold_remote_falls_through_to_local(self, tmp_path: Path) -> None:
+        """Offline + cold cache on the remote index still serves local files."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+
+        with _coord(
+            cache_dir=tmp_path / "cache",
+            offline=True,
+            indexes=[
+                IndexConfig("pypi", "https://pypi.org/simple/"),
+                IndexConfig("local", wheelhouse.as_uri()),
+            ],
+        ) as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            listing = coord.index.get_listing("foo")
+            assert listing is not None
+            assert [f.filename for f in listing] == ["foo-1.0-py3-none-any.whl"]
+            assert coord.index.get_listing_error("foo") is None
+            assert coord.index.get_listing_index("foo") == "local"
+
     def test_local_index(self, tmp_path: Path) -> None:
         """A file:// index uses LocalIndexClient."""
         wheelhouse = tmp_path / "wheelhouse"

@@ -4,7 +4,9 @@ Each index in the list is named and addressable; the order alone is
 semantically significant (no "primary vs extras" split).  Per package,
 the router walks the list left-to-right and stops at the first index
 whose listing for the package is non-empty (presence-based first-index,
-matching uv's ``--index-strategy first-index``).
+matching uv's ``--index-strategy first-index``).  An index that raises
+:class:`~nab_index.cache.OfflineError` (offline mode, cold cache) is
+treated as having no listing, so later indexes are still consulted.
 
 Per-package overrides route a package to a *named* index regardless
 of order; when an override matches, *only* that index is consulted
@@ -23,6 +25,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from ._naming import canonical as _normalise_name
+from .cache import OfflineError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -195,7 +198,11 @@ class MultiIndexClient:
 
         for index_name in self._order:
             client = self._clients[index_name]
-            files = await client.get_files(package)
+            try:
+                files = await client.get_files(package)
+            except OfflineError:
+                # Offline with a cold cache: treat as no listing.
+                continue
             if files:
                 self._record_route(package, index_name)
                 return files
