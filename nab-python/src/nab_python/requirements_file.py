@@ -635,9 +635,6 @@ def resolve_groups_to_requirements(
         return []
     try:
         resolved = resolve_dependency_groups(groups, *selected)
-    except InvalidRequirement as exc:
-        msg = f"invalid requirement in [dependency-groups]: {exc}"
-        raise InvalidProjectRequirementError(msg) from exc
     except ExceptionGroup as group:
         detail = "; ".join(str(e) for e in group.exceptions)
         if all(isinstance(e, LookupError) for e in group.exceptions):

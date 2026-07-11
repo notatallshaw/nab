@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ._vendor.packaging.ranges import VersionRange
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from nab_resolver.types import Incompatibility, RangeProtocol
 
-    from ._vendor.packaging.ranges import VersionRange
     from ._vendor.packaging.specifiers import SpecifierSet
     from ._vendor.packaging.version import Version
 
@@ -58,7 +59,10 @@ class PackagingProvider:
     ) -> dict[str, VersionRange]:
         """Convert SpecifierSet deps to VersionRange deps."""
         raw = self._packages.get(package, {}).get(version, {})
-        return {dep: spec.to_range() for dep, spec in raw.items()}
+        return {
+            dep: (spec.to_range() if spec else VersionRange.full(admit_arbitrary=False))
+            for dep, spec in raw.items()
+        }
 
     _CONFLICT_THRESHOLD = 5
 

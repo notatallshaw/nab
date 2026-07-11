@@ -47,6 +47,18 @@ jobs:
       - name: Run pre-commit on all files
         run: pre-commit run --show-diff-on-failure --color=always --all-files
 
+  vendor:
+    name: vendored packaging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Check vendored packaging matches pin plus patch
+        run: tasks/vendor-packaging.sh --check
+
   types:
     name: ${{ matrix.checker }}
     runs-on: ubuntu-latest
