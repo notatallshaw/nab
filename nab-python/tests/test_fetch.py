@@ -160,6 +160,23 @@ class TestInMemoryIndex:
         idx.store_metadata("foo", "1.0", "METADATA\n")
         assert not idx.metadata_from_sdist("foo", "1.0")
 
+    def test_metadata_none_keeps_stored_sdist_pkg_info(self) -> None:
+        """A failed sidecar fetch must not erase stored sdist PKG-INFO."""
+        idx = InMemoryIndex()
+        pending, _ = idx.get_or_create_pending("metadata:foo:1.0")
+        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
+        idx.store_metadata("foo", "1.0", None)
+        assert pending.event.is_set()
+        assert idx.get_metadata("foo", "1.0") == "PKG-INFO\n"
+        assert idx.metadata_from_sdist("foo", "1.0")
+
+    def test_metadata_none_after_sdist_none_stays_none(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_sdist_metadata("foo", "1.0", None)
+        idx.store_metadata("foo", "1.0", None)
+        assert idx.get_metadata("foo", "1.0") is None
+        assert not idx.metadata_from_sdist("foo", "1.0")
+
     def test_sdist_archive_pending_event_fires(self) -> None:
         idx = InMemoryIndex()
         pending, _ = idx.get_or_create_pending("sdist-archive:foo:1.0")
@@ -562,6 +579,46 @@ class TestFetchCoordinator:
             event.wait(timeout=5)
             assert not coord._crashed
             assert coord.index.get_metadata("broken", "1.0") is None
+
+    @respx.mock
+    def test_late_sidecar_failure_keeps_stored_sdist_pkg_info(self) -> None:
+        """A sidecar fetch failing after the sdist stored PKG-INFO keeps it."""
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="pkg-1.0/PKG-INFO")
+            data = b"Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n"
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+
+        respx.get("https://files.example.com/pkg-1.0.tar.gz").mock(
+            return_value=httpx.Response(200, content=buf.getvalue())
+        )
+        respx.get("https://files.example.com/pkg-1.0.whl.metadata").mock(
+            return_value=httpx.Response(404)
+        )
+
+        with _coord() as coord:
+            sdist_event = coord.request_sdist(
+                "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+            )
+            assert sdist_event.wait(timeout=5)
+
+            # queue the request directly: request_metadata would short-circuit
+            # on has_metadata, but a prefetch already in flight still lands
+            pending, _ = coord.index.get_or_create_pending("metadata:pkg:1.0")
+            coord._submit(
+                FetchRequest(
+                    kind=FetchKind.METADATA,
+                    package="pkg",
+                    version="1.0",
+                    url="https://files.example.com/pkg-1.0.whl.metadata",
+                )
+            )
+
+            assert pending.event.wait(timeout=5)
+            assert not coord._crashed
+            assert "Name: pkg" in (coord.index.get_metadata("pkg", "1.0") or "")
+            assert coord.index.metadata_from_sdist("pkg", "1.0")
 
     @respx.mock
     def test_metadata_hash_mismatch_records_integrity_error(self) -> None:
