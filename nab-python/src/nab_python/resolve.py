@@ -342,8 +342,17 @@ def _group_package_ranges(
         if req.url is not None:
             continue
         name = str(canonicalize_name(req.name))
+        # A bare requirement enters the solver without arbitrary-string
+        # admission, keeping subset and equality checks consistent with
+        # algebra-derived full-bounded terms. The accumulator identity stays
+        # arbitrary-admitting so === literals survive their first intersection.
         previous = ranges.get(name, VersionRange.full())
-        ranges[name] = previous & req.specifier.to_range()
+        term = (
+            req.specifier.to_range()
+            if req.specifier
+            else VersionRange.full(admit_arbitrary=False)
+        )
+        ranges[name] = previous & term
         sources[name].append(str(req))
     return ranges, sources
 
@@ -696,11 +705,16 @@ def _build_resolver_inputs(
             raise NotImplementedError(msg)
         name = str(canonicalize_name(req.name))
         previous = resolver_requirements.get(name, VersionRange.full())
-        resolver_requirements[name] = previous & req.specifier.to_range()
+        term = (
+            req.specifier.to_range()
+            if req.specifier
+            else VersionRange.full(admit_arbitrary=False)
+        )
+        resolver_requirements[name] = previous & term
         sources[name].append(str(req))
         for extra in req.extras:
             extra_key = join_extra(name, extra)
-            resolver_requirements[extra_key] = VersionRange.full()
+            resolver_requirements[extra_key] = VersionRange.full(admit_arbitrary=False)
             _, normalized_extra = split_extra(extra_key)
             assert normalized_extra is not None  # join_extra always sets one
             root_extras.add((name, normalized_extra))
@@ -1042,7 +1056,12 @@ def _build_constraints(
             )
             raise NotImplementedError(msg)
         name = str(canonicalize_name(req.name))
-        out[name] = out.get(name, VersionRange.full()) & req.specifier.to_range()
+        term = (
+            req.specifier.to_range()
+            if req.specifier
+            else VersionRange.full(admit_arbitrary=False)
+        )
+        out[name] = out.get(name, VersionRange.full()) & term
         sources[name].append(cstr)
     raise_for_unsatisfiable(out, sources, kind="constraint")
     return out

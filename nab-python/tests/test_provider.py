@@ -822,7 +822,7 @@ class TestPrereleaseAdmission:
         }
         coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
         root_reqs = {
-            "foo": VersionRange.full(),
+            "foo": VersionRange.full(admit_arbitrary=False),
             "bar": SpecifierSet("==5.0").to_range(),
         }
         provider = Provider(
@@ -1528,8 +1528,8 @@ class TestAddClassifiedDep:
         add_classified_dep(Requirement("bar[a,b]>=1.0"), set(), base, extra_map)
         assert V("2.0") in base["bar"]
         assert V("0.5") not in base["bar"]
-        assert base["bar[a]"] == VersionRange.full()
-        assert base["bar[b]"] == VersionRange.full()
+        assert base["bar[a]"] == VersionRange.full(admit_arbitrary=False)
+        assert base["bar[b]"] == VersionRange.full(admit_arbitrary=False)
 
     def test_extra_gated_multi_extra_splits_into_one_proxy_each(self) -> None:
         """``bar[a,b]`` under extra ``x`` records both proxies in that bucket."""
@@ -1537,8 +1537,8 @@ class TestAddClassifiedDep:
         extra_map: dict[str, dict[str, VersionRange]] = {"x": {}}
         add_classified_dep(Requirement("bar[a,b]>=1.0"), {"x"}, base, extra_map)
         assert V("2.0") in extra_map["x"]["bar"]
-        assert extra_map["x"]["bar[a]"] == VersionRange.full()
-        assert extra_map["x"]["bar[b]"] == VersionRange.full()
+        assert extra_map["x"]["bar[a]"] == VersionRange.full(admit_arbitrary=False)
+        assert extra_map["x"]["bar[b]"] == VersionRange.full(admit_arbitrary=False)
         assert "bar" not in base
 
     def test_multi_extra_proxy_names_normalized(self) -> None:
@@ -4618,7 +4618,7 @@ class TestExtras:
             "Metadata-Version: 2.1\nName: gamma\nVersion: 1.0\n"
             "Requires-Dist: alpha[ext-one]\n",
         )
-        roots = {"gamma": VersionRange.full()}
+        roots = {"gamma": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=roots
         )
@@ -4856,8 +4856,8 @@ class TestExtrasPrereleaseAdmission:
         }
         coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
         root_reqs = {
-            "a": VersionRange.full(),
-            "b": VersionRange.full(),
+            "a": VersionRange.full(admit_arbitrary=False),
+            "b": VersionRange.full(admit_arbitrary=False),
         }
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
@@ -4911,7 +4911,7 @@ class TestExtrasPrereleaseBaseRangeBlocks:
     def _resolve_r(
         self, coordinator: MagicMock
     ) -> tuple[dict[str, Version], Resolver[str, Version]]:
-        root_reqs = {"r": VersionRange.full()}
+        root_reqs = {"r": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator,
             python_version="3.12.0",
@@ -7369,8 +7369,8 @@ class TestExtrasInvalidMetadata:
             package="pkg",
         )
         root_reqs = {
-            "pkg": VersionRange.full(),
-            "pkg[feature]": VersionRange.full(),
+            "pkg": VersionRange.full(admit_arbitrary=False),
+            "pkg[feature]": VersionRange.full(admit_arbitrary=False),
         }
         provider = Provider(
             coordinator,

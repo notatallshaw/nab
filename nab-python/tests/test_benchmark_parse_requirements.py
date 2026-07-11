@@ -38,4 +38,6 @@ def test_repeated_name_keeps_pin(harness: str) -> None:
     )
     assert Version("6.0.0") in reqs["inmanta-core"]
     assert Version("4.0.0") not in reqs["inmanta-core"]
-    assert reqs["inmanta-core[pytest-inmanta-extensions]"] == VersionRange.full()
+    assert reqs["inmanta-core[pytest-inmanta-extensions]"] == VersionRange.full(
+        admit_arbitrary=False
+    )

@@ -690,7 +690,7 @@ class TestParseRequirements:
         """An unconstrained requirement gets the any() range."""
         env = _linux_311().environment
         out = _parse_requirements(["pkg"], env)
-        assert out["pkg"] == VersionRange.full()
+        assert out["pkg"] == VersionRange.full(admit_arbitrary=False)
 
     def test_specifier_yields_intervals(self) -> None:
         """A bounded specifier produces the corresponding interval."""
@@ -855,7 +855,7 @@ class TestResolveOneTuple:
         tr = _resolve_one_tuple(
             coordinator,
             _linux_311(),
-            requirements={"pkg": VersionRange.full()},
+            requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
             constraints=None,
             uploaded_prior_to=None,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
@@ -876,7 +876,7 @@ class TestResolveOneTuple:
         tr = _resolve_one_tuple(
             coordinator,
             _linux_311(),
-            requirements={"pkg": VersionRange.full()},
+            requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
             constraints=None,
             uploaded_prior_to=None,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
@@ -900,7 +900,7 @@ class TestResolveOneTuple:
         tr = _resolve_one_tuple(
             coordinator,
             _linux_311(),
-            requirements={"pkg": VersionRange.full()},
+            requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
             constraints=None,
             uploaded_prior_to=None,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
@@ -922,7 +922,7 @@ class TestResolveOneTuple:
         tr = _resolve_one_tuple(
             coordinator,
             _linux_311(),
-            requirements={"pkg": VersionRange.full()},
+            requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
             constraints=None,
             uploaded_prior_to=None,
             dist_policy=DistPolicy.SDIST_INSTALL,
@@ -954,7 +954,7 @@ class TestVcsConfigPlumbing:
             _resolve_one_tuple(
                 coordinator,
                 _linux_311(),
-                requirements={"pkg": VersionRange.full()},
+                requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
                 constraints=None,
                 uploaded_prior_to=None,
                 dist_policy=DistPolicy.WHEEL_OR_SDIST,
@@ -984,7 +984,7 @@ class TestVcsConfigPlumbing:
         tr = _resolve_one_tuple(
             coordinator,
             _linux_311(),
-            requirements={"other": VersionRange.full()},
+            requirements={"other": VersionRange.full(admit_arbitrary=False)},
             constraints=None,
             uploaded_prior_to=None,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
@@ -1019,7 +1019,7 @@ class TestVcsConfigPlumbing:
             _resolve_one_tuple(
                 coordinator,
                 _linux_311(),
-                requirements={"pkg": VersionRange.full()},
+                requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
                 constraints=None,
                 uploaded_prior_to=None,
                 dist_policy=DistPolicy.WHEEL_OR_SDIST,

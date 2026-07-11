@@ -138,9 +138,14 @@ def parse_requirements(
             )
             raise NotImplementedError(msg)
         name = canonicalize_name(req.name)
-        reqs[name] = reqs.get(name, VersionRange.full()) & req.specifier.to_range()
+        term = (
+            req.specifier.to_range()
+            if req.specifier
+            else VersionRange.full(admit_arbitrary=False)
+        )
+        reqs[name] = reqs.get(name, VersionRange.full()) & term
         for extra in req.extras:
-            reqs[f"{name}[{extra}]"] = VersionRange.full()
+            reqs[f"{name}[{extra}]"] = VersionRange.full(admit_arbitrary=False)
     return reqs
 
 

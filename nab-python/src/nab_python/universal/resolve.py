@@ -600,10 +600,15 @@ def _parse_requirements(
             )
             raise NotImplementedError(msg)
         name = canonicalize_name(req.name)
-        out[name] = out.get(name, VersionRange.full()) & req.specifier.to_range()
+        term = (
+            req.specifier.to_range()
+            if req.specifier
+            else VersionRange.full(admit_arbitrary=False)
+        )
+        out[name] = out.get(name, VersionRange.full()) & term
         sources[name].append(req_str)
         for extra in req.extras:
-            out[join_extra(name, extra)] = VersionRange.full()
+            out[join_extra(name, extra)] = VersionRange.full(admit_arbitrary=False)
     raise_for_unsatisfiable(out, sources, kind=kind)
     return out
 
