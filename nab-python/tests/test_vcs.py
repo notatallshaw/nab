@@ -14,6 +14,7 @@ import pytest
 
 from nab_index.client import SdistFile, WheelFile  # noqa: F401 - re-exported by helpers
 from nab_index.vcs import (
+    _COMPLETE_MARKER,
     VcsCloneError,
     VcsRequest,
     _resolve_sha,
@@ -32,6 +33,12 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+
+
+def _mark_complete(clone_dir: Path) -> None:
+    """Fabricate a finished cached clone the way ``prepare_clone`` leaves one."""
+    (clone_dir / ".git").mkdir(parents=True, exist_ok=True)
+    (clone_dir / ".git" / _COMPLETE_MARKER).touch()
 
 
 class TestVcsRequestParse:
@@ -263,14 +270,14 @@ class TestResolveShaAnnotatedTag:
 
 
 class TestPrepareClone:
-    def test_idempotent_when_dest_exists(
+    def test_idempotent_when_marked_complete(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         sha = "c" * 40
         dest = tmp_path / "vcs" / "1234567890abcdef" / sha
-        (dest / ".git").mkdir(parents=True)
+        _mark_complete(dest)
 
         monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "1234567890abcdef")
 
@@ -352,11 +359,124 @@ class TestPrepareClone:
     ) -> None:
         sha = "f" * 40
         dest = tmp_path / "vcs" / "k" / sha
-        (dest / ".git").mkdir(parents=True)
+        _mark_complete(dest)
         monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "k")
         req = VcsRequest("git", "https://example/r.git", sha, "subpkg")
         clone = prepare_clone(tmp_path, req, require_pin=True)
         assert clone.subdirectory == "subpkg"
+
+    def test_init_only_tree_from_interrupted_fetch_is_recloned(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A tree whose fetch never finished is discarded and recloned.
+
+        ``git init`` creates ``.git`` before the network fetch runs, so a
+        run killed mid-fetch leaves a tree containing only ``.git``.
+        """
+        sha = "d" * 40
+        repo_key = "aaaa0000bbbb1111"
+        dest = tmp_path / "vcs" / repo_key / sha
+        (dest / ".git").mkdir(parents=True)
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: repo_key)
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            if cmd[:2] == ["git", "checkout"]:
+                (cwd / "pyproject.toml").write_text("[project]\n")
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://example/repo.git", sha, "")
+        clone = prepare_clone(tmp_path, req, require_pin=True)
+        assert clone.path == dest
+        assert (dest / "pyproject.toml").is_file()
+
+    def test_incomplete_clone_never_visible_at_cache_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Mid-fetch state must not appear at the shared cache path."""
+        sha = "e" * 40
+        repo_key = "cccc2222dddd3333"
+        dest = tmp_path / "vcs" / repo_key / sha
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: repo_key)
+        dest_seen_during_fetch: list[bool] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            if cmd[:2] == ["git", "fetch"]:
+                dest_seen_during_fetch.append(dest.exists())
+            if cmd[:2] == ["git", "checkout"]:
+                (cwd / "pyproject.toml").write_text("[project]\n")
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://example/repo.git", sha, "")
+        clone = prepare_clone(tmp_path, req, require_pin=True)
+        assert dest_seen_during_fetch == [False]
+        assert clone.path == dest
+        assert (dest / "pyproject.toml").is_file()
+
+    def test_lost_publish_race_returns_winner_clone(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When a concurrent run finishes first, its clone is used as-is."""
+        sha = "f" * 40
+        repo_key = "eeee4444ffff5555"
+        dest = tmp_path / "vcs" / repo_key / sha
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: repo_key)
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            if cmd[:2] == ["git", "fetch"]:
+                _mark_complete(dest)
+                (dest / "pyproject.toml").write_text("winner")
+            if cmd[:2] == ["git", "checkout"]:
+                (cwd / "pyproject.toml").write_text("loser")
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://example/repo.git", sha, "")
+        clone = prepare_clone(tmp_path, req, require_pin=True)
+        assert clone.path == dest
+        assert (dest / "pyproject.toml").read_text() == "winner"
+        assert [p for p in dest.parent.iterdir() if p != dest] == []
+
+    def test_unmarked_tree_appearing_during_clone_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A foreign unmarked tree blocking the cache path fails loudly."""
+        sha = "a" * 40
+        repo_key = "9999888877776666"
+        dest = tmp_path / "vcs" / repo_key / sha
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: repo_key)
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            if cmd[:2] == ["git", "fetch"]:
+                (dest / ".git").mkdir(parents=True)
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://example/repo.git", sha, "")
+        with pytest.raises(VcsCloneError, match="could not be moved into place"):
+            prepare_clone(tmp_path, req, require_pin=True)
+        assert [p for p in dest.parent.iterdir() if p != dest] == []
 
 
 class TestProviderVcsIntegration:
@@ -373,7 +493,7 @@ class TestProviderVcsIntegration:
         """End-to-end: provider materialises a VCS source via the cache."""
         sha = "a" * 40
         clone_dir = tmp_path / "cache" / "vcs" / "k" / sha
-        (clone_dir / ".git").mkdir(parents=True)
+        _mark_complete(clone_dir)
         (clone_dir / "pyproject.toml").write_text(
             '[project]\nname = "foo"\nversion = "1.0.0"\n',
             encoding="utf-8",
@@ -418,7 +538,7 @@ class TestProviderVcsIntegration:
         """
         sha = "b" * 40
         clone_dir = tmp_path / "cache" / "vcs" / "k" / sha
-        (clone_dir / ".git").mkdir(parents=True)
+        _mark_complete(clone_dir)
         (clone_dir / "pyproject.toml").write_text(
             '[project]\nname = "foo"\nversion = "1.0.0"\n',
             encoding="utf-8",
@@ -526,7 +646,7 @@ class TestProviderVcsIntegration:
         """
         sha = "a" * 40
         clone_dir = tmp_path / "cache" / "vcs" / "k" / sha
-        (clone_dir / ".git").mkdir(parents=True)
+        _mark_complete(clone_dir)
         (clone_dir / "pyproject.toml").write_text(
             '[project]\nname = "foo"\nversion = "1.0"\ndynamic = ["dependencies"]\n',
             encoding="utf-8",
