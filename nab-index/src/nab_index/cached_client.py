@@ -118,13 +118,29 @@ class CachedAsyncSimpleClient:
         if cached is not None:
             body, policy = cached
             if policy.is_fresh() or self._offline:
-                return _parse_files(json.loads(body), self._index_url, package)
+                return self._parse_listing(body, package)
             return await self._revalidate_simple(package, body, policy)
 
         if self._offline:
             msg = f"No cached listing for {package} (offline mode)"
             raise OfflineError(msg)
         return await self._fetch_simple(package)
+
+    def _parse_listing(self, body: bytes, package: str) -> list[WheelFile | SdistFile]:
+        """Parse a Simple-API listing body, raising :class:`TypeError` on non-JSON.
+
+        A non-JSON body raises the same :class:`TypeError` as a valid-JSON body
+        of the wrong shape, not a raw :class:`json.JSONDecodeError`.
+        """
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            msg = (
+                f"{self._index_url} served a malformed Simple-API response for "
+                f"{package!r}: body is not valid JSON"
+            )
+            raise TypeError(msg) from exc
+        return _parse_files(data, self._index_url, package)
 
     async def _revalidate_simple(
         self, package: str, body: bytes, policy: CachePolicy
@@ -141,19 +157,23 @@ class CachedAsyncSimpleClient:
                 etag=_header(response, "etag") or policy.etag,
             )
             self._cache.refresh_simple_policy(package, new_policy)
-            return _parse_files(json.loads(body), self._index_url, package)
+            return self._parse_listing(body, package)
 
         if response.status_code == _HTTP_NOT_FOUND:
             return []
         response.raise_for_status()
         new_body = response.content
+
+        # Parse before caching so a bad body never poisons the cache.
+        files = self._parse_listing(new_body, package)
+
         new_policy = CachePolicy(
             fetched_at=int(time.time()),
             max_age=_parse_max_age(_header(response, "cache-control")),
             etag=_header(response, "etag"),
         )
         self._cache.put_simple(package, new_body, new_policy)
-        return _parse_files(json.loads(new_body), self._index_url, package)
+        return files
 
     async def _fetch_simple(self, package: str) -> list[WheelFile | SdistFile]:
         url = f"{self._index_url}{package}/"
@@ -162,13 +182,17 @@ class CachedAsyncSimpleClient:
             return []
         response.raise_for_status()
         body = response.content
+
+        # Parse before caching so a bad body never poisons the cache.
+        files = self._parse_listing(body, package)
+
         policy = CachePolicy(
             fetched_at=int(time.time()),
             max_age=_parse_max_age(_header(response, "cache-control")),
             etag=_header(response, "etag"),
         )
         self._cache.put_simple(package, body, policy)
-        return _parse_files(json.loads(body), self._index_url, package)
+        return files
 
     async def get_metadata_text(
         self,

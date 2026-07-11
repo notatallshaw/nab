@@ -951,6 +951,86 @@ class TestGetFiles:
         assert len(files) == 1
 
 
+class TestNonJsonListingBody:
+    """A 200 response whose body is not JSON must not poison the cache.
+
+    An index that ignores the JSON Accept header can serve PEP 503 HTML
+    (or a proxy/captive-portal page) with status 200.
+    """
+
+    _HTML_BODY = b"<!DOCTYPE html><html><body>links</body></html>"
+
+    def test_cold_non_json_body_raises_clean_and_skips_cache(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(self._HTML_BODY, status=200)])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("foo")
+            finally:
+                await client.aclose()
+
+        with pytest.raises(TypeError, match="malformed Simple-API"):
+            asyncio.run(go())
+        assert cache.get_simple("foo") is None
+
+    def test_poisoned_cache_not_reproduced_offline(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        online = _FakeTransport([_FakeResponse(self._HTML_BODY, status=200)])
+
+        async def cold() -> list:
+            client = CachedAsyncSimpleClient(online, cache)
+            try:
+                return await client.get_files("foo")
+            finally:
+                await client.aclose()
+
+        with pytest.raises(TypeError, match="malformed Simple-API"):
+            asyncio.run(cold())
+        assert len(online.calls) == 1
+
+        offline = _FakeTransport()
+
+        async def later() -> list:
+            client = CachedAsyncSimpleClient(offline, cache, offline=True)
+            try:
+                return await client.get_files("foo")
+            finally:
+                await client.aclose()
+
+        with pytest.raises(OfflineError, match="foo"):
+            asyncio.run(later())
+        assert offline.calls == []
+
+    def test_revalidate_non_json_body_preserves_good_cache(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=1, etag="old"),
+        )
+        transport = _FakeTransport([_FakeResponse(self._HTML_BODY, status=200)])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        with pytest.raises(TypeError, match="malformed Simple-API"):
+            asyncio.run(go())
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        body, _ = cached
+        assert body == LISTING_BYTES
+
+
 class TestGetMetadataText:
     def test_cold_cache_fetches_and_stores(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
