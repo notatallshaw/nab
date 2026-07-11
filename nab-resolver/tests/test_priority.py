@@ -203,4 +203,6 @@ class TestPromotingProvider:
         except ResolutionError:
             pass
         assert resolver.stats.conflicts > 0
-        assert resolver.stats.package_conflict_counts.get("D", 0) > 0
+        # The credit lands on the depending package whose clause pinned D
+        # (conflict_credit_target), not on D itself.
+        assert resolver.stats.package_conflict_counts.get("E", 0) > 0

@@ -13,6 +13,8 @@ from collections.abc import Mapping
 
 import pytest
 
+from nab_resolver.conflict import conflict_credit_target
+from nab_resolver.partial_solution import Assignment
 from nab_resolver.ranges import Range
 from nab_resolver.report import format_error
 from nab_resolver.resolver import ResolutionError, Resolver
@@ -333,3 +335,56 @@ class TestFormatErrorNarrow:
             "because your project depends on root 1\n"
             "so <root> 1"
         )
+
+
+class TestConflictCreditTarget:
+    """The one conflict credit moves to the depending package when the
+    satisfier is a derivation propagated from its dependency clause (the
+    situation widened parent terms make common)."""
+
+    def _dependency_clause(self) -> Incompatibility[str, int]:
+        return Incompatibility(
+            [
+                Term("parent", Range.between(1, 3), positive=True),
+                Term("child", Range.at_least(2), positive=False),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+
+    def _derivation(
+        self, package: str, cause: Incompatibility[str, int]
+    ) -> Assignment[str, int]:
+        return Assignment(
+            package=package,
+            accumulated_range=Range.at_least(2),
+            decision_level=3,
+            is_decision=False,
+            cause=cause,
+        )
+
+    def test_derivation_from_dependency_clause_targets_parent(self) -> None:
+        satisfier = self._derivation("child", self._dependency_clause())
+        assert conflict_credit_target(satisfier) == "parent"
+
+    def test_decision_satisfier_targets_itself(self) -> None:
+        decision = Assignment(
+            package="child",
+            accumulated_range=Range.singleton(2),
+            decision_level=3,
+            is_decision=True,
+        )
+        assert conflict_credit_target(decision) == "child"
+
+    def test_non_dependency_cause_targets_itself(self) -> None:
+        derived: Incompatibility[str, int] = Incompatibility(
+            [Term("child", Range.at_least(2), positive=False)],
+            cause=IncompatibilityCause.DERIVED,
+        )
+        assert conflict_credit_target(self._derivation("child", derived)) == "child"
+
+    def test_self_dependency_clause_targets_itself(self) -> None:
+        self_dep: Incompatibility[str, int] = Incompatibility(
+            [Term("child", Range.singleton(2), positive=True)],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert conflict_credit_target(self._derivation("child", self_dep)) == "child"
