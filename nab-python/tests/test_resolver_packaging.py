@@ -48,23 +48,26 @@ class TestSpecifierToRange:
         r = SpecifierSet(">=2.0,<1.0").to_range()
         assert r.is_empty
 
-    def test_term_subset_ignores_arbitrary_flag(self) -> None:
-        """A specifier-built full range satisfies a flag-free full term.
+    def test_term_subset_respects_arbitrary_flag(self) -> None:
+        """The arbitrary-string flag is load-bearing for subset and satisfaction.
 
-        ``SpecifierSet("")`` produces the full range flagged as also
-        admitting arbitrary ``===`` versions, while range unions built
-        during conflict resolution produce the unflagged full range.
-        The two compare unequal but ``flagged_full`` is a subset of
-        ``plain_full``, and term satisfaction follows that subset relation:
-        conflict resolution would otherwise loop on a clause it can never
+        ``SpecifierSet("")`` produces the full range that also admits
+        arbitrary ``===`` versions, while range unions built during conflict
+        resolution produce the unflagged full range. The flagged range is a
+        strict superset: it is not a subset of the plain range, and a term
+        carrying the plain range is not satisfied by the flagged assignment.
+        The reverse holds. Treating the two as mutual subsets (the old
+        algebra) let conflict resolution loop on a clause it could never
         resolve away.
         """
         flagged_full = SpecifierSet("").to_range()
         exact = VersionRange.singleton(V("1.0"))
         plain_full = exact | ~exact
         assert plain_full != flagged_full
-        assert flagged_full.is_subset(plain_full)
-        assert Term("pkg", plain_full).satisfies(flagged_full)
+        assert not flagged_full.is_subset(plain_full)
+        assert plain_full.is_subset(flagged_full)
+        assert not Term("pkg", plain_full).satisfies(flagged_full)
+        assert Term("pkg", flagged_full).satisfies(plain_full)
 
     def test_not_equal(self) -> None:
         """Convert !=1.5 to a range excluding only 1.5."""
@@ -636,7 +639,7 @@ class TestPrereleaseAuthorizationBacktracking:
 
         result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
             {
-                "a": VersionRange.full(),
+                "a": VersionRange.full(admit_arbitrary=False),
                 "d": SpecifierSet("==1.0").to_range(),
             }
         )
@@ -805,7 +808,7 @@ class TestRedundantTransitivePrereleaseOptIn:
         )
         result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
             {
-                "a": VersionRange.full(),
+                "a": VersionRange.full(admit_arbitrary=False),
                 "c": SpecifierSet(">=1.0").to_range(),
             }
         )

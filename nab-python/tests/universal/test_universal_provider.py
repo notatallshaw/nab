@@ -393,7 +393,7 @@ class TestCrossTupleProxyAlignment:
         metadata = {"1.0": self._A_META}
         metadata.update({v: self._C_META.format(v=v) for v in c_versions})
         coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
-        root_reqs = {"a": VersionRange.full()}
+        root_reqs = {"a": VersionRange.full(admit_arbitrary=False)}
         provider = UniversalProvider(
             coordinator,
             marker_environment=_LINUX_ENV,

@@ -887,7 +887,7 @@ class TestNoVersionsReasons:
         provider = Provider(
             coordinator,
             python_version="3.12.0",
-            root_requirements={"foo": VersionRange.full()},
+            root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
         )
         # Pretend the resolver decided bar==1.0 already.
         provider.solution_decisions["bar"] = V("1.0")
@@ -916,7 +916,7 @@ class TestNoVersionsReasons:
             python_version="3.12.0",
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_LOCAL,
-            root_requirements={"pkg": VersionRange.full()},
+            root_requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
         )
         result = provider.choose_version("pkg", VersionRange.full())
         assert result is None
@@ -975,7 +975,7 @@ class TestNoVersionsReasons:
             coordinator,
             python_version="3.12.0",
             root_requirements={
-                "foo": VersionRange.full(),
+                "foo": VersionRange.full(admit_arbitrary=False),
                 "bar": SpecifierSet("==1.0").to_range(),
             },
         )
@@ -1006,7 +1006,7 @@ class TestNoVersionsReasons:
         provider = Provider(
             coordinator,
             python_version="3.12.0",
-            root_requirements={"foo": VersionRange.full()},
+            root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
         )
         provider.solution_ranges["bar"] = SpecifierSet("<2.0").to_range()
         result = provider.choose_version("foo", VersionRange.full())
@@ -2482,7 +2482,7 @@ class TestLookAheadAbort:
             metadata_by_version={v: meta_template.format(ver=v) for v in versions},
             package="foo",
         )
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
@@ -2508,7 +2508,7 @@ class TestLookAheadAbort:
             metadata_by_version={v: meta_template.format(ver=v) for v in versions},
             package="foo",
         )
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
@@ -2535,7 +2535,7 @@ class TestLookAheadAbort:
             metadata_by_version={v: meta_template.format(ver=v) for v in versions},
             package="foo",
         )
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
@@ -2560,7 +2560,7 @@ class TestLookAheadAbort:
             metadata_by_version={v: meta_template.format(ver=v) for v in versions},
             package="foo",
         )
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
@@ -2587,7 +2587,7 @@ class TestLookAheadAbort:
             metadata_by_version={v: meta_template.format(ver=v) for v in versions},
             package="foo",
         )
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
@@ -2616,7 +2616,7 @@ class TestLookAheadAbort:
         coordinator = make_coordinator(
             [make_wheel("1.0")], metadata_text=meta, package="foo"
         )
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
@@ -2645,7 +2645,7 @@ class TestLookAheadAbort:
         coordinator = make_coordinator(
             [make_wheel("1.0")], metadata_text=meta, package="foo"
         )
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
@@ -2672,7 +2672,7 @@ class TestLookAheadAbort:
             metadata_by_version={"1.0": meta_v1_broken, "0.9": meta_v09},
             package="foo",
         )
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
@@ -2696,7 +2696,7 @@ class TestLookAheadAbort:
             "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar>=5.0\n"
         )
         coordinator = make_coordinator(wheels, metadata_text=meta, package="foo")
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
@@ -3546,7 +3546,7 @@ class TestSkipFetch:
             python_version="3.12.0",
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
-            root_requirements={"pkg": VersionRange.full()},
+            root_requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
             package_overrides=(
                 pkg_override("pkg", dependencies=(Requirement("dep-a>=1"),)),
             ),
@@ -3574,7 +3574,7 @@ class TestSkipFetch:
         provider = Provider(
             coordinator,
             python_version="3.12.0",
-            root_requirements={"pkg": VersionRange.full()},
+            root_requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
             package_overrides=(
                 pkg_override("pkg == 2.0", dependencies=(Requirement("dep-a>=1"),)),
             ),
@@ -5517,7 +5517,7 @@ class TestPrefetchWalkAhead:
             metadata_by_version={v: meta.format(ver=v) for v in ("3.0", "2.0", "1.0")},
             package="foo",
         )
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
@@ -7398,7 +7398,7 @@ class TestScanBatchNoFirstCandidate:
         coordinator = make_coordinator(
             wheels, metadata_by_version=meta_by_version, package="foo"
         )
-        root_reqs = {"foo": VersionRange.full()}
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator, python_version="3.12.0", root_requirements=root_reqs
         )
