@@ -70,7 +70,10 @@ def conflict_resolution(
         if is_terminal_incompatibility(current_incompatibility):
             # Unreachable: the backjump_target == 0 check below raises first.
             raise ResolutionError(  # pragma: no cover
-                format_error(current_incompatibility),
+                format_error(
+                    current_incompatibility,
+                    narrow=resolver.provider.narrow_for_display,
+                ),
                 incompatibility=current_incompatibility,
             )
 
@@ -128,7 +131,10 @@ def conflict_resolution(
 
             if backjump_target == 0:
                 raise ResolutionError(
-                    format_error(current_incompatibility),
+                    format_error(
+                        current_incompatibility,
+                        narrow=resolver.provider.narrow_for_display,
+                    ),
                     incompatibility=current_incompatibility,
                 )
 

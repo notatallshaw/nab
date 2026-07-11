@@ -84,6 +84,18 @@ class FuzzProvider:
         """No force-backtrack signal from this test provider."""
         return []
 
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        del package, version
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        del package
+        return constraint
+
 
 class PromotingFuzzProvider:
     """Provider that promotes packages above a conflict threshold.
@@ -164,6 +176,18 @@ class PromotingFuzzProvider:
         """No force-backtrack signal from this test provider."""
         return []
 
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        del package, version
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        del package
+        return constraint
+
 
 class OldestFirstProvider:
     """Provider that picks the oldest version instead of newest.
@@ -234,6 +258,18 @@ class OldestFirstProvider:
     def consume_force_backtrack_targets(self) -> list[str]:
         """No force-backtrack signal from this test provider."""
         return []
+
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        del package, version
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        del package
+        return constraint
 
 
 def verify_solution(

@@ -106,3 +106,15 @@ class PackagingProvider:
     def consume_force_backtrack_targets(self) -> list[str]:
         """No force-backtrack signal from this in-memory provider."""
         return []
+
+    def widen_decision(self, package: str, version: Version) -> VersionRange | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        del package, version
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[Version]
+    ) -> RangeProtocol[Version]:
+        """Identity: constraints render as stored."""
+        del package
+        return constraint

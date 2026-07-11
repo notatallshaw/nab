@@ -1,0 +1,335 @@
+"""Tests for the decision-widening provider hooks.
+
+``widen_decision`` lets a provider replace the exact singleton parent term
+of a cross-package dependency clause with a wider range containing no other
+selectable version, so adjacent clauses merge contiguously instead of
+accumulating one hole per rejected version. ``narrow_for_display`` maps
+possibly-widened constraints back onto known versions at error-render time.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+
+import pytest
+
+from nab_resolver.ranges import Range
+from nab_resolver.report import format_error
+from nab_resolver.resolver import ResolutionError, Resolver
+from nab_resolver.root import ROOT
+from nab_resolver.types import (
+    Incompatibility,
+    IncompatibilityCause,
+    RangeProtocol,
+    Term,
+)
+
+
+class _BaseProvider:
+    """In-memory provider mirroring test_resolver's DictProvider."""
+
+    def __init__(self, packages: dict[str, dict[int, dict[str, Range]]]) -> None:
+        self._packages = packages
+
+    def _get_versions(self, package: str) -> list[int]:
+        if package not in self._packages:
+            return []
+        return sorted(self._packages[package].keys(), reverse=True)
+
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
+        for version in self._get_versions(package):
+            if version in version_range:
+                return version
+        return None
+
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> bool:
+        return any(v in version_range for v in self._get_versions(package))
+
+    def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
+        return self._packages.get(package, {}).get(version, {})
+
+    def prioritize(
+        self,
+        package: str,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[str, int],
+        culprit_counts: Mapping[str, int] | None = None,
+    ) -> object:
+        versions = self._get_versions(package)
+        return sum(1 for v in versions if v in version_range)
+
+    def is_ready(self, package: str) -> bool:
+        """All packages decidable immediately in tests."""
+        return True
+
+    def receive_partial_solution_hint(
+        self,
+        positive_ranges: Mapping[str, RangeProtocol[int]],
+        decisions: Mapping[str, int],
+    ) -> None:
+        """No-op: test provider does not use partial solution state."""
+
+    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
+        """No queued clauses for this in-memory provider."""
+        return []
+
+    def consume_force_backtrack_targets(self) -> list[str]:
+        """No force-backtrack signal from this provider."""
+        return []
+
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        return constraint
+
+
+class _RecordingWidenProvider(_BaseProvider):
+    """Records every ``widen_decision`` call and declines to widen."""
+
+    def __init__(self, packages: dict[str, dict[int, dict[str, Range]]]) -> None:
+        super().__init__(packages)
+        self.widen_calls: list[tuple[object, int]] = []
+
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        self.widen_calls.append((package, version))
+        return None
+
+
+class _WideningProvider(_BaseProvider):
+    """Widens a decided version to the open gap between its listed neighbors."""
+
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        universe = sorted(self._packages.get(package, {}).keys())
+        if version not in universe:
+            return None
+        index = universe.index(version)
+        widened: Range[int] = Range.full()
+        if index > 0:
+            widened = widened & Range.greater_than(universe[index - 1])
+        if index < len(universe) - 1:
+            widened = widened & Range.less_than(universe[index + 1])
+        return widened
+
+
+class _NarrowingProvider(_BaseProvider):
+    """Narrows displayed constraints for one package to a fixed range."""
+
+    def __init__(
+        self,
+        packages: dict[str, dict[int, dict[str, Range]]],
+        target: str,
+        narrowed: Range[int],
+    ) -> None:
+        super().__init__(packages)
+        self._target = target
+        self._narrowed = narrowed
+        self.narrow_calls: list[object] = []
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        self.narrow_calls.append(package)
+        if package == self._target:
+            return self._narrowed
+        return constraint
+
+
+class TestWidenDecisionNoneIsToday:
+    """The default hook (returning None) must not change behavior."""
+
+    def test_multi_package_backtracking_scenario_unchanged(self) -> None:
+        """Deep-backtracking graph: same result and same decision count as
+        the exact-singleton resolver produces (captured before the hook
+        existed: result {root: 1, a: 1, c: 2}, 9 decisions)."""
+        provider = _BaseProvider(
+            {
+                "root": {1: {"a": Range.full(), "c": Range.full()}},
+                "a": {2: {"b": Range.at_least(2)}, 1: {}},
+                "b": {2: {"c": Range.at_least(3)}, 1: {}},
+                "c": {2: {}, 1: {}},
+            }
+        )
+        resolver = Resolver(provider)
+        result = resolver.resolve({"root": Range.singleton(1)})
+        assert result == {"root": 1, "a": 1, "c": 2}
+        assert resolver.stats.decisions == 9
+
+
+class TestWideningMergesDependencyClauses:
+    def test_widened_clauses_merge_into_single_interval(self) -> None:
+        """Three rejected versions of ``a`` sharing one dep constraint must
+        leave a single-interval merged DEPENDENCY clause, not a 3-hole union.
+        """
+        provider = _WideningProvider(
+            {
+                "root": {1: {"a": Range.full()}},
+                "a": {
+                    3: {"b": Range.singleton(5)},
+                    2: {"b": Range.singleton(5)},
+                    1: {"b": Range.singleton(5)},
+                },
+                "b": {1: {}},
+            }
+        )
+        resolver = Resolver(provider)
+        with pytest.raises(ResolutionError):
+            resolver.resolve({"root": Range.singleton(1)})
+
+        merged = [
+            inc
+            for inc in resolver.incompatibilities
+            if inc.cause is IncompatibilityCause.DEPENDENCY
+            and len(inc.terms) == 2
+            and inc.terms[0].package == "a"
+            and inc.terms[1].package == "b"
+        ]
+        assert len(merged) == 1
+        constraint = merged[0].terms[0].constraint
+        assert isinstance(constraint, Range)
+        assert len(constraint._intervals) == 1
+        assert 1 in constraint
+        assert 2 in constraint
+        assert 3 in constraint
+
+    def test_widening_does_not_change_unsat_outcome(self) -> None:
+        """The same impossible graph fails with and without widening."""
+        packages = {
+            "root": {1: {"a": Range.full()}},
+            "a": {
+                3: {"b": Range.singleton(5)},
+                2: {"b": Range.singleton(5)},
+                1: {"b": Range.singleton(5)},
+            },
+            "b": {1: {}},
+        }
+        with pytest.raises(ResolutionError):
+            Resolver(_BaseProvider(packages)).resolve({"root": Range.singleton(1)})
+        with pytest.raises(ResolutionError):
+            Resolver(_WideningProvider(packages)).resolve({"root": Range.singleton(1)})
+
+
+class TestSelfDependencyStaysExact:
+    def test_self_dep_clause_keeps_singleton_term(self) -> None:
+        """foo@2 depends on foo=={1}: the single-term clause asserts exactly
+        "foo is never 2", even when the provider widens decisions."""
+        provider = _WideningProvider({"foo": {2: {"foo": Range.singleton(1)}, 1: {}}})
+        resolver = Resolver(provider, max_iterations=100)
+        result = resolver.resolve({"foo": Range.full()})
+        assert result == {"foo": 1}
+
+        self_clauses = [
+            inc
+            for inc in resolver.incompatibilities
+            if inc.cause is IncompatibilityCause.DEPENDENCY
+            and len(inc.terms) == 1
+            and inc.terms[0].package == "foo"
+        ]
+        assert len(self_clauses) == 1
+        assert self_clauses[0].terms[0].constraint == Range.singleton(2)
+        assert self_clauses[0].terms[0].is_positive()
+
+
+class TestRootIsNeverWidened:
+    def test_widen_decision_never_called_with_root_sentinel(self) -> None:
+        provider = _RecordingWidenProvider(
+            {
+                "root": {1: {"foo": Range.full(), "bar": Range.full()}},
+                "foo": {1: {"baz": Range.at_least(2)}},
+                "bar": {1: {}},
+                "baz": {2: {}, 1: {}},
+            }
+        )
+        resolver = Resolver(provider)
+        resolver.resolve({"root": Range.singleton(1)})
+        assert provider.widen_calls
+        assert all(package is not ROOT for package, _ in provider.widen_calls)
+
+
+class TestFormatErrorNarrow:
+    def test_narrow_applies_to_parent_side_not_dependency_side(self) -> None:
+        """The positive parent term is narrowed; the originally-negative dep
+        term renders as requested even though it is displayed positively."""
+        clause = Incompatibility(
+            [
+                Term("foo", Range.between(1, 4), positive=True),
+                Term("bar", Range.at_least(3), positive=False),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        narrowed_packages: list[object] = []
+
+        def narrow(package: object, constraint: Range[int]) -> Range[int]:
+            narrowed_packages.append(package)
+            if package == "foo":
+                return Range.singleton(2)
+            return Range.singleton(9)
+
+        message = format_error(clause, narrow=narrow)
+        assert message == "because foo 2 depends on bar [3, +inf)"
+        assert narrowed_packages == ["foo"]
+
+    def test_narrow_applies_to_no_versions_term(self) -> None:
+        clause = Incompatibility(
+            [Term("qux", Range.at_least(5), positive=True)],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+        message = format_error(
+            clause, narrow=lambda package, constraint: Range.singleton(7)
+        )
+        assert message == "because no versions of qux 7 are available"
+
+    def test_narrow_applies_to_derived_positive_terms(self) -> None:
+        clause = Incompatibility(
+            [
+                Term("a", Range.between(1, 9), positive=True),
+                Term("b", Range.between(1, 9), positive=False),
+            ],
+            cause=IncompatibilityCause.DERIVED,
+        )
+
+        def narrow(package: object, constraint: Range[int]) -> Range[int]:
+            return Range.singleton(3)
+
+        message = format_error(clause, narrow=narrow)
+        assert message == "so a 3 and not b [1, 9)"
+
+    def test_raise_site_narrows_through_provider(self) -> None:
+        """The resolver passes ``narrow_for_display`` to ``format_error``:
+        the positive NO_VERSIONS term is narrowed, the negative dep side of
+        the DEPENDENCY clause still renders the requested range."""
+        provider = _NarrowingProvider(
+            {"root": {1: {"foo": Range.full()}}},
+            target="foo",
+            narrowed=Range.between(5, 7),
+        )
+        resolver = Resolver(provider)
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve({"root": Range.singleton(1)})
+        message = str(exc_info.value)
+        assert "because no versions of foo [5, 7) are available" in message
+        assert "depends on foo *" in message
+        assert provider.narrow_calls
+
+    def test_identity_narrow_keeps_message_byte_identical(self) -> None:
+        """A provider with the identity ``narrow_for_display`` renders the
+        exact message the resolver produced before the hook existed."""
+        provider = _BaseProvider({"root": {1: {"foo": Range.full()}}})
+        resolver = Resolver(provider)
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve({"root": Range.singleton(1)})
+        assert str(exc_info.value) == (
+            "because no versions of foo * are available\n"
+            "because root 1 depends on foo *\n"
+            "so root 1\n"
+            "because your project depends on root 1\n"
+            "so <root> 1"
+        )

@@ -130,6 +130,14 @@ class _InertProvider:
     def consume_force_backtrack_targets(self) -> list[Any]:
         return []
 
+    def widen_decision(self, package: Any, version: int) -> RangeProtocol[int] | None:
+        return None
+
+    def narrow_for_display(
+        self, package: Any, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        return constraint
+
 
 def _resolver() -> tuple[Resolver[Any, int], _RecordingObserver]:
     observer = _RecordingObserver()

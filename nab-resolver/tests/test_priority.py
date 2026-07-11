@@ -71,6 +71,16 @@ class _TrackingProvider:
         """No force-backtrack signal from this test provider."""
         return []
 
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        return constraint
+
 
 class _PromotingProvider:
     """Provider that promotes packages with 3+ conflicts."""
@@ -129,6 +139,16 @@ class _PromotingProvider:
     def consume_force_backtrack_targets(self) -> list[str]:
         """No force-backtrack signal from this test provider."""
         return []
+
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        return constraint
 
 
 class TestConflictCountsReachProvider:

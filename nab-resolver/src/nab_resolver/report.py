@@ -9,12 +9,16 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#error-repo
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from .types import IncompatibilityCause, PackageType, Term, VersionType
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .types import Incompatibility
+
+    _NarrowFn: TypeAlias = Callable[[Any, Any], Any]  # (package, constraint) -> shown
 
 __all__ = [
     "explain_incompatibility",
@@ -25,10 +29,19 @@ __all__ = [
 ]
 
 
-def format_error(root_incompatibility: Incompatibility[Any, Any]) -> str:
-    """Format a human-readable error from an incompatibility derivation tree."""
+def format_error(
+    root_incompatibility: Incompatibility[Any, Any],
+    narrow: _NarrowFn | None = None,
+) -> str:
+    """Format a human-readable error from an incompatibility derivation tree.
+
+    ``narrow`` maps ``(package, constraint)`` to a display constraint and is
+    applied to originally-positive terms only; a negative dependency-side
+    term renders as requested even when displayed negated.  Narrowing
+    happens at render time only, never mutating the derivation tree.
+    """
     lines: list[str] = []
-    explain_incompatibility(root_incompatibility, lines, set())
+    explain_incompatibility(root_incompatibility, lines, set(), narrow)
     return "\n".join(lines) if lines else "Resolution impossible"
 
 
@@ -41,6 +54,7 @@ def explain_incompatibility(
     incompatibility: Incompatibility[Any, Any],
     lines: list[str],
     visited_ids: set[int],
+    narrow: _NarrowFn | None = None,
 ) -> None:
     """Walk the cause tree appending one explanatory line per node."""
     if id(incompatibility) in visited_ids:
@@ -49,17 +63,33 @@ def explain_incompatibility(
 
     if incompatibility.cause == IncompatibilityCause.DERIVED:
         if incompatibility.cause_left:
-            explain_incompatibility(incompatibility.cause_left, lines, visited_ids)
+            explain_incompatibility(
+                incompatibility.cause_left, lines, visited_ids, narrow
+            )
         if incompatibility.cause_right:
-            explain_incompatibility(incompatibility.cause_right, lines, visited_ids)
+            explain_incompatibility(
+                incompatibility.cause_right, lines, visited_ids, narrow
+            )
 
-    lines.append(_render_line(incompatibility))
+    lines.append(_render_line(incompatibility, narrow))
 
 
-def _render_line(incompatibility: Incompatibility[Any, Any]) -> str:
+def _narrow_positive(term: Term[Any, Any], narrow: _NarrowFn) -> Term[Any, Any]:
+    """Return ``term`` with a narrowed constraint when originally positive."""
+    if not term.is_positive():
+        return term
+    return Term(term.package, narrow(term.package, term.constraint), positive=True)
+
+
+def _render_line(
+    incompatibility: Incompatibility[Any, Any],
+    narrow: _NarrowFn | None,
+) -> str:
     """Render a single incompatibility as one explanation line."""
     cause = incompatibility.cause
     terms = incompatibility.terms
+    if narrow is not None:
+        terms = [_narrow_positive(term, narrow) for term in terms]
 
     # Attribution form for the two standard two-term clauses.
     if (

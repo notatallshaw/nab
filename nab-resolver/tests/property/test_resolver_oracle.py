@@ -148,6 +148,18 @@ class ConstantPriorityProvider:
         """No force-backtrack signal from this provider."""
         return []
 
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        del package, version
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        del package
+        return constraint
+
 
 class LookaheadProvider:
     """Provider exercising the pending-clauses and force-backtrack contract.
@@ -246,6 +258,18 @@ class LookaheadProvider:
         targets = self._force_targets
         self._force_targets = []
         return targets
+
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        del package, version
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        del package
+        return constraint
 
 
 def _assert_closure(result: dict[str, int], deps: Deps, roots: Roots) -> None:

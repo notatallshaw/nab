@@ -104,6 +104,16 @@ class DictProvider:
         """No force-backtrack signal from this provider."""
         return []
 
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        return constraint
+
 
 class PromotingProvider(DictProvider):
     """DictProvider that promotes packages with 5+ conflicts."""

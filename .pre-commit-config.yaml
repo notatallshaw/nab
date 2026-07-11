@@ -9,6 +9,9 @@ repos:
       - id: end-of-file-fixer
       - id: mixed-line-ending
       - id: trailing-whitespace
+        # Vendoring patches carry unified-diff context lines whose
+        # leading space must survive verbatim for git apply.
+        exclude: ^tasks/vendoring/
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: 745be0411e3c150e246d527e531e5a221b8c3462  # frozen: v0.15.19

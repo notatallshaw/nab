@@ -155,6 +155,33 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         """
         ...
 
+    def widen_decision(
+        self, package: PackageType, version: VersionType
+    ) -> RangeProtocol[VersionType] | None:
+        """Return a widened stand-in for ``version`` in dependency clauses, or None.
+
+        Soundness contract: the returned range must contain ``version`` and
+        no other version that could ever be chosen for ``package`` in this
+        resolution; versions inside it that can never be selected are
+        harmless.  ``None`` keeps the exact singleton.  Widening lets
+        dependency clauses for adjacent rejected versions merge into
+        contiguous ranges instead of accumulating one hole per version.
+        """
+        ...
+
+    def narrow_for_display(
+        self, package: PackageType, constraint: RangeProtocol[VersionType]
+    ) -> RangeProtocol[VersionType]:
+        """Map a possibly-widened ``constraint`` back onto known versions.
+
+        Applied at error-render time only; the derivation state is never
+        mutated.  The renderer narrows every originally-positive term, so
+        ``package`` may be the virtual root sentinel or another package
+        outside the provider's namespace; return such constraints
+        unchanged, as providers that do not widen do for all input.
+        """
+        ...
+
 
 @dataclass
 class ResolverStats(Generic[PackageType]):
@@ -404,24 +431,25 @@ class Resolver(Generic[PackageType, VersionType]):
         )
 
         dependencies = self.provider.get_dependencies(next_package, chosen_version)
+        if not dependencies:
+            return next_package
+        exact_range = self.range_type.singleton(chosen_version)
+        widened = self.provider.widen_decision(next_package, chosen_version)
+        parent_range = exact_range if widened is None else widened
         for dependency_package, dependency_range in dependencies.items():
-            package_term = Term(
-                next_package,
-                self.range_type.singleton(chosen_version),
-                positive=True,
-            )
             cross_package = dependency_package != next_package
             if not cross_package:
                 # An incompatibility holds at most one term per package,
                 # so self-dependency terms merge to {v} & ~range: empty
                 # (a vacuous clause) when the range contains the chosen
-                # version, else exactly {v}.
+                # version, else exactly {v}.  The exact singleton is kept:
+                # widening a single-term clause only degrades error text.
                 if chosen_version in dependency_range:
                     continue
-                terms = [package_term]
+                terms = [Term(next_package, exact_range, positive=True)]
             else:
                 terms = [
-                    package_term,
+                    Term(next_package, parent_range, positive=True),
                     Term(dependency_package, dependency_range, positive=False),
                 ]
             incompatibility = Incompatibility(
