@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "apply_targeted_backtrack",
+    "conflict_credit_target",
     "conflict_resolution",
     "find_most_recent_satisfier",
     "force_targeted_backtrack",
@@ -70,7 +71,10 @@ def conflict_resolution(
         if is_terminal_incompatibility(current_incompatibility):
             # Unreachable: the backjump_target == 0 check below raises first.
             raise ResolutionError(  # pragma: no cover
-                format_error(current_incompatibility),
+                format_error(
+                    current_incompatibility,
+                    narrow=resolver.provider.narrow_for_display,
+                ),
                 incompatibility=current_incompatibility,
             )
 
@@ -128,7 +132,10 @@ def conflict_resolution(
 
             if backjump_target == 0:
                 raise ResolutionError(
-                    format_error(current_incompatibility),
+                    format_error(
+                        current_incompatibility,
+                        narrow=resolver.provider.narrow_for_display,
+                    ),
                     incompatibility=current_incompatibility,
                 )
 
@@ -137,10 +144,12 @@ def conflict_resolution(
             resolver.stats.backjumps += 1
             resolver.observer.on_backjump(from_level, backjump_target)
 
-            # Count only the "affected" package so it gets decided first
+            # Count only one package per conflict so it gets decided first
             # after restart and its dependencies constrain the culprit.
             affected_package = most_recent_satisfier.package
-            resolver.stats.package_conflict_counts[affected_package] += 1
+            resolver.stats.package_conflict_counts[
+                conflict_credit_target(most_recent_satisfier)
+            ] += 1
 
             update_culprit_counts(
                 resolver,
@@ -211,6 +220,28 @@ def update_culprit_counts(
             and package not in resolver.pending_targeted_backtrack
         ):
             resolver.pending_targeted_backtrack.append(package)
+
+
+def conflict_credit_target(satisfier: Assignment[Any, Any]) -> Any:
+    """Return the package whose decision receives the conflict credit.
+
+    A positive term over a decided package used to be satisfied only by the
+    decision itself, so the credit landed on the package whose decision
+    triggered the conflict.  A widened parent term is often already
+    satisfied by the earlier derivation propagated from its dependency
+    clause; crediting the derivation's own package then starves the
+    promotion heuristics, while crediting both packages over-promotes the
+    whole cluster past the backjump horizon.  The clause's depending parent
+    receives the one credit instead.
+    """
+    if satisfier.is_decision or satisfier.cause is None:
+        return satisfier.package
+    if satisfier.cause.cause is not IncompatibilityCause.DEPENDENCY:
+        return satisfier.package
+    parent = satisfier.cause.terms[0].package
+    if parent == satisfier.package:
+        return satisfier.package
+    return parent
 
 
 def iterate_force_resolution(

@@ -280,6 +280,47 @@ def _struct_admits(
     return matches_bounds_only(bounds, parsed)
 
 
+def _bisect_predicate(
+    versions: Sequence[Version], predicate: Callable[[Version], bool]
+) -> int:
+    """First index whose ``predicate`` is true over an ascending list.
+
+    The predicate must be monotonic (false runs then true runs). Equivalent to
+    ``bisect.bisect_left`` on the mapped booleans, done by hand because the
+    ``key`` parameter for :mod:`bisect` only exists on Python 3.10 and later.
+    """
+    low, high = 0, len(versions)
+    while low < high:
+        mid = (low + high) // 2
+        if predicate(versions[mid]):
+            high = mid
+        else:
+            low = mid + 1
+    return low
+
+
+def _partition_indexes(
+    versions: Sequence[Version], lower: LowerBound, upper: UpperBound
+) -> tuple[int, int]:
+    """Locate one interval's bounds in an ascending version list.
+
+    Returns ``(first_inside, first_above)``: the index of the first version at
+    or above ``lower`` and of the first version strictly above ``upper``, so
+    ``versions[first_inside:first_above]`` are the versions the interval
+    contains. The bound predicates are monotonic over an ascending list, so
+    both cuts bisect on the predicate value.
+    """
+    above = lower._above
+    below = upper._below
+
+    first_inside = 0 if above is None else _bisect_predicate(versions, above)
+    if below is None:
+        first_above = len(versions)
+    else:
+        first_above = _bisect_predicate(versions, lambda v: not below(v))
+    return first_inside, first_above
+
+
 # Repr helpers:
 
 
@@ -316,7 +357,8 @@ class VersionRange:
     :class:`~packaging.specifiers.SpecifierSet`.
 
     Construct via :meth:`~packaging.specifiers.SpecifierSet.to_range`, or with
-    the :meth:`full`, :meth:`empty`, and :meth:`singleton` class methods.
+    the :meth:`full`, :meth:`empty`, :meth:`singleton`, and :meth:`from_bounds`
+    class methods.
     Compose with :meth:`intersection`, :meth:`union`, :meth:`complement`, and
     :meth:`difference` (or the ``&`` / ``|`` / ``~`` / ``-`` operators). Test
     membership with ``in`` or :meth:`contains`, filter an iterable with
@@ -407,7 +449,8 @@ class VersionRange:
         raise TypeError(
             "cannot create 'VersionRange' instances directly; use "
             "SpecifierSet.to_range(), VersionRange.full(), "
-            "VersionRange.empty(), or VersionRange.singleton() instead"
+            "VersionRange.empty(), VersionRange.singleton(), or "
+            "VersionRange.from_bounds() instead"
         )
 
     @classmethod
@@ -596,6 +639,73 @@ class VersionRange:
         # ``0.dev0`` singleton is ``(-inf, 0.dev0]`` in canonical form.
         return cls._build(
             _canonical_floor(((lower, upper),)),
+            prereleases_configured=prereleases,
+        )
+
+    @classmethod
+    def from_bounds(
+        cls,
+        lower: Version | str | None = None,
+        upper: Version | str | None = None,
+        *,
+        include_lower: bool = True,
+        include_upper: bool = True,
+        prereleases: bool | None = None,
+    ) -> VersionRange:
+        """Return the raw version-order interval from ``lower`` to ``upper``.
+
+        A single interval in the PEP 440 total order. The bounds are pure order
+        cuts, not specifier semantics: ``None`` on a side is unbounded there.
+        Both ends are inclusive by default, so ``from_bounds(v, v)`` is
+        :meth:`singleton`; pass ``include_lower=False`` or ``include_upper=False``
+        for a half-open interval.
+
+        >>> "2.0" in VersionRange.from_bounds("1.0", "2.0")
+        True
+        >>> "2.0" in VersionRange.from_bounds("1.0", "2.0", include_upper=False)
+        False
+        >>> VersionRange.from_bounds("1.5", "1.5") == VersionRange.singleton("1.5")
+        True
+
+        Membership is decided by the bounds alone, so pre-releases, post-releases,
+        and locals inside them are members even where the matching specifier
+        would exclude them:
+
+        >>> "1.0.post1" in VersionRange.from_bounds("1.0", "2.0", include_lower=False)
+        True
+        >>> "1.0.post1" in SpecifierSet(">1.0,<2.0").to_range()
+        False
+        >>> "2.0rc1" in VersionRange.from_bounds("1.0", "2.0")
+        True
+        >>> "2.0rc1" in SpecifierSet(">=1.0,<2.0").to_range()
+        False
+
+        An inverted pair, or an equal pair with either end exclusive, is the
+        empty range; an unbounded pair is the versions-only full range.
+
+        >>> VersionRange.from_bounds("2.0", "1.0").is_empty
+        True
+        >>> VersionRange.from_bounds() == VersionRange.full(admit_arbitrary=False)
+        True
+
+        :raises packaging.version.InvalidVersion: if ``lower`` or ``upper`` is a
+            string that does not parse as a PEP 440 version.
+        """
+        if lower is not None and not isinstance(lower, Version):
+            lower = Version(lower)
+        if upper is not None and not isinstance(upper, Version):
+            upper = Version(upper)
+
+        if lower is not None and upper is not None:
+            closed = include_lower and include_upper
+            if lower > upper or (lower == upper and not closed):
+                return cls.empty(prereleases=prereleases)
+
+        lower_bound = NEG_INF if lower is None else LowerBound(lower, include_lower)
+        upper_bound = POS_INF if upper is None else UpperBound(upper, include_upper)
+
+        return cls._build(
+            _canonical_floor(((lower_bound, upper_bound),)),
             prereleases_configured=prereleases,
         )
 
@@ -1077,6 +1187,75 @@ class VersionRange:
 
         if not found_final:
             yield from all_nonfinal
+
+    def snap_bounds(self, versions: Iterable[Version | str]) -> VersionRange:
+        """Snap each finite bound inward onto the given versions.
+
+        Returns a subset of self that agrees with self on membership of every
+        given version: each finite segment end moves inward onto the outermost
+        given version its segment contains, and a bound with no given version
+        to land on is unchanged, as are unbounded ends.
+
+        Solver arithmetic and set algebra leave bounds at versions nobody
+        released; snapping them onto real versions yields the range a human
+        would write, and the subset guarantee means the snapped range never
+        admits a version the original excluded, even if the given list was
+        stale.
+
+        ``versions`` may be any iterable of versions or version strings, in any
+        order; it is sorted internally. ``snap_bounds([])`` returns an equal
+        range.
+
+        >>> r = SpecifierSet(">=1.0,<2.0").to_range()
+        >>> r.snap_bounds(["1.2", "1.5", "1.8"])
+        <VersionRange '[1.2, 1.8]'>
+        >>> SpecifierSet(">=1.0").to_range().snap_bounds(["1.2", "1.5"])
+        <VersionRange '[1.2, +inf)'>
+        >>> r.snap_bounds([]) == r
+        True
+
+        A version-order gap round-trips to the singleton it surrounds:
+
+        >>> versions = [Version("1.0"), Version("2.0"), Version("3.0")]
+        >>> gap = VersionRange.from_bounds(
+        ...     "1.0", "3.0", include_lower=False, include_upper=False
+        ... )
+        >>> gap.snap_bounds(versions) == VersionRange.singleton("2.0")
+        True
+
+        :raises packaging.version.InvalidVersion: if a string does not parse as a
+            PEP 440 version.
+        """
+        anchors = sorted(v if isinstance(v, Version) else Version(v) for v in versions)
+        if not self._bounds:
+            return self
+
+        simplified: list[Interval] = []
+        for lower, upper in self._bounds:
+            first_inside, first_above = _partition_indexes(anchors, lower, upper)
+            if first_inside >= first_above:
+                simplified.append((lower, upper))
+                continue
+            new_lower = (
+                lower
+                if lower.version is None
+                else LowerBound(anchors[first_inside], True)
+            )
+            new_upper = (
+                upper
+                if upper.version is None
+                else UpperBound(anchors[first_above - 1], True)
+            )
+            simplified.append((new_lower, new_upper))
+
+        return self._build(
+            _canonical_floor(tuple(simplified)),
+            admit=self._admit,
+            reject=self._reject,
+            admit_arbitrary=self._admit_arbitrary,
+            pre_region=self._pre_region,
+            prereleases_configured=self._prereleases_configured,
+        )
 
     @classmethod
     def _from_specifier_set(cls, specifier_set: SpecifierSet) -> VersionRange:

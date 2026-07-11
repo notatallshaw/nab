@@ -7,6 +7,7 @@ types.  Uses a thread pool with a shared HTTP session to overlap I/O.
 
 from __future__ import annotations
 
+import bisect
 import enum
 import logging
 import re
@@ -620,8 +621,13 @@ class Provider:
         self.versions_only_cache: dict[str, list[Version]] = {}
         self.wheel_by_version_cache: dict[str, dict[Version, DistFile]] = {}
 
-        self.solution_ranges: dict[str, RangeProtocol[Version]] = {}
-        self.solution_decisions: dict[str, Version] = {}
+        # Widening state: the ascending versions_only view per normalized
+        # name, and the widened parent range per decided (name, version).
+        self._ascending_versions_cache: dict[str, list[Version]] = {}
+        self._widened_ranges: dict[tuple[str, Version], VersionRange] = {}
+
+        self.solution_ranges: Mapping[str, RangeProtocol[Version]] = {}
+        self.solution_decisions: Mapping[str, Version] = {}
         self.pending_clauses: list[Incompatibility[str, Version]] = []
         self.pending_blocks: defaultdict[tuple[str, str, Version], list[Version]] = (
             defaultdict(list)
@@ -1519,8 +1525,8 @@ class Provider:
 
     def receive_partial_solution_hint(
         self,
-        positive_ranges: dict[str, RangeProtocol[Version]],
-        decisions: dict[str, Version],
+        positive_ranges: Mapping[str, RangeProtocol[Version]],
+        decisions: Mapping[str, Version],
     ) -> None:
         """Accept a snapshot of the resolver's positive-range assignments.
 
@@ -1563,6 +1569,82 @@ class Provider:
         targets = self._force_backtrack_targets
         self._force_backtrack_targets = []
         return targets
+
+    def _ascending_versions(
+        self,
+        normalized: str,
+        version_list: list[tuple[Version, DistFile]],
+    ) -> list[Version]:
+        """Return the widening universe for ``normalized``: ascending, cached.
+
+        The reversed ``versions_only`` view of the post-filter listing, so
+        pre-release, dev, post, and local versions all fence widening.
+        Yanked files are dropped at nab-index parse time and can never be
+        selected; if that ever moves into a provider-level filter, this
+        universe must be sourced below it, or widened ranges would span
+        selectable yanked versions.
+        """
+        cached = self._ascending_versions_cache.get(normalized)
+        if cached is None:
+            cached = list(reversed(self.versions_only(normalized, version_list)))
+            self._ascending_versions_cache[normalized] = cached
+        return cached
+
+    def widen_decision(self, package: str, version: Version) -> VersionRange | None:
+        """Return the widened parent range for a decided ``version``, or None.
+
+        The widened range spans the open gap between ``version``'s listed
+        neighbors, so it contains no other selectable version (see
+        ``ResolverProvider.widen_decision`` for the contract).  Extras
+        proxies share the base package's universe.  Local, VCS, and archive
+        sources (synthesized single-version listings) and packages whose
+        listing is not cached are not widened.
+        """
+        _, _, normalized = self.split_and_normalize(package)
+        if (
+            normalized in self.local_sources
+            or normalized in self.vcs_sources
+            or normalized in self.archive_sources
+        ):
+            return None
+        version_list = self.versions_cache.get(normalized)
+        if version_list is None:
+            return None
+
+        key = (normalized, version)
+        widened = self._widened_ranges.get(key)
+        if widened is None:
+            universe = self._ascending_versions(normalized, version_list)
+            below = bisect.bisect_left(universe, version)
+            above = bisect.bisect_right(universe, version)
+            prev = universe[below - 1] if below else None
+            nxt = universe[above] if above < len(universe) else None
+
+            widened = VersionRange.from_bounds(
+                prev, nxt, include_lower=False, include_upper=False
+            )
+            self._widened_ranges[key] = widened
+        return widened
+
+    def narrow_for_display(
+        self, package: object, constraint: RangeProtocol[Version]
+    ) -> RangeProtocol[Version]:
+        """Map a possibly-widened ``constraint`` back onto listed versions.
+
+        Render-time only and cache-only: the ROOT sentinel (a non-str
+        package) and packages whose listing is not cached return
+        ``constraint`` unchanged, and nothing is ever fetched.
+        """
+        if not isinstance(package, str):
+            return constraint
+        _, _, normalized = self.split_and_normalize(package)
+        version_list = self.versions_cache.get(normalized)
+        if version_list is None:
+            return constraint
+        assert isinstance(constraint, VersionRange)
+        return constraint.snap_bounds(
+            self._ascending_versions(normalized, version_list)
+        )
 
     def get_dependencies(
         self, package: str, version: Version

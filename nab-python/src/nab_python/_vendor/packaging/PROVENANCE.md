@@ -11,7 +11,12 @@ plus at most one checked-in patch, and nothing else.
   to.
 - `tasks/vendoring/packaging.patch`, when present, is the only divergence from
   pristine; the rebuild reapplies it after refreshing. With no patch file the
-  tree is byte-identical to upstream at the pin.
+  tree is byte-identical to upstream at the pin. The current patch adds
+  `VersionRange.from_bounds` and `VersionRange.snap_bounds` to `ranges.py`,
+  generated from the `range-from-bounds` branch of the packaging fork
+  (`git diff upstream/main..range-from-bounds -- src/packaging/ranges.py`,
+  paths rewritten to this directory). An upstream PR is planned; until it
+  lands the patch carries the two methods.
 - `tasks/vendor-packaging.sh` fetches `pypa/packaging` at the pin, replaces this
   package with the pristine `src/packaging/` tree plus the repo-root license
   texts, and reapplies the patch. `--check` rebuilds into a temp location and

@@ -71,6 +71,16 @@ class _TrackingProvider:
         """No force-backtrack signal from this test provider."""
         return []
 
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        return constraint
+
 
 class _PromotingProvider:
     """Provider that promotes packages with 3+ conflicts."""
@@ -130,6 +140,16 @@ class _PromotingProvider:
         """No force-backtrack signal from this test provider."""
         return []
 
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        """No widening: dependency clauses keep the exact decided version."""
+        return None
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        """Identity: constraints render as stored."""
+        return constraint
+
 
 class TestConflictCountsReachProvider:
     def test_provider_receives_conflict_counts(self) -> None:
@@ -183,4 +203,6 @@ class TestPromotingProvider:
         except ResolutionError:
             pass
         assert resolver.stats.conflicts > 0
-        assert resolver.stats.package_conflict_counts.get("D", 0) > 0
+        # The credit lands on the depending package whose clause pinned D
+        # (conflict_credit_target), not on D itself.
+        assert resolver.stats.package_conflict_counts.get("E", 0) > 0
