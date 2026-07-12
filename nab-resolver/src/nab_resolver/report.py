@@ -97,8 +97,13 @@ def _render_line(
         and len(terms) == _ATTRIBUTION_CLAUSE_TERMS
     ):
         parent, dep = terms
-        positive_dep = dep if dep.is_positive() else dep.negate()
-        return f"because {format_term(parent)} depends on {format_term(positive_dep)}"
+        # A negative dep term holds the parent's required range (negate to
+        # show it); a positive dep term holds a version the parent forbids.
+        if dep.is_positive():
+            return (
+                f"because {format_term(parent)} is incompatible with {format_term(dep)}"
+            )
+        return f"because {format_term(parent)} depends on {format_term(dep.negate())}"
 
     if cause is IncompatibilityCause.ROOT and len(terms) == _ATTRIBUTION_CLAUSE_TERMS:
         _, dep = terms
