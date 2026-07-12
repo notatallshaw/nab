@@ -1797,6 +1797,23 @@ class TestErrorMessages:
         message = format_error(clause)
         assert message == "because foo 2 depends on bar [3, +inf)"
 
+    def test_positive_dependency_term_reads_as_incompatible(self) -> None:
+        """A both-positive DEPENDENCY clause reads as an incompatibility.
+
+        The look-ahead flush groups rejected candidates into
+        ``{candidate in {v}, blocker == w}`` with the blocker term positive,
+        so it holds the version the candidate forbids, not a required range.
+        It must not claim the candidate depends on that version.
+        """
+        candidate = Term("app", Range.singleton(3), positive=True)
+        blocker = Term("lib", Range.singleton(9), positive=True)
+        clause = Incompatibility(
+            [candidate, blocker], cause=IncompatibilityCause.DEPENDENCY
+        )
+        message = format_error(clause)
+        assert message == "because app 3 is incompatible with lib 9"
+        assert "depends on" not in message
+
     def test_root_clause_attributes_to_the_project(self) -> None:
         """A ROOT clause reads as a project dependency and ignores the root term."""
         root = Term("root", Range.singleton(0), positive=True)

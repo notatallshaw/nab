@@ -2414,6 +2414,64 @@ class TestDecisionLookAhead:
         terms = clauses[0].terms
         assert {t.package for t in terms} == {"foo", "bar"}
 
+    def test_full_resolve_reports_lookahead_clause_as_incompatible(self) -> None:
+        """The look-ahead grouped clause renders as an incompatibility.
+
+        Root needs foo and app; foo 1.0 requires lib==9.0 while app 3.0
+        requires lib==5.0.  The resolve fails, and the grouped clause that
+        rejects app against the decided lib==9.0 carries the blocker term
+        positive.  It must render as app being incompatible with lib 9.0, not
+        as app depending on it; app's real dependency is lib 5.0.
+        """
+
+        def named_wheel(pkg: str, version: str) -> WheelFile:
+            return WheelFile(
+                filename=f"{pkg}-{version}-py3-none-any.whl",
+                url=f"https://example.com/{pkg}-{version}.whl",
+                version=version,
+                requires_python=None,
+                has_metadata=True,
+                upload_time=None,
+                local_path=None,
+            )
+
+        def meta(name: str, version: str, *reqs: str) -> str:
+            lines = ["Metadata-Version: 2.1", f"Name: {name}", f"Version: {version}"]
+            lines += [f"Requires-Dist: {r}" for r in reqs]
+            return "\n".join(lines) + "\n"
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": [named_wheel("foo", "1.0")],
+                "app": [named_wheel("app", "3.0")],
+                "lib": [named_wheel("lib", "5.0"), named_wheel("lib", "9.0")],
+            },
+            metadata_by_version={
+                "1.0": meta("foo", "1.0", "lib==9.0"),
+                "3.0": meta("app", "3.0", "lib==5.0"),
+                "5.0": meta("lib", "5.0"),
+                "9.0": meta("lib", "9.0"),
+            },
+        )
+        root_reqs = {
+            "foo": VersionRange.full(admit_arbitrary=False),
+            "app": VersionRange.full(admit_arbitrary=False),
+        }
+        provider = Provider(
+            coordinator, python_version="3.12.0", root_requirements=root_reqs
+        )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(dict(root_reqs))
+
+        lines = str(exc_info.value).splitlines()
+        assert not [
+            ln for ln in lines if "app" in ln and "lib" in ln and "depends on" in ln
+        ]
+        assert any(
+            "app" in ln and "lib" in ln and "incompatible with" in ln for ln in lines
+        )
+
 
 class TestLookAheadAbort:
     """Look-ahead abort path: when the scan rejects ``_LOOKAHEAD_ABORT_THRESHOLD``
