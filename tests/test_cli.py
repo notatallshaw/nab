@@ -2423,6 +2423,44 @@ class TestLockedFlag:
         assert "Cannot lock" in capsys.readouterr().err
         assert out.read_bytes() == before
 
+    def test_malformed_committed_lock_exits_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A committed pylock that is not valid TOML exits with a message,
+        # not a raw TOMLDecodeError.
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        self._write_lock(
+            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+        )
+        capsys.readouterr()
+        out.write_text('lock-version = "1.0"\n<<<<<<< HEAD\n', encoding="utf-8")
+        with pytest.raises(SystemExit) as exc:
+            self._run_locked(
+                pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+            )
+        assert exc.value.code == 1
+        assert "is not valid TOML" in capsys.readouterr().err
+
+    def test_non_utf8_committed_lock_exits_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A committed pylock that is not valid UTF-8 exits the same way,
+        # not a raw UnicodeDecodeError.
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        self._write_lock(
+            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+        )
+        capsys.readouterr()
+        out.write_bytes(b"\xff\xfe not utf-8")
+        with pytest.raises(SystemExit) as exc:
+            self._run_locked(
+                pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+            )
+        assert exc.value.code == 1
+        assert "is not valid TOML" in capsys.readouterr().err
+
     def test_requirements_format_unsupported(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

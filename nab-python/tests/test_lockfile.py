@@ -1381,6 +1381,11 @@ class TestReadLockfileAnchor:
         path.write_text("this is not [[[ valid TOML")
         assert read_lockfile_anchor(path) is None
 
+    def test_returns_none_when_not_utf8(self, tmp_path: Path) -> None:
+        path = tmp_path / "pylock.toml"
+        path.write_bytes(b"\xff\xfe not utf-8")
+        assert read_lockfile_anchor(path) is None
+
     def test_returns_none_when_no_tool_nab(self, tmp_path: Path) -> None:
         path = tmp_path / "pylock.toml"
         path.write_text('lock-version = "1.0"\n')
@@ -1451,6 +1456,11 @@ class TestReadLockfilePackages:
     def test_returns_none_when_toml_invalid(self, tmp_path: Path) -> None:
         path = tmp_path / "pylock.toml"
         path.write_text("this is not [[[ valid TOML")
+        assert read_lockfile_packages(path) is None
+
+    def test_returns_none_when_not_utf8(self, tmp_path: Path) -> None:
+        path = tmp_path / "pylock.toml"
+        path.write_bytes(b"\xff\xfe not utf-8")
         assert read_lockfile_packages(path) is None
 
     def test_returns_none_when_not_a_pylock(self, tmp_path: Path) -> None:
