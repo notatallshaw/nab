@@ -1,8 +1,10 @@
 # Configuration
 
-All project shape lives in `[tool.nab]` inside the project's
-`pyproject.toml`.  The CLI is intentionally narrow: it carries only
-runtime knobs (cache directory, offline mode, HTTP backend).
+The keys that decide what nab resolves live in `[tool.nab]` inside the
+project's `pyproject.toml`, or in a project-directory `nab.toml` that
+sets the same keys.  The CLI carries runtime knobs (cache directory,
+offline mode, HTTP backend), and can also override a project key for a
+single run with a `--project-<key>` flag.
 
 ## Top-level keys
 
@@ -539,7 +541,7 @@ If both are present, the matrix `python` wins under universal mode
 and `requires-python` wins under specific mode.  Pick one shape
 based on whether you want one lock or many.
 
-## CLI flags (runtime only)
+## CLI flags
 
 ```
 nab lock [PATH]
@@ -563,8 +565,9 @@ the resolved set, so it prints a notice and is recorded in the lockfile.
 `dist-policy` value and resets `trust-unverified-deps`; set the table form
 in a file to keep that flag.
 
-Anything that defines *what* gets resolved goes in `[tool.nab]`; the
-CLI only carries knobs about *how this run executes*.
+The CLI carries knobs about *how this run executes*; the one exception
+is a `--project-*` flag, which overrides a *what-gets-resolved* key for
+the single run.
 
 ## Layered configuration sources
 
