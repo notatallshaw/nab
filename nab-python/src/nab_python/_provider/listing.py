@@ -274,7 +274,7 @@ def filter_distributions(
     chosen version.  The wheels are dropped later, at lock
     construction time, so only the sdist ends up pinned.
     """
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from ..provider import DistPolicy
 
     index_name = provider.serving_index(normalized)
@@ -362,7 +362,7 @@ def _excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
     other policies admit both kinds here (``SDIST_INSTALL`` keeps wheels
     as a metadata source and prunes them at lock-construction time).
     """
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from ..provider import DistPolicy
 
     if policy == DistPolicy.WHEEL_ONLY:

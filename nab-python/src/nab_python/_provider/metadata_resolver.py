@@ -181,7 +181,7 @@ def resolve_dynamic_sdist(
     :func:`nab_python._provider.lookahead.look_ahead_ok` and surfaces the
     accumulated reasons if no candidate ultimately works.
     """
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from ..provider import BuildPolicy, UnsupportedSdistError
     from .build_remote import build_remote_sdist
 
@@ -450,7 +450,7 @@ def cache_deps_from_metadata(
     :meth:`nab_python.provider.Provider.get_dependencies` (which hands in a
     bare :class:`WheelMetadata` for a complete ``dependencies`` override).
     """
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from ..provider import _normalize_extra
 
     package, version = cache_key
@@ -554,7 +554,7 @@ def add_classified_dep(
     A name appearing on several ``Requires-Dist`` lines is intersected
     into one range.
     """
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from ..provider import join_extra
 
     name = canonicalize_name(req.name)

@@ -101,7 +101,7 @@ def _pick_in_mode(
     the proxy always needs the base metadata. BACKTRACK mode additionally
     checks ``Provides-Extra`` for transitive extras.
     """
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from ..provider import ExtrasMode, MetadataError, _normalize_extra
 
     _, _, normalized = provider.split_and_normalize(base)
@@ -176,7 +176,7 @@ def _record_base_range_blocks(
     tighter (a singleton blocker) than recording against the range.
     """
     # Late import: ``lookahead`` shares state with this module
-    # through ``pypi`` and importing it at module load creates a cycle.
+    # through ``provider`` and importing it at module load creates a cycle.
     from .lookahead import flush_pending_blocks
 
     base_decision = provider.solution_decisions.get(base_normalized)
@@ -200,7 +200,7 @@ def get_extra_dependencies(
     version: Version,
 ) -> dict[str, VersionRange]:
     """Get dependencies for an extras proxy package."""
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from ..provider import MetadataError, join_extra
 
     _, _, normalized = provider.split_and_normalize(base)
@@ -254,7 +254,7 @@ def handle_missing_extra(
     only the base dep (BACKTRACK skips these versions in
     choose_version before we get here).
     """
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from ..provider import ExtrasMode, MissingExtraError
 
     is_user = (normalized, extra) in provider.root_extras
