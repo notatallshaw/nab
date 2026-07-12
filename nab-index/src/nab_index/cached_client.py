@@ -18,6 +18,7 @@ from .cache import CacheBackend, CachePolicy, OfflineError
 from .client import (
     _HTTP_NOT_FOUND,
     DEFAULT_INDEX,
+    MalformedSimpleResponseError,
     SdistFile,
     WheelFile,
     _extract_sdist_files,
@@ -127,10 +128,11 @@ class CachedAsyncSimpleClient:
         return await self._fetch_simple(package)
 
     def _parse_listing(self, body: bytes, package: str) -> list[WheelFile | SdistFile]:
-        """Parse a Simple-API listing body, raising :class:`TypeError` on non-JSON.
+        """Parse a Simple-API listing body.
 
-        A non-JSON body raises the same :class:`TypeError` as a valid-JSON body
-        of the wrong shape, not a raw :class:`json.JSONDecodeError`.
+        A non-JSON body raises the same
+        :class:`MalformedSimpleResponseError` as a valid-JSON body of the
+        wrong shape, not a raw :class:`json.JSONDecodeError`.
         """
         try:
             data = json.loads(body)
@@ -139,7 +141,7 @@ class CachedAsyncSimpleClient:
                 f"{self._index_url} served a malformed Simple-API response for "
                 f"{package!r}: body is not valid JSON"
             )
-            raise TypeError(msg) from exc
+            raise MalformedSimpleResponseError(msg) from exc
         return _parse_files(data, self._index_url, package)
 
     async def _revalidate_simple(

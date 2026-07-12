@@ -22,6 +22,7 @@ from nab_index.cached_client import (
     _parse_max_age,
 )
 from nab_index.client import (
+    MalformedSimpleResponseError,
     MetadataHashMismatchError,
     SdistFile,
     SdistHashMismatchError,
@@ -974,7 +975,7 @@ class TestNonJsonListingBody:
             finally:
                 await client.aclose()
 
-        with pytest.raises(TypeError, match="malformed Simple-API"):
+        with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
             asyncio.run(go())
         assert cache.get_simple("foo") is None
 
@@ -989,7 +990,7 @@ class TestNonJsonListingBody:
             finally:
                 await client.aclose()
 
-        with pytest.raises(TypeError, match="malformed Simple-API"):
+        with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
             asyncio.run(cold())
         assert len(online.calls) == 1
 
@@ -1024,7 +1025,7 @@ class TestNonJsonListingBody:
             finally:
                 await client.aclose()
 
-        with pytest.raises(TypeError, match="malformed Simple-API"):
+        with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
             asyncio.run(go())
         cached = cache.get_simple("pkg")
         assert cached is not None

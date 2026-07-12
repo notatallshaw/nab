@@ -24,6 +24,8 @@ from packaging.utils import (
 )
 from packaging.version import InvalidVersion, Version
 
+from .transport import HttpError
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_INDEX",
     "AsyncSimpleClient",
+    "MalformedSimpleResponseError",
     "MetadataHashMismatchError",
     "SdistFile",
     "SdistHashMismatchError",
@@ -49,6 +52,14 @@ _ACCEPTED_HASH_ALGORITHMS = ("sha256", "sha384", "sha512")
 # 3.10.12 / 3.11.4; sdist extraction requires it (see extract_sdist_archive).
 # data_filter appears with the same change, so its presence detects support.
 _SUPPORTS_DATA_FILTER = hasattr(tarfile, "data_filter")
+
+
+class MalformedSimpleResponseError(HttpError):
+    """The index served a 200 response that is not a usable Simple-API listing.
+
+    Subclasses :class:`HttpError` so a broken listing is caught alongside
+    transport and 4xx/5xx failures.
+    """
 
 
 class MetadataHashMismatchError(Exception):
@@ -284,10 +295,10 @@ def _parse_files(
     / ``url``) is skipped so the usable entries in the same listing are
     kept.  A malformed *body* (not a JSON object, or a ``files`` value
     that is not a list) is a broken response, not an empty one, so it
-    raises :class:`TypeError` rather than returning no files: an empty
-    result means "package absent" to the multi-index router, which would
-    otherwise fall through to a lower-priority index and risk pinning a
-    different version.
+    raises :class:`MalformedSimpleResponseError` rather than returning no
+    files: an empty result means "package absent" to the multi-index router,
+    which would otherwise fall through to a lower-priority index and risk
+    pinning a different version.
     """
     expected = canonicalize_name(package)
     # PEP 691: relative URLs resolve against the package page, not the index root.
@@ -298,14 +309,14 @@ def _parse_files(
             f"{index_url} served a malformed Simple-API response for "
             f"{package!r}: body is {type(data).__name__}, expected a JSON object"
         )
-        raise TypeError(msg)
+        raise MalformedSimpleResponseError(msg)
     raw_files = data.get("files")
     if not isinstance(raw_files, list):
         msg = (
             f"{index_url} served a malformed Simple-API response for "
             f"{package!r}: 'files' is {type(raw_files).__name__}, expected a list"
         )
-        raise TypeError(msg)
+        raise MalformedSimpleResponseError(msg)
     for file_info in raw_files:
         if not isinstance(file_info, dict):
             continue
