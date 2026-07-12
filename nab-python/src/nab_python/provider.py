@@ -636,6 +636,13 @@ class Provider:
             tuple[str, str, RangeProtocol[Version]], list[Version]
         ] = defaultdict(list)
 
+        # Diagnostic-only: the dep range each rejected candidate declared for the
+        # blocker, unioned per group, read only by the no-versions message. The
+        # flushed clause uses the blocker's positive range, not this.
+        self.pending_range_dep_ranges: defaultdict[
+            tuple[str, str, RangeProtocol[Version]], RangeProtocol[Version]
+        ] = defaultdict(VersionRange.empty)
+
         # Diagnostic-only: root_requirements feed PubGrub directly, so these
         # blockers never need flushing as incompatibilities; they exist purely
         # so the failure message can name the excluding root requirement.
@@ -1462,12 +1469,13 @@ class Provider:
                 continue
             out.append(f"requires {blocker_pkg} != {blocker_version}")
 
-        for cand, blocker_pkg, blocker_range in self.pending_range_blocks:
+        for cand, blocker_pkg, pos_range in self.pending_range_blocks:
             if cand != normalized:
                 continue
+            dep_range = self.pending_range_dep_ranges[(cand, blocker_pkg, pos_range)]
             out.append(
-                f"requires {blocker_pkg} in {blocker_range}"
-                " (disjoint with current solution range)"
+                f"requires {blocker_pkg} in {dep_range}"
+                f" but solution has it in {pos_range}"
             )
 
         for (

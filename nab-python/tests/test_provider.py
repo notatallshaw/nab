@@ -1008,12 +1008,18 @@ class TestNoVersionsReasons:
             python_version="3.12.0",
             root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
         )
-        provider.solution_ranges["bar"] = SpecifierSet("<2.0").to_range()
+        pos_range = SpecifierSet("<2.0").to_range()
+        dep_range = SpecifierSet("==2.0").to_range()
+        provider.solution_ranges["bar"] = pos_range
         result = provider.choose_version("foo", VersionRange.full())
         assert result is None
         reason = provider.get_no_versions_reason("foo")
         assert reason is not None
-        assert "bar" in reason
+        # foo requires bar==2.0; the message must name that, not the solution range.
+        assert (
+            f"requires bar in {dep_range} but solution has it in {pos_range}" in reason
+        )
+        assert "disjoint with current solution range" not in reason
 
 
 class TestGetDependencies:
