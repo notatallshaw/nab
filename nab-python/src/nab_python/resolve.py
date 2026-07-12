@@ -712,7 +712,7 @@ def _build_resolver_inputs(
         )
         resolver_requirements[name] = previous & term
         sources[name].append(str(req))
-        for extra in req.extras:
+        for extra in sorted(req.extras):
             extra_key = join_extra(name, extra)
             resolver_requirements[extra_key] = VersionRange.full(admit_arbitrary=False)
             _, normalized_extra = split_extra(extra_key)

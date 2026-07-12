@@ -607,7 +607,7 @@ def _parse_requirements(
         )
         out[name] = out.get(name, VersionRange.full()) & term
         sources[name].append(req_str)
-        for extra in req.extras:
+        for extra in sorted(req.extras):
             out[join_extra(name, extra)] = VersionRange.full(admit_arbitrary=False)
     raise_for_unsatisfiable(out, sources, kind=kind)
     return out

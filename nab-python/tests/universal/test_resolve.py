@@ -686,6 +686,28 @@ class TestParseRequirements:
         assert "pkg[foo]" in out
         assert "pkg[bar]" in out
 
+    def test_multi_extra_proxy_keys_sorted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Extra proxy keys are inserted in sorted order.
+
+        ``Requirement.extras`` is a set with PYTHONHASHSEED-dependent order, and
+        the insertion order of the proxy keys becomes the resolver's root
+        package order. A reversed extras order must still give the sorted keys.
+        """
+        env = _linux_311().environment
+        real_requirement = resolve_mod.Requirement
+
+        def reversed_extras(req_str: str) -> object:
+            req = real_requirement(req_str)
+            monkeypatch.setattr(req, "extras", sorted(req.extras, reverse=True))
+            return req
+
+        monkeypatch.setattr(resolve_mod, "Requirement", reversed_extras)
+        out = _parse_requirements(["pkg[a,b,c]"], env)
+        proxy_keys = [k for k in out if k.startswith("pkg[")]
+        assert proxy_keys == ["pkg[a]", "pkg[b]", "pkg[c]"]
+
     def test_no_specifier_yields_any(self) -> None:
         """An unconstrained requirement gets the any() range."""
         env = _linux_311().environment

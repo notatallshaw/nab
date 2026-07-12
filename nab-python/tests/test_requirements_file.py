@@ -405,12 +405,33 @@ class TestExpandSelfExtras:
             "a": ["depA"],
             "b": ["depB"],
         }
-        # ``Requirement.extras`` is a set: order between siblings is
-        # not guaranteed.  Originally-selected extras appear before
-        # transitively-discovered ones.
-        result = expand_self_extras(opt, "mypkg", ["all"])
-        assert result[0] == "all"
-        assert sorted(result[1:]) == ["a", "b"]
+        # Selected extras stay in front; self-ref siblings follow in sorted order.
+        assert expand_self_extras(opt, "mypkg", ["all"]) == ["all", "a", "b"]
+
+    def test_self_reference_siblings_walked_in_sorted_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sibling extras enter the worklist in sorted order.
+
+        ``Requirement.extras`` is a set with PYTHONHASHSEED-dependent order, and
+        the order siblings enter the worklist decides their
+        ``root_package_order`` tiebreak. A reversed extras order must still give
+        the sorted result.
+        """
+        opt = {
+            "all": ["mypkg[a, b, c]"],
+            "a": ["depA"],
+            "b": ["depB"],
+            "c": ["depC"],
+        }
+
+        def reversed_extras(req_str: str) -> Requirement:
+            req = Requirement(req_str)
+            monkeypatch.setattr(req, "extras", sorted(req.extras, reverse=True))
+            return req
+
+        monkeypatch.setattr("nab_python.requirements_file.Requirement", reversed_extras)
+        assert expand_self_extras(opt, "mypkg", ["all"]) == ["all", "a", "b", "c"]
 
     def test_canonical_match_collapses_underscore_dot_hyphen(self) -> None:
         """PEP 503 canonicalisation makes ``my_pkg``/``My.Pkg``/``mypkg`` all match."""
@@ -554,6 +575,32 @@ class TestExpandExtraRequirements:
         out = expand_extra_requirements(opt, "mypkg", ["all"])
         dep = next(r for r in out if r.name == "some-dep")
         assert dep.marker is None
+
+    def test_self_ref_siblings_flattened_in_sorted_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Self-ref siblings feed the flattened requirements in sorted order.
+
+        ``Requirement.extras`` is a set with PYTHONHASHSEED-dependent order, and
+        on the universal path the order ``_self_ref_edges`` walks siblings
+        becomes the resolver's root package order. A reversed extras order must
+        still give the sorted result.
+        """
+        opt = {
+            "all": ["mypkg[a, b, c]"],
+            "a": ["depA"],
+            "b": ["depB"],
+            "c": ["depC"],
+        }
+
+        def reversed_extras(req_str: str) -> Requirement:
+            req = Requirement(req_str)
+            monkeypatch.setattr(req, "extras", sorted(req.extras, reverse=True))
+            return req
+
+        monkeypatch.setattr("nab_python.requirements_file.Requirement", reversed_extras)
+        out = expand_extra_requirements(opt, "mypkg", ["all"])
+        assert [r.name for r in out] == ["depA", "depB", "depC"]
 
     def test_self_reference_not_emitted_as_requirement(self) -> None:
         """The self-reference activates its extra but never lands as a
