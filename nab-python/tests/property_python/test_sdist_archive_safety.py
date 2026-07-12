@@ -119,6 +119,30 @@ def test_extract_sdist_files_never_raises_on_garbage(blob: bytes) -> None:
     assert _extract_sdist_files(blob) == (None, None)
 
 
+_PKG_INFO = "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n"
+
+
+@st.composite
+def truncated_archives(draw: st.DrawFn) -> bytes:
+    """A well-formed sdist cut short, as a half-finished download leaves it.
+
+    Random bytes never form a gzip header, so only a real archive with its
+    tail removed exercises the partly-decodable stream.
+    """
+    archive = make_targz([("pkg-1.0/PKG-INFO", _PKG_INFO.encode())])
+    cut = draw(st.integers(min_value=1, max_value=len(archive) - 1))
+    return archive[:cut]
+
+
+@given(blob=truncated_archives())
+@PROPERTY_SETTINGS
+def test_extract_sdist_files_never_raises_on_truncated_archive(blob: bytes) -> None:
+    """A truncated archive yields whole metadata or none, never an exception."""
+    pkg_info, pyproject = _extract_sdist_files(blob)
+    assert pkg_info in (None, _PKG_INFO)
+    assert pyproject is None
+
+
 hostile_names = st.sampled_from(
     [
         "../evil.txt",

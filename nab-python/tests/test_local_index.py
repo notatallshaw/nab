@@ -234,6 +234,20 @@ class TestFlatWheelhouse:
         assert len(files) == 1
         assert files[0].requires_python is None
 
+    def test_sdist_requires_python_none_for_truncated_archive(
+        self, tmp_path: Path
+    ) -> None:
+        # A half-downloaded sdist: gzip header, deflate stream cut short. It
+        # cannot be read, so the version lists with no Requires-Python bound.
+        path = tmp_path / "foo-1.0.tar.gz"
+        _write_sdist(path, "foo", "1.0", ">=3.12")
+        whole = path.read_bytes()
+        path.write_bytes(whole[: len(whole) // 2])
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
     def test_foreign_sdist_metadata_not_read(self, tmp_path: Path) -> None:
         # A sibling package's sdist Requires-Python must not leak onto foo.
         _write_sdist(tmp_path / "foo-1.0.tar.gz", "foo", "1.0", ">=3.8")
