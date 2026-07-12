@@ -59,6 +59,12 @@ CI and Read the Docs install from that lock, so a published build resolves
 nothing. After changing the group, re-run the refresh script and commit the
 lock.
 
+Unlike the other groups, that lock is a single resolution for Python 3.13,
+the one version Read the Docs and the CI docs job build with. nab runs on
+3.10 and newer, but the docs build is only supported on 3.13: locking the
+toolchain across the whole range would hold it to whatever still supports
+the floor.
+
 ## Coverage policy
 
 The `pyproject.toml` `[tool.coverage.report] fail_under = 100`

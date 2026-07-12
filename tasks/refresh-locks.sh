@@ -18,12 +18,23 @@ fi
 
 EXTRA_ARGS=("$@")
 
+# Only one interpreter ever builds the docs: Read the Docs and the CI docs job
+# both pin 3.13. Locking that group across the project's universal matrix would
+# hold the toolchain to whatever still supports the 3.10 floor, so it gets a
+# single resolution for the version that actually builds it.
+DOCS_PYTHON="==3.13.*"
+
 for group in tests types pre-commit crosshair release docs; do
     echo "==> Locking group: ${group}"
+    group_args=()
+    if [[ "${group}" == "docs" ]]; then
+        group_args=(--project-mode specific --project-requires-python "${DOCS_PYTHON}")
+    fi
     "${NAB[@]}" lock \
         --groups "${group}" \
         --no-emit-workspace \
         --output ".github/requirements/pylock.${group}.toml" \
+        "${group_args[@]}" \
         "${EXTRA_ARGS[@]}"
 done
 
