@@ -1,4 +1,4 @@
-# Multi-index routing
+# Lock with multiple indexes
 
 > [!WARNING]
 > Multi-index support is experimental. Cross-index attribution in
@@ -35,8 +35,9 @@ index = "torch-cpu"
 
 Routing lives on the per-package override, via the `index` body field,
 alongside the other per-package policies (see the
-[configuration guide](configuration.md)).  To route several packages to
-one index, list them in a `[[tool.nab.package-rules]]` entry instead:
+[configuration reference](../reference/configuration.md)).  To route
+several packages to one index, list them in a
+`[[tool.nab.package-rules]]` entry instead:
 
 ```toml
 [[tool.nab.package-rules]]

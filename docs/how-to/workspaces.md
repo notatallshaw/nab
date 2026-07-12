@@ -1,4 +1,4 @@
-# Workspaces
+# Lock a workspace
 
 > [!WARNING]
 > Workspace support is experimental. Discovery rules, member

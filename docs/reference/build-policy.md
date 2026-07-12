@@ -49,7 +49,7 @@ Adds PEP 517 backend invocation on local checkouts.  When a
 `[[tool.nab.local-sources]]` entry (or a workspace member) has
 `dynamic = ["dependencies"]`, the project's
 `[build-system].build-backend` runs inside an isolated venv via
-[`nab_python._build.runner`](../reference/build.md) and the
+`nab_python._build.runner` and the
 resulting wheel `METADATA` is used.  Remote PyPI sdists and VCS
 clones remain static-only.
 
@@ -94,7 +94,7 @@ build-policy = "build-remote"
 That keeps the rest of the graph in the hermetic default while
 permitting the one package you actually need to build.  When you
 know the package's dependencies, a `dependencies` metadata override
-(see the [configuration guide](configuration.md)) resolves it under
+(see the [configuration reference](configuration.md)) resolves it under
 `never` without building at all.
 
 ## Overrides

@@ -1,4 +1,4 @@
-# VCS dependencies
+# Add a VCS dependency
 
 nab resolves dependencies pulled from git URLs through
 `[tool.nab.vcs]` and `[[tool.nab.vcs-sources]]`.  Only git is
@@ -72,7 +72,7 @@ Reading static dependencies from the cloned tree works at any
 require `build-policy = "build-remote"` (a clone is considered
 "remote" for build purposes because the source bytes are
 network-fetched, even though they end up on disk before the
-backend runs).  See the [build policy](build-policy.md) page.
+backend runs).  See the [build policy](../reference/build-policy.md) page.
 
 ## `pkg @ git+...` at the project root
 

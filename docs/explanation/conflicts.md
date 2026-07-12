@@ -57,8 +57,8 @@ spelling here does not have to match the table key exactly.
 In a workspace, `conflicts` is scoped to the pyproject being locked.
 Declaring conflicts in the workspace root does not propagate to a
 `nab lock packages/<member>/pyproject.toml`; each member declares
-its own. See the [workspaces guide](workspaces.md) for the full list
-of keys that flow vs stay local.
+its own. See [Lock a workspace](../how-to/workspaces.md) for the full
+list of keys that flow vs stay local.
 
 ## Specific mode: fail fast
 

@@ -1,6 +1,6 @@
 # Getting started
 
-This guide walks through a first resolve with nab against PyPI.
+This tutorial walks through a first resolve with nab against PyPI.
 
 ## Install
 
@@ -9,8 +9,8 @@ uv tool install nab
 nab --version
 ```
 
-For other install paths (extras, pipx, dev check-out) see
-[installation](installation.md).
+For other install paths (extras, pipx, a checkout) see
+[Install nab](../how-to/install.md).
 
 ## A minimal `pyproject.toml`
 
@@ -48,14 +48,14 @@ typing_extensions==4.12.2
 
 The resolver pins one version per package for the host's marker
 environment. For multi-platform / multi-Python locks see
-[universal resolution](universal.md).
+[universal resolution](../explanation/universal.md).
 
 ## Where to next
 
-* [Configuration](configuration.md): every key under `[tool.nab]`,
-  what it does, and what the default is.
-* [CLI](cli.md): every subcommand, flag, exit code, and
+* [Configuration](../reference/configuration.md): every key under
+  `[tool.nab]`, what it does, and what the default is.
+* [CLI](../reference/cli.md): every subcommand, flag, exit code, and
   environment variable.
-* [Lockfile](lockfile.md): what is in `pylock.toml`, the
+* [Lockfile](../reference/lockfile.md): what is in `pylock.toml`, the
   `requirements.txt --hash` shape, and how `nab download` consumes
   them.

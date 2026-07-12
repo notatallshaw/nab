@@ -156,7 +156,7 @@ Both subcommands accept the same runtime knobs:
 | `--cache-dir PATH` | `~/.cache/nab` | Override the on-disk cache root. |
 | `--no-cache` | off | Disable cache for this run. Combine with `--offline` only if the cache already has every file. |
 | `--offline {True,False}` | unset | Use cache only, never hit the network. Layered: `--offline True` forces offline, `--offline False` forces network even over a lower `offline = true`. Bare `--offline` / `--no-offline` are shorthands for `True` / `False`. |
-| `--http-backend {urllib3,httpx}` | `urllib3` | Pick the async transport for fetches. Layered, so it can also be set in an `nab.toml` or `NAB_HTTP_BACKEND`. `httpx` needs its extra (see [installation](installation.md)). |
+| `--http-backend {urllib3,httpx}` | `urllib3` | Pick the async transport for fetches. Layered, so it can also be set in an `nab.toml` or `NAB_HTTP_BACKEND`. `httpx` needs its extra (see [Install nab](../how-to/install.md)). |
 
 `urllib3` is the only backend pulled in by the base install. The
 others surface a helpful `ImportError` if selected without the

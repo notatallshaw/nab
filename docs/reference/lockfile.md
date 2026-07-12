@@ -39,7 +39,7 @@ lockfiles. It is what `nab lock --format pylock` produces and
 what `nab download` consumes when handed a lockfile.
 
 A trimmed example, after resolving the
-[getting-started](getting-started.md) project:
+[getting-started](../tutorial/getting-started.md) project:
 
 ```toml
 lock-version = "1.0"
