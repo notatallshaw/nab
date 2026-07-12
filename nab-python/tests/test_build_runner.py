@@ -360,6 +360,23 @@ class TestRunBuildBackend:
         ):
             run_build_backend(tmp_path, config=config)
 
+    def test_build_system_table_rejected_wrapped(
+        self, tmp_path: Path, config: NabProjectConfig
+    ) -> None:
+        """build.BuildSystemTableValidationError from an invalid build-system table is wrapped as BuildBackendError."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[build-system]\nbuild-backend = "setuptools.build_meta"\n',
+            encoding="utf-8",
+        )
+        env = MagicMock()
+        env.__enter__ = MagicMock(return_value=env)
+        env.__exit__ = MagicMock(return_value=None)
+        with (
+            patch("nab_python._build.runner.NabBuildEnv", return_value=env),
+            pytest.raises(BuildBackendError, match="setuptools.build_meta"),
+        ):
+            run_build_backend(tmp_path, config=config)
+
 
 class TestShouldSkipPrepare:
     """Unit tests for the hatchling+dynamic-deps detection predicate."""

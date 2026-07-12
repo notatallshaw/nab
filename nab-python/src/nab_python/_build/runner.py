@@ -120,7 +120,11 @@ def run_build_backend(
                 else:
                     metadata_dir = Path(project.metadata_path(output_dir))
                 return _parse_metadata(metadata_dir / "METADATA")
-    except build.BuildBackendException as exc:
+    except (
+        build.BuildException,
+        build.BuildBackendException,
+        build.FailedProcessError,
+    ) as exc:
         msg = f"build backend {backend!r} failed: {exc}"
         raise BuildBackendError(msg) from exc
     except (BuildEnvError, ResolutionError) as exc:
