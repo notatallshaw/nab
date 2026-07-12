@@ -29,6 +29,9 @@ __all__ = [
 
 _HTTP_BAD_REQUEST = 400
 
+# urllib3's default read timeout is None, so bound it against a stalled index.
+_DEFAULT_TIMEOUT_SECONDS = 5.0
+
 
 class _SSLContext(truststore.SSLContext):
     """truststore SSLContext that answers urllib3-future's cert probe.
@@ -97,10 +100,17 @@ class Urllib3AsyncTransport:
     within each thread.
     """
 
-    def __init__(self, *, num_pools: int = 10, maxsize: int = 50) -> None:
+    def __init__(
+        self,
+        *,
+        num_pools: int = 10,
+        maxsize: int = 50,
+        timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
         """Create a transport."""
         self._num_pools = num_pools
         self._maxsize = maxsize
+        self._timeout = timeout
         self._local = threading.local()
         self._pools: list[urllib3.PoolManager] = []
         self._pools_lock = threading.Lock()
@@ -120,7 +130,7 @@ class Urllib3AsyncTransport:
         return pool
 
     def _request(self, url: str, headers: dict[str, str]) -> urllib3.BaseHTTPResponse:
-        return self._pool().request("GET", url, headers=headers)
+        return self._pool().request("GET", url, headers=headers, timeout=self._timeout)
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None

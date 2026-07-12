@@ -172,7 +172,10 @@ class TestUrllib3AsyncTransport:
         assert content == b"world"
         assert text == "world"
         pool.request.assert_called_once_with(
-            "GET", "https://example.com/", headers={"Accept-Encoding": "gzip", "k": "v"}
+            "GET",
+            "https://example.com/",
+            headers={"Accept-Encoding": "gzip", "k": "v"},
+            timeout=5.0,
         )
         pool.clear.assert_called_once()
 
@@ -219,7 +222,10 @@ class TestUrllib3AsyncTransport:
 
         asyncio.run(go())
         pool.request.assert_called_once_with(
-            "GET", "https://example.com/", headers={"Accept-Encoding": "gzip"}
+            "GET",
+            "https://example.com/",
+            headers={"Accept-Encoding": "gzip"},
+            timeout=5.0,
         )
 
     def test_get_lets_caller_override_accept_encoding(
@@ -243,8 +249,49 @@ class TestUrllib3AsyncTransport:
 
         asyncio.run(go())
         pool.request.assert_called_once_with(
-            "GET", "https://example.com/", headers={"Accept-Encoding": "identity"}
+            "GET",
+            "https://example.com/",
+            headers={"Accept-Encoding": "identity"},
+            timeout=5.0,
         )
+
+    def test_get_applies_bounded_default_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The default request carries a finite timeout."""
+        pool = self._fake_pool(b"{}")
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager",
+            lambda **kw: pool,
+        )
+
+        async def go() -> None:
+            transport = Urllib3AsyncTransport()
+            try:
+                await transport.get("https://example.com/")
+            finally:
+                await transport.aclose()
+
+        asyncio.run(go())
+        assert pool.request.call_args.kwargs["timeout"] == 5.0
+
+    def test_get_forwards_custom_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A caller-chosen timeout reaches the underlying request."""
+        pool = self._fake_pool(b"{}")
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager",
+            lambda **kw: pool,
+        )
+
+        async def go() -> None:
+            transport = Urllib3AsyncTransport(timeout=1.5)
+            try:
+                await transport.get("https://example.com/")
+            finally:
+                await transport.aclose()
+
+        asyncio.run(go())
+        assert pool.request.call_args.kwargs["timeout"] == 1.5
 
     def test_response_json(self) -> None:
         fake = MagicMock(spec=urllib3.BaseHTTPResponse)
