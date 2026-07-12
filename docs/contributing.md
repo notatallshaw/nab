@@ -52,6 +52,13 @@ hatch run docs:build     # sphinx-build -W, warnings are errors
 hatch run docs:serve     # live-reloading preview
 ```
 
+The `docs` dependency-group in `pyproject.toml` is the one place the doc
+tooling is declared. nab locks it into
+`.github/requirements/pylock.docs.toml` (`tasks/refresh-locks.sh`), and both
+CI and Read the Docs install from that lock, so a published build resolves
+nothing. After changing the group, re-run the refresh script and commit the
+lock.
+
 ## Coverage policy
 
 The `pyproject.toml` `[tool.coverage.report] fail_under = 100`

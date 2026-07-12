@@ -70,6 +70,14 @@ types = [
 pre-commit = [
     "pre-commit>=4",
 ]
+docs = [
+    "sphinx>=8",
+    "furo>=2024.8",
+    "myst-parser>=4",
+    "linkify-it-py>=2",
+    "sphinx-design>=0.6",
+    "sphinx-copybutton>=0.5",
+]
 release = [
     "packaging>=24.0",
     "tomlkit>=0.13",
