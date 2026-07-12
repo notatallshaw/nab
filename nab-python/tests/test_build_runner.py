@@ -16,6 +16,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import json
+import subprocess
 import sys
 import tarfile
 import zipfile
@@ -23,13 +25,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from installer.utils import Scheme
+from installer.utils import SCHEME_NAMES, Scheme
 
 from nab_index.multi_index import IndexConfig
 from nab_python._build.env import (
     BuildEnvError,
     NabBuildEnv,
     _FastSchemeDictionaryDestination,
+    _venv_scheme_paths,
 )
 from nab_python._build.runner import BuildBackendError, run_build_backend
 from nab_python.config import NabProjectConfig
@@ -116,8 +119,17 @@ def _wheel_record_hash(data: bytes) -> str:
     return "sha256=" + digest.decode()
 
 
-def _make_installable_wheel(path: Path, name: str, version: str) -> None:
-    """Write a minimal but installer-valid pure-Python wheel."""
+def _make_installable_wheel(
+    path: Path,
+    name: str,
+    version: str,
+    data_files: dict[str, bytes] | None = None,
+) -> None:
+    """Write a minimal but installer-valid pure-Python wheel.
+
+    ``data_files`` are placed under the PEP 427 ``<dist>.data``
+    directory, keyed by their path within it (``headers/foo.h``).
+    """
     dist = f"{name}-{version}"
     files = {
         f"{name}/__init__.py": b"",
@@ -129,6 +141,8 @@ def _make_installable_wheel(path: Path, name: str, version: str) -> None:
             b"Root-Is-Purelib: true\nTag: py3-none-any\n"
         ),
     }
+    for data_path, data in (data_files or {}).items():
+        files[f"{dist}.data/{data_path}"] = data
     record = "".join(
         f"{p},{_wheel_record_hash(d)},{len(d)}\n" for p, d in files.items()
     )
@@ -738,10 +752,13 @@ class TestNabBuildEnvInstall:
         )
         monkeypatch.setattr(
             "nab_python._build.env._venv_scheme_paths",
-            lambda _python: {"purelib": str(tmp_path / "site")},
+            lambda _python: {
+                "purelib": str(tmp_path / "site"),
+                "headers": str(tmp_path / "include"),
+            },
         )
         opened = MagicMock()
-        opened.__enter__.return_value = MagicMock()
+        opened.__enter__.return_value = MagicMock(distribution="fake")
         opened.__exit__.return_value = False
         monkeypatch.setattr(WheelFile, "open", lambda _path: opened)
         installer_calls: list[object] = []
@@ -861,7 +878,12 @@ class TestNabBuildEnvEnterInstall:
 
         monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
         monkeypatch.setattr(
-            env_mod, "_venv_scheme_paths", lambda _python: {"purelib": str(tmp_path)}
+            env_mod,
+            "_venv_scheme_paths",
+            lambda _python: {
+                "purelib": str(tmp_path),
+                "headers": str(tmp_path / "include"),
+            },
         )
         fake_wheel = tmp_path / "fake-1.0-py3-none-any.whl"
         fake_wheel.touch()
@@ -871,7 +893,7 @@ class TestNabBuildEnvEnterInstall:
             lambda self, _wd: [fake_wheel],
         )
         opened = MagicMock()
-        opened.__enter__.return_value = MagicMock()
+        opened.__enter__.return_value = MagicMock(distribution="fake")
         opened.__exit__.return_value = False
         monkeypatch.setattr(WheelFile, "open", lambda _path: opened)
         installer_calls: list[object] = []
@@ -920,6 +942,87 @@ class TestNabBuildEnvEnterInstall:
         with pytest.raises(RuntimeError, match="resolve failed"):
             env.__enter__()
         assert env._tmpdir is None  # type: ignore[attr-defined]
+
+
+class TestBuildEnvHeaderScheme:
+    """A build requirement whose wheel ships a ``.data/headers/`` payload.
+
+    greenlet, a build requirement of gevent, ships ``greenlet.h`` that way.
+    """
+
+    def _py_version(self) -> str:
+        return f"{sys.version_info.major}.{sys.version_info.minor}"
+
+    def _patch_probe(self, monkeypatch: pytest.MonkeyPatch, venv_path: Path) -> None:
+        """Answer the scheme probe with what a venv interpreter prints."""
+        py_version = self._py_version()
+        site = venv_path / "lib" / f"python{py_version}" / "site-packages"
+        payload = json.dumps(
+            {
+                "paths": {
+                    "purelib": str(site),
+                    "platlib": str(site),
+                    "scripts": str(venv_path / "bin"),
+                    "data": str(venv_path),
+                    "include": f"/usr/include/python{py_version}",
+                },
+                "prefix": str(venv_path),
+                "py_version": py_version,
+            }
+        )
+
+        def _run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+    def test_scheme_paths_cover_every_installer_scheme(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        venv_path = tmp_path / "venv"
+        self._patch_probe(monkeypatch, venv_path)
+
+        paths = _venv_scheme_paths(venv_path / "bin" / "python")
+
+        assert set(SCHEME_NAMES) <= set(paths)
+        expected = venv_path / "include" / "site" / f"python{self._py_version()}"
+        assert paths["headers"] == str(expected)
+
+    def test_header_payload_lands_under_the_dist_include_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        venv_path = tmp_path / "venv"
+        venv_path.mkdir()
+        (tmp_path / "wheels").mkdir()
+        env._venv_path = venv_path  # type: ignore[attr-defined]
+        env._python_executable = venv_path / "bin" / "python"  # type: ignore[attr-defined]
+
+        wheel = tmp_path / "greenlet-3.2.4-py3-none-any.whl"
+        _make_installable_wheel(
+            wheel,
+            "greenlet",
+            "3.2.4",
+            data_files={"headers/greenlet.h": b"#define GREENLET_H\n"},
+        )
+
+        monkeypatch.setattr(env, "_resolve_and_download", lambda *_a, **_k: [wheel])
+        self._patch_probe(monkeypatch, venv_path)
+
+        env.install(["greenlet==3.2.4"])
+
+        py_version = self._py_version()
+        header = (
+            venv_path
+            / "include"
+            / "site"
+            / f"python{py_version}"
+            / "greenlet"
+            / "greenlet.h"
+        )
+        assert header.read_bytes() == b"#define GREENLET_H\n"
+        site = venv_path / "lib" / f"python{py_version}" / "site-packages"
+        assert (site / "greenlet" / "__init__.py").is_file()
 
 
 @pytest.mark.skipif(
