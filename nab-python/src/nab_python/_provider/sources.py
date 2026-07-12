@@ -163,7 +163,7 @@ def index_vcs_sources(
     repo, and pin allowlists apply to ``[[tool.nab.vcs-sources]]``
     just like project-root direct-URL requirements.
     """
-    # Late import: ``pypi`` imports this module at module load.
+    # Late import: ``provider`` imports this module at module load.
     from .._vcs_admission import admit_vcs_url
     from ..provider import VcsPolicy
 

@@ -40,7 +40,7 @@ def look_ahead_ok(
     rejection so the resolver moves on; the message is recorded for the
     eventual no-versions diagnostic.
     """
-    # Late import: pypi imports this module at module load.
+    # Late import: provider imports this module at module load.
     from ..provider import MetadataError
 
     if provider.split_and_normalize(package)[1] is not None:
