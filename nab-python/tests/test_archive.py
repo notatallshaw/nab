@@ -483,3 +483,55 @@ class TestExtractArchive:
         out.mkdir()
         with pytest.raises(ValueError, match="broken link in sdist member"):
             extract_sdist_archive(buf.getvalue(), out)
+
+    @requires_data_filter
+    def test_flat_archive_with_one_package_dir_keeps_root(self, tmp_path: Path) -> None:
+        # Top-level project files beside a lone package dir: the package dir is
+        # not a wrapping root, so the source root stays the extraction root.
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for name, text in (
+                ("pyproject.toml", _PYPROJECT),
+                ("setup.py", "from setuptools import setup\n\nsetup()\n"),
+                ("mypkg/__init__.py", ""),
+            ):
+                body = text.encode("utf-8")
+                info = tarfile.TarInfo(name)
+                info.size = len(body)
+                tar.addfile(info, io.BytesIO(body))
+        out = tmp_path / "out"
+        out.mkdir()
+        root = extract_sdist_archive(buf.getvalue(), out)
+        assert root == out.resolve()
+        assert (root / "pyproject.toml").is_file()
+
+    @requires_data_filter
+    def test_wrapping_directory_is_the_source_root(self, tmp_path: Path) -> None:
+        # A conformant sdist holds every member under one name-version directory,
+        # and that directory is the source root the build backend runs in.
+        out = tmp_path / "out"
+        out.mkdir()
+        root = extract_sdist_archive(_make_sdist("foo", "1.0.0", _PYPROJECT), out)
+        assert root == out.resolve() / "foo-1.0.0"
+        assert (root / "pyproject.toml").is_file()
+
+    @requires_data_filter
+    def test_top_level_file_beside_a_directory_keeps_root(self, tmp_path: Path) -> None:
+        # A stray top-level file means no directory wraps every member, so the
+        # root stays at the extraction dir instead of guessing that the lone
+        # directory is the source tree.
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for name, text in (
+                ("foo-1.0.0/pyproject.toml", _PYPROJECT),
+                ("README", "readme\n"),
+            ):
+                body = text.encode("utf-8")
+                info = tarfile.TarInfo(name)
+                info.size = len(body)
+                tar.addfile(info, io.BytesIO(body))
+        out = tmp_path / "out"
+        out.mkdir()
+        root = extract_sdist_archive(buf.getvalue(), out)
+        assert root == out.resolve()
+        assert (root / "foo-1.0.0" / "pyproject.toml").is_file()

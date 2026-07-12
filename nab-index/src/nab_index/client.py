@@ -612,9 +612,9 @@ def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
     any member that would write outside ``target_dir`` (absolute paths, ``..``,
     escaping links) or is a special file (device node, FIFO); a rejected member
     surfaces as a :class:`ValueError`.  A hard link whose target is not present
-    in the archive surfaces the same way.  The single extracted top-level
-    directory is the source root, falling back to ``target_dir`` when the
-    archive has no single top-level directory.
+    in the archive surfaces the same way.  A lone top-level directory that
+    wraps every member is the source root; otherwise (top-level files, as in a
+    flat sdist, or several top-level directories) the root is ``target_dir``.
 
     The data filter is required; a Python that lacks it (before 3.10.12 /
     3.11.4 / 3.12) is unsupported and extraction raises.
@@ -637,14 +637,10 @@ def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
         msg = f"broken link in sdist member: {exc}"
         raise ValueError(msg) from exc
 
-    # The source root is the single extracted top-level directory, read from
-    # the extracted tree so a sanitised member name cannot mislead it.  A
-    # symlink is not followed here: only a real directory counts as the root.
-    subdirs = [
-        entry
-        for entry in target_dir.iterdir()
-        if entry.is_dir() and not entry.is_symlink()
-    ]
-    if len(subdirs) == 1:
-        return subdirs[0]
+    # A lone wrapping directory is the source root; top-level files (a flat
+    # sdist) leave it at target_dir. Read from disk, not member names, so a
+    # sanitised name cannot mislead the choice.
+    entries = list(target_dir.iterdir())
+    if len(entries) == 1 and entries[0].is_dir() and not entries[0].is_symlink():
+        return entries[0]
     return target_dir
