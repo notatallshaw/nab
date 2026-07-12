@@ -86,7 +86,7 @@ def build_remote_sdist(
     with tempfile.TemporaryDirectory(prefix="nab-build-remote-") as td:
         try:
             source_dir = extract_sdist_archive(data, Path(td))
-        except (OSError, ValueError) as exc:
+        except ValueError as exc:
             msg = f"{package}=={version} sdist archive could not be extracted: {exc}"
             raise UnsupportedSdistError(msg) from exc
         try:

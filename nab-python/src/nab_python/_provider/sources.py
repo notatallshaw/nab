@@ -10,7 +10,6 @@ downloads and hash-verifies a ``.tar.gz`` and extracts it; both reuse the
 from __future__ import annotations
 
 import shutil
-import tarfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -382,7 +381,7 @@ def _extract_archive(
     target.mkdir(parents=True)
     try:
         root = extract_sdist_archive(data, target)
-    except (OSError, ValueError, tarfile.TarError) as exc:
+    except ValueError as exc:
         shutil.rmtree(target, ignore_errors=True)
         msg = f"archive could not be extracted: {exc}"
         raise UnsupportedSdistError(msg) from exc

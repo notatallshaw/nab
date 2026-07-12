@@ -237,8 +237,7 @@ class TestFlatWheelhouse:
     def test_sdist_requires_python_none_for_truncated_archive(
         self, tmp_path: Path
     ) -> None:
-        # A half-downloaded sdist: gzip header, deflate stream cut short. It
-        # cannot be read, so the version lists with no Requires-Python bound.
+        # The sdist cannot be read, so the version lists with no Requires-Python.
         path = tmp_path / "foo-1.0.tar.gz"
         _write_sdist(path, "foo", "1.0", ">=3.12")
         whole = path.read_bytes()

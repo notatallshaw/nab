@@ -112,6 +112,20 @@ def _done_event() -> threading.Event:
     return ev
 
 
+def _make_sdist_targz() -> bytes:
+    """Return .tar.gz bytes for a one-file sdist rooted at pkg-1.0."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        body = b"[project]\nname = 'pkg'\n"
+        info = tarfile.TarInfo(name="pkg-1.0/pyproject.toml")
+        info.size = len(body)
+        tar.addfile(info, io.BytesIO(body))
+    return buf.getvalue()
+
+
+_SDIST_TARGZ = _make_sdist_targz()
+
+
 class TestPrefetchListings:
     def test_root_requirements_prefetched(self) -> None:
         """Root requirement listings are fetched in background on init."""
@@ -7071,60 +7085,32 @@ class TestBuildRemoteFailureModes:
         with pytest.raises(SdistHashMismatchError):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
-    def test_archive_extract_failure_raises(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    @pytest.mark.parametrize(
+        "data",
+        [
+            b"",
+            b"not a gzip stream",
+            _SDIST_TARGZ[: len(_SDIST_TARGZ) // 2],
+        ],
+        ids=["empty", "not-gzip", "truncated"],
+    )
+    def test_unreadable_archive_raises(self, data: bytes) -> None:
+        """An unreadable archive raises the skippable ``UnsupportedSdistError``."""
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _ok_fetch(
+        def _fetch(
             pkg: str,
             ver: str,
             _url: str,
             _hashes: tuple[tuple[str, str], ...] = (),
         ) -> threading.Event:
-            provider.coordinator.index.store_sdist_archive(pkg, ver, b"corrupt")
+            provider.coordinator.index.store_sdist_archive(pkg, ver, data)
             return _done_event()
 
         cast(
             "MagicMock", provider.coordinator
-        ).request_sdist_archive.side_effect = _ok_fetch
-
-        def _bad_extract(_data: bytes, _target: object) -> object:
-            raise ValueError("malformed archive")
-
-        monkeypatch.setattr(build_remote, "extract_sdist_archive", _bad_extract)
-        with pytest.raises(UnsupportedSdistError, match="could not be extracted"):
-            build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
-
-    def test_truncated_archive_raises(self) -> None:
-        # A half-downloaded archive: the gzip stream stops before the end of
-        # the deflate data, so no build can run against it.
-        provider = self._provider(with_sdist=True)
-        provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
-
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            body = b"[project]\nname = 'pkg'\n"
-            info = tarfile.TarInfo(name="pkg-1.0/pyproject.toml")
-            info.size = len(body)
-            tar.addfile(info, io.BytesIO(body))
-        whole = buf.getvalue()
-
-        def _partial_fetch(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
-        ) -> threading.Event:
-            provider.coordinator.index.store_sdist_archive(
-                pkg, ver, whole[: len(whole) // 2]
-            )
-            return _done_event()
-
-        cast(
-            "MagicMock", provider.coordinator
-        ).request_sdist_archive.side_effect = _partial_fetch
+        ).request_sdist_archive.side_effect = _fetch
         with pytest.raises(UnsupportedSdistError, match="could not be extracted"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 

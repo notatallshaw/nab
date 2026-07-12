@@ -124,11 +124,7 @@ _PKG_INFO = "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n"
 
 @st.composite
 def truncated_archives(draw: st.DrawFn) -> bytes:
-    """A well-formed sdist cut short, as a half-finished download leaves it.
-
-    Random bytes never form a gzip header, so only a real archive with its
-    tail removed exercises the partly-decodable stream.
-    """
+    """A well-formed sdist cut short at a random byte."""
     archive = make_targz([("pkg-1.0/PKG-INFO", _PKG_INFO.encode())])
     cut = draw(st.integers(min_value=1, max_value=len(archive) - 1))
     return archive[:cut]

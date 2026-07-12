@@ -8,6 +8,7 @@ on real ``.tar.gz`` bytes.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
 import tarfile
@@ -60,6 +61,11 @@ def _make_flat_sdist(pyproject: str) -> bytes:
 
 
 _PYPROJECT = '[project]\nname = "foo"\nversion = "1.0.0"\ndependencies = ["bar>=1"]\n'
+
+
+def _half(data: bytes) -> bytes:
+    """Return the leading half of ``data``, as a cut-short download leaves it."""
+    return data[: len(data) // 2]
 
 
 def _provider(archive_sources: list[ArchiveSource], cache_dir: Path | None) -> Provider:
@@ -293,10 +299,9 @@ class TestArchiveMaterialize:
             provider.fetch_versions("foo")
 
     def test_truncated_archive_raises(self, tmp_path: Path) -> None:
-        # A half-downloaded archive whose hash matches the bytes on hand: the
-        # gzip stream stops early, which is an extraction failure like any other.
-        whole = _make_sdist("foo", "1.0.0", _PYPROJECT)
-        data = whole[: len(whole) // 2]
+        # The hash covers the truncated bytes, so this fails in extraction
+        # rather than in the hash check.
+        data = _half(_make_sdist("foo", "1.0.0", _PYPROJECT))
         digest = hashlib.sha256(data).hexdigest()
         source = ArchiveSource(
             name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
@@ -499,14 +504,23 @@ class TestExtractArchive:
             extract_sdist_archive(buf.getvalue(), out)
 
     @requires_data_filter
-    def test_truncated_archive_raises_value_error(self, tmp_path: Path) -> None:
-        # A half-downloaded archive: gzip stops mid-stream, which reaches the
-        # caller as an EOFError rather than a tarfile error.
-        whole = _make_sdist("foo", "1.0.0", _PYPROJECT)
+    @pytest.mark.parametrize(
+        "data",
+        [
+            b"",
+            b"not a gzip stream",
+            gzip.compress(b"not a tar"),
+            _half(_make_sdist("foo", "1.0.0", _PYPROJECT)),
+        ],
+        ids=["empty", "not-gzip", "gzip-not-tar", "truncated"],
+    )
+    def test_unreadable_archive_raises_value_error(
+        self, data: bytes, tmp_path: Path
+    ) -> None:
         out = tmp_path / "out"
         out.mkdir()
-        with pytest.raises(ValueError, match="truncated sdist archive"):
-            extract_sdist_archive(whole[: len(whole) // 2], out)
+        with pytest.raises(ValueError, match="unreadable sdist archive"):
+            extract_sdist_archive(data, out)
 
     @requires_data_filter
     def test_flat_archive_with_one_package_dir_keeps_root(self, tmp_path: Path) -> None:
