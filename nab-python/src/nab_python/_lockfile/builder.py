@@ -178,7 +178,7 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
     try:
         with path.open("rb") as f:
             data = tomli.load(f)
-    except (OSError, tomli.TOMLDecodeError):
+    except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError):
         return None
     nab = tool_nab_section(data)
     raw = nab.get("created-at") if isinstance(nab, dict) else None
@@ -212,7 +212,7 @@ def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
         with path.open("rb") as f:
             data = tomli.load(f)
         pylock = Pylock.from_dict(data)
-    except (OSError, tomli.TOMLDecodeError, PylockValidationError):
+    except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError, PylockValidationError):
         return None
     return {
         str(pkg.name): pkg.version for pkg in pylock.packages if pkg.version is not None

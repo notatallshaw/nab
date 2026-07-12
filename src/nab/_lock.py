@@ -335,7 +335,14 @@ def _check_locked(
     except _cli.MissingHashError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)
-    committed = _packages_only(target.read_text(encoding="utf-8"))
+    try:
+        committed = _packages_only(target.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
+        sys.stderr.write(
+            f"Error: --locked: lockfile {target} is not valid TOML: {e};"
+            " re-run `nab lock` to regenerate it.\n"
+        )
+        sys.exit(1)
     if _packages_only(new_text) == committed:
         sys.stderr.write(f"Lockfile {target} is up to date.\n")
         return
