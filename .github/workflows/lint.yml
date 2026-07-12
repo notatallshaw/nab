@@ -59,6 +59,34 @@ jobs:
       - name: Check vendored packaging matches pin plus patch
         run: tasks/vendor-packaging.sh --check
 
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.13"
+
+      - name: Upgrade pip to dependency-cooldown support
+        run: python -m pip install --upgrade "pip>=26.1"
+
+      # Same commands Read the Docs runs (.readthedocs.yaml), so a dead
+      # cross-reference fails the PR instead of the publish.  The docs env is
+      # unpinned, so both pip runs take the cooldown: the env var carries it
+      # into the pip that hatch drives to build the env.
+      - name: Install hatch
+        run: python -m pip install --uploaded-prior-to P3D hatch
+
+      - name: Build the docs
+        run: hatch run docs:build
+        env:
+          PIP_UPLOADED_PRIOR_TO: P3D
+
   types:
     name: ${{ matrix.checker }}
     runs-on: ubuntu-latest

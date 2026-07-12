@@ -6,22 +6,62 @@ nab is resolve-only: it produces a pinned set of versions (or a
 PEP 751 lockfile) but never installs.  Hand the lockfile to whatever
 installer you trust.
 
+## Where to start
+
+* New to nab: work through
+  [getting started](tutorial/getting-started.md).
+* A task in mind: the how-to guides cover installing nab, local
+  checkouts, VCS sources, multiple indexes, and workspaces.
+* Looking something up: the reference covers the
+  [`[tool.nab]` keys](reference/configuration.md), the
+  [CLI](reference/cli.md), the
+  [lockfile formats](reference/lockfile.md), and the
+  [build policy](reference/build-policy.md).
+* Want to know how something works: the explanations cover
+  [universal resolution](explanation/universal.md) and
+  [conflicting extras and groups](explanation/conflicts.md).
+
 ```{toctree}
 :maxdepth: 2
-:caption: Guides
+:caption: Tutorial
 
-guides/installation
-guides/getting-started
-guides/configuration
-guides/cli
-guides/lockfile
-guides/build-policy
-guides/local-sources
-guides/vcs
-guides/multi-index
-guides/workspaces
-guides/universal
-guides/conflicts
+tutorial/getting-started
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: How-to guides
+
+how-to/install
+how-to/local-sources
+how-to/vcs
+how-to/multi-index
+how-to/workspaces
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Reference
+
+reference/cli
+reference/configuration
+reference/lockfile
+reference/build-policy
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: Explanation
+
+explanation/universal
+explanation/conflicts
+```
+
+```{toctree}
+:maxdepth: 1
+:caption: Project
+
+contributing
 ```
 
 ## Status
@@ -38,4 +78,4 @@ guides/conflicts
   output format are still subject to change.
 * Mutually-exclusive extras and dependency groups via
   `[tool.nab].conflicts`: fail fast in specific mode, fork the resolve
-  in universal mode.  See [conflicts](guides/conflicts.md).
+  in universal mode.  See [conflicts](explanation/conflicts.md).

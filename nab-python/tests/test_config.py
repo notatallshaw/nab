@@ -55,12 +55,12 @@ def write(tmp_path: Path, body: str) -> Path:
 
 
 DOCS_CONFIGURATION = (
-    Path(__file__).resolve().parents[2] / "docs" / "guides" / "configuration.md"
+    Path(__file__).resolve().parents[2] / "docs" / "reference" / "configuration.md"
 )
 
 
 def first_tool_nab_example() -> str:
-    """Return the first ``[tool.nab]`` fenced TOML block in the config guide."""
+    """Return the first ``[tool.nab]`` fenced TOML block in the config reference."""
     text = DOCS_CONFIGURATION.read_text()
     for block in re.findall(r"```toml\n(.*?)```", text, re.DOTALL):
         if block.lstrip().startswith("[tool.nab]"):

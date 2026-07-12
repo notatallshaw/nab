@@ -1,4 +1,4 @@
-# Local sources
+# Use a local checkout as a source
 
 `[[tool.nab.local-sources]]` lets you treat a directory on disk
 as the only candidate for a named package.  The typical use case
@@ -40,7 +40,7 @@ name = "my-fork"
 path = "../my-fork"
 ```
 
-See [build policy](build-policy.md) for the full ladder.
+See [build policy](../reference/build-policy.md) for the full ladder.
 
 ## Dynamic dependencies
 
