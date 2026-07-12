@@ -11,7 +11,9 @@ Cache layout under ``cache_root / "vcs"``:
 ``repo-key`` is the 16-char prefix of a SHA-256 over the canonicalised
 repo URL (``vcs+`` prefix stripped).  ``commit-sha`` is always a
 concrete 40-char hash; floating refs are resolved via
-``git ls-remote`` before the clone runs.
+``git ls-remote`` before the clone runs.  A finished clone carries a
+``.git/nab-complete`` marker file; a tree without it is discarded and
+recloned.
 """
 
 from __future__ import annotations
@@ -22,13 +24,11 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from ._subdir import subdirectory_escapes
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 __all__ = [
     "FULL_GIT_SHA_RE",
@@ -47,6 +47,10 @@ logger = logging.getLogger(__name__)
 # the clone-time validation in this module.
 FULL_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _VCS_PREFIX_RE = re.compile(r"^git\+")
+
+# Written inside ``.git`` after checkout.  ``git init`` creates ``.git``
+# before the fetch, so the directory alone cannot prove a finished clone.
+_COMPLETE_MARKER = "nab-complete"
 
 
 class VcsCloneError(Exception):
@@ -153,12 +157,15 @@ def prepare_clone(
     the named ref to a SHA, then performs a shallow clone of that
     commit.
 
-    Idempotent: if the destination already exists with a populated
-    ``.git`` folder, no fetch happens.
+    Idempotent: a destination carrying the completion marker is reused
+    without a fetch.  A fresh clone lands in a temporary sibling
+    directory and is renamed into place only once fully checked out, so
+    a concurrent or interrupted run never leaves a partial tree at the
+    cache path.
     """
     sha = _resolve_sha(request, require_pin=require_pin)
     dest = cache_root / "vcs" / _repo_key(request.repo_url) / sha
-    if (dest / ".git").is_dir():
+    if _clone_complete(dest):
         return VcsClone(
             path=dest,
             commit_sha=sha,
@@ -167,14 +174,33 @@ def prepare_clone(
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
-        # Partial clone from a prior failure: wipe and retry.
+        # Unmarked tree from an interrupted run: wipe and retry.
         shutil.rmtree(dest)
-    _shallow_clone(request.repo_url, sha, dest)
+
+    tmp = Path(tempfile.mkdtemp(dir=dest.parent, prefix=f"{sha}.", suffix=".tmp"))
+    _shallow_clone(request.repo_url, sha, tmp)
+    try:
+        tmp.rename(dest)
+    except OSError as exc:
+        # A concurrent run renamed its own finished clone first: use it.
+        shutil.rmtree(tmp, ignore_errors=True)
+        if not _clone_complete(dest):
+            msg = (
+                f"clone of {request.repo_url} @ {sha} could not be"
+                f" moved into place: {exc}"
+            )
+            raise VcsCloneError(msg) from exc
+
     return VcsClone(
         path=dest,
         commit_sha=sha,
         subdirectory=request.subdirectory,
     )
+
+
+def _clone_complete(dest: Path) -> bool:
+    """Return True when ``dest`` holds a fully fetched and checked-out clone."""
+    return (dest / ".git" / _COMPLETE_MARKER).is_file()
 
 
 def _resolve_sha(request: VcsRequest, *, require_pin: bool) -> str:
@@ -236,9 +262,13 @@ def _shallow_clone(repo_url: str, sha: str, dest: Path) -> None:
     Uses ``git init`` + ``git fetch --depth 1`` to land precisely the
     chosen commit without pulling history.  Hosts that disallow
     direct sha fetch surface as a :class:`VcsCloneError` from the
-    fetch step.
+    fetch step.  The completion marker is written last, so its
+    presence proves the checkout finished.
+
+    ``dest`` is the temporary directory ``prepare_clone`` created with
+    :func:`tempfile.mkdtemp`, so it already exists.
     """
-    dest.mkdir(parents=True)
+    dest.mkdir(parents=True, exist_ok=True)
     init_args = ["git", "init", "--quiet"]
     fetch_args = ["git", "fetch", "--quiet", "--depth", "1", repo_url, sha]
     checkout_args = ["git", "checkout", "--quiet", "FETCH_HEAD"]
@@ -261,6 +291,7 @@ def _shallow_clone(repo_url: str, sha: str, dest: Path) -> None:
             cwd=dest,
             env=_git_env(),
         )
+        (dest / ".git" / _COMPLETE_MARKER).touch()
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         # Roll back the partial clone so the cache stays clean.
         shutil.rmtree(dest, ignore_errors=True)
