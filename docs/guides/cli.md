@@ -2,8 +2,9 @@
 
 `nab` exposes three subcommands: `lock`, `download`, and `config`. The
 first two read project shape from `[tool.nab]` in the project's
-`pyproject.toml`; the CLI itself carries only runtime knobs. `config`
-inspects the layered configuration.
+`pyproject.toml` or a project-directory `nab.toml`; the CLI carries
+runtime knobs and can override a project key for one run with a
+`--project-<key>` flag. `config` inspects the layered configuration.
 
 ## Synopsis
 
