@@ -19,6 +19,7 @@ from nab_python.download import (
     iter_artifacts,
 )
 from nab_python.lockfile import (
+    ArchivePin,
     IndexPin,
     LocalPin,
     LockInput,
@@ -471,6 +472,29 @@ class TestLocalIndexArtefacts:
         assert (out / "foo-1.0-py3-none-any.whl").read_bytes() == wheel_bytes
         assert (out / "foo-1.0.tar.gz").read_bytes() == sdist_bytes
         assert len(result.written) == 2
+        assert transport.requested == []
+
+    def test_file_url_archive_copied_from_disk(self, tmp_path: Path) -> None:
+        src = tmp_path / "wheelhouse"
+        src.mkdir()
+        out = tmp_path / "out"
+        archive_bytes = b"ARCHIVEDATA"
+        archive_file = src / "foo-1.0.0.tar.gz"
+        archive_file.write_bytes(archive_bytes)
+        pin = ArchivePin(
+            name="foo",
+            version="1.0.0",
+            url=archive_file.as_uri(),
+            hashes=(("sha256", hashlib.sha256(archive_bytes).hexdigest()),),
+        )
+        transport = _FakeTransport({archive_file.as_uri(): b"WRONG"})
+        result = download_lock(
+            LockInput(pins={"foo": pin}),
+            transport,  # type: ignore[arg-type]
+            out,
+        )
+        assert (out / "foo-1.0.0.tar.gz").read_bytes() == archive_bytes
+        assert len(result.written) == 1
         assert transport.requested == []
 
     def test_missing_local_file_raises_download_error(self, tmp_path: Path) -> None:

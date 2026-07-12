@@ -4,8 +4,9 @@ Consumes a :class:`~nab_python.lockfile.LockInput` and writes every
 recorded wheel, sdist, and direct-URL archive into a target directory,
 verifying the recorded hash.  Local and VCS pins are skipped: their
 contents live elsewhere on disk and the lockfile carries no ``sha256``
-for them.  An artefact from a local ``file://`` (find-links) index is
-copied from its on-disk path rather than fetched over HTTP.
+for them.  An artefact with a local ``file://`` URL (a find-links
+index entry or a direct-URL archive) is copied from its on-disk path
+rather than fetched over HTTP.
 
 Use as a one-shot from the CLI ``nab download`` command, or
 programmatically after :func:`~nab_python.resolve.resolve_pyproject_to_lock`.
@@ -23,6 +24,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from nab_index.client import AsyncSimpleClient
+from nab_index.local_index import parse_file_url
 from nab_index.transport import HttpError
 
 from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
@@ -59,9 +61,10 @@ class DownloadEntry:
     The downloader verifies against the first acceptable algorithm the
     index published, preferring sha256 over sha384 over sha512.
 
-    ``local_path`` is set for an artefact from a local ``file://``
-    (find-links) index; its bytes are read from disk instead of fetched
-    over ``url``.
+    ``local_path`` is set for an artefact read from disk instead of
+    fetched over ``url``: a wheel or sdist from a local ``file://``
+    (find-links) index, or a direct-URL archive whose ``url`` is
+    ``file://``.
     """
 
     package: str
@@ -108,13 +111,16 @@ def _entries_for_pin(canonical: str, pin: PinShape) -> Iterable[DownloadEntry]:
         yield from _iter_index_pin(canonical, pin)
     elif isinstance(pin, ArchivePin):
         algo, digest = pin.primary_digest
+        parts = urlsplit(pin.url)
+        local_path = parse_file_url(pin.url) if parts.scheme == "file" else None
         yield DownloadEntry(
             package=canonical,
             version=pin.version,
-            filename=posixpath.basename(urlsplit(pin.url).path),
+            filename=posixpath.basename(parts.path),
             url=pin.url,
             hash_algo=algo,
             digest=digest.lower(),
+            local_path=local_path,
         )
     elif isinstance(pin, (LocalPin, VcsPin)):
         return
