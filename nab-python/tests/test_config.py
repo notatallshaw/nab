@@ -100,6 +100,19 @@ class TestCliOverridesFold:
                 path, discover_workspace=False, cli_overrides={"mode": "universal"}
             )
 
+    def test_cli_mode_specific_shadows_declared_matrix(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            '[tool.nab.matrix]\npython = ">=3.11,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        config = read_pyproject_config(
+            path, discover_workspace=False, cli_overrides={"mode": "specific"}
+        )
+        assert config.mode is ResolveMode.SPECIFIC
+        assert config.matrix is None
+
 
 class TestDefaults:
     def test_no_tool_nab_table_returns_defaults(self, tmp_path: Path) -> None:
@@ -138,6 +151,17 @@ class TestMode:
     def test_matrix_without_universal_mode_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
+            '[tool.nab.matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
+        )
+        with pytest.raises(ConfigError, match="set mode = 'universal'"):
+            read_pyproject_config(path)
+
+    def test_matrix_with_specific_mode_in_same_file_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "specific"\n'
             '[tool.nab.matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
         )
         with pytest.raises(ConfigError, match="set mode = 'universal'"):
