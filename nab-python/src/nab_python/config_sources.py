@@ -1145,6 +1145,14 @@ class Origin:
         """
         return _scope_label(self.kind)
 
+    def outranks(self, other: Origin) -> bool:
+        """Whether this origin sits at a strictly higher precedence level.
+
+        A tie is not an outranking: ``PYPROJECT`` and ``PROJECT_TOML``
+        share a rank, so neither overrides the other here.
+        """
+        return _PRECEDENCE[self.kind] > _PRECEDENCE[other.kind]
+
 
 def _scope_label(kind: SourceKind) -> str:
     """Return the scope name ``nab config`` reports for a source kind.

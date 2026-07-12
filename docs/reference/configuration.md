@@ -537,9 +537,20 @@ The two `python` knobs cover different shapes of resolve:
   `[tool.nab.matrix].python-patches` to control the resolve and
   marker shape across all tuples.
 
-If both are present, the matrix `python` wins under universal mode
-and `requires-python` wins under specific mode.  Pick one shape
-based on whether you want one lock or many.
+Declaring a `[tool.nab.matrix]` table while `mode` is `specific` is an
+error: the matrix is the universal resolver's input, so leaving mode
+behind is almost always an oversight rather than an intent.
+
+The one exception is an explicit `--project-mode specific` on the
+command line.  A CLI override outranks the `[tool.nab]` table, so it
+selects a single-environment resolve for that run and the declared
+matrix does not apply; `requires-python` then chooses the Python to
+resolve against.  This is how a universal project takes one
+single-environment lock without editing its `pyproject.toml`:
+
+```bash
+nab lock --project-mode specific --project-requires-python "==3.13.*"
+```
 
 ## CLI flags
 

@@ -611,8 +611,10 @@ def _config_from_effective(
     caller afterwards.
     """
     del anchor  # P<n>D durations are already anchored in the effective map.
-    mode: ResolveMode = effective["mode"].value
-    matrix: MatrixConfig | None = effective["matrix"].value
+    mode_value = effective["mode"]
+    matrix_value = effective["matrix"]
+    mode: ResolveMode = mode_value.value
+    matrix: MatrixConfig | None = matrix_value.value
     if mode is ResolveMode.UNIVERSAL and matrix is None:
         msg = (
             "mode = 'universal' requires a [tool.nab.matrix] table"
@@ -620,12 +622,16 @@ def _config_from_effective(
         )
         raise ConfigError(msg)
     if mode is ResolveMode.SPECIFIC and matrix is not None:
-        msg = (
-            "[tool.nab.matrix] is set but mode is 'specific'; set"
-            " mode = 'universal' to opt in to the experimental"
-            " matrix-based resolver"
-        )
-        raise ConfigError(msg)
+        if not mode_value.origin.outranks(matrix_value.origin):
+            msg = (
+                "[tool.nab.matrix] is set but mode is 'specific'; set"
+                " mode = 'universal' to opt in to the experimental"
+                " matrix-based resolver"
+            )
+            raise ConfigError(msg)
+        # A higher-precedence source (--project-mode) selected a
+        # single-environment resolve, so the matrix it shadows does not apply.
+        matrix = None
 
     dist_policy, trust_unverified = effective["dist-policy"].value
     indexes: tuple[IndexConfig, ...] = effective["indexes"].value
