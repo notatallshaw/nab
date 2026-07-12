@@ -290,8 +290,7 @@ class TestFetchVersions:
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
         provider.fetch_versions("foo")
-        # request_listing called at most once (from init or first fetch)
-        assert coordinator.request_listing.call_count <= 1
+        assert provider.stats.listings_fetched == 1
 
     def test_skips_unparseable_version(self) -> None:
         """Wheels with invalid version strings are skipped."""
@@ -480,8 +479,7 @@ class TestFetchVersions:
         provider = Provider(coordinator)
         provider.fetch_versions("Foo-Bar")
         provider.fetch_versions("foo_bar")
-        # Both resolve to the same normalized name, only one lookup needed
-        assert coordinator.request_listing.call_count <= 1
+        assert provider.stats.listings_fetched == 1
 
 
 class TestChooseVersion:
