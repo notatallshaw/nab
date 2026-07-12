@@ -130,15 +130,21 @@ def apply_python_axis_overlay(
     yields ``python_full_version`` ``3.8.0`` like the universal matrix. On
     CPython ``implementation_version`` equals ``python_full_version``, so move
     it with the axis; other implementations version separately and keep their
-    host value unless the overlay sets it. Keys the overlay sets explicitly are
-    kept verbatim.
+    host value unless the overlay sets it. Non-axis keys the overlay sets are
+    kept verbatim; the ``python_version``/``python_full_version`` pair is always
+    the derived one, so a patch-precision ``python_version`` (e.g. ``3.10.5``)
+    normalizes to major.minor.
     """
     source = overlay.get("python_full_version") or overlay.get("python_version")
-    if source is not None:
-        environment.update(python_axis_environment(source))
-        if environment.get("implementation_name") == "cpython":
-            environment["implementation_version"] = environment["python_full_version"]
+    if source is None:
+        environment.update(overlay)
+        return
+
+    axis = python_axis_environment(source)
+    if environment.get("implementation_name") == "cpython":
+        environment["implementation_version"] = axis["python_full_version"]
     environment.update(overlay)
+    environment.update(axis)
 
 
 def _normalize_extra(extra: str) -> str:
