@@ -18,7 +18,7 @@ fi
 
 EXTRA_ARGS=("$@")
 
-for group in tests types pre-commit crosshair release; do
+for group in tests types pre-commit crosshair release docs; do
     echo "==> Locking group: ${group}"
     "${NAB[@]}" lock \
         --groups "${group}" \

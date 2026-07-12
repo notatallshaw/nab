@@ -4,8 +4,13 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.13"
-  commands:
-    - pip install hatch
-    - hatch run docs:build
-    - mkdir -p $READTHEDOCS_OUTPUT/html
-    - cp -r docs/_build/html/. $READTHEDOCS_OUTPUT/html
+  jobs:
+    install:
+      # pylock.docs.toml is a PEP 751 lock nab writes for its own docs group
+      # (tasks/refresh-locks.sh), so the published build resolves nothing.
+      # Installing a pylock needs pip 26.1.
+      - python -m pip install --upgrade "pip>=26.1"
+      - python -m pip install -r .github/requirements/pylock.docs.toml
+    build:
+      html:
+        - python -m sphinx -W -b html docs $READTHEDOCS_OUTPUT/html

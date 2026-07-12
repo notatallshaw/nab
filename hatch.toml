@@ -54,15 +54,13 @@ fix = "ruff check --fix ."
 fmt = "ruff format ."
 fmt-check = "ruff format --check ."
 
+# The docs dependency-group in pyproject.toml is the single source of truth: it
+# is what nab locks into .github/requirements/pylock.docs.toml, which is what CI
+# and Read the Docs install.  Only the live-reload server is local-only.
 [envs.docs]
-detached = true
+skip-install = true
+dependency-groups = ["docs"]
 dependencies = [
-    "sphinx>=8",
-    "furo>=2024.8",
-    "myst-parser>=4",
-    "linkify-it-py>=2",
-    "sphinx-design>=0.6",
-    "sphinx-copybutton>=0.5",
     "sphinx-autobuild>=2024.10",
 ]
 
