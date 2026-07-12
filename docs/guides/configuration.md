@@ -20,9 +20,9 @@ constraints = ["urllib3<2"]
 default-groups = ["dev"]
 
 # Override the host's Python for a single-environment resolve.
-# Single value, not a range; for multi-Python locking use the
-# [tool.nab.matrix] table below.
-requires-python = "3.12.0"
+# A PEP 440 specifier, not a bare version; for multi-Python
+# locking use the [tool.nab.matrix] table below.
+requires-python = "==3.12.0"
 
 # Reproducibility cutoff.  Distributions uploaded after this timestamp
 # are ignored.  Accepts ISO 8601 strings, native TOML datetimes, or a
@@ -524,8 +524,8 @@ error.  See [Build policy](build-policy.md).
 
 The two `python` knobs cover different shapes of resolve:
 
-* `[tool.nab].requires-python`: a single Python version (or a bare
-  specifier like `>=3.12.0`).  Treated as a host-environment
+* `[tool.nab].requires-python`: a PEP 440 specifier like `==3.12.0`
+  or `>=3.12`.  Treated as a host-environment
   override for a single-environment resolve.  Mostly useful when
   you need to lock against a different Python than the one running
   nab and you only need one lock.

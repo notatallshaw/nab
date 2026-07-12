@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -51,6 +52,20 @@ def write(tmp_path: Path, body: str) -> Path:
     p = tmp_path / "pyproject.toml"
     p.write_text(body)
     return p
+
+
+DOCS_CONFIGURATION = (
+    Path(__file__).resolve().parents[2] / "docs" / "guides" / "configuration.md"
+)
+
+
+def first_tool_nab_example() -> str:
+    """Return the first ``[tool.nab]`` fenced TOML block in the config guide."""
+    text = DOCS_CONFIGURATION.read_text()
+    for block in re.findall(r"```toml\n(.*?)```", text, re.DOTALL):
+        if block.lstrip().startswith("[tool.nab]"):
+            return block
+    raise AssertionError("no [tool.nab] example block in configuration.md")
 
 
 class TestCliOverridesFold:
@@ -702,6 +717,16 @@ class TestRequiresPython:
         path = write(tmp_path, "[tool.nab]\nrequires-python = 3\n")
         with pytest.raises(ConfigError, match="requires-python must be a string"):
             read_pyproject_config(path)
+
+    def test_top_level_doc_example_is_a_valid_specifier(self, tmp_path: Path) -> None:
+        """The config guide's top-level example must parse as a valid specifier."""
+        block = first_tool_nab_example()
+        match = re.search(r'^requires-python = "([^"]*)"', block, re.MULTILINE)
+        assert match is not None, "top-level example dropped requires-python"
+        value = match.group(1)
+
+        path = write(tmp_path, f'[tool.nab]\nrequires-python = "{value}"\n')
+        assert read_pyproject_config(path).requires_python == value
 
 
 class TestUploadedPriorTo:
