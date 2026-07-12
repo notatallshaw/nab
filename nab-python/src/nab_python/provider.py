@@ -1441,9 +1441,23 @@ class Provider:
         missing from the index when in fact it is the resolver's
         transitive constraints (or a too-strict build policy) that
         excluded every candidate.
+
+        ``all_versions`` is post-filter, so an empty one means either the
+        index served no files or every file it served was dropped by
+        requires-python, dist-policy, or the upload-time cutoff.  The raw
+        listing tells the two apart: a non-empty one is present but
+        incompatible, not absent.
         """
         if not all_versions:
-            reason = "package not found on any configured index"
+            _, _, normalized = self.split_and_normalize(package)
+            raw_listing = self.coordinator.index.get_listing(normalized)
+            if raw_listing:
+                reason = (
+                    "found on index but no distribution is compatible "
+                    "(all filtered by requires-python, dist-policy, or upload-time)"
+                )
+            else:
+                reason = "package not found on any configured index"
         elif blockers:
             # Look-ahead rejection: candidates DID match the range but
             # were rejected.  Naming the blocker is more useful than

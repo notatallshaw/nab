@@ -854,6 +854,35 @@ class TestNoVersionsReasons:
             == "no version matches the requirement"
         )
 
+    def test_present_but_requires_python_filtered_reports_incompatible(self) -> None:
+        """A requires-python-filtered package reports incompatible, not absent."""
+        coordinator = make_coordinator(
+            [
+                make_wheel("1.0", requires_python=">=3.13"),
+                make_wheel("2.0", requires_python=">=3.13"),
+                make_wheel("3.0", requires_python=">=3.13"),
+            ],
+            package="foo",
+        )
+        provider = Provider(coordinator, python_version="3.9.0")
+        provider.choose_version("foo", SpecifierSet("").to_range())
+        assert (
+            provider.get_no_versions_reason("foo")
+            == "found on index but no distribution is compatible "
+            "(all filtered by requires-python, dist-policy, or upload-time)"
+        )
+
+    def test_present_but_dist_policy_filtered_reports_incompatible(self) -> None:
+        """A dist-policy-filtered package reports incompatible, not absent."""
+        coordinator = make_coordinator([make_sdist("1.0")], package="foo")
+        provider = Provider(coordinator, dist_policy=DistPolicy.WHEEL_ONLY)
+        provider.choose_version("foo", SpecifierSet("").to_range())
+        assert (
+            provider.get_no_versions_reason("foo")
+            == "found on index but no distribution is compatible "
+            "(all filtered by requires-python, dist-policy, or upload-time)"
+        )
+
     def test_get_reason_returns_none_for_unknown_package(self) -> None:
         """Packages without a recorded reason return ``None``."""
         coordinator = make_coordinator([], package="foo")
