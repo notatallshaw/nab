@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 project = "nab"
 author = "Damian Shaw"
 copyright = "2026, Damian Shaw"  # noqa: A001 - Sphinx convention
@@ -30,6 +32,10 @@ intersphinx_mapping = {
 html_theme = "furo"
 html_title = "nab"
 html_static_path: list[str] = []
+
+# Read the Docs serves several versions from one domain.  Without a canonical
+# URL, search engines and link previews pick an arbitrary one.
+html_baseurl = os.environ.get("READTHEDOCS_CANONICAL_URL", "")
 
 source_suffix = {
     ".md": "markdown",

@@ -8,6 +8,10 @@ nab reads a `pyproject.toml`, resolves the dependency tree, and
 writes a pinned set of versions or a PEP 751 lockfile. It does not
 install. Hand the lockfile to whatever installer you trust.
 
+## Documentation
+
+<https://nab.readthedocs.io/>
+
 ## Install
 
 For package hygiene, and security reasons, the preference is to install nab itself
