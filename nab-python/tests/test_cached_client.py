@@ -30,6 +30,7 @@ from nab_index.client import (
     _parse_sdist_filename,
     _select_artifact_hash,
 )
+from nab_index.transport import HttpError
 from nab_python.metadata import parse_metadata
 
 LISTING = {
@@ -67,7 +68,7 @@ class _FakeResponse:
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             msg = f"status {self.status_code}"
-            raise RuntimeError(msg)
+            raise HttpError(msg)
 
 
 class _MischarsetResponse(_FakeResponse):
@@ -837,7 +838,7 @@ class TestGetFiles:
             finally:
                 await client.aclose()
 
-        with pytest.raises(RuntimeError, match="500"):
+        with pytest.raises(HttpError, match="500"):
             asyncio.run(go())
 
     def test_cold_cache_404_returns_empty(self, tmp_path: Path) -> None:
