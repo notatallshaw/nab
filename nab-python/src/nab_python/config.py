@@ -748,6 +748,7 @@ def _apply_workspace_discovery(
     if not discovered:
         return config
     merged = merge_workspace_local_sources(config.local_sources, discovered)
+    _reject_duplicate_source_names(merged, config.vcs_sources, config.archive_sources)
     explicit_names = {canonicalize_name(src.name) for src in config.local_sources}
     # Universal mode forbids host builds (see _enforce_universal_build_policy),
     # so the workspace BUILD_LOCAL floor does not apply: keep its never.
