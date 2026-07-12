@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import pytest
 
-from nab_index.client import WheelFile, _parse_files
+from nab_index.client import (
+    MalformedSimpleResponseError,
+    WheelFile,
+    _parse_files,
+)
+from nab_index.transport import HttpError
 
 _INDEX = "https://example.com/"
 
@@ -30,25 +35,31 @@ def test_valid_body_parses() -> None:
     assert files[0].filename == "foo-1.0-py3-none-any.whl"
 
 
+def test_malformed_body_is_index_error() -> None:
+    """A malformed body raises ``HttpError``, not just the subclass."""
+    with pytest.raises(HttpError, match="malformed Simple-API"):
+        _parse_files("oops", _INDEX, "foo")
+
+
 def test_non_dict_body_raises() -> None:
-    with pytest.raises(TypeError, match="malformed Simple-API"):
+    with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
         _parse_files(["foo"], _INDEX, "foo")
 
 
 def test_non_string_body_raises() -> None:
-    with pytest.raises(TypeError, match="malformed Simple-API"):
+    with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
         _parse_files("oops", _INDEX, "foo")
 
 
 def test_non_list_files_value_raises() -> None:
-    with pytest.raises(TypeError, match="malformed Simple-API"):
+    with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
         _parse_files({"files": "oops"}, _INDEX, "foo")
-    with pytest.raises(TypeError, match="malformed Simple-API"):
+    with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
         _parse_files({"files": {"a": 1}}, _INDEX, "foo")
 
 
 def test_missing_files_key_raises() -> None:
-    with pytest.raises(TypeError, match="malformed Simple-API"):
+    with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
         _parse_files({}, _INDEX, "foo")
 
 

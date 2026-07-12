@@ -508,6 +508,29 @@ class TestLockCommandSpecific:
         assert "Cannot lock" in err
         assert "503" in err
 
+    def test_malformed_simple_response_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A malformed Simple-API listing exits 1 cleanly, not a raw traceback.
+
+        Raises the parser's real error so the test tracks whatever type a
+        broken 200 body produces.
+        """
+        from nab_index.client import _parse_files
+
+        with pytest.raises(HttpError, match="malformed Simple-API") as caught:
+            _parse_files(b"<!doctype html>", "https://pypi.org/simple/", "foo")
+
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch("nab.cli.resolve_pyproject", side_effect=caught.value),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        err = capsys.readouterr().err
+        assert "malformed Simple-API" in err
+        assert "Traceback" not in err
+
     def test_missing_sdist_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -1204,6 +1227,25 @@ class TestLockCommandUniversal:
         err = capsys.readouterr().err
         assert "Cannot lock" in err
         assert "503" in err
+
+    def test_malformed_simple_response_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A malformed Simple-API listing exits 1 cleanly, not a raw traceback."""
+        from nab_index.client import _parse_files
+
+        with pytest.raises(HttpError, match="malformed Simple-API") as caught:
+            _parse_files(b"<!doctype html>", "https://pypi.org/simple/", "foo")
+
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch("nab.cli.resolve_universal_pyproject", side_effect=caught.value),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes")
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "malformed Simple-API" in err
 
     def test_requirements_missing_hash_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
