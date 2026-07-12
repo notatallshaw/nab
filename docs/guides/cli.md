@@ -103,7 +103,12 @@ prints a notice naming the cutoff it dropped.
 Resolve and download every wheel and sdist into a local
 directory. The download is idempotent: files whose recorded
 sha256 matches a local file are left alone. Local and VCS pins
-are skipped. Single-environment only.
+are skipped.
+
+Universal mode (`[tool.nab].mode = "universal"`) re-resolves
+across the matrix and downloads the union of every tuple's
+artefacts into the same directory, deduplicated by URL so a
+wheel shared across tuples is fetched once.
 
 * `--output` defaults to `wheels/`.
 * `--max-concurrency` controls parallel HTTP fetches (default `8`,
