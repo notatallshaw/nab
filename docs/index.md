@@ -22,14 +22,14 @@ installer you trust.
   [conflicting extras and groups](explanation/conflicts.md).
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 :caption: Tutorial
 
 tutorial/getting-started
 ```
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 :caption: How-to guides
 
 how-to/install
@@ -40,7 +40,7 @@ how-to/workspaces
 ```
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 :caption: Reference
 
 reference/cli
@@ -50,7 +50,7 @@ reference/build-policy
 ```
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 :caption: Explanation
 
 explanation/universal
