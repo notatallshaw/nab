@@ -314,7 +314,7 @@ def expand_self_extras(
                 continue
             worklist.extend(
                 canonicalize_name(sub)
-                for sub in req.extras
+                for sub in sorted(req.extras)
                 if canonicalize_name(sub) not in seen
             )
     return out
@@ -557,7 +557,7 @@ def _self_ref_edges(
             return []
         if isinstance(residual, str):
             edge = gates | {residual}
-    return [(canonicalize_name(sub), edge) for sub in req.extras]
+    return [(canonicalize_name(sub), edge) for sub in sorted(req.extras)]
 
 
 def expand_group_includes(

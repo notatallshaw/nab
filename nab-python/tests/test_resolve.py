@@ -2003,6 +2003,24 @@ class TestBuildResolverInputs:
         assert "foo" not in resolver_requirements
         assert not caplog.records
 
+    def test_multi_extra_proxy_keys_sorted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Extra proxy keys are inserted in sorted order.
+
+        ``Requirement.extras`` is a set with PYTHONHASHSEED-dependent order, and
+        the insertion order of the proxy keys becomes the resolver's
+        ``root_package_order`` tiebreak. A reversed extras order must still give
+        the sorted keys.
+        """
+        req = Requirement("demo[x,y,z]")
+        monkeypatch.setattr(req, "extras", ["z", "y", "x"])
+        resolver_requirements, _ = _build_resolver_inputs(
+            [req], NabProjectConfig(), environment={}
+        )
+        proxy_keys = [k for k in resolver_requirements if k.startswith("demo[")]
+        assert proxy_keys == ["demo[x]", "demo[y]", "demo[z]"]
+
 
 class TestBuildConstraints:
     """``_build_constraints`` folds duplicate constraint lines."""
