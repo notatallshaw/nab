@@ -90,9 +90,9 @@ def look_ahead_ok(
                 and decided_version is None
                 and (dep_range & pos_range).is_empty
             ):
-                provider.pending_range_blocks[
-                    (package, dep_normalized, pos_range)
-                ].append(version)
+                range_key = (package, dep_normalized, pos_range)
+                provider.pending_range_blocks[range_key].append(version)
+                provider.pending_range_dep_ranges[range_key] |= dep_range
                 return False
 
     return True
@@ -149,6 +149,7 @@ def flush_pending_blocks(provider: Provider) -> None:
             )
         )
     provider.pending_range_blocks = defaultdict(list)
+    provider.pending_range_dep_ranges = defaultdict(VersionRange.empty)
 
     # Root- and metadata-blocks are diagnostic-only; drop them without
     # emitting clauses.
