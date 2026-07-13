@@ -20,7 +20,6 @@ from ._vcs_admission import admit_vcs_url
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
-from ._vendor.packaging.version import Version
 from .config import (
     ConfigError,
     ConflictFork,
@@ -70,6 +69,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
+    from ._vendor.packaging.version import Version
     from .target import ResolveTarget
 
 

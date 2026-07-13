@@ -758,17 +758,19 @@ class TestRequiresPython:
     ) -> None:
         """``--python`` is the knob the error names, so it has to work.
 
-        The check runs against the target the resolve actually uses, which
-        ``--python`` moves after the config is read.  A library capped below
-        the host (``>=3.9,<3.13`` on 3.14) is otherwise unlockable.
+        The check runs against the target the resolve actually uses, and
+        ``--python`` moves that target after the config is read.  Without it a
+        library capped below the interpreter locking it could not be locked at
+        all.  nab itself needs 3.10, so a project declaring only 3.9 is never
+        the host, whatever runs the suite.
         """
-        path = write(tmp_path, '[tool.nab]\nrequires-python = ">=3.9,<3.13"\n')
+        path = write(tmp_path, '[tool.nab]\nrequires-python = "==3.9.*"\n')
         config = read_pyproject_config(path)
         with pytest.raises(ConfigError, match="excludes the resolve target"):
             plan_targets(config)
 
-        (target,) = plan_targets(with_python_override(config, "3.12"))
-        assert target.python_version == "3.12"
+        (target,) = plan_targets(with_python_override(config, "3.9"))
+        assert target.python_version == "3.9"
 
     def test_project_table_is_the_fallback_source(self, tmp_path: Path) -> None:
         """``[project].requires-python`` is recorded when [tool.nab] sets none."""
