@@ -112,11 +112,32 @@ refuses a lock whose declared environments none of its own satisfies.
 The declaration always pins `python_version`, `sys_platform` and
 `platform_machine`. It also pins every other PEP 508 variable that
 a marker in the resolve consulted: a dependency, root requirement,
-or constraint marker on `platform_system` pins `platform_system`,
-and one on `python_full_version` pins the target's exact micro
-release. This is deliberately narrow. A marker nab evaluated is a
-question whose answer changed the package set, so an installer that
-answers it differently must not use this lock.
+or constraint marker on `platform_system` pins `platform_system`.
+This is deliberately narrow. A marker nab evaluated is a question
+whose answer changed the package set, so an installer that answers
+it differently must not use this lock.
+
+`python_full_version` is the exception: it is declared by
+constraint, not by value. The pins do not depend on the micro
+release, they depend on how each marker clause reading it answered,
+so that is what the lock declares. A clause that held is declared as
+it stands; one that did not is declared complemented, since PEP 508
+has no `not`:
+
+```text
+tomli ; python_full_version <= "3.11.0a6"   read false
+    -> python_full_version > "3.11.0a6"
+```
+
+The lock is then installable on every micro release that reads the
+resolve's markers the way the resolve did, and a marker that
+genuinely splits the micros (`python_full_version >= "3.13.4"`)
+still partitions them. Pinning the value instead would refuse every
+other micro, including every real one when the target names a minor:
+`--python 3.13` synthesizes `3.13.0`, which no released interpreter
+reports. A clause whose complement cannot be stated as a clause (an
+unusual operator such as `~=`, or a PEP 440 prerelease boundary)
+falls back to pinning the exact value.
 
 Two variables are never declared: `platform_release` and
 `platform_version` name one machine's kernel build, so a lock

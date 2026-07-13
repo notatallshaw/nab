@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 
     from nab_resolver.types import Incompatibility, RangeProtocol
 
+    from ._vendor.packaging.markers import Marker
     from ._vendor.packaging.requirements import Requirement
     from ._vendor.packaging.version import Version
     from .config import IndexOverride, NabProjectConfig, PackageOverride
@@ -570,11 +571,12 @@ class Provider:
         # Requires-Python compatibility, keyed by the raw specifier string.
         self.requires_python_cache: dict[str, bool] = {}
 
-        # The PEP 508 variables every dependency marker evaluated here named.
-        # The lock's ``environments`` declaration pins each one to the target's
-        # value, so an installer whose environment answers differently is
-        # refused rather than handed a package set chosen for another machine.
-        self.consulted_marker_variables: set[str] = set()
+        # Every dependency marker evaluated here.  The lock's ``environments``
+        # declaration is built from them: it declares the variables they named
+        # and how their clauses read, so an installer whose environment answers
+        # differently is refused rather than handed a package set chosen for
+        # another machine.
+        self.consulted_markers: set[Marker] = set()
 
         # Marker evaluation caches keyed by id(marker); requirement parsing is
         # cached upstream so each distinct marker text shares one Marker. The

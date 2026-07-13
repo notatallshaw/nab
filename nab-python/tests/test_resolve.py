@@ -10,7 +10,7 @@ import pytest
 
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python._vendor.packaging.markers import default_environment
+from nab_python._vendor.packaging.markers import Marker, default_environment
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
@@ -3152,6 +3152,20 @@ class TestLocalSourceExtrasMarkers:
             )
 
 
+# A real linux CPython 3.12.3, the kind of interpreter a lock resolved for
+# ``python = "3.12"`` has to install on.
+_PY312_ENV: dict[str, str] = {
+    "implementation_name": "cpython",
+    "os_name": "posix",
+    "platform_machine": "x86_64",
+    "platform_python_implementation": "CPython",
+    "platform_system": "Linux",
+    "python_full_version": "3.12.3",
+    "python_version": "3.12",
+    "sys_platform": "linux",
+}
+
+
 class TestLockDeclaresItsEnvironment:
     """A single-environment lock declares the environment it was resolved
     for.  Every dependency whose marker was False here was dropped, so an
@@ -3240,3 +3254,42 @@ class TestLockDeclaresItsEnvironment:
         (environment,) = result.lock_input.environments
         assert "platform_release" not in str(environment)
         assert "platform_release" in caplog.text
+
+    def test_a_full_version_marker_declares_how_it_read_not_the_micro(
+        self, tmp_path: Path
+    ) -> None:
+        """``--python 3.12`` invents the micro 3.12.0; no interpreter reports it.
+
+        Pinning it would refuse every real 3.12, so the lock declares what
+        the resolve actually depends on: the marker read false, and it
+        reads false on every 3.12.
+        """
+        result = self._resolve(
+            tmp_path,
+            self._PYPROJECT,
+            self._coordinator(
+                'Requires-Dist: tomli ; python_full_version <= "3.11.0a6"\n'
+            ),
+        )
+        (environment,) = result.lock_input.environments
+        assert 'python_full_version > "3.11.0a6"' in str(environment)
+        assert "python_full_version ==" not in str(environment)
+        assert "tomli" not in result.pins
+        assert Marker(str(environment)).evaluate(_PY312_ENV)
+
+    def test_a_marker_that_splits_the_micros_refuses_the_other_side(
+        self, tmp_path: Path
+    ) -> None:
+        """Here the micro really does change the pins, so the lock says so."""
+        result = self._resolve(
+            tmp_path,
+            self._PYPROJECT,
+            self._coordinator('Requires-Dist: bar ; python_full_version >= "3.12.4"\n'),
+        )
+        (environment,) = result.lock_input.environments
+        assert 'python_full_version < "3.12.4"' in str(environment)
+        assert "bar" not in result.pins
+        assert Marker(str(environment)).evaluate(_PY312_ENV)
+        assert not Marker(str(environment)).evaluate(
+            {**_PY312_ENV, "python_full_version": "3.12.5"}
+        )

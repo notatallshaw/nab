@@ -19,13 +19,13 @@ report metadata for the target or for someone else.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ._conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
 from ._vendor.packaging import tags as ptags
-from ._vendor.packaging.markers import default_environment
+from ._vendor.packaging.markers import Marker, default_environment
 from ._vendor.packaging.version import InvalidVersion, Version
 from .tags import TagSet
 
@@ -173,6 +173,36 @@ _MARKER_VARIABLE_RE = re.compile(
     r"\b(" + "|".join(sorted(PEP508_MARKER_VARIABLES)) + r")\b"
 )
 
+# The one variable a lock declares by constraint rather than by value: see
+# :func:`_full_version_clauses`.
+_PYTHON_FULL_VERSION = "python_full_version"
+
+# The operator that states the complement of each comparison.  PEP 508 has no
+# ``not``, so a clause the resolve found False is declared by flipping its
+# operator.  ``~=``, ``===`` and the membership operators have no
+# single-clause complement and are deliberately absent; a clause using one is
+# declared by value instead.
+_COMPLEMENT_OPERATOR: dict[str, str] = {
+    "<": ">=",
+    "<=": ">",
+    ">": "<=",
+    ">=": "<",
+    "==": "!=",
+    "!=": "==",
+}
+
+# One ``lhs op rhs`` comparison of a marker, matched against the string form
+# :func:`Marker.__str__` normalises to: an operand is either a quoted literal
+# or a bare variable token, which is what tells the two apart (the same
+# property the membership scan in :mod:`nab_python._lockfile.disjointness`
+# rests on).  Ordered so the two-character operators win over their prefixes.
+_MARKER_OPERAND = r'"[^"]*"|[A-Za-z_][A-Za-z0-9_]*'
+_MARKER_CLAUSE_RE = re.compile(
+    rf"(?P<lhs>{_MARKER_OPERAND})\s*"
+    r"(?P<op>===|==|!=|<=|>=|~=|<|>|not\s+in|in)\s*"
+    rf"(?P<rhs>{_MARKER_OPERAND})"
+)
+
 
 def marker_variables(marker_text: str) -> frozenset[str]:
     """Return the PEP 508 environment variables ``marker_text`` names.
@@ -186,30 +216,102 @@ def marker_variables(marker_text: str) -> frozenset[str]:
     return frozenset(_MARKER_VARIABLE_RE.findall(marker_text))
 
 
-def environment_declaration(target: ResolveTarget, consulted: Iterable[str]) -> str:
+def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) -> str:
     """Render the PEP 751 ``environments`` marker for ``target``.
 
-    Pins every variable in ``consulted`` to the value ``target`` gives it,
-    plus :data:`_ALWAYS_DECLARED`.  A resolve drops every dependency whose
+    Declares every variable the ``consulted`` markers named, plus
+    :data:`_ALWAYS_DECLARED`.  A resolve drops every dependency whose
     marker is False under the target, so an installer that consults the
     same variable and gets a different answer would be missing the deps
     that environment needs: the declaration refuses it instead.
 
-    ``consulted`` is the union of the variables the resolve's markers
-    named, not a fixed projection of the target: a marker on
-    ``python_full_version`` pins the micro release, one on
-    ``platform_system`` pins the OS.  Variables in
-    :data:`UNBOUNDABLE_MARKER_VARIABLES` are dropped (see there).
+    Every variable but one is declared by value: a marker on
+    ``platform_system`` pins the OS.  ``python_full_version`` is declared
+    by constraint (see :func:`_full_version_clauses`), because a lock that
+    pinned the micro release would refuse the very interpreters it
+    resolved for.  Variables in :data:`UNBOUNDABLE_MARKER_VARIABLES` are
+    dropped (see there).
     """
+    texts = sorted({str(marker) for marker in consulted})
+    variables: set[str] = set()
+    for text in texts:
+        variables |= marker_variables(text)
     names = [
         *_ALWAYS_DECLARED,
-        *sorted(
-            (set(consulted) & PEP508_MARKER_VARIABLES)
-            - set(_ALWAYS_DECLARED)
-            - UNBOUNDABLE_MARKER_VARIABLES
-        ),
+        *sorted(variables - set(_ALWAYS_DECLARED) - UNBOUNDABLE_MARKER_VARIABLES),
     ]
-    return " and ".join(f'{name} == "{target.marker_env[name]}"' for name in names)
+    clauses: list[str] = []
+    for name in names:
+        if name == _PYTHON_FULL_VERSION:
+            clauses.extend(_full_version_clauses(target, texts))
+        else:
+            clauses.append(f'{name} == "{target.marker_env[name]}"')
+    return " and ".join(clauses)
+
+
+def _full_version_clauses(target: ResolveTarget, texts: Sequence[str]) -> list[str]:
+    """Declare how the resolve read ``python_full_version``, not its value.
+
+    Pinning the target's own ``python_full_version`` would refuse every
+    other micro release, including every real one when the target names a
+    minor (``--python 3.13`` synthesizes ``3.13.0``, which no released
+    interpreter reports).  The pins do not depend on the micro; they depend
+    on how each clause reading it answered.  So that is what the lock
+    declares: a clause that held is declared as it stands, one that did not
+    is declared complemented (``python_full_version <= "3.11.0a6"`` read
+    False becomes ``python_full_version > "3.11.0a6"``).  Every environment
+    the result admits answers the resolve's clauses the way the resolve
+    did, and a marker that genuinely splits the micros (``>= "3.13.4"``)
+    still partitions them.
+
+    Each clause is decided by asking packaging: it is rebuilt as a marker of
+    its own and evaluated against the target through the public
+    ``Marker.evaluate``, so no marker semantics are re-derived here.
+
+    A clause whose outcome nab cannot state as a clause falls back to
+    declaring the target's exact value, which is sound if narrow: an unusual
+    operator (``~=``, ``===``, a membership test), a comparison against
+    another variable rather than a literal, or a PEP 440 boundary where the
+    flipped operator is not the complement -- ``< "3.10.2"`` excludes the
+    prereleases of 3.10.2 and so does ``>= "3.10.2"``, so on a ``3.10.2rc1``
+    target neither side holds.  The same fallback covers a marker that only
+    spells the name inside a literal, which leaves nothing to declare.
+    """
+    environment = dict(target.marker_env)
+    exact = f'{_PYTHON_FULL_VERSION} == "{environment[_PYTHON_FULL_VERSION]}"'
+    declared: set[str] = set()
+    for text in texts:
+        for match in _MARKER_CLAUSE_RE.finditer(text):
+            lhs, op, rhs = match.group("lhs", "op", "rhs")
+            if _PYTHON_FULL_VERSION not in (lhs, rhs):
+                continue
+            declaration = _declared_clause(lhs, " ".join(op.split()), rhs, environment)
+            if declaration is None:
+                return [exact]
+            declared.add(declaration)
+    return sorted(declared) or [exact]
+
+
+def _declared_clause(
+    lhs: str, op: str, rhs: str, environment: Mapping[str, str]
+) -> str | None:
+    """Return the clause declaring how ``lhs op rhs`` read, or None.
+
+    The clause is one comparison of a marker the resolve evaluated, with
+    ``python_full_version`` on one side; packaging decides which way it read.
+    None means nab cannot state that outcome as a clause of its own, and the
+    caller declares the exact value instead.
+    """
+    literal = rhs if lhs == _PYTHON_FULL_VERSION else lhs
+    if op not in _COMPLEMENT_OPERATOR or not literal.startswith('"'):
+        return None
+    clause = f"{lhs} {op} {rhs}"
+    if Marker(clause).evaluate(environment):
+        return clause
+    complement = f"{lhs} {_COMPLEMENT_OPERATOR[op]} {rhs}"
+    if not Marker(complement).evaluate(environment):
+        return None
+    return complement
 
 
 def host_environment(

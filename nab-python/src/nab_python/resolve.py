@@ -269,26 +269,31 @@ def _declared_environments(
     The pins hold for the one environment ``target`` names, so the lock
     says so: every dependency whose marker was False here was dropped, and
     an installer that answers one of those markers differently needs a
-    different package set.  The declaration pins each PEP 508 variable the
-    resolve consulted.  The provider records the markers it read off the
-    dependency graph; the root requirements and constraints are scanned
-    here, since their markers are evaluated before the provider exists.
+    different package set.  The declaration is built from the markers the
+    resolve read (see
+    :func:`~nab_python.target.environment_declaration`).  The provider
+    records the ones it read off the dependency graph; the root
+    requirements and constraints are collected here, since their markers
+    are evaluated before the provider exists.
 
     A marker on an axis the lock cannot bound (see
     :data:`~nab_python.target.UNBOUNDABLE_MARKER_VARIABLES`) is reported:
     the lock stays open on it, so an installer whose kernel differs will
     still accept the lock, with the dep that marker gated missing.
     """
-    consulted = set(provider.consulted_marker_variables)
+    consulted = set(provider.consulted_markers)
     for req in requirements:
         if req.marker is not None:
-            consulted |= marker_variables(str(req.marker))
+            consulted.add(req.marker)
     for constraint in constraints:
         marker = Requirement(constraint).marker
         if marker is not None:
-            consulted |= marker_variables(str(marker))
+            consulted.add(marker)
 
-    unboundable = sorted(consulted & UNBOUNDABLE_MARKER_VARIABLES)
+    variables: set[str] = set()
+    for marker in consulted:
+        variables |= marker_variables(str(marker))
+    unboundable = sorted(variables & UNBOUNDABLE_MARKER_VARIABLES)
     if unboundable:
         _logger.warning(
             "A marker in this resolve consults %s, which names the resolving"

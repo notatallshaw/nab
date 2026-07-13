@@ -31,6 +31,7 @@ from nab_python._provider.metadata_resolver import (
 )
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._testing.overrides import pkg_override
+from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
@@ -7389,10 +7390,10 @@ class TestScanBatchNoFirstCandidate:
         assert outcome is None
 
 
-class TestConsultedMarkerVariables:
-    """The lock's ``environments`` declaration is built from the PEP 508
-    variables the resolve's dependency markers named, so the provider has
-    to record every marker it evaluates.
+class TestConsultedMarkers:
+    """The lock's ``environments`` declaration is built from the dependency
+    markers the resolve read, so the provider has to record every marker it
+    evaluates.
     """
 
     @staticmethod
@@ -7412,21 +7413,21 @@ class TestConsultedMarkerVariables:
             target=_PY312,
         )
         provider.get_dependencies("foo", V("1.0"))
-        assert provider.consulted_marker_variables == {"platform_system"}
+        assert provider.consulted_markers == {Marker('platform_system == "Windows"')}
 
     def test_a_marker_that_holds_is_recorded_too(self) -> None:
-        """A True marker keeps its dep, so its variable still gated the resolve."""
+        """A True marker keeps its dep, so it still gated the resolve."""
         provider = Provider(
             self._coordinator('bar ; sys_platform != "win32"'), target=_PY312
         )
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in deps
-        assert provider.consulted_marker_variables == {"sys_platform"}
+        assert provider.consulted_markers == {Marker('sys_platform != "win32"')}
 
     def test_an_unmarked_dependency_records_nothing(self) -> None:
         provider = Provider(self._coordinator("bar"), target=_PY312)
         provider.get_dependencies("foo", V("1.0"))
-        assert provider.consulted_marker_variables == set()
+        assert provider.consulted_markers == set()
 
 
 class TestPrereleaseHostTarget:
