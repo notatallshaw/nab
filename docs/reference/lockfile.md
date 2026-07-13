@@ -25,9 +25,9 @@ Each pinned package carries:
   index), a `LocalPin` (a directory on disk), a `VcsPin` (a
   git URL with a commit pin), or an `ArchivePin` (a `.tar.gz` URL
   content-pinned by a required `sha256`),
-* every artefact the index listed at that pinned version (`sdist`
-  and `wheels`), each with its filename, URL, `sha256`, and optional
-  size.
+* every artefact the resolve considered at that pinned version
+  (`sdist` and the `wheels` the target can install), each with its
+  filename, URL, `sha256`, and optional size.
 
 The digests are the ones the index published, so nothing is hashed
 locally to build a lock. A resolve does fetch, but only to read
@@ -37,6 +37,10 @@ index publishes no sidecar, and the sdist only when no wheel is
 published (built, if its dependencies are dynamic and the
 [build policy](build-policy.md) allows it). VCS and archive sources
 are cloned or downloaded for the same reason.
+
+A wheel the target's PEP 425 tags reject was never a candidate, so it
+is not in the lock: a lock resolved on `linux_x86_64` carries no
+`win_amd64` wheels.
 
 ## PEP 751 `pylock.toml`
 

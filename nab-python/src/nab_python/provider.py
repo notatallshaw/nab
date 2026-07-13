@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from ._vendor.packaging.version import Version
     from .config import IndexOverride, NabProjectConfig, PackageOverride
     from .fetch import FetchCoordinator
+    from .tags import TagSet
     from .target import ResolveTarget
 
 __all__ = [
@@ -309,6 +310,8 @@ class ProviderStats:
     excluded_by_time: int = 0
     excluded_by_dist_policy: int = 0
     excluded_by_build_policy: int = 0
+    excluded_by_wheel_tags: int = 0
+    excluded_versions_no_compatible_wheel: int = 0
     sdist_pyproject_fallbacks: int = 0
     get_dependencies_calls: int = 0
     choose_version_calls: int = 0
@@ -347,10 +350,17 @@ class Provider:
     The HTTP connection pool is shared across threads for reuse.
 
     ``target`` is the environment the resolve is for: its markers gate
-    every dependency and its Python filters candidates by
-    Requires-Python.  Left unset, markers evaluate against the host and
-    no candidate is filtered by Requires-Python, since nothing has said
-    which Python the resolve targets.
+    every dependency, its Python filters candidates by Requires-Python,
+    and its wheel tags filter candidates by PEP 425 compatibility, so a
+    version whose only wheels the target cannot install is a version the
+    resolver never sees.  Left unset, markers evaluate against the host
+    and neither filter runs, since nothing has said which machine the
+    resolve targets.
+
+    ``preferences`` are versions another resolve already decided, tried
+    first when they are usable here.  The universal path passes the pins
+    of an already-resolved tuple, which aligns the matrix on one version
+    where every tuple can take it.
     """
 
     # Drives two prefetch paths: the speculative root-batch prefetch
@@ -425,12 +435,23 @@ class Provider:
         archive_sources: list[ArchiveSource] | None = None,
         archive_cache_dir: Path | None = None,
         build_config: NabProjectConfig | None = None,
-        resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
+        resolution_strategy: ResolutionStrategy | str = ResolutionStrategy.HIGHEST,
         direct_packages: frozenset[str] | None = None,
+        preferences: Mapping[str, Version] | None = None,
         *,
         trust_unverified_sdist_deps: bool = False,
     ) -> None:
         """Construct the provider; see the class docstring for parameters."""
+        if isinstance(resolution_strategy, str):
+            try:
+                resolution_strategy = ResolutionStrategy(resolution_strategy)
+            except ValueError as exc:
+                valid = sorted(s.value for s in ResolutionStrategy)
+                msg = (
+                    f"resolution_strategy must be one of {valid!r};"
+                    f" got {resolution_strategy!r}"
+                )
+                raise ValueError(msg) from exc
         self.coordinator = coordinator
         self.target = target
         self.uploaded_prior_to = uploaded_prior_to
@@ -444,9 +465,21 @@ class Provider:
         self.build_policy = build_policy
         # Opt-out: trust a pre-2.2 sdist's PKG-INFO deps as final instead of
         # routing through the dynamic path. Off by default (strict PEP 643).
-        self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
+        # ``build_config`` carries the project's own setting; the argument is
+        # for a caller that has no config (a benchmark harness).
+        self.trust_unverified_sdist_deps = trust_unverified_sdist_deps or (
+            build_config is not None and build_config.trust_unverified_sdist_deps
+        )
         self._resolution_strategy = resolution_strategy
         self._direct_packages: frozenset[str] = direct_packages or frozenset()
+        # Versions another target already decided, tried first when they are
+        # usable here: uv-style cross-target alignment ("target A picked numpy
+        # 2.2.6, ask target B to try 2.2.6 first").  Keyed canonically, to
+        # match the provider's own naming scheme.
+        self._preferences: dict[str, Version] = {
+            canonicalize_name(name): version
+            for name, version in (preferences or {}).items()
+        }
         self._package_overrides = tuple(package_overrides)
         self._index_overrides: Mapping[str, IndexOverride] = index_overrides or {}
         # True when any override sets a time cutoff or disables one, so the
@@ -488,6 +521,20 @@ class Provider:
             self.python_release = target.python_release
             self.environment = dict(target.marker_env)
             self.env_with_extra = target.env_with_membership()
+
+        # The wheel tags the target installs.  ``None`` turns the tag filter
+        # off, which happens when no target is set (nothing has said which
+        # machine the resolve is for) or when a marker overlay moved the target
+        # off its tag axis, leaving the tags describing another machine (see
+        # ``ResolveTarget.with_marker_overrides``).
+        self.wheel_tags: TagSet | None = (
+            target.tags if target is not None and target.tags_faithful else None
+        )
+
+        # Wheels the tag filter dropped, per canonical name, so a package left
+        # with no candidate can say the target has no compatible wheel rather
+        # than blame requires-python or the cutoff.
+        self.tag_excluded_wheels: dict[str, int] = {}
 
         self.root_requirements = root_requirements or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
@@ -1030,11 +1077,23 @@ class Provider:
     def choose_version(
         self, package: str, version_range: RangeProtocol[Version]
     ) -> Version | None:
-        """Pick a version within the allowed range, respecting the strategy."""
+        """Pick a version within the allowed range, respecting the strategy.
+
+        A preference another resolve decided wins when it is in range and
+        usable here; otherwise the strategy picks.
+        """
         assert isinstance(version_range, VersionRange)
         self.stats.choose_version_calls += 1
 
         base, extra, normalized = self.split_and_normalize(package)
+
+        preferred = self._preferred_version(
+            package, base, extra, normalized, version_range
+        )
+        if preferred is not None:
+            self._flush_pending_blocks()
+            return preferred
+
         if extra is not None:
             return self._choose_extra_version(package, base, extra, version_range)
 
@@ -1061,6 +1120,44 @@ class Provider:
         return self._run_full_scan(
             normalized, candidates, wheel_by_version, package, all_versions
         )
+
+    def _preferred_version(
+        self,
+        package: str,
+        base: str,
+        extra: str | None,
+        normalized: str,
+        version_range: VersionRange,
+    ) -> Version | None:
+        """Return the preferred version for ``package``, or None to pick fresh.
+
+        A preference is honored only when it is in range and usable here: a
+        base version needs extractable metadata, an extras proxy
+        additionally needs to declare the extra.
+        """
+        preferred = self._preferences.get(normalized)
+        if preferred is None:
+            return None
+        all_versions = self.versions_only(normalized, self.fetch_versions(package))
+
+        # The proxy's range is built full(), so intersect it with the base's
+        # positive range, which carries the pre-release admission granted by
+        # the requirement that named the extra.  This mirrors
+        # choose_extra_version.
+        admit_range = version_range
+        if extra is not None:
+            base_range = self.solution_ranges.get(normalized)
+            if base_range is not None:
+                admit_range = version_range & base_range
+
+        if preferred not in set(admit_range.filter(all_versions)):
+            return None
+        usable = (
+            _extras.version_provides_extra(self, base, extra, preferred)
+            if extra is not None
+            else self._look_ahead_ok(normalized, preferred, check_decisions=True)
+        )
+        return preferred if usable else None
 
     def has_satisfying_version(
         self, package: str, version_range: RangeProtocol[Version]
@@ -1341,15 +1438,23 @@ class Provider:
         excluded every candidate.
 
         ``all_versions`` is post-filter, so an empty one means either the
-        index served no files or every file it served was dropped by
-        requires-python, dist-policy, or the upload-time cutoff.  The raw
-        listing tells the two apart: a non-empty one is present but
-        incompatible, not absent.
+        index served no files or every file it served was dropped by the
+        wheel-tag filter, requires-python, dist-policy, or the upload-time
+        cutoff.  The raw listing tells absence from incompatibility apart,
+        and the tag filter's own tally names the wheel-tag case, which is
+        what a Windows-only package on a Linux target hits.
         """
         if not all_versions:
             _, _, normalized = self.split_and_normalize(package)
             raw_listing = self.coordinator.index.get_listing(normalized)
-            if raw_listing:
+            tag_excluded = self.tag_excluded_wheels.get(normalized, 0)
+            if tag_excluded:
+                reason = (
+                    f"found on index but none of the wheel's tags are compatible"
+                    f" with the resolve target ({tag_excluded} wheels rejected),"
+                    f" and no sdist is available to build from"
+                )
+            elif raw_listing:
                 reason = (
                     "found on index but no distribution is compatible "
                     "(all filtered by requires-python, dist-policy, or upload-time)"

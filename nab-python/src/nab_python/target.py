@@ -105,6 +105,20 @@ IMPLEMENTATION_MARKERS: dict[str, dict[str, str]] = {
 }
 
 
+# The PEP 508 markers a wheel-tag set encodes: the python version, the
+# interpreter, and the machine.  A marker overlay that moves one of these
+# leaves the tags describing a different target than the markers do.
+_TAG_AXIS_MARKERS: tuple[str, ...] = (
+    "implementation_name",
+    "os_name",
+    "platform_machine",
+    "platform_python_implementation",
+    "platform_system",
+    "python_version",
+    "sys_platform",
+)
+
+
 # PEP 425 interpreter short tag per implementation, used in the label so
 # targets differing only by implementation stay distinct.
 _IMPLEMENTATION_PREFIX: dict[str, str] = {"cpython": "py", "pypy": "pp"}
@@ -291,6 +305,11 @@ class ResolveTarget:
     implementation, which pins ``implementation_name`` on
     :attr:`environment_marker_string` so the CPython and PyPy entries
     for one python/platform stay mutually exclusive.
+
+    ``tags_faithful`` says :attr:`tags` still describes the machine
+    :attr:`marker_env` does.  Only :meth:`with_marker_overrides` can
+    break that, and a provider given such a target filters no wheel by
+    tag: see there.
     """
 
     label: str
@@ -300,6 +319,7 @@ class ResolveTarget:
     selection: tuple[tuple[str, str], ...] = ()
     platform_spec: PlatformSpec | None = field(default=None, compare=False)
     multi_implementation: bool = field(default=False, compare=False)
+    tags_faithful: bool = field(default=True, compare=False)
 
     def __post_init__(self) -> None:
         """Reject a python the resolve cannot compare Requires-Python against.
@@ -408,12 +428,31 @@ class ResolveTarget:
         cannot rebuild the wheel-tag axis.  The result is no longer
         host-faithful; a build backend run under it reports the host's
         metadata, not the impersonated target's.
+
+        An overlay that moves a marker the tag set encodes (the python
+        version, the implementation, or the machine) leaves the tags
+        describing one machine and the markers another, so the result is
+        not :attr:`tags_faithful` and a provider filters no wheel by tag
+        under it: filtering by a tag set the markers disown would drop
+        wheels the impersonated target installs and admit ones it cannot.
+        Overlaying a value the target already has moves nothing and keeps
+        the tags faithful.  ``[tool.nab.environment]`` and ``--python``
+        do not come through here; they rebuild the tag axis (see
+        :meth:`for_declared` and :meth:`for_host_python`).
         """
         if not overrides:
             return self
         env = dict(self.marker_env)
         apply_python_axis_overlay(env, overrides)
-        return replace(self, marker_env=env, host_faithful=False)
+        moved = any(
+            env.get(name) != self.marker_env.get(name) for name in _TAG_AXIS_MARKERS
+        )
+        return replace(
+            self,
+            marker_env=env,
+            host_faithful=False,
+            tags_faithful=self.tags_faithful and not moved,
+        )
 
     def with_selection(self, selection: tuple[tuple[str, str], ...]) -> ResolveTarget:
         """Return this target under a conflict fork's active members.

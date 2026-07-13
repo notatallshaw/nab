@@ -9,7 +9,7 @@ import threading
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,6 +34,7 @@ from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
+from nab_python._vendor.packaging.tags import Tag
 from nab_python._vendor.packaging.version import InvalidVersion, Version
 from nab_python.config import (
     IndexOverride,
@@ -60,6 +61,7 @@ from nab_python.provider import (
     VcsSource,
 )
 from nab_python.resolve import _build_resolver_inputs, _raise_for_source_python
+from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
 from nab_resolver.resolver import ResolutionError, Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -876,6 +878,38 @@ class TestNoVersionsReasons:
             provider.get_no_versions_reason("foo")
             == "found on index but no distribution is compatible "
             "(all filtered by requires-python, dist-policy, or upload-time)"
+        )
+
+    def test_present_but_wheel_tags_incompatible_names_the_tags(self) -> None:
+        """A Windows-only package on a Linux target reads like pip's message.
+
+        pywin32 is the real case: every wheel is ``win_*`` and there is no
+        sdist, so the target has nothing to install and the reason has to
+        say so rather than blame requires-python.
+        """
+        wheels = [
+            WheelFile(
+                filename=f"foo-1.0-cp311-cp311-{tag}.whl",
+                url=f"https://example.com/foo-1.0-cp311-cp311-{tag}.whl",
+                version="1.0",
+                requires_python=None,
+                has_metadata=True,
+                upload_time=None,
+            )
+            for tag in ("win_amd64", "win32")
+        ]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(
+            coordinator,
+            target=ResolveTarget.for_declared(
+                python_version="3.11", spec=PlatformSpec("linux_x86_64")
+            ),
+        )
+        provider.choose_version("foo", SpecifierSet("").to_range())
+        assert provider.get_no_versions_reason("foo") == (
+            "found on index but none of the wheel's tags are compatible with"
+            " the resolve target (2 wheels rejected), and no sdist is"
+            " available to build from"
         )
 
     def test_present_but_dist_policy_filtered_reports_incompatible(self) -> None:
@@ -7393,3 +7427,71 @@ class TestConsultedMarkerVariables:
         provider = Provider(self._coordinator("bar"), target=_PY312)
         provider.get_dependencies("foo", V("1.0"))
         assert provider.consulted_marker_variables == set()
+
+
+class TestPrereleaseHostTarget:
+    """A prerelease interpreter reports ``3.15.0rc1`` as its full version.
+
+    ``ResolveTarget.for_host`` takes that string verbatim, so the tag
+    filter has to key off the release the interpreter is (cp315), not the
+    version string, and Requires-Python still has to admit the machine the
+    resolve is running on.
+    """
+
+    _RC_ENV: ClassVar[dict[str, str]] = {
+        "implementation_name": "cpython",
+        "implementation_version": "3.15.0rc1",
+        "os_name": "posix",
+        "platform_machine": "x86_64",
+        "platform_python_implementation": "CPython",
+        "platform_release": "6.8.0",
+        "platform_system": "Linux",
+        "platform_version": "#1 SMP",
+        "python_full_version": "3.15.0rc1",
+        "python_version": "3.15",
+        "sys_platform": "linux",
+    }
+    _RC_TAGS = (
+        Tag("cp315", "cp315", "manylinux_2_39_x86_64"),
+        Tag("py3", "none", "any"),
+    )
+
+    def _target(self) -> ResolveTarget:
+        return ResolveTarget.for_host(
+            env_source=lambda: dict(self._RC_ENV),
+            tags_source=lambda: self._RC_TAGS,
+        )
+
+    @staticmethod
+    def _wheel(tag: str, requires_python: str | None = None) -> WheelFile:
+        filename = f"foo-1.0-{tag}.whl"
+        return WheelFile(
+            filename=filename,
+            url=f"https://example.com/{filename}",
+            version="1.0",
+            requires_python=requires_python,
+            has_metadata=True,
+            upload_time=None,
+        )
+
+    def test_rc_host_installs_its_own_release_wheels(self) -> None:
+        """cp315 wheels are kept; a wheel for the previous release is not."""
+        files = [
+            self._wheel("cp315-cp315-manylinux_2_39_x86_64"),
+            self._wheel("cp314-cp314-manylinux_2_39_x86_64"),
+        ]
+        provider = Provider(
+            make_coordinator(files, package="foo"), target=self._target()
+        )
+        kept = {dist.filename for _, dist in provider.fetch_versions("foo")}
+        assert kept == {"foo-1.0-cp315-cp315-manylinux_2_39_x86_64.whl"}
+        assert provider.stats.excluded_by_wheel_tags == 1
+
+    def test_rc_host_is_admitted_by_a_requires_python_floor(self) -> None:
+        """PEP 440 admits a prerelease when the range holds no final release."""
+        files = [self._wheel("py3-none-any", requires_python=">=3.9")]
+        provider = Provider(
+            make_coordinator(files, package="foo"), target=self._target()
+        )
+        assert provider.python_version == "3.15.0rc1"
+        assert [v for v, _ in provider.fetch_versions("foo")] == [V("1.0")]

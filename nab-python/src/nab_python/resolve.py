@@ -270,8 +270,8 @@ def _declared_environments(
     says so: every dependency whose marker was False here was dropped, and
     an installer that answers one of those markers differently needs a
     different package set.  The declaration pins each PEP 508 variable the
-    resolve consulted -- the provider records the markers it read off the
-    dependency graph, and the root requirements and constraints are scanned
+    resolve consulted.  The provider records the markers it read off the
+    dependency graph; the root requirements and constraints are scanned
     here, since their markers are evaluated before the provider exists.
 
     A marker on an axis the lock cannot bound (see

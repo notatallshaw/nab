@@ -427,6 +427,35 @@ class TestWithMarkerOverrides:
         overlaid = base.with_marker_overrides({"sys_platform": "win32"})
         assert overlaid.tags == base.tags
 
+    def test_a_moved_machine_marker_disowns_the_tags(self) -> None:
+        """The tags now describe a machine the markers no longer name."""
+        base = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        assert base.tags_faithful
+        assert not base.with_marker_overrides({"sys_platform": "win32"}).tags_faithful
+
+    def test_a_moved_python_marker_disowns_the_tags(self) -> None:
+        """The tag set encodes the interpreter, which the overlay cannot rebuild."""
+        base = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        assert not base.with_marker_overrides({"python_version": "3.8"}).tags_faithful
+
+    def test_an_overlay_that_moves_nothing_keeps_the_tags(self) -> None:
+        """Restating a value the target already has changes no axis."""
+        base = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        overlaid = base.with_marker_overrides({"platform_system": "Linux"})
+        assert overlaid.tags_faithful
+
+    def test_an_off_axis_overlay_keeps_the_tags(self) -> None:
+        """No wheel tag encodes the kernel version, so moving it is harmless."""
+        base = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        overlaid = base.with_marker_overrides({"platform_release": "9.9.9"})
+        assert overlaid.tags_faithful
+
+    def test_an_unfaithful_target_stays_unfaithful(self) -> None:
+        """A second overlay cannot restore tags the first one disowned."""
+        base = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        overlaid = base.with_marker_overrides({"sys_platform": "win32"})
+        assert not overlaid.with_marker_overrides({"os_name": "nt"}).tags_faithful
+
 
 class TestDeclaredEnvironment:
     def test_kernel_markers_evaluate_against_the_declared_release(self) -> None:

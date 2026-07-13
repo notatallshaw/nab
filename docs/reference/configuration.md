@@ -80,11 +80,19 @@ implementation = "cpython"  # "cpython" (default) or "pypy"
   `never`.  A python-only retarget warns and permits.  See
   [Build policy](build-policy.md).
 
-A declared platform moves the markers only.  Candidate selection does not
-yet reject a version that ships no wheel for it, and the lockfile records
-every wheel the pinned version publishes, so a single-environment lock is
-not a cross-platform wheel lock.  Use `mode = "universal"`, which does
-filter candidates by wheel tag, to lock for machines you are not on.
+The target declares both halves of the environment: its PEP 508 markers
+gate every dependency, and its PEP 425 wheel tags gate every candidate.
+A version whose only wheels the target cannot install, and which ships no
+sdist, is not a candidate: the resolve fails on it rather than pinning a
+wheel that will not install (`pywin32` on Linux).  An sdist keeps a
+version alive whatever the build policy, so a pure-source package still
+resolves.  The lockfile records only the wheels the target can install.
+
+The resolve is still for one environment.  A lock made for
+`linux_x86_64` is a lock for `linux_x86_64`; it says so in its PEP 751
+`environments` (see [lockfiles](lockfile.md)), and a conforming installer
+refuses it elsewhere.  To lock for several machines at once, use
+`mode = "universal"`.
 
 `[tool.nab.environment]` and `[tool.nab.matrix]` cannot both be set: the
 matrix already declares one environment per tuple.

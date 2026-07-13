@@ -1,8 +1,11 @@
-"""Tests for :class:`UniversalProvider`.
+"""Tests for :class:`Provider` under a declared (non-host) target.
 
-Uses the same mock-coordinator pattern as ``nab-python/tests/test_provider.py``
-to exercise the marker-environment overlay, preferences, and resolution
-strategy paths.
+A declared target names the machine it resolves for, so its markers and
+its wheel tags are synthesized rather than read off the host.  These
+exercise the paths that only a declared target reaches: the wheel-tag
+filter, cross-target preferences, the resolution strategy, and the
+per-target Requires-Python patch level.  ``nab-python/tests/universal/``
+drives the same provider through the matrix.
 """
 
 from __future__ import annotations
@@ -25,13 +28,13 @@ from nab_python.fetch import InMemoryIndex
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
+    Provider,
     VcsConfig,
     VcsPolicy,
     VcsSource,
 )
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
-from nab_python.universal.provider import UniversalProvider
 from nab_resolver.resolver import Resolver
 
 if TYPE_CHECKING:
@@ -83,13 +86,13 @@ def _linux_target(spec: PlatformSpec) -> ResolveTarget:
 class TestPerTupleRequiresPythonOverride:
     """A requires-python override participates in per-tuple python filtering."""
 
-    def _provider(self, py: str) -> UniversalProvider:
+    def _provider(self, py: str) -> Provider:
         coordinator = make_coordinator(
             [_make_wheel("1.0", requires_python=">=3.6")],
             package="pkg",
             auto_metadata=True,
         )
-        return UniversalProvider(
+        return Provider(
             coordinator,
             ResolveTarget.for_declared(
                 python_version=py, spec=PlatformSpec("linux_x86_64")
@@ -110,13 +113,13 @@ class TestPerTupleRequiresPythonOverride:
 class TestProvidesExtraDependenciesOverride:
     """A dependencies + provides-extra override gates deps behind the extra."""
 
-    def _provider(self) -> UniversalProvider:
+    def _provider(self) -> Provider:
         coordinator = make_coordinator(
             [_make_wheel("1.0")],
             package="pkg",
             auto_metadata=True,
         )
-        return UniversalProvider(
+        return Provider(
             coordinator,
             _LINUX_TARGET,
             package_overrides=(
@@ -148,7 +151,7 @@ class TestEnvironmentOverlay:
     def test_user_keys_override_host_defaults(self) -> None:
         """The target's marker overrides take precedence over the host env."""
         coordinator = _make_coordinator([])
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             ResolveTarget.for_host().with_marker_overrides(
                 {"sys_platform": "win32", "python_version": "3.12"}
@@ -160,7 +163,7 @@ class TestEnvironmentOverlay:
     def test_keys_not_supplied_keep_default(self) -> None:
         """Markers the user did not supply fall back to ``default_environment()``."""
         coordinator = _make_coordinator([])
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             ResolveTarget.for_host().with_marker_overrides({"python_version": "3.11"}),
         )
@@ -171,7 +174,7 @@ class TestEnvironmentOverlay:
     def test_env_with_extra_is_refreshed(self) -> None:
         """The hot-path ``env_with_extra`` cache reflects the overlay."""
         coordinator = _make_coordinator([])
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             ResolveTarget.for_host().with_marker_overrides({"sys_platform": "win32"}),
         )
@@ -183,12 +186,12 @@ class TestTrustUnverifiedSdistDeps:
 
     def test_defaults_false_without_build_config(self) -> None:
         coordinator = _make_coordinator([])
-        provider = UniversalProvider(coordinator, _LINUX_TARGET)
+        provider = Provider(coordinator, _LINUX_TARGET)
         assert provider.trust_unverified_sdist_deps is False
 
     def test_taken_from_build_config(self) -> None:
         coordinator = _make_coordinator([])
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             build_config=NabProjectConfig(trust_unverified_sdist_deps=True),
@@ -203,7 +206,7 @@ class TestStrategyValidation:
         """Anything other than highest/lowest/lowest-direct is a user error."""
         coordinator = _make_coordinator([])
         with pytest.raises(ValueError, match="resolution_strategy"):
-            UniversalProvider(
+            Provider(
                 coordinator,
                 _LINUX_TARGET,
                 resolution_strategy="middle",
@@ -216,7 +219,7 @@ class TestPreferences:
     def test_preferences_keys_are_canonicalized(self) -> None:
         """Lookups by canonical name should hit a preference."""
         coordinator = _make_coordinator([])
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             preferences={"My-Cool_Pkg": Version("1.0")},
@@ -227,7 +230,7 @@ class TestPreferences:
         """The preferred version wins over highest if the range allows it."""
         wheels = [_make_wheel(v) for v in ("1.0", "2.0", "3.0")]
         coordinator = _make_coordinator(wheels)
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             preferences={"pkg": Version("2.0")},
@@ -239,7 +242,7 @@ class TestPreferences:
         """An out-of-range preference falls back to the strategy default."""
         wheels = [_make_wheel(v) for v in ("1.0", "2.0", "3.0")]
         coordinator = _make_coordinator(wheels)
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             preferences={"pkg": Version("5.0")},
@@ -263,14 +266,14 @@ class TestExtrasProxyPreference:
         versions: Sequence[str],
         metadata_by_version: dict[str, str | None],
         preferred: str,
-    ) -> UniversalProvider:
+    ) -> Provider:
         wheels = [_make_wheel(v, package="foo") for v in versions]
         coordinator = make_coordinator(
             wheels,
             package="foo",
             metadata_by_version=metadata_by_version,
         )
-        return UniversalProvider(
+        return Provider(
             coordinator,
             _LINUX_TARGET,
             root_extras={("foo", "bar")},
@@ -327,15 +330,13 @@ class TestExtrasProxyPreferenceAdmission:
         'Provides-Extra: bar\nRequires-Dist: cryptography; extra == "bar"\n\n'
     )
 
-    def _provider(
-        self, *, versions: Sequence[str], preferred: str
-    ) -> UniversalProvider:
+    def _provider(self, *, versions: Sequence[str], preferred: str) -> Provider:
         wheels = [_make_wheel(v, package="foo") for v in versions]
         metadata = {v: self._WITH_EXTRA.format(ver=v) for v in versions}
         coordinator = make_coordinator(
             wheels, package="foo", metadata_by_version=metadata
         )
-        return UniversalProvider(
+        return Provider(
             coordinator,
             _LINUX_TARGET,
             root_extras={("foo", "bar")},
@@ -387,7 +388,7 @@ class TestCrossTupleProxyAlignment:
         metadata.update({v: self._C_META.format(v=v) for v in c_versions})
         coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
         root_reqs = {"a": VersionRange.full(admit_arbitrary=False)}
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             root_requirements=root_reqs,
@@ -411,7 +412,7 @@ class TestStrategyChoiceVersion:
         """``lowest`` returns the smallest candidate."""
         wheels = [_make_wheel(v) for v in ("1.0", "2.0", "3.0")]
         coordinator = _make_coordinator(wheels)
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             resolution_strategy="lowest",
@@ -422,7 +423,7 @@ class TestStrategyChoiceVersion:
     def test_lowest_returns_none_for_empty_range(self) -> None:
         """``lowest`` returns None when the range admits nothing."""
         coordinator = _make_coordinator([])
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             resolution_strategy="lowest",
@@ -433,7 +434,7 @@ class TestStrategyChoiceVersion:
         """``lowest-direct`` returns minimum when the package is direct."""
         wheels = [_make_wheel(v) for v in ("1.0", "2.0", "3.0")]
         coordinator = _make_coordinator(wheels)
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             resolution_strategy="lowest-direct",
@@ -446,7 +447,7 @@ class TestStrategyChoiceVersion:
         """``lowest-direct`` returns highest for transitive packages."""
         wheels = [_make_wheel(v) for v in ("1.0", "2.0", "3.0")]
         coordinator = _make_coordinator(wheels)
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             resolution_strategy="lowest-direct",
@@ -494,17 +495,41 @@ def _index_with_files(
 
 
 class TestWheelTagFiltering:
-    """Resolve-time wheel-tag filtering (hole 2 plug)."""
+    """A version whose wheels the target cannot install is not a candidate."""
 
-    def test_no_tag_filter_keeps_every_wheel(self) -> None:
-        """Without ``filter_by_wheel_tags`` the override is a no-op."""
+    def test_no_target_keeps_every_wheel(self) -> None:
+        """With no target nothing has said which machine to filter for."""
         wheels = [_platform_wheel("1.0", "cp311-cp311-win_amd64")]
-        provider = UniversalProvider(
+        provider = Provider(_index_with_files(wheels))
+        result = provider.filter_distributions("pkg", wheels)
+        assert [v for v, _ in result] == [Version("1.0")]
+        assert provider.stats.excluded_by_wheel_tags == 0
+
+    def test_marker_overlay_keeps_every_wheel(self) -> None:
+        """An overlay moves the markers off the tag axis, so the tags are unusable.
+
+        The tag set still describes the machine the target was built from,
+        not the one the markers now name, so filtering by it would drop
+        wheels the impersonated target installs.
+        """
+        wheels = [_platform_wheel("1.0", "cp311-cp311-win_amd64")]
+        provider = Provider(
             _index_with_files(wheels),
-            _LINUX_TARGET,
+            _LINUX_TARGET.with_marker_overrides({"sys_platform": "win32"}),
         )
         result = provider.filter_distributions("pkg", wheels)
         assert [v for v, _ in result] == [Version("1.0")]
+        assert provider.stats.excluded_by_wheel_tags == 0
+
+    def test_overlay_of_the_targets_own_value_keeps_the_filter(self) -> None:
+        """An overlay that moves nothing leaves the tag set describing the target."""
+        wheels = [_platform_wheel("1.0", "cp311-cp311-win_amd64")]
+        provider = Provider(
+            _index_with_files(wheels),
+            _LINUX_TARGET.with_marker_overrides({"sys_platform": "linux"}),
+        )
+        assert provider.filter_distributions("pkg", wheels) == []
+        assert provider.stats.excluded_by_wheel_tags == 1
 
     def test_incompatible_wheel_dropped_when_alternative_exists(self) -> None:
         """A win wheel is dropped on a linux tuple that has a linux wheel too."""
@@ -512,15 +537,14 @@ class TestWheelTagFiltering:
             _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
             _platform_wheel("1.0", "cp311-cp311-win_amd64"),
         ]
-        provider = UniversalProvider(
+        provider = Provider(
             _index_with_files(wheels),
             _linux_target(PlatformSpec("linux_x86_64")),
-            filter_by_wheel_tags=True,
         )
         result = provider.filter_distributions("pkg", wheels)
         kept_filenames = {dist.filename for _, dist in result}
         assert kept_filenames == {"pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"}
-        assert provider.excluded_by_wheel_tags == 1
+        assert provider.stats.excluded_by_wheel_tags == 1
 
     def test_version_dropped_when_no_compatible_wheel_under_never(self) -> None:
         """All-incompatible wheels with NEVER build_policy makes version unavailable."""
@@ -528,16 +552,15 @@ class TestWheelTagFiltering:
             _platform_wheel("2.0", "cp311-cp311-win_amd64"),
             _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
         ]
-        provider = UniversalProvider(
+        provider = Provider(
             _index_with_files(wheels),
             _linux_target(PlatformSpec("linux_x86_64")),
-            filter_by_wheel_tags=True,
             build_policy=BuildPolicy.NEVER,
         )
         result = provider.filter_distributions("pkg", wheels)
         kept_versions = {v for v, _ in result}
         assert kept_versions == {Version("1.0")}
-        assert provider.excluded_versions_no_compatible_wheel == 1
+        assert provider.stats.excluded_versions_no_compatible_wheel == 1
 
     def test_version_kept_via_sdist_under_allow(self) -> None:
         """Under ALLOW, a version with only an sdist survives the filter."""
@@ -545,10 +568,9 @@ class TestWheelTagFiltering:
             _platform_wheel("2.0", "cp311-cp311-win_amd64"),
             _sdist("2.0"),
         ]
-        provider = UniversalProvider(
+        provider = Provider(
             _index_with_files(files),
             _linux_target(PlatformSpec("linux_x86_64")),
-            filter_by_wheel_tags=True,
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
         result = provider.filter_distributions("pkg", files)
@@ -561,43 +583,40 @@ class TestWheelTagFiltering:
     def test_pure_python_wheel_compatible_with_every_platform(self) -> None:
         """``py3-none-any`` wheels match every tuple."""
         wheels = [_platform_wheel("1.0", "py3-none-any")]
-        provider = UniversalProvider(
+        provider = Provider(
             _index_with_files(wheels),
             _linux_target(PlatformSpec("linux_x86_64")),
-            filter_by_wheel_tags=True,
         )
         result = provider.filter_distributions("pkg", wheels)
         assert [v for v, _ in result] == [Version("1.0")]
-        assert provider.excluded_by_wheel_tags == 0
+        assert provider.stats.excluded_by_wheel_tags == 0
 
     def test_higher_glibc_wheel_dropped_below_floor(self) -> None:
         """A manylinux 2.34 wheel is incompatible with a 2.17 floor."""
         wheels = [
             _platform_wheel("1.0", "cp311-cp311-manylinux_2_34_x86_64"),
         ]
-        provider = UniversalProvider(
+        provider = Provider(
             _index_with_files(wheels),
             _linux_target(PlatformSpec("linux_x86_64", libc_version=(2, 17))),
-            filter_by_wheel_tags=True,
             build_policy=BuildPolicy.NEVER,
         )
         result = provider.filter_distributions("pkg", wheels)
         assert result == []
-        assert provider.excluded_by_wheel_tags == 1
+        assert provider.stats.excluded_by_wheel_tags == 1
 
     def test_higher_glibc_wheel_admitted_when_floor_raised(self) -> None:
         """The same wheel passes if the user declares a 2.34 floor."""
         wheels = [
             _platform_wheel("1.0", "cp311-cp311-manylinux_2_34_x86_64"),
         ]
-        provider = UniversalProvider(
+        provider = Provider(
             _index_with_files(wheels),
             _linux_target(PlatformSpec("linux_x86_64", libc_version=(2, 34))),
-            filter_by_wheel_tags=True,
         )
         result = provider.filter_distributions("pkg", wheels)
         assert [v for v, _ in result] == [Version("1.0")]
-        assert provider.excluded_by_wheel_tags == 0
+        assert provider.stats.excluded_by_wheel_tags == 0
 
     def test_sdist_only_under_no_dist_policy_drops_version(self) -> None:
         """``WHEEL_ONLY`` plus no compatible wheel removes the version."""
@@ -605,10 +624,9 @@ class TestWheelTagFiltering:
             _platform_wheel("2.0", "cp311-cp311-win_amd64"),
             _sdist("2.0"),
         ]
-        provider = UniversalProvider(
+        provider = Provider(
             _index_with_files(files),
             _linux_target(PlatformSpec("linux_x86_64")),
-            filter_by_wheel_tags=True,
             dist_policy=DistPolicy.WHEEL_ONLY,
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
@@ -628,10 +646,9 @@ class TestWheelTagFiltering:
             _platform_wheel("2.0", "cp311-cp311-win_amd64"),
             _sdist("2.0"),
         ]
-        provider = UniversalProvider(
+        provider = Provider(
             _index_with_files(files),
             _linux_target(PlatformSpec("linux_x86_64")),
-            filter_by_wheel_tags=True,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
         )
@@ -639,30 +656,28 @@ class TestWheelTagFiltering:
         kept_kinds = {(v, isinstance(d, WheelFile)) for v, d in result}
         assert (Version("2.0"), False) in kept_kinds
         assert (Version("2.0"), True) not in kept_kinds
-        assert provider.excluded_versions_no_compatible_wheel == 0
+        assert provider.stats.excluded_versions_no_compatible_wheel == 0
 
     def test_fetch_versions_applies_wheel_tag_filter(self) -> None:
-        """Regression: the resolver path must consult the override.
+        """The resolver path runs the filter, not just a direct call.
 
-        ``_provider.listing.fetch_versions`` previously called the
-        module-level ``filter_distributions`` directly, bypassing
-        :meth:`UniversalProvider.filter_distributions`.  That hid
-        the wheel-tag filter from the production resolver path while
-        the unit tests above (which call the method directly) kept
-        passing.
+        ``versions_cache`` is the single funnel: candidate selection,
+        metadata sourcing, every prefetch path, look-ahead, and the
+        emitted wheel list all read what ``fetch_versions`` stored.  The
+        unit tests above call ``filter_distributions`` directly, so this
+        one pins the path production takes.
         """
         files: list[WheelFile | SdistFile] = [
             _platform_wheel("2.0", "cp311-cp311-win_amd64"),
         ]
-        provider = UniversalProvider(
+        provider = Provider(
             _index_with_files(files),
             _linux_target(PlatformSpec("linux_x86_64")),
-            filter_by_wheel_tags=True,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         result = provider.fetch_versions("pkg")
         assert result == []
-        assert provider.excluded_versions_no_compatible_wheel == 1
+        assert provider.stats.excluded_versions_no_compatible_wheel == 1
 
 
 class TestRequiresPythonPatch:
@@ -670,7 +685,7 @@ class TestRequiresPythonPatch:
 
     def test_dist_kept_when_patch_satisfies_requires_python(self) -> None:
         """python_full_version 3.13.4 keeps a dist that requires >=3.13.1."""
-        provider = UniversalProvider(
+        provider = Provider(
             _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
             ResolveTarget.for_declared(
                 python_version="3.13",
@@ -683,7 +698,7 @@ class TestRequiresPythonPatch:
 
     def test_dist_excluded_when_patch_below_requires_python(self) -> None:
         """A tuple targeting 3.13.0 excludes a >=3.13.1 dist."""
-        provider = UniversalProvider(
+        provider = Provider(
             _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
             ResolveTarget.for_declared(
                 python_version="3.13", spec=PlatformSpec("linux_x86_64")
@@ -711,7 +726,7 @@ class TestVcsConfigPlumbing:
             url=f"git+https://example.com/pkg.git@{_FORTY_SHA}",
         )
         with pytest.raises(ValueError, match="vcs_sources require VcsPolicy.ALLOW"):
-            UniversalProvider(
+            Provider(
                 coordinator,
                 _LINUX_TARGET,
                 vcs_config=VcsConfig(policy=VcsPolicy.BLOCK),
@@ -731,7 +746,7 @@ class TestVcsConfigPlumbing:
             name="pkg",
             url=f"git+https://example.com/pkg.git@{_FORTY_SHA}",
         )
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             vcs_config=VcsConfig(
@@ -755,7 +770,7 @@ class TestVcsConfigPlumbing:
         """
         coordinator = _make_coordinator([])
         cache = tmp_path / "vcs"
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             vcs_cache_dir=cache,
@@ -766,7 +781,7 @@ class TestVcsConfigPlumbing:
     def test_vcs_cache_dir_defaults_to_none(self) -> None:
         """When omitted, ``vcs_cache_dir`` remains ``None`` on the provider."""
         coordinator = _make_coordinator([])
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator,
             _LINUX_TARGET,
             build_policy=BuildPolicy.NEVER,

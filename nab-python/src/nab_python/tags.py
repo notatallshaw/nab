@@ -8,8 +8,10 @@ the interpreter running nab. CPython tags come from
 (interpreter ``ppXY``, abi ``pypyXY_pp73``). Both add
 interpreter-agnostic tags from ``packaging.tags.compatible_tags``.
 Platform tags use ``mac_platforms`` for macOS and expand the declared
-libc family's tags on Linux. A wheel matches the target iff its parsed
-tags share a member with the target's accepted tag set.
+libc family's tags on Linux, in the order ``sys_tags`` uses, so the
+declared path and the host path rank the same wheel first. A wheel
+matches the target iff its parsed tags share a member with the target's
+accepted tag set.
 
 :class:`TagSet` is that accepted set, in install-preference order. The
 host builds one from ``packaging.tags.sys_tags``; a target Python on
@@ -333,21 +335,30 @@ def _manylinux_platform_tags(arch: str, glibc_version: tuple[int, int]) -> list[
 def _linux_platform_tags(
     arch: str, *, libc: Libc, libc_version: tuple[int, int]
 ) -> list[str]:
-    """Generate the declared libc family's tags plus plain linux, for an arch.
+    """Generate plain linux plus the declared libc family's tags, for an arch.
 
-    Ordered by install preference: most-specific (highest libc version)
-    first, down to the oldest the family and arch allow.  A target links one
-    C library, so only that family's tags are emitted.
+    The order is ``packaging.tags.sys_tags``': the plain ``linux_<arch>``
+    tag first, then the family's tags from the highest libc version down
+    to the oldest the family and arch allow.  A tag set predicts which
+    wheel an installer picks on the target, and an installer reads its
+    tags off ``sys_tags``, which yields the plain tag before any
+    manylinux one (``_linux_platforms``).  A declared target that ranked
+    manylinux first would predict a wheel the target machine does not
+    install.  It only shows on an index that serves plain ``linux_*``
+    wheels; PyPI rejects them.
+
+    A target links one C library, so a glibc target emits no musllinux
+    tags and a musl target emits no manylinux tags; the other family's
+    wheels do not run there.
     """
     major, minor = libc_version
+    out = [f"linux_{arch}"]
     if libc == "musl":
         # musllinux_X_Y: PEP 656.
-        out = [f"musllinux_{major}_{m}_{arch}" for m in range(minor, -1, -1)]
+        out += [f"musllinux_{major}_{m}_{arch}" for m in range(minor, -1, -1)]
     else:
         # manylinux_X_Y: PEP 600.
-        out = _manylinux_platform_tags(arch, libc_version)
-    # The most generic Linux tag, so it ranks below every libc-specific one.
-    out.append(f"linux_{arch}")
+        out += _manylinux_platform_tags(arch, libc_version)
     return out
 
 
