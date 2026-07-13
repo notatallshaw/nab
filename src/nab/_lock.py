@@ -275,9 +275,7 @@ def _emit(
     if format == "pylock":
         _emit_pylock(lock_input, output=output)
     else:
-        _emit_requirements(
-            lock_input, output=output, with_hashes=format == "requirements"
-        )
+        _emit_requirements(lock_input, format=format, output=output)
 
 
 def _packages_only(text: str) -> str:
@@ -462,46 +460,54 @@ def _check_output_template(output: Path, template: str) -> None:
 
 
 def _emit_requirements(
-    lock_input: LockInput, *, output: Path | None, with_hashes: bool
+    lock_input: LockInput,
+    *,
+    format: str,  # noqa: A002 - shadows builtin by convention
+    output: Path | None,
 ) -> None:
     """Emit the pins as requirements, one file per target where needed.
 
     Four output shapes:
 
-    * ``output`` is ``None`` or ``-``: write one stdout dump.  A resolve
-      with several targets separates them with ``# label`` blocks, which
-      is an inspection / piping shape: pip cannot install a multi-block
-      file directly.
+    * ``output`` is ``-``, or is unset for a lock covering more than one
+      target: write one stdout dump, the targets separated by ``# label``
+      blocks.  That is an inspection / piping shape (pip cannot install a
+      multi-block file), and it is why a multi-target lock has no default
+      file to fall back to: there is no one file to write.
+    * ``output`` is unset and the lock covers one target: write
+      ``requirements.txt``.
     * ``output`` contains ``{python_version}`` or ``{platform_id}``:
       write one file per target, substituting the target's values into
       the template.  This is the constraints-per-Python-version shape
       (e.g. ``constraints-{python_version}.txt``).
-    * ``output`` is a plain path and the resolve ran against one target:
-      write that target's pins there.
+    * ``output`` is a plain path: write the lock's one target there.
 
     A plain path with several targets errors clearly: there is no
     one-file shape that pip can install from across all of them.
     """
-    if output is None or _cli.is_stdout(output):
+    with_hashes = format == "requirements"
+    multi_target = len(lock_input.targets) > 1
+    if _cli.is_stdout(output) or (output is None and multi_target):
         sys.stdout.write(_render_requirements_or_exit(lock_input, with_hashes))
         return
 
-    template = str(output)
+    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
+    template = str(target)
     if not any(var in template for var in _cli.TUPLE_TEMPLATE_VARS):
-        if len(lock_input.targets) > 1:
+        if multi_target:
             sys.stderr.write(
                 "Error: universal mode produced multiple tuples but"
-                f" --output {output} has no template variable to"
+                f" --output {target} has no template variable to"
                 " disambiguate.  Use {python_version} and/or"
                 " {platform_id} in the path, e.g.:\n"
                 "  --output 'constraints-{python_version}.txt'\n"
             )
             sys.exit(1)
-        _write_target_requirements(lock_input, output, with_hashes=with_hashes)
+        _write_target_requirements(lock_input, target, with_hashes=with_hashes)
         return
 
-    _check_output_template(output, template)
-    for label, path in _substituted_paths(lock_input, output, template).items():
+    _check_output_template(target, template)
+    for label, path in _substituted_paths(lock_input, target, template).items():
         _write_target_requirements(
             _for_target(lock_input, label),
             path,
