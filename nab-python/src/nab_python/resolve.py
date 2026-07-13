@@ -239,9 +239,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             raise
         pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
         if config.local_sources or config.vcs_sources or config.archive_sources:
-            _raise_for_source_python(
-                provider, pins, Version(target.python_full_version)
-            )
+            _raise_for_source_python(provider, pins, target.python_release)
         lock_input = build_lock_input_from_provider(
             provider,
             pins,

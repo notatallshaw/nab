@@ -217,6 +217,22 @@ class ResolveTarget:
     platform_spec: PlatformSpec | None = field(default=None, compare=False)
     multi_implementation: bool = field(default=False, compare=False)
 
+    def __post_init__(self) -> None:
+        """Reject a python the resolve cannot compare Requires-Python against.
+
+        Every candidate's ``Requires-Python`` is tested against this target,
+        so an unparseable version has to fail here, naming itself, rather than
+        as an ``InvalidVersion`` raised per candidate deep in the listing.
+        """
+        try:
+            Version(self.python_full_version)
+        except InvalidVersion as exc:
+            msg = (
+                f"target {self.label!r} names python_full_version"
+                f" {self.python_full_version!r}, which is not a PEP 440 version"
+            )
+            raise ValueError(msg) from exc
+
     @property
     def python_version(self) -> str:
         """The PEP 508 ``python_version``: the target's ``major.minor``."""
@@ -226,6 +242,18 @@ class ResolveTarget:
     def python_full_version(self) -> str:
         """The PEP 508 ``python_full_version``: the target's full release."""
         return self.marker_env["python_full_version"]
+
+    @property
+    def python_release(self) -> Version:
+        """The release a ``Requires-Python`` specifier is compared against.
+
+        ``python_full_version`` is the PEP 508 marker value, so on a release
+        candidate it carries the ``rc``.  A specifier admits no prerelease
+        unless it names one, so comparing that value directly would exclude
+        every distribution requiring the very release the interpreter is a
+        candidate for.  pip compares ``sys.version_info``, and so does this.
+        """
+        return Version(Version(self.python_full_version).base_version)
 
     @property
     def implementation(self) -> str:

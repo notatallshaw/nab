@@ -50,9 +50,6 @@ __all__ = [
     "wheel_tag_set",
 ]
 
-# The free-threaded build ships from CPython 3.13 (PEP 703).
-FREE_THREADED_MIN_PYTHON = (3, 13)
-
 Libc = Literal["glibc", "musl"]
 
 # The free-threaded build ships from CPython 3.13 (PEP 703).
@@ -392,7 +389,11 @@ _PYMALLOC_LAST_VERSION = (3, 7)
 # PEP 425 interpreter short code for PyPy, and the abi suffix CPython's
 # free-threaded build carries (``cp313t``).  Both are read back off a
 # host tag set to name the interpreter a bare ``sys_tags()`` came from.
-_PYPY_INTERPRETER_PREFIX = "pp"
+# The PEP 425 interpreter prefix each implementation names itself with.
+_IMPLEMENTATION_FOR_PREFIX: Mapping[str, str] = MappingProxyType(
+    {"cp": "cpython", "pp": "pypy"}
+)
+_INTERPRETER_PREFIX_LEN = 2
 _FREE_THREADED_ABI_SUFFIX = "t"
 
 # The platform tag of an interpreter-agnostic wheel.  It is not a
@@ -577,11 +578,7 @@ class TagSet:
         ]
         # sys_tags yields the most specific tag first, so the running
         # interpreter names itself in the first entry.
-        implementation = (
-            "pypy"
-            if host[0].interpreter.startswith(_PYPY_INTERPRETER_PREFIX)
-            else "cpython"
-        )
+        implementation = _host_implementation(host[0].interpreter)
         # The host's free-threaded ABI only carries to a Python that has one:
         # ``cp310t`` has never existed, and a target advertising it matches no
         # wheel at all.  The declared-target path refuses the same combination.
@@ -625,6 +622,23 @@ def _python_pair(python_version: str) -> tuple[int, int]:
     release = Version(python_version).release
     major, minor = (*release, 0)[:2]
     return major, minor
+
+
+def _host_implementation(interpreter: str) -> str:
+    """Name the implementation a PEP 425 interpreter tag belongs to.
+
+    An interpreter nab has no tag rules for cannot be resolved for: guessing
+    CPython would hand it a ``cpXY`` tag set it can load none of.
+    """
+    prefix = interpreter[:_INTERPRETER_PREFIX_LEN]
+    implementation = _IMPLEMENTATION_FOR_PREFIX.get(prefix)
+    if implementation is None:
+        msg = (
+            f"unsupported interpreter {interpreter!r}:"
+            f" nab resolves for CPython and PyPy"
+        )
+        raise ValueError(msg)
+    return implementation
 
 
 def supports_free_threading(python_version: str) -> bool:

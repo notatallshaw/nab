@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from nab_python._vendor.packaging.markers import Marker
+from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.tags import Tag
 from nab_python._vendor.packaging.version import InvalidVersion, Version
 from nab_python.tags import PlatformSpec
@@ -88,6 +89,41 @@ class TestForHost:
         assert target.host_faithful
         assert Version(target.python_full_version)
         assert target.tags.ordered
+
+
+class TestPythonRelease:
+    """``Requires-Python`` names a release, so a prerelease host is one."""
+
+    def test_a_release_candidate_host_is_its_release(self) -> None:
+        """A 3.15 candidate satisfies ``>=3.15``, as it does under pip.
+
+        The PEP 508 marker value keeps the ``rc``, but a specifier admits no
+        prerelease unless it names one, so comparing that value would drop
+        every distribution requiring the release the host is a candidate for.
+        """
+        target = ResolveTarget.for_host(
+            env_source=lambda: {**_HOST_ENV, "python_full_version": "3.15.0rc1"},
+            tags_source=_host_tags,
+        )
+        assert target.python_full_version == "3.15.0rc1"
+        assert target.python_release == Version("3.15.0")
+        assert target.python_release in SpecifierSet(">=3.15")
+
+    def test_a_final_release_is_itself(self) -> None:
+        target = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        assert target.python_release == Version(_HOST_ENV["python_full_version"])
+
+
+class TestTargetPythonIsComparable:
+    """Every candidate's Requires-Python is tested against this target."""
+
+    def test_an_unparseable_python_names_itself(self) -> None:
+        """A local-build version fails here, not once per candidate."""
+        with pytest.raises(ValueError, match="not a PEP 440 version"):
+            ResolveTarget.for_host(
+                env_source=lambda: {**_HOST_ENV, "python_full_version": "3.11.2+"},
+                tags_source=_host_tags,
+            )
 
 
 class TestForHostPython:

@@ -25,7 +25,6 @@ from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.utils import canonicalize_name
-from .._vendor.packaging.version import Version
 from ..config import ConfigError, IndexOverride, PackageOverride
 from ..fetch import (
     DEFAULT_INDEX_NAME,
@@ -76,6 +75,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
+    from .._vendor.packaging.version import Version
     from ..config import ConflictSet, NabProjectConfig
     from ..target import ResolveTarget
     from .matrix import Matrix
@@ -671,7 +671,7 @@ def _raise_for_source_python(
     )
     if not managed:
         return
-    target = Version(t.python_full_version)
+    target = t.python_release
     for name, version in pins.items():
         normalized = canonicalize_name(name)
         if normalized not in managed:

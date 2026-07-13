@@ -951,6 +951,18 @@ class TestTagSetHostConstructors:
             Tag("py3", "none", "any"),
         )
 
+    def test_an_unknown_host_interpreter_raises(self) -> None:
+        """Guessing CPython would hand the host a tag set it can load none of."""
+
+        def graalpy_tags() -> tuple[Tag, ...]:
+            return (
+                Tag("graalpy311", "graalpy311_native", "manylinux_2_39_x86_64"),
+                Tag("py3", "none", "any"),
+            )
+
+        with pytest.raises(ValueError, match="unsupported interpreter"):
+            TagSet.for_host_python("3.11", tags_source=graalpy_tags)
+
     def test_free_threaded_host_does_not_carry_to_an_older_python(self) -> None:
         """``cp310t`` never existed, so a target naming it matches no wheel."""
         tags = TagSet.for_host_python("3.10", tags_source=self._free_threaded_host)

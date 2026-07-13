@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.version import Version
-from ..tags import FREE_THREADED_MIN_PYTHON
+from ..tags import FREE_THREADED_MIN_PYTHON, supports_free_threading
 from ..target import IMPLEMENTATION_MARKERS, PLATFORM_MARKERS, ResolveTarget
 
 if TYPE_CHECKING:
@@ -148,7 +148,7 @@ class Matrix:
         too_old = [
             py
             for py in _pythons_in_range(self.python)
-            if tuple(int(p) for p in py.split(".")) < FREE_THREADED_MIN_PYTHON
+            if not supports_free_threading(py)
         ]
         if too_old:
             msg = (

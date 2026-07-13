@@ -380,17 +380,17 @@ def excluded_by_python(
     A per-package ``requires-python`` override substitutes for
     ``dist.requires_python`` and goes through the same cached comparison,
     keyed by the specifier string; the verdict depends only on that string
-    and the fixed ``provider.python_version``.
+    and the fixed ``provider.python_release``.
     """
     override_rp = provider.effective_requires_python(normalized, version)
     effective = override_rp if override_rp is not None else dist.requires_python
-    if not effective or not provider.python_version:
+    if not effective or provider.python_release is None:
         return False
     cached = provider.requires_python_cache.get(effective)
     if cached is None:
         try:
             spec = SpecifierSet(effective)
-            cached = Version(provider.python_version) not in spec
+            cached = provider.python_release not in spec
         except InvalidSpecifier:
             # Malformed Requires-Python on the dist: treat as
             # not-excluded, let downstream logic decide.  Our own

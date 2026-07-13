@@ -1,12 +1,12 @@
 """Property tests for the matrix-expansion logic in :mod:`nab_python.universal.matrix`.
 
-The matrix expansion produces one ``MatrixTuple`` per
+The matrix expansion produces one ``ResolveTarget`` per
 ``(python_version, platform_id)`` pair admitted by a PEP 440
 specifier.  This file walks the relevant clauses of `PEP 440`_,
 `PEP 425`_, and `PEP 508`_ paragraph by paragraph and adds a
 property test for each one.  PEP 508 specifies the
 environment-marker variables every tool must provide; the matrix's
-per-tuple ``environment`` dict must include every PEP 508 key so
+per-tuple ``marker_env`` dict must include every PEP 508 key so
 that subsequent ``Marker.evaluate`` calls do not raise.
 
 .. _PEP 440: https://peps.python.org/pep-0440/
@@ -125,7 +125,7 @@ class TestExpansionDeterminism:
     def test_expand_environment_dict_stable(
         self, spec: str, platforms: tuple[PlatformSpec, ...]
     ) -> None:
-        """The per-tuple ``environment`` dict is identical across calls.
+        """The per-tuple ``marker_env`` dict is identical across calls.
 
         The label/identity check in :meth:`test_expand_is_idempotent`
         confirms tuple ordering is deterministic.  Downstream marker
@@ -266,7 +266,7 @@ class TestQuoteSysPlatformConsistency:
     > ``linux``, ``linux2``, ``darwin``, ``java1.8.0_51`` (note
     > that ``linux`` is from Python3 and ``linux2`` from Python2).
 
-    The ``environment`` dict's ``sys_platform`` must be consistent
+    The ``marker_env`` dict's ``sys_platform`` must be consistent
     with the tuple's ``platform_id``.  A regression in
     ``PLATFORM_MARKERS`` (e.g. setting ``sys_platform`` to
     ``"Darwin"`` for a macOS id) would mis-evaluate platform-gated
