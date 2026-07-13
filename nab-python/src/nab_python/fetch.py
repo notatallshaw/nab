@@ -139,15 +139,15 @@ class InMemoryIndex:
         self._sdist_archive_errors: dict[tuple[str, str], BaseException] = {}
         self._pending: dict[str, _Pending] = {}
 
-        # Parsed metadata is a pure function of the underlying text, so we
-        # share it across tuple providers in universal mode.
+        # Parsed metadata is a pure function of the underlying text, so it
+        # is shared across the per-target providers of one resolve.
         self._parsed_metadata: dict[tuple[str, str], Any] = {}
 
         # Post-reconciliation sdist metadata: the result after
         # PEP 643 dynamic deps have been resolved via the bundled
         # pyproject.toml fallback or a PEP 517 backend invocation.
-        # Shared across tuples so universal mode does not re-augment
-        # (or, more importantly, re-build) the same sdist N times.
+        # Shared across targets so a matrix does not re-augment (or, more
+        # importantly, re-build) the same sdist once per tuple.
         self._resolved_sdist_metadata: dict[tuple[str, str], Any] = {}
 
     def get_listing(self, package: str) -> list[WheelFile | SdistFile] | None:

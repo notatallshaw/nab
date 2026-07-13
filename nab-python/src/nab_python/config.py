@@ -454,9 +454,11 @@ class NabProjectConfig:
 class ConflictSelectionError(ConfigError):
     """A requested extra/group selection violates a declared conflict.
 
-    Raised on the single-environment path, where one resolution cannot
-    serve two mutually-exclusive members at once.  Universal mode forks
-    the resolve instead of raising.
+    Raised when one resolve cannot serve the selection: a project
+    resolving for a single environment cannot install two
+    mutually-exclusive members at once.  A declared matrix forks the
+    resolve instead of raising, and only raises when one fork still
+    reaches two members (through an umbrella extra, say).
     """
 
 

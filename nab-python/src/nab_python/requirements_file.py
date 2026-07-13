@@ -274,8 +274,8 @@ def expand_self_extras(
     evaluates true under ``environment``.  ``extra`` is bound to the
     extra being walked so a marker like ``extra == "all"`` resolves
     against it.  ``environment`` ``None`` skips that check and walks
-    every self-reference, which is what the universal path wants (it
-    defers marker evaluation to each tuple).
+    every self-reference, which is what a caller that defers marker
+    evaluation to each target wants.
 
     A marker read here decides which extras are active, so it shapes the
     package set the lock records.  ``consulted`` collects the ones that were
