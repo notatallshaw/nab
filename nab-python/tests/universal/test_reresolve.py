@@ -15,6 +15,7 @@ from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.version import Version
 from nab_python.provider import BuildPolicy, DistPolicy
+from nab_python.tags import PlatformSpec
 from nab_python.universal import reresolve as reresolve_module
 from nab_python.universal.matrix import MatrixTuple
 from nab_python.universal.reresolve import (
@@ -24,7 +25,6 @@ from nab_python.universal.reresolve import (
 )
 from nab_python.universal.resolve import TupleResult, UniversalResult
 from nab_python.universal.validate import PinValidation, ValidationReport
-from nab_python.universal.wheel_selection import PlatformSpec
 
 
 def _wheel(filename: str) -> WheelFile:

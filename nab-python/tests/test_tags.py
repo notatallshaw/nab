@@ -17,15 +17,31 @@ from unittest.mock import patch
 import pytest
 
 from nab_index.client import WheelFile
-from nab_python.universal.wheel_selection import (
+from nab_python.tags import (
     _PLATFORM_ARCH,
     _PLATFORM_KIND,
     PlatformSpec,
     _platform_tags_for_spec,
-    compatible_tags_for_tuple,
-    select_wheel_for_tuple,
-    wheel_compatible_with_tuple,
+    select_wheel,
+    tags_for_target,
 )
+
+
+def _compatible(
+    wheel: WheelFile,
+    *,
+    python_version: str,
+    spec: PlatformSpec,
+    implementation: str = "cpython",
+) -> bool:
+    """True iff the target would install ``wheel``, given only that wheel."""
+    chosen = select_wheel(
+        [wheel],
+        python_version=python_version,
+        spec=spec,
+        implementation=implementation,
+    )
+    return chosen is not None
 
 
 def _wheel(filename: str) -> WheelFile:
@@ -79,32 +95,26 @@ class TestPlatformSpec:
         assert spec.label_suffix() == "-glibc2.17-musl1.2-rel5.15.0_2d_generic"
 
 
-class TestCompatibleTagsForTuple:
-    """``compatible_tags_for_tuple`` produces the full PEP 425 tag set."""
+class TestTagsForTarget:
+    """``tags_for_target`` produces the full PEP 425 tag set."""
 
     def test_linux_includes_manylinux_at_or_below_floor(self) -> None:
         """A linux_x86_64 spec with floor 2.17 admits manylinux_2_17 and below."""
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux_2_17_x86_64" in tag_strs
         assert "cp311-cp311-manylinux_2_5_x86_64" in tag_strs
 
     def test_linux_excludes_manylinux_above_floor(self) -> None:
         """manylinux_2_28 is NOT in the set when floor is 2.17."""
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux_2_28_x86_64" not in tag_strs
 
     def test_linux_includes_legacy_aliases(self) -> None:
         """manylinux1, manylinux2010, manylinux2014 aliases are included."""
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux1_x86_64" in tag_strs
         assert "cp311-cp311-manylinux2010_x86_64" in tag_strs
         assert "cp311-cp311-manylinux2014_x86_64" in tag_strs
@@ -112,18 +122,14 @@ class TestCompatibleTagsForTuple:
     def test_linux_excludes_aliases_above_floor(self) -> None:
         """manylinux2014 is excluded when floor is below 2.17."""
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 12))
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux2014_x86_64" not in tag_strs
         assert "cp311-cp311-manylinux2010_x86_64" in tag_strs
 
     def test_aarch64_manylinux_floor_stops_at_2_17(self) -> None:
         """aarch64 does not descend below glibc 2.17 (PEP 599)."""
         spec = PlatformSpec("linux_aarch64", manylinux_floor=(2, 17))
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux_2_17_aarch64" in tag_strs
         assert "cp311-cp311-manylinux2014_aarch64" in tag_strs
         assert "cp311-cp311-manylinux_2_16_aarch64" not in tag_strs
@@ -136,43 +142,33 @@ class TestCompatibleTagsForTuple:
         spec = PlatformSpec("linux_aarch64")
         for alias in ("manylinux1", "manylinux2010"):
             wheel = _wheel(f"foo-1.0-cp311-cp311-{alias}_aarch64.whl")
-            assert not wheel_compatible_with_tuple(
-                wheel, python_version="3.11", spec=spec
-            )
+            assert not _compatible(wheel, python_version="3.11", spec=spec)
 
     def test_x86_64_keeps_legacy_alias_floor(self) -> None:
         """x86_64 still descends to manylinux1 (glibc 2.5)."""
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux1_x86_64" in tag_strs
         assert "cp311-cp311-manylinux_2_5_x86_64" in tag_strs
 
     def test_non_glibc2_floor_descends_to_x_0(self) -> None:
         """A glibc 3.x floor descends to 3.0 on any arch (the 2.17 cap is glibc 2.x only)."""
         spec = PlatformSpec("linux_aarch64", manylinux_floor=(3, 1))
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux_3_1_aarch64" in tag_strs
         assert "cp311-cp311-manylinux_3_0_aarch64" in tag_strs
 
     def test_linux_includes_musllinux_at_floor(self) -> None:
         """Musllinux at-or-below the floor is admitted."""
         spec = PlatformSpec("linux_x86_64", musllinux_floor=(1, 2))
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-musllinux_1_2_x86_64" in tag_strs
         assert "cp311-cp311-musllinux_1_0_x86_64" in tag_strs
 
     def test_macos_arm64_default_accepts_modern_wheels(self) -> None:
         """The default ``macos_arm64`` admits ``macosx_11_0`` and ``macosx_12_0``."""
         spec = PlatformSpec("macos_arm64")
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         # mac_platforms yields versions <= the declared one
         assert "cp311-cp311-macosx_11_0_arm64" in tag_strs
         assert "cp311-cp311-macosx_12_0_arm64" in tag_strs
@@ -182,52 +178,43 @@ class TestCompatibleTagsForTuple:
     def test_macos_x86_64_uses_default_floor(self) -> None:
         """``macos_x86_64`` defaults to macOS 10.13 (x86_64-era)."""
         spec = PlatformSpec("macos_x86_64")
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-macosx_10_13_x86_64" in tag_strs
 
     def test_macos_explicit_min(self) -> None:
         """An explicit ``macos_min`` overrides the default."""
         spec = PlatformSpec("macos_arm64", macos_min=(14, 0))
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-macosx_14_0_arm64" in tag_strs
 
     def test_windows_amd64(self) -> None:
         """Windows amd64 generates ``win_amd64`` tags."""
         spec = PlatformSpec("windows_amd64")
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-win_amd64" in tag_strs
 
     def test_includes_universal_tags(self) -> None:
         """``py3-none-any`` and ``cp311-none-any`` are always in the set."""
         spec = PlatformSpec("linux_x86_64")
-        tag_strs = {
-            str(t) for t in compatible_tags_for_tuple(python_version="3.11", spec=spec)
-        }
-        # cp311-none-any only appears for windows in compatible_tags;
-        # py3-none-any is the universal pure-Python tag.
-        assert any(t == "py3-none-any" for t in tag_strs)
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        assert "py3-none-any" in tag_strs
+        assert "cp311-none-any" in tag_strs
 
 
 class TestWheelCompatibility:
-    """``wheel_compatible_with_tuple`` accepts/rejects per the tag rules."""
+    """A wheel is a candidate iff its tags meet the target's tag set."""
 
     def test_accepts_at_floor_manylinux(self) -> None:
         """A manylinux_2_17 wheel matches a 2.17-floor linux spec."""
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
-        assert wheel_compatible_with_tuple(wheel, python_version="3.11", spec=spec)
+        assert _compatible(wheel, python_version="3.11", spec=spec)
 
     def test_rejects_above_floor_manylinux(self) -> None:
         """A manylinux_2_28 wheel does not match a 2.17-floor linux spec."""
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_28_x86_64.whl")
-        assert not wheel_compatible_with_tuple(wheel, python_version="3.11", spec=spec)
+        assert not _compatible(wheel, python_version="3.11", spec=spec)
 
     def test_accepts_universal_wheel(self) -> None:
         """``py3-none-any`` is accepted by every platform."""
@@ -238,40 +225,40 @@ class TestWheelCompatibility:
             "windows_amd64",
         ):
             spec = PlatformSpec(platform_id)
-            assert wheel_compatible_with_tuple(wheel, python_version="3.11", spec=spec)
+            assert _compatible(wheel, python_version="3.11", spec=spec)
 
     def test_rejects_wrong_arch(self) -> None:
         """An aarch64 wheel does not match a x86_64 spec."""
         spec = PlatformSpec("linux_x86_64")
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_aarch64.whl")
-        assert not wheel_compatible_with_tuple(wheel, python_version="3.11", spec=spec)
+        assert not _compatible(wheel, python_version="3.11", spec=spec)
 
     def test_rejects_wrong_python_minor(self) -> None:
         """A cp311 wheel does not match a 3.12 tuple."""
         spec = PlatformSpec("linux_x86_64")
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
-        assert not wheel_compatible_with_tuple(wheel, python_version="3.12", spec=spec)
+        assert not _compatible(wheel, python_version="3.12", spec=spec)
 
     def test_compressed_tag_set(self) -> None:
         """A wheel with cp310.cp311 matches both 3.10 and 3.11."""
         spec = PlatformSpec("linux_x86_64")
         wheel = _wheel("pkg-1.0-cp310.cp311-cp310.cp311-manylinux_2_17_x86_64.whl")
-        assert wheel_compatible_with_tuple(wheel, python_version="3.10", spec=spec)
-        assert wheel_compatible_with_tuple(wheel, python_version="3.11", spec=spec)
+        assert _compatible(wheel, python_version="3.10", spec=spec)
+        assert _compatible(wheel, python_version="3.11", spec=spec)
 
     def test_abi3_forward_compat(self) -> None:
         """A cp310-abi3 wheel works on 3.10, 3.11, etc."""
         spec = PlatformSpec("linux_x86_64")
         wheel = _wheel("pkg-1.0-cp310-abi3-manylinux_2_17_x86_64.whl")
-        assert wheel_compatible_with_tuple(wheel, python_version="3.10", spec=spec)
-        assert wheel_compatible_with_tuple(wheel, python_version="3.13", spec=spec)
+        assert _compatible(wheel, python_version="3.10", spec=spec)
+        assert _compatible(wheel, python_version="3.13", spec=spec)
 
     def test_default_macos_arm64_accepts_modern_arm64_wheel(self) -> None:
         """``macosx_11_0`` and ``macosx_12_0`` wheels match the default spec."""
         spec = PlatformSpec("macos_arm64")
         for tag in ("macosx_11_0_arm64", "macosx_12_0_arm64"):
             wheel = _wheel(f"pkg-1.0-cp311-cp311-{tag}.whl")
-            assert wheel_compatible_with_tuple(wheel, python_version="3.11", spec=spec)
+            assert _compatible(wheel, python_version="3.11", spec=spec)
 
     def test_garbage_filename(self) -> None:
         """A non-wheel filename is rejected."""
@@ -284,7 +271,7 @@ class TestWheelCompatibility:
             has_metadata=False,
             upload_time=None,
         )
-        assert not wheel_compatible_with_tuple(wheel, python_version="3.11", spec=spec)
+        assert not _compatible(wheel, python_version="3.11", spec=spec)
 
     def test_too_few_dashes(self) -> None:
         """A wheel filename with too few dashes is rejected."""
@@ -297,7 +284,7 @@ class TestWheelCompatibility:
             has_metadata=False,
             upload_time=None,
         )
-        assert not wheel_compatible_with_tuple(wheel, python_version="3.11", spec=spec)
+        assert not _compatible(wheel, python_version="3.11", spec=spec)
 
     def test_non_whl_extension_rejected(self) -> None:
         """A filename without ``.whl`` extension is rejected."""
@@ -310,9 +297,7 @@ class TestWheelCompatibility:
             has_metadata=False,
             upload_time=None,
         )
-        assert not wheel_compatible_with_tuple(
-            sdist_like, python_version="3.11", spec=spec
-        )
+        assert not _compatible(sdist_like, python_version="3.11", spec=spec)
 
     def test_unparseable_tag_string(self) -> None:
         """A wheel whose tag segment trips ``parse_tag`` is rejected.
@@ -321,7 +306,7 @@ class TestWheelCompatibility:
         few error paths (e.g. an empty tag).  We patch it to raise
         and verify our ``except Exception`` handler returns None.
         """
-        from nab_python.universal.wheel_selection import _parse_tag_str
+        from nab_python.tags import _parse_tag_str
 
         spec = PlatformSpec("linux_x86_64")
         wheel = WheelFile(
@@ -332,32 +317,34 @@ class TestWheelCompatibility:
             has_metadata=False,
             upload_time=None,
         )
-        # Clear any prior cached result on this tag suffix so the
-        # patched ``parse_tag`` is exercised regardless of test ordering.
+        # Clear any prior cached result on this tag suffix so the patched
+        # ``parse_tag`` is exercised, and clear the None it caches so no
+        # later test sees this common suffix as unparseable.
         _parse_tag_str.cache_clear()
-        with patch(
-            "nab_python.universal.wheel_selection.ptags.parse_tag",
-            side_effect=ValueError("forced"),
-        ):
-            assert not wheel_compatible_with_tuple(
-                wheel, python_version="3.11", spec=spec
-            )
+        try:
+            with patch(
+                "nab_python.tags.ptags.parse_tag",
+                side_effect=ValueError("forced"),
+            ):
+                assert not _compatible(wheel, python_version="3.11", spec=spec)
+        finally:
+            _parse_tag_str.cache_clear()
 
 
-class TestSelectWheelForTuple:
+class TestSelectWheel:
     """Selection prefers more-specific tags."""
 
     def test_no_compatible_returns_none(self) -> None:
         """No compatible wheel -> None."""
         spec = PlatformSpec("linux_x86_64")
         wheels = [_wheel("pkg-1.0-cp311-cp311-win_amd64.whl")]
-        assert select_wheel_for_tuple(wheels, python_version="3.11", spec=spec) is None
+        assert select_wheel(wheels, python_version="3.11", spec=spec) is None
 
     def test_default_macos_arm64_selects_modern_only_wheel(self) -> None:
         """A version shipping only a ``macosx_12_0`` arm64 wheel is selectable."""
         spec = PlatformSpec("macos_arm64")
         wheels = [_wheel("pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl")]
-        chosen = select_wheel_for_tuple(wheels, python_version="3.12", spec=spec)
+        chosen = select_wheel(wheels, python_version="3.12", spec=spec)
         assert chosen is not None
         assert chosen.filename == "pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl"
 
@@ -368,7 +355,7 @@ class TestSelectWheelForTuple:
             _wheel("pkg-2.2.0-py3-none-any.whl"),
             _wheel("pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl"),
         ]
-        chosen = select_wheel_for_tuple(wheels, python_version="3.12", spec=spec)
+        chosen = select_wheel(wheels, python_version="3.12", spec=spec)
         assert chosen is not None
         assert chosen.filename == "pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl"
 
@@ -379,7 +366,7 @@ class TestSelectWheelForTuple:
             _wheel("pkg-1.0-py3-none-any.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"),
         ]
-        chosen = select_wheel_for_tuple(wheels, python_version="3.11", spec=spec)
+        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
         assert chosen is not None
         assert "manylinux" in chosen.filename
 
@@ -387,7 +374,7 @@ class TestSelectWheelForTuple:
         """When only py3-none-any is compatible, it wins."""
         spec = PlatformSpec("linux_x86_64")
         wheels = [_wheel("pkg-1.0-py3-none-any.whl")]
-        chosen = select_wheel_for_tuple(wheels, python_version="3.11", spec=spec)
+        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
         assert chosen is not None
         assert chosen.filename == "pkg-1.0-py3-none-any.whl"
 
@@ -406,7 +393,7 @@ class TestSelectWheelForTuple:
             ),
             good,
         ]
-        chosen = select_wheel_for_tuple(wheels, python_version="3.11", spec=spec)
+        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
         assert chosen is good
 
     def test_higher_glibc_wheel_wins_over_lower(self) -> None:
@@ -421,7 +408,7 @@ class TestSelectWheelForTuple:
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"),
         ]
-        chosen = select_wheel_for_tuple(wheels, python_version="3.11", spec=spec)
+        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
         assert chosen is not None
         assert "manylinux_2_17" in chosen.filename
 
@@ -438,7 +425,7 @@ class TestSelectWheelForTuple:
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux2014_x86_64.whl"),
         ]
-        chosen = select_wheel_for_tuple(wheels, python_version="3.11", spec=spec)
+        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
         assert chosen is not None
         assert "manylinux2014" in chosen.filename
 
@@ -454,7 +441,7 @@ class TestSelectWheelForTuple:
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
         ]
-        chosen = select_wheel_for_tuple(wheels, python_version="3.11", spec=spec)
+        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
         assert chosen is not None
         assert "manylinux_2_17" in chosen.filename
 
@@ -463,9 +450,7 @@ class TestSelectWheelForTuple:
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
         build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
-        chosen = select_wheel_for_tuple(
-            [build1, build5], python_version="3.11", spec=spec
-        )
+        chosen = select_wheel([build1, build5], python_version="3.11", spec=spec)
         assert chosen is build5
 
     def test_build_tag_selection_is_order_independent(self) -> None:
@@ -473,12 +458,8 @@ class TestSelectWheelForTuple:
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
         build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
-        forward = select_wheel_for_tuple(
-            [build1, build5], python_version="3.11", spec=spec
-        )
-        reverse = select_wheel_for_tuple(
-            [build5, build1], python_version="3.11", spec=spec
-        )
+        forward = select_wheel([build1, build5], python_version="3.11", spec=spec)
+        reverse = select_wheel([build5, build1], python_version="3.11", spec=spec)
         assert forward is build5
         assert reverse is build5
 
@@ -487,9 +468,7 @@ class TestSelectWheelForTuple:
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
         untagged = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         build3 = _wheel("pkg-1.0-3-cp311-cp311-manylinux_2_17_x86_64.whl")
-        chosen = select_wheel_for_tuple(
-            [untagged, build3], python_version="3.11", spec=spec
-        )
+        chosen = select_wheel([untagged, build3], python_version="3.11", spec=spec)
         assert chosen is build3
 
     def test_malformed_build_tag_treated_as_absent(self) -> None:
@@ -497,9 +476,7 @@ class TestSelectWheelForTuple:
         spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
         malformed = _wheel("pkg-1.0-x-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
-        chosen = select_wheel_for_tuple(
-            [malformed, build5], python_version="3.11", spec=spec
-        )
+        chosen = select_wheel([malformed, build5], python_version="3.11", spec=spec)
         assert chosen is build5
 
 
@@ -533,42 +510,42 @@ class TestPyPyTags:
     def test_pypy_wheel_matches_pypy_tuple(self) -> None:
         """A real ``ppXY-pypyXY_pp73`` wheel matches its PyPy tuple."""
         wheel = _wheel("numpy-1.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.whl")
-        assert wheel_compatible_with_tuple(
+        assert _compatible(
             wheel, python_version="3.11", spec=self.SPEC, implementation="pypy"
         )
 
     def test_pypy_none_wheel_matches_pypy_tuple(self) -> None:
         """A ``ppXY-none`` interpreter-specific wheel matches too."""
         wheel = _wheel("foo-1.0-pp311-none-manylinux_2_17_x86_64.whl")
-        assert wheel_compatible_with_tuple(
+        assert _compatible(
             wheel, python_version="3.11", spec=self.SPEC, implementation="pypy"
         )
 
     def test_cpython_wheel_rejected_on_pypy_tuple(self) -> None:
         """A CPython wheel is not a candidate for a PyPy tuple."""
         wheel = _wheel("numpy-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
-        assert not wheel_compatible_with_tuple(
+        assert not _compatible(
             wheel, python_version="3.11", spec=self.SPEC, implementation="pypy"
         )
 
     def test_pypy_wheel_rejected_on_cpython_tuple(self) -> None:
         """A PyPy wheel is not a candidate for the default CPython tuple."""
         wheel = _wheel("numpy-1.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.whl")
-        assert not wheel_compatible_with_tuple(
+        assert not _compatible(
             wheel, python_version="3.11", spec=self.SPEC, implementation="cpython"
         )
 
     def test_pypy_minor_must_match(self) -> None:
         """A PyPy 3.10 wheel does not match a PyPy 3.11 tuple."""
         wheel = _wheel("numpy-1.0-pp310-pypy310_pp73-manylinux_2_17_x86_64.whl")
-        assert not wheel_compatible_with_tuple(
+        assert not _compatible(
             wheel, python_version="3.11", spec=self.SPEC, implementation="pypy"
         )
 
     def test_pure_python_wheel_matches_either(self) -> None:
         """A ``py3-none-any`` wheel matches both implementations."""
         wheel = _wheel("foo-1.0-py3-none-any.whl")
-        assert wheel_compatible_with_tuple(
+        assert _compatible(
             wheel, python_version="3.11", spec=self.SPEC, implementation="pypy"
         )
 
@@ -576,7 +553,7 @@ class TestPyPyTags:
         """The PyPy-specific wheel outranks the pure-Python fallback."""
         pure = _wheel("numpy-1.0-py3-none-any.whl")
         native = _wheel("numpy-1.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.whl")
-        chosen = select_wheel_for_tuple(
+        chosen = select_wheel(
             [pure, native],
             python_version="3.11",
             spec=self.SPEC,
@@ -586,8 +563,8 @@ class TestPyPyTags:
 
     def test_compat_tag_sets_differ_by_implementation(self) -> None:
         """The CPython and PyPy tuples accept disjoint native-tag sets."""
-        cp = compatible_tags_for_tuple(python_version="3.11", spec=self.SPEC)
-        pp = compatible_tags_for_tuple(
+        cp = tags_for_target(python_version="3.11", spec=self.SPEC)
+        pp = tags_for_target(
             python_version="3.11", spec=self.SPEC, implementation="pypy"
         )
         cp_native = {t for t in cp if t.abi.startswith("cp")}

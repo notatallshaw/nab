@@ -62,9 +62,9 @@ from nab_python.provider import (
 )
 from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import ResolutionResult
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import Matrix, MatrixTuple
 from nab_python.universal.resolve import TupleResult, UniversalResult
-from nab_python.universal.wheel_selection import PlatformSpec
 from nab_resolver.resolver import ResolutionError
 
 V = Version

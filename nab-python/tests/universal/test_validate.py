@@ -22,6 +22,7 @@ from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import MatrixTuple
 from nab_python.universal.resolve import TupleResult, UniversalResult
 from nab_python.universal.validate import (
@@ -32,7 +33,6 @@ from nab_python.universal.validate import (
     _requirement_key,
     validate_lock,
 )
-from nab_python.universal.wheel_selection import PlatformSpec
 
 _BASE_METADATA = (
     "Metadata-Version: 2.1\n"

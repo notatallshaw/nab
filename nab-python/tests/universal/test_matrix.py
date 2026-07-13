@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from nab_python._vendor.packaging.markers import Marker
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import (
     _IMPLEMENTATION_DEFAULTS,
     _KNOWN_PYTHON_MINORS,
@@ -17,7 +18,6 @@ from nab_python.universal.matrix import (
     MatrixTuple,
     _pythons_in_range,
 )
-from nab_python.universal.wheel_selection import PlatformSpec
 
 
 class TestPythonsInRange:

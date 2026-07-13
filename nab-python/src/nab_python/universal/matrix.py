@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.version import Version
-from .wheel_selection import PlatformSpec
+from ..tags import PlatformSpec
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

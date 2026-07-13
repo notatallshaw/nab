@@ -15,13 +15,13 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import (
     _IMPLEMENTATION_DEFAULTS,
     _KNOWN_PYTHON_MINORS,
     _PLATFORM_DEFAULTS,
     Matrix,
 )
-from nab_python.universal.wheel_selection import PlatformSpec
 
 from .strategies import PROPERTY_SETTINGS
 

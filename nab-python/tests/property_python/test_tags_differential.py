@@ -1,7 +1,7 @@
 """Differential property tests: nab wheel selection vs upstream ``packaging.tags``.
 
-:mod:`nab_python.universal.wheel_selection` implements `PEP 425`_
-wheel-tag preference on top of the vendored ``packaging.tags``.
+:mod:`nab_python.tags` implements `PEP 425`_ wheel-tag preference on
+top of the vendored ``packaging.tags``.
 Each test here re-derives one layer with the upstream ``packaging``
 distribution as the oracle and requires agreement:
 
@@ -12,8 +12,8 @@ distribution as the oracle and requires agreement:
 3. ``parse_tag`` must expand compressed tag sets identically.
 4. ``wheel_tag_set`` must agree with upstream
    ``parse_wheel_filename`` on every spec-valid filename.
-5. ``select_wheel_for_tuple`` must pick a wheel whose best upstream
-   rank is the minimum over all candidate wheels.
+5. ``select_wheel`` must pick a wheel whose best upstream rank is
+   the minimum over all candidate wheels.
 
 .. _PEP 425: https://peps.python.org/pep-0425/
 """
@@ -30,11 +30,11 @@ from packaging.version import InvalidVersion
 
 from nab_index.client import WheelFile
 from nab_python._vendor.packaging import tags as vendored_tags
-from nab_python.universal.wheel_selection import (
+from nab_python.tags import (
     PlatformSpec,
     _platform_tags_for_spec,
     _tags_in_order,
-    select_wheel_for_tuple,
+    select_wheel,
     wheel_tag_set,
 )
 
@@ -68,7 +68,7 @@ def _triples(tag_iter: object) -> list[tuple[str, str, str]]:
 def _oracle_tags_in_order(
     python_version: str, platforms: list[str], implementation: str
 ) -> list[tuple[str, str, str]]:
-    """Rebuild ``wheel_selection._tags_in_order`` with upstream ``packaging.tags``."""
+    """Rebuild ``tags._tags_in_order`` with upstream ``packaging.tags``."""
     major, minor = (int(p) for p in python_version.split("."))
     py = (major, minor)
     out: list[tuple[str, str, str]] = []
@@ -300,7 +300,7 @@ class TestSelectWheelMinimizesUpstreamRank:
             return min(ranks) if ranks else None
 
         oracle_ranks = [r for w in wheels if (r := best_rank(w)) is not None]
-        chosen = select_wheel_for_tuple(
+        chosen = select_wheel(
             wheels,
             python_version=python_version,
             spec=spec,

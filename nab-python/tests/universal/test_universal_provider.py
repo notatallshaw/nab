@@ -29,8 +29,8 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_python.tags import PlatformSpec
 from nab_python.universal.provider import UniversalProvider
-from nab_python.universal.wheel_selection import PlatformSpec
 from nab_resolver.resolver import Resolver
 
 if TYPE_CHECKING:

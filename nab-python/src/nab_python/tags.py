@@ -1,14 +1,15 @@
-"""Predict which wheel a tuple would install.
+"""Predict which wheel a target environment would install.
 
-Universal resolution needs the install-time wheel selection answer
-without a live interpreter, so the tag set is computed from
-:class:`PlatformSpec` and the implementation name directly. CPython
-tags come from ``packaging.tags.cpython_tags``; PyPy tags are emitted
-directly (interpreter ``ppXY``, abi ``pypyXY_pp73``). Both add
-interpreter-agnostic tags from ``compatible_tags``. Platform tags use
-``mac_platforms`` for macOS and expand manylinux / musllinux from the
-declared glibc / musl floor. A wheel matches the tuple iff its parsed
-tags share a member with the tuple's compatible-tag set.
+Resolution needs the install-time wheel selection answer without a
+live interpreter, so the tag set is computed from :class:`PlatformSpec`
+and the implementation name directly. CPython tags come from
+``packaging.tags.cpython_tags``; PyPy tags are emitted directly
+(interpreter ``ppXY``, abi ``pypyXY_pp73``). Both add
+interpreter-agnostic tags from ``packaging.tags.compatible_tags``.
+Platform tags use ``mac_platforms`` for macOS and expand manylinux /
+musllinux from the declared glibc / musl floor. A wheel matches the
+target iff its parsed tags share a member with the target's accepted
+tag set.
 """
 
 from __future__ import annotations
@@ -18,26 +19,26 @@ from dataclasses import dataclass
 from functools import cache, lru_cache
 from typing import TYPE_CHECKING
 
-from .._vendor.packaging import tags as ptags
+from ._vendor.packaging import tags as ptags
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from nab_index.client import WheelFile
 
-    from .._vendor.packaging.tags import Tag
+    from ._vendor.packaging.tags import Tag
+
+
+__all__ = [
+    "PlatformSpec",
+    "select_wheel",
+    "tags_for_target",
+    "wheel_tag_set",
+]
 
 
 # PEP 427: a wheel filename has at least 5 dash-separated segments
 # (name-version-pythontag-abitag-platformtag.whl), or 6 with a build tag.
-__all__ = [
-    "PlatformSpec",
-    "compatible_tags_for_tuple",
-    "select_wheel_for_tuple",
-    "wheel_compatible_with_tuple",
-]
-
-
 _MIN_WHEEL_FILENAME_PARTS = 5
 
 # PEP 427: a build tag adds a sixth dash-separated segment at index 2,
@@ -260,7 +261,7 @@ _PYPY_SOABI = "73"
 
 
 @cache
-def compatible_tags_for_tuple(
+def tags_for_target(
     *,
     python_version: str,
     spec: PlatformSpec,
@@ -271,7 +272,7 @@ def compatible_tags_for_tuple(
     Builds the same ordered tags as :func:`_tags_in_order` and returns
     them as a frozenset.  Cached on the three immutable inputs (str,
     frozen dataclass, str): the resulting set is identical across every
-    wheel-compatibility check for the same tuple, so the cache skips
+    wheel-compatibility check for the same target, so the cache skips
     rebuilding the same :class:`Tag` set per call.
     """
     return frozenset(_tags_in_order(python_version, spec, implementation))
@@ -328,40 +329,20 @@ def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     return _parse_tag_str("-".join(parts[-3:]))
 
 
-def wheel_compatible_with_tuple(
-    wheel: WheelFile,
-    *,
-    python_version: str,
-    spec: PlatformSpec,
-    implementation: str = "cpython",
-) -> bool:
-    """Return True iff ``wheel`` is a candidate for the given tuple."""
-    wheel_tags = wheel_tag_set(wheel.filename)
-    if wheel_tags is None:
-        return False
-    compat = compatible_tags_for_tuple(
-        python_version=python_version, spec=spec, implementation=implementation
-    )
-    # ``frozenset.isdisjoint`` is a C-level builtin that beats the
-    # Python ``any(t in compat for t in wheel_tags)`` generator on
-    # the per-wheel hot loop.
-    return not wheel_tags.isdisjoint(compat)
-
-
-def select_wheel_for_tuple(
+def select_wheel(
     wheels: Iterable[WheelFile],
     *,
     python_version: str,
     spec: PlatformSpec,
     implementation: str = "cpython",
 ) -> WheelFile | None:
-    """Pick the most-specific compatible wheel for the tuple, or None.
+    """Pick the most-specific compatible wheel for the target, or None.
 
     Implements PEP 425 preference: wheels matching earlier
-    (more-specific) tags in ``compatible_tags_for_tuple`` win over
-    those matching later (more-generic) tags.  Within the same tag
-    rank, the wheel with the highest PEP 427 build tag wins (an absent
-    tag sorts lowest); exact ties keep input order.
+    (more-specific) tags in :func:`tags_for_target` win over those
+    matching later (more-generic) tags.  Within the same tag rank, the
+    wheel with the highest PEP 427 build tag wins (an absent tag sorts
+    lowest); exact ties keep input order.
     """
     compat_list = list(_tags_in_order(python_version, spec, implementation))
     rank: dict[Tag, int] = {tag: i for i, tag in enumerate(compat_list)}
@@ -403,13 +384,13 @@ def _build_tag_sort_key(filename: str) -> tuple[int, str]:
 def _tags_in_order(
     python_version: str, spec: PlatformSpec, implementation: str = "cpython"
 ) -> Iterable[Tag]:
-    """Yield the tags a tuple accepts in install preference order.
+    """Yield the tags a target accepts in install preference order.
 
-    CPython tuples use ``packaging.tags.cpython_tags`` (cpXY-cpXY,
-    cpXY-abi3 forward-compat, cpXY-none).  PyPy tuples cannot reuse that
-    (it forces the ``cp`` interpreter and abi3, which PyPy lacks), so
-    their interpreter/abi/none tags are emitted directly.  Both then add
-    the interpreter-agnostic tags (pyXY-none-any, py3-none-any, ...).
+    CPython targets use ``packaging.tags.cpython_tags`` (cpXY-cpXY,
+    cpXY-abi3 forward-compat, cpXY-none).  PyPy targets cannot reuse
+    that (it forces the ``cp`` interpreter and abi3, which PyPy lacks),
+    so their interpreter/abi/none tags are emitted directly.  Both then
+    add the interpreter-agnostic tags (pyXY-none-any, py3-none-any, ...).
     """
     major, minor = (int(p) for p in python_version.split("."))
     py_version = (major, minor)

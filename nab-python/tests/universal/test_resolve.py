@@ -56,6 +56,7 @@ from nab_python.requirements_file import (
     read_pyproject_name,
     read_pyproject_optional_dependencies,
 )
+from nab_python.tags import PlatformSpec
 from nab_python.universal import resolve as resolve_mod
 from nab_python.universal.matrix import Matrix, MatrixTuple
 from nab_python.universal.resolve import (
@@ -71,7 +72,6 @@ from nab_python.universal.resolve import (
     merge_universal_lock_inputs,
     resolve_with_coordinator,
 )
-from nab_python.universal.wheel_selection import PlatformSpec
 from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:

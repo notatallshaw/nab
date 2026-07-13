@@ -44,7 +44,7 @@ from ..provider import (
     VcsConfig,
     VcsSource,
 )
-from .wheel_selection import compatible_tags_for_tuple, wheel_tag_set
+from ..tags import tags_for_target, wheel_tag_set
 
 __all__ = [
     "DistFile",
@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from .._vendor.packaging.version import Version
     from ..config import IndexOverride, NabProjectConfig, PackageOverride
     from ..fetch import FetchCoordinator
-    from .wheel_selection import PlatformSpec
+    from ..tags import PlatformSpec
 
 
 class UniversalProvider(Provider):
@@ -217,11 +217,11 @@ class UniversalProvider(Provider):
 
         spec = self._platform_spec
         py_minor = self._py_minor
-        # Look up the per-tuple compat tag set once outside the per-wheel
+        # Look up the per-tuple accepted tag set once outside the per-wheel
         # loop and inline the membership check; this loop runs for every
         # wheel of every package on every tuple, so the hoist matters on
         # large workloads.
-        compat = compatible_tags_for_tuple(
+        accepted = tags_for_target(
             python_version=py_minor, spec=spec, implementation=self._implementation
         )
         kept: list[tuple[Version, DistFile]] = []
@@ -230,7 +230,7 @@ class UniversalProvider(Provider):
         for version, dist in base:
             if isinstance(dist, WheelFile):
                 wheel_tags = wheel_tag_set(dist.filename)
-                if wheel_tags is not None and not wheel_tags.isdisjoint(compat):
+                if wheel_tags is not None and not wheel_tags.isdisjoint(accepted):
                     kept.append((version, dist))
                     versions_with_wheel.add(version)
                 else:
