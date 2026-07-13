@@ -73,12 +73,18 @@ implementation = "cpython"  # "cpython" (default) or "pypy"
   which is what pip's `--python-version` does.  `nab lock --python 3.10`
   is the same thing for one run.
 * `platform` (with or without `implementation`) declares the machine, so
-  the markers and the wheel tags are synthesized from the platform id
-  rather than read off the host.  `implementation` needs a `platform`:
-  an interpreter is modelled on a declared machine, never on the host's.
+  the PEP 508 markers are synthesized from the platform id rather than
+  read off the host.  `implementation` needs a `platform`: an interpreter
+  is modelled on a declared machine, never on the host's.
 * A declared platform forbids host builds, so `build-policy` must be
   `never`.  A python-only retarget warns and permits.  See
   [Build policy](build-policy.md).
+
+A declared platform moves the markers only.  Candidate selection does not
+yet reject a version that ships no wheel for it, and the lockfile records
+every wheel the pinned version publishes, so a single-environment lock is
+not a cross-platform wheel lock.  Use `mode = "universal"`, which does
+filter candidates by wheel tag, to lock for machines you are not on.
 
 `[tool.nab.environment]` and `[tool.nab.matrix]` cannot both be set: the
 matrix already declares one environment per tuple.
