@@ -804,8 +804,11 @@ def _apply_workspace_discovery(
     # workspace BUILD_LOCAL floor does not apply there: keep never.  A
     # python-only retarget stays on the host machine, so the floor still
     # applies and a workspace member with dynamic metadata still builds.
+    #
+    # The planner without the requires-python check: the config is still
+    # being read, and --python has not moved the target yet.
     promoted_policy = config.build_policy
-    if not _forbids_host_builds(plan_targets(config)):
+    if not _forbids_host_builds(_plan_targets(config.matrix, config.environment)):
         promoted_policy = auto_promote_build_policy_for_workspace(config.build_policy)
     if promoted_policy is not config.build_policy:
         _logger.info(
@@ -1069,16 +1072,16 @@ def _check_requires_python_admits_target(
     """
     if requires_python is None:
         return
-    version = Version(target.python_full_version)
-    # Accept a prerelease host (3.14.0rc1): the declaration is about the
-    # release line, and a specifier only admits prereleases when asked.
-    if SpecifierSet(requires_python).contains(version, prereleases=True):
+    # The release, not the marker value: a specifier admits no prerelease
+    # unless it names one, so ">=3.14" has to admit a 3.14 candidate host.
+    # This is the comparison every candidate's Requires-Python takes too.
+    if target.python_release in SpecifierSet(requires_python):
         return
     msg = (
         f"requires-python = {requires_python!r} excludes the resolve target"
-        f" Python {version} ({target.label}).  nab resolves for the host"
-        " interpreter unless told otherwise; pass --python with a version the"
-        " declaration admits, set [tool.nab.environment] python to one, or"
+        f" Python {target.python_full_version} ({target.label}).  nab resolves"
+        " for the host interpreter unless told otherwise; pass --python with a"
+        " version the declaration admits, set [tool.nab.environment] python to one, or"
         " widen requires-python."
     )
     raise ConfigError(msg)
@@ -1415,6 +1418,9 @@ def _validate_environment_values(environment: Mapping[str, str]) -> None:
 _MARKER_PYTHON_KEYS = ("python_full_version", "python_version")
 _MARKER_IMPLEMENTATION_KEYS = ("implementation_name", "platform_python_implementation")
 _MARKER_PLATFORM_KEYS = ("sys_platform", "platform_machine")
+# The platform id names these too, so an overlay may repeat them as long as it
+# agrees with the machine the pair identifies.
+_MARKER_PLATFORM_IMPLIED_KEYS = ("platform_system", "os_name")
 
 # The platform id each (sys_platform, platform_machine) pair names.
 _PLATFORM_ID_BY_MARKERS: dict[tuple[str, str], str] = {
@@ -1444,6 +1450,7 @@ def _environment_from_marker_environment(
         *_MARKER_PYTHON_KEYS,
         *_MARKER_IMPLEMENTATION_KEYS,
         *_MARKER_PLATFORM_KEYS,
+        *_MARKER_PLATFORM_IMPLIED_KEYS,
     }
     untranslatable = sorted(set(marker_environment) - translatable)
     if untranslatable:
@@ -1465,6 +1472,15 @@ def _environment_from_marker_environment(
             # platform_python_implementation is title-cased ("CPython").
             environment["implementation"] = marker_environment[key].lower()
             break
+    implied = [k for k in _MARKER_PLATFORM_IMPLIED_KEYS if k in marker_environment]
+    if implied and not any(k in marker_environment for k in _MARKER_PLATFORM_KEYS):
+        msg = (
+            f"[tool.nab.marker-environment] sets {implied!r} without"
+            " (sys_platform, platform_machine), which is the pair that names"
+            " the machine.  Declare [tool.nab.environment] platform instead:"
+            " half a machine would keep the other half of the host's."
+        )
+        raise ConfigError(msg)
     if any(key in marker_environment for key in _MARKER_PLATFORM_KEYS):
         pair = (
             marker_environment.get("sys_platform", ""),
@@ -1481,9 +1497,35 @@ def _environment_from_marker_environment(
                 " a machine would keep the other half of the host's."
             )
             raise ConfigError(msg)
+        _check_implied_platform_markers(marker_environment, platform_id)
         environment["platform"] = platform_id
     _validate_environment_values(environment)
     return environment
+
+
+def _check_implied_platform_markers(
+    marker_environment: Mapping[str, str], platform_id: str
+) -> None:
+    """Reject an overlay whose implied markers contradict the platform it names.
+
+    The platform id carries ``platform_system`` and ``os_name``, so an overlay
+    that repeats them is translatable; one that disagrees with them names two
+    machines at once.
+    """
+    declared = PLATFORM_MARKERS[platform_id]
+    conflicting = {
+        key: marker_environment[key]
+        for key in _MARKER_PLATFORM_IMPLIED_KEYS
+        if key in marker_environment and marker_environment[key] != declared[key]
+    }
+    if conflicting:
+        expected = {key: declared[key] for key in conflicting}
+        msg = (
+            f"[tool.nab.marker-environment] sets {conflicting!r}, which"
+            f" contradicts platform {platform_id!r}, where they are"
+            f" {expected!r}.  One overlay names one machine."
+        )
+        raise ConfigError(msg)
 
 
 def _environment_from_effective(

@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from nab_python._vendor.packaging.markers import default_environment
+from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConfigError,
@@ -20,6 +22,7 @@ from nab_python.config import (
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
+    _check_requires_python_admits_target,
     conflict_exclusion_groups,
     conflict_forks,
     index_routes_from_config,
@@ -753,6 +756,42 @@ class TestRequiresPython:
         ):
             plan_targets(config)
 
+    def test_a_matrix_declares_its_own_pythons(self, tmp_path: Path) -> None:
+        """The matrix names the targets, so requires-python does not gate them.
+
+        The declaration is about the project, and a matrix that admits a
+        Python the project excludes is caught where the matrix is parsed.
+        """
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\nrequires-python = "==3.9.*"\n'
+            '[tool.nab.matrix]\npython = "==3.12"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        config = read_pyproject_config(path)
+        (target,) = plan_targets(config)
+        assert target.python_version == "3.12"
+
+    def test_a_release_candidate_host_satisfies_its_own_release(
+        self, tmp_path: Path
+    ) -> None:
+        """``>=3.14`` has to admit a 3.14 candidate, as it does under pip.
+
+        A specifier admits no prerelease unless it names one, so comparing the
+        marker value would refuse to lock at all on a release candidate.
+        """
+        path = write(tmp_path, '[tool.nab]\nrequires-python = ">=3.14"\n')
+        config = read_pyproject_config(path)
+        target = ResolveTarget.for_host(
+            env_source=lambda: {
+                **default_environment(),
+                "python_version": "3.14",
+                "python_full_version": "3.14.0rc1",
+            },
+        )
+        assert target.python_release in SpecifierSet(">=3.14")
+        _check_requires_python_admits_target(config.requires_python, target)
+
     def test_a_python_override_rescues_a_declaration_the_host_fails(
         self, tmp_path: Path
     ) -> None:
@@ -1312,6 +1351,36 @@ class TestMarkerEnvironmentDeprecation:
             platform="windows_amd64", implementation="cpython"
         )
 
+    def test_the_platform_id_carries_the_markers_it_implies(
+        self, tmp_path: Path
+    ) -> None:
+        """The overlay nab shipped named platform_system, so it has to translate."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'platform_system = "Linux"\n'
+            'sys_platform = "linux"\n'
+            'platform_machine = "x86_64"\n',
+        )
+        config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(platform="linux_x86_64")
+
+    def test_an_implied_marker_that_contradicts_the_platform_is_an_error(
+        self, tmp_path: Path
+    ) -> None:
+        """One overlay names one machine."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'platform_system = "Windows"\n'
+            'sys_platform = "linux"\n'
+            'platform_machine = "x86_64"\n',
+        )
+        with pytest.raises(ConfigError, match="contradicts platform"):
+            read_pyproject_config(path)
+
     def test_half_a_platform_is_an_error(self, tmp_path: Path) -> None:
         """``sys_platform`` alone used to keep the host's machine."""
         path = write(
@@ -1331,14 +1400,23 @@ class TestMarkerEnvironmentDeprecation:
         with pytest.raises(ConfigError, match="names no platform nab models"):
             read_pyproject_config(path)
 
-    def test_untranslatable_variable_is_an_error(self, tmp_path: Path) -> None:
-        """``platform_system`` carries no axis: the platform id implies it."""
+    def test_an_implied_marker_alone_is_an_error(self, tmp_path: Path) -> None:
+        """``platform_system`` names no machine without the pair that does."""
         path = write(
             tmp_path,
             '[tool.nab.marker-environment]\nplatform_system = "Linux"\n',
         )
+        with pytest.raises(ConfigError, match="which is the pair that names"):
+            read_pyproject_config(path)
+
+    def test_untranslatable_variable_is_an_error(self, tmp_path: Path) -> None:
+        """A variable no environment axis carries cannot be translated."""
+        path = write(
+            tmp_path,
+            '[tool.nab.marker-environment]\nplatform_release = "6.8.0"\n',
+        )
         with pytest.raises(
-            ConfigError, match=r"variable\(s\) \['platform_system'\] cannot be"
+            ConfigError, match=r"variable\(s\) \['platform_release'\] cannot be"
         ):
             read_pyproject_config(path)
 
