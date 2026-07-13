@@ -22,7 +22,6 @@ from urllib.parse import urlsplit
 from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import (
-    AsyncSimpleClient,
     MetadataHashMismatchError,
     SdistFile,
     SdistHashMismatchError,
@@ -890,6 +889,10 @@ class FetchCoordinator:
         finally:
             await client.aclose()
 
+            # A file:// index client owns no transport, but a direct archive
+            # fetch can still have opened one.  aclose is idempotent.
+            await self._transport.aclose()
+
     def _dispatch(
         self,
         item: FetchRequest | list[FetchRequest],
@@ -1065,6 +1068,8 @@ class FetchCoordinator:
             if self._offline:
                 msg = f"archive fetch unavailable in offline mode ({req.url})"
                 raise OfflineError(msg)
-            data = await AsyncSimpleClient(self._transport).download(req.url)
+            response = await self._transport.get(req.url)
+            response.raise_for_status()
+            data = response.content
 
         self.index.store_sdist_archive(req.package, req.version, data)
