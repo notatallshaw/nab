@@ -51,12 +51,21 @@ PLATFORM_IDS = (
     "windows_amd64",
 )
 
-specs = st.builds(
-    PlatformSpec,
-    platform_id=st.sampled_from(PLATFORM_IDS),
-    manylinux_floor=st.tuples(st.just(2), st.integers(0, 35)),
-    musllinux_floor=st.tuples(st.just(1), st.integers(0, 4)),
-    macos_min=st.none() | st.tuples(st.integers(10, 14), st.integers(0, 15)),
+specs = st.one_of(
+    st.builds(
+        PlatformSpec,
+        platform_id=st.sampled_from(PLATFORM_IDS),
+        libc=st.just("glibc"),
+        libc_version=st.tuples(st.just(2), st.integers(0, 35)),
+        macos_min=st.none() | st.tuples(st.integers(10, 14), st.integers(0, 15)),
+    ),
+    st.builds(
+        PlatformSpec,
+        platform_id=st.sampled_from(PLATFORM_IDS),
+        libc=st.just("musl"),
+        libc_version=st.tuples(st.just(1), st.integers(0, 4)),
+        macos_min=st.none() | st.tuples(st.integers(10, 14), st.integers(0, 15)),
+    ),
 )
 
 
@@ -80,9 +89,7 @@ def _oracle_tags_in_order(
     else:
         interpreter = f"cp{major}{minor}"
         out += _triples(
-            upstream_tags.cpython_tags(
-                python_version=py, abis=[interpreter], platforms=platforms
-            )
+            upstream_tags.cpython_tags(python_version=py, platforms=platforms)
         )
     out += _triples(
         upstream_tags.compatible_tags(

@@ -45,6 +45,7 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_python.tags import PlatformSpec
 from nab_python.workspace import WorkspaceConfig
 
 
@@ -2733,6 +2734,148 @@ class TestMatrix:
         with pytest.raises(
             ConfigError, match="matrix.platforms must list at least one"
         ):
+            read_pyproject_config(path)
+
+    def _platforms_body(self, platforms: str) -> str:
+        return (
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.12"\n'
+            f"platforms = {platforms}\n"
+        )
+
+    def test_platform_table_form(self, tmp_path: Path) -> None:
+        """A table entry reaches the tag knobs a bare id cannot."""
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '["linux_x86_64", { id = "linux_x86_64", libc = "musl",'
+                ' libc-version = "1.2" }]'
+            ),
+        )
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.platforms == (
+            "linux_x86_64",
+            PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2)),
+        )
+
+    def test_platform_table_all_knobs(self, tmp_path: Path) -> None:
+        """Every table key lands on the spec."""
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '[{ id = "macos_arm64", macos-min = "14.0",'
+                ' platform-release = "23.1.0", platform-version = "Darwin 23" }]'
+            ),
+        )
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.platforms == (
+            PlatformSpec(
+                "macos_arm64",
+                macos_min=(14, 0),
+                platform_release="23.1.0",
+                platform_version="Darwin 23",
+            ),
+        )
+
+    def test_platform_table_defaults_match_bare_id(self, tmp_path: Path) -> None:
+        """A table with only ``id`` is the bare-string form."""
+        path = write(tmp_path, self._platforms_body('[{ id = "linux_x86_64" }]'))
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.platforms == (PlatformSpec("linux_x86_64"),)
+
+    def test_platform_table_unknown_key(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body('[{ id = "linux_x86_64", glibc = "2.28" }]'),
+        )
+        with pytest.raises(
+            ConfigError, match=r"unknown matrix.platforms\[0\] keys: \['glibc'\]"
+        ):
+            read_pyproject_config(path)
+
+    def test_platform_table_missing_id(self, tmp_path: Path) -> None:
+        path = write(tmp_path, self._platforms_body('[{ libc = "musl" }]'))
+        with pytest.raises(
+            ConfigError, match=r"matrix.platforms\[0\] missing required key 'id'"
+        ):
+            read_pyproject_config(path)
+
+    def test_platform_table_bad_libc(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body('[{ id = "linux_x86_64", libc = "uclibc" }]'),
+        )
+        with pytest.raises(ConfigError, match="libc must be one of"):
+            read_pyproject_config(path)
+
+    def test_platform_table_id_must_be_a_string(self, tmp_path: Path) -> None:
+        path = write(tmp_path, self._platforms_body("[{ id = 3 }]"))
+        with pytest.raises(
+            ConfigError, match=r"matrix.platforms\[0\].id must be a string"
+        ):
+            read_pyproject_config(path)
+
+    def test_platform_entry_must_be_string_or_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, self._platforms_body("[3]"))
+        with pytest.raises(
+            ConfigError, match=r"matrix.platforms\[0\] must be a platform id or a table"
+        ):
+            read_pyproject_config(path)
+
+    def test_platforms_must_be_a_list(self, tmp_path: Path) -> None:
+        path = write(tmp_path, self._platforms_body('"linux_x86_64"'))
+        with pytest.raises(ConfigError, match="matrix.platforms must be a list"):
+            read_pyproject_config(path)
+
+    def test_platform_table_unknown_id_still_rejected(self, tmp_path: Path) -> None:
+        """The table form does not bypass the known-platform-id check."""
+        path = write(tmp_path, self._platforms_body('[{ id = "linux_riscv64" }]'))
+        with pytest.raises(ConfigError, match="Unknown platform ids"):
+            read_pyproject_config(path)
+
+    @pytest.mark.parametrize("value", ["2", "2.28.1", "1!2.28", "2.28rc1", "garbage"])
+    def test_platform_table_bad_libc_version(self, tmp_path: Path, value: str) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                f'[{{ id = "linux_x86_64", libc-version = "{value}" }}]'
+            ),
+        )
+        with pytest.raises(ConfigError, match="libc-version must be"):
+            read_pyproject_config(path)
+
+    def test_platform_table_libc_version_must_be_a_string(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body('[{ id = "linux_x86_64", libc-version = 2.28 }]'),
+        )
+        with pytest.raises(ConfigError, match="libc-version must be a string"):
+            read_pyproject_config(path)
+
+    def test_same_id_different_libc_is_not_a_duplicate(self, tmp_path: Path) -> None:
+        """One id under two libc families is two distinct targets."""
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '["linux_x86_64", { id = "linux_x86_64", libc = "musl" }]'
+            ),
+        )
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert len(matrix.platforms) == 2
+
+    def test_table_repeating_a_bare_id_is_a_duplicate(self, tmp_path: Path) -> None:
+        """A defaults-only table collapses onto the bare id's label."""
+        path = write(
+            tmp_path,
+            self._platforms_body('["linux_x86_64", { id = "linux_x86_64" }]'),
+        )
+        with pytest.raises(ConfigError, match="matrix.platforms has duplicate entry"):
             read_pyproject_config(path)
 
     def test_invalid_python_order(self, tmp_path: Path) -> None:

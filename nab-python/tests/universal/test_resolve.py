@@ -1281,8 +1281,8 @@ class TestMergeUniversalLockInputs:
         matrix = Matrix(
             python="==3.11",
             platforms=(
-                PlatformSpec("linux_x86_64", manylinux_floor=(2, 17)),
-                PlatformSpec("linux_x86_64", manylinux_floor=(2, 34)),
+                PlatformSpec("linux_x86_64", libc_version=(2, 17)),
+                PlatformSpec("linux_x86_64", libc_version=(2, 34)),
             ),
         )
         older, newer = matrix.expand()

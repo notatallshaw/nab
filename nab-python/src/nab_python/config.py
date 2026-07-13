@@ -57,6 +57,7 @@ from .provider import (
     VcsSource,
     _normalize_extra,
 )
+from .tags import Libc, PlatformSpec, platform_label
 from .universal.matrix import Matrix
 from .workspace import (
     WorkspaceConfig,
@@ -123,10 +124,15 @@ _VERSION_MARKER_VARIABLES = frozenset({"python_version", "python_full_version"})
 
 @dataclass(frozen=True, slots=True)
 class MatrixConfig:
-    """User-declared matrix axes for universal resolution."""
+    """User-declared matrix axes for universal resolution.
+
+    A ``platforms`` entry is either a bare platform id, which takes the
+    platform's default tag knobs, or a :class:`PlatformSpec` parsed from
+    the table form.
+    """
 
     python: str
-    platforms: tuple[str, ...]
+    platforms: tuple[str | PlatformSpec, ...]
     python_order: str = "asc"
     python_patches: Mapping[str, str] | None = None
     implementations: tuple[str, ...] = ("cpython",)
@@ -2216,6 +2222,96 @@ def _validate_matrix_python(spec: str) -> None:
             raise ConfigError(msg)
 
 
+_PLATFORM_TABLE_KEYS = frozenset(
+    {
+        "id",
+        "libc",
+        "libc-version",
+        "macos-min",
+        "platform-release",
+        "platform-version",
+    }
+)
+_KNOWN_LIBC: tuple[Libc, ...] = ("glibc", "musl")
+
+
+def _parse_matrix_platforms(value: object) -> tuple[str | PlatformSpec, ...]:
+    """Parse ``matrix.platforms``: bare ids, tables, or a mix of both.
+
+    A bare id takes the platform's default tag knobs.  The table form
+    declares the knobs a bare id cannot reach: the libc family and
+    version, the macOS deployment target, and the kernel marker values.
+    """
+    if not isinstance(value, list):
+        msg = f"matrix.platforms must be a list, got {type(value).__name__}"
+        raise ConfigError(msg)
+    platforms: list[str | PlatformSpec] = []
+    for i, item in enumerate(value):
+        if isinstance(item, str):
+            platforms.append(item)
+        elif isinstance(item, dict):
+            platforms.append(_parse_platform_table(f"matrix.platforms[{i}]", item))
+        else:
+            msg = (
+                f"matrix.platforms[{i}] must be a platform id or a table,"
+                f" got {type(item).__name__}"
+            )
+            raise ConfigError(msg)
+    return tuple(platforms)
+
+
+def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
+    """Parse one ``matrix.platforms`` table entry into a :class:`PlatformSpec`."""
+    unknown = sorted(set(value) - _PLATFORM_TABLE_KEYS)
+    if unknown:
+        msg = (
+            f"unknown {where} keys: {unknown!r};"
+            f" expected {sorted(_PLATFORM_TABLE_KEYS)!r}"
+        )
+        raise ConfigError(msg)
+    if "id" not in value:
+        msg = f"{where} missing required key 'id'"
+        raise ConfigError(msg)
+    libc = value.get("libc", "glibc")
+    if libc not in _KNOWN_LIBC:
+        msg = f"{where}.libc must be one of {list(_KNOWN_LIBC)!r}, got {libc!r}"
+        raise ConfigError(msg)
+    return PlatformSpec(
+        platform_id=_parse_string_value(f"{where}.id", value["id"]),
+        libc=libc,
+        libc_version=_parse_major_minor(
+            f"{where}.libc-version", value.get("libc-version")
+        ),
+        macos_min=_parse_major_minor(f"{where}.macos-min", value.get("macos-min")),
+        platform_release=_parse_string_value(
+            f"{where}.platform-release", value.get("platform-release", "")
+        ),
+        platform_version=_parse_string_value(
+            f"{where}.platform-version", value.get("platform-version", "")
+        ),
+    )
+
+
+def _parse_major_minor(key: str, value: object) -> tuple[int, int] | None:
+    """Parse a ``major.minor`` string into a pair; ``None`` passes through."""
+    if value is None:
+        return None
+    text = _parse_string_value(key, value)
+    try:
+        version = Version(text)
+    except InvalidVersion as exc:
+        msg = f"{key} must be a 'major.minor' version, got {text!r}"
+        raise ConfigError(msg) from exc
+    release = version.release
+    two_part = len(release) == _MINOR_RELEASE_PARTS
+    # str() round-trips the normalized version, so an epoch or a
+    # pre/post/dev/local qualifier shows up as a mismatch here.
+    if not two_part or str(version) != f"{release[0]}.{release[1]}":
+        msg = f"{key} must be exactly 'major.minor', got {text!r}"
+        raise ConfigError(msg)
+    return (release[0], release[1])
+
+
 def _parse_matrix(value: object) -> MatrixConfig | None:
     if not isinstance(value, dict):
         msg = f"[tool.nab.matrix] must be a table, got {type(value).__name__}"
@@ -2243,11 +2339,11 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
         msg = "matrix.python must be a string PEP 440 specifier"
         raise ConfigError(msg)
     _validate_matrix_python(python)
-    platforms = _parse_string_list("matrix.platforms", platforms_raw)
+    platforms = _parse_matrix_platforms(platforms_raw)
     if not platforms:
         msg = "matrix.platforms must list at least one platform id"
         raise ConfigError(msg)
-    _reject_duplicates("matrix.platforms", platforms)
+    _reject_duplicates("matrix.platforms", tuple(platform_label(p) for p in platforms))
     python_order = value.get("python-order", "asc")
     if python_order not in {"asc", "desc"}:
         msg = f"matrix.python-order must be 'asc' or 'desc', got {python_order!r}"

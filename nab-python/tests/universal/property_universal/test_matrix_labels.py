@@ -44,7 +44,7 @@ python_specs = st.one_of(
 # with a literal underscore.
 rel_strings = st.text(alphabet="_-abc0123456789.", min_size=0, max_size=8)
 
-floors = st.tuples(st.integers(0, 3), st.integers(0, 20))
+libc_versions = st.none() | st.tuples(st.integers(0, 3), st.integers(0, 20))
 
 
 def _specs_for(platform_id: str) -> st.SearchStrategy[PlatformSpec]:
@@ -52,8 +52,8 @@ def _specs_for(platform_id: str) -> st.SearchStrategy[PlatformSpec]:
     return st.builds(
         PlatformSpec,
         platform_id=st.just(platform_id),
-        manylinux_floor=floors,
-        musllinux_floor=floors,
+        libc=st.sampled_from(["glibc", "musl"]),
+        libc_version=libc_versions,
         macos_min=st.none() | st.tuples(st.integers(10, 15), st.integers(0, 3)),
         platform_release=rel_strings,
         platform_version=rel_strings,

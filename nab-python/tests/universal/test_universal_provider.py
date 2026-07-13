@@ -585,7 +585,7 @@ class TestWheelTagFiltering:
         provider = UniversalProvider(
             _index_with_files(wheels),
             marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64", manylinux_floor=(2, 17)),
+            platform_spec=PlatformSpec("linux_x86_64", libc_version=(2, 17)),
             build_policy=BuildPolicy.NEVER,
         )
         result = provider.filter_distributions("pkg", wheels)
@@ -600,7 +600,7 @@ class TestWheelTagFiltering:
         provider = UniversalProvider(
             _index_with_files(wheels),
             marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64", manylinux_floor=(2, 34)),
+            platform_spec=PlatformSpec("linux_x86_64", libc_version=(2, 34)),
         )
         result = provider.filter_distributions("pkg", wheels)
         assert [v for v, _ in result] == [Version("1.0")]

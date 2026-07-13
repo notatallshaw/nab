@@ -3,8 +3,8 @@
 These tests pin the spec-compliant tag selector's behavior on the
 common cases that real resolvers encounter:
 
-- manylinux / musllinux floor enforcement (PEP 600 / PEP 656)
-- macOS arch + version-floor compatibility
+- one libc family per target, at or below its version (PEP 600 / PEP 656)
+- macOS arch + version compatibility
 - Windows arch matching
 - ``py3-none-any`` fallback ordering
 - Compressed-tag-set wheels (``cp310.cp311``)
@@ -22,8 +22,19 @@ from nab_python.tags import (
     _PLATFORM_KIND,
     PlatformSpec,
     _platform_tags_for_spec,
+    platform_label,
     select_wheel,
     tags_for_target,
+)
+
+# numpy 2.5.1 ships one manylinux wheel (tagged 2.27 and 2.28, no older),
+# one musllinux wheel, and one free-threaded wheel per platform.
+NUMPY_MANYLINUX = (
+    "numpy-2.5.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+)
+NUMPY_MUSLLINUX = "numpy-2.5.1-cp313-cp313-musllinux_1_2_x86_64.whl"
+NUMPY_FREETHREADED = (
+    "numpy-2.5.1-cp313-cp313t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
 )
 
 
@@ -58,7 +69,44 @@ def _wheel(filename: str) -> WheelFile:
 
 
 class TestPlatformSpec:
-    """``PlatformSpec`` exposes per-platform tag floors."""
+    """``PlatformSpec`` exposes per-platform tag knobs."""
+
+    def test_default_libc_is_glibc_2_28(self) -> None:
+        """An undeclared Linux target is glibc, at the modern baseline."""
+        spec = PlatformSpec("linux_x86_64")
+        assert spec.libc == "glibc"
+        assert spec.effective_libc_version == (2, 28)
+
+    def test_musl_libc_version_defaults_per_family(self) -> None:
+        """A musl target with no version takes musl's default, not glibc's."""
+        spec = PlatformSpec("linux_x86_64", libc="musl")
+        assert spec.effective_libc_version == (1, 2)
+
+    def test_declared_libc_version_wins(self) -> None:
+        """An explicit ``libc_version`` overrides the family default."""
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        assert spec.effective_libc_version == (2, 17)
+
+    def test_label_of_bare_id_is_the_id(self) -> None:
+        """A bare platform id renders as itself."""
+        assert platform_label("linux_x86_64") == "linux_x86_64"
+
+    def test_label_of_spec_carries_the_suffix(self) -> None:
+        """A spec renders as its id plus the knob discriminator."""
+        spec = PlatformSpec("linux_x86_64", libc="musl")
+        assert platform_label(spec) == "linux_x86_64-musl"
+
+    def test_label_suffix_separates_libc_families(self) -> None:
+        """A musl spec never renders the suffix of an otherwise-equal glibc one.
+
+        Both are the same ``platform_id`` with the same version pair, so a
+        suffix that dropped the family would collapse two targets with
+        disjoint wheel sets onto one label.
+        """
+        glibc = PlatformSpec("linux_x86_64", libc_version=(1, 2))
+        musl = PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2))
+        assert glibc.label_suffix() == "-glibc1.2"
+        assert musl.label_suffix() == "-musl1.2"
 
     def test_default_linux_arch(self) -> None:
         """``linux_x86_64`` carries the right architecture name."""
@@ -92,43 +140,129 @@ class TestPlatformSpec:
     def test_label_suffix_escapes_kernel_release(self) -> None:
         """Pins the escaped suffix shape for a realistic kernel release."""
         spec = PlatformSpec("linux_x86_64", platform_release="5.15.0-generic")
-        assert spec.label_suffix() == "-glibc2.17-musl1.2-rel5.15.0_2d_generic"
+        assert spec.label_suffix() == "-rel5.15.0_2d_generic"
+
+
+class TestLibcFamilyExclusivity:
+    """A target links one C library, so it accepts one family's wheels.
+
+    Emitting both families let a declared glibc target install a
+    musllinux wheel, which cannot run there.
+    """
+
+    def test_glibc_target_emits_no_musllinux(self) -> None:
+        """The default (glibc) linux target has no musllinux platform tag."""
+        platforms = _platform_tags_for_spec(PlatformSpec("linux_x86_64"))
+        assert any(p.startswith("manylinux") for p in platforms)
+        assert not any(p.startswith("musllinux") for p in platforms)
+
+    def test_musl_target_emits_no_manylinux(self) -> None:
+        """A musl target has no manylinux platform tag."""
+        spec = PlatformSpec("linux_x86_64", libc="musl")
+        platforms = _platform_tags_for_spec(spec)
+        assert any(p.startswith("musllinux") for p in platforms)
+        assert not any(p.startswith("manylinux") for p in platforms)
+
+    def test_glibc_target_takes_numpy_manylinux_wheel(self) -> None:
+        """numpy ships manylinux_2_28 only; the default glibc target installs it."""
+        spec = PlatformSpec("linux_x86_64")
+        assert _compatible(_wheel(NUMPY_MANYLINUX), python_version="3.13", spec=spec)
+
+    def test_glibc_target_rejects_numpy_musllinux_wheel(self) -> None:
+        """The same glibc target must not pick numpy's musl wheel."""
+        spec = PlatformSpec("linux_x86_64")
+        assert not _compatible(
+            _wheel(NUMPY_MUSLLINUX), python_version="3.13", spec=spec
+        )
+
+    def test_musl_target_takes_numpy_musllinux_wheel(self) -> None:
+        """A musl target installs numpy's musllinux wheel."""
+        spec = PlatformSpec("linux_x86_64", libc="musl")
+        assert _compatible(_wheel(NUMPY_MUSLLINUX), python_version="3.13", spec=spec)
+
+    def test_musl_target_rejects_numpy_manylinux_wheel(self) -> None:
+        """A musl target must not pick numpy's glibc wheel."""
+        spec = PlatformSpec("linux_x86_64", libc="musl")
+        assert not _compatible(
+            _wheel(NUMPY_MANYLINUX), python_version="3.13", spec=spec
+        )
+
+    def test_glibc_target_selects_manylinux_over_musllinux(self) -> None:
+        """Given numpy's full wheel list, the glibc target picks the glibc wheel."""
+        spec = PlatformSpec("linux_x86_64")
+        wheels = [_wheel(NUMPY_MUSLLINUX), _wheel(NUMPY_MANYLINUX)]
+        chosen = select_wheel(wheels, python_version="3.13", spec=spec)
+        assert chosen is not None
+        assert chosen.filename == NUMPY_MANYLINUX
+
+
+class TestFreeThreadedAbi:
+    """``cpython_tags`` owns the abi list, so free-threaded ABIs are visible."""
+
+    def test_free_threaded_wheel_visible_on_free_threaded_build(self) -> None:
+        """A cp313t wheel is a candidate when packaging derives a ``t`` abi.
+
+        The abi list is no longer forced to ``cpXY``, so the target picks
+        up whatever ABIs ``packaging.tags`` derives.  Simulate a
+        free-threaded build by flipping the config var packaging reads.
+        """
+        spec = PlatformSpec("linux_x86_64")
+        wheel = _wheel(NUMPY_FREETHREADED)
+        assert not _compatible(wheel, python_version="3.13", spec=spec)
+
+        tags_for_target.cache_clear()
+        try:
+            with patch(
+                "nab_python.tags.ptags._get_config_var",
+                side_effect=lambda name, warn=False: (
+                    1 if name == "Py_GIL_DISABLED" else None
+                ),
+            ):
+                assert _compatible(wheel, python_version="3.13", spec=spec)
+        finally:
+            tags_for_target.cache_clear()
 
 
 class TestTagsForTarget:
     """``tags_for_target`` produces the full PEP 425 tag set."""
 
-    def test_linux_includes_manylinux_at_or_below_floor(self) -> None:
-        """A linux_x86_64 spec with floor 2.17 admits manylinux_2_17 and below."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+    def test_linux_includes_manylinux_at_or_below_libc_version(self) -> None:
+        """A glibc 2.17 target admits manylinux_2_17 and below."""
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux_2_17_x86_64" in tag_strs
         assert "cp311-cp311-manylinux_2_5_x86_64" in tag_strs
 
-    def test_linux_excludes_manylinux_above_floor(self) -> None:
-        """manylinux_2_28 is NOT in the set when floor is 2.17."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+    def test_linux_excludes_manylinux_above_libc_version(self) -> None:
+        """manylinux_2_28 needs glibc 2.28; a 2.17 target cannot run it."""
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux_2_28_x86_64" not in tag_strs
 
+    def test_default_linux_admits_manylinux_2_28(self) -> None:
+        """The default glibc version admits the modern manylinux baseline."""
+        spec = PlatformSpec("linux_x86_64")
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        assert "cp311-cp311-manylinux_2_28_x86_64" in tag_strs
+
     def test_linux_includes_legacy_aliases(self) -> None:
         """manylinux1, manylinux2010, manylinux2014 aliases are included."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux1_x86_64" in tag_strs
         assert "cp311-cp311-manylinux2010_x86_64" in tag_strs
         assert "cp311-cp311-manylinux2014_x86_64" in tag_strs
 
-    def test_linux_excludes_aliases_above_floor(self) -> None:
-        """manylinux2014 is excluded when floor is below 2.17."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 12))
+    def test_linux_excludes_aliases_above_libc_version(self) -> None:
+        """manylinux2014 means glibc 2.17; a 2.12 target excludes it."""
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 12))
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux2014_x86_64" not in tag_strs
         assert "cp311-cp311-manylinux2010_x86_64" in tag_strs
 
-    def test_aarch64_manylinux_floor_stops_at_2_17(self) -> None:
+    def test_aarch64_manylinux_stops_at_2_17(self) -> None:
         """aarch64 does not descend below glibc 2.17 (PEP 599)."""
-        spec = PlatformSpec("linux_aarch64", manylinux_floor=(2, 17))
+        spec = PlatformSpec("linux_aarch64", libc_version=(2, 17))
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux_2_17_aarch64" in tag_strs
         assert "cp311-cp311-manylinux2014_aarch64" in tag_strs
@@ -144,23 +278,23 @@ class TestTagsForTarget:
             wheel = _wheel(f"foo-1.0-cp311-cp311-{alias}_aarch64.whl")
             assert not _compatible(wheel, python_version="3.11", spec=spec)
 
-    def test_x86_64_keeps_legacy_alias_floor(self) -> None:
+    def test_x86_64_keeps_legacy_alias_range(self) -> None:
         """x86_64 still descends to manylinux1 (glibc 2.5)."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux1_x86_64" in tag_strs
         assert "cp311-cp311-manylinux_2_5_x86_64" in tag_strs
 
-    def test_non_glibc2_floor_descends_to_x_0(self) -> None:
-        """A glibc 3.x floor descends to 3.0 on any arch (the 2.17 cap is glibc 2.x only)."""
-        spec = PlatformSpec("linux_aarch64", manylinux_floor=(3, 1))
+    def test_non_glibc2_major_descends_to_x_0(self) -> None:
+        """A glibc 3.x target descends to 3.0 on any arch (the 2.17 cap is glibc 2.x only)."""
+        spec = PlatformSpec("linux_aarch64", libc_version=(3, 1))
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux_3_1_aarch64" in tag_strs
         assert "cp311-cp311-manylinux_3_0_aarch64" in tag_strs
 
-    def test_linux_includes_musllinux_at_floor(self) -> None:
-        """Musllinux at-or-below the floor is admitted."""
-        spec = PlatformSpec("linux_x86_64", musllinux_floor=(1, 2))
+    def test_musl_includes_musllinux_at_or_below_version(self) -> None:
+        """A musl 1.2 target admits musllinux_1_2 and below."""
+        spec = PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2))
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-musllinux_1_2_x86_64" in tag_strs
         assert "cp311-cp311-musllinux_1_0_x86_64" in tag_strs
@@ -175,7 +309,7 @@ class TestTagsForTarget:
         # Still a ceiling: a newer-than-default macOS wheel is excluded.
         assert "cp311-cp311-macosx_13_0_arm64" not in tag_strs
 
-    def test_macos_x86_64_uses_default_floor(self) -> None:
+    def test_macos_x86_64_uses_default_min(self) -> None:
         """``macos_x86_64`` defaults to macOS 10.13 (x86_64-era)."""
         spec = PlatformSpec("macos_x86_64")
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
@@ -204,15 +338,15 @@ class TestTagsForTarget:
 class TestWheelCompatibility:
     """A wheel is a candidate iff its tags meet the target's tag set."""
 
-    def test_accepts_at_floor_manylinux(self) -> None:
-        """A manylinux_2_17 wheel matches a 2.17-floor linux spec."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+    def test_accepts_manylinux_at_libc_version(self) -> None:
+        """A manylinux_2_17 wheel matches a glibc 2.17 target."""
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         assert _compatible(wheel, python_version="3.11", spec=spec)
 
-    def test_rejects_above_floor_manylinux(self) -> None:
-        """A manylinux_2_28 wheel does not match a 2.17-floor linux spec."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+    def test_rejects_manylinux_above_libc_version(self) -> None:
+        """A manylinux_2_28 wheel does not match a glibc 2.17 target."""
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_28_x86_64.whl")
         assert not _compatible(wheel, python_version="3.11", spec=spec)
 
@@ -397,13 +531,13 @@ class TestSelectWheel:
         assert chosen is good
 
     def test_higher_glibc_wheel_wins_over_lower(self) -> None:
-        """Among manylinux candidates, higher glibc (closer to floor) wins.
+        """Among manylinux candidates, the highest runnable glibc wins.
 
-        With floor 2.17, both manylinux_2_5 and manylinux_2_17 are
+        On a glibc 2.17 target both manylinux_2_5 and manylinux_2_17 are
         compatible.  manylinux_2_17 is the more-specific tag (PEP 600
         recommends preferring it) and should be selected.
         """
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         wheels = [
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"),
@@ -420,7 +554,7 @@ class TestSelectWheel:
         its equivalent manylinux_X_Y tag, so manylinux2014 outranks
         manylinux_2_5.
         """
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         wheels = [
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux2014_x86_64.whl"),
@@ -436,7 +570,7 @@ class TestSelectWheel:
         and manylinux_2_5 second, the loop must keep the first as
         best and not replace it.
         """
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         wheels = [
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
@@ -447,7 +581,7 @@ class TestSelectWheel:
 
     def test_higher_build_tag_wins_at_same_rank(self) -> None:
         """Among same-tag wheels, the higher PEP 427 build tag wins."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
         chosen = select_wheel([build1, build5], python_version="3.11", spec=spec)
@@ -455,7 +589,7 @@ class TestSelectWheel:
 
     def test_build_tag_selection_is_order_independent(self) -> None:
         """The same wheel is chosen regardless of index file order."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
         forward = select_wheel([build1, build5], python_version="3.11", spec=spec)
@@ -465,7 +599,7 @@ class TestSelectWheel:
 
     def test_build_tagged_wheel_beats_untagged_at_same_rank(self) -> None:
         """An absent build tag sorts lowest, so a tagged wheel wins."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         untagged = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         build3 = _wheel("pkg-1.0-3-cp311-cp311-manylinux_2_17_x86_64.whl")
         chosen = select_wheel([untagged, build3], python_version="3.11", spec=spec)
@@ -473,7 +607,7 @@ class TestSelectWheel:
 
     def test_malformed_build_tag_treated_as_absent(self) -> None:
         """A build segment without a leading digit sorts lowest."""
-        spec = PlatformSpec("linux_x86_64", manylinux_floor=(2, 17))
+        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         malformed = _wheel("pkg-1.0-x-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
         chosen = select_wheel([malformed, build5], python_version="3.11", spec=spec)

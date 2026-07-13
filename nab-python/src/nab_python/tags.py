@@ -6,10 +6,9 @@ and the implementation name directly. CPython tags come from
 ``packaging.tags.cpython_tags``; PyPy tags are emitted directly
 (interpreter ``ppXY``, abi ``pypyXY_pp73``). Both add
 interpreter-agnostic tags from ``packaging.tags.compatible_tags``.
-Platform tags use ``mac_platforms`` for macOS and expand manylinux /
-musllinux from the declared glibc / musl floor. A wheel matches the
-target iff its parsed tags share a member with the target's accepted
-tag set.
+Platform tags use ``mac_platforms`` for macOS and expand the declared
+libc family's tags on Linux. A wheel matches the target iff its parsed
+tags share a member with the target's accepted tag set.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from functools import cache, lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from ._vendor.packaging import tags as ptags
 
@@ -30,11 +29,15 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "Libc",
     "PlatformSpec",
+    "platform_label",
     "select_wheel",
     "tags_for_target",
     "wheel_tag_set",
 ]
+
+Libc = Literal["glibc", "musl"]
 
 
 # PEP 427: a wheel filename has at least 5 dash-separated segments
@@ -46,13 +49,16 @@ _MIN_WHEEL_FILENAME_PARTS = 5
 _WHEEL_PARTS_WITH_BUILD = 6
 _BUILD_TAG_RE = re.compile(r"(\d+)(.*)", re.ASCII)
 
-# Default manylinux floor: glibc 2.17 (the manylinux2014 generation,
-# adopted by every mainstream distro since CentOS 7 / Ubuntu 14.04).
-# A tighter floor reduces accepted wheels; a looser floor accepts
-# wheels that may not run on older glibc.
-_DEFAULT_MANYLINUX_FLOOR = (2, 17)
-# Default musllinux floor: musl 1.2 (adopted by Alpine 3.13+, 2021+).
-_DEFAULT_MUSLLINUX_FLOOR = (1, 2)
+# manylinux_2_28 is the modern baseline: numpy, pandas and scipy ship
+# nothing older, so a lower default rejects their only Linux wheels.
+_DEFAULT_GLIBC_VERSION = (2, 28)
+# musl 1.2 is the Alpine 3.13+ (2021) baseline that musllinux wheels target.
+_DEFAULT_MUSL_VERSION = (1, 2)
+_DEFAULT_LIBC: Libc = "glibc"
+_DEFAULT_LIBC_VERSION: dict[Libc, tuple[int, int]] = {
+    "glibc": _DEFAULT_GLIBC_VERSION,
+    "musl": _DEFAULT_MUSL_VERSION,
+}
 # The macOS defaults model the deployment-target (system) macOS version.
 # ``mac_platforms`` treats this as a ceiling: a system at macOS V installs
 # wheels built for V and older, never newer, so a higher value accepts more
@@ -65,7 +71,7 @@ _DEFAULT_MACOS_MIN = (12, 0)
 # below 10.13.
 _DEFAULT_MACOS_X86_64_MIN = (10, 13)
 
-# Legacy manylinux aliases (PEPs 513/571/599) keyed by their glibc floor.
+# Legacy manylinux aliases (PEPs 513/571/599) keyed by the glibc they mean.
 _LEGACY_MANYLINUX: dict[tuple[int, int], str] = {
     (2, 17): "manylinux2014",
     (2, 12): "manylinux2010",
@@ -84,26 +90,28 @@ _OTHER_MIN_GLIBC2_MINOR = 17
 
 @dataclass(frozen=True)
 class PlatformSpec:
-    """Concrete tag floors for one matrix platform_id.
+    """Concrete tag knobs for one matrix platform_id.
 
-    Users can override the per-platform floors when their
-    deployment target requires it.  The defaults are deliberately
-    permissive (manylinux 2.17, musl 1.2, macOS 12 arm64 / 10.13
-    x86_64) so most real deployments work out of the box.
+    ``libc`` names the C library the Linux target runs.  A machine
+    has one, so a target emits that family's wheel tags and never the
+    other's.  ``libc_version`` is the version the target guarantees:
+    a wheel built against an older libc runs on a newer one, so every
+    version at or below it is accepted.  Unset, it takes the family
+    default (glibc 2.28, musl 1.2).
 
     ``platform_release`` and ``platform_version`` set the
-    corresponding PEP 508 marker values on this platform's tuples
-    (hole 1.3 plug).  When unset, both default to the empty string,
-    which makes any kernel-version-conditioned marker
-    (``platform_release >= "5.10"``) evaluate False (the safe
-    direction: drop the gated dep) but a silent failure if the
-    target machine actually has that kernel.  Users who declare a
-    minimum target kernel get the gated deps included.
+    corresponding PEP 508 marker values on this platform's tuples.
+    When unset, both default to the empty string, which makes any
+    kernel-version-conditioned marker (``platform_release >= "5.10"``)
+    evaluate False (the safe direction: drop the gated dep) but a
+    silent failure if the target machine actually has that kernel.
+    Users who declare a minimum target kernel get the gated deps
+    included.
     """
 
     platform_id: str
-    manylinux_floor: tuple[int, int] = _DEFAULT_MANYLINUX_FLOOR
-    musllinux_floor: tuple[int, int] = _DEFAULT_MUSLLINUX_FLOOR
+    libc: Libc = _DEFAULT_LIBC
+    libc_version: tuple[int, int] | None = None  # family-dependent default
     macos_min: tuple[int, int] | None = None  # arch-dependent default
     platform_release: str = ""
     platform_version: str = ""
@@ -113,25 +121,43 @@ class PlatformSpec:
         """The architecture suffix used in platform tags."""
         return _PLATFORM_ARCH[self.platform_id]
 
+    @property
+    def effective_libc_version(self) -> tuple[int, int]:
+        """The declared libc version, or this family's default."""
+        if self.libc_version is None:
+            return _DEFAULT_LIBC_VERSION[self.libc]
+        return self.libc_version
+
     def label_suffix(self) -> str:
         """Return a label discriminator, empty for the platform default.
 
         Two specs sharing a ``platform_id`` collapse to one matrix-tuple
-        label unless their floors set them apart, which silently merges
-        their per-tuple pins.  The suffix encodes the floors so distinct
+        label unless their knobs set them apart, which silently merges
+        their per-tuple pins.  The suffix encodes the knobs so distinct
         specs stay distinct; a spec left at the platform default emits no
         suffix and keeps the plain ``pyXY-platform`` label.
         """
         if self == PlatformSpec(self.platform_id):
             return ""
+        parts: list[str] = []
+        # A non-default libc always shows, with or without a version, so a
+        # musl target can never render the suffix of a glibc one.
+        if self.libc != _DEFAULT_LIBC or self.libc_version is not None:
+            parts.append(f"-{self.libc}{_version_tag(self.libc_version)}")
         fields = (
-            ("glibc", _floor_tag(self.manylinux_floor)),
-            ("musl", _floor_tag(self.musllinux_floor)),
-            ("macos", _floor_tag(self.macos_min)),
+            ("macos", _version_tag(self.macos_min)),
             ("rel", _escape_label_value(self.platform_release)),
             ("ver", _escape_label_value(self.platform_version)),
         )
-        return "".join(f"-{tag}{value}" for tag, value in fields if value)
+        parts += [f"-{tag}{value}" for tag, value in fields if value]
+        return "".join(parts)
+
+
+def platform_label(platform: str | PlatformSpec) -> str:
+    """Render a declared matrix platform as its label."""
+    if isinstance(platform, str):
+        return platform
+    return platform.platform_id + platform.label_suffix()
 
 
 # Map our matrix platform_ids to (kind, arch).  Kind is one of
@@ -153,9 +179,9 @@ _PLATFORM_KIND: dict[str, str] = {
 }
 
 
-def _floor_tag(floor: tuple[int, int] | None) -> str:
-    """Render a ``(major, minor)`` floor as ``major.minor``, or ``""`` if unset."""
-    return f"{floor[0]}.{floor[1]}" if floor is not None else ""
+def _version_tag(version: tuple[int, int] | None) -> str:
+    """Render a ``(major, minor)`` pair as ``major.minor``, or ``""`` if unset."""
+    return f"{version[0]}.{version[1]}" if version is not None else ""
 
 
 def _escape_label_value(value: str) -> str:
@@ -178,31 +204,15 @@ def _escape_label_value(value: str) -> str:
     return "".join(out)
 
 
-def _linux_platform_tags(
-    arch: str,
-    *,
-    manylinux_floor: tuple[int, int],
-    musllinux_floor: tuple[int, int],
-) -> list[str]:
-    """Generate manylinux + musllinux + plain linux tags for an arch.
+def _manylinux_platform_tags(arch: str, glibc_version: tuple[int, int]) -> list[str]:
+    """Generate the manylinux tags a glibc target accepts, newest first.
 
-    Returns the tag list in install-preference order: most-specific
-    (highest glibc/musl version) first.  Accepts every minor version
-    at or below the declared floor, down to the arch's oldest
-    supported glibc; this is the spec-compliant interpretation of
-    "manylinux_X_Y means glibc X.Y or older".
-
-    Note: PEP 600 says installers prefer wheels with the *highest*
-    glibc among compatible ones.  Our use case is "decide which
-    wheel a tuple would install"; the tag list ordering matches
-    that preference.
+    Emits each legacy alias right after its equivalent PEP 600 tag so a
+    legacy-named wheel ranks at its own glibc, matching packaging.tags.
+    A glibc 2.x target stops at the arch's oldest tag (2.5 for x86,
+    2.17 otherwise); any other major stops at minor 0.
     """
-    # manylinux_X_Y: PEP 600 form.  Iterate high-to-low for preference
-    # order, emitting each legacy alias right after its equivalent
-    # PEP 600 tag so a legacy-named wheel ranks at its own glibc, matching
-    # packaging.tags.  A glibc 2.x floor stops at the arch's oldest tag
-    # (2.5 for x86, 2.17 otherwise); any other major stops at minor 0.
-    major, minor = manylinux_floor
+    major, minor = glibc_version
     if major == _LEGACY_GLIBC_MAJOR:
         min_minor = (
             _X86_MIN_GLIBC2_MINOR
@@ -217,9 +227,27 @@ def _linux_platform_tags(
         legacy = _LEGACY_MANYLINUX.get((major, m))
         if legacy is not None:
             out.append(f"{legacy}_{arch}")
-    # musllinux_X_Y: PEP 656 form.  Same accept-at-or-below rule.
-    mu_major, mu_minor = musllinux_floor
-    out.extend(f"musllinux_{mu_major}_{m}_{arch}" for m in range(mu_minor, -1, -1))
+    return out
+
+
+def _linux_platform_tags(
+    arch: str, *, libc: Libc, libc_version: tuple[int, int]
+) -> list[str]:
+    """Generate the declared libc family's tags plus plain linux, for an arch.
+
+    Returns the tag list in install-preference order: most-specific
+    (highest libc version) first, down to the oldest the family and arch
+    allow.  A target links one C library, so a glibc target emits no
+    musllinux tags and a musl target emits no manylinux tags; the other
+    family's wheels do not run there.
+    """
+    major, minor = libc_version
+    if libc == "musl":
+        # musllinux_X_Y: PEP 656.
+        out = [f"musllinux_{major}_{m}_{arch}" for m in range(minor, -1, -1)]
+    else:
+        # manylinux_X_Y: PEP 600.
+        out = _manylinux_platform_tags(arch, libc_version)
     # Plain linux_<arch>: the most generic Linux tag.  Most installers
     # accept this only when no manylinux/musllinux wheel is present.
     out.append(f"linux_{arch}")
@@ -233,9 +261,7 @@ def _platform_tags_for_spec(spec: PlatformSpec) -> list[str]:
 
     if kind == "linux":
         return _linux_platform_tags(
-            arch,
-            manylinux_floor=spec.manylinux_floor,
-            musllinux_floor=spec.musllinux_floor,
+            arch, libc=spec.libc, libc_version=spec.effective_libc_version
         )
 
     if kind == "macos":
@@ -387,10 +413,13 @@ def _tags_in_order(
     """Yield the tags a target accepts in install preference order.
 
     CPython targets use ``packaging.tags.cpython_tags`` (cpXY-cpXY,
-    cpXY-abi3 forward-compat, cpXY-none).  PyPy targets cannot reuse
-    that (it forces the ``cp`` interpreter and abi3, which PyPy lacks),
-    so their interpreter/abi/none tags are emitted directly.  Both then
-    add the interpreter-agnostic tags (pyXY-none-any, py3-none-any, ...).
+    cpXY-abi3 forward-compat, cpXY-none) with the abi list left to
+    packaging, which derives the interpreter's real ABIs the same way
+    it does for the host; naming them here hides the free-threaded
+    ``cpXYt`` ABI.  PyPy targets cannot reuse that (it forces the ``cp``
+    interpreter and abi3, which PyPy lacks), so their interpreter/abi/none
+    tags are emitted directly.  Both then add the interpreter-agnostic
+    tags (pyXY-none-any, py3-none-any, ...).
     """
     major, minor = (int(p) for p in python_version.split("."))
     py_version = (major, minor)
@@ -404,9 +433,7 @@ def _tags_in_order(
             yield ptags.Tag(interpreter, "none", platform_)
     else:
         interpreter = f"cp{major}{minor}"
-        yield from ptags.cpython_tags(
-            python_version=py_version, abis=[interpreter], platforms=platforms
-        )
+        yield from ptags.cpython_tags(python_version=py_version, platforms=platforms)
     yield from ptags.compatible_tags(
         python_version=py_version, interpreter=interpreter, platforms=platforms
     )

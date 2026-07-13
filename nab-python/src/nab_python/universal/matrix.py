@@ -127,7 +127,7 @@ class MatrixTuple:
 
         Uses the interpreter prefix (``py`` for CPython, ``pp`` for
         PyPy) so tuples that differ only by implementation get distinct
-        labels, and appends the platform spec's floor discriminator so
+        labels, and appends the platform spec's knob discriminator so
         two specs sharing a ``platform_id`` do not collapse.  A
         conflict-fork ``selection`` then appends each active member as
         ``kind-name``, joined by ``.``, in sorted order so the forks of
@@ -233,9 +233,9 @@ class Matrix:
         minors, an empty python range, or an invalid ``python_order``
         each raise a ``ValueError`` before any work happens.
 
-        ``platforms`` accepts either bare platform-id strings (use
-        default tag floors) or :class:`PlatformSpec` instances for
-        per-platform glibc/musl/macOS overrides.
+        ``platforms`` accepts either bare platform-id strings (use the
+        default tag knobs) or :class:`PlatformSpec` instances for
+        per-platform libc/macOS overrides.
         """
         if self.python_order not in {"asc", "desc"}:
             msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
