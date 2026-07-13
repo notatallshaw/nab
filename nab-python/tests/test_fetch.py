@@ -371,66 +371,6 @@ class TestFetchCoordinator:
             assert event.is_set()
 
     @respx.mock
-    def test_request_wheel_metadata_fetches_with_sentinel_key(self) -> None:
-        """The per-wheel fetch caches under ``f"{version}#{filename}"``."""
-        respx.get(
-            "https://files.example.com/testpkg-1.0-py3-none-any.whl.metadata"
-        ).mock(return_value=httpx.Response(200, text=METADATA_TEXT))
-        with _coord() as coord:
-            event = coord.request_wheel_metadata(
-                "testpkg",
-                "1.0",
-                "testpkg-1.0-py3-none-any.whl",
-                "https://files.example.com/testpkg-1.0-py3-none-any.whl.metadata",
-            )
-            event.wait(timeout=5)
-            sentinel = "1.0#testpkg-1.0-py3-none-any.whl"
-            assert coord.index.has_metadata("testpkg", sentinel)
-            # The plain-version cache stays untouched; the per-wheel
-            # fetch exists precisely so the resolver-time cache does
-            # not get clobbered.
-            assert not coord.index.has_metadata("testpkg", "1.0")
-
-    @respx.mock
-    def test_request_wheel_metadata_cached(self) -> None:
-        """Repeating the per-wheel fetch returns an already-set event."""
-        with _coord() as coord:
-            sentinel = "2.0#pkg-2.0-py3-none-any.whl"
-            coord.index.store_metadata("pkg", sentinel, "cached")
-            event = coord.request_wheel_metadata(
-                "pkg",
-                "2.0",
-                "pkg-2.0-py3-none-any.whl",
-                "https://example.com/m",
-            )
-            assert event.is_set()
-
-    @respx.mock
-    def test_request_wheel_metadata_deduplicates(self) -> None:
-        """A per-wheel fetch whose sentinel key is pending reuses it.
-
-        The sentinel-keyed metadata is not yet stored, so the cached
-        early-return is skipped, but the pre-created pending makes
-        ``get_or_create_pending`` report the key exists, so no fetch
-        is submitted.
-        """
-        route = respx.get(
-            "https://files.example.com/dup-1.0-py3-none-any.whl.metadata"
-        ).mock(return_value=httpx.Response(200, text=METADATA_TEXT))
-        with _coord() as coord:
-            pending, _ = coord.index.get_or_create_pending(
-                "metadata:dup:1.0#dup-1.0-py3-none-any.whl"
-            )
-            event = coord.request_wheel_metadata(
-                "dup",
-                "1.0",
-                "dup-1.0-py3-none-any.whl",
-                "https://files.example.com/dup-1.0-py3-none-any.whl.metadata",
-            )
-            assert event is pending.event
-            assert route.call_count == 0
-
-    @respx.mock
     def test_request_metadata_none_url(self) -> None:
         """Metadata request with None url stores None."""
         with _coord() as coord:

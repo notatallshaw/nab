@@ -35,34 +35,12 @@ def _done_event() -> threading.Event:
 def _pre_populate_index(
     index: InMemoryIndex,
     listings_map: Mapping[str, Sequence[WheelFile | SdistFile]],
-    *,
-    baseline_metadata: Mapping[str, str] | None,
-    per_wheel_metadata: Mapping[str, str] | None,
-    sdist_pyproject: Mapping[str, str] | None,
 ) -> None:
-    """Load listings and pre-store validator-visible slots into ``index``."""
+    """Load ``listings_map`` into ``index``."""
     for pkg_name, pkg_wheels in listings_map.items():
         index.store_listing(pkg_name, pkg_wheels)
         # Mirror production: every fetched listing records its serving index.
         index.store_listing_index(pkg_name, DEFAULT_INDEX_NAME)
-        if baseline_metadata is not None and pkg_name in baseline_metadata:
-            for w in pkg_wheels:
-                index.store_metadata(pkg_name, w.version, baseline_metadata[pkg_name])
-                break
-        if per_wheel_metadata is not None:
-            for w in pkg_wheels:
-                if w.filename in per_wheel_metadata:
-                    index.store_metadata(
-                        pkg_name,
-                        f"{w.version}#{w.filename}",
-                        per_wheel_metadata[w.filename],
-                    )
-        if sdist_pyproject is not None and pkg_name in sdist_pyproject:
-            for w in pkg_wheels:
-                index.store_sdist_pyproject(
-                    pkg_name, w.version, sdist_pyproject[pkg_name]
-                )
-                break
 
 
 def _resolve_listings(
@@ -138,9 +116,8 @@ def _wire_sdist_side_effects(
     *,
     sdist_pkg_info: str | None,
     sdist_pyproject_toml: str | None,
-    failures: set[str],
 ) -> None:
-    """Attach ``request_sdist`` and ``request_wheel_metadata`` side effects."""
+    """Attach the ``request_sdist`` side effect."""
 
     def _request_sdist(
         pkg: str,
@@ -156,22 +133,10 @@ def _wire_sdist_side_effects(
             index.store_sdist_pyproject(pkg, ver, sdist_pyproject_toml)
         return _done_event()
 
-    def _request_wheel_metadata(
-        pkg: str,
-        ver: str,
-        filename: str,
-        _url: str,
-        _hash: tuple[str, str] | None = None,
-    ) -> threading.Event:
-        if filename in failures:
-            index.store_metadata(pkg, f"{ver}#{filename}", None)
-        return _done_event()
-
     coordinator.request_sdist.side_effect = _request_sdist
-    coordinator.request_wheel_metadata.side_effect = _request_wheel_metadata
 
 
-def make_coordinator(  # noqa: PLR0913
+def make_coordinator(
     wheels: Sequence[WheelFile | SdistFile] | None = None,
     *,
     package: str = "pkg",
@@ -181,10 +146,6 @@ def make_coordinator(  # noqa: PLR0913
     auto_metadata: bool = False,
     sdist_pkg_info: str | None = None,
     sdist_pyproject_toml: str | None = None,
-    baseline_metadata: Mapping[str, str] | None = None,
-    per_wheel_metadata: Mapping[str, str] | None = None,
-    sdist_pyproject: Mapping[str, str] | None = None,
-    fetch_failures: set[str] | None = None,
 ) -> MagicMock:
     """Build a mock :class:`FetchCoordinator` backed by an :class:`InMemoryIndex`.
 
@@ -198,25 +159,12 @@ def make_coordinator(  # noqa: PLR0913
 
     Request side effects:
 
-    * ``request_listing`` and ``request_wheel_metadata`` always return a
-      set event.  ``request_wheel_metadata`` honours ``fetch_failures``:
-      filenames in the set store ``None`` at the sentinel
-      ``f"{version}#{filename}"`` key.
+    * ``request_listing`` always returns a set event.
     * ``request_metadata`` and ``request_metadata_batch`` write
       ``metadata_text`` (or the entry from ``metadata_by_version``, or
       auto-generated minimal METADATA when ``auto_metadata`` is true).
     * ``request_sdist`` writes ``sdist_pkg_info`` and, if not ``None``,
       ``sdist_pyproject_toml``.
-
-    Pre-stores written directly to the index before the coordinator
-    fires:
-
-    * ``baseline_metadata`` keys on package name and writes once per
-      package using the first wheel's version.
-    * ``per_wheel_metadata`` keys on wheel filename and writes at the
-      validator's ``f"{version}#{filename}"`` sentinel.
-    * ``sdist_pyproject`` keys on package name and writes the
-      pyproject.toml text used by the PEP 621 fast path.
 
     Call sites that need request side effects beyond what this helper
     wires up (for example ``request_sdist_archive``) can reassign
@@ -225,16 +173,8 @@ def make_coordinator(  # noqa: PLR0913
     defaults to the single default-PyPI :class:`IndexConfig` list.
     """
     index = InMemoryIndex()
-    failures = fetch_failures if fetch_failures is not None else set()
 
-    listings_map = _resolve_listings(wheels, package, listings)
-    _pre_populate_index(
-        index,
-        listings_map,
-        baseline_metadata=baseline_metadata,
-        per_wheel_metadata=per_wheel_metadata,
-        sdist_pyproject=sdist_pyproject,
-    )
+    _pre_populate_index(index, _resolve_listings(wheels, package, listings))
 
     coordinator = MagicMock()
     coordinator.index = index
@@ -251,6 +191,5 @@ def make_coordinator(  # noqa: PLR0913
         index,
         sdist_pkg_info=sdist_pkg_info,
         sdist_pyproject_toml=sdist_pyproject_toml,
-        failures=failures,
     )
     return coordinator

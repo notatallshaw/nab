@@ -635,43 +635,6 @@ class FetchCoordinator:
             )
         return pending.event
 
-    def request_wheel_metadata(
-        self,
-        package: str,
-        version: str,
-        wheel_filename: str,
-        url: str,
-        metadata_hash: tuple[str, str] | None = None,
-    ) -> threading.Event:
-        """Request metadata for one specific wheel of ``(package, version)``.
-
-        Used by the universal-resolution validation pass to fetch each
-        tuple's chosen wheel metadata separately from the resolver's
-        baseline.  Cached under the sentinel key ``f"{version}#{wheel_filename}"``
-        so the resolver-time cache (keyed on plain ``version``) is
-        untouched.  Goes through the same async transport and shares
-        connection pooling.
-        """
-        self._check_alive()
-        sentinel_version = f"{version}#{wheel_filename}"
-        if self.index.has_metadata(package, sentinel_version):
-            done = threading.Event()
-            done.set()
-            return done
-        key = f"metadata:{package}:{sentinel_version}"
-        pending, existed = self.index.get_or_create_pending(key)
-        if not existed:
-            self._submit(
-                FetchRequest(
-                    kind=FetchKind.METADATA,
-                    package=package,
-                    version=sentinel_version,
-                    url=url,
-                    metadata_hash=metadata_hash,
-                )
-            )
-        return pending.event
-
     def request_sdist(
         self,
         package: str,

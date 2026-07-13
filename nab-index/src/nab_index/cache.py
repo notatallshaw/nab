@@ -112,10 +112,7 @@ def _require_single_segment(component: str) -> str:
     the cache root, so it must be a single path segment. A value with
     an embedded separator expands to a nested path, and ``.`` or ``..``
     names a parent, so either would read or write a different file than
-    the key describes and return the wrong cache entry. The
-    universal-validation sentinel ``f"{version}#{filename}"`` puts an
-    index-supplied filename in the version slot, the one component that
-    is not already a canonical name or a PEP 440 version.
+    the key describes and return the wrong cache entry.
     """
     if component in ("", ".", "..") or component != Path(component).name:
         msg = f"cache key component is not a single path segment: {component!r}"

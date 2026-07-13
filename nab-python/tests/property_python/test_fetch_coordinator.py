@@ -147,9 +147,7 @@ class FakeClientCoordinator(FetchCoordinator):
 # One action = (kind, pkg_idx, ver_idx).
 actions = st.lists(
     st.tuples(
-        st.sampled_from(
-            ["listing", "metadata", "wheel_meta", "sdist", "sdist_archive", "batch"]
-        ),
+        st.sampled_from(["listing", "metadata", "sdist", "sdist_archive", "batch"]),
         st.integers(0, len(PKGS) - 1),
         st.integers(0, len(VERSIONS) - 1),
     ),
@@ -191,12 +189,6 @@ def test_every_request_gets_exactly_one_correct_reply(
                     pkg, ver, f"https://example.invalid/{pkg}-{ver}.whl.metadata"
                 )
                 requested.append((("metadata", pkg, ver), ev))
-            elif kind == "wheel_meta":
-                fname = f"{pkg}-{ver}-py3-none-any.whl"
-                ev = coord.request_wheel_metadata(
-                    pkg, ver, fname, f"https://example.invalid/{fname}.metadata"
-                )
-                requested.append((("metadata", pkg, f"{ver}#{fname}"), ev))
             elif kind == "sdist":
                 ev = coord.request_sdist(
                     pkg, ver, f"https://example.invalid/{pkg}-{ver}.tar.gz"
