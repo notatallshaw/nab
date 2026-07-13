@@ -154,7 +154,6 @@ source = []
 omit = [
     "*/tests/property/*",
     "*/tests/property_python/*",
-    "*/tests/universal/property_universal/*",
     "*/test_crosshair_*.py",
     "*/_vendor/*",
     "*/nab_python/_testing/*",

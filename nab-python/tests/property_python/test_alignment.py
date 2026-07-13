@@ -1,13 +1,14 @@
-"""Property tests for cross-tuple alignment helpers in :mod:`nab_python.universal.resolve`.
+"""Property tests for cross-target alignment helpers in :mod:`nab_python.resolve`.
 
-Universal resolution iterates per-tuple resolutions serially with
-each tuple's pins threaded forward as preferences.  The pure helpers
-``_direct_package_names`` and ``_parse_requirements`` shape that
-input.
+A resolve iterates its targets serially with each target's pins threaded
+forward as preferences.  The pure helper ``_build_resolver_inputs``
+shapes that input: it canonicalises the direct names, drops the
+requirements this target's markers exclude, and reports the extras the
+root requested.
 
 This file walks the relevant clauses of `PEP 503`_ (canonical names)
 and `PEP 508`_ (environment markers) paragraph by paragraph and
-adds a property test for each invariant the helpers must preserve.
+adds a property test for each invariant the helper must preserve.
 
 .. _PEP 503: https://peps.python.org/pep-0503/
 .. _PEP 508: https://peps.python.org/pep-0508/
@@ -20,18 +21,18 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from nab_python._vendor.packaging.ranges import VersionRange
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
-from nab_python.lockfile import IndexPin, LockInput
+from nab_python.config import NabProjectConfig
+from nab_python.lockfile import IndexPin, TargetLock
+from nab_python.resolve import (
+    ResolveResult,
+    TargetResult,
+    _build_resolver_inputs,
+    build_lock_input,
+)
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
-from nab_python.universal.matrix import Matrix
-from nab_python.universal.resolve import (
-    TupleResult,
-    UniversalResult,
-    _direct_package_names,
-    _parse_requirements,
-    merge_universal_lock_inputs,
-)
 from nab_resolver.errors import ResolutionError
 
 from .strategies import LINUX_TARGET, PROPERTY_SETTINGS
@@ -39,8 +40,8 @@ from .strategies import LINUX_TARGET, PROPERTY_SETTINGS
 pytestmark = pytest.mark.property
 
 
-def _fake_tuple() -> ResolveTarget:
-    """Build a minimal linux/3.11 target for property fixtures."""
+def _fake_target() -> ResolveTarget:
+    """Return the minimal linux/3.11 target the property fixtures use."""
     return LINUX_TARGET
 
 
@@ -68,7 +69,8 @@ class TestQuoteCanonicalDirectNames:
     > ``.``, ``-``, or ``_`` replaced with a single ``-`` character."
 
     User-supplied direct dependency names go through the same
-    canonicalization before the resolver compares them.
+    canonicalization before the resolver compares them; the keys of
+    ``_build_resolver_inputs`` are the direct set the provider is given.
 
     Reference: https://peps.python.org/pep-0503/#normalized-names
     """
@@ -85,10 +87,14 @@ class TestQuoteCanonicalDirectNames:
         self, names: list[str]
     ) -> None:
         """Variations of the same name canonicalise to a single canonical form."""
-        out = _direct_package_names(names)
+        out, _ = _build_resolver_inputs(
+            [Requirement(name) for name in names],
+            NabProjectConfig(),
+            environment=_fake_target().marker_env,
+        )
         assert all(n == n.lower() for n in out)
         if names:
-            assert out == {"my-pkg"}
+            assert set(out) == {"my-pkg"}
 
 
 @st.composite
@@ -115,9 +121,9 @@ class TestMarkerFiltering:
     evaluates to ``False`` for a given environment, the requirement
     does not apply.
 
-    ``_parse_requirements`` evaluates the marker for the per-tuple
+    ``_build_resolver_inputs`` evaluates the marker for the target's
     environment and drops requirements whose marker says ``False``;
-    otherwise the per-tuple solve would over-constrain.
+    otherwise the per-target solve would over-constrain.
 
     .. _PEP 508: https://peps.python.org/pep-0508/#environment-markers
     """
@@ -128,9 +134,13 @@ class TestMarkerFiltering:
         self, reqs: list[str]
     ) -> None:
         """Requirements with non-matching markers are absent from the parsed dict."""
-        linux_env = _fake_tuple().marker_env
+        linux_env = _fake_target().marker_env
         try:
-            out = _parse_requirements(reqs, linux_env)
+            out, _ = _build_resolver_inputs(
+                [Requirement(text) for text in reqs],
+                NabProjectConfig(),
+                environment=linux_env,
+            )
         except ResolutionError:
             # Self-contradictory draws (e.g. ``pkg<0.0``) are rejected
             # by the function; this property tests marker filtering only.
@@ -140,7 +150,7 @@ class TestMarkerFiltering:
 
 @st.composite
 def pin_maps(draw: st.DrawFn) -> dict[str, IndexPin]:
-    """Draw a non-empty ``{name: IndexPin}`` mapping for a tuple's lock input."""
+    """Draw a non-empty ``{name: IndexPin}`` mapping for a target's lock."""
     names = draw(st.lists(package_names(), min_size=1, max_size=4, unique=True))
     return {
         name: IndexPin(
@@ -160,7 +170,7 @@ _PLATFORM_POOL: tuple[str, ...] = (
 
 
 @st.composite
-def tuple_lock_inputs(
+def target_locks(
     draw: st.DrawFn,
 ) -> list[tuple[ResolveTarget, dict[str, IndexPin]]]:
     """Draw N ``(ResolveTarget, pin_map)`` pairs with unique labels."""
@@ -175,51 +185,51 @@ def tuple_lock_inputs(
     )
     pairs: list[tuple[ResolveTarget, dict[str, IndexPin]]] = []
     for platform in chosen_platforms:
-        tup = ResolveTarget.for_declared(
+        target = ResolveTarget.for_declared(
             python_version="3.11", spec=PlatformSpec(platform)
         )
-        pairs.append((tup, draw(pin_maps())))
+        pairs.append((target, draw(pin_maps())))
     return pairs
 
 
-class TestMergeUniversalLockInputs:
-    """Per-tuple pins survive the merge into a universal :class:`LockInput`.
+class TestBuildLockInput:
+    """Per-target pins survive the collection into a :class:`LockInput`.
 
     PEP 751 expects per-environment package entries: callers feed a
-    ``UniversalResult`` whose tuple results each carry a
-    :class:`LockInput`, and the merge must preserve every pin under
-    the originating tuple's label.  A regression that filtered or
-    coalesced pins would silently drop installation targets from
-    the lockfile.
+    ``ResolveResult`` whose target results each carry a
+    :class:`TargetLock`, and the collection must preserve every pin
+    under the originating target's label.  A regression that filtered or
+    coalesced pins would silently drop installation targets from the
+    lockfile.
 
     Reference: https://peps.python.org/pep-0751/
     """
 
-    @given(pairs=tuple_lock_inputs())
+    @given(pairs=target_locks())
     @PROPERTY_SETTINGS
-    def test_merge_preserves_per_tuple_pins(
+    def test_lock_input_preserves_per_target_pins(
         self, pairs: list[tuple[ResolveTarget, dict[str, IndexPin]]]
     ) -> None:
-        """Every input ``(name, version)`` reappears under the source tuple's label."""
-        matrix = Matrix(
-            python="==3.11", platforms=tuple(p.platform_id for p, _ in pairs)
-        )
-        tuple_results = [
-            TupleResult(
-                tuple_=tup,
+        """Every input ``(name, version)`` reappears under the source target's label."""
+        target_results = [
+            TargetResult(
+                target=target,
                 success=True,
                 pins={name: Version(pin.version) for name, pin in pin_map.items()},
-                lock_input=LockInput(pins=pin_map),
+                lock=TargetLock(target=target, pins=pin_map),
             )
-            for tup, pin_map in pairs
+            for target, pin_map in pairs
         ]
-        universal = UniversalResult(matrix=matrix, tuple_results=tuple_results)
-        merged = merge_universal_lock_inputs(universal)
+        result = ResolveResult(
+            targets=tuple(target for target, _ in pairs),
+            target_results=target_results,
+        )
+        lock_input = build_lock_input(result)
 
-        for tup, pin_map in pairs:
-            label = tup.label
-            assert label in merged.per_tuple_pins
-            recorded = merged.per_tuple_pins[label]
+        for target, pin_map in pairs:
+            label = target.label
+            assert label in lock_input.targets
+            recorded = lock_input.targets[label].pins
             for name, pin in pin_map.items():
                 assert name in recorded
                 assert recorded[name].version == pin.version

@@ -27,6 +27,8 @@ from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import PackageOverride
 from nab_python.provider import BuildPolicy, DistPolicy
+from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
 
 PACKAGE_NAMES = [f"pkg{i}" for i in range(10)]
 
@@ -68,6 +70,11 @@ BRUTE_FORCE_SETTINGS = settings(
 """Settings for properties that compare against brute-force enumeration."""
 
 MAX_BRUTE_FORCE_COMBINATIONS = 10_000
+
+LINUX_TARGET = ResolveTarget.for_declared(
+    python_version="3.11", spec=PlatformSpec("linux_x86_64")
+)
+"""The CPython 3.11 linux_x86_64 target the property fixtures resolve against."""
 
 
 # PEP 503 forbids a trailing separator in canonical names; the regex
