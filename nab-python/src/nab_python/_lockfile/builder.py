@@ -76,7 +76,7 @@ class LockInputProvider(Protocol):
     """Structural protocol for the provider slice the builder reads.
 
     Mirrors the public surface :class:`~nab_python.provider.Provider`
-    exposes that :func:`build_lock_input_from_provider` consumes; tests
+    exposes that :func:`build_target_lock` consumes; tests
     may supply a stub without inheriting the full Provider class.
     """
 

@@ -9,7 +9,7 @@ index entry or a direct-URL archive) is copied from its on-disk path
 rather than fetched over HTTP.
 
 Use as a one-shot from the CLI ``nab download`` command, or
-programmatically after :func:`~nab_python.resolve.resolve_pyproject_to_lock`.
+programmatically after :func:`~nab_python.resolve.build_lock_input`.
 """
 
 from __future__ import annotations

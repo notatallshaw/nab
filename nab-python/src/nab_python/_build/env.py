@@ -250,7 +250,7 @@ class NabBuildEnv:
         """Resolve ``requires`` (+ ``extra``) and write wheels under ``wheel_dir``.
 
         The inner resolve runs against a synthetic pyproject so it
-        can reuse :func:`nab_python.resolve.resolve_pyproject` and
+        can reuse :func:`nab_python.resolve.resolve_for_targets` and
         :func:`nab_python.download.download_lock` end-to-end.  No
         local sources / workspace / marker overlay; build deps
         come from the configured indexes only.
