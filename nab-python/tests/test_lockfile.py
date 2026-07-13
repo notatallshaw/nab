@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar, cast
@@ -1315,6 +1316,68 @@ class TestErrorPaths:
         )
         with pytest.raises(ValueError, match="acceptable hash"):
             _ = artifact.primary_digest
+
+
+class TestFailedWriteKeepsCommittedFile:
+    """A write that dies partway must not leave a shortened lockfile behind.
+
+    The emitters replace an existing file, and both formats are
+    newline-delimited records, so a prefix of the new text parses as a
+    complete lock holding a subset of the pins.  A consumer would install
+    that subset without complaint, so the previously committed file has to
+    survive a failed write untouched.
+    """
+
+    def _committed(self) -> LockInput:
+        return LockInput(targets=_one({"foo": _index_pin()}))
+
+    def _bigger(self) -> LockInput:
+        return LockInput(
+            targets=_one(
+                {
+                    name: _index_pin(name=name, version="2.0")
+                    for name in ("aaa", "bbb", "ccc", "ddd", "eee", "fff")
+                }
+            )
+        )
+
+    def test_pylock(
+        self,
+        tmp_path: Path,
+        cap_writes: Callable[[int], AbstractContextManager[None]],
+    ) -> None:
+        target = tmp_path / "pylock.toml"
+        write_lock(self._committed(), output_path=target)
+        committed = target.read_bytes()
+        half = len(write_lock(self._bigger())) // 2
+
+        with cap_writes(half), pytest.raises(OSError, match="No space left"):
+            write_lock(self._bigger(), output_path=target)
+
+        assert target.read_bytes() == committed
+        assert [p.name for p in tmp_path.iterdir()] == ["pylock.toml"]
+
+    @pytest.mark.parametrize(
+        "write",
+        [write_requirements_with_hashes, write_requirements_without_hashes],
+        ids=["with_hashes", "without_hashes"],
+    )
+    def test_requirements(
+        self,
+        write: Callable[..., str],
+        tmp_path: Path,
+        cap_writes: Callable[[int], AbstractContextManager[None]],
+    ) -> None:
+        target = tmp_path / "requirements.txt"
+        write(self._committed(), output_path=target)
+        committed = target.read_bytes()
+        half = len(write(self._bigger())) // 2
+
+        with cap_writes(half), pytest.raises(OSError, match="No space left"):
+            write(self._bigger(), output_path=target)
+
+        assert target.read_bytes() == committed
+        assert [p.name for p in tmp_path.iterdir()] == ["requirements.txt"]
 
 
 class TestRoundTrip:

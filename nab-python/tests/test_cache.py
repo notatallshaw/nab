@@ -96,7 +96,7 @@ class TestAtomicWrite:
             msg = "boom"
             raise OSError(msg)
 
-        monkeypatch.setattr("nab_index.cache.os.replace", fail_replace)
+        monkeypatch.setattr("nab_index.atomic.os.replace", fail_replace)
         with pytest.raises(OSError, match="boom"):
             _atomic_write(target, b"data")
         assert not target.exists()
@@ -107,7 +107,7 @@ class TestAtomicWrite:
     ) -> None:
         target = tmp_path / "x.txt"
         monkeypatch.setattr(
-            "nab_index.cache.os.replace",
+            "nab_index.atomic.os.replace",
             lambda _s, _d: (_ for _ in ()).throw(RuntimeError("rep")),
         )
 
@@ -115,7 +115,7 @@ class TestAtomicWrite:
             msg = "unlink-fail"
             raise OSError(msg)
 
-        monkeypatch.setattr("nab_index.cache.os.unlink", fail_unlink)
+        monkeypatch.setattr("nab_index.atomic.os.unlink", fail_unlink)
         with pytest.raises(RuntimeError, match="rep"):
             _atomic_write(target, b"data")
 

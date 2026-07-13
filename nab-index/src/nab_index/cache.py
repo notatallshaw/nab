@@ -19,15 +19,14 @@ old directory is harmless.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
-import os
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
+from .atomic import atomic_write
 
 __all__ = [
     "CacheBackend",
@@ -76,25 +75,9 @@ def _index_dirname(index_url: str) -> str:
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    """Write ``data`` to ``path`` atomically via tempfile + replace.
-
-    The temp file is created in the destination directory so the rename
-    is a same-filesystem operation. A partial write or a crash leaves
-    the target file untouched.
-    """
+    """Create the cache bucket for ``path``, then write ``data`` into it."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    tmp_path = Path(tmp)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        # Path.replace would route around os.replace on Python 3.10
-        # (pathlib captures it at import time), defeating monkeypatches.
-        os.replace(tmp_path, path)  # noqa: PTH105
-    except BaseException:
-        with contextlib.suppress(OSError):
-            tmp_path.unlink()
-        raise
+    atomic_write(path, data)
 
 
 def _read_text(path: Path) -> str | None:

@@ -10,6 +10,8 @@ import io
 import runpy
 import stat
 import sys
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
@@ -783,6 +785,26 @@ class TestLockCommandSpecific:
             lock(pyproject, output=out)
         assert "cannot write output" in capsys.readouterr().err
 
+    def test_full_disk_keeps_committed_lock(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        cap_writes: Callable[[int], AbstractContextManager[None]],
+    ) -> None:
+        """A write that runs out of space leaves the committed lock in place."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        committed = b'lock-version = "1.0"\n'
+        out.write_bytes(committed)
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
+            cap_writes(64),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out)
+        assert "cannot write output" in capsys.readouterr().err
+        assert out.read_bytes() == committed
+
     def test_resolution_flag_threads_to_resolver(self, tmp_path: Path) -> None:
         """``--project-resolution lowest`` reaches resolve_for_targets as the enum."""
         pyproject = _make_pyproject(tmp_path)
@@ -1104,6 +1126,29 @@ class TestLockCommandUniversal:
         text = out.read_text()
         assert 'lock-version = "1.0"' in text
         assert 'name = "foo"' in text
+
+    def test_full_disk_keeps_committed_requirements(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        cap_writes: Callable[[int], AbstractContextManager[None]],
+    ) -> None:
+        """A requirements write that runs out of space keeps the committed file."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "requirements.txt"
+        committed = b"foo==0.9\n"
+        out.write_bytes(committed)
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_universal_result(success=True),
+            ),
+            cap_writes(4),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=out, format="requirements")
+        assert "cannot write output" in capsys.readouterr().err
+        assert out.read_bytes() == committed
 
     def test_default_groups_from_config_not_cli_groups(self, tmp_path: Path) -> None:
         """Universal pylock records ``default-groups`` from config, not ``--groups``."""
