@@ -922,6 +922,13 @@ class TestUploadedPriorTo:
         # Equivalent to 00:00 UTC.
         assert dt.astimezone(timezone.utc) == datetime(2026, 5, 1, tzinfo=timezone.utc)
 
+    def test_iso_string_with_fractional_seconds(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[tool.nab]\nuploaded-prior-to = "2026-05-01T00:00:00.5Z"\n'
+        )
+        dt = read_pyproject_config(path).uploaded_prior_to
+        assert dt == datetime(2026, 5, 1, 0, 0, 0, 500000, tzinfo=timezone.utc)
+
     def test_naive_iso_string_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path, '[tool.nab]\nuploaded-prior-to = "2026-05-01T00:00:00"\n'
