@@ -26,6 +26,7 @@ from nab_python.config import (
     plan_targets,
     read_pyproject_config,
     validate_conflict_minimums,
+    with_python_override,
 )
 from nab_python.config_sources import (
     SourceConfigError,
@@ -739,17 +740,35 @@ class TestRequiresPython:
         assert read_pyproject_config(path).requires_python == ">=3.13,<3.14"
 
     def test_excluding_the_resolve_target_is_an_error(self, tmp_path: Path) -> None:
-        """A declaration the target Python fails names the knob that moves it."""
+        """A declaration the target Python fails names the knobs that move it."""
         path = write(
             tmp_path,
             '[tool.nab]\nrequires-python = "==3.9.*"\n'
             '[tool.nab.environment]\npython = "3.12"\n',
         )
+        config = read_pyproject_config(path)
         with pytest.raises(
             ConfigError,
-            match=r"excludes the resolve target Python 3.12.*tool.nab.environment",
+            match=r"excludes the resolve target Python 3.12.*--python",
         ):
-            read_pyproject_config(path)
+            plan_targets(config)
+
+    def test_a_python_override_rescues_a_declaration_the_host_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """``--python`` is the knob the error names, so it has to work.
+
+        The check runs against the target the resolve actually uses, which
+        ``--python`` moves after the config is read.  A library capped below
+        the host (``>=3.9,<3.13`` on 3.14) is otherwise unlockable.
+        """
+        path = write(tmp_path, '[tool.nab]\nrequires-python = ">=3.9,<3.13"\n')
+        config = read_pyproject_config(path)
+        with pytest.raises(ConfigError, match="excludes the resolve target"):
+            plan_targets(config)
+
+        (target,) = plan_targets(with_python_override(config, "3.12"))
+        assert target.python_version == "3.12"
 
     def test_project_table_is_the_fallback_source(self, tmp_path: Path) -> None:
         """``[project].requires-python`` is recorded when [tool.nab] sets none."""

@@ -709,8 +709,6 @@ def _config_from_effective(
     requires_python = effective["requires-python"].value
     if requires_python is None:
         requires_python = project_requires_python
-    if matrix is None:
-        _check_requires_python_admits_target(requires_python, targets[0])
 
     default_groups = effective["default-groups"].value
     conflicts = effective["conflicts"].value
@@ -871,8 +869,15 @@ def plan_targets(config: NabProjectConfig) -> tuple[ResolveTarget, ...]:
     host machine on another Python when it names only ``python``), and a
     project that declares neither resolves against the running interpreter,
     like pip.
+
+    The ``requires-python`` declaration is checked here rather than at parse
+    time because ``--python`` moves the target after the config is read, and
+    it is the flag that rescues a project whose declaration excludes the host.
     """
-    return _plan_targets(config.matrix, config.environment)
+    targets = _plan_targets(config.matrix, config.environment)
+    if config.matrix is None:
+        _check_requires_python_admits_target(config.requires_python, targets[0])
+    return targets
 
 
 def _plan_targets(
@@ -1072,9 +1077,9 @@ def _check_requires_python_admits_target(
     msg = (
         f"requires-python = {requires_python!r} excludes the resolve target"
         f" Python {version} ({target.label}).  nab resolves for the host"
-        " interpreter unless told otherwise; set [tool.nab.environment]"
-        " python to a version the declaration admits, or widen"
-        " requires-python."
+        " interpreter unless told otherwise; pass --python with a version the"
+        " declaration admits, set [tool.nab.environment] python to one, or"
+        " widen requires-python."
     )
     raise ConfigError(msg)
 
