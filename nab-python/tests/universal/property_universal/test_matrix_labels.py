@@ -57,6 +57,7 @@ def _specs_for(platform_id: str) -> st.SearchStrategy[PlatformSpec]:
         macos_min=st.none() | st.tuples(st.integers(10, 15), st.integers(0, 3)),
         platform_release=rel_strings,
         platform_version=rel_strings,
+        free_threaded=st.booleans(),
     )
 
 

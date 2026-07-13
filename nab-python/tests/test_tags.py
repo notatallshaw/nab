@@ -22,6 +22,7 @@ from nab_python.tags import (
     _PLATFORM_KIND,
     PlatformSpec,
     _platform_tags_for_spec,
+    _tags_in_order,
     platform_label,
     select_wheel,
     tags_for_target,
@@ -36,6 +37,16 @@ NUMPY_MUSLLINUX = "numpy-2.5.1-cp313-cp313-musllinux_1_2_x86_64.whl"
 NUMPY_FREETHREADED = (
     "numpy-2.5.1-cp313-cp313t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
 )
+# cryptography ships one abi3 wheel per platform, usable from cp37 up.
+CRYPTOGRAPHY_ABI3 = "cryptography-44.0.0-cp37-abi3-manylinux_2_28_x86_64.whl"
+
+
+def _free_threaded_host() -> object:
+    """Patch the config vars packaging reads to fake a free-threaded host."""
+    return patch(
+        "nab_python.tags.ptags._get_config_var",
+        side_effect=lambda name, warn=False: 1 if name == "Py_GIL_DISABLED" else None,
+    )
 
 
 def _compatible(
@@ -196,31 +207,87 @@ class TestLibcFamilyExclusivity:
         assert chosen.filename == NUMPY_MANYLINUX
 
 
-class TestFreeThreadedAbi:
-    """``cpython_tags`` owns the abi list, so free-threaded ABIs are visible."""
+class TestFreeThreadedTarget:
+    """``free_threaded`` declares the ``cpXYt`` ABI, which is exclusive.
 
-    def test_free_threaded_wheel_visible_on_free_threaded_build(self) -> None:
-        """A cp313t wheel is a candidate when packaging derives a ``t`` abi.
+    A free-threaded interpreter loads neither an ordinary ``cpXY``
+    extension nor an ``abi3`` one, and a GIL interpreter cannot load a
+    ``cpXYt`` one, so the two targets take disjoint binary wheels.
+    """
 
-        The abi list is no longer forced to ``cpXY``, so the target picks
-        up whatever ABIs ``packaging.tags`` derives.  Simulate a
-        free-threaded build by flipping the config var packaging reads.
-        """
+    def test_free_threaded_target_takes_the_cp313t_wheel(self) -> None:
+        """numpy's cp313t wheel is a candidate for a free-threaded target."""
+        spec = PlatformSpec("linux_x86_64", free_threaded=True)
+        assert _compatible(_wheel(NUMPY_FREETHREADED), python_version="3.13", spec=spec)
+
+    def test_free_threaded_target_rejects_the_gil_wheel(self) -> None:
+        """The same target must not pick numpy's ordinary cp313 wheel."""
+        spec = PlatformSpec("linux_x86_64", free_threaded=True)
+        assert not _compatible(
+            _wheel(NUMPY_MANYLINUX), python_version="3.13", spec=spec
+        )
+
+    def test_free_threaded_target_rejects_abi3(self) -> None:
+        """abi3 wheels do not load on a free-threaded build (PEP 703)."""
+        spec = PlatformSpec("linux_x86_64", free_threaded=True)
+        assert not _compatible(
+            _wheel(CRYPTOGRAPHY_ABI3), python_version="3.13", spec=spec
+        )
+
+    def test_free_threaded_target_keeps_abi3t_and_pure_python(self) -> None:
+        """The stable free-threaded ABI and the pure-Python fallback remain."""
+        spec = PlatformSpec("linux_x86_64", free_threaded=True)
+        tag_strs = {str(t) for t in tags_for_target(python_version="3.13", spec=spec)}
+        assert "cp313-abi3t-manylinux_2_28_x86_64" in tag_strs
+        assert "py3-none-any" in tag_strs
+
+    def test_gil_target_rejects_the_free_threaded_wheel(self) -> None:
+        """The default (GIL) target must not pick numpy's cp313t wheel."""
         spec = PlatformSpec("linux_x86_64")
-        wheel = _wheel(NUMPY_FREETHREADED)
-        assert not _compatible(wheel, python_version="3.13", spec=spec)
+        assert not _compatible(
+            _wheel(NUMPY_FREETHREADED), python_version="3.13", spec=spec
+        )
 
-        tags_for_target.cache_clear()
-        try:
-            with patch(
-                "nab_python.tags.ptags._get_config_var",
-                side_effect=lambda name, warn=False: (
-                    1 if name == "Py_GIL_DISABLED" else None
-                ),
-            ):
+    def test_label_carries_the_free_threaded_discriminator(self) -> None:
+        """A free-threaded target renders its own label."""
+        spec = PlatformSpec("linux_x86_64", free_threaded=True)
+        assert platform_label(spec) == "linux_x86_64-ft"
+
+
+class TestAbiIsHostIndependent:
+    """The ABI comes from the declared target, not from the running host.
+
+    packaging derives ABIs from the host's ``Py_GIL_DISABLED`` /
+    ``Py_DEBUG`` config vars when it is not told which ABI to use.  nab
+    runs on any interpreter, so a host-derived ABI would make the same
+    matrix lock differently under a free-threaded or debug build.
+    """
+
+    def test_gil_target_unchanged_on_a_free_threaded_host(self) -> None:
+        """A declared GIL target keeps its cp313 and abi3 tags on such a host."""
+        spec = PlatformSpec("linux_x86_64")
+        with _free_threaded_host():
+            tag_strs = {str(t) for t in _tags_in_order("3.13", spec)}
+        assert "cp313-cp313-manylinux_2_28_x86_64" in tag_strs
+        assert "cp313-abi3-manylinux_2_28_x86_64" in tag_strs
+        assert not any("cp313t" in t for t in tag_strs)
+
+    def test_ordinary_wheels_stay_candidates_on_a_free_threaded_host(self) -> None:
+        """The cp313 and abi3 wheels a GIL target installs stay selectable."""
+        spec = PlatformSpec("linux_x86_64")
+        wheels = [_wheel(NUMPY_MANYLINUX), _wheel(CRYPTOGRAPHY_ABI3)]
+        with _free_threaded_host():
+            for wheel in wheels:
                 assert _compatible(wheel, python_version="3.13", spec=spec)
-        finally:
-            tags_for_target.cache_clear()
+            assert not _compatible(
+                _wheel(NUMPY_FREETHREADED), python_version="3.13", spec=spec
+            )
+
+    def test_free_threaded_target_reachable_from_any_host(self) -> None:
+        """A declared free-threaded target gets its cp313t tag with no host help."""
+        spec = PlatformSpec("linux_x86_64", free_threaded=True)
+        tag_strs = {str(t) for t in _tags_in_order("3.13", spec)}
+        assert "cp313-cp313t-manylinux_2_28_x86_64" in tag_strs
 
 
 class TestTagsForTarget:

@@ -2,13 +2,14 @@
 
 Resolution needs the install-time wheel selection answer without a
 live interpreter, so the tag set is computed from :class:`PlatformSpec`
-and the implementation name directly. CPython tags come from
-``packaging.tags.cpython_tags``; PyPy tags are emitted directly
-(interpreter ``ppXY``, abi ``pypyXY_pp73``). Both add
-interpreter-agnostic tags from ``packaging.tags.compatible_tags``.
-Platform tags use ``mac_platforms`` for macOS and expand the declared
-libc family's tags on Linux. A wheel matches the target iff its parsed
-tags share a member with the target's accepted tag set.
+and the implementation name directly, never from the interpreter
+running nab. CPython tags come from ``packaging.tags.cpython_tags``;
+PyPy tags are emitted directly (interpreter ``ppXY``, abi
+``pypyXY_pp73``). Both add interpreter-agnostic tags from
+``packaging.tags.compatible_tags``. Platform tags use ``mac_platforms``
+for macOS and expand the declared libc family's tags on Linux. A wheel
+matches the target iff its parsed tags share a member with the target's
+accepted tag set.
 """
 
 from __future__ import annotations
@@ -107,6 +108,10 @@ class PlatformSpec:
     silent failure if the target machine actually has that kernel.
     Users who declare a minimum target kernel get the gated deps
     included.
+
+    ``free_threaded`` declares a CPython 3.13+ free-threaded target.
+    It picks the ``cpXYt`` ABI (and with it ``abi3t`` in place of
+    ``abi3``), which is what such an interpreter installs.
     """
 
     platform_id: str
@@ -115,6 +120,7 @@ class PlatformSpec:
     macos_min: tuple[int, int] | None = None  # arch-dependent default
     platform_release: str = ""
     platform_version: str = ""
+    free_threaded: bool = False
 
     @property
     def arch(self) -> str:
@@ -131,15 +137,17 @@ class PlatformSpec:
     def label_suffix(self) -> str:
         """Return a label discriminator, empty for the platform default.
 
-        Two specs sharing a ``platform_id`` collapse to one matrix-tuple
-        label unless their knobs set them apart, which silently merges
-        their per-tuple pins.  The suffix encodes the knobs so distinct
-        specs stay distinct; a spec left at the platform default emits no
-        suffix and keeps the plain ``pyXY-platform`` label.
+        A tuple's label names its target, so the suffix encodes the
+        knobs that set this spec apart from the platform's defaults and
+        two distinct specs never render the same suffix.  A spec left at
+        the platform default emits no suffix and keeps the plain
+        ``pyXY-platform`` label.
         """
         if self == PlatformSpec(self.platform_id):
             return ""
         parts: list[str] = []
+        if self.free_threaded:
+            parts.append("-ft")
         # A non-default libc always shows, with or without a version, so a
         # musl target can never render the suffix of a glibc one.
         if self.libc != _DEFAULT_LIBC or self.libc_version is not None:
@@ -413,13 +421,14 @@ def _tags_in_order(
     """Yield the tags a target accepts in install preference order.
 
     CPython targets use ``packaging.tags.cpython_tags`` (cpXY-cpXY,
-    cpXY-abi3 forward-compat, cpXY-none) with the abi list left to
-    packaging, which derives the interpreter's real ABIs the same way
-    it does for the host; naming them here hides the free-threaded
-    ``cpXYt`` ABI.  PyPy targets cannot reuse that (it forces the ``cp``
-    interpreter and abi3, which PyPy lacks), so their interpreter/abi/none
-    tags are emitted directly.  Both then add the interpreter-agnostic
-    tags (pyXY-none-any, py3-none-any, ...).
+    cpXY-abi3 forward-compat, cpXY-none).  The abi is named from the
+    declared target (``cpXYt`` for a free-threaded one, ``cpXY``
+    otherwise): left to packaging it would come from the config vars of
+    the interpreter running nab, which would make a target's wheels a
+    function of the host.  PyPy targets cannot reuse ``cpython_tags``
+    (it forces the ``cp`` interpreter and abi3, which PyPy lacks), so
+    their interpreter/abi/none tags are emitted directly.  Both then add
+    the interpreter-agnostic tags (pyXY-none-any, py3-none-any, ...).
     """
     major, minor = (int(p) for p in python_version.split("."))
     py_version = (major, minor)
@@ -433,7 +442,10 @@ def _tags_in_order(
             yield ptags.Tag(interpreter, "none", platform_)
     else:
         interpreter = f"cp{major}{minor}"
-        yield from ptags.cpython_tags(python_version=py_version, platforms=platforms)
+        abi = interpreter + ("t" if spec.free_threaded else "")
+        yield from ptags.cpython_tags(
+            python_version=py_version, abis=[abi], platforms=platforms
+        )
     yield from ptags.compatible_tags(
         python_version=py_version, interpreter=interpreter, platforms=platforms
     )

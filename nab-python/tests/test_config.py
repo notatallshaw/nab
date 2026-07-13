@@ -2750,14 +2750,14 @@ class TestMatrix:
         path = write(
             tmp_path,
             self._platforms_body(
-                '["linux_x86_64", { id = "linux_x86_64", libc = "musl",'
+                '["macos_arm64", { id = "linux_x86_64", libc = "musl",'
                 ' libc-version = "1.2" }]'
             ),
         )
         matrix = read_pyproject_config(path).matrix
         assert matrix is not None
         assert matrix.platforms == (
-            "linux_x86_64",
+            "macos_arm64",
             PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2)),
         )
 
@@ -2857,25 +2857,94 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="libc-version must be a string"):
             read_pyproject_config(path)
 
-    def test_same_id_different_libc_is_not_a_duplicate(self, tmp_path: Path) -> None:
-        """One id under two libc families is two distinct targets."""
+    def test_same_id_under_two_libc_families_is_a_duplicate(
+        self, tmp_path: Path
+    ) -> None:
+        """Both libc families of one id cannot share a lock.
+
+        The two targets render the same PEP 508 marker (there is no libc
+        marker variable), so the lockfile could not tell their pins apart.
+        """
         path = write(
             tmp_path,
             self._platforms_body(
                 '["linux_x86_64", { id = "linux_x86_64", libc = "musl" }]'
             ),
         )
-        matrix = read_pyproject_config(path).matrix
-        assert matrix is not None
-        assert len(matrix.platforms) == 2
+        with pytest.raises(ConfigError, match="matrix.platforms has duplicate entry"):
+            read_pyproject_config(path)
+
+    def test_same_id_free_threaded_and_gil_is_a_duplicate(self, tmp_path: Path) -> None:
+        """A free-threaded and a GIL target of one id cannot share a lock."""
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '["linux_x86_64", { id = "linux_x86_64", free-threaded = true }]'
+            ),
+        )
+        with pytest.raises(ConfigError, match="matrix.platforms has duplicate entry"):
+            read_pyproject_config(path)
 
     def test_table_repeating_a_bare_id_is_a_duplicate(self, tmp_path: Path) -> None:
-        """A defaults-only table collapses onto the bare id's label."""
+        """A defaults-only table repeats the bare id."""
         path = write(
             tmp_path,
             self._platforms_body('["linux_x86_64", { id = "linux_x86_64" }]'),
         )
         with pytest.raises(ConfigError, match="matrix.platforms has duplicate entry"):
+            read_pyproject_config(path)
+
+    def test_free_threaded_platform(self, tmp_path: Path) -> None:
+        """``free-threaded`` lands on the spec."""
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.13"\n'
+            'platforms = [{ id = "linux_x86_64", free-threaded = true }]\n',
+        )
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.platforms == (PlatformSpec("linux_x86_64", free_threaded=True),)
+
+    def test_free_threaded_must_be_a_boolean(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '[{ id = "linux_x86_64", free-threaded = "yes" }]',
+            ),
+        )
+        with pytest.raises(ConfigError, match="free-threaded must be a boolean"):
+            read_pyproject_config(path)
+
+    def test_free_threaded_rejects_python_below_3_13(self, tmp_path: Path) -> None:
+        """3.12 has no free-threaded build, so its cp312t ABI matches nothing."""
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.12,<3.14"\n'
+            'platforms = [{ id = "linux_x86_64", free-threaded = true }]\n',
+        )
+        with pytest.raises(
+            ConfigError, match="the free-threaded build starts at CPython 3.13"
+        ):
+            read_pyproject_config(path)
+
+    def test_free_threaded_rejects_pypy(self, tmp_path: Path) -> None:
+        """PyPy has no free-threaded build."""
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.13"\n'
+            'platforms = [{ id = "linux_x86_64", free-threaded = true }]\n'
+            'implementations = ["cpython", "pypy"]\n',
+        )
+        with pytest.raises(ConfigError, match="only CPython has a free-threaded build"):
             read_pyproject_config(path)
 
     def test_invalid_python_order(self, tmp_path: Path) -> None:

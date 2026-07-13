@@ -57,7 +57,7 @@ from .provider import (
     VcsSource,
     _normalize_extra,
 )
-from .tags import Libc, PlatformSpec, platform_label
+from .tags import Libc, PlatformSpec
 from .universal.matrix import Matrix
 from .workspace import (
     WorkspaceConfig,
@@ -68,11 +68,12 @@ from .workspace import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
     from pathlib import Path
 
     from ._vendor.packaging.ranges import VersionRange
+    from .universal.matrix import MatrixTuple
 
 __all__ = [
     "ConfigError",
@@ -2230,9 +2231,13 @@ _PLATFORM_TABLE_KEYS = frozenset(
         "macos-min",
         "platform-release",
         "platform-version",
+        "free-threaded",
     }
 )
 _KNOWN_LIBC: tuple[Libc, ...] = ("glibc", "musl")
+
+# The free-threaded build ships from CPython 3.13 (PEP 703).
+_FREE_THREADED_MIN_PYTHON = (3, 13)
 
 
 def _parse_matrix_platforms(value: object) -> tuple[str | PlatformSpec, ...]:
@@ -2240,7 +2245,8 @@ def _parse_matrix_platforms(value: object) -> tuple[str | PlatformSpec, ...]:
 
     A bare id takes the platform's default tag knobs.  The table form
     declares the knobs a bare id cannot reach: the libc family and
-    version, the macOS deployment target, and the kernel marker values.
+    version, the macOS deployment target, the kernel marker values, and
+    the free-threaded build.
     """
     if not isinstance(value, list):
         msg = f"matrix.platforms must be a list, got {type(value).__name__}"
@@ -2288,6 +2294,9 @@ def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
         ),
         platform_version=_parse_string_value(
             f"{where}.platform-version", value.get("platform-version", "")
+        ),
+        free_threaded=_parse_bool(
+            f"{where}.free-threaded", value.get("free-threaded"), default=False
         ),
     )
 
@@ -2343,7 +2352,14 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
     if not platforms:
         msg = "matrix.platforms must list at least one platform id"
         raise ConfigError(msg)
-    _reject_duplicates("matrix.platforms", tuple(platform_label(p) for p in platforms))
+    # One target per platform id: a lockfile entry is selected by a PEP 508
+    # marker, which has no libc or free-threading variable, so two targets
+    # sharing an id would render the same marker and the lock could not tell
+    # their pins apart.  The other libc family needs its own lock run.
+    _reject_duplicates(
+        "matrix.platforms",
+        tuple(p if isinstance(p, str) else p.platform_id for p in platforms),
+    )
     python_order = value.get("python-order", "asc")
     if python_order not in {"asc", "desc"}:
         msg = f"matrix.python-order must be 'asc' or 'desc', got {python_order!r}"
@@ -2373,10 +2389,39 @@ def _validate_matrix_axes(config: MatrixConfig) -> None:
         implementations=config.implementations,
     )
     try:
-        matrix.expand()
+        tuples = matrix.expand()
     except ValueError as exc:
         msg = f"invalid [tool.nab.matrix]: {exc}"
         raise ConfigError(msg) from exc
+    _validate_free_threaded(tuples)
+
+
+def _validate_free_threaded(tuples: Iterable[MatrixTuple]) -> None:
+    """Reject free-threaded targets no interpreter build can satisfy.
+
+    A ``cpXYt`` ABI exists only for CPython 3.13 and up, so any other
+    tuple would advertise an ABI no wheel carries and silently lose
+    every binary wheel.
+    """
+    for tup in tuples:
+        if not tup.platform_spec.free_threaded:
+            continue
+        if tup.implementation != "cpython":
+            msg = (
+                f"matrix.platforms target {tup.label!r} is free-threaded:"
+                f" only CPython has a free-threaded build, not"
+                f" {tup.implementation!r}"
+            )
+            raise ConfigError(msg)
+        version = tuple(int(p) for p in tup.python_version.split("."))
+        if version < _FREE_THREADED_MIN_PYTHON:
+            floor = ".".join(str(p) for p in _FREE_THREADED_MIN_PYTHON)
+            msg = (
+                f"matrix.platforms target {tup.label!r} is free-threaded:"
+                f" the free-threaded build starts at CPython {floor},"
+                f" but matrix.python admits {tup.python_version}"
+            )
+            raise ConfigError(msg)
 
 
 _KNOWN_IMPLEMENTATIONS = ("cpython", "pypy")

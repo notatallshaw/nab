@@ -58,6 +58,7 @@ specs = st.one_of(
         libc=st.just("glibc"),
         libc_version=st.tuples(st.just(2), st.integers(0, 35)),
         macos_min=st.none() | st.tuples(st.integers(10, 14), st.integers(0, 15)),
+        free_threaded=st.booleans(),
     ),
     st.builds(
         PlatformSpec,
@@ -65,6 +66,7 @@ specs = st.one_of(
         libc=st.just("musl"),
         libc_version=st.tuples(st.just(1), st.integers(0, 4)),
         macos_min=st.none() | st.tuples(st.integers(10, 14), st.integers(0, 15)),
+        free_threaded=st.booleans(),
     ),
 )
 
@@ -75,7 +77,11 @@ def _triples(tag_iter: object) -> list[tuple[str, str, str]]:
 
 
 def _oracle_tags_in_order(
-    python_version: str, platforms: list[str], implementation: str
+    python_version: str,
+    platforms: list[str],
+    implementation: str,
+    *,
+    free_threaded: bool,
 ) -> list[tuple[str, str, str]]:
     """Rebuild ``tags._tags_in_order`` with upstream ``packaging.tags``."""
     major, minor = (int(p) for p in python_version.split("."))
@@ -88,8 +94,11 @@ def _oracle_tags_in_order(
         out += [(interpreter, "none", p) for p in platforms]
     else:
         interpreter = f"cp{major}{minor}"
+        cp_abi = interpreter + ("t" if free_threaded else "")
         out += _triples(
-            upstream_tags.cpython_tags(python_version=py, platforms=platforms)
+            upstream_tags.cpython_tags(
+                python_version=py, abis=[cp_abi], platforms=platforms
+            )
         )
     out += _triples(
         upstream_tags.compatible_tags(
@@ -120,7 +129,12 @@ class TestTagOrderMatchesUpstream:
         # An empty platform list falls back to host tags, which drifted upstream after 26.2.
         assume(platforms)
         got = _triples(_tags_in_order(python_version, spec, implementation))
-        expected = _oracle_tags_in_order(python_version, platforms, implementation)
+        expected = _oracle_tags_in_order(
+            python_version,
+            platforms,
+            implementation,
+            free_threaded=spec.free_threaded,
+        )
         assert got == expected
 
 
@@ -293,7 +307,12 @@ class TestSelectWheelMinimizesUpstreamRank:
         platforms = _platform_tags_for_spec(spec)
         # An empty platform list falls back to host tags, which drifted upstream after 26.2.
         assume(platforms)
-        order = _oracle_tags_in_order(python_version, platforms, implementation)
+        order = _oracle_tags_in_order(
+            python_version,
+            platforms,
+            implementation,
+            free_threaded=spec.free_threaded,
+        )
         rank = {t: i for i, t in enumerate(order)}
 
         def best_rank(w: WheelFile) -> int | None:

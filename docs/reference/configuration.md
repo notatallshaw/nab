@@ -530,7 +530,7 @@ platform's defaults, or a table declaring the wheel-tag knobs:
 [tool.nab.matrix]
 python = ">=3.11,<3.14"
 platforms = [
-    "linux_x86_64",
+    "windows_amd64",
     { id = "linux_x86_64", libc = "musl", libc-version = "1.2" },
     { id = "macos_arm64", macos-min = "14.0" },
     { id = "linux_aarch64", platform-release = "5.15.0" },
@@ -545,6 +545,7 @@ platforms = [
 | `macos-min` | arm64 `12.0`, x86_64 `10.13` | The macOS deployment target |
 | `platform-release` | `""` | The `platform_release` marker value |
 | `platform-version` | `""` | The `platform_version` marker value |
+| `free-threaded` | `false` | Target the free-threaded (`cp3XXt`) CPython build |
 
 A machine links one C library, so a target accepts one family's wheels:
 a `glibc` target takes manylinux wheels and never musllinux ones, and a
@@ -555,10 +556,19 @@ is 2.28 because numpy, pandas and scipy publish nothing older.
 `macos-min` works the same way in the other direction: `mac_platforms`
 treats it as the newest macOS a wheel may target.
 
-The same id may appear more than once with different knobs; each becomes
-its own tuple, labelled with a discriminator suffix
-(`py312-linux_x86_64-musl`).  Two entries that render the same label are
-a duplicate and an error.
+`free-threaded` picks the `cp3XXt` ABI, so the target takes the
+free-threaded wheels and neither the ordinary `cp3XX` ones nor `abi3`
+(a free-threaded interpreter cannot load either).  It needs CPython
+3.13 or newer, the first release with a free-threaded build; a matrix
+that admits an older minor, or a non-CPython implementation, is a
+config error.
+
+An id may appear once.  A lockfile entry is selected by a PEP 508
+marker, and PEP 508 has no variable for the libc family or the
+free-threaded build, so two targets sharing an id would render the same
+marker and the lock could not tell their pins apart.  Locking a second
+libc family, or a free-threaded build alongside the GIL one, is a
+second lock run with its own config and output file.
 
 Each tuple impersonates a platform, so universal mode cannot build on
 the host: `build-policy` defaults to `never` and cannot be raised.  An
