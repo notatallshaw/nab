@@ -1211,6 +1211,36 @@ class TestFetchCoordinator:
             event.wait(timeout=5)
             assert coord.index.get_sdist_archive("pkg", "1.0") is None
 
+    def test_request_direct_archive_deduplicates(self, tmp_path: Path) -> None:
+        """A direct archive already in flight hands back its pending event."""
+        archive = tmp_path / "pkg-1.0.tar.gz"
+        archive.write_bytes(b"archive")
+        with _coord() as coord:
+            pending, _ = coord.index.get_or_create_pending("sdist-archive:pkg:digest")
+            event = coord.request_direct_archive("pkg", "digest", archive.as_uri())
+
+            assert event is pending.event
+            assert coord.index.get_sdist_archive("pkg", "digest") is None
+
+    def test_file_index_still_closes_the_transport(self, tmp_path: Path) -> None:
+        """A file:// index client owns no transport; a direct archive fetch may."""
+        closed = threading.Event()
+
+        class RecordingTransport(HttpxAsyncTransport):
+            async def aclose(self) -> None:
+                closed.set()
+                await super().aclose()
+
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        with FetchCoordinator(
+            transport=RecordingTransport(),  # type: ignore[arg-type]
+            indexes=[IndexConfig("local", wheelhouse.as_uri())],
+        ):
+            pass
+
+        assert closed.is_set()
+
     def test_fetch_sdist_archive_null_url_stores_none(self) -> None:
         """A ``FetchRequest`` with ``url=None`` short-circuits to ``None``.
 

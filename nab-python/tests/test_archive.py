@@ -1,9 +1,9 @@
 """Tests for direct-URL archive sources (``[[tool.nab.archive-sources]]``).
 
-The download itself goes through the fetch coordinator, so these tests
-pre-seed the in-memory index with the archive bytes (or an error) rather
-than hitting the network, and exercise the extract-then-materialise path
-on real ``.tar.gz`` bytes.
+Most tests pre-seed the in-memory index with the archive bytes rather than
+hitting the network, and exercise the extract-then-materialise path on real
+``.tar.gz`` bytes.  The fetch tests drive a real coordinator, so the download
+itself is under test.
 """
 
 from __future__ import annotations
@@ -15,17 +15,22 @@ import tarfile
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
+import respx
 
 from nab_index._subdir import subdirectory_escapes
 from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.client import SdistHashMismatchError, extract_sdist_archive
+from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_index.multi_index import IndexConfig
+from nab_python._provider.sources import _fetch_archive_bytes
 from nab_python.download import (
     DownloadError,
     _reject_colliding_targets,
     iter_artifacts,
 )
-from nab_python.fetch import InMemoryIndex
+from nab_python.fetch import FetchCoordinator, InMemoryIndex
 from nab_python.lockfile import ArchivePin, LockInput
 from nab_python.provider import (
     ArchiveSource,
@@ -74,6 +79,18 @@ def _provider(archive_sources: list[ArchiveSource], cache_dir: Path | None) -> P
     return Provider(
         coordinator,
         archive_sources=archive_sources,
+        archive_cache_dir=cache_dir,
+        build_policy=BuildPolicy.NEVER,
+    )
+
+
+def _fetching_provider(
+    coordinator: FetchCoordinator, source: ArchiveSource, cache_dir: Path
+) -> Provider:
+    """Provider wired to a real coordinator, so the archive is really fetched."""
+    return Provider(
+        coordinator,
+        archive_sources=[source],
         archive_cache_dir=cache_dir,
         build_policy=BuildPolicy.NEVER,
     )
@@ -239,20 +256,6 @@ class TestArchiveMaterialize:
         assert len(versions) == 1
         assert str(versions[0][0]) == "1.0.0"
 
-    def test_hash_mismatch_is_hard_error(self, tmp_path: Path) -> None:
-        digest = "a" * 64
-        source = ArchiveSource(
-            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
-        )
-        provider = _provider([source], tmp_path / "arch")
-        provider.coordinator.index.store_sdist_archive_error(
-            "foo", digest, SdistHashMismatchError("sha256 mismatch")
-        )
-        # A tampered archive fails the resolve loudly; it is not swallowed
-        # as an UnsupportedSdistError the look-ahead would treat as a skip.
-        with pytest.raises(SdistHashMismatchError):
-            provider.fetch_versions("foo")
-
     def test_missing_cache_dir_raises(self) -> None:
         digest = "a" * 64
         source = ArchiveSource(
@@ -268,14 +271,13 @@ class TestArchiveMaterialize:
             name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
         )
         provider = _provider([source], tmp_path / "arch")
-        # No bytes stored and no error recorded: the fetch produced nothing.
+        # No bytes stored: the fetch produced nothing.
         with pytest.raises(UnsupportedSdistError, match="download.*failed"):
             provider.fetch_versions("foo")
 
-    def test_local_source_hash_verified(self, tmp_path: Path) -> None:
-        # A file:// index reads bytes without verifying, so materialisation
-        # re-checks the hash: tampered bytes present (and no recorded error)
-        # still fail the resolve loudly.
+    def test_tampered_archive_is_hard_error(self, tmp_path: Path) -> None:
+        # Tampered bytes fail the resolve loudly, not as an UnsupportedSdistError
+        # the look-ahead would treat as a skippable version.
         digest = "a" * 64
         source = ArchiveSource(
             name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
@@ -393,6 +395,73 @@ class TestArchiveMaterialize:
         second.coordinator.index.store_sdist_archive("foo", digest, data)
         versions = second.fetch_versions("foo")
         assert str(versions[0][0]) == "1.0.0"
+
+
+class TestArchiveFetch:
+    """An archive URL is read by its own scheme, whatever the index speaks."""
+
+    def test_file_archive_read_from_disk_under_https_index(
+        self, tmp_path: Path
+    ) -> None:
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        archive = tmp_path / "foo-1.0.0.tar.gz"
+        archive.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(name="foo", url=f"{archive.as_uri()}#sha256={digest}")
+
+        with FetchCoordinator(transport=HttpxAsyncTransport()) as coordinator:
+            provider = _fetching_provider(coordinator, source, tmp_path / "arch")
+            _, _, key, fetched = _fetch_archive_bytes(provider, source)
+
+        assert key == digest
+        assert fetched == data
+
+    @respx.mock
+    def test_https_archive_fetched_over_http_under_file_index(
+        self, tmp_path: Path
+    ) -> None:
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        digest = hashlib.sha256(data).hexdigest()
+        url = "https://ex.invalid/foo-1.0.0.tar.gz"
+        respx.get(url).mock(return_value=httpx.Response(200, content=data))
+        source = ArchiveSource(name="foo", url=f"{url}#sha256={digest}")
+
+        with FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            indexes=[IndexConfig("local", wheelhouse.as_uri())],
+        ) as coordinator:
+            provider = _fetching_provider(coordinator, source, tmp_path / "arch")
+            _, _, _, fetched = _fetch_archive_bytes(provider, source)
+
+        assert fetched == data
+
+    @respx.mock
+    def test_offline_https_archive_is_not_fetched(self, tmp_path: Path) -> None:
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        digest = hashlib.sha256(data).hexdigest()
+        url = "https://ex.invalid/foo-1.0.0.tar.gz"
+        route = respx.get(url).mock(return_value=httpx.Response(200, content=data))
+        source = ArchiveSource(name="foo", url=f"{url}#sha256={digest}")
+
+        with FetchCoordinator(
+            transport=HttpxAsyncTransport(), offline=True
+        ) as coordinator:
+            provider = _fetching_provider(coordinator, source, tmp_path / "arch")
+            with pytest.raises(UnsupportedSdistError, match="download.*failed"):
+                _fetch_archive_bytes(provider, source)
+
+        assert not route.called
+
+    def test_missing_file_archive_fails_the_resolve(self, tmp_path: Path) -> None:
+        absent = tmp_path / "absent-1.0.0.tar.gz"
+        source = ArchiveSource(name="foo", url=f"{absent.as_uri()}#sha256={'a' * 64}")
+
+        with FetchCoordinator(transport=HttpxAsyncTransport()) as coordinator:
+            provider = _fetching_provider(coordinator, source, tmp_path / "arch")
+            with pytest.raises(UnsupportedSdistError, match="download.*failed"):
+                _fetch_archive_bytes(provider, source)
 
 
 class TestArchiveDownload:

@@ -494,6 +494,10 @@ package below the archive root, for monorepo layouts.  Reading static
 dependencies works at any `build-policy`; dynamic dependencies require
 `build-policy = "build-remote"`, like a remote sdist.
 
+The URL is read by its own scheme, whatever the configured indexes use:
+a `file://` archive is read from disk, and any other archive is fetched
+over HTTP.
+
 ## Universal mode (experimental)
 
 Universal resolution runs the single-environment resolver once per
