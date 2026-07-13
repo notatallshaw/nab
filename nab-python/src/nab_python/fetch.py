@@ -153,8 +153,10 @@ class InMemoryIndex:
         self._pending: dict[str, _Pending] = {}
 
         # Parsed metadata is a pure function of the underlying text, so it
-        # is shared across the per-target providers of one resolve.
-        self._parsed_metadata: dict[tuple[str, str], Any] = {}
+        # is shared across the per-target providers of one resolve.  Each
+        # entry is ``(source_text, parsed)``: the two artifact kinds share
+        # one ``_metadata`` slot, so a parse only answers for its own text.
+        self._parsed_metadata: dict[tuple[str, str], tuple[str, Any]] = {}
 
         # Post-reconciliation sdist metadata: the result after
         # PEP 643 dynamic deps have been resolved via the bundled
@@ -243,6 +245,47 @@ class InMemoryIndex:
             source = self._metadata_source[slot]
             return source is None or source == metadata_url
 
+    def get_metadata_with_origin(
+        self, package: str, version: str
+    ) -> tuple[str | None, bool]:
+        """Return the metadata text and whether it came from an sdist.
+
+        Read together under one lock.  Wheel METADATA and sdist PKG-INFO
+        share the slot and a fetch can land between two lookups, so taking
+        the text and its origin separately can pair one artifact's text
+        with the other's origin.  Only sdist text goes through the
+        :pep:`643` dynamic-deps gate, so the pair has to be coherent.
+        """
+        with self._lock:
+            slot = (package, version)
+            return self._metadata.get(slot), slot in self._metadata_from_sdist
+
+    def _write_metadata_slot(
+        self,
+        slot: tuple[str, str],
+        data: str | None,
+        *,
+        source: str | None,
+        from_sdist: bool,
+    ) -> None:
+        """Write the shared metadata slot. Caller holds the lock.
+
+        ``source`` is the sidecar URL the text came from, or ``None`` when
+        the slot stands for the version rather than for one artifact.
+
+        Reconciled sdist metadata is derived from the text in the slot, so
+        replacing the text drops it.  The parsed cache carries the text it
+        parsed and needs no eviction.
+        """
+        if self._metadata.get(slot) != data:
+            self._resolved_sdist_metadata.pop(slot, None)
+        self._metadata[slot] = data
+        self._metadata_source[slot] = source
+        if from_sdist:
+            self._metadata_from_sdist.add(slot)
+        else:
+            self._metadata_from_sdist.discard(slot)
+
     def store_metadata(
         self,
         package: str,
@@ -268,9 +311,9 @@ class InMemoryIndex:
                 and self._metadata[slot] is not None
             )
             if not keep_sdist_text:
-                self._metadata[slot] = data
-                self._metadata_source[slot] = metadata_url
-                self._metadata_from_sdist.discard(slot)
+                self._write_metadata_slot(
+                    slot, data, source=metadata_url, from_sdist=False
+                )
 
             # the waiter gets whatever the slot holds, which may be kept text
             result = self._metadata[slot]
@@ -317,9 +360,9 @@ class InMemoryIndex:
         """
         key = f"sdist:{package}:{version}"
         with self._lock:
-            self._metadata[(package, version)] = data
-            self._metadata_source[(package, version)] = None
-            self._metadata_from_sdist.add((package, version))
+            self._write_metadata_slot(
+                (package, version), data, source=None, from_sdist=True
+            )
             pending = self._pending.get(key)
         if pending is not None:
             pending.result = data
@@ -417,42 +460,35 @@ class InMemoryIndex:
             self._pending[key] = pending
             return pending, False
 
-    def get_parsed_metadata(self, package: str, version: str) -> Any | None:
-        """Return the cached parsed :class:`WheelMetadata` or ``None``.
+    def get_parsed_metadata(
+        self, package: str, version: str, source_text: str
+    ) -> Any | None:
+        """Return the cached parse of ``source_text``, or ``None``.
 
-        Unlike :meth:`get_metadata` (which returns the raw text),
-        this returns the already-parsed dataclass.  Callers populate
-        the cache by calling :meth:`store_parsed_metadata` after
-        parsing the text once.
+        Unlike :meth:`get_metadata` (which returns the raw text), this
+        returns the already-parsed dataclass.  A parse of any other text is
+        a miss: wheel METADATA and sdist PKG-INFO share one
+        ``(package, version)`` slot and either can replace the other while
+        a resolve is in flight, so a hit on the key alone would hand back
+        the deps of the artifact the caller is not holding.
         """
         with self._lock:
-            return self._parsed_metadata.get((package, version))
+            entry = self._parsed_metadata.get((package, version))
+            if entry is None or entry[0] != source_text:
+                return None
+            return entry[1]
 
-    def store_parsed_metadata(self, package: str, version: str, metadata: Any) -> None:
-        """Cache a parsed :class:`WheelMetadata` for future tuple lookups.
+    def store_parsed_metadata(
+        self, package: str, version: str, metadata: Any, source_text: str
+    ) -> None:
+        """Cache the parse of ``source_text`` for future tuple lookups.
 
         Safe across tuples because the parsed object is read-only and
-        a pure function of the underlying text.  Per-tuple
-        classification (marker eval, extras admission) happens
-        above this cache.
+        a pure function of ``source_text``.  Per-tuple classification
+        (marker eval, extras admission) happens above this cache.
         """
         with self._lock:
-            self._parsed_metadata[(package, version)] = metadata
-
-    def pop_parsed_metadata(self, package: str, version: str) -> Any | None:
-        """Remove and return the cached parsed metadata for one key.
-
-        Returns ``None`` when no entry was present.  Used by the
-        re-resolve path so that overriding the raw text invalidates
-        the parsed view that downstream metadata classification reads.
-        """
-        with self._lock:
-            popped = self._parsed_metadata.pop((package, version), None)
-            # An override invalidates the reconciled view too: the
-            # post-augment / post-build metadata is downstream of the
-            # raw parse and must not survive when the parse is replaced.
-            self._resolved_sdist_metadata.pop((package, version), None)
-            return popped
+            self._parsed_metadata[(package, version)] = (source_text, metadata)
 
     def get_resolved_sdist_metadata(self, package: str, version: str) -> Any | None:
         """Return cached post-reconciliation sdist metadata or ``None``.

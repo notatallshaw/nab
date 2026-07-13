@@ -691,13 +691,15 @@ def await_metadata_batch(
         )
         if integrity_error is not None:
             raise integrity_error
-        text = provider.coordinator.index.get_metadata(package, ver_str)
+        text, from_sdist = provider.coordinator.index.get_metadata_with_origin(
+            package, ver_str
+        )
         if text is None:
             # No PEP 658 text arrived: leave the version un-cached so
             # look-ahead's get_dependencies runs the sdist fallback (or
             # refuses it) rather than pinning it as dependency-free.
             continue
-        if provider.coordinator.index.metadata_from_sdist(package, ver_str):
+        if from_sdist:
             # The shared slot holds sdist PKG-INFO from an earlier
             # fallback; caching it here would skip the PEP 643 gate
             # that get_dependencies applies on the from_sdist path.

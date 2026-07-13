@@ -788,3 +788,111 @@ class TestVcsConfigPlumbing:
             build_policy=BuildPolicy.NEVER,
         )
         assert provider.vcs_cache_dir is None
+
+
+_WHEEL_METADATA = (
+    "Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\nRequires-Dist: dep-from-wheel\n\n"
+)
+
+# Metadata-Version 2.1 keeps these Requires-Dist lines outside the PEP 643
+# static guarantee, so the sdist's deps come from its pyproject.toml instead.
+_SDIST_PKG_INFO = (
+    "Metadata-Version: 2.1\n"
+    "Name: pkg\n"
+    "Version: 1.0\n"
+    "Requires-Dist: dep-from-untrusted-pkginfo\n"
+    "\n"
+)
+
+_SDIST_PYPROJECT = """
+[project]
+name = "pkg"
+version = "1.0"
+dependencies = ["dep-from-static-pyproject"]
+"""
+
+
+def _wheel_and_sdist_targets() -> tuple[MagicMock, Provider, Provider]:
+    """Two targets over one (pkg, 1.0) published as a manylinux wheel and an sdist.
+
+    The macOS target has no compatible wheel and takes the sdist path; the
+    Linux target takes the wheel.  Both share one coordinator, so both
+    artifacts of (pkg, 1.0) write one metadata slot.
+    """
+    coordinator = make_coordinator(
+        [
+            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
+            _sdist("1.0"),
+        ],
+        package="pkg",
+        metadata_text=_WHEEL_METADATA,
+        sdist_pkg_info=_SDIST_PKG_INFO,
+        sdist_pyproject_toml=_SDIST_PYPROJECT,
+    )
+    macos = Provider(
+        coordinator,
+        ResolveTarget.for_declared(
+            python_version="3.11", spec=PlatformSpec("macos_arm64")
+        ),
+    )
+    linux = Provider(coordinator, _LINUX_TARGET)
+    return coordinator, macos, linux
+
+
+class TestSharedMetadataSlot:
+    """Wheel METADATA and sdist PKG-INFO share one slot across the targets."""
+
+    def test_late_wheel_sidecar_supersedes_the_sdist_parse(self) -> None:
+        """A sidecar landing after the sdist gives the wheel's deps, not the sdist's.
+
+        The listing prefetch is not tag-filtered, so the wheel's PEP 658
+        sidecar for (pkg, 1.0) is in flight while the macOS target fetches the
+        same version's sdist.  Whichever lands last owns the slot, and every
+        later reader has to resolve against that text.
+        """
+        coordinator, macos, linux = _wheel_and_sdist_targets()
+        assert set(macos.get_dependencies("pkg", Version("1.0"))) == {
+            "dep-from-static-pyproject"
+        }
+        coordinator.index.store_metadata("pkg", "1.0", _WHEEL_METADATA)
+        assert set(linux.get_dependencies("pkg", Version("1.0"))) == {"dep-from-wheel"}
+
+    def test_deps_do_not_depend_on_which_fetch_lands_first(self) -> None:
+        """The same sidecar landing first gives the Linux target the same deps."""
+        coordinator, macos, linux = _wheel_and_sdist_targets()
+        coordinator.index.store_metadata("pkg", "1.0", _WHEEL_METADATA)
+        assert set(macos.get_dependencies("pkg", Version("1.0"))) == {"dep-from-wheel"}
+        assert set(linux.get_dependencies("pkg", Version("1.0"))) == {"dep-from-wheel"}
+
+    def test_sidecar_landing_between_lookups_keeps_the_origin_with_the_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A reader takes the text and its origin from one write, so the gate holds.
+
+        The fetcher writes the slot from its own thread, so an in-flight
+        sidecar can land between a reader's two lookups.  Landing it from
+        inside the origin lookup pins that interleave: pairing the sdist's
+        PKG-INFO with the wheel's origin skips the PEP 643 gate and resolves
+        the untrusted Requires-Dist lines, which neither artifact declares.
+        """
+        coordinator, macos, linux = _wheel_and_sdist_targets()
+        # The wheel's sidecar is still in flight, so the sdist is the only
+        # metadata of (pkg, 1.0) that has reached the slot.
+        coordinator.request_metadata.side_effect = lambda *_args: _done_event()
+        coordinator.request_metadata_batch.side_effect = lambda items: [
+            (pkg, ver, _done_event()) for pkg, ver, _url, _hash in items
+        ]
+        assert set(macos.get_dependencies("pkg", Version("1.0"))) == {
+            "dep-from-static-pyproject"
+        }
+        index = coordinator.index
+        reported_origin = index.metadata_from_sdist
+
+        def _land_sidecar_then_report(package: str, version: str) -> bool:
+            index.store_metadata(package, version, _WHEEL_METADATA)
+            return reported_origin(package, version)
+
+        monkeypatch.setattr(index, "metadata_from_sdist", _land_sidecar_then_report)
+        assert set(linux.get_dependencies("pkg", Version("1.0"))) == {
+            "dep-from-static-pyproject"
+        }

@@ -60,13 +60,14 @@ def resolve_metadata(
     _, _, normalized = provider.split_and_normalize(package)
     ver_str = str(version)
 
-    text = provider.coordinator.index.get_metadata(normalized, ver_str)
+    # Wheel METADATA and sdist PKG-INFO share the slot, so the text and the
+    # kind of the last write come back together.  Inferring the kind from the
+    # listing instead would mislabel the text whenever this provider's view
+    # differs from the one that stored it.
+    text, from_sdist = provider.coordinator.index.get_metadata_with_origin(
+        normalized, ver_str
+    )
     if text is not None:
-        # Wheel METADATA and sdist PKG-INFO share the slot; the index
-        # records which kind the last write was.  Inferring from the
-        # listing instead would mislabel the text whenever this
-        # provider's view differs from the one that stored it.
-        from_sdist = provider.coordinator.index.metadata_from_sdist(normalized, ver_str)
         return (text, from_sdist)
 
     dist = pick_dist_for_metadata(versions, version)
@@ -417,7 +418,9 @@ def parse_and_cache_metadata(
     The parsed :class:`WheelMetadata` is shared via the
     :class:`~nab_python.fetch.InMemoryIndex` so that universal-mode
     resolves only run :func:`parse_metadata` once per
-    ``(package, version)`` regardless of how many tuples ask for it.
+    ``(package, version)`` regardless of how many tuples ask for it.  The
+    cache answers for ``metadata_text`` alone, so a tuple that reads the
+    other artifact's metadata out of the shared slot parses it itself.
     Per-tuple classification (marker evaluation, extras admission)
     still runs locally in :func:`cache_deps_from_metadata`.  The
     sdist-dynamic-deps reconciliation in
@@ -427,10 +430,14 @@ def parse_and_cache_metadata(
     """
     package, version = cache_key
     version_str = str(version)
-    metadata = provider.coordinator.index.get_parsed_metadata(package, version_str)
+    metadata = provider.coordinator.index.get_parsed_metadata(
+        package, version_str, metadata_text
+    )
     if metadata is None:
         metadata = parse_metadata(metadata_text)
-        provider.coordinator.index.store_parsed_metadata(package, version_str, metadata)
+        provider.coordinator.index.store_parsed_metadata(
+            package, version_str, metadata, metadata_text
+        )
     if from_sdist and _sdist_deps_need_dynamic(
         metadata,
         trust_unverified=provider.effective_trust_unverified(
