@@ -2599,7 +2599,7 @@ class TestMatrix:
         assert config.mode is ResolveMode.UNIVERSAL
         assert config.matrix == MatrixConfig(
             python=">=3.11,<3.14",
-            platforms=("linux_x86_64", "macos_arm64"),
+            platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("macos_arm64")),
         )
 
     def test_python_order_and_patches(self, tmp_path: Path) -> None:
@@ -2757,9 +2757,29 @@ class TestMatrix:
         matrix = read_pyproject_config(path).matrix
         assert matrix is not None
         assert matrix.platforms == (
-            "macos_arm64",
+            PlatformSpec("macos_arm64"),
             PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2)),
         )
+
+    @pytest.mark.parametrize(
+        ("entry", "message"),
+        [
+            ('{ id = "windows_amd64", libc = "musl" }', "libc is a Linux knob"),
+            ('{ id = "macos_arm64", libc-version = "2.28" }', "libc is a Linux knob"),
+            (
+                '{ id = "linux_x86_64", macos-min = "14.0" }',
+                "macos-min is a macOS knob",
+            ),
+            ('{ id = "macos_arm64", macos-min = "9.0" }', "below 10.0"),
+        ],
+    )
+    def test_platform_table_rejects_a_knob_the_platform_cannot_use(
+        self, tmp_path: Path, entry: str, message: str
+    ) -> None:
+        """A knob the platform never reads still names the target, so it raises."""
+        path = write(tmp_path, self._platforms_body(f"[{entry}]"))
+        with pytest.raises(ConfigError, match=message):
+            read_pyproject_config(path)
 
     def test_platform_table_all_knobs(self, tmp_path: Path) -> None:
         """Every table key lands on the spec."""
@@ -2863,9 +2883,7 @@ class TestMatrix:
             tmp_path,
             self._platforms_body('[{ id = "linux_x86_64", libc-version = "3.0" }]'),
         )
-        with pytest.raises(
-            ConfigError, match=r"libc-version must be a 2.x version for glibc, got 3.0"
-        ):
+        with pytest.raises(ConfigError, match=r"glibc has only a 2.x series"):
             read_pyproject_config(path)
 
     def test_platform_table_musl_version_major_must_be_1(self, tmp_path: Path) -> None:
@@ -2876,9 +2894,7 @@ class TestMatrix:
                 '[{ id = "linux_x86_64", libc = "musl", libc-version = "2.0" }]'
             ),
         )
-        with pytest.raises(
-            ConfigError, match=r"libc-version must be a 1.x version for musl, got 2.0"
-        ):
+        with pytest.raises(ConfigError, match=r"musl has only a 1.x series"):
             read_pyproject_config(path)
 
     def test_same_id_under_two_libc_families_is_a_duplicate(
@@ -3491,7 +3507,7 @@ class TestProjectNabTomlConfiguresResolve:
         config = read_pyproject_config(path, discover_workspace=False)
         assert config.mode is ResolveMode.UNIVERSAL
         assert config.matrix is not None
-        assert config.matrix.platforms == ("linux_x86_64",)
+        assert config.matrix.platforms == (PlatformSpec("linux_x86_64"),)
         # Universal mode forces the build-policy floor to never even though
         # the project-nab.toml set no build-policy.
         assert config.build_policy is BuildPolicy.NEVER

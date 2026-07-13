@@ -44,7 +44,6 @@ from nab_python.requirements_file import (
     read_pyproject_groups,
     read_pyproject_optional_dependencies,
 )
-from nab_python.tags import platform_label
 
 from . import cli as _cli
 from .cli import (
@@ -789,7 +788,7 @@ def _build_provenance(
     platforms: tuple[str, ...]
     if config.mode is ResolveMode.UNIVERSAL and config.matrix is not None:
         python_specifier = config.matrix.python
-        platforms = tuple(platform_label(p) for p in config.matrix.platforms)
+        platforms = tuple(p.label for p in config.matrix.platforms)
     else:
         python_specifier = config.requires_python
         platforms = ()

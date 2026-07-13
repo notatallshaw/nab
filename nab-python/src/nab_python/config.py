@@ -14,7 +14,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 import tomli
@@ -125,15 +125,10 @@ _VERSION_MARKER_VARIABLES = frozenset({"python_version", "python_full_version"})
 
 @dataclass(frozen=True, slots=True)
 class MatrixConfig:
-    """User-declared matrix axes for universal resolution.
-
-    A ``platforms`` entry is either a bare platform id, which takes the
-    platform's default tag knobs, or a :class:`PlatformSpec` parsed from
-    the table form.
-    """
+    """User-declared matrix axes for universal resolution."""
 
     python: str
-    platforms: tuple[str | PlatformSpec, ...]
+    platforms: tuple[PlatformSpec, ...]
     python_order: str = "asc"
     python_patches: Mapping[str, str] | None = None
     implementations: tuple[str, ...] = ("cpython",)
@@ -2234,35 +2229,42 @@ _PLATFORM_TABLE_KEYS = frozenset(
         "free-threaded",
     }
 )
-_KNOWN_LIBC: tuple[Libc, ...] = ("glibc", "musl")
 
 # The free-threaded build ships from CPython 3.13 (PEP 703).
 _FREE_THREADED_MIN_PYTHON = (3, 13)
 
 
-def _parse_matrix_platforms(value: object) -> tuple[str | PlatformSpec, ...]:
+def _parse_matrix_platforms(value: object) -> tuple[PlatformSpec, ...]:
     """Parse ``matrix.platforms``: bare ids, tables, or a mix of both.
 
     A bare id takes the platform's default tag knobs; the table form declares
     them (libc family and version, macOS deployment target, kernel marker
-    values, free-threaded build).
+    values, free-threaded build).  Both become a :class:`PlatformSpec`, so
+    everything downstream reads one shape.
     """
     if not isinstance(value, list):
         msg = f"matrix.platforms must be a list, got {type(value).__name__}"
         raise ConfigError(msg)
-    platforms: list[str | PlatformSpec] = []
+    platforms: list[PlatformSpec] = []
     for i, item in enumerate(value):
+        where = f"matrix.platforms[{i}]"
         if isinstance(item, str):
-            platforms.append(item)
+            platforms.append(_platform_spec(where, platform_id=item))
         elif isinstance(item, dict):
-            platforms.append(_parse_platform_table(f"matrix.platforms[{i}]", item))
+            platforms.append(_parse_platform_table(where, item))
         else:
-            msg = (
-                f"matrix.platforms[{i}] must be a platform id or a table,"
-                f" got {type(item).__name__}"
-            )
+            msg = f"{where} must be a platform id or a table, got {type(item).__name__}"
             raise ConfigError(msg)
     return tuple(platforms)
+
+
+def _platform_spec(where: str, **knobs: Any) -> PlatformSpec:
+    """Build a :class:`PlatformSpec`, reporting its knob check as a config error."""
+    try:
+        return PlatformSpec(**knobs)
+    except ValueError as exc:
+        msg = f"invalid {where}: {exc}"
+        raise ConfigError(msg) from exc
 
 
 def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
@@ -2278,27 +2280,13 @@ def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
         msg = f"{where} missing required key 'id'"
         raise ConfigError(msg)
 
-    libc = value.get("libc", "glibc")
-    if libc not in _KNOWN_LIBC:
-        msg = f"{where}.libc must be one of {list(_KNOWN_LIBC)!r}, got {libc!r}"
-        raise ConfigError(msg)
-
-    libc_version = _parse_major_minor(
-        f"{where}.libc-version", value.get("libc-version")
-    )
-    # A foreign major (glibc 3.0, musl 2.0) names tags no wheel carries.
-    expected_major = LIBC_MAJOR[libc]
-    if libc_version is not None and libc_version[0] != expected_major:
-        msg = (
-            f"{where}.libc-version must be a {expected_major}.x version"
-            f" for {libc}, got {libc_version[0]}.{libc_version[1]}"
-        )
-        raise ConfigError(msg)
-
-    return PlatformSpec(
+    return _platform_spec(
+        where,
         platform_id=_parse_string_value(f"{where}.id", value["id"]),
-        libc=libc,
-        libc_version=libc_version,
+        libc=_parse_libc(f"{where}.libc", value.get("libc")),
+        libc_version=_parse_major_minor(
+            f"{where}.libc-version", value.get("libc-version")
+        ),
         macos_min=_parse_major_minor(f"{where}.macos-min", value.get("macos-min")),
         platform_release=_parse_string_value(
             f"{where}.platform-release", value.get("platform-release", "")
@@ -2310,6 +2298,17 @@ def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
             f"{where}.free-threaded", value.get("free-threaded"), default=False
         ),
     )
+
+
+def _parse_libc(key: str, value: object) -> Libc | None:
+    """Parse a libc family name; an absent key leaves the family undeclared."""
+    if value is None:
+        return None
+    text = _parse_string_value(key, value)
+    if text not in LIBC_MAJOR:
+        msg = f"{key} must be one of {sorted(LIBC_MAJOR)!r}, got {text!r}"
+        raise ConfigError(msg)
+    return cast("Libc", text)
 
 
 def _parse_major_minor(key: str, value: object) -> tuple[int, int] | None:
@@ -2366,10 +2365,7 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
     # One target per platform id.  A lockfile entry is selected by a PEP 508
     # marker, which has no libc or free-threading variable, so two targets
     # sharing an id would render the same marker.
-    _reject_duplicates(
-        "matrix.platforms",
-        tuple(p if isinstance(p, str) else p.platform_id for p in platforms),
-    )
+    _reject_duplicates("matrix.platforms", tuple(p.platform_id for p in platforms))
     python_order = value.get("python-order", "asc")
     if python_order not in {"asc", "desc"}:
         msg = f"matrix.python-order must be 'asc' or 'desc', got {python_order!r}"

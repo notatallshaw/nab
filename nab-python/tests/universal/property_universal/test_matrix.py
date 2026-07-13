@@ -23,6 +23,7 @@ from hypothesis import strategies as st
 from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import (
     _KNOWN_PYTHON_MINORS,
     _PLATFORM_DEFAULTS,
@@ -173,7 +174,7 @@ class TestPythonOrderingFlip:
         with pytest.raises(ValueError, match="python_order"):
             Matrix(
                 python=">=3.10",
-                platforms=("linux_x86_64",),
+                platforms=(PlatformSpec("linux_x86_64"),),
                 python_order=bad_order,
             ).expand()
 

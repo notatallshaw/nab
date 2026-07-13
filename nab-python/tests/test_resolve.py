@@ -44,6 +44,7 @@ from nab_python.resolve import (
     resolve_pyproject,
     resolve_universal_pyproject,
 )
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import MatrixTuple
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import (
@@ -1176,7 +1177,10 @@ class TestResolveUniversalPyproject:
         assert result is sentinel
         kwargs = mock_resolve_universal.call_args.kwargs
         assert kwargs["matrix"].python == ">=3.11,<3.13"
-        assert kwargs["matrix"].platforms == ("linux_x86_64", "macos_arm64")
+        assert kwargs["matrix"].platforms == (
+            PlatformSpec("linux_x86_64"),
+            PlatformSpec("macos_arm64"),
+        )
         # No conflicts: a single unforked fork carrying the base deps.
         (fork,) = kwargs["forks"]
         assert fork.selection == ()
@@ -1214,7 +1218,9 @@ class TestResolveUniversalPyproject:
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
         config = NabProjectConfig(
             mode=ResolveMode.UNIVERSAL,
-            matrix=MatrixConfig(python=">=3.12,<3.14", platforms=("linux_x86_64",)),
+            matrix=MatrixConfig(
+                python=">=3.12,<3.14", platforms=(PlatformSpec("linux_x86_64"),)
+            ),
         )
         resolve_universal_pyproject(pyproject, config=config)
         kwargs = mock_resolve_universal.call_args.kwargs

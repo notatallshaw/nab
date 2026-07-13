@@ -143,8 +143,7 @@ class MatrixTuple:
         """
         prefix = _IMPLEMENTATION_PREFIX[self.implementation]
         base = (
-            f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
-            + self.platform_spec.label_suffix()
+            f"{prefix}{self.python_version.replace('.', '')}-{self.platform_spec.label}"
         )
         if not self.selection:
             return base
@@ -220,7 +219,7 @@ class Matrix:
     """
 
     python: str
-    platforms: tuple[str | PlatformSpec, ...]
+    platforms: tuple[PlatformSpec, ...]
     python_order: str = "asc"
     python_patches: dict[str, str] | None = None
     implementations: tuple[str, ...] = ("cpython",)
@@ -232,20 +231,14 @@ class Matrix:
         implementations, ``python_patches`` keys that are not known
         minors, an empty python range, or an invalid ``python_order``
         each raise a ``ValueError`` before any work happens.
-
-        ``platforms`` accepts either bare platform-id strings (use the
-        default tag knobs) or :class:`PlatformSpec` instances for
-        per-platform libc/macOS overrides.
         """
         if self.python_order not in {"asc", "desc"}:
             msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
             raise ValueError(msg)
-        specs = [
-            p if isinstance(p, PlatformSpec) else PlatformSpec(p)
-            for p in self.platforms
-        ]
         unknown = [
-            s.platform_id for s in specs if s.platform_id not in _PLATFORM_DEFAULTS
+            s.platform_id
+            for s in self.platforms
+            if s.platform_id not in _PLATFORM_DEFAULTS
         ]
         if unknown:
             msg = f"Unknown platform ids: {unknown!r}"
@@ -281,7 +274,7 @@ class Matrix:
                 multi_implementation=multi_impl,
             )
             for py in py_versions
-            for spec in specs
+            for spec in self.platforms
             for impl in self.implementations
         ]
 

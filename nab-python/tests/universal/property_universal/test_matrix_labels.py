@@ -15,7 +15,7 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from nab_python.tags import PlatformSpec
+from nab_python.tags import _PLATFORM_KIND, LIBC_MAJOR, PlatformSpec
 from nab_python.universal.matrix import (
     _IMPLEMENTATION_DEFAULTS,
     _KNOWN_PYTHON_MINORS,
@@ -40,24 +40,55 @@ python_specs = st.one_of(
     st.sampled_from(_KNOWN_PYTHON_MINORS).map(lambda v: f"!={v}"),
 )
 
-# No whitespace: label_suffix collapses runs of it into "_", which collides
+# No whitespace: the label collapses runs of it into "_", which collides
 # with a literal underscore.
 rel_strings = st.text(alphabet="_-abc0123456789.", min_size=0, max_size=8)
 
-libc_versions = st.none() | st.tuples(st.integers(0, 3), st.integers(0, 20))
+
+def _libc_knobs(platform_id: str) -> st.SearchStrategy[dict[str, object]]:
+    """Draw the libc knobs the platform admits: none unless it is Linux."""
+    if _PLATFORM_KIND[platform_id] != "linux":
+        return st.just({})
+    return st.sampled_from(sorted(LIBC_MAJOR)).flatmap(
+        lambda libc: st.fixed_dictionaries(
+            {
+                "libc": st.just(libc),
+                "libc_version": st.none()
+                | st.tuples(st.just(LIBC_MAJOR[libc]), st.integers(0, 20)),
+            }
+        )
+    )
+
+
+def _macos_knobs(platform_id: str) -> st.SearchStrategy[dict[str, object]]:
+    """Draw the macOS knob the platform admits: none unless it is macOS."""
+    if _PLATFORM_KIND[platform_id] != "macos":
+        return st.just({})
+    return st.fixed_dictionaries(
+        {"macos_min": st.none() | st.tuples(st.integers(10, 15), st.integers(0, 3))}
+    )
 
 
 def _specs_for(platform_id: str) -> st.SearchStrategy[PlatformSpec]:
-    """Build a ``PlatformSpec`` strategy fixed to one platform id."""
+    """Build a ``PlatformSpec`` strategy fixed to one platform id.
+
+    Only the knobs that platform admits are drawn, since the others are a
+    construction error rather than a spec whose label needs to stay apart.
+    """
     return st.builds(
-        PlatformSpec,
-        platform_id=st.just(platform_id),
-        libc=st.sampled_from(["glibc", "musl"]),
-        libc_version=libc_versions,
-        macos_min=st.none() | st.tuples(st.integers(10, 15), st.integers(0, 3)),
-        platform_release=rel_strings,
-        platform_version=rel_strings,
-        free_threaded=st.booleans(),
+        lambda libc, macos, release, version, ft: PlatformSpec(
+            platform_id=platform_id,
+            platform_release=release,
+            platform_version=version,
+            free_threaded=ft,
+            **libc,
+            **macos,
+        ),
+        libc=_libc_knobs(platform_id),
+        macos=_macos_knobs(platform_id),
+        release=rel_strings,
+        version=rel_strings,
+        ft=st.booleans(),
     )
 
 
@@ -90,7 +121,7 @@ class TestExpansionExactCoverage:
         """Expansion covers the exact cross product, repeatably, with unique labels."""
         matrix = Matrix(
             python=python,
-            platforms=tuple(platforms),
+            platforms=tuple(PlatformSpec(p) for p in platforms),
             python_order=order,
             implementations=tuple(impls),
         )
@@ -111,23 +142,23 @@ class TestExpansionExactCoverage:
         assert len(set(labels)) == len(labels), labels
 
 
-class TestLabelSuffixInjective:
-    """``PlatformSpec.label_suffix`` is the documented disambiguator
-    for specs sharing a ``platform_id``: distinct specs must render
-    distinct suffixes, otherwise their per-tuple pins silently merge
-    under one dict key.
+class TestLabelInjective:
+    """``PlatformSpec.label`` is the documented disambiguator for specs
+    sharing a ``platform_id``: distinct specs must render distinct
+    labels, otherwise their per-tuple pins silently merge under one
+    dict key.
     """
 
     @given(pair=spec_pairs())
     @PROPERTY_SETTINGS
-    def test_label_suffix_injective_for_distinct_specs(
+    def test_label_injective_for_distinct_specs(
         self, pair: tuple[PlatformSpec, PlatformSpec]
     ) -> None:
-        """Two distinct same-platform specs never share a label suffix."""
+        """Two distinct same-platform specs never share a label."""
         spec_a, spec_b = pair
         assume(spec_a != spec_b)
-        assert spec_a.label_suffix() != spec_b.label_suffix(), (
-            f"{spec_a!r} and {spec_b!r} collide on suffix {spec_a.label_suffix()!r}"
+        assert spec_a.label != spec_b.label, (
+            f"{spec_a!r} and {spec_b!r} collide on label {spec_a.label!r}"
         )
 
 
@@ -149,7 +180,7 @@ class TestPythonPatchesEnvironment:
         full = f"{minor}.{patch}"
         matrix = Matrix(
             python=f"=={minor}",
-            platforms=("linux_x86_64",),
+            platforms=(PlatformSpec("linux_x86_64"),),
             python_patches={minor: full},
         )
         (tup,) = matrix.expand()

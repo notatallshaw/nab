@@ -18,6 +18,7 @@ from hypothesis import strategies as st
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.version import Version
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import Matrix
 from nab_python.universal.resolve import TupleResult, UniversalResult
 from nab_python.universal.validate import validate_lock
@@ -44,7 +45,7 @@ def _wheel(filename: str) -> WheelFile:
 
 def _matrix() -> Matrix:
     """Build the single-tuple linux/3.11 matrix used by every test."""
-    return Matrix(python=">=3.11,<3.12", platforms=("linux_x86_64",))
+    return Matrix(python=">=3.11,<3.12", platforms=(PlatformSpec("linux_x86_64"),))
 
 
 def _metadata(deps: list[str], version: str = "1.0") -> str:

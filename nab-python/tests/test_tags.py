@@ -23,7 +23,6 @@ from nab_python.tags import (
     PlatformSpec,
     _platform_tags_for_spec,
     _tags_in_order,
-    platform_label,
     select_wheel,
     tags_for_target,
 )
@@ -79,13 +78,56 @@ def _wheel(filename: str) -> WheelFile:
     )
 
 
+class TestPlatformSpecKnobsBelongToTheirPlatform:
+    """A knob the platform cannot read is a construction error.
+
+    The tag generator consults a libc only on Linux and a macOS version
+    only on macOS, so a knob on any other platform selects no different
+    wheel.  It does reach the target's label, so accepting one would name
+    a machine that was never modelled.
+    """
+
+    @pytest.mark.parametrize("platform_id", ["macos_arm64", "windows_amd64"])
+    def test_libc_outside_linux_raises(self, platform_id: str) -> None:
+        """Only a Linux target links a C library."""
+        with pytest.raises(ValueError, match="libc is a Linux knob"):
+            PlatformSpec(platform_id, libc="musl")
+
+    @pytest.mark.parametrize("platform_id", ["macos_arm64", "windows_amd64"])
+    def test_libc_version_outside_linux_raises(self, platform_id: str) -> None:
+        """A libc version is as Linux-only as the family it versions."""
+        with pytest.raises(ValueError, match="libc is a Linux knob"):
+            PlatformSpec(platform_id, libc_version=(2, 28))
+
+    @pytest.mark.parametrize("platform_id", ["linux_x86_64", "windows_amd64"])
+    def test_macos_min_outside_macos_raises(self, platform_id: str) -> None:
+        """A deployment target means nothing off macOS."""
+        with pytest.raises(ValueError, match="macos-min is a macOS knob"):
+            PlatformSpec(platform_id, macos_min=(14, 0))
+
+    def test_macos_min_below_the_tag_floor_raises(self) -> None:
+        """No wheel tag names a macOS older than 10.0.
+
+        ``mac_platforms`` yields nothing below it, and packaging reads an
+        empty platform list as "unset", which would silently hand the
+        target the tags of the host nab happens to be running on.
+        """
+        with pytest.raises(ValueError, match="below 10.0"):
+            PlatformSpec("macos_arm64", macos_min=(9, 0))
+
+    def test_unknown_platform_id_defers_to_the_matrix(self) -> None:
+        """An unknown id is the matrix's error to report, not the spec's."""
+        assert PlatformSpec("freebsd_amd64", libc="musl").libc == "musl"
+
+
 class TestPlatformSpec:
     """``PlatformSpec`` exposes per-platform tag knobs."""
 
     def test_default_libc_is_glibc_2_28(self) -> None:
         """An undeclared Linux target is glibc 2.28."""
         spec = PlatformSpec("linux_x86_64")
-        assert spec.libc == "glibc"
+        assert spec.libc is None
+        assert spec.effective_libc == "glibc"
         assert spec.effective_libc_version == (2, 28)
 
     def test_musl_libc_version_defaults_per_family(self) -> None:
@@ -98,26 +140,26 @@ class TestPlatformSpec:
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         assert spec.effective_libc_version == (2, 17)
 
-    def test_label_of_bare_id_is_the_id(self) -> None:
-        """A bare platform id renders as itself."""
-        assert platform_label("linux_x86_64") == "linux_x86_64"
+    def test_label_of_default_spec_is_the_id(self) -> None:
+        """A spec left at the platform defaults renders as its id."""
+        assert PlatformSpec("linux_x86_64").label == "linux_x86_64"
 
-    def test_label_of_spec_carries_the_suffix(self) -> None:
-        """A spec renders as its id plus the knob discriminator."""
+    def test_label_carries_the_knobs(self) -> None:
+        """A spec off the defaults renders its id plus what sets it apart."""
         spec = PlatformSpec("linux_x86_64", libc="musl")
-        assert platform_label(spec) == "linux_x86_64-musl"
+        assert spec.label == "linux_x86_64-musl"
 
-    def test_label_suffix_separates_libc_families(self) -> None:
-        """A musl spec never renders the suffix of an otherwise-equal glibc one.
+    def test_label_names_the_libc_family(self) -> None:
+        """A musl target never renders the label of a glibc one.
 
-        Both are the same ``platform_id`` with the same version pair, so a
-        suffix that dropped the family would collapse two targets with
-        disjoint wheel sets onto one label.
+        The two families' version numbers are not comparable, so a label
+        that dropped the family could collapse two targets with disjoint
+        wheel sets onto one key.
         """
-        glibc = PlatformSpec("linux_x86_64", libc_version=(1, 2))
-        musl = PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2))
-        assert glibc.label_suffix() == "-glibc1.2"
-        assert musl.label_suffix() == "-musl1.2"
+        glibc = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        musl = PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 1))
+        assert glibc.label == "linux_x86_64-glibc2.17"
+        assert musl.label == "linux_x86_64-musl1.1"
 
     def test_default_linux_arch(self) -> None:
         """``linux_x86_64`` carries the right architecture name."""
@@ -129,29 +171,28 @@ class TestPlatformSpec:
         spec = PlatformSpec("macos_arm64")
         assert spec.arch == "arm64"
 
-    def test_label_suffix_distinguishes_space_from_underscore(self) -> None:
+    def test_label_distinguishes_space_from_underscore(self) -> None:
         """Whitespace and ``_`` in ``platform_release`` encode differently.
 
-        Both are legal release characters; if they folded to the same
-        suffix the two specs' matrix tuples would share a label and
-        their per-tuple pins would silently merge.
+        Both are legal release characters; if they folded together the two
+        specs' targets would share a label and their pins would merge.
         """
         with_space = PlatformSpec("linux_x86_64", platform_release="a a")
         with_underscore = PlatformSpec("linux_x86_64", platform_release="a_a")
-        assert with_space.label_suffix() != with_underscore.label_suffix()
+        assert with_space.label != with_underscore.label
 
-    def test_label_suffix_release_cannot_forge_version_field(self) -> None:
+    def test_label_release_cannot_forge_a_version_field(self) -> None:
         """A ``-`` in ``platform_release`` cannot fake a ``ver`` field."""
         release_only = PlatformSpec("linux_x86_64", platform_release="r-ver1")
         release_and_version = PlatformSpec(
             "linux_x86_64", platform_release="r", platform_version="1"
         )
-        assert release_only.label_suffix() != release_and_version.label_suffix()
+        assert release_only.label != release_and_version.label
 
-    def test_label_suffix_escapes_kernel_release(self) -> None:
-        """Pins the escaped suffix shape for a realistic kernel release."""
+    def test_label_escapes_a_kernel_release(self) -> None:
+        """Pins the escaped label shape for a realistic kernel release."""
         spec = PlatformSpec("linux_x86_64", platform_release="5.15.0-generic")
-        assert spec.label_suffix() == "-rel5.15.0_2d_generic"
+        assert spec.label == "linux_x86_64-rel5.15.0_2d_generic"
 
 
 class TestLibcFamilyExclusivity:
@@ -247,7 +288,7 @@ class TestFreeThreadedTarget:
     def test_label_carries_the_free_threaded_discriminator(self) -> None:
         """A free-threaded target renders its own label."""
         spec = PlatformSpec("linux_x86_64", free_threaded=True)
-        assert platform_label(spec) == "linux_x86_64-ft"
+        assert spec.label == "linux_x86_64-ft"
 
 
 class TestAbiIsHostIndependent:
@@ -347,16 +388,6 @@ class TestTagsForTarget:
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux1_x86_64" in tag_strs
         assert "cp311-cp311-manylinux_2_5_x86_64" in tag_strs
-
-    def test_non_glibc2_major_descends_to_x_0(self) -> None:
-        """A glibc 3.x target descends to 3.0 on any arch.
-
-        The 2.17 floor is a glibc 2.x rule only.
-        """
-        spec = PlatformSpec("linux_aarch64", libc_version=(3, 1))
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
-        assert "cp311-cp311-manylinux_3_1_aarch64" in tag_strs
-        assert "cp311-cp311-manylinux_3_0_aarch64" in tag_strs
 
     def test_musl_includes_musllinux_at_or_below_version(self) -> None:
         """A musl 1.2 target admits musllinux_1_2 and below."""

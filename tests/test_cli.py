@@ -148,7 +148,7 @@ def _workspace_pyproject(tmp_path: Path, *, universal: bool = False) -> Path:
 
 def _universal_result(*, success: bool, error: str | None = None) -> UniversalResult:
     """Build a real :class:`UniversalResult` with one matrix tuple."""
-    matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+    matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
     tup = MatrixTuple(
         python_version="3.11",
         platform_id="linux_x86_64",
@@ -168,7 +168,7 @@ def _universal_result(*, success: bool, error: str | None = None) -> UniversalRe
 
 def _multi_tuple_universal_result() -> UniversalResult:
     """Build a successful UniversalResult with two tuples (3.11 and 3.12)."""
-    matrix = Matrix(python=">=3.11,<3.13", platforms=("linux_x86_64",))
+    matrix = Matrix(python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),))
     tuples = []
     results = []
     for py_minor in ("3.11", "3.12"):
@@ -1034,7 +1034,7 @@ class TestLockCommandUniversal:
             'platforms = ["linux_x86_64"]\n',
         )
 
-        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         results: list[TupleResult] = []
         for member, version in (("cpu", "1.0"), ("gpu", "2.0")):
             tup = MatrixTuple(
@@ -1317,7 +1317,7 @@ class TestLockCommandUniversal:
         mixed = UniversalResult(
             matrix=Matrix(
                 python="==3.11",
-                platforms=("linux_x86_64", "windows_amd64"),
+                platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
             ),
             tuple_results=[ok_tr, bad_tr],
         )
@@ -1372,7 +1372,9 @@ class TestLockCommandUniversal:
             error="ResolutionError: base unresolvable\nDiagnostics: missing",
         )
         mixed = UniversalResult(
-            matrix=Matrix(python=">=3.11,<3.13", platforms=("linux_x86_64",)),
+            matrix=Matrix(
+                python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+            ),
             tuple_results=[ok_tr, bad_tr],
             base_results=[ok_base, bad_base],
         )
@@ -1454,7 +1456,10 @@ class TestLockCommandUniversal:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """A template missing ``{platform_id}`` on a multi-platform matrix exits 1."""
-        matrix = Matrix(python="==3.11", platforms=("linux_x86_64", "windows_amd64"))
+        matrix = Matrix(
+            python="==3.11",
+            platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
+        )
         tuples_results = []
         for platform_id in ("linux_x86_64", "windows_amd64"):
             env = {**_LINUX_311_ENV, "python_version": "3.11"}
@@ -1616,7 +1621,9 @@ class TestLockCommandUniversal:
             lock_input=None,
         )
         mixed = UniversalResult(
-            matrix=Matrix(python=">=3.11,<3.13", platforms=("linux_x86_64",)),
+            matrix=Matrix(
+                python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+            ),
             tuple_results=[good_tr, bad_tr],
         )
         out = tmp_path / "constraints-{python_version}.txt"
@@ -1650,7 +1657,7 @@ class TestNoEmitWorkspace:
     @staticmethod
     def _alpha_and_foo_universal() -> UniversalResult:
         """A universal result with alpha + foo on a single tuple."""
-        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         tup = MatrixTuple(
             python_version="3.11",
             platform_id="linux_x86_64",
