@@ -133,7 +133,7 @@ def _settings(
 
 def _one_target() -> list[ResolveTarget]:
     """The single linux/3.11 target a forked resolve runs against."""
-    return Matrix(python="==3.11", platforms=("linux_x86_64",)).expand()
+    return Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)).expand()
 
 
 def _linux_311() -> ResolveTarget:
@@ -1349,7 +1349,7 @@ class TestLocalVcsRequiresPython:
         )
         result = self._resolve(
             make_coordinator([], package="foo"),
-            Matrix(python="==3.10", platforms=("linux_x86_64",)),
+            Matrix(python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)),
             local,
         )
         assert not result.success
@@ -1369,7 +1369,9 @@ class TestLocalVcsRequiresPython:
             auto_metadata=True,
         )
         result = self._resolve(
-            coord, Matrix(python="==3.10", platforms=("linux_x86_64",)), local
+            coord,
+            Matrix(python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)),
+            local,
         )
         assert result.success
         pins = result.target_results[0].pins
@@ -1380,7 +1382,7 @@ class TestLocalVcsRequiresPython:
         local = self._write(tmp_path, '[project]\nname = "foo"\nversion = "1.0"\n')
         result = self._resolve(
             make_coordinator([], package="foo"),
-            Matrix(python="==3.10", platforms=("linux_x86_64",)),
+            Matrix(python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)),
             local,
         )
         assert result.success
@@ -1395,7 +1397,7 @@ class TestLocalVcsRequiresPython:
             make_coordinator([], package="foo"),
             Matrix(
                 python="==3.13",
-                platforms=("linux_x86_64",),
+                platforms=(PlatformSpec("linux_x86_64"),),
                 python_patches={"3.13": "3.13.4"},
             ),
             local,
@@ -1412,7 +1414,7 @@ class TestLocalVcsRequiresPython:
             make_coordinator([], package="foo"),
             Matrix(
                 python="==3.13",
-                platforms=("linux_x86_64",),
+                platforms=(PlatformSpec("linux_x86_64"),),
                 python_patches={"3.13": "3.13.4"},
             ),
             local,
@@ -1463,7 +1465,9 @@ class TestArchiveSourceAcrossTargets:
 
         result = resolve_with_coordinator(
             coord,
-            Matrix(python=">=3.11, <3.13", platforms=("linux_x86_64",)).expand(),
+            Matrix(
+                python=">=3.11, <3.13", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
             _reqs("foo"),
             config=NabProjectConfig(archive_sources=(source,)),
             cache_dir=tmp_path,
@@ -1491,7 +1495,7 @@ class TestArchiveSourceAcrossTargets:
 
         result = resolve_with_coordinator(
             coord,
-            Matrix(python="==3.10", platforms=("linux_x86_64",)).expand(),
+            Matrix(python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)).expand(),
             _reqs("foo"),
             config=NabProjectConfig(archive_sources=(source,)),
             cache_dir=tmp_path,

@@ -670,7 +670,7 @@ class TestEnvironmentDeclaration:
         """The two entries for one (python, platform) point must stay disjoint."""
         matrix = Matrix(
             python="==3.11",
-            platforms=("linux_x86_64",),
+            platforms=(PlatformSpec("linux_x86_64"),),
             implementations=("cpython", "pypy"),
         )
         cpython, pypy = (environment_declaration(t, ()) for t in matrix.expand())

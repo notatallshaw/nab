@@ -39,7 +39,6 @@ from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
-from ._vendor.packaging.version import Version
 from .config import (
     ConfigError,
     ConflictFork,
@@ -86,6 +85,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport
+
+    from ._vendor.packaging.version import Version
 
 
 __all__ = [

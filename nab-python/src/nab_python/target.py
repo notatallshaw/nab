@@ -467,6 +467,22 @@ class ResolveTarget:
     multi_implementation: bool = field(default=False, compare=False)
     tags_faithful: bool = field(default=True, compare=False)
 
+    def __post_init__(self) -> None:
+        """Reject a python the resolve cannot compare Requires-Python against.
+
+        Every candidate's ``Requires-Python`` is tested against this target,
+        so an unparseable version has to fail here, naming itself, rather than
+        as an ``InvalidVersion`` raised per candidate deep in the listing.
+        """
+        try:
+            Version(self.python_full_version)
+        except InvalidVersion as exc:
+            msg = (
+                f"target {self.label!r} names python_full_version"
+                f" {self.python_full_version!r}, which is not a PEP 440 version"
+            )
+            raise ValueError(msg) from exc
+
     @property
     def python_version(self) -> str:
         """The PEP 508 ``python_version``: the target's ``major.minor``."""
@@ -476,6 +492,18 @@ class ResolveTarget:
     def python_full_version(self) -> str:
         """The PEP 508 ``python_full_version``: the target's full release."""
         return self.marker_env["python_full_version"]
+
+    @property
+    def python_release(self) -> Version:
+        """The release a ``Requires-Python`` specifier is compared against.
+
+        ``python_full_version`` is the PEP 508 marker value, so on a release
+        candidate it carries the ``rc``.  A specifier admits no prerelease
+        unless it names one, so comparing that value directly would exclude
+        every distribution requiring the very release the interpreter is a
+        candidate for.  pip compares ``sys.version_info``, and so does this.
+        """
+        return Version(Version(self.python_full_version).base_version)
 
     @property
     def implementation(self) -> str:
@@ -665,8 +693,7 @@ class ResolveTarget:
         "3.11.4"`` evaluate against the user's actual deployment.
         """
         return cls(
-            label=_python_label(python_version, implementation)
-            + f"-{spec.platform_id}{spec.label_suffix()}",
+            label=_python_label(python_version, implementation) + f"-{spec.label}",
             marker_env=declared_environment(
                 python_version, spec, implementation, python_full_version
             ),
