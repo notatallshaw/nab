@@ -214,7 +214,6 @@ def expand_self_extras(
     project_name: str | None,
     selected: Sequence[str],
     environment: Mapping[str, str] | None = None,
-    consulted: set[Marker] | None = None,
 ) -> list[str]:
     """Return ``selected`` plus every extra reachable through self-references.
 
@@ -234,11 +233,6 @@ def expand_self_extras(
     against it.  ``environment`` ``None`` skips that check and walks
     every self-reference, which is what a caller that defers marker
     evaluation to each target wants.
-
-    A marker read here decides which extras are active, so it shapes the
-    package set the lock records.  ``consulted`` collects the ones that were
-    evaluated, so the lock can declare them alongside the markers the resolve
-    read off the dependency graph.
 
     The original ``selected`` order is preserved at the front of the
     result; reachable extras are appended in BFS order without
@@ -268,13 +262,14 @@ def expand_self_extras(
                 continue
             if canonicalize_name(req.name) != canonical_project:
                 continue
-            if environment is not None and req.marker is not None:
-                if consulted is not None:
-                    consulted.add(req.marker)
-                if not dependency_marker_holds(
+            if (
+                environment is not None
+                and req.marker is not None
+                and not dependency_marker_holds(
                     req.marker, {**environment, "extra": extra}
-                ):
-                    continue
+                )
+            ):
+                continue
             worklist.extend(
                 canonicalize_name(sub)
                 for sub in sorted(req.extras)
