@@ -57,8 +57,9 @@ from nab_python.requirements_file import (
     read_pyproject_optional_dependencies,
 )
 from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
 from nab_python.universal import resolve as resolve_mod
-from nab_python.universal.matrix import Matrix, MatrixTuple
+from nab_python.universal.matrix import Matrix
 from nab_python.universal.resolve import (
     ResolveFork,
     TupleResult,
@@ -100,43 +101,15 @@ def _make_coordinator(listings: dict[str, list[WheelFile]]) -> MagicMock:
     return make_coordinator(listings=listings, auto_metadata=True)
 
 
-def _linux_311() -> MatrixTuple:
-    return MatrixTuple(
-        python_version="3.11",
-        platform_spec=PlatformSpec("linux_x86_64"),
-        environment={
-            "python_version": "3.11",
-            "python_full_version": "3.11.0",
-            "implementation_name": "cpython",
-            "implementation_version": "3.11.0",
-            "os_name": "posix",
-            "platform_machine": "x86_64",
-            "platform_python_implementation": "CPython",
-            "platform_release": "",
-            "platform_system": "Linux",
-            "platform_version": "",
-            "sys_platform": "linux",
-        },
+def _linux_311() -> ResolveTarget:
+    return ResolveTarget.for_declared(
+        python_version="3.11", spec=PlatformSpec("linux_x86_64")
     )
 
 
-def _windows_311() -> MatrixTuple:
-    return MatrixTuple(
-        python_version="3.11",
-        platform_spec=PlatformSpec("windows_amd64"),
-        environment={
-            "python_version": "3.11",
-            "python_full_version": "3.11.0",
-            "implementation_name": "cpython",
-            "implementation_version": "3.11.0",
-            "os_name": "nt",
-            "platform_machine": "AMD64",
-            "platform_python_implementation": "CPython",
-            "platform_release": "",
-            "platform_system": "Windows",
-            "platform_version": "",
-            "sys_platform": "win32",
-        },
+def _windows_311() -> ResolveTarget:
+    return ResolveTarget.for_declared(
+        python_version="3.11", spec=PlatformSpec("windows_amd64")
     )
 
 
@@ -481,7 +454,7 @@ class TestConflictForkBaseNames:
         )
         pylock = build_pylock(lock_input)
         by_name = {str(p.name): p for p in pylock.packages}
-        env = dict(result.tuple_results[0].tuple_.environment)
+        env = dict(result.tuple_results[0].tuple_.marker_env)
         neither = {**env, "extras": frozenset()}
         cpu = {**env, "extras": frozenset({"cpu"})}
 
@@ -550,7 +523,7 @@ class TestConflictForkBaseNames:
         ):
             assert clause in marker_text
 
-        env = dict(result.tuple_results[0].tuple_.environment)
+        env = dict(result.tuple_results[0].tuple_.marker_env)
         none = {**env, "extras": frozenset(), "dependency_groups": frozenset()}
         assert crossdep.marker is not None
         assert not crossdep.marker.evaluate(none)
@@ -662,25 +635,25 @@ class TestParseRequirements:
 
     def test_marker_true_keeps_requirement(self) -> None:
         """A requirement whose marker matches the env is kept."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(['pkg; sys_platform == "linux"'], env)
         assert "pkg" in out
 
     def test_marker_false_drops_requirement(self) -> None:
         """A requirement whose marker excludes the env is dropped."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(['pkg; sys_platform == "win32"'], env)
         assert out == {}
 
     def test_set_marker_drops_without_crash(self) -> None:
         """A lockfile-only set marker is empty at resolve time, so the dep drops."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(['pkg ; "x" in extras'], env)
         assert out == {}
 
     def test_extras_get_separate_entries(self) -> None:
         """Extras become ``name[extra]`` entries with any-version range."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(["pkg[foo,bar]"], env)
         assert "pkg" in out
         assert "pkg[foo]" in out
@@ -695,7 +668,7 @@ class TestParseRequirements:
         the insertion order of the proxy keys becomes the resolver's root
         package order. A reversed extras order must still give the sorted keys.
         """
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         real_requirement = resolve_mod.Requirement
 
         def reversed_extras(req_str: str) -> object:
@@ -710,13 +683,13 @@ class TestParseRequirements:
 
     def test_no_specifier_yields_any(self) -> None:
         """An unconstrained requirement gets the any() range."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(["pkg"], env)
         assert out["pkg"] == VersionRange.full(admit_arbitrary=False)
 
     def test_specifier_yields_intervals(self) -> None:
         """A bounded specifier produces the corresponding interval."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(["pkg>=1.0,<2.0"], env)
         # The specifier should be stricter than unbounded; we check
         # by confirming a known-out-of-range version is excluded.
@@ -730,7 +703,7 @@ class TestParseRequirements:
         requirement on its own without any special-casing here.
         Declared extras still flow through.
         """
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(["pkg[ext]===1.0.special"], env)
         assert "pkg" in out
         assert "1.0.special" in out["pkg"]
@@ -739,7 +712,7 @@ class TestParseRequirements:
 
     def test_duplicate_name_intersects(self) -> None:
         """Two requirements for one package combine to their overlap."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(["pkg>=2.0", "pkg<3.0"], env)
         assert Version("2.5") in out["pkg"]
         assert Version("1.0") not in out["pkg"]
@@ -747,13 +720,13 @@ class TestParseRequirements:
 
     def test_conflicting_names_raise(self) -> None:
         """Contradictory pins for one package raise ResolutionError."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         with pytest.raises(ResolutionError, match="pkg==1.0"):
             _parse_requirements(["pkg==1.0", "pkg==2.0"], env)
 
     def test_constraint_extras_rejected(self) -> None:
         """A constraint carrying extras is rejected, matching pip."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         with pytest.raises(ConfigError, match="extras"):
             _parse_requirements(["pkg[dev]<2.0"], env, kind="constraint")
 
@@ -765,7 +738,7 @@ class TestParseRequirements:
         single-env path once enforced such constraints unconditionally
         (issue #38).
         """
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(
             ['pkg<2.0 ; sys_platform == "win32"'], env, kind="constraint"
         )
@@ -773,7 +746,7 @@ class TestParseRequirements:
 
     def test_marker_true_keeps_constraint(self) -> None:
         """A constraint whose marker matches the env binds its range."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(
             ['pkg<2.0 ; sys_platform == "linux"'], env, kind="constraint"
         )
@@ -782,19 +755,19 @@ class TestParseRequirements:
 
     def test_extra_proxy_key_normalized(self) -> None:
         """The proxy key is PEP 685 normalized, matching the single-env path."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(["pkg[My_Extra]"], env)
         assert "pkg[my-extra]" in out
 
     def test_plain_url_requirement_refused(self) -> None:
         """A plain archive URL is refused as an unsupported scheme."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
             _parse_requirements(["pkg @ https://example.com/pkg.whl"], env)
 
     def test_vcs_url_refused_by_default_policy(self) -> None:
         """A git+https requirement is refused under the default BLOCK policy."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             _parse_requirements(
                 [f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"], env
@@ -802,7 +775,7 @@ class TestParseRequirements:
 
     def test_url_constraint_refused(self) -> None:
         """A direct-URL constraint is refused the same way as a requirement."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             _parse_requirements(
                 [f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"],
@@ -812,7 +785,7 @@ class TestParseRequirements:
 
     def test_admitted_vcs_url_raises_not_implemented(self) -> None:
         """An admitted VCS requirement still has no universal resolve path."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         vcs_config = VcsConfig(
             policy=VcsPolicy.ALLOW,
             allowed_schemes=frozenset({"git+https"}),
@@ -847,9 +820,9 @@ class TestUniversalSelfRefMarker:
             )
         )
         strings = [str(r) for r in reqs]
-        assert "some-dep" not in _parse_requirements(strings, _linux_311().environment)
+        assert "some-dep" not in _parse_requirements(strings, _linux_311().marker_env)
         included = {
-            **_linux_311().environment,
+            **_linux_311().marker_env,
             "python_version": "3.9",
             "python_full_version": "3.9.0",
         }
@@ -860,7 +833,7 @@ class TestRootExtras:
     """``_root_extras`` recovers requested extras from the proxy keys."""
 
     def test_recovers_and_normalizes_extras(self) -> None:
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _parse_requirements(["pkg[My_Extra]", "other"], env)
         assert _root_extras(out) == {("pkg", "my-extra")}
 

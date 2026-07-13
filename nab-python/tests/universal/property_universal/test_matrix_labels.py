@@ -22,10 +22,9 @@ from nab_python.tags import (
     LIBC_MAJOR,
     PlatformSpec,
 )
+from nab_python.target import IMPLEMENTATION_MARKERS, PLATFORM_MARKERS
 from nab_python.universal.matrix import (
-    _IMPLEMENTATION_DEFAULTS,
     _KNOWN_PYTHON_MINORS,
-    _PLATFORM_DEFAULTS,
     Matrix,
 )
 
@@ -33,8 +32,8 @@ from .strategies import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 
-PLATFORM_IDS = sorted(_PLATFORM_DEFAULTS)
-IMPLS = sorted(_IMPLEMENTATION_DEFAULTS)
+PLATFORM_IDS = sorted(PLATFORM_MARKERS)
+IMPLS = sorted(IMPLEMENTATION_MARKERS)
 
 python_specs = st.one_of(
     st.sampled_from(_KNOWN_PYTHON_MINORS).map(lambda v: f"=={v}"),
@@ -147,8 +146,8 @@ class TestExpansionExactCoverage:
         assert len(got) == len(expected)
         assert set(got) == expected
         again = matrix.expand()
-        assert [(t.label, t.environment) for t in again] == [
-            (t.label, t.environment) for t in tuples
+        assert [(t.label, t.marker_env) for t in again] == [
+            (t.label, t.marker_env) for t in tuples
         ]
         labels = [t.label for t in tuples]
         assert len(set(labels)) == len(labels), labels
@@ -196,7 +195,7 @@ class TestPythonPatchesEnvironment:
             python_patches={minor: full},
         )
         (tup,) = matrix.expand()
-        env = tup.environment
+        env = tup.marker_env
         assert env["python_full_version"] == full
         assert env["python_version"] == minor
         assert env["implementation_version"] == full

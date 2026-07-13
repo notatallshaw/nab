@@ -1,25 +1,20 @@
-"""Provider subclass that accepts a full PEP 508 marker environment.
+"""Provider subclass for one point of the universal matrix.
 
-The stock :class:`nab_python.provider.Provider` only accepts a
-``python_version`` override and inherits everything else from
-``default_environment()`` (the host environment).  Universal resolution
-needs to swap the entire environment per tuple, so this subclass
-overlays a user-supplied dict on top.
-
-Also adds a ``preferences`` knob: a ``{package_name: Version}`` dict
-tried first when choosing a version.  Used for cross-tuple alignment
-("if tuple A picked numpy 2.2.6, ask tuple B to try 2.2.6 first").
+Adds a ``preferences`` knob to the stock
+:class:`nab_python.provider.Provider`: a ``{package_name: Version}``
+dict tried first when choosing a version.  Used for cross-target
+alignment ("if target A picked numpy 2.2.6, ask target B to try 2.2.6
+first").
 
 Resolution strategy (``highest``/``lowest``/``lowest-direct``) is
 inherited from :class:`Provider` and threaded through via the
 parent's ``resolution_strategy`` and ``direct_packages`` kwargs.
 
-When ``platform_spec`` is supplied, the provider also filters wheel
-candidates by tag compatibility at resolve time.  Versions whose only
-wheels are for another libc family, or above the spec's libc/macOS
-version, become unavailable unless an sdist is present, which keeps the
-version alive at every ``build_policy`` level (look-ahead rejects an
-unreadable sdist).
+With ``filter_by_wheel_tags`` the provider also filters wheel candidates
+by tag compatibility at resolve time.  Versions whose only wheels are for
+another libc family, or above the target's libc/macOS version, become
+unavailable unless an sdist is present, which keeps the version alive at
+every ``build_policy`` level (look-ahead rejects an unreadable sdist).
 """
 
 from __future__ import annotations
@@ -28,9 +23,7 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
 
-from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .._provider.extras import version_provides_extra
-from .._vendor.packaging.markers import default_environment
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
 from ..provider import (
@@ -44,7 +37,6 @@ from ..provider import (
     VcsConfig,
     VcsSource,
 )
-from ..tags import tags_for_target, wheel_tag_set
 
 __all__ = [
     "DistFile",
@@ -64,16 +56,17 @@ if TYPE_CHECKING:
     from .._vendor.packaging.version import Version
     from ..config import IndexOverride, NabProjectConfig, PackageOverride
     from ..fetch import FetchCoordinator
-    from ..tags import PlatformSpec
+    from ..tags import TagSet
+    from ..target import ResolveTarget
 
 
 class UniversalProvider(Provider):
-    """Provider with a user-supplied marker environment + preferences."""
+    """Provider for one resolve target, with uv-style version preferences."""
 
     def __init__(  # noqa: PLR0913 - matches Provider signature
         self,
         coordinator: FetchCoordinator,
-        marker_environment: dict[str, str],
+        target: ResolveTarget,
         *,
         root_requirements: dict[str, VersionRange] | None = None,
         uploaded_prior_to: datetime | None = None,
@@ -93,9 +86,9 @@ class UniversalProvider(Provider):
         preferences: dict[str, Version] | None = None,
         resolution_strategy: ResolutionStrategy | str = ResolutionStrategy.HIGHEST,
         direct_packages: frozenset[str] | None = None,
-        platform_spec: PlatformSpec | None = None,
+        filter_by_wheel_tags: bool = False,
     ) -> None:
-        """Create a provider with overlay environment + uv-style preferences."""
+        """Create a provider for ``target`` with uv-style preferences."""
         if isinstance(resolution_strategy, str):
             try:
                 resolution_strategy = ResolutionStrategy(resolution_strategy)
@@ -113,13 +106,7 @@ class UniversalProvider(Provider):
         )
         super().__init__(
             coordinator,
-            # Use the full patch version for Requires-Python evaluation;
-            # python_version only carries major.minor, so patch-level
-            # specifiers (e.g. >=3.13.1) require python_full_version.
-            python_version=(
-                marker_environment.get("python_full_version")
-                or marker_environment.get("python_version")
-            ),
+            target=target,
             root_requirements=root_requirements,
             uploaded_prior_to=uploaded_prior_to,
             extras_mode=extras_mode,
@@ -139,22 +126,12 @@ class UniversalProvider(Provider):
             resolution_strategy=resolution_strategy,
             direct_packages=direct_packages,
         )
-        merged: dict[str, str] = {
-            key: value
-            for key, value in default_environment().items()
-            if isinstance(value, str)
-        }
-        merged.update(marker_environment)
-        self.environment = merged
-        self.env_with_extra = {**merged, **EMPTY_MEMBERSHIP_SETS}
         # Normalize preferences keys so lookup matches the provider's
         # canonical naming scheme.
         self._preferences: dict[str, Version] = {
             canonicalize_name(k): v for k, v in (preferences or {}).items()
         }
-        self._platform_spec = platform_spec
-        self._py_minor = marker_environment.get("python_version")
-        self._implementation = marker_environment.get("implementation_name", "cpython")
+        self._wheel_tags: TagSet | None = target.tags if filter_by_wheel_tags else None
         self.excluded_by_wheel_tags = 0
         self.excluded_versions_no_compatible_wheel = 0
 
@@ -198,9 +175,8 @@ class UniversalProvider(Provider):
         """Filter parent's result by wheel-tag compatibility.
 
         A version is unavailable to the resolver if its only wheels are
-        tag-incompatible with this tuple's ``platform_spec``.  Sdists
-        keep the version alive at every
-        :class:`BuildPolicy` level because static PKG-INFO and the
+        tag-incompatible with the target.  Sdists keep the version alive at
+        every :class:`BuildPolicy` level because static PKG-INFO and the
         bundled ``pyproject.toml`` fallback are read unconditionally;
         ``BUILD_LOCAL`` adds backend invocation on local checkouts and
         ``BUILD_REMOTE`` adds it on VCS clones and remote sdists.  The
@@ -208,29 +184,22 @@ class UniversalProvider(Provider):
         extraction actually fails (e.g. dynamic deps with no static
         fallback under :attr:`BuildPolicy.NEVER`).
 
-        When ``platform_spec`` is unset (legacy callers) the override
-        is a no-op.
+        Without ``filter_by_wheel_tags`` the override is a no-op.
         """
         base = super().filter_distributions(normalized, files)
-        if self._platform_spec is None or self._py_minor is None:
+        # Bound once outside the per-wheel loop: this runs for every wheel
+        # of every package on every target, so the hoist matters on large
+        # workloads.
+        tags = self._wheel_tags
+        if tags is None:
             return base
 
-        spec = self._platform_spec
-        py_minor = self._py_minor
-        # Look up the per-tuple accepted tag set once outside the per-wheel
-        # loop and inline the membership check; this loop runs for every
-        # wheel of every package on every tuple, so the hoist matters on
-        # large workloads.
-        accepted = tags_for_target(
-            python_version=py_minor, spec=spec, implementation=self._implementation
-        )
         kept: list[tuple[Version, DistFile]] = []
         versions_with_wheel: set[Version] = set()
         versions_with_sdist: set[Version] = set()
         for version, dist in base:
             if isinstance(dist, WheelFile):
-                wheel_tags = wheel_tag_set(dist.filename)
-                if wheel_tags is not None and not wheel_tags.isdisjoint(accepted):
+                if tags.accepts(dist.filename):
                     kept.append((version, dist))
                     versions_with_wheel.add(version)
                 else:

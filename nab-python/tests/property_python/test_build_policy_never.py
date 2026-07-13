@@ -35,6 +35,7 @@ from nab_python.provider import (
     Provider,
     UnsupportedSdistError,
 )
+from nab_python.target import ResolveTarget
 
 from .strategies import PROPERTY_SETTINGS
 
@@ -126,7 +127,7 @@ def _run_case(
     )
     provider = Provider(
         coordinator,
-        python_version="3.12.0",
+        target=ResolveTarget.for_host_python("3.12.0"),
         dist_policy=DistPolicy.WHEEL_OR_SDIST,
         build_policy=policy,
     )

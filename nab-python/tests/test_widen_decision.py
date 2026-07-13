@@ -24,6 +24,7 @@ from nab_python.provider import (
     Provider,
     VcsSource,
 )
+from nab_python.target import ResolveTarget
 from nab_resolver.resolver import Resolver
 from nab_resolver.root import ROOT
 
@@ -71,7 +72,7 @@ def _graph_coordinator(graph: dict[str, dict[str, list[str]]]) -> MagicMock:
 def _listing_provider(package: str, versions: list[str]) -> Provider:
     """Provider with ``package``'s listing already fetched into the cache."""
     coordinator = _graph_coordinator({package: {v: [] for v in versions}})
-    provider = Provider(coordinator, python_version="3.12.0")
+    provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
     provider.fetch_versions(package)
     return provider
 
@@ -79,7 +80,7 @@ def _listing_provider(package: str, versions: list[str]) -> Provider:
 class TestWidenDecision:
     def test_none_before_listing_is_cached(self) -> None:
         coordinator = _graph_coordinator({"p": {"1.0": []}})
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
         assert provider.widen_decision("p", V("1.0")) is None
 
     def test_universe_includes_prereleases(self) -> None:
@@ -139,7 +140,7 @@ class TestWidenDecision:
 
     def test_none_for_vcs_source(self) -> None:
         coordinator = make_coordinator([], package="bar")
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
         provider.vcs_sources["bar"] = VcsSource(
             "bar", "git+https://example.com/bar.git@abc123"
         )
@@ -148,7 +149,7 @@ class TestWidenDecision:
 
     def test_none_for_archive_source(self) -> None:
         coordinator = make_coordinator([], package="baz")
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
         provider.archive_sources["baz"] = ArchiveSource(
             "baz", "https://example.com/baz-1.0.tar.gz#sha256=00"
         )
@@ -178,7 +179,7 @@ class TestNarrowForDisplay:
 
     def test_never_triggers_a_fetch(self) -> None:
         coordinator = _graph_coordinator({"p": {"3.0": [], "2.0": [], "1.0": []}})
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
         provider.fetch_versions("p")
         coordinator.request_listing.side_effect = AssertionError(
             "narrow_for_display fetched a listing"
@@ -212,7 +213,9 @@ class TestWideningRegressionGraphs:
     ) -> dict[str, Version]:
         coordinator = _graph_coordinator(graph)
         provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
+            coordinator,
+            target=ResolveTarget.for_host_python("3.12.0"),
+            root_requirements=root_reqs,
         )
         resolver = Resolver(provider, range_type=VersionRange, root_version="0")
         return resolver.resolve(root_reqs)

@@ -28,6 +28,7 @@ from nab_python.provider import (
     join_extra,
     split_extra,
 )
+from nab_python.target import ResolveTarget
 
 from .strategies import PROPERTY_SETTINGS
 
@@ -96,7 +97,11 @@ def _make_extras_provider(
     # Pre-store metadata so the resolver short-circuits on the
     # has_metadata cache hit before the side effects fire.
     coordinator.index.store_metadata("testpkg", "1.0", metadata_text)
-    return Provider(coordinator, python_version="3.12.0", extras_mode=extras_mode)
+    return Provider(
+        coordinator,
+        target=ResolveTarget.for_host_python("3.12.0"),
+        extras_mode=extras_mode,
+    )
 
 
 class TestQuoteExtraNameNormalization:

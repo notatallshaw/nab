@@ -63,17 +63,24 @@ from nab_python.provider import (
 from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import ResolutionResult
 from nab_python.tags import PlatformSpec
-from nab_python.universal.matrix import Matrix, MatrixTuple
+from nab_python.target import ResolveTarget
+from nab_python.universal.matrix import Matrix
 from nab_python.universal.resolve import TupleResult, UniversalResult
 from nab_resolver.resolver import ResolutionError
 
 V = Version
 
-_LINUX_311_ENV = {
-    "python_version": "3.11",
-    "sys_platform": "linux",
-    "platform_machine": "x86_64",
-}
+
+def _target(
+    py_minor: str = "3.11",
+    platform_id: str = "linux_x86_64",
+    selection: tuple[tuple[str, str], ...] = (),
+) -> ResolveTarget:
+    """A declared CPython target for the universal-result fixtures."""
+    target = ResolveTarget.for_declared(
+        python_version=py_minor, spec=PlatformSpec(platform_id)
+    )
+    return target.with_selection(selection)
 
 
 def _foo_index_pin(version: str = "1.0", name: str = "foo") -> IndexPin:
@@ -149,11 +156,7 @@ def _workspace_pyproject(tmp_path: Path, *, universal: bool = False) -> Path:
 def _universal_result(*, success: bool, error: str | None = None) -> UniversalResult:
     """Build a real :class:`UniversalResult` with one matrix tuple."""
     matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
-    tup = MatrixTuple(
-        python_version="3.11",
-        environment=dict(_LINUX_311_ENV),
-        platform_spec=PlatformSpec("linux_x86_64"),
-    )
+    tup = _target()
     lock_input = LockInput(pins={"foo": _foo_index_pin()}) if success else None
     tr = TupleResult(
         tuple_=tup,
@@ -171,12 +174,7 @@ def _multi_tuple_universal_result() -> UniversalResult:
     tuples = []
     results = []
     for py_minor in ("3.11", "3.12"):
-        env = {**_LINUX_311_ENV, "python_version": py_minor}
-        tup = MatrixTuple(
-            python_version=py_minor,
-            environment=env,
-            platform_spec=PlatformSpec("linux_x86_64"),
-        )
+        tup = _target(py_minor)
         tuples.append(tup)
         results.append(
             TupleResult(
@@ -1035,12 +1033,7 @@ class TestLockCommandUniversal:
         matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         results: list[TupleResult] = []
         for member, version in (("cpu", "1.0"), ("gpu", "2.0")):
-            tup = MatrixTuple(
-                python_version="3.11",
-                environment=dict(_LINUX_311_ENV),
-                platform_spec=PlatformSpec("linux_x86_64"),
-                selection=(("extra", member),),
-            )
+            tup = _target(selection=(("extra", member),))
             results.append(
                 TupleResult(
                     tuple_=tup,
@@ -1286,16 +1279,8 @@ class TestLockCommandUniversal:
         each successful tuple's ``# label`` + pins block.
         """
         pyproject = _universal_pyproject(tmp_path)
-        ok_tuple = MatrixTuple(
-            python_version="3.11",
-            environment=dict(_LINUX_311_ENV),
-            platform_spec=PlatformSpec("linux_x86_64"),
-        )
-        bad_tuple = MatrixTuple(
-            python_version="3.11",
-            environment=dict(_LINUX_311_ENV),
-            platform_spec=PlatformSpec("windows_amd64"),
-        )
+        ok_tuple = _target()
+        bad_tuple = _target(platform_id="windows_amd64")
         ok_tr = TupleResult(
             tuple_=ok_tuple,
             success=True,
@@ -1334,16 +1319,8 @@ class TestLockCommandUniversal:
         # failed one renders a ``base/<label>: FAILED`` block.  One
         # tuple has to fail so ``_print_universal_blocks`` runs at all.
         pyproject = _universal_pyproject(tmp_path)
-        env_a = MatrixTuple(
-            python_version="3.11",
-            environment=dict(_LINUX_311_ENV),
-            platform_spec=PlatformSpec("linux_x86_64"),
-        )
-        env_b = MatrixTuple(
-            python_version="3.12",
-            environment={**_LINUX_311_ENV, "python_version": "3.12"},
-            platform_spec=PlatformSpec("linux_x86_64"),
-        )
+        env_a = _target()
+        env_b = _target("3.12")
         bad_tr = TupleResult(
             tuple_=env_b,
             success=False,
@@ -1455,12 +1432,7 @@ class TestLockCommandUniversal:
         )
         tuples_results = []
         for platform_id in ("linux_x86_64", "windows_amd64"):
-            env = {**_LINUX_311_ENV, "python_version": "3.11"}
-            tup = MatrixTuple(
-                python_version="3.11",
-                environment=env,
-                platform_spec=PlatformSpec(platform_id),
-            )
+            tup = _target(platform_id=platform_id)
             tuples_results.append(
                 TupleResult(
                     tuple_=tup,
@@ -1586,16 +1558,8 @@ class TestLockCommandUniversal:
         """Only successful tuples produce a file."""
         pyproject = _universal_pyproject(tmp_path)
         # Build a mixed matrix: 3.11 succeeds, 3.12 fails.
-        good_tup = MatrixTuple(
-            python_version="3.11",
-            environment={**_LINUX_311_ENV, "python_version": "3.11"},
-            platform_spec=PlatformSpec("linux_x86_64"),
-        )
-        bad_tup = MatrixTuple(
-            python_version="3.12",
-            environment={**_LINUX_311_ENV, "python_version": "3.12"},
-            platform_spec=PlatformSpec("linux_x86_64"),
-        )
+        good_tup = _target()
+        bad_tup = _target("3.12")
         good_tr = TupleResult(
             tuple_=good_tup,
             success=True,
@@ -1648,11 +1612,7 @@ class TestNoEmitWorkspace:
     def _alpha_and_foo_universal() -> UniversalResult:
         """A universal result with alpha + foo on a single tuple."""
         matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
-        tup = MatrixTuple(
-            python_version="3.11",
-            environment=dict(_LINUX_311_ENV),
-            platform_spec=PlatformSpec("linux_x86_64"),
-        )
+        tup = _target()
         pins = {"alpha": V("0"), "foo": V("1.0")}
         lock_input = LockInput(
             pins={

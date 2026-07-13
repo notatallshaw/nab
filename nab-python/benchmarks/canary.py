@@ -53,6 +53,7 @@ from nab_python.provider import (
     VcsPolicy,
     split_extra,
 )
+from nab_python.target import ResolveTarget
 from nab_resolver.resolver import Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -178,6 +179,14 @@ def _full_marker_environment(
 _PYTHON_VERSION_PARTS = 2
 
 
+def _resolve_target(
+    python_version: str,
+    marker_environment: dict[str, str] | None,
+) -> ResolveTarget:
+    target = ResolveTarget.for_host_python(python_version)
+    return target.with_marker_overrides(marker_environment or {})
+
+
 def _scenario_marker_env(
     python_version: str,
     overlay: dict[str, str],
@@ -240,14 +249,13 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
     ) as coordinator:
         provider = Provider(
             coordinator,
-            python_version=python_version,
+            target=_resolve_target(python_version, marker_environment),
             root_requirements=requirements,
             uploaded_prior_to=uploaded_prior_to,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             package_overrides=package_overrides,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
-            marker_environment=marker_environment,
         )
         resolver = Resolver(
             provider,

@@ -31,7 +31,6 @@ from nab_python._provider.metadata_resolver import (
 )
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._testing.overrides import pkg_override
-from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
@@ -59,14 +58,18 @@ from nab_python.provider import (
     VcsConfig,
     VcsPolicy,
     VcsSource,
-    apply_python_axis_overlay,
-    python_axis_environment,
 )
 from nab_python.resolve import _build_resolver_inputs, _raise_for_source_python
+from nab_python.target import ResolveTarget
 from nab_resolver.resolver import ResolutionError, Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 V = Version
+
+# The target most tests resolve against: the host machine, impersonating
+# CPython 3.12.0.  Shared because it is frozen and building one walks the
+# host's whole tag set.
+_PY312 = ResolveTarget.for_host_python("3.12.0")
 
 
 def make_wheel(
@@ -131,9 +134,7 @@ class TestPrefetchListings:
         """Root requirement listings are fetched in background on init."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         root_reqs = {"foo": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         result = provider.fetch_versions("foo")
         assert len(result) == 1
 
@@ -141,9 +142,7 @@ class TestPrefetchListings:
         """``prefetch_new_deps`` doesn't overwrite already-cached listings."""
         coordinator = make_coordinator([make_wheel("2.0")], package="foo")
         root_reqs = {"foo": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.fetch_versions("foo")
         provider.versions_cache["foo"] = [(V("1.0"), make_wheel("1.0"))]
         provider.prefetch_new_deps({"foo": SpecifierSet(">=1.0").to_range()})
@@ -187,9 +186,7 @@ class TestSpeculativePrefetch:
             package="foo",
         )
         root_reqs = {"foo": SpecifierSet("<3.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.fetch_versions("foo")
         # Should have submitted a batch prefetch within the root range
         assert (
@@ -234,9 +231,7 @@ class TestSpeculativePrefetch:
         """No prefetch when root range excludes all versions."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         root_reqs = {"foo": SpecifierSet(">=5.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.fetch_versions("foo")
         coordinator.request_metadata_batch.assert_not_called()
 
@@ -317,7 +312,7 @@ class TestFetchVersions:
         coordinator = make_coordinator(
             [make_wheel("1.0", requires_python=">=3.12")], package="foo"
         )
-        provider = Provider(coordinator, python_version="3.10.0")
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.10.0"))
         assert provider.fetch_versions("foo") == []
 
     def test_keeps_matching_requires_python(self) -> None:
@@ -325,7 +320,7 @@ class TestFetchVersions:
         coordinator = make_coordinator(
             [make_wheel("1.0", requires_python=">=3.10")], package="foo"
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         assert len(provider.fetch_versions("foo")) == 1
 
     def test_invalid_requires_python_keeps_package(self) -> None:
@@ -333,7 +328,7 @@ class TestFetchVersions:
         coordinator = make_coordinator(
             [make_wheel("1.0", requires_python=">>>invalid")], package="foo"
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         assert len(provider.fetch_versions("foo")) == 1
 
     def test_non_string_requires_python_admitted_without_crash(self) -> None:
@@ -355,7 +350,7 @@ class TestFetchVersions:
         files = _parse_files(data, "https://example.com/", "foo")
         assert files[0].requires_python is None
         coordinator = make_coordinator(files, package="foo")
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         assert len(provider.fetch_versions("foo")) == 1
 
     def test_requires_python_cache_hit_exercises_cached_branch(self) -> None:
@@ -373,7 +368,7 @@ class TestFetchVersions:
             ],
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.10.0")
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.10.0"))
         # Two wheels, same requires-python string, both excluded.
         assert provider.fetch_versions("foo") == []
         # Cache should have one entry: the parsed exclusion verdict.
@@ -384,7 +379,7 @@ class TestFetchVersions:
         coordinator = make_coordinator(
             [make_wheel("1.0", requires_python=">=99.0")], package="foo"
         )
-        provider = Provider(coordinator, python_version=None)
+        provider = Provider(coordinator, target=None)
         assert len(provider.fetch_versions("foo")) == 1
 
     def test_requires_python_filter_honors_python_overlay(self) -> None:
@@ -403,12 +398,10 @@ class TestFetchVersions:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312.with_marker_overrides(
+                {"python_version": "3.8", "python_full_version": "3.8.0"}
+            ),
             build_policy=BuildPolicy.NEVER,
-            marker_environment={
-                "python_version": "3.8",
-                "python_full_version": "3.8.0",
-            },
         )
         versions = [v for v, _ in provider.fetch_versions("foo")]
         assert versions == [V("1.0")]
@@ -428,7 +421,7 @@ class TestFetchVersions:
                 )
         records = asyncio.run(LocalIndexClient(tmp_path.as_uri()).get_files("foo"))
         coordinator = make_coordinator([], package="foo")
-        provider = Provider(coordinator, python_version="3.8.0")
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.8.0"))
         versions = [v for v, _ in provider.filter_distributions("foo", records)]
         assert versions == [V("1.0")]
 
@@ -449,7 +442,7 @@ class TestFetchVersions:
             (tmp_path / f"foo-{version}.tar.gz").write_bytes(buf.getvalue())
         records = asyncio.run(LocalIndexClient(tmp_path.as_uri()).get_files("foo"))
         coordinator = make_coordinator([], package="foo")
-        provider = Provider(coordinator, python_version="3.8.0")
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.8.0"))
         versions = [v for v, _ in provider.filter_distributions("foo", records)]
         assert versions == [V("1.0")]
 
@@ -469,9 +462,10 @@ class TestFetchVersions:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.3",
+            target=ResolveTarget.for_host_python("3.12.3").with_marker_overrides(
+                {"python_version": "3.8"}
+            ),
             build_policy=BuildPolicy.NEVER,
-            marker_environment={"python_version": "3.8"},
         )
         assert provider.environment["python_version"] == "3.8"
         assert provider.environment["python_full_version"] == "3.8.0"
@@ -663,7 +657,7 @@ class TestResolutionStrategy:
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements=root_reqs,
             resolution_strategy=ResolutionStrategy.LOWEST,
         )
@@ -689,7 +683,7 @@ class TestEqualVersionDifferentStrings:
 
     def test_listing_collapses_to_one_logical_version(self) -> None:
         coordinator = make_coordinator(self._files(), package="pkg")
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         version_list = provider.fetch_versions("pkg")
         versions = provider.versions_only("pkg", version_list)
         assert versions == [V("1.0")]
@@ -697,7 +691,7 @@ class TestEqualVersionDifferentStrings:
 
     def test_wheel_not_evicted_by_same_version_sdist(self) -> None:
         coordinator = make_coordinator(self._files(), package="pkg")
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         version_list = provider.fetch_versions("pkg")
         mapping = provider._wheel_by_version("pkg", version_list)
         assert len(mapping) == 1
@@ -711,7 +705,7 @@ class TestEqualVersionDifferentStrings:
             coordinator = make_coordinator(self._files(), package="pkg")
             provider = Provider(
                 coordinator,
-                python_version="3.12.0",
+                target=_PY312,
                 resolution_strategy=strategy,
             )
             chosen[strategy] = provider.choose_version(
@@ -727,8 +721,8 @@ class TestEqualVersionDifferentStrings:
         forward = make_coordinator(self._files(), package="pkg")
         reverse_files = list(reversed(self._files()))
         backward = make_coordinator(reverse_files, package="pkg")
-        p_forward = Provider(forward, python_version="3.12.0")
-        p_backward = Provider(backward, python_version="3.12.0")
+        p_forward = Provider(forward, target=_PY312)
+        p_backward = Provider(backward, target=_PY312)
         v_forward = p_forward.choose_version("pkg", SpecifierSet(">=1.0").to_range())
         v_backward = p_backward.choose_version("pkg", SpecifierSet(">=1.0").to_range())
         assert v_forward is not None
@@ -837,9 +831,7 @@ class TestPrereleaseAdmission:
             "foo": VersionRange.full(admit_arbitrary=False),
             "bar": SpecifierSet("==5.0").to_range(),
         }
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         resolver = Resolver(provider, range_type=VersionRange, root_version="0")
         pins = resolver.resolve(root_reqs)
         assert pins["foo"] == V("2.0rc1")
@@ -878,7 +870,7 @@ class TestNoVersionsReasons:
             ],
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.9.0")
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.9.0"))
         provider.choose_version("foo", SpecifierSet("").to_range())
         assert (
             provider.get_no_versions_reason("foo")
@@ -927,7 +919,7 @@ class TestNoVersionsReasons:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
         )
         # Pretend the resolver decided bar==1.0 already.
@@ -954,7 +946,7 @@ class TestNoVersionsReasons:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_LOCAL,
             root_requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
@@ -1014,7 +1006,7 @@ class TestNoVersionsReasons:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements={
                 "foo": VersionRange.full(admit_arbitrary=False),
                 "bar": SpecifierSet("==1.0").to_range(),
@@ -1046,7 +1038,7 @@ class TestNoVersionsReasons:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
         )
         pos_range = SpecifierSet("<2.0").to_range()
@@ -1077,7 +1069,7 @@ class TestGetDependencies:
             ),
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in deps
         assert "baz" in deps
@@ -1095,7 +1087,7 @@ class TestGetDependencies:
             ),
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo", V("1.0"))
         assert V("3.0") in deps["bar"]
         assert V("1.0") not in deps["bar"]
@@ -1108,7 +1100,7 @@ class TestGetDependencies:
             metadata_text="Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n",
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         provider.get_dependencies("foo", V("1.0"))
         provider.get_dependencies("foo", V("1.0"))
         # Metadata should only be requested once (via speculative prefetch
@@ -1131,7 +1123,7 @@ class TestGetDependencies:
         coordinator.index.store_metadata_error(
             "foo", "1.0", MetadataHashMismatchError("metadata sha256 mismatch")
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         with pytest.raises(MetadataHashMismatchError):
             provider.get_dependencies("foo", V("1.0"))
         assert ("foo", V("1.0")) not in provider.deps_cache
@@ -1161,7 +1153,7 @@ class TestGetDependencies:
             return _done_event()
 
         coordinator.request_sdist.side_effect = _poisoned_request_sdist
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         with pytest.raises(SdistHashMismatchError):
             provider.get_dependencies("foo", V("1.0"))
         assert ("foo", V("1.0")) not in provider.deps_cache
@@ -1191,7 +1183,7 @@ class TestGetDependencies:
         coordinator = make_coordinator(
             [make_wheel("1.0")], metadata_text=bad_metadata, package="foo"
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         with pytest.raises(MetadataError, match="Invalid metadata"):
             provider.get_dependencies("foo", V("1.0"))
 
@@ -1211,7 +1203,7 @@ class TestGetDependencies:
         coordinator = make_coordinator(
             [make_wheel("1.0")], metadata_text=bad_metadata, package="foo"
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         with pytest.raises(MetadataError, match="invalid Requires-Python"):
             provider.get_dependencies("foo", V("1.0"))
 
@@ -1235,7 +1227,7 @@ class TestGetDependencies:
         coordinator = make_coordinator(
             [make_wheel("1.0")], metadata_text=bad_metadata, package="foo"
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         with pytest.raises(MetadataError, match="Invalid metadata"):
             provider.get_dependencies("foo", V("1.0"))
         # Make the underlying parse blow up if we go through it again --
@@ -1262,7 +1254,7 @@ class TestGetDependencies:
         coordinator = make_coordinator(
             [make_wheel("1.0")], metadata_text=bad_metadata, package="foo"
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         with caplog.at_level("WARNING", logger="nab_python.provider"):
             with pytest.raises(MetadataError):
                 provider.get_dependencies("foo", V("1.0"))
@@ -1298,7 +1290,7 @@ class TestGetDependencies:
             [make_wheel("1.0", has_metadata=False, local_path=wheel_path)],
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in deps
         assert V("2.0") in deps["bar"]
@@ -1318,7 +1310,7 @@ class TestGetDependencies:
             [make_wheel("1.0", has_metadata=False, local_path=wheel_path)],
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         with pytest.raises(MetadataError):
             provider.get_dependencies("foo", V("1.0"))
 
@@ -1335,7 +1327,7 @@ class TestGetDependencies:
             ),
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" not in deps
         assert "baz" in deps
@@ -1356,7 +1348,7 @@ class TestGetDependencies:
             ),
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.11")
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.11"))
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "only313" not in deps
         assert "only311" in deps
@@ -1367,7 +1359,7 @@ class TestGetDependencies:
         """
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         with pytest.raises(InvalidVersion, match="'not-a-version'"):
-            Provider(coordinator, python_version="not-a-version")
+            Provider(coordinator, target=ResolveTarget.for_host_python("not-a-version"))
 
     def test_arbitrary_equality_dep_is_literal_range(self) -> None:
         """``===`` deps round-trip as a literal-only range.
@@ -1388,7 +1380,7 @@ class TestGetDependencies:
             ),
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in deps
         assert "custom-build" in deps["bar"]
@@ -1417,7 +1409,7 @@ class TestTransitiveDirectUrlDep:
             ),
             package="foo",
         )
-        return Provider(coordinator, python_version="3.12.0", vcs_config=vcs_config)
+        return Provider(coordinator, target=_PY312, vcs_config=vcs_config)
 
     def test_plain_url_dep_refused(self) -> None:
         """A non-VCS direct-URL dep raises rather than pinning from the index."""
@@ -1458,7 +1450,7 @@ class TestTransitiveDirectUrlDep:
             ),
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" not in deps
         assert "baz" in deps
@@ -1484,7 +1476,7 @@ class TestTransitiveDirectUrlDep:
         )
         return Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_extras=root_extras,
             vcs_config=vcs_config,
         )
@@ -1862,16 +1854,18 @@ class TestLocalSources:
 
 class TestMarkerEnvironment:
     def test_overlay_overrides_host(self) -> None:
-        """Keys in ``marker_environment`` overlay the host environment."""
+        """Keys in the target's marker overrides overlay the host environment."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
             coordinator,
+            target=ResolveTarget.for_host().with_marker_overrides(
+                {
+                    "platform_system": "Windows",
+                    "sys_platform": "win32",
+                    "platform_machine": "AMD64",
+                }
+            ),
             build_policy=BuildPolicy.NEVER,
-            marker_environment={
-                "platform_system": "Windows",
-                "sys_platform": "win32",
-                "platform_machine": "AMD64",
-            },
         )
         assert provider.environment["platform_system"] == "Windows"
         assert provider.environment["sys_platform"] == "win32"
@@ -1882,8 +1876,10 @@ class TestMarkerEnvironment:
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
             coordinator,
+            target=ResolveTarget.for_host().with_marker_overrides(
+                {"platform_system": "Darwin"}
+            ),
             build_policy=BuildPolicy.NEVER,
-            marker_environment={"platform_system": "Darwin"},
         )
         assert "os_name" in provider.environment
         assert provider.environment["platform_system"] == "Darwin"
@@ -1903,22 +1899,24 @@ class TestMarkerEnvironment:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12",
+            target=ResolveTarget.for_host_python("3.12").with_marker_overrides(
+                {"sys_platform": "win32"}
+            ),
             build_policy=BuildPolicy.NEVER,
-            marker_environment={"sys_platform": "win32"},
         )
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "pywin32" in deps
         assert "only-linux" not in deps
 
     def test_python_version_overlay_runs_after_python_version_arg(self) -> None:
-        """``marker_environment`` overlay applies after ``python_version``."""
+        """The marker overrides apply after the target Python."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
             coordinator,
-            python_version="3.11.5",
+            target=ResolveTarget.for_host_python("3.11.5").with_marker_overrides(
+                {"python_version": "3.13"}
+            ),
             build_policy=BuildPolicy.NEVER,
-            marker_environment={"python_version": "3.13"},
         )
         assert provider.environment["python_version"] == "3.13"
 
@@ -1926,7 +1924,9 @@ class TestMarkerEnvironment:
         """A 2-part python_version yields a 3-part python_full_version."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
-            coordinator, python_version="3.10", build_policy=BuildPolicy.NEVER
+            coordinator,
+            target=ResolveTarget.for_host_python("3.10"),
+            build_policy=BuildPolicy.NEVER,
         )
         assert provider.environment["python_version"] == "3.10"
         assert provider.environment["python_full_version"] == "3.10.0"
@@ -1935,175 +1935,33 @@ class TestMarkerEnvironment:
         """A 3-part python_version keeps its patch component."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
-            coordinator, python_version="3.11.5", build_policy=BuildPolicy.NEVER
+            coordinator,
+            target=ResolveTarget.for_host_python("3.11.5"),
+            build_policy=BuildPolicy.NEVER,
         )
         assert provider.environment["python_full_version"] == "3.11.5"
 
-    def test_overlay_with_never_override_passes(self) -> None:
-        """Overrides at ``NEVER`` skip the guard's offending branch.
 
-        Covers the loop's skip-iteration path: a build override whose
-        policy is ``NEVER`` must not contribute to the guard's offending
-        list.
-        """
-        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+class TestTargetEnvironment:
+    def test_target_python_moves_implementation_version(self) -> None:
+        """A target Python moves implementation_version too."""
         provider = Provider(
-            coordinator,
-            build_policy=BuildPolicy.NEVER,
-            package_overrides=(
-                pkg_override("quarantined", build_policy=BuildPolicy.NEVER),
-            ),
-            marker_environment={"platform_system": "Windows"},
+            make_coordinator(), target=ResolveTarget.for_host_python("3.9.0")
         )
-        assert (
-            provider.effective_build_policy("quarantined", V("1.0"))
-            is BuildPolicy.NEVER
-        )
-
-    def test_default_policy_blocked_when_overlay_used(self) -> None:
-        """The default ``BUILD_LOCAL`` is rejected with a marker overlay.
-
-        Users who want a marker overlay must opt into ``never`` explicitly,
-        since a host-side backend cannot reflect the impersonated target.
-        """
-        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
-        with pytest.raises(ValueError, match="marker_environment overlay requires"):
-            Provider(
-                coordinator,
-                marker_environment={"platform_system": "Windows"},
-            )
-
-    def test_overlay_with_build_remote_policy_raises(self) -> None:
-        """Non-``NEVER`` global + ``marker_environment`` is rejected."""
-        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
-        with pytest.raises(ValueError, match="marker_environment overlay requires"):
-            Provider(
-                coordinator,
-                build_policy=BuildPolicy.BUILD_REMOTE,
-                marker_environment={"platform_system": "Windows"},
-            )
-
-    def test_overlay_with_build_remote_override_raises(self) -> None:
-        """A build override that escapes ``NEVER`` also fails the guard."""
-        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
-        with pytest.raises(ValueError, match="marker_environment overlay requires"):
-            Provider(
-                coordinator,
-                build_policy=BuildPolicy.NEVER,
-                package_overrides=(
-                    pkg_override("foo", build_policy=BuildPolicy.BUILD_REMOTE),
-                ),
-                marker_environment={"platform_system": "Windows"},
-            )
-
-    def test_overlay_with_build_remote_index_override_raises(self) -> None:
-        """A per-index build override that escapes ``NEVER`` fails the guard."""
-        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
-        with pytest.raises(ValueError, match="marker_environment overlay requires"):
-            Provider(
-                coordinator,
-                build_policy=BuildPolicy.NEVER,
-                index_overrides={
-                    "internal": IndexOverride(build_policy=BuildPolicy.BUILD_REMOTE)
-                },
-                marker_environment={"platform_system": "Windows"},
-            )
-
-    def test_no_overlay_no_constraint(self) -> None:
-        """Without ``marker_environment``, looser ``BuildPolicy`` works."""
-        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
-        provider = Provider(coordinator, build_policy=BuildPolicy.BUILD_REMOTE)
-        assert provider.build_policy is BuildPolicy.BUILD_REMOTE
-
-    def test_empty_overlay_no_constraint(self) -> None:
-        """An empty overlay does not trigger the BuildPolicy check."""
-        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
-        provider = Provider(
-            coordinator,
-            build_policy=BuildPolicy.BUILD_REMOTE,
-            marker_environment={},
-        )
-        assert provider.build_policy is BuildPolicy.BUILD_REMOTE
-
-
-class TestPythonAxisEnvironment:
-    def test_single_component_version_pads_python_version(self) -> None:
-        """``python_version`` is padded to major.minor like full to three."""
-        env = python_axis_environment("3")
-        assert env == {"python_version": "3.0", "python_full_version": "3.0.0"}
-
-    def test_unparseable_version_raises_named_error(self) -> None:
-        """The error names the bad ``python_version`` input."""
-        with pytest.raises(InvalidVersion, match="python_version 'not-a-version'"):
-            python_axis_environment("not-a-version")
-
-    def test_two_component_prerelease_keeps_tag(self) -> None:
-        """A 2-release-component prerelease keeps its tag in full version."""
-        env = python_axis_environment("3.14a1")
-        assert env["python_version"] == "3.14"
-        assert Version(env["python_full_version"]) == Version("3.14a1")
-
-    def test_two_component_prerelease_not_treated_as_final(self) -> None:
-        """A prerelease target must not satisfy a final-release marker."""
-        env = python_axis_environment("3.14rc1")
-        assert Marker('python_full_version >= "3.14.0"').evaluate(env) is False
-        assert Marker('python_full_version == "3.14.0"').evaluate(env) is False
-
-
-class TestApplyPythonAxisOverlay:
-    def test_cpython_moves_implementation_version_with_axis(self) -> None:
-        """On CPython the axis move drags implementation_version along."""
-        env = {
-            "implementation_name": "cpython",
-            "python_version": "3.11",
-            "python_full_version": "3.11.5",
-            "implementation_version": "3.11.5",
-        }
-        apply_python_axis_overlay(env, {"python_version": "3.8"})
-        assert env["python_full_version"] == "3.8.0"
-        assert env["implementation_version"] == "3.8.0"
-
-    def test_non_cpython_keeps_its_implementation_version(self) -> None:
-        """A PyPy axis move keeps the interpreter's own release version."""
-        env = {
-            "implementation_name": "pypy",
-            "python_version": "3.9",
-            "python_full_version": "3.9.18",
-            "implementation_version": "7.3.13",
-        }
-        apply_python_axis_overlay(env, {"python_version": "3.10"})
-        assert env["python_full_version"] == "3.10.0"
-        assert env["implementation_version"] == "7.3.13"
-
-    def test_provider_target_python_moves_implementation_version(self) -> None:
-        """A Provider target Python moves implementation_version too."""
-        provider = Provider(make_coordinator(), python_version="3.9.0")
         assert provider.environment["implementation_version"] == "3.9.0"
         assert (
             provider.environment["implementation_version"]
             == provider.environment["python_full_version"]
         )
 
-    def test_patch_precision_python_version_normalizes_to_minor(self) -> None:
-        """A patch-precision python_version overlay normalizes to major.minor."""
-        env = {
-            "implementation_name": "cpython",
-            "python_version": "3.11",
-            "python_full_version": "3.11.5",
-            "implementation_version": "3.11.5",
-        }
-        apply_python_axis_overlay(env, {"python_version": "3.10.5"})
-        assert env["python_version"] == "3.10"
-        assert env["python_full_version"] == "3.10.5"
-        assert Marker('python_version == "3.10"').evaluate(env) is True
-
-    def test_provider_marker_env_patch_python_version_normalizes(self) -> None:
-        """A marker-env python_version like 3.10.5 normalizes to major.minor."""
+    def test_marker_env_patch_python_version_normalizes(self) -> None:
+        """A marker-override python_version like 3.10.5 normalizes to major.minor."""
         provider = Provider(
             make_coordinator(),
-            python_version="3.12.3",
+            target=ResolveTarget.for_host_python("3.12.3").with_marker_overrides(
+                {"python_version": "3.10.5"}
+            ),
             build_policy=BuildPolicy.NEVER,
-            marker_environment={"python_version": "3.10.5"},
         )
         assert provider.environment["python_version"] == "3.10"
         assert provider.environment["python_full_version"] == "3.10.5"
@@ -2126,9 +1984,7 @@ class TestLookAhead:
         )
 
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) == V("1.0")
 
@@ -2150,9 +2006,7 @@ class TestLookAhead:
             package="foo",
         )
         root_reqs = {"bar": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) == V("1.0")
 
@@ -2167,9 +2021,7 @@ class TestLookAhead:
             package="foo",
         )
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) is None
 
@@ -2184,9 +2036,7 @@ class TestLookAhead:
             package="foo",
         )
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.get_dependencies("foo", V("1.0"))
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) is None
@@ -2209,9 +2059,7 @@ class TestLookAhead:
             package="foo",
         )
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         spec = SpecifierSet("")
         # v2.0 conflicts with root, v1.0 has no metadata_url and is
         # skipped; choose_version returns ``None`` instead of raising.
@@ -2228,9 +2076,7 @@ class TestLookAhead:
             package="foo",
         )
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.deps_cache[("foo", V("1.0"))] = {}
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) == V("1.0")
@@ -2286,9 +2132,7 @@ class TestLookAhead:
 
         coordinator.request_metadata_batch.side_effect = _request_metadata_batch
 
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
 
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) == V("1.0")
@@ -2311,9 +2155,7 @@ class TestLookAhead:
         )
 
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) == V("1.0")
 
@@ -2359,9 +2201,7 @@ class TestDecisionLookAhead:
         # Root requirements are unused for the rejection itself, but they
         # have to be non-empty so that look-ahead is enabled.
         root_reqs = {"baz": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         spec = SpecifierSet("")
         # foo==2.0 conflicts with bar==3.0 (needs >=5.0); foo==1.0 is compatible.
@@ -2400,9 +2240,7 @@ class TestDecisionLookAhead:
         )
         coordinator = make_coordinator(wheels, metadata_text=meta, package="foo")
         root_reqs = {"baz": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         # check_decisions=False ignores the bar==3.0 conflict.
         assert provider._look_ahead_ok("foo", V("1.0"), check_decisions=False)
@@ -2417,9 +2255,7 @@ class TestDecisionLookAhead:
         )
         coordinator = make_coordinator(wheels, metadata_text=meta, package="foo")
         root_reqs = {"baz": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) is None
@@ -2436,9 +2272,7 @@ class TestDecisionLookAhead:
         )
         coordinator = make_coordinator(wheels, metadata_text=meta, package="foo")
         root_reqs = {"baz": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         # bar has a positive range that doesn't intersect bar>=5.0 (the dep)
         # but is not decided yet.
         provider.receive_partial_solution_hint(
@@ -2495,9 +2329,7 @@ class TestDecisionLookAhead:
             "foo": VersionRange.full(admit_arbitrary=False),
             "app": VersionRange.full(admit_arbitrary=False),
         }
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         resolver = Resolver(provider, range_type=VersionRange, root_version="0")
         with pytest.raises(ResolutionError) as exc_info:
             resolver.resolve(dict(root_reqs))
@@ -2612,9 +2444,7 @@ class TestLookAheadAbort:
             package="foo",
         )
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         provider._LOOKAHEAD_ABORT_THRESHOLD = 2  # type: ignore[misc]
         chosen = provider.choose_version("foo", VersionRange.full())
@@ -2638,9 +2468,7 @@ class TestLookAheadAbort:
             package="foo",
         )
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         provider._LOOKAHEAD_ABORT_THRESHOLD = 64  # type: ignore[misc]
         # Only 2 candidates so we never cross 64; the scan returns None.
@@ -2665,9 +2493,7 @@ class TestLookAheadAbort:
             package="foo",
         )
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         provider._LOOKAHEAD_ABORT_THRESHOLD = 2  # type: ignore[misc]
         assert provider.choose_version("foo", VersionRange.full()) == V("3.0")
@@ -2690,9 +2516,7 @@ class TestLookAheadAbort:
             package="foo",
         )
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         provider._LOOKAHEAD_ABORT_THRESHOLD = 2  # type: ignore[misc]
         provider.choose_version("foo", VersionRange.full())
@@ -2717,9 +2541,7 @@ class TestLookAheadAbort:
             package="foo",
         )
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         provider._LOOKAHEAD_ABORT_THRESHOLD = 2  # type: ignore[misc]
         provider._MAX_FORCE_BACKTRACKS_PER_PKG = 3  # type: ignore[misc]
@@ -2746,9 +2568,7 @@ class TestLookAheadAbort:
             [make_wheel("1.0")], metadata_text=meta, package="foo"
         )
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         # bar=3.0 conflicts with foo's bar<2.0 dep, the same
         # state that would have triggered the abort in the first place.
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
@@ -2775,9 +2595,7 @@ class TestLookAheadAbort:
             [make_wheel("1.0")], metadata_text=meta, package="foo"
         )
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         provider._lookahead_aborted["foo"] = ("bar", V("3.0"))
         # No pre-warm; cold cache. The safety look-ahead fetches the
@@ -2802,9 +2620,7 @@ class TestLookAheadAbort:
             package="foo",
         )
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         # Skip is recorded, but foo==1.0 has bad metadata so the
         # safety check rejects and the scan proceeds.
@@ -2826,9 +2642,7 @@ class TestLookAheadAbort:
         )
         coordinator = make_coordinator(wheels, metadata_text=meta, package="foo")
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         # Recorded state names bar==3.0, but the current decisions have
         # bar==2.0, so the recorded state is stale.
         provider.receive_partial_solution_hint({}, {"bar": V("2.0")})
@@ -3268,7 +3082,7 @@ class TestDependenciesOverride:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             extras_mode=ExtrasMode.ERROR_USER,
             root_extras={("foo", "security")},
             package_overrides=(
@@ -3546,7 +3360,7 @@ class TestRequiresPythonListingGate:
         )
         provider = Provider(
             coordinator,
-            python_version="3.9.0",
+            target=ResolveTarget.for_host_python("3.9.0"),
             package_overrides=(pkg_override("foo", requires_python=">=3.9"),),
         )
         assert [v for v, _ in provider.fetch_versions("foo")] == [V("1.0")]
@@ -3559,7 +3373,7 @@ class TestRequiresPythonListingGate:
         )
         provider = Provider(
             coordinator,
-            python_version="3.10.0",
+            target=ResolveTarget.for_host_python("3.10.0"),
             package_overrides=(pkg_override("foo", requires_python=">=3.11"),),
         )
         assert provider.fetch_versions("foo") == []
@@ -3571,7 +3385,7 @@ class TestRequiresPythonListingGate:
         )
         provider = Provider(
             coordinator,
-            python_version="3.9.0",
+            target=ResolveTarget.for_host_python("3.9.0"),
             package_overrides=(pkg_override("foo", requires_python=""),),
         )
         assert [v for v, _ in provider.fetch_versions("foo")] == [V("1.0")]
@@ -3589,7 +3403,7 @@ class TestRequiresPythonListingGate:
         )
         provider = Provider(
             coordinator,
-            python_version="3.10.0",
+            target=ResolveTarget.for_host_python("3.10.0"),
             package_overrides=(pkg_override("foo", requires_python=">=3.0"),),
         )
         assert [v for v, _ in provider.fetch_versions("foo")] == [V("1.0")]
@@ -3602,7 +3416,7 @@ class TestRequiresPythonListingGate:
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
             coordinator,
-            python_version=None,
+            target=None,
             package_overrides=(pkg_override("foo", requires_python=">=3.11"),),
         )
         assert len(provider.fetch_versions("foo")) == 1
@@ -3617,7 +3431,7 @@ class TestSkipFetch:
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             package_overrides=(
                 pkg_override("foo", dependencies=(Requirement("dep-a>=1"),)),
             ),
@@ -3629,7 +3443,7 @@ class TestSkipFetch:
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             package_overrides=(pkg_override("foo", dependencies=()),),
         )
         assert provider.get_dependencies("foo", V("1.0")) == {}
@@ -3640,7 +3454,7 @@ class TestSkipFetch:
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             package_overrides=(
                 pkg_override("foo", dependencies=(Requirement("dep-a>=1"),)),
             ),
@@ -3654,7 +3468,7 @@ class TestSkipFetch:
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             package_overrides=(pkg_override("foo", requires_python=">=3.0"),),
         )
         with pytest.raises(MetadataError):
@@ -3672,7 +3486,7 @@ class TestSkipFetch:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             root_requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
@@ -3702,7 +3516,7 @@ class TestSkipFetch:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
             package_overrides=(
                 pkg_override("pkg == 2.0", dependencies=(Requirement("dep-a>=1"),)),
@@ -3722,7 +3536,7 @@ class TestSkipFetch:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             package_overrides=(
                 pkg_override("pkg", dependencies=(Requirement("dep-a"),)),
             ),
@@ -3742,7 +3556,7 @@ class TestSkipFetch:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements={"pkg": SpecifierSet(">=1.0").to_range()},
             package_overrides=(
                 pkg_override("pkg == 2.0", dependencies=(Requirement("dep-a"),)),
@@ -3762,7 +3576,7 @@ class TestSkipFetch:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             package_overrides=(
                 pkg_override("pkg", dependencies=(Requirement("dep-a"),)),
             ),
@@ -3779,7 +3593,7 @@ class TestSkipFetch:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             package_overrides=(
                 pkg_override("pkg == 2.0", dependencies=(Requirement("dep-a"),)),
             ),
@@ -3810,7 +3624,7 @@ class TestLocalVcsPythonGuardOverride:
         coordinator = make_coordinator([], package="foo")
         provider = Provider(
             coordinator,
-            python_version="3.9.0",
+            target=ResolveTarget.for_host_python("3.9.0"),
             local_sources=[LocalSource("foo", str(tmp_path))],
             build_policy=BuildPolicy.NEVER,
             package_overrides=(pkg_override("foo", requires_python=override_rp),),
@@ -4241,7 +4055,7 @@ class TestExtras:
             metadata_text=EXTRA_METADATA,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo[security]", V("1.0"))
         assert "cryptography" in deps
         assert "foo" in deps
@@ -4254,7 +4068,7 @@ class TestExtras:
             metadata_text=WHITESPACE_EXTRA_METADATA,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo[security]", V("1.0"))
         assert "cryptography" in deps
 
@@ -4378,7 +4192,7 @@ class TestExtras:
             metadata_text=EXTRA_METADATA,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         base_deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in base_deps
         extra_deps = provider.get_dependencies("foo[security]", V("1.0"))
@@ -4391,7 +4205,7 @@ class TestExtras:
             metadata_text=EXTRA_METADATA,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         provider.get_dependencies("foo[security]", V("1.0"))
         provider.get_dependencies("foo[security]", V("1.0"))
         assert ("foo[security]", V("1.0")) in provider.deps_cache
@@ -4409,7 +4223,7 @@ class TestExtras:
     def test_marker_cache_hits_on_repeat(self) -> None:
         """Reclassifying the same Requirement hits the marker caches."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         base_req = Requirement('bar; python_version >= "3.7"')
         extra_req = Requirement('qux; extra == "security"')
 
@@ -4436,7 +4250,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         base_deps = provider.get_dependencies("foo", V("1.0"))
         sec_deps = provider.get_dependencies("foo[security]", V("1.0"))
         assert "cryptography" not in base_deps
@@ -4458,7 +4272,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         sec_deps = provider.get_dependencies("foo[security]", V("1.0"))
         socks_deps = provider.get_dependencies("foo[socks]", V("1.0"))
         assert "cryptography" in sec_deps
@@ -4483,7 +4297,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         base_deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in base_deps
         extra_deps = provider.get_dependencies("foo[dev]", V("1.0"))
@@ -4503,7 +4317,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in deps
         assert "bar[baz]" in deps
@@ -4522,7 +4336,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo[all]", V("1.0"))
         assert "bar" in deps
         assert "bar[http]" in deps
@@ -4543,7 +4357,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         base_deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar[http]" in base_deps
         extra_deps = provider.get_dependencies("foo[all]", V("1.0"))
@@ -4564,7 +4378,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         extra_deps = provider.get_dependencies("foo[tight]", V("1.0"))
         assert "bar" in extra_deps
         assert V("1.5") not in extra_deps["bar"]
@@ -4589,7 +4403,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo[bar]", V("1.0"))
         assert deps["foo"].is_empty
 
@@ -4607,7 +4421,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo[bar]", V("1.0"))
         assert deps["foo"] == VersionRange.singleton(V("1.0"))
 
@@ -4626,7 +4440,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         base_deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in base_deps
         assert "bar[http]" not in base_deps  # base doesn't have the extra
@@ -4646,7 +4460,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in deps
         assert "bar[http]" in deps
@@ -4666,7 +4480,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo[all]", V("1.0"))
         assert "bar" in deps
         assert "bar[http]" in deps
@@ -4680,9 +4494,7 @@ class TestExtras:
             metadata_text=NO_EXTRA_METADATA,
             package="foo",
         )
-        provider = Provider(
-            coordinator, python_version="3.12.0", extras_mode=ExtrasMode.WARN
-        )
+        provider = Provider(coordinator, target=_PY312, extras_mode=ExtrasMode.WARN)
         deps = provider.get_dependencies("foo[nonexistent]", V("1.0"))
         assert deps == {"foo": VersionRange.singleton(V("1.0"))}
 
@@ -4695,7 +4507,7 @@ class TestExtras:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             extras_mode=ExtrasMode.ERROR_USER,
             root_extras={("foo", "nonexistent")},
         )
@@ -4711,7 +4523,7 @@ class TestExtras:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             extras_mode=ExtrasMode.ERROR_USER,
         )
         deps = provider.get_dependencies("foo[nonexistent]", V("1.0"))
@@ -4748,9 +4560,7 @@ class TestExtras:
             "Requires-Dist: alpha[ext-one]\n",
         )
         roots = {"gamma": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=roots
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=roots)
         resolver: Resolver[str, Version] = Resolver(
             provider, range_type=VersionRange, root_version="0"
         )
@@ -4767,7 +4577,7 @@ class TestExtras:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             extras_mode=ExtrasMode.BACKTRACK,
             root_extras={("foo", "nonexistent")},
         )
@@ -4791,7 +4601,7 @@ class TestExtras:
 
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             extras_mode=ExtrasMode.BACKTRACK,
         )
         spec = SpecifierSet("")
@@ -4853,7 +4663,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         deps = provider.get_dependencies("foo[dev]", V("1.0"))
         assert "good" in deps
         assert "broken" in deps
@@ -4874,7 +4684,7 @@ class TestExtras:
             metadata_text=metadata,
             package="foo",
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         provider.versions_cache["cryptography"] = [(V("1.0"), make_wheel("1.0"))]
         deps = provider.get_dependencies("foo[security]", V("1.0"))
         assert "cryptography" in deps
@@ -4891,7 +4701,7 @@ class TestExtras:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             extras_mode=ExtrasMode.BACKTRACK,
         )
         spec = SpecifierSet("")
@@ -4921,7 +4731,7 @@ class TestExtrasPrereleaseAdmission:
         )
         provider = Provider(
             self._coordinator_for_c(),
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements=root_reqs,
             root_extras=root_extras,
         )
@@ -4988,9 +4798,7 @@ class TestExtrasPrereleaseAdmission:
             "a": VersionRange.full(admit_arbitrary=False),
             "b": VersionRange.full(admit_arbitrary=False),
         }
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         resolver = Resolver(provider, range_type=VersionRange, root_version="0")
         pins = resolver.resolve(root_reqs)
         assert resolver.stats.backjumps > 0
@@ -5043,7 +4851,7 @@ class TestExtrasPrereleaseBaseRangeBlocks:
         root_reqs = {"r": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             extras_mode=ExtrasMode.BACKTRACK,
             root_requirements=root_reqs,
         )
@@ -5088,7 +4896,7 @@ class TestExtrasPrereleaseBaseRangeBlocks:
         }
         coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
         provider = Provider(
-            coordinator, python_version="3.12.0", extras_mode=ExtrasMode.BACKTRACK
+            coordinator, target=_PY312, extras_mode=ExtrasMode.BACKTRACK
         )
         # Base decided to the final 1.0.0, which does not provide x, so the
         # proxy has no candidate; the pre-release 2.0.0a1 is excluded only
@@ -5197,7 +5005,7 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.SDIST_INSTALL,
         )
         deps = provider.get_dependencies("pkg", V("1.0"))
@@ -5214,7 +5022,7 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         deps = provider.get_dependencies("pkg", V("1.0"))
@@ -5232,7 +5040,7 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
         )
@@ -5249,7 +5057,7 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             trust_unverified_sdist_deps=True,
@@ -5268,7 +5076,7 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             trust_unverified_sdist_deps=True,
@@ -5286,7 +5094,7 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             trust_unverified_sdist_deps=True,
@@ -5304,7 +5112,7 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             package_overrides=(pkg_override("pkg", dist_trust_unverified_deps=True),),
@@ -5324,7 +5132,7 @@ class TestDistPolicy:
         coordinator.index.store_listing_index("pkg", "internal")
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             index_overrides={
@@ -5346,7 +5154,7 @@ class TestDistPolicy:
         coordinator.index.store_listing_index("pkg", "pypi")
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             index_overrides={
@@ -5367,7 +5175,7 @@ class TestDistPolicy:
         coordinator.index.store_listing_index("pkg", "internal")
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             package_overrides=(pkg_override("pkg", dist_trust_unverified_deps=True),),
@@ -5387,7 +5195,7 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(MetadataError):
@@ -5426,7 +5234,7 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         provider.fetch_versions("pkg")
@@ -5453,7 +5261,7 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(MetadataError):
@@ -5508,9 +5316,7 @@ class TestSpeculativePrefetchBatchLimit:
             package="foo",
         )
         root_reqs = {"foo": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.fetch_versions("foo")
         # request_metadata_batch should have been called with at most
         # PREFETCH_BATCH items.
@@ -5528,9 +5334,7 @@ class TestSpeculativePrefetchBatchLimit:
             package="foo",
         )
         root_reqs = {"foo": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         # Pre-cache deps for v2.0 so it gets skipped during prefetch.
         provider.deps_cache[("foo", V("2.0"))] = {}
         provider.fetch_versions("foo")
@@ -5670,9 +5474,7 @@ class TestPrefetchWalkAhead:
             package="foo",
         )
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
         with patch.object(
             provider, "prefetch_walk_ahead", wraps=provider.prefetch_walk_ahead
@@ -5689,9 +5491,7 @@ class TestPrefetchWalkAhead:
             package="foo",
         )
         root_reqs = {"foo": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         with patch.object(
             provider, "prefetch_walk_ahead", wraps=provider.prefetch_walk_ahead
         ) as spy:
@@ -5705,9 +5505,7 @@ class TestPickBestCandidateNone:
         wheels = [make_wheel("1.0")]
         coordinator = make_coordinator(wheels, package="foo")
         root_reqs = {"foo": SpecifierSet(">=5.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         versions = provider.fetch_versions("foo")
         result = provider.pick_best_candidate("foo", versions)
         assert result is None
@@ -5715,16 +5513,14 @@ class TestPickBestCandidateNone:
     def test_returns_none_on_empty_versions(self) -> None:
         """pick_best_candidate returns None when versions list is empty."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         assert provider.pick_best_candidate("foo", []) is None
 
     def test_returns_none_on_empty_versions_with_root_range(self) -> None:
         """Empty versions list returns None even when name is a root requirement."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         root_reqs = {"foo": SpecifierSet(">=1.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         assert provider.pick_best_candidate("foo", []) is None
 
     def test_root_requirement_returns_first_match(self) -> None:
@@ -5732,9 +5528,7 @@ class TestPickBestCandidateNone:
         wheels = [make_wheel("3.0"), make_wheel("2.0"), make_wheel("1.0")]
         coordinator = make_coordinator(wheels, package="foo")
         root_reqs = {"foo": SpecifierSet("<3.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         versions = provider.fetch_versions("foo")
         result = provider.pick_best_candidate("foo", versions)
         assert result is not None
@@ -5791,9 +5585,7 @@ class TestAwaitMetadataBatchEdgeCases:
             package="foo",
         )
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         spec = SpecifierSet("")
         result = provider.choose_version("foo", spec.to_range())
         assert result == V("1.0")
@@ -5821,9 +5613,7 @@ class TestAwaitMetadataBatchEdgeCases:
             package="foo",
         )
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         spec = SpecifierSet("")
         result = provider.choose_version("foo", spec.to_range())
         assert result == V("1.0")
@@ -5837,7 +5627,7 @@ class TestAwaitMetadataBatchEdgeCases:
         coordinator.index.store_metadata_error(
             "foo", "1.0", MetadataHashMismatchError("metadata sha256 mismatch")
         )
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         with pytest.raises(MetadataHashMismatchError):
             provider._await_metadata_batch(
                 "foo",
@@ -5857,7 +5647,7 @@ class TestAwaitMetadataBatchEdgeCases:
         """
         dists = [make_sdist("1.0"), make_wheel("1.0")]
         coordinator = make_coordinator(dists, sdist_pkg_info=PKG_INFO_PRE_PEP643_DEPS)
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         with pytest.raises(UnsupportedSdistError):
             provider.get_dependencies("pkg", V("1.0"))
 
@@ -5919,7 +5709,7 @@ class TestSpeculativePrefetchSkipsNonWheelDists:
         root_reqs = {"foo": SpecifierSet(">=1.0").to_range()}
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements=root_reqs,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
@@ -5955,7 +5745,7 @@ class TestChooseVersionBatchLoop:
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements=root_reqs,
         )
         # Use a small batch size to force multiple iterations.
@@ -5993,7 +5783,7 @@ class TestChooseVersionBatchLoop:
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements=root_reqs,
         )
         provider._BROAD_LA_REJECT_CAP = 1
@@ -6137,12 +5927,12 @@ class TestSharedSlotProvenance:
         the pre-PEP-643 deps.
         """
         coordinator = make_coordinator(None, sdist_pkg_info=PKG_INFO_PRE_PEP643_DEPS)
-        first = Provider(coordinator, python_version="3.12.0")
+        first = Provider(coordinator, target=_PY312)
         first.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
         with pytest.raises(UnsupportedSdistError):
             first.get_dependencies("pkg", V("1.0"))
 
-        second = Provider(coordinator, python_version="3.12.0")
+        second = Provider(coordinator, target=_PY312)
         second.versions_cache["pkg"] = [
             (V("1.0"), make_wheel("1.0")),
             (V("1.0"), make_sdist("1.0")),
@@ -6163,11 +5953,11 @@ class TestSharedSlotProvenance:
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: dep-a\n"
         )
         coordinator = make_coordinator(None, metadata_text=metadata)
-        first = Provider(coordinator, python_version="3.12.0")
+        first = Provider(coordinator, target=_PY312)
         first.versions_cache["pkg"] = [(V("1.0"), make_wheel("1.0"))]
         assert "dep-a" in first.get_dependencies("pkg", V("1.0"))
 
-        second = Provider(coordinator, python_version="3.12.0")
+        second = Provider(coordinator, target=_PY312)
         second.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
         assert "dep-a" in second.get_dependencies("pkg", V("1.0"))
 
@@ -6388,7 +6178,7 @@ class TestEffectiveBuildPolicy:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_LOCAL,
             package_overrides=(
@@ -6460,7 +6250,7 @@ class TestEffectiveBuildPolicy:
         from nab_python._vendor.packaging.version import Version as _Version
 
         coordinator = make_coordinator([make_sdist("1.0")], package="pkg")
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         cached_meta = WheelMetadata(
             name="pkg",
             version=_Version("1.0"),
@@ -6493,7 +6283,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(UnsupportedSdistError):
@@ -6508,7 +6298,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(UnsupportedSdistError):
@@ -6534,7 +6324,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         deps = provider.get_dependencies("pkg", V("1.0"))
@@ -6554,7 +6344,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(UnsupportedSdistError):
@@ -6575,7 +6365,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(UnsupportedSdistError):
@@ -6598,7 +6388,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         deps = provider.get_dependencies("pkg", V("1.0"))
@@ -6617,7 +6407,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(UnsupportedSdistError):
@@ -6632,7 +6422,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(UnsupportedSdistError):
@@ -6647,7 +6437,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(UnsupportedSdistError):
@@ -6669,7 +6459,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         deps = provider.get_dependencies("pkg", V("1.0"))
@@ -6685,7 +6475,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(MetadataError, match="must be an array of strings"):
@@ -6707,7 +6497,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(MetadataError, match="must be a table"):
@@ -6729,7 +6519,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         deps = provider.get_dependencies("pkg", V("1.0"))
@@ -6753,7 +6543,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(MetadataError, match="extra 'bad' must be an array"):
@@ -6774,7 +6564,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(MetadataError, match="must be an array of strings"):
@@ -6795,7 +6585,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(MetadataError, match="invalid requirement"):
@@ -6818,7 +6608,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(MetadataError, match="invalid requirement"):
@@ -6841,7 +6631,7 @@ class TestStaticSdistMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         with pytest.raises(MetadataError, match="extra 'foo' must be an array"):
@@ -6884,7 +6674,7 @@ class TestStaticSdistMetadata:
 
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
@@ -6916,7 +6706,7 @@ class TestStaticSdistMetadata:
 
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
@@ -6962,7 +6752,7 @@ class TestStaticSdistMetadata:
 
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
@@ -7001,7 +6791,7 @@ class TestStaticSdistMetadata:
         root_reqs = {"pkg": SpecifierSet(">=0").to_range()}
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             root_requirements=root_reqs,
         )
@@ -7027,7 +6817,7 @@ class TestBuildRemoteFailureModes:
         coordinator = make_coordinator(files, package="pkg")
         return Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_REMOTE,
             package_overrides=overrides,
@@ -7317,7 +7107,7 @@ class TestPublicAccessors:
         local = LocalSource(name="My-Lib", path="/tmp/my-lib")
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             local_sources=[local],
             build_policy=BuildPolicy.NEVER,
         )
@@ -7333,7 +7123,7 @@ class TestPublicAccessors:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             vcs_sources=[vcs],
             vcs_config=VcsConfig(
                 policy=VcsPolicy.ALLOW,
@@ -7350,7 +7140,7 @@ class TestPublicAccessors:
         coordinator = make_coordinator(wheels, package="pkg")
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements={"pkg": SpecifierSet(">=0").to_range()},
         )
         # Force the listing into the cache by asking for a version
@@ -7361,7 +7151,7 @@ class TestPublicAccessors:
 
     def test_dist_files_for_unlisted_returns_empty(self) -> None:
         coordinator = make_coordinator(package="pkg")
-        provider = Provider(coordinator, python_version="3.12.0")
+        provider = Provider(coordinator, target=_PY312)
         assert provider.dist_files_for("unknown", V("1.0")) == []
 
 
@@ -7399,9 +7189,7 @@ class TestExtrasInvalidMetadata:
             metadata_by_version={"2.0": EXTRA_METADATA, "1.0": EXTRA_METADATA},
             package="foo",
         )
-        provider = Provider(
-            coordinator, python_version="3.12.0", extras_mode=ExtrasMode.WARN
-        )
+        provider = Provider(coordinator, target=_PY312, extras_mode=ExtrasMode.WARN)
         provider._invalid_metadata[("foo", V("2.0"))] = "stub"
         version = provider.choose_version("foo[security]", VersionRange.full())
         assert version == V("1.0")
@@ -7414,9 +7202,7 @@ class TestExtrasInvalidMetadata:
             metadata_by_version={"2.0": self.BAD_META, "1.0": EXTRA_METADATA},
             package="foo",
         )
-        provider = Provider(
-            coordinator, python_version="3.12.0", extras_mode=ExtrasMode.WARN
-        )
+        provider = Provider(coordinator, target=_PY312, extras_mode=ExtrasMode.WARN)
         version = provider.choose_version("foo[security]", VersionRange.full())
         assert version == V("1.0")
 
@@ -7435,7 +7221,7 @@ class TestExtrasInvalidMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             extras_mode=ExtrasMode.WARN,
             root_extras={("foo", "security")},
         )
@@ -7461,7 +7247,7 @@ class TestExtrasInvalidMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_extras={("foo", "security")},
         )
         version = provider.choose_version("foo[security]", VersionRange.full())
@@ -7481,7 +7267,7 @@ class TestExtrasInvalidMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             extras_mode=ExtrasMode.WARN,
             root_extras={("foo", "security")},
         )
@@ -7503,7 +7289,7 @@ class TestExtrasInvalidMetadata:
         )
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_extras={("foo", "security")},
         )
         version = provider.choose_version("foo[security]", VersionRange.full())
@@ -7529,7 +7315,7 @@ class TestExtrasInvalidMetadata:
         }
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=_PY312,
             root_requirements=root_reqs,
             root_extras={("pkg", "feature")},
         )
@@ -7554,9 +7340,7 @@ class TestScanBatchNoFirstCandidate:
             wheels, metadata_by_version=meta_by_version, package="foo"
         )
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(
-            coordinator, python_version="3.12.0", root_requirements=root_reqs
-        )
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("1")})
         provider._LOOKAHEAD_ABORT_THRESHOLD = 2  # type: ignore[misc]
         wheel_by = {V(str(i)): wheels[20 - i] for i in range(20, 0, -1)}

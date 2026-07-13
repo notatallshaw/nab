@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from ..config import IndexOverride, NabProjectConfig, PackageOverride
     from ..fetch import FetchCoordinator
-    from .matrix import MatrixTuple
+    from ..target import ResolveTarget
     from .resolve import UniversalResult
     from .validate import PinValidation, ValidationReport
 
@@ -199,7 +199,7 @@ def _reresolve_one_step(  # noqa: PLR0913
 
 def _resolve_one_tuple_with_overrides(  # noqa: PLR0913
     coordinator: FetchCoordinator,
-    tup: MatrixTuple,
+    tup: ResolveTarget,
     requirements: list[str],
     wheel_metadata: dict[tuple[str, str], str],
     *,
@@ -219,12 +219,14 @@ def _resolve_one_tuple_with_overrides(  # noqa: PLR0913
     resolution_strategy: str,
 ) -> dict[str, str]:
     """Re-resolve ``tup`` with the given metadata overrides; return pins."""
-    # Carry the original tuple's patch release so markers gated on
+    # Carry the original target's patch release so markers gated on
     # python_full_version evaluate the same in both passes.
+    spec = tup.platform_spec
+    assert spec is not None  # every matrix target declares one
     one_tuple_matrix = _Matrix(
         python=f"=={tup.python_version}",
-        platforms=(tup.platform_spec,),
-        python_patches={tup.python_version: tup.environment["python_full_version"]},
+        platforms=(spec,),
+        python_patches={tup.python_version: tup.python_full_version},
         implementations=(tup.implementation,),
     )
     with _override_metadata(coordinator, wheel_metadata):

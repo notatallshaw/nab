@@ -18,7 +18,6 @@ from nab_resolver.resolver import (
 
 from ._conflict_kind import dependency_marker_holds, membership_set_in_marker
 from ._vcs_admission import admit_vcs_url
-from ._vendor.packaging.markers import default_environment
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import SpecifierSet
@@ -41,11 +40,10 @@ from .config import (
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, build_lock_input_from_provider
 from .provider import (
+    BuildPolicy,
     Provider,
     ResolutionStrategy,
-    apply_python_axis_overlay,
     join_extra,
-    python_axis_environment,
     split_extra,
 )
 from .requirements_file import (
@@ -60,6 +58,7 @@ from .requirements_file import (
     resolve_groups_to_requirements,
     select_optional_dependencies,
 )
+from .target import ResolveTarget
 from .universal.matrix import Matrix
 from .universal.resolve import (
     ResolveFork,
@@ -72,8 +71,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport
-
-    from .universal.matrix import MatrixTuple
 
 
 __all__ = [
@@ -149,17 +146,16 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
 
     if python_version is not None:
-        effective_python = python_version
+        target = ResolveTarget.for_host_python(python_version)
     elif config.requires_python is not None:
-        effective_python = _resolve_target_python(config.requires_python)
+        target = ResolveTarget.for_host_python(
+            _resolve_target_python(config.requires_python)
+        )
     else:
-        vi = sys.version_info
-        effective_python = f"{vi.major}.{vi.minor}.{vi.micro}"
-
-    marker_environment = _build_marker_environment(
-        python_version=effective_python,
-        overrides=config.marker_environment,
-    )
+        target = ResolveTarget.for_host()
+    _check_marker_overlay_build_policy(config)
+    target = target.with_marker_overrides(config.marker_environment)
+    marker_environment = target.marker_env
 
     if config.conflicts:
         # Read each table once and reuse it across the existence check
@@ -209,7 +205,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     ) as coordinator:
         provider = Provider(
             coordinator,
-            python_version=marker_environment["python_full_version"],
+            target=target,
             root_requirements=resolver_requirements,
             uploaded_prior_to=config.uploaded_prior_to,
             root_extras=root_extras,
@@ -219,7 +215,6 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             index_overrides=config.index_overrides,
             trust_unverified_sdist_deps=config.trust_unverified_sdist_deps,
             vcs_config=config.vcs,
-            marker_environment=dict(config.marker_environment) or None,
             local_sources=list(config.local_sources) or None,
             vcs_sources=list(config.vcs_sources) or None,
             vcs_cache_dir=cache_dir / "vcs" if cache_dir is not None else None,
@@ -245,7 +240,7 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
         if config.local_sources or config.vcs_sources or config.archive_sources:
             _raise_for_source_python(
-                provider, pins, Version(marker_environment["python_full_version"])
+                provider, pins, Version(target.python_full_version)
             )
         lock_input = build_lock_input_from_provider(
             provider,
@@ -324,7 +319,7 @@ def _group_requirements_by_group_from_table(
 
 
 def _group_package_ranges(
-    requirements: list[Requirement], environment: dict[str, str]
+    requirements: list[Requirement], environment: Mapping[str, str]
 ) -> tuple[dict[str, VersionRange], dict[str, list[str]]]:
     """Fold one group's direct requirements into per-package ranges.
 
@@ -373,7 +368,7 @@ class _GroupConflict:
 
 def _find_group_conflicts(
     per_group: Mapping[str, list[Requirement]],
-    environment: dict[str, str],
+    environment: Mapping[str, str],
 ) -> list[_GroupConflict]:
     """Return the direct group-vs-group conflicts under ``environment``.
 
@@ -419,7 +414,7 @@ def _find_group_conflicts(
 def _check_group_disjointness(
     per_group: Mapping[str, list[Requirement]],
     *,
-    environment: dict[str, str],
+    environment: Mapping[str, str],
 ) -> None:
     """Raise on the first direct conflict between two groups, naming them.
 
@@ -437,7 +432,7 @@ def _check_group_disjointness(
 
 def _check_group_disjointness_across_tuples(
     per_group: Mapping[str, list[Requirement]],
-    tuples: Sequence[MatrixTuple],
+    tuples: Sequence[ResolveTarget],
 ) -> None:
     """Raise if a direct group conflict holds on any targeted tuple.
 
@@ -446,7 +441,7 @@ def _check_group_disjointness_across_tuples(
     """
     affected: dict[_GroupConflict, set[str]] = defaultdict(set)
     for t in tuples:
-        for conflict in _find_group_conflicts(per_group, t.environment):
+        for conflict in _find_group_conflicts(per_group, t.marker_env):
             affected[conflict].add(t.label)
     if not affected:
         return
@@ -469,7 +464,7 @@ def _check_group_disjointness_across_tuples(
 def _load_extra_requirements(
     path: Path,
     selected: Sequence[str],
-    environment: dict[str, str] | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> list[Requirement]:
     """Read [project.optional-dependencies] from ``path`` and expand ``selected``.
 
@@ -496,7 +491,7 @@ def _extra_requirements_from_table(
     selected: Sequence[str],
     *,
     path: Path,
-    environment: dict[str, str] | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> list[Requirement]:
     """Expand ``selected`` extras from an already-read optional-deps table.
 
@@ -678,7 +673,7 @@ def _build_resolver_inputs(
     requirements: list[Requirement],
     config: NabProjectConfig,
     *,
-    environment: dict[str, str],
+    environment: Mapping[str, str],
 ) -> tuple[dict[str, VersionRange], set[tuple[str, str]]]:
     """Convert PEP 508 ``Requirement`` objects to the resolver's input shape.
 
@@ -722,27 +717,40 @@ def _build_resolver_inputs(
     return resolver_requirements, root_extras
 
 
-def _build_marker_environment(
-    *,
-    python_version: str,
-    overrides: Mapping[str, str],
-) -> dict[str, str]:
-    """Return the merged PEP 508 environment used for root-marker evaluation.
+def _check_marker_overlay_build_policy(config: NabProjectConfig) -> None:
+    """Reject a non-``NEVER`` build policy under a marker-environment overlay.
 
-    Mirrors :class:`Provider`: defaults from
-    :func:`default_environment`, then ``python_version`` /
-    ``python_full_version`` rewritten from the effective Python, then
-    user overrides. An overlay touching one python-axis key re-derives the
-    other through :func:`apply_python_axis_overlay` so they stay in sync.
+    Backends run on the host, so invoking one under an overlay would
+    produce metadata that does not match the impersonated target.  The
+    guard inspects both override surfaces as well as the global, so a
+    single build override cannot quietly opt out of the soundness check.
+    A config with no overlay resolves against the host and builds freely.
     """
-    env: dict[str, str] = {
-        key: value
-        for key, value in default_environment().items()
-        if isinstance(value, str)
-    }
-    apply_python_axis_overlay(env, python_axis_environment(python_version))
-    apply_python_axis_overlay(env, overrides)
-    return env
+    if not config.marker_environment:
+        return
+    offending: list[tuple[str, BuildPolicy]] = []
+    if config.build_policy is not BuildPolicy.NEVER:
+        offending.append(("<global>", config.build_policy))
+    offending.extend(
+        (o.name, o.build_policy)
+        for o in config.package_overrides
+        if o.build_policy not in (None, BuildPolicy.NEVER)
+    )
+    offending.extend(
+        (f"index:{name}", o.build_policy)
+        for name, o in config.index_overrides.items()
+        if o.build_policy not in (None, BuildPolicy.NEVER)
+    )
+    if not offending:
+        return
+    rendered = ", ".join(f"{name}={policy.value}" for name, policy in offending)
+    msg = (
+        "marker_environment overlay requires BuildPolicy.NEVER globally"
+        " and in every override that sets build-policy; got"
+        f" {rendered}.  Backends run on the host and report metadata for"
+        " the host, not the impersonated target."
+    )
+    raise ValueError(msg)
 
 
 def _raise_for_source_python(
@@ -780,7 +788,7 @@ def _validate_universal_conflict_minimums(
     tables: _ForkTables,
     selected_extras: Sequence[str],
     active_groups: Sequence[str],
-    tuples: Sequence[MatrixTuple],
+    tuples: Sequence[ResolveTarget],
 ) -> None:
     """Run the require-one minimums check per tuple, marker-aware.
 
@@ -792,7 +800,7 @@ def _validate_universal_conflict_minimums(
     """
     for t in tuples:
         active_extras = expand_self_extras(
-            tables.optional, tables.project_name, selected_extras, t.environment
+            tables.optional, tables.project_name, selected_extras, t.marker_env
         )
         try:
             validate_conflict_minimums(conflicts, active_extras, active_groups)
@@ -806,7 +814,7 @@ def _validate_universal_conflict_exclusions(
     tables: _ForkTables,
     active_extras: Sequence[str],
     active_groups: Sequence[str],
-    tuples: Sequence[MatrixTuple],
+    tuples: Sequence[ResolveTarget],
 ) -> None:
     """Run the at-most-one exclusion check per tuple, marker-aware.
 
@@ -818,7 +826,7 @@ def _validate_universal_conflict_exclusions(
     expanded_groups = expand_group_includes(tables.groups, active_groups)
     for t in tuples:
         expanded_extras = expand_self_extras(
-            tables.optional, tables.project_name, active_extras, t.environment
+            tables.optional, tables.project_name, active_extras, t.marker_env
         )
         try:
             validate_conflict_exclusions(conflicts, expanded_extras, expanded_groups)
@@ -1028,7 +1036,7 @@ def _resolve_target_python(specifier: str) -> str:
 
 
 def _build_constraints(
-    config: NabProjectConfig, *, environment: dict[str, str]
+    config: NabProjectConfig, *, environment: Mapping[str, str]
 ) -> dict[str, VersionRange]:
     """Parse constraint strings from config into resolver-input ranges.
 

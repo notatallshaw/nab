@@ -51,6 +51,7 @@ from nab_python.provider import (
     VcsPolicy,
     split_extra,
 )
+from nab_python.target import ResolveTarget
 from nab_resolver.resolver import Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -184,6 +185,15 @@ def scenario_marker_env(
     return env
 
 
+def resolve_target(
+    python_version: str,
+    marker_environment: dict[str, str] | None,
+) -> ResolveTarget:
+    """Build the scenario's resolve target: host machine, scenario Python."""
+    target = ResolveTarget.for_host_python(python_version)
+    return target.with_marker_overrides(marker_environment or {})
+
+
 def parse_datetime(value: str) -> datetime:
     """Parse an ISO 8601 datetime string to a timezone-aware datetime."""
     dt = datetime.fromisoformat(value)
@@ -245,14 +255,13 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
     ) as coordinator:
         provider = Provider(
             coordinator,
-            python_version=python_version,
+            target=resolve_target(python_version, marker_environment),
             root_requirements=requirements,
             uploaded_prior_to=uploaded_prior_to,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             package_overrides=package_overrides,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
-            marker_environment=marker_environment,
             resolution_strategy=resolution_strategy,
             direct_packages=direct_packages,
         )

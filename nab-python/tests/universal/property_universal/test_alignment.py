@@ -23,7 +23,8 @@ from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.version import Version
 from nab_python.lockfile import IndexPin, LockInput
 from nab_python.tags import PlatformSpec
-from nab_python.universal.matrix import Matrix, MatrixTuple
+from nab_python.target import ResolveTarget
+from nab_python.universal.matrix import Matrix
 from nab_python.universal.resolve import (
     TupleResult,
     UniversalResult,
@@ -33,18 +34,14 @@ from nab_python.universal.resolve import (
 )
 from nab_resolver.errors import ResolutionError
 
-from .strategies import LINUX_ENV, PROPERTY_SETTINGS
+from .strategies import LINUX_TARGET, PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 
 
-def _fake_tuple() -> MatrixTuple:
-    """Build a minimal linux/3.11 ``MatrixTuple`` for property fixtures."""
-    return MatrixTuple(
-        python_version="3.11",
-        platform_spec=PlatformSpec("linux_x86_64"),
-        environment=LINUX_ENV,
-    )
+def _fake_tuple() -> ResolveTarget:
+    """Build a minimal linux/3.11 target for property fixtures."""
+    return LINUX_TARGET
 
 
 @st.composite
@@ -131,7 +128,7 @@ class TestMarkerFiltering:
         self, reqs: list[str]
     ) -> None:
         """Requirements with non-matching markers are absent from the parsed dict."""
-        linux_env = _fake_tuple().environment
+        linux_env = _fake_tuple().marker_env
         try:
             out = _parse_requirements(reqs, linux_env)
         except ResolutionError:
@@ -165,8 +162,8 @@ _PLATFORM_POOL: tuple[str, ...] = (
 @st.composite
 def tuple_lock_inputs(
     draw: st.DrawFn,
-) -> list[tuple[MatrixTuple, dict[str, IndexPin]]]:
-    """Draw N ``(MatrixTuple, pin_map)`` pairs with unique labels."""
+) -> list[tuple[ResolveTarget, dict[str, IndexPin]]]:
+    """Draw N ``(ResolveTarget, pin_map)`` pairs with unique labels."""
     size = draw(st.integers(min_value=1, max_value=3))
     chosen_platforms = draw(
         st.lists(
@@ -176,12 +173,10 @@ def tuple_lock_inputs(
             unique=True,
         )
     )
-    pairs: list[tuple[MatrixTuple, dict[str, IndexPin]]] = []
+    pairs: list[tuple[ResolveTarget, dict[str, IndexPin]]] = []
     for platform in chosen_platforms:
-        tup = MatrixTuple(
-            python_version="3.11",
-            platform_spec=PlatformSpec(platform),
-            environment={**LINUX_ENV, "sys_platform": platform.split("_", 1)[0]},
+        tup = ResolveTarget.for_declared(
+            python_version="3.11", spec=PlatformSpec(platform)
         )
         pairs.append((tup, draw(pin_maps())))
     return pairs
@@ -203,7 +198,7 @@ class TestMergeUniversalLockInputs:
     @given(pairs=tuple_lock_inputs())
     @PROPERTY_SETTINGS
     def test_merge_preserves_per_tuple_pins(
-        self, pairs: list[tuple[MatrixTuple, dict[str, IndexPin]]]
+        self, pairs: list[tuple[ResolveTarget, dict[str, IndexPin]]]
     ) -> None:
         """Every input ``(name, version)`` reappears under the source tuple's label."""
         matrix = Matrix(

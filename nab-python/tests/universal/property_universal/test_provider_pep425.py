@@ -20,17 +20,18 @@ from hypothesis import strategies as st
 from nab_index.client import SdistFile, WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python.provider import BuildPolicy, DistPolicy
-from nab_python.tags import PlatformSpec, select_wheel
+from nab_python.tags import PlatformSpec, TagSet
+from nab_python.target import ResolveTarget
 from nab_python.universal.provider import UniversalProvider
 
-from .strategies import LINUX_ENV, PROPERTY_SETTINGS
+from .strategies import LINUX_TARGET, PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 
 
 def compatible(wheel: WheelFile, spec: PlatformSpec) -> bool:
     """True iff a CPython 3.11 target on ``spec`` would install ``wheel``."""
-    return select_wheel([wheel], python_version="3.11", spec=spec) is not None
+    return TagSet.for_spec(python_version="3.11", spec=spec).pick([wheel]) is not None
 
 
 _PLATFORM_TAGS = (
@@ -93,8 +94,8 @@ def coordinator(files: list[WheelFile | SdistFile]) -> MagicMock:
     return make_coordinator(files, package="pkg")
 
 
-class TestNoPlatformSpecIsNoOp:
-    """When ``platform_spec=None`` the universal provider must return
+class TestNoTagFilterIsNoOp:
+    """Without ``filter_by_wheel_tags`` the universal provider must return
     the parent provider's full listing unchanged.
 
     The override delegates to ``super().filter_distributions`` and
@@ -105,11 +106,11 @@ class TestNoPlatformSpecIsNoOp:
 
     @given(files=listing())
     @PROPERTY_SETTINGS
-    def test_no_platform_spec_is_noop(self, files: list[WheelFile | SdistFile]) -> None:
-        """Without ``platform_spec`` the override matches super()'s output."""
+    def test_no_tag_filter_is_noop(self, files: list[WheelFile | SdistFile]) -> None:
+        """Without the tag filter the override matches super()'s output."""
         provider = UniversalProvider(
             coordinator(files),
-            marker_environment=LINUX_ENV,
+            LINUX_TARGET,
         )
         super_out = UniversalProvider.__mro__[1].filter_distributions(
             provider, "pkg", files
@@ -135,8 +136,8 @@ class TestFilterIsSubsetOfParent:
         """The override never adds entries; it only removes."""
         provider = UniversalProvider(
             coordinator(files),
-            marker_environment=LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64"),
+            LINUX_TARGET,
+            filter_by_wheel_tags=True,
             build_policy=BuildPolicy.NEVER,
         )
         super_out = UniversalProvider.__mro__[1].filter_distributions(
@@ -169,8 +170,8 @@ class TestOnlyCompatibleWheelsKept:
         spec = PlatformSpec("linux_x86_64")
         provider = UniversalProvider(
             coordinator(files),
-            marker_environment=LINUX_ENV,
-            platform_spec=spec,
+            ResolveTarget.for_declared(python_version="3.11", spec=spec),
+            filter_by_wheel_tags=True,
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
         out = provider.filter_distributions("pkg", files)
@@ -199,8 +200,8 @@ class TestVersionAdmissionPolicy:
         spec = PlatformSpec("linux_x86_64")
         provider = UniversalProvider(
             coordinator(files),
-            marker_environment=LINUX_ENV,
-            platform_spec=spec,
+            ResolveTarget.for_declared(python_version="3.11", spec=spec),
+            filter_by_wheel_tags=True,
             build_policy=BuildPolicy.BUILD_REMOTE,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
@@ -231,8 +232,8 @@ class TestVersionAdmissionPolicy:
         spec = PlatformSpec("linux_x86_64")
         provider = UniversalProvider(
             coordinator(files),
-            marker_environment=LINUX_ENV,
-            platform_spec=spec,
+            ResolveTarget.for_declared(python_version="3.11", spec=spec),
+            filter_by_wheel_tags=True,
             build_policy=BuildPolicy.NEVER,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )

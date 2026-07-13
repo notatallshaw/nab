@@ -27,7 +27,7 @@ from nab_python.universal.validate import (
     _per_extra_divergence,
 )
 
-from .strategies import LINUX_ENV, PROPERTY_SETTINGS
+from .strategies import LINUX_TARGET, PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 
@@ -89,7 +89,7 @@ class TestEvaluateGroupsByExtra:
     ) -> None:
         """Computed buckets equal the buckets we encoded in the METADATA."""
         text, expected = payload
-        out = _evaluate_metadata_deps_by_extra(text, LINUX_ENV)
+        out = _evaluate_metadata_deps_by_extra(text, LINUX_TARGET.marker_env)
         assert out == expected
 
 

@@ -255,7 +255,7 @@ def expand_self_extras(
     optional_deps: Mapping[str, Sequence[str]],
     project_name: str | None,
     selected: Sequence[str],
-    environment: dict[str, str] | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Return ``selected`` plus every extra reachable through self-references.
 

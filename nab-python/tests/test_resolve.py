@@ -9,11 +9,14 @@ import pytest
 
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.overrides import pkg_override
+from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import InvalidVersion, Version
 from nab_python.config import (
     ConfigError,
     ConflictSelectionError,
+    IndexOverride,
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
@@ -30,10 +33,10 @@ from nab_python.resolve import (
     UnsupportedModeError,
     _augment_resolution_error,
     _build_constraints,
-    _build_marker_environment,
     _build_resolver_inputs,
     _check_group_disjointness,
     _check_group_disjointness_across_tuples,
+    _check_marker_overlay_build_policy,
     _find_group_conflicts,
     _load_extra_requirements,
     _load_group_requirements,
@@ -45,7 +48,7 @@ from nab_python.resolve import (
     resolve_universal_pyproject,
 )
 from nab_python.tags import PlatformSpec
-from nab_python.universal.matrix import MatrixTuple
+from nab_python.target import ResolveTarget
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import (
     Incompatibility,
@@ -535,14 +538,9 @@ class TestResolvePyproject:
 
             resolve_pyproject(pyproject, _FAKE_TRANSPORT)
 
-        call_kwargs = mock_provider_cls.call_args
-        pv = call_kwargs.kwargs.get("python_version") or call_kwargs[1].get(
-            "python_version"
-        )
-        assert pv is not None
-        parts = pv.split(".")
-        assert len(parts) == 3
-        assert all(p.isdigit() for p in parts)
+        target = mock_provider_cls.call_args.kwargs["target"]
+        assert target.host_faithful
+        assert target.marker_env == default_environment()
 
     def test_indexes_from_config_passed_to_coordinator(self, tmp_path: Path) -> None:
         """[tool.nab.indexes] reaches FetchCoordinator as the indexes list."""
@@ -747,6 +745,7 @@ class TestResolvePyproject:
         pyproject.write_text(
             "[project]\n"
             'dependencies = ["foo", "windows-only; sys_platform == \'win32\'"]\n'
+            '[tool.nab]\nbuild-policy = "never"\n'
             "[tool.nab.marker-environment]\n"
             'sys_platform = "linux"\n',
         )
@@ -818,6 +817,7 @@ class TestResolvePyproject:
         pyproject.write_text(
             "[project]\n"
             'dependencies = ["foo", "linux-only; sys_platform == \'linux\'"]\n'
+            '[tool.nab]\nbuild-policy = "never"\n'
             "[tool.nab.marker-environment]\n"
             'sys_platform = "linux"\n',
         )
@@ -902,7 +902,8 @@ class TestResolvePyproject:
 
         resolve_pyproject(pyproject, _FAKE_TRANSPORT)
 
-        assert mock_provider_cls.call_args.kwargs["python_version"] == "3.10.5"
+        target = mock_provider_cls.call_args.kwargs["target"]
+        assert target.python_full_version == "3.10.5"
 
     @patch("nab_python.resolve.build_lock_input_from_provider")
     @patch("nab_python.resolve.Resolver")
@@ -929,7 +930,8 @@ class TestResolvePyproject:
 
         resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.4")
 
-        assert mock_provider_cls.call_args.kwargs["python_version"] == "3.12.4"
+        target = mock_provider_cls.call_args.kwargs["target"]
+        assert target.python_full_version == "3.12.4"
 
     def test_universal_mode_rejected(self, tmp_path: Path) -> None:
         """resolve_pyproject refuses to handle mode = 'universal'."""
@@ -2547,104 +2549,93 @@ class TestAugmentResolutionError:
         assert "foo: package not found on any configured index" in str(info.value)
 
 
-def _tuple_for_python(python_version: str) -> MatrixTuple:
-    """Build a linux_x86_64 tuple for ``python_version``.
+def _tuple_for_python(python_version: str) -> ResolveTarget:
+    """Build a linux_x86_64 target for ``python_version``.
 
     Only the marker environment matters for the group pre-pass, so the
     platform axis is held constant and the python axis varies; the
     label encodes the python version so a conflict message can be
     asserted against it.
     """
-    return MatrixTuple(
+    return ResolveTarget.for_declared(
         python_version=python_version,
-        platform_spec=PlatformSpec("linux_x86_64"),
-        environment={
-            "python_version": python_version,
-            "python_full_version": f"{python_version}.0",
-            "implementation_name": "cpython",
-            "implementation_version": f"{python_version}.0",
-            "os_name": "posix",
-            "platform_machine": "x86_64",
-            "platform_python_implementation": "CPython",
-            "platform_release": "",
-            "platform_system": "Linux",
-            "platform_version": "",
-            "sys_platform": "linux",
-        },
+        spec=PlatformSpec("linux_x86_64"),
     )
 
 
-class TestBuildMarkerEnvironment:
-    def test_two_part_python_version_expands_full_version(self) -> None:
-        """python_full_version pads to three components, matching the matrix."""
-        env = _build_marker_environment(python_version="3.10", overrides={})
-        assert env["python_version"] == "3.10"
-        assert env["python_full_version"] == "3.10.0"
+class TestCheckMarkerOverlayBuildPolicy:
+    """A marker overlay forces ``BuildPolicy.NEVER`` everywhere it can build."""
 
-    def test_full_python_version_preserved(self) -> None:
-        env = _build_marker_environment(python_version="3.11.5", overrides={})
-        assert env["python_full_version"] == "3.11.5"
+    def test_default_policy_blocked_when_overlay_used(self) -> None:
+        """The default ``BUILD_LOCAL`` is rejected with a marker overlay.
 
-    def test_overlay_python_version_alone_syncs_full_version(self) -> None:
-        """An overlay python_version drives python_full_version too.
-
-        Setting only ``python_version`` moves ``python_full_version`` off
-        the host patch level to ``{minor}.0``, so a
-        ``python_full_version``-gated marker no longer reads the host
-        interpreter.
+        Users who want a marker overlay must opt into ``never`` explicitly,
+        since a host-side backend cannot reflect the impersonated target.
         """
-        env = _build_marker_environment(
-            python_version="3.12.3", overrides={"python_version": "3.8"}
+        config = NabProjectConfig(
+            marker_environment={"platform_system": "Windows"},
         )
-        assert env["python_version"] == "3.8"
-        assert env["python_full_version"] == "3.8.0"
+        with pytest.raises(ValueError, match="marker_environment overlay requires"):
+            _check_marker_overlay_build_policy(config)
 
-    def test_overlay_full_version_alone_syncs_minor(self) -> None:
-        """An overlay python_full_version drives python_version too."""
-        env = _build_marker_environment(
-            python_version="3.12.3", overrides={"python_full_version": "3.8.7"}
+    def test_overlay_with_build_remote_policy_raises(self) -> None:
+        """Non-``NEVER`` global + a marker overlay is rejected."""
+        config = NabProjectConfig(
+            build_policy=BuildPolicy.BUILD_REMOTE,
+            marker_environment={"platform_system": "Windows"},
         )
-        assert env["python_version"] == "3.8"
-        assert env["python_full_version"] == "3.8.7"
+        with pytest.raises(ValueError, match="marker_environment overlay requires"):
+            _check_marker_overlay_build_policy(config)
 
-    def test_overlay_both_axis_values_respected(self) -> None:
-        """When the overlay sets both axis keys, both win verbatim."""
-        env = _build_marker_environment(
-            python_version="3.12.3",
-            overrides={"python_version": "3.8", "python_full_version": "3.8.7"},
+    def test_overlay_with_build_remote_override_raises(self) -> None:
+        """A build override that escapes ``NEVER`` also fails the guard."""
+        config = NabProjectConfig(
+            build_policy=BuildPolicy.NEVER,
+            package_overrides=(
+                pkg_override("foo", build_policy=BuildPolicy.BUILD_REMOTE),
+            ),
+            marker_environment={"platform_system": "Windows"},
         )
-        assert env["python_version"] == "3.8"
-        assert env["python_full_version"] == "3.8.7"
+        with pytest.raises(ValueError, match="marker_environment overlay requires"):
+            _check_marker_overlay_build_policy(config)
 
-    def test_overlay_without_python_keeps_host_axis(self) -> None:
-        """A non-python overlay leaves both python-axis values alone."""
-        env = _build_marker_environment(
-            python_version="3.12.3", overrides={"sys_platform": "win32"}
+    def test_overlay_with_build_remote_index_override_raises(self) -> None:
+        """A per-index build override that escapes ``NEVER`` fails the guard."""
+        config = NabProjectConfig(
+            build_policy=BuildPolicy.NEVER,
+            index_overrides={
+                "internal": IndexOverride(build_policy=BuildPolicy.BUILD_REMOTE)
+            },
+            marker_environment={"platform_system": "Windows"},
         )
-        assert env["python_version"] == "3.12"
-        assert env["python_full_version"] == "3.12.3"
-        assert env["sys_platform"] == "win32"
+        with pytest.raises(ValueError, match="marker_environment overlay requires"):
+            _check_marker_overlay_build_policy(config)
 
-    def test_target_python_moves_implementation_version(self) -> None:
-        """implementation_version follows a non-host target on CPython."""
-        env = _build_marker_environment(python_version="3.9.0", overrides={})
-        assert env["implementation_version"] == "3.9.0"
-        assert env["implementation_version"] == env["python_full_version"]
-
-    def test_overlay_python_moves_implementation_version(self) -> None:
-        """An overlay python-axis move drags implementation_version along."""
-        env = _build_marker_environment(
-            python_version="3.12.3", overrides={"python_version": "3.8"}
+    def test_overlay_with_never_override_passes(self) -> None:
+        """An override already at ``NEVER`` is not offending."""
+        config = NabProjectConfig(
+            build_policy=BuildPolicy.NEVER,
+            package_overrides=(
+                pkg_override("quarantined", build_policy=BuildPolicy.NEVER),
+            ),
+            marker_environment={"platform_system": "Windows"},
         )
-        assert env["implementation_version"] == "3.8.0"
+        _check_marker_overlay_build_policy(config)
 
-    def test_explicit_implementation_version_override_wins(self) -> None:
-        """An explicit implementation_version override is kept verbatim."""
-        env = _build_marker_environment(
-            python_version="3.9.0",
-            overrides={"implementation_version": "3.9.7"},
+    def test_no_overlay_no_constraint(self) -> None:
+        """Without an overlay, a looser ``BuildPolicy`` is fine."""
+        _check_marker_overlay_build_policy(
+            NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
         )
-        assert env["implementation_version"] == "3.9.7"
+
+    def test_empty_overlay_no_constraint(self) -> None:
+        """An empty overlay does not trigger the build-policy check."""
+        _check_marker_overlay_build_policy(
+            NabProjectConfig(
+                build_policy=BuildPolicy.BUILD_REMOTE,
+                marker_environment={},
+            )
+        )
 
 
 class TestCheckGroupDisjointnessAcrossTuples:
@@ -2889,8 +2880,8 @@ class TestLocalVcsRequiresPython:
         coordinator = make_coordinator([], package="foo")
         provider = Provider(
             coordinator,
+            target=ResolveTarget.for_host_python(python_version),
             local_sources=[LocalSource("foo", str(tmp_path))],
-            python_version=python_version,
             build_policy=BuildPolicy.NEVER,
         )
         provider.fetch_versions("foo")
