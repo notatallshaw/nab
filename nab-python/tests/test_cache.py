@@ -18,6 +18,12 @@ from nab_index.cache import (
     _index_dirname,
 )
 
+# Two wheels of one version, each with its own PEP 658 sidecar.
+METADATA_URLS = (
+    "https://f.example/foo-1.0-cp311-manylinux_2_17_x86_64.whl.metadata",
+    "https://f.example/foo-1.0-cp311-win_amd64.whl.metadata",
+)
+
 
 class TestCachePolicy:
     def test_is_fresh_within_window(self) -> None:
@@ -206,21 +212,26 @@ class TestOnDiskCache:
 
     def test_metadata_round_trip(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
-        cache.put_metadata("foo", "1.0", "Metadata-Version: 2.1\nName: foo\n")
-        assert cache.get_metadata("foo", "1.0") == (
+        cache.put_metadata(
+            "foo", METADATA_URLS[0], "Metadata-Version: 2.1\nName: foo\n"
+        )
+        assert cache.get_metadata("foo", METADATA_URLS[0]) == (
             "Metadata-Version: 2.1\nName: foo\n"
         )
 
     def test_metadata_miss(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
-        assert cache.get_metadata("foo", "1.0") is None
+        assert cache.get_metadata("foo", METADATA_URLS[0]) is None
 
-    def test_metadata_per_version(self, tmp_path: Path) -> None:
+    def test_metadata_per_artifact(self, tmp_path: Path) -> None:
+        """Each wheel of a version gets its own entry, keyed by sidecar URL."""
         cache = self._make(tmp_path)
-        cache.put_metadata("foo", "1.0", "v1")
-        cache.put_metadata("foo", "2.0", "v2")
-        assert cache.get_metadata("foo", "1.0") == "v1"
-        assert cache.get_metadata("foo", "2.0") == "v2"
+        linux_url, win_url = METADATA_URLS
+        cache.put_metadata("foo", linux_url, "linux")
+        cache.put_metadata("foo", win_url, "win")
+        assert cache.get_metadata("foo", linux_url) == "linux"
+        assert cache.get_metadata("foo", win_url) == "win"
+        assert len(list((tmp_path / "metadata-v1" / "pypi" / "foo").iterdir())) == 2
 
     def test_sdist_round_trip(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
@@ -243,31 +254,38 @@ class TestOnDiskCache:
         path.write_text("not-json", encoding="utf-8")
         assert cache.get_sdist_files("foo", "1.0") is None
 
-    def test_put_metadata_rejects_multi_segment_sentinel(self, tmp_path: Path) -> None:
+    def test_put_metadata_rejects_multi_segment_package(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
-        sentinel = "1.0#foo-1.0-py3-none-any/../../elsewhere.whl"
         with pytest.raises(ValueError, match="not a single path segment"):
-            cache.put_metadata("foo", sentinel, "text")
-        assert list(tmp_path.rglob("elsewhere.whl.metadata")) == []
+            cache.put_metadata("foo/../../elsewhere", METADATA_URLS[0], "text")
+        assert list(tmp_path.rglob("*.metadata")) == []
 
-    def test_sentinel_version_round_trips(self, tmp_path: Path) -> None:
+    def test_put_sdist_rejects_multi_segment_version(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
-        sentinel = "1.0#foo-1.0-py3-none-any.whl"
-        cache.put_metadata("foo", sentinel, "META")
-        assert cache.get_metadata("foo", sentinel) == "META"
+        with pytest.raises(ValueError, match="not a single path segment"):
+            cache.put_sdist_files("foo", "1.0/../../elsewhere", "Name: foo\n", None)
+        assert list(tmp_path.rglob("*.json")) == []
+
+    def test_metadata_url_cannot_escape_the_package_dir(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        cache.put_metadata("foo", "https://f.example/../../../etc/passwd.metadata", "T")
+        written = list(tmp_path.rglob("*.metadata"))
+        assert [p.parent for p in written] == [
+            tmp_path / "metadata-v1" / "pypi" / "foo"
+        ]
 
 
 class TestNullCache:
     def test_get_returns_none_and_put_is_noop(self) -> None:
         cache = NullCache()
         assert cache.get_simple("foo") is None
-        assert cache.get_metadata("foo", "1.0") is None
+        assert cache.get_metadata("foo", METADATA_URLS[0]) is None
         assert cache.get_sdist_files("foo", "1.0") is None
         # Puts must be no-ops with no return value.
         policy = CachePolicy(fetched_at=0, max_age=0, etag=None)
         assert cache.put_simple("foo", b"", policy) is None
         assert cache.refresh_simple_policy("foo", policy) is None
-        assert cache.put_metadata("foo", "1.0", "x") is None
+        assert cache.put_metadata("foo", METADATA_URLS[0], "x") is None
         assert cache.put_sdist_files("foo", "1.0", "x", None) is None
         # And subsequent gets still miss.
         assert cache.get_simple("foo") is None

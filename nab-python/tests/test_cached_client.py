@@ -1049,11 +1049,11 @@ class TestGetMetadataText:
 
         text = asyncio.run(go())
         assert text == "Metadata-Version: 2.1\n"
-        assert cache.get_metadata("pkg", "1.0") == text
+        assert cache.get_metadata("pkg", "https://x/pkg.metadata") == text
 
     def test_warm_cache_skips_network(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_metadata("pkg", "1.0", "stored")
+        cache.put_metadata("pkg", "https://x/pkg.metadata", "stored")
         transport = _FakeTransport()
 
         async def go() -> str:
@@ -1067,6 +1067,36 @@ class TestGetMetadataText:
 
         assert asyncio.run(go()) == "stored"
         assert transport.calls == []
+
+    def test_sibling_wheel_of_same_version_is_not_served(self, tmp_path: Path) -> None:
+        """A cached sidecar is not reused for another wheel of the same version.
+
+        PEP 658 publishes a sidecar per file, and per-platform wheels of one
+        version can declare different dependencies, so the second wheel must
+        be fetched and verified against its own digest.
+        """
+        linux_url = "https://f.example/foo-1.0-cp311-manylinux_2_17_x86_64.whl.metadata"
+        win_url = "https://f.example/foo-1.0-cp311-win_amd64.whl.metadata"
+        linux_body = b"Metadata-Version: 2.1\nRequires-Dist: linux-only-dep\n"
+        win_body = b"Metadata-Version: 2.1\nRequires-Dist: windows-only-dep\n"
+        transport = _FakeTransport([_FakeResponse(linux_body), _FakeResponse(win_body)])
+        win_digest = hashlib.sha256(win_body).hexdigest()
+
+        async def go() -> str:
+            warm = CachedAsyncSimpleClient(transport, _make_cache(tmp_path))
+            await warm.get_metadata_text("foo", "1.0", linux_url)
+            await warm.aclose()
+            # A later process reading the same cache root.
+            client = CachedAsyncSimpleClient(transport, _make_cache(tmp_path))
+            try:
+                return await client.get_metadata_text(
+                    "foo", "1.0", win_url, ("sha256", win_digest)
+                )
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == win_body.decode()
+        assert [url for url, _ in transport.calls] == [linux_url, win_url]
 
     def test_offline_miss_raises(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -1101,7 +1131,7 @@ class TestGetMetadataText:
 
         text = asyncio.run(go())
         assert text == body.decode()
-        assert cache.get_metadata("pkg", "1.0") == text
+        assert cache.get_metadata("pkg", "https://x/pkg.metadata") == text
 
     def test_mismatching_hash_raises_and_skips_cache(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -1120,7 +1150,7 @@ class TestGetMetadataText:
 
         with pytest.raises(MetadataHashMismatchError):
             asyncio.run(go())
-        assert cache.get_metadata("pkg", "1.0") is None
+        assert cache.get_metadata("pkg", "https://x/pkg.metadata") is None
 
     def test_returns_utf8_decode_of_verified_bytes(self, tmp_path: Path) -> None:
         """The result is the utf-8 decode of the hash-verified bytes.
@@ -1147,7 +1177,7 @@ class TestGetMetadataText:
 
         text = asyncio.run(go())
         assert text == body.decode("utf-8")
-        assert cache.get_metadata("foo", "1.0") == text
+        assert cache.get_metadata("foo", "https://x/foo.metadata") == text
         parsed = parse_metadata(text)
         assert [str(req) for req in parsed.requires_dist] == ["bar>=2"]
 

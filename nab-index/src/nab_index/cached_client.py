@@ -72,9 +72,10 @@ def _header(response: HttpResponse, key: str) -> str | None:
 class CachedAsyncSimpleClient:
     """Async PyPI Simple API client with on-disk caching.
 
-    Distinct from :class:`AsyncSimpleClient`: the metadata methods
-    take ``(package, version)`` so the cache can key by package
-    coordinate rather than URL. The interface mirrors what
+    Distinct from :class:`AsyncSimpleClient`: its methods take the
+    ``(package, version)`` coordinate alongside the artifact URL, so the
+    cache can key sdist records by coordinate and offline misses can name
+    what was being resolved. The interface mirrors what
     :class:`FetchCoordinator` actually needs.
     """
 
@@ -203,7 +204,13 @@ class CachedAsyncSimpleClient:
         metadata_url: str,
         metadata_hash: tuple[str, str] | None = None,
     ) -> str:
-        """Return PEP 658 metadata text for ``(package, version)``.
+        """Return the PEP 658 metadata text published at ``metadata_url``.
+
+        The cache entry stands for the sidecar at that URL, not for the
+        ``(package, version)`` coordinate: a version's wheels each publish
+        their own sidecar, and per-platform wheels can declare different
+        dependencies, so keying by version would serve one wheel's METADATA
+        for another.  ``version`` names the coordinate being resolved.
 
         Treated as immutable: cached forever, never revalidated.  A
         cache hit is returned without re-checking, since it was
@@ -217,7 +224,7 @@ class CachedAsyncSimpleClient:
         the response Content-Type charset. This keeps the parsed text
         tied to the bytes the hash covers.
         """
-        cached = self._cache.get_metadata(package, version)
+        cached = self._cache.get_metadata(package, metadata_url)
         if cached is not None:
             return cached
 
@@ -231,7 +238,7 @@ class CachedAsyncSimpleClient:
         if metadata_hash is not None:
             _verify_metadata_hash(content, metadata_hash)
         text = content.decode("utf-8")
-        self._cache.put_metadata(package, version, text)
+        self._cache.put_metadata(package, metadata_url, text)
         return text
 
     async def get_sdist_files(

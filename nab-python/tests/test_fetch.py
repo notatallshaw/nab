@@ -1294,6 +1294,45 @@ class TestFetchCoordinatorCache:
             assert listing == []
         assert not coord._crashed
 
+    @respx.mock
+    def test_warm_cache_keeps_sibling_wheels_apart(self, tmp_path: Path) -> None:
+        """One wheel's METADATA is never served for a sibling wheel of that version.
+
+        PEP 658 attaches a sidecar to a file, so per-platform wheels of one
+        version can declare different dependencies. A run whose compatible
+        wheel differs from an earlier run's must fetch its own sidecar.
+        """
+        linux_url = "https://f.example/foo-1.0-cp311-manylinux_2_17_x86_64.whl.metadata"
+        win_url = "https://f.example/foo-1.0-cp311-win_amd64.whl.metadata"
+        linux_body = (
+            b"Metadata-Version: 2.1\nName: foo\nRequires-Dist: linux-only-dep\n"
+        )
+        win_body = (
+            b"Metadata-Version: 2.1\nName: foo\nRequires-Dist: windows-only-dep\n"
+        )
+        linux_route = respx.get(linux_url).mock(
+            return_value=httpx.Response(200, content=linux_body)
+        )
+        win_route = respx.get(win_url).mock(
+            return_value=httpx.Response(200, content=win_body)
+        )
+        linux_hash = ("sha256", hashlib.sha256(linux_body).hexdigest())
+        win_hash = ("sha256", hashlib.sha256(win_body).hexdigest())
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord.request_metadata("foo", "1.0", linux_url, linux_hash).wait(timeout=5)
+            assert coord.index.get_metadata("foo", "1.0") == linux_body.decode()
+
+        # A later run over the same cache dir, in an environment whose
+        # compatible wheel is the win_amd64 one.
+        with _coord(cache_dir=tmp_path) as coord:
+            coord.request_metadata("foo", "1.0", win_url, win_hash).wait(timeout=5)
+            assert coord.index.get_metadata_error("foo", "1.0") is None
+            assert coord.index.get_metadata("foo", "1.0") == win_body.decode()
+
+        assert linux_route.call_count == 1
+        assert win_route.call_count == 1
+
     def test_explicit_cache_backend_takes_precedence(self) -> None:
         """A passed-in cache_backend wins over cache_dir."""
         from nab_index.cache import NullCache
