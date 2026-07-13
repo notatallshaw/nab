@@ -216,10 +216,14 @@ def _scan_flat_wheelhouse(
     root: Path,
     package: str,
 ) -> list[WheelFile | SdistFile]:
-    """Find all dists for ``package`` in a flat directory of files."""
+    """Find all dists for ``package`` in a flat directory of files.
+
+    Entries are sorted because the listing order breaks ties between dists at
+    one version, and ``iterdir`` order comes from the filesystem.
+    """
     canonical = _canonical(package)
     files: list[WheelFile | SdistFile] = []
-    for entry in root.iterdir():
+    for entry in sorted(root.iterdir()):
         if not entry.is_file():
             continue
         if _FLAT_EXTS.search(entry.name) is None:

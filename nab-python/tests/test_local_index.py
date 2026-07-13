@@ -22,7 +22,7 @@ from nab_index.local_index import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine
+    from collections.abc import Coroutine, Iterator
     from typing import Any
 
 _T = TypeVar("_T")
@@ -153,6 +153,31 @@ class TestFlatWheelhouse:
         missing = tmp_path / "does-not-exist"
         client = LocalIndexClient(missing.as_uri())
         assert run(client.get_files("foo")) == []
+
+    def test_listing_order_independent_of_readdir_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # These dists tie on every ordering rule, so only the directory-entry
+        # order can separate them.
+        names = [
+            "foo-1.0-py3-none-any.whl",
+            "foo-1.0-py2.py3-none-any.whl",
+            "foo-1.0.tar.gz",
+        ]
+        for name in names:
+            (tmp_path / name).write_bytes(b"")
+
+        client = LocalIndexClient(tmp_path.as_uri())
+        real_iterdir = Path.iterdir
+
+        def listing(*, reverse: bool) -> list[str]:
+            def fake_iterdir(self: Path) -> Iterator[Path]:
+                return iter(sorted(real_iterdir(self), reverse=reverse))
+
+            monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+            return [f.filename for f in run(client.get_files("foo"))]
+
+        assert listing(reverse=False) == listing(reverse=True) == sorted(names)
 
     def test_requires_python_read_from_wheel_metadata(self, tmp_path: Path) -> None:
         # Requires-Python is absent from the filename; it comes from METADATA.
