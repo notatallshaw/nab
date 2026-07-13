@@ -30,6 +30,7 @@ from ..requirements_file import (
     _parse_requirements,
     _require_string_list,
 )
+from ..target import marker_variables
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -349,9 +350,18 @@ def classify_requirement(
 
 
 def marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> bool:
-    """Evaluate ``marker`` against the env without ``extra`` set, cached."""
+    """Evaluate ``marker`` against the env without ``extra`` set, cached.
+
+    Every dependency marker the resolve reads passes through here, so this
+    is where the variables it consults are recorded for the lock's
+    ``environments`` declaration.  Recording on the cache miss scans each
+    distinct marker once.
+    """
     result = provider.marker_base_cache.get(marker_id)
     if result is None:
+        provider.consulted_marker_variables |= marker_variables(
+            marker_text(provider, marker, marker_id)
+        )
         result = marker.evaluate({**provider.environment, **EMPTY_MEMBERSHIP_SETS})
         provider.marker_base_cache[marker_id] = result
     return result

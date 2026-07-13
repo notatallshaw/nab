@@ -18,7 +18,8 @@ report metadata for the target or for someone else.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import re
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -34,12 +35,16 @@ if TYPE_CHECKING:
 
 __all__ = [
     "IMPLEMENTATION_MARKERS",
+    "PEP508_MARKER_VARIABLES",
     "PLATFORM_MARKERS",
+    "UNBOUNDABLE_MARKER_VARIABLES",
     "EnvironmentSource",
     "ResolveTarget",
     "apply_python_axis_overlay",
     "declared_environment",
+    "environment_declaration",
     "host_environment",
+    "marker_variables",
     "python_axis_environment",
 ]
 
@@ -112,6 +117,85 @@ _HOST_PLATFORM_LABEL = "host"
 # ``python_full_version`` is the full ``major.minor.micro`` release.
 _PYTHON_VERSION_PARTS = 2
 _PYTHON_FULL_VERSION_PARTS = 3
+
+
+# Every environment variable PEP 508 defines.  A lock declares the target's
+# value for each one the resolve consulted, so the set has to be the spec's.
+PEP508_MARKER_VARIABLES: frozenset[str] = frozenset(
+    {
+        "implementation_name",
+        "implementation_version",
+        "os_name",
+        "platform_machine",
+        "platform_python_implementation",
+        "platform_release",
+        "platform_system",
+        "platform_version",
+        "python_full_version",
+        "python_version",
+        "sys_platform",
+    }
+)
+
+# ``platform_release`` and ``platform_version`` name one machine's kernel
+# build (``6.18.33-microsoft-standard-WSL2``), so a lock cannot bound them:
+# declaring the resolving machine's value would refuse every other machine,
+# and omitting it leaves the axis open.  A marker that consults one is
+# reported to the user rather than declared.
+UNBOUNDABLE_MARKER_VARIABLES: frozenset[str] = frozenset(
+    {"platform_release", "platform_version"}
+)
+
+# Declared whether or not a marker consults them: these are the axes the
+# package set was chosen for, so a lock that leaves them open is one any
+# environment would accept.
+_ALWAYS_DECLARED: tuple[str, ...] = (
+    "python_version",
+    "sys_platform",
+    "platform_machine",
+)
+
+_MARKER_VARIABLE_RE = re.compile(
+    r"\b(" + "|".join(sorted(PEP508_MARKER_VARIABLES)) + r")\b"
+)
+
+
+def marker_variables(marker_text: str) -> frozenset[str]:
+    """Return the PEP 508 environment variables ``marker_text`` names.
+
+    Matches the spec's names as whole words against the marker's string
+    form.  A name inside a string literal (``sys_platform ==
+    "python_version"``) counts, so the result over-approximates; a
+    declaration built from too many variables is narrower than one built
+    from too few, which is the safe direction to be wrong in.
+    """
+    return frozenset(_MARKER_VARIABLE_RE.findall(marker_text))
+
+
+def environment_declaration(target: ResolveTarget, consulted: Iterable[str]) -> str:
+    """Render the PEP 751 ``environments`` marker for ``target``.
+
+    Pins every variable in ``consulted`` to the value ``target`` gives it,
+    plus :data:`_ALWAYS_DECLARED`.  A resolve drops every dependency whose
+    marker is False under the target, so an installer that consults the
+    same variable and gets a different answer would be missing the deps
+    that environment needs: the declaration refuses it instead.
+
+    ``consulted`` is the union of the variables the resolve's markers
+    named, not a fixed projection of the target: a marker on
+    ``python_full_version`` pins the micro release, one on
+    ``platform_system`` pins the OS.  Variables in
+    :data:`UNBOUNDABLE_MARKER_VARIABLES` are dropped (see there).
+    """
+    names = [
+        *_ALWAYS_DECLARED,
+        *sorted(
+            (set(consulted) & PEP508_MARKER_VARIABLES)
+            - set(_ALWAYS_DECLARED)
+            - UNBOUNDABLE_MARKER_VARIABLES
+        ),
+    ]
+    return " and ".join(f'{name} == "{target.marker_env[name]}"' for name in names)
 
 
 def host_environment(

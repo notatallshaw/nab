@@ -7353,3 +7353,43 @@ class TestScanBatchNoFirstCandidate:
         del wheel_by
         # No abort can fire without a first_candidate; the scan returns None.
         assert outcome is None
+
+
+class TestConsultedMarkerVariables:
+    """The lock's ``environments`` declaration is built from the PEP 508
+    variables the resolve's dependency markers named, so the provider has
+    to record every marker it evaluates.
+    """
+
+    @staticmethod
+    def _coordinator(requires_dist: str) -> MagicMock:
+        return make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+                f"Requires-Dist: {requires_dist}\n"
+            ),
+            package="foo",
+        )
+
+    def test_an_evaluated_dependency_marker_is_recorded(self) -> None:
+        provider = Provider(
+            self._coordinator('colorama ; platform_system == "Windows"'),
+            target=_PY312,
+        )
+        provider.get_dependencies("foo", V("1.0"))
+        assert provider.consulted_marker_variables == {"platform_system"}
+
+    def test_a_marker_that_holds_is_recorded_too(self) -> None:
+        """A True marker keeps its dep, so its variable still gated the resolve."""
+        provider = Provider(
+            self._coordinator('bar ; sys_platform != "win32"'), target=_PY312
+        )
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "bar" in deps
+        assert provider.consulted_marker_variables == {"sys_platform"}
+
+    def test_an_unmarked_dependency_records_nothing(self) -> None:
+        provider = Provider(self._coordinator("bar"), target=_PY312)
+        provider.get_dependencies("foo", V("1.0"))
+        assert provider.consulted_marker_variables == set()

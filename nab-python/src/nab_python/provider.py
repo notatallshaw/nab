@@ -523,6 +523,12 @@ class Provider:
         # Requires-Python compatibility, keyed by the raw specifier string.
         self.requires_python_cache: dict[str, bool] = {}
 
+        # The PEP 508 variables every dependency marker evaluated here named.
+        # The lock's ``environments`` declaration pins each one to the target's
+        # value, so an installer whose environment answers differently is
+        # refused rather than handed a package set chosen for another machine.
+        self.consulted_marker_variables: set[str] = set()
+
         # Marker evaluation caches keyed by id(marker); requirement parsing is
         # cached upstream so each distinct marker text shares one Marker. The
         # id keying is safe because metadata_cache keeps every evaluated marker

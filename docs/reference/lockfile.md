@@ -53,6 +53,9 @@ A trimmed example, after resolving the
 lock-version = "1.0"
 created-by = "nab"
 requires-python = ">=3.10"
+environments = [
+    'python_version == "3.12" and sys_platform == "linux" and platform_machine == "x86_64"',
+]
 
 [[packages]]
 name = "fastapi"
@@ -92,6 +95,35 @@ own directory, with POSIX separators, as PEP 751 requires. A
 committed lockfile therefore stays usable on another machine as
 long as the surrounding layout is preserved; it never carries an
 absolute, machine-specific path.
+
+### The environment the lock is for
+
+A specific-mode resolve answers for one environment: the
+[resolve target](configuration.md). Every dependency whose
+PEP 508 marker was false there was dropped, so the
+pins are not a package set another environment can install. The lock
+says so in the top-level `environments`, and a PEP 751 consumer
+refuses a lock whose declared environments none of its own satisfies.
+
+The declaration always pins `python_version`, `sys_platform` and
+`platform_machine`. It also pins every other PEP 508 variable that
+a marker in the resolve consulted: a dependency, root requirement,
+or constraint marker on `platform_system` pins `platform_system`,
+and one on `python_full_version` pins the target's exact micro
+release. This is deliberately narrow. A marker nab evaluated is a
+question whose answer changed the package set, so an installer that
+answers it differently must not use this lock.
+
+Two variables are never declared: `platform_release` and
+`platform_version` name one machine's kernel build, so a lock
+carrying the resolving machine's value would refuse every other
+machine. A marker that consults one is reported as a warning at
+lock time; the lock stays open on that axis.
+
+`requires-python` is the project's declaration
+(`[tool.nab].requires-python`, or `[project].requires-python`), not
+the target's Python. It bounds what the project supports; the
+`environments` entry names what was resolved.
 
 ### Universal mode
 

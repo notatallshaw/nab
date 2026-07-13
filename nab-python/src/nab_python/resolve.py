@@ -17,6 +17,7 @@ from nab_resolver.resolver import (
 
 from ._conflict_kind import dependency_marker_holds, membership_set_in_marker
 from ._vcs_admission import admit_vcs_url
+from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
@@ -56,6 +57,11 @@ from .requirements_file import (
     read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
     select_optional_dependencies,
+)
+from .target import (
+    UNBOUNDABLE_MARKER_VARIABLES,
+    environment_declaration,
+    marker_variables,
 )
 from .universal.resolve import (
     ResolveFork,
@@ -240,6 +246,9 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             provider,
             pins,
             requires_python=config.requires_python,
+            environments=_declared_environments(
+                target, provider, requirements, config.constraints
+            ),
             extras=tuple(extras),
             dependency_groups=tuple(groups),
             default_groups=config.default_groups,
@@ -247,6 +256,48 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             resolved_keys=raw,
         )
         return ResolutionResult(pins=pins, lock_input=lock_input)
+
+
+def _declared_environments(
+    target: ResolveTarget,
+    provider: Provider,
+    requirements: Sequence[Requirement],
+    constraints: Sequence[str],
+) -> list[Marker]:
+    """Build the lock's PEP 751 ``environments`` for this resolve.
+
+    The pins hold for the one environment ``target`` names, so the lock
+    says so: every dependency whose marker was False here was dropped, and
+    an installer that answers one of those markers differently needs a
+    different package set.  The declaration pins each PEP 508 variable the
+    resolve consulted -- the provider records the markers it read off the
+    dependency graph, and the root requirements and constraints are scanned
+    here, since their markers are evaluated before the provider exists.
+
+    A marker on an axis the lock cannot bound (see
+    :data:`~nab_python.target.UNBOUNDABLE_MARKER_VARIABLES`) is reported:
+    the lock stays open on it, so an installer whose kernel differs will
+    still accept the lock, with the dep that marker gated missing.
+    """
+    consulted = set(provider.consulted_marker_variables)
+    for req in requirements:
+        if req.marker is not None:
+            consulted |= marker_variables(str(req.marker))
+    for constraint in constraints:
+        marker = Requirement(constraint).marker
+        if marker is not None:
+            consulted |= marker_variables(str(marker))
+
+    unboundable = sorted(consulted & UNBOUNDABLE_MARKER_VARIABLES)
+    if unboundable:
+        _logger.warning(
+            "A marker in this resolve consults %s, which names the resolving"
+            " machine's kernel build; the lockfile cannot declare it, so an"
+            " installer whose value differs will still accept this lock and"
+            " miss the dependencies that marker gates.",
+            ", ".join(unboundable),
+        )
+    return [Marker(environment_declaration(target, consulted))]
 
 
 def _load_group_requirements(path: Path, selected: Sequence[str]) -> list[Requirement]:

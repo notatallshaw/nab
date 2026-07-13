@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -3149,3 +3150,93 @@ class TestLocalSourceExtrasMarkers:
                 coordinator,
                 "3.12.0",
             )
+
+
+class TestLockDeclaresItsEnvironment:
+    """A single-environment lock declares the environment it was resolved
+    for.  Every dependency whose marker was False here was dropped, so an
+    installer that answers one of those markers differently needs a
+    different package set: PEP 751 ``environments`` refuses it.
+    """
+
+    @staticmethod
+    def _resolve(tmp_path: Path, body: str, coordinator: MagicMock) -> ResolutionResult:
+        (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            return resolve_pyproject(tmp_path / "pyproject.toml", _FAKE_TRANSPORT)
+
+    _PYPROJECT = (
+        '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+        '[tool.nab]\nbuild-policy = "never"\n'
+        "[tool.nab.environment]\n"
+        'python = "3.12"\nplatform = "linux_x86_64"\n'
+    )
+
+    @staticmethod
+    def _coordinator(requires_dist: str = "") -> MagicMock:
+        return make_coordinator(
+            _index_wheels("foo", "1.0"),
+            package="foo",
+            metadata_text=(
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n" + requires_dist
+            ),
+        )
+
+    def test_the_three_axes_are_always_declared(self, tmp_path: Path) -> None:
+        result = self._resolve(tmp_path, self._PYPROJECT, self._coordinator())
+        (environment,) = result.lock_input.environments
+        assert str(environment) == (
+            'python_version == "3.12" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64"'
+        )
+
+    def test_a_dependency_marker_declares_its_variable(self, tmp_path: Path) -> None:
+        """tqdm's ``colorama ; platform_system == "Windows"`` is the real case."""
+        result = self._resolve(
+            tmp_path,
+            self._PYPROJECT,
+            self._coordinator(
+                'Requires-Dist: colorama ; platform_system == "Windows"\n'
+            ),
+        )
+        (environment,) = result.lock_input.environments
+        assert 'platform_system == "Linux"' in str(environment)
+        assert "colorama" not in result.pins
+
+    def test_a_root_requirement_marker_declares_its_variable(
+        self, tmp_path: Path
+    ) -> None:
+        """Root markers are evaluated before the provider exists."""
+        body = self._PYPROJECT.replace(
+            'dependencies = ["foo"]',
+            'dependencies = ["foo", "winonly; os_name == \'nt\'"]',
+        )
+        result = self._resolve(tmp_path, body, self._coordinator())
+        (environment,) = result.lock_input.environments
+        assert 'os_name == "posix"' in str(environment)
+
+    def test_a_constraint_marker_declares_its_variable(self, tmp_path: Path) -> None:
+        body = self._PYPROJECT.replace(
+            '[tool.nab]\nbuild-policy = "never"\n',
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "constraints = [\"foo<9; implementation_name == 'cpython'\"]\n",
+        )
+        result = self._resolve(tmp_path, body, self._coordinator())
+        (environment,) = result.lock_input.environments
+        assert 'implementation_name == "cpython"' in str(environment)
+
+    def test_an_unboundable_marker_warns_and_stays_undeclared(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A kernel-versioned marker names one machine; the lock cannot bound it."""
+        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+            result = self._resolve(
+                tmp_path,
+                self._PYPROJECT,
+                self._coordinator('Requires-Dist: bar ; platform_release >= "5.10"\n'),
+            )
+        (environment,) = result.lock_input.environments
+        assert "platform_release" not in str(environment)
+        assert "platform_release" in caplog.text

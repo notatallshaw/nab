@@ -16,11 +16,15 @@ from nab_python._vendor.packaging.version import InvalidVersion, Version
 from nab_python.tags import PlatformSpec
 from nab_python.target import (
     IMPLEMENTATION_MARKERS,
+    PEP508_MARKER_VARIABLES,
     PLATFORM_MARKERS,
+    UNBOUNDABLE_MARKER_VARIABLES,
     ResolveTarget,
     apply_python_axis_overlay,
     declared_environment,
+    environment_declaration,
     host_environment,
+    marker_variables,
     python_axis_environment,
 )
 
@@ -532,3 +536,84 @@ class TestApplyPythonAxisOverlay:
             env, {"python_version": "3.9", "implementation_version": "3.9.7"}
         )
         assert env["implementation_version"] == "3.9.7"
+
+
+class TestMarkerVariables:
+    """The lock's ``environments`` declaration is built from the PEP 508
+    variables the resolve's markers named, so the scan must find every
+    one the spec defines and nothing else.
+    """
+
+    def test_finds_every_variable_a_marker_names(self) -> None:
+        found = marker_variables(
+            'python_full_version < "3.11.4" and sys_platform == "win32"'
+        )
+        assert found == {"python_full_version", "sys_platform"}
+
+    def test_python_version_does_not_match_inside_python_full_version(self) -> None:
+        assert marker_variables('python_full_version >= "3.9.1"') == {
+            "python_full_version"
+        }
+
+    def test_a_marker_naming_nothing_yields_nothing(self) -> None:
+        assert marker_variables('extra == "docs"') == frozenset()
+
+    def test_a_name_in_a_string_literal_counts(self) -> None:
+        """Over-approximating narrows the declaration, which is the safe way."""
+        assert marker_variables('os_name == "platform_machine"') == {
+            "os_name",
+            "platform_machine",
+        }
+
+    def test_every_declared_variable_is_a_marker_environment_key(self) -> None:
+        target = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        assert target.marker_env.keys() >= PEP508_MARKER_VARIABLES
+
+
+class TestEnvironmentDeclaration:
+    """A single-environment lock declares the environment it was resolved
+    for: an installer that answers a consulted marker differently needs a
+    different package set, so the declaration has to refuse it.
+    """
+
+    def _target(self) -> ResolveTarget:
+        return ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+
+    def test_the_three_axes_are_declared_unconsulted(self) -> None:
+        declaration = environment_declaration(self._target(), ())
+        assert declaration == (
+            'python_version == "3.13" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64"'
+        )
+
+    def test_a_consulted_variable_is_declared(self) -> None:
+        declaration = environment_declaration(self._target(), {"platform_system"})
+        assert declaration.endswith('and platform_system == "Linux"')
+        assert Marker(declaration).evaluate(_HOST_ENV)
+
+    def test_consulted_variables_are_declared_in_sorted_order(self) -> None:
+        declaration = environment_declaration(
+            self._target(), {"platform_system", "os_name"}
+        )
+        assert declaration.endswith(
+            'and os_name == "posix" and platform_system == "Linux"'
+        )
+
+    def test_a_consulted_full_version_pins_the_micro_release(self) -> None:
+        declaration = environment_declaration(self._target(), {"python_full_version"})
+        assert 'python_full_version == "3.13.2"' in declaration
+        assert not Marker(declaration).evaluate(
+            {**_HOST_ENV, "python_full_version": "3.13.3"}
+        )
+
+    def test_unboundable_variables_are_never_declared(self) -> None:
+        declaration = environment_declaration(
+            self._target(), UNBOUNDABLE_MARKER_VARIABLES
+        )
+        assert "platform_release" not in declaration
+        assert "platform_version" not in declaration
+
+    def test_the_declaration_refuses_a_foreign_environment(self) -> None:
+        declaration = environment_declaration(self._target(), {"platform_system"})
+        windows = {**_HOST_ENV, "sys_platform": "win32", "platform_system": "Windows"}
+        assert not Marker(declaration).evaluate(windows)
