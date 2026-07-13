@@ -2967,9 +2967,7 @@ class TestMatrix:
             'python = ">=3.12,<3.14"\n'
             'platforms = [{ id = "linux_x86_64", free-threaded = true }]\n',
         )
-        with pytest.raises(
-            ConfigError, match="the free-threaded build starts at CPython 3.13"
-        ):
+        with pytest.raises(ConfigError, match="needs CPython 3.13 or newer"):
             read_pyproject_config(path)
 
     def test_free_threaded_rejects_pypy(self, tmp_path: Path) -> None:
@@ -2983,7 +2981,7 @@ class TestMatrix:
             'platforms = [{ id = "linux_x86_64", free-threaded = true }]\n'
             'implementations = ["cpython", "pypy"]\n',
         )
-        with pytest.raises(ConfigError, match="only CPython has a free-threaded build"):
+        with pytest.raises(ConfigError, match="needs CPython, not"):
             read_pyproject_config(path)
 
     def test_invalid_python_order(self, tmp_path: Path) -> None:

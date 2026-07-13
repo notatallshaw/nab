@@ -69,12 +69,11 @@ from .workspace import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
     from collections.abc import Set as AbstractSet
     from pathlib import Path
 
     from ._vendor.packaging.ranges import VersionRange
-    from .universal.matrix import MatrixTuple
 
 __all__ = [
     "ConfigError",
@@ -2238,9 +2237,6 @@ _PLATFORM_KNOB_OWNER: Mapping[str, frozenset[str]] = MappingProxyType(
     }
 )
 
-# The free-threaded build ships from CPython 3.13 (PEP 703).
-_FREE_THREADED_MIN_PYTHON = (3, 13)
-
 
 def _parse_matrix_platforms(value: object) -> tuple[PlatformSpec, ...]:
     """Parse ``matrix.platforms``: bare ids, tables, or a mix of both.
@@ -2430,37 +2426,10 @@ def _validate_matrix_axes(config: MatrixConfig) -> None:
         implementations=config.implementations,
     )
     try:
-        tuples = matrix.expand()
+        matrix.expand()
     except ValueError as exc:
         msg = f"invalid [tool.nab.matrix]: {exc}"
         raise ConfigError(msg) from exc
-    _validate_free_threaded(tuples)
-
-
-def _validate_free_threaded(tuples: Iterable[MatrixTuple]) -> None:
-    """Reject free-threaded targets no interpreter build can satisfy.
-
-    A ``cpXYt`` ABI exists only for CPython 3.13 and up.
-    """
-    for tup in tuples:
-        if not tup.platform_spec.free_threaded:
-            continue
-        if tup.implementation != "cpython":
-            msg = (
-                f"matrix.platforms target {tup.label!r} is free-threaded:"
-                f" only CPython has a free-threaded build, not"
-                f" {tup.implementation!r}"
-            )
-            raise ConfigError(msg)
-        version = tuple(int(p) for p in tup.python_version.split("."))
-        if version < _FREE_THREADED_MIN_PYTHON:
-            floor = ".".join(str(p) for p in _FREE_THREADED_MIN_PYTHON)
-            msg = (
-                f"matrix.platforms target {tup.label!r} is free-threaded:"
-                f" the free-threaded build starts at CPython {floor},"
-                f" but matrix.python admits {tup.python_version}"
-            )
-            raise ConfigError(msg)
 
 
 _KNOWN_IMPLEMENTATIONS = ("cpython", "pypy")

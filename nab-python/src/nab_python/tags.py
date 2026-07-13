@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DEFAULT_LIBC",
+    "FREE_THREADED_MIN_PYTHON",
     "LIBC_MAJOR",
     "Libc",
     "PlatformSpec",
@@ -43,10 +44,18 @@ __all__ = [
 
 Libc = Literal["glibc", "musl"]
 
+# The free-threaded build ships from CPython 3.13 (PEP 703).
+FREE_THREADED_MIN_PYTHON = (3, 13)
+
 
 # PEP 427: a wheel filename has at least 5 dash-separated segments
 # (name-version-pythontag-abitag-platformtag.whl), or 6 with a build tag.
 _MIN_WHEEL_FILENAME_PARTS = 5
+
+# A PEP 425 compressed tag set is a cross product, so an index-supplied
+# filename naming 40 interpreters, 40 abis and 40 platforms would parse into
+# 64000 tags.  No real wheel comes close to this bound.
+_MAX_WHEEL_TAGS = 4096
 
 # PEP 427: a build tag adds a sixth dash-separated segment at index 2,
 # and build tags start with a digit (captured here for ordering).
@@ -76,8 +85,9 @@ LIBC_MAJOR: Mapping[Libc, int] = MappingProxyType({"glibc": 2, "musl": 1})
 # only misses the newest wheels and falls back to an older version or an
 # sdist, while too high writes a wheel into the lock that an older machine
 # cannot install.
-_DEFAULT_MACOS_MIN = (12, 0)
-_DEFAULT_MACOS_X86_64_MIN = (10, 13)
+_DEFAULT_MACOS_MIN: Mapping[str, tuple[int, int]] = MappingProxyType(
+    {"arm64": (12, 0), "x86_64": (10, 13)}
+)
 
 # The oldest macOS each arch can name a wheel tag for.  ``mac_platforms``
 # yields no x86_64 binary format below 10.4, and Apple Silicon shipped at
@@ -340,19 +350,15 @@ def _platform_tags_for_spec(spec: PlatformSpec) -> list[str]:
         )
 
     if kind == "macos":
-        macos_min = spec.macos_min
-        if macos_min is None:
-            macos_min = (
-                _DEFAULT_MACOS_MIN if arch == "arm64" else _DEFAULT_MACOS_X86_64_MIN
-            )
+        macos_min = spec.macos_min or _DEFAULT_MACOS_MIN[arch]
         # mac_platforms treats the declared OS as a max and yields older too.
         return list(ptags.mac_platforms(version=macos_min, arch=arch))
 
     if kind == "windows":
         return [f"win_{arch}"]
 
-    # No id maps to a fourth kind today, so this fires only for one added
-    # without a tag rule, where a silent fallthrough would tag it as Windows.
+    # The id-to-kind table holds three kinds; a fourth added without a tag
+    # rule of its own is a programming error.
     msg = f"Unknown platform kind: {kind}"
     raise ValueError(msg)
 
@@ -403,7 +409,7 @@ def _parse_tag_str(tag_str: str) -> frozenset[Tag] | None:
     Returns ``None`` for unparseable input.
     """
     try:
-        raw = ptags.parse_tag(tag_str)
+        raw = ptags.parse_tag(tag_str, limit=_MAX_WHEEL_TAGS)
     except Exception:  # noqa: BLE001 - never trust upstream parser
         return None
     return frozenset(_intern_tag(t) for t in raw)

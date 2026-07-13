@@ -21,10 +21,12 @@ from nab_python.tags import (
     _PLATFORM_ARCH,
     _PLATFORM_KIND,
     PlatformSpec,
+    _parse_tag_str,
     _platform_tags_for_spec,
     _tags_in_order,
     select_wheel,
     tags_for_target,
+    wheel_tag_set,
 )
 
 # numpy 2.5.1 ships one manylinux wheel (tagged 2.27 and 2.28, no older),
@@ -462,6 +464,22 @@ class TestTagsForTarget:
 class TestWheelCompatibility:
     """A wheel is a candidate iff its tags meet the target's tag set."""
 
+    def test_an_oversized_compressed_tag_set_drops_the_wheel(self) -> None:
+        """A PEP 425 compressed tag set is a cross product, and the index names it.
+
+        A filename listing 40 interpreters, 40 abis and 40 platforms parses
+        into 64000 tags.  The parser is bounded, and a filename over the bound
+        is unreadable, which drops the whole candidate.
+        """
+        _parse_tag_str.cache_clear()
+        try:
+            big = ".".join(f"cp3{i}" for i in range(40))
+            abis = ".".join(f"abi{i}" for i in range(40))
+            plats = ".".join(f"plat{i}" for i in range(40))
+            assert wheel_tag_set(f"pkg-1.0-{big}-{abis}-{plats}.whl") is None
+        finally:
+            _parse_tag_str.cache_clear()
+
     def test_accepts_manylinux_at_libc_version(self) -> None:
         """A manylinux_2_17 wheel matches a glibc 2.17 target."""
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
@@ -564,8 +582,6 @@ class TestWheelCompatibility:
         few error paths (e.g. an empty tag).  We patch it to raise
         and verify our ``except Exception`` handler returns None.
         """
-        from nab_python.tags import _parse_tag_str
-
         spec = PlatformSpec("linux_x86_64")
         wheel = WheelFile(
             filename="forced-1.0-cp311-cp311-linux_x86_64.whl",

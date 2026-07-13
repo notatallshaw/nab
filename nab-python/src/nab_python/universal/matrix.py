@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.version import Version
+from ..tags import FREE_THREADED_MIN_PYTHON
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -230,12 +231,14 @@ class Matrix:
 
         Validates inputs eagerly: unknown platform ids, unknown
         implementations, ``python_patches`` keys that are not known
-        minors, an empty python range, or an invalid ``python_order``
-        each raise a ``ValueError`` before any work happens.
+        minors, an empty python range, an invalid ``python_order``, or a
+        free-threaded platform no interpreter build can satisfy each raise a
+        ``ValueError`` before any work happens.
         """
         if self.python_order not in {"asc", "desc"}:
             msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
             raise ValueError(msg)
+        self._check_free_threaded()
         unknown = [
             s.platform_id
             for s in self.platforms
@@ -277,6 +280,35 @@ class Matrix:
             for spec in self.platforms
             for impl in self.implementations
         ]
+
+    def _check_free_threaded(self) -> None:
+        """Reject a free-threaded platform no interpreter build can satisfy.
+
+        The ``cpXYt`` ABI ships only from CPython 3.13, and only the matrix
+        sees both axes the rule needs: the platform carries the flag, and the
+        implementation and the python range live here.
+        """
+        if not any(spec.free_threaded for spec in self.platforms):
+            return
+        foreign = [i for i in self.implementations if i != "cpython"]
+        if foreign:
+            msg = (
+                f"a free-threaded platform needs CPython, not {foreign!r};"
+                f" only CPython has a free-threaded build"
+            )
+            raise ValueError(msg)
+        floor = ".".join(str(p) for p in FREE_THREADED_MIN_PYTHON)
+        too_old = [
+            py
+            for py in _pythons_in_range(self.python)
+            if tuple(int(p) for p in py.split(".")) < FREE_THREADED_MIN_PYTHON
+        ]
+        if too_old:
+            msg = (
+                f"a free-threaded platform needs CPython {floor} or newer,"
+                f" but matrix.python admits {too_old!r}"
+            )
+            raise ValueError(msg)
 
 
 def _build_environment(

@@ -21,7 +21,7 @@ distribution as the oracle and requires agreement:
 from __future__ import annotations
 
 import pytest
-from hypothesis import assume, given
+from hypothesis import given
 from hypothesis import strategies as st
 from packaging import tags as upstream_tags
 from packaging import utils as upstream_utils
@@ -148,8 +148,6 @@ class TestTagOrderMatchesUpstream:
     ) -> None:
         """Vendored tag order equals the upstream-rebuilt order."""
         platforms = _platform_tags_for_spec(spec)
-        # An empty platform list falls back to host tags, which drifted upstream after 26.2.
-        assume(platforms)
         got = _triples(_tags_in_order(python_version, spec, implementation))
         expected = _oracle_tags_in_order(
             python_version,
@@ -327,8 +325,6 @@ class TestSelectWheelMinimizesUpstreamRank:
     ) -> None:
         """The selected wheel's best upstream rank is the minimum over all wheels."""
         platforms = _platform_tags_for_spec(spec)
-        # An empty platform list falls back to host tags, which drifted upstream after 26.2.
-        assume(platforms)
         order = _oracle_tags_in_order(
             python_version,
             platforms,
