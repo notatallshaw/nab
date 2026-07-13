@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import ssl
 from typing import TYPE_CHECKING, Any
 
 import httpx
 import truststore
 
+from .retry import MAX_RETRIES, RETRY_STATUSES, next_delay
 from .transport import HttpError
 
 if TYPE_CHECKING:
@@ -75,15 +77,39 @@ class HttpxAsyncTransport:
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
     ) -> _HttpxResponse:
-        """Send a GET request."""
-        try:
-            response = await self._client.get(url, headers=headers)
-        except Exception as exc:
-            # httpx raises InvalidURL and lets idna hostname errors escape its
-            # HTTPError hierarchy, so wrap every failure to issue the request.
-            msg = f"GET {url} failed: {exc}"
-            raise HttpError(msg) from exc
-        return _HttpxResponse(response)
+        """Send a GET request, retrying a blip.
+
+        httpx has no retry machinery beyond reconnecting, so the shared policy
+        runs in this loop rather than in the client.
+        """
+        failures = 0
+
+        while True:
+            try:
+                response = await self._client.get(url, headers=headers)
+            except httpx.HTTPError as exc:
+                failures += 1
+                if failures > MAX_RETRIES:
+                    msg = f"GET {url} failed: {exc}"
+                    raise HttpError(msg) from exc
+                delay = next_delay(failures)
+            except Exception as exc:
+                # httpx raises InvalidURL and lets idna hostname errors escape
+                # its HTTPError hierarchy.  A URL httpx cannot even issue is not
+                # a blip, so it is wrapped and raised rather than retried.
+                msg = f"GET {url} failed: {exc}"
+                raise HttpError(msg) from exc
+            else:
+                if response.status_code not in RETRY_STATUSES:
+                    return _HttpxResponse(response)
+                failures += 1
+                # Out of budget: hand back the status the index served, which is
+                # what the urllib3 backend does with raise_on_status=False.
+                if failures > MAX_RETRIES:
+                    return _HttpxResponse(response)
+                delay = next_delay(failures, response.headers.get("Retry-After"))
+
+            await asyncio.sleep(delay)
 
     async def aclose(self) -> None:
         """Close the underlying client."""

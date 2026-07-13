@@ -7,7 +7,10 @@ import io
 import json
 import ssl
 import tarfile
-from collections.abc import Mapping
+import threading
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -19,6 +22,7 @@ import urllib3
 
 from nab_index.client import AsyncSimpleClient, _extract_sdist_files
 from nab_index.httpx_async_transport import HttpxAsyncTransport, _HttpxResponse
+from nab_index.retry import GET_RETRY, MAX_RETRIES, RETRY_STATUSES, next_delay
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import (
     Urllib3AsyncTransport,
@@ -38,6 +42,113 @@ LISTING_JSON = {
         },
     ],
 }
+
+
+class _StubIndex(ThreadingHTTPServer):
+    """Loopback index that serves each queued status once, then 200."""
+
+    statuses: list[int]
+    seen: list[str]
+
+
+class _StubIndexHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        assert isinstance(self.server, _StubIndex)
+        self.server.seen.append(self.path)
+        status = self.server.statuses.pop(0) if self.server.statuses else 200
+
+        body = b"ok"
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        """Drop the handler's stderr access log."""
+
+
+@contextmanager
+def _stub_index(statuses: list[int]) -> Iterator[_StubIndex]:
+    server = _StubIndex(("127.0.0.1", 0), _StubIndexHandler)
+    server.statuses = list(statuses)
+    server.seen = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.fixture
+def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record the httpx transport's backoff sleeps instead of taking them."""
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(
+        "nab_index.httpx_async_transport.asyncio.sleep",
+        fake_sleep,
+    )
+    return delays
+
+
+class TestRetryPolicy:
+    """The retry policy both transports share."""
+
+    def test_transient_status_is_retried_without_retry_after(self) -> None:
+        """A bare 5xx/429 is retried; urllib3's default only retries with Retry-After."""
+        assert all(
+            GET_RETRY.is_retry("GET", status, has_retry_after=False)
+            for status in RETRY_STATUSES
+        )
+
+    def test_client_error_is_not_retried(self) -> None:
+        """A 404 (absent package) and a 403 are the index's answer."""
+        assert not GET_RETRY.is_retry("GET", 404, has_retry_after=False)
+        assert not GET_RETRY.is_retry("GET", 403, has_retry_after=False)
+
+    def test_budget_is_bounded(self) -> None:
+        assert GET_RETRY.total == MAX_RETRIES
+
+    def test_exhausted_status_retries_keep_the_response(self) -> None:
+        """A persistent 503 surfaces as HTTP 503, not as a retry error."""
+        assert GET_RETRY.raise_on_status is False
+
+    def test_backoff_grows_between_attempts(self) -> None:
+        """The first retry is immediate, then urllib3's exponential schedule."""
+        assert [next_delay(n) for n in (1, 2, 3)] == [0.0, 0.5, 1.0]
+
+    def test_retry_after_overrides_backoff(self) -> None:
+        assert next_delay(1, "2") == 2.0
+
+    def test_retry_after_is_bounded(self) -> None:
+        """A long Retry-After cannot park the resolve."""
+        assert next_delay(1, "3600") == 10.0
+        assert GET_RETRY.get_retry_after(_urllib3_response(503, "3600")) == 10.0
+
+    def test_unparseable_retry_after_falls_back_to_backoff(self) -> None:
+        assert next_delay(2, "soon") == 0.5
+        assert GET_RETRY.get_retry_after(_urllib3_response(503, "soon")) is None
+
+    def test_absent_retry_after_falls_back_to_backoff(self) -> None:
+        assert GET_RETRY.get_retry_after(_urllib3_response(503, None)) is None
+
+    def test_bound_survives_urllib3s_retry_copies(self) -> None:
+        """urllib3 clones the policy per attempt, so the bound must clone with it."""
+        retry = GET_RETRY.increment(method="GET", url="/pkg/", error=OSError("boom"))
+        assert retry.get_retry_after(_urllib3_response(503, "3600")) == 10.0
+
+
+def _urllib3_response(status: int, retry_after: str | None) -> urllib3.BaseHTTPResponse:
+    response = MagicMock(spec=urllib3.BaseHTTPResponse)
+    response.status = status
+    response.headers = {} if retry_after is None else {"Retry-After": retry_after}
+    return response
 
 
 class TestFetchCoordinatorTransport:
@@ -141,12 +252,19 @@ class TestHttpxAsyncTransport:
     def test_get_wraps_non_httperror_from_request(
         self, raised: Exception, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A non-HTTPError raised while issuing the request maps to HttpError."""
+        """A non-HTTPError raised while issuing the request maps to HttpError.
+
+        A URL httpx cannot even issue is not a blip, so it is raised on the
+        first attempt rather than spending the retry budget on it.
+        """
+        attempts = 0
 
         async def go() -> None:
             transport = HttpxAsyncTransport(http2=False)
 
             async def boom(*args: object, **kwargs: object) -> object:
+                nonlocal attempts
+                attempts += 1
                 raise raised
 
             monkeypatch.setattr(transport._client, "get", boom)
@@ -160,6 +278,8 @@ class TestHttpxAsyncTransport:
         ):
             asyncio.run(go())
 
+        assert attempts == 1
+
     def test_uses_truststore_ssl_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """AsyncClient gets a truststore SSLContext via verify=."""
         cls = MagicMock()
@@ -167,6 +287,124 @@ class TestHttpxAsyncTransport:
         HttpxAsyncTransport()
         verify = cls.call_args.kwargs["verify"]
         assert isinstance(verify, truststore.SSLContext)
+
+    @respx.mock
+    def test_get_retries_a_transient_status(self, slept: list[float]) -> None:
+        """A bare 503 is a blip, so ask again before believing it."""
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=[httpx.Response(503), httpx.Response(200, json={"ok": True})]
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        resp = asyncio.run(go())
+        resp.raise_for_status()
+        assert resp.status_code == 200
+        assert route.call_count == 2
+        assert slept == [0.0]
+
+    @respx.mock
+    def test_get_retries_a_transport_error(self, slept: list[float]) -> None:
+        """A dropped connection is retried, as it is on the urllib3 backend."""
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=[httpx.ConnectError("boom"), httpx.Response(200)]
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        assert asyncio.run(go()).status_code == 200
+        assert route.call_count == 2
+        assert slept == [0.0]
+
+    @respx.mock
+    def test_get_honours_a_bounded_retry_after(self, slept: list[float]) -> None:
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "3600"}),
+                httpx.Response(200),
+            ]
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        assert asyncio.run(go()).status_code == 200
+        assert route.call_count == 2
+        assert slept == [10.0]
+
+    @respx.mock
+    def test_get_gives_up_on_a_persistent_transient_status(
+        self, slept: list[float]
+    ) -> None:
+        """The budget is bounded, and the caller still sees the 503."""
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=[httpx.Response(503)] * (MAX_RETRIES + 1)
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        resp = asyncio.run(go())
+        assert route.call_count == MAX_RETRIES + 1
+        assert slept == [0.0, 0.5, 1.0]
+        with pytest.raises(HttpError, match="503"):
+            resp.raise_for_status()
+
+    @respx.mock
+    def test_get_gives_up_on_a_persistent_transport_error(
+        self, slept: list[float]
+    ) -> None:
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=httpx.ConnectError("boom")
+        )
+
+        async def go() -> None:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        with pytest.raises(HttpError, match="GET https://example.com/pkg failed"):
+            asyncio.run(go())
+        assert route.call_count == MAX_RETRIES + 1
+        assert slept == [0.0, 0.5, 1.0]
+
+    @respx.mock
+    def test_get_does_not_retry_a_client_error(self, slept: list[float]) -> None:
+        """A 404 is the index's answer, so it is fetched once."""
+        route = respx.get("https://example.com/missing").mock(
+            return_value=httpx.Response(404)
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/missing")
+            finally:
+                await transport.aclose()
+
+        assert asyncio.run(go()).status_code == 404
+        assert route.call_count == 1
+        assert slept == []
 
 
 class TestUrllib3AsyncTransport:
@@ -205,6 +443,7 @@ class TestUrllib3AsyncTransport:
             "https://example.com/",
             headers={"Accept-Encoding": "gzip", "k": "v"},
             timeout=5.0,
+            retries=GET_RETRY,
         )
         pool.clear.assert_called_once()
 
@@ -255,6 +494,7 @@ class TestUrllib3AsyncTransport:
             "https://example.com/",
             headers={"Accept-Encoding": "gzip"},
             timeout=5.0,
+            retries=GET_RETRY,
         )
 
     def test_get_lets_caller_override_accept_encoding(
@@ -282,6 +522,7 @@ class TestUrllib3AsyncTransport:
             "https://example.com/",
             headers={"Accept-Encoding": "identity"},
             timeout=5.0,
+            retries=GET_RETRY,
         )
 
     def test_get_applies_bounded_default_timeout(
@@ -321,6 +562,55 @@ class TestUrllib3AsyncTransport:
 
         asyncio.run(go())
         assert pool.request.call_args.kwargs["timeout"] == 1.5
+
+    def test_get_retries_a_bare_transient_status(self) -> None:
+        """One 503 with no Retry-After must not read as the index's answer."""
+        with _stub_index([503]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/pkg-1.0.whl.metadata"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            resp.raise_for_status()
+            assert resp.status_code == 200
+            assert len(index.seen) == 2
+
+    def test_get_gives_up_on_a_persistent_transient_status(self) -> None:
+        """The budget is bounded, and the caller still sees the 503."""
+        with _stub_index([503] * (MAX_RETRIES + 1)) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            assert len(index.seen) == MAX_RETRIES + 1
+            with pytest.raises(HttpError, match="HTTP 503"):
+                resp.raise_for_status()
+
+    def test_get_does_not_retry_a_client_error(self) -> None:
+        """A 404 is the index's answer, so it is fetched once."""
+        with _stub_index([404]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            assert asyncio.run(go()).status_code == 404
+            assert len(index.seen) == 1
 
     def test_response_json(self) -> None:
         fake = MagicMock(spec=urllib3.BaseHTTPResponse)
