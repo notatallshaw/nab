@@ -153,9 +153,9 @@ class InMemoryIndex:
         self._pending: dict[str, _Pending] = {}
 
         # Parsed metadata is a pure function of the underlying text, so it
-        # is shared across the per-target providers of one resolve.  Each
-        # entry is ``(source_text, parsed)``: the two artifact kinds share
-        # one ``_metadata`` slot, so a parse only answers for its own text.
+        # is shared across the per-target providers of one resolve.  Entries
+        # are ``(source_text, parsed)``: a wheel and an sdist share one
+        # ``_metadata`` slot, so a parse only answers for the text it parsed.
         self._parsed_metadata: dict[tuple[str, str], tuple[str, Any]] = {}
 
         # Post-reconciliation sdist metadata: the result after
@@ -250,11 +250,10 @@ class InMemoryIndex:
     ) -> tuple[str | None, bool]:
         """Return the metadata text and whether it came from an sdist.
 
-        Read together under one lock.  Wheel METADATA and sdist PKG-INFO
-        share the slot and a fetch can land between two lookups, so taking
-        the text and its origin separately can pair one artifact's text
-        with the other's origin.  Only sdist text goes through the
-        :pep:`643` dynamic-deps gate, so the pair has to be coherent.
+        Wheel METADATA and sdist PKG-INFO share the slot, so a write landing
+        between two separate lookups can pair one artifact's text with the
+        other's origin.  Only sdist text goes through the :pep:`643`
+        dynamic-deps gate, so the two are read under one lock.
         """
         with self._lock:
             slot = (package, version)
@@ -279,6 +278,7 @@ class InMemoryIndex:
         """
         if self._metadata.get(slot) != data:
             self._resolved_sdist_metadata.pop(slot, None)
+
         self._metadata[slot] = data
         self._metadata_source[slot] = source
         if from_sdist:
@@ -468,9 +468,9 @@ class InMemoryIndex:
         Unlike :meth:`get_metadata` (which returns the raw text), this
         returns the already-parsed dataclass.  A parse of any other text is
         a miss: wheel METADATA and sdist PKG-INFO share one
-        ``(package, version)`` slot and either can replace the other while
-        a resolve is in flight, so a hit on the key alone would hand back
-        the deps of the artifact the caller is not holding.
+        ``(package, version)`` slot and either can replace the other
+        mid-resolve, so a hit on the key alone could hand back the deps of
+        the artifact the caller is not holding.
         """
         with self._lock:
             entry = self._parsed_metadata.get((package, version))
