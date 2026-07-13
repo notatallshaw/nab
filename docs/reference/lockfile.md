@@ -29,8 +29,14 @@ Each pinned package carries:
   and `wheels`), each with its filename, URL, `sha256`, and optional
   size.
 
-Nothing is fetched to build a lock: the digests come from the index
-listing, so a resolve reads metadata and never a wheel body.
+The digests are the ones the index published, so nothing is hashed
+locally to build a lock. A resolve does fetch, but only to read
+metadata, and it takes the cheapest source available: a wheel's
+[PEP 658] metadata sidecar first, then the wheel itself when the
+index publishes no sidecar, and the sdist only when no wheel is
+published (built, if its dependencies are dynamic and the
+[build policy](build-policy.md) allows it). VCS and archive sources
+are cloned or downloaded for the same reason.
 
 ## PEP 751 `pylock.toml`
 
@@ -189,4 +195,5 @@ against those same digests on the way down, and pip refuses
 anything else.
 
 [PEP 751]: https://peps.python.org/pep-0751/
+[PEP 658]: https://peps.python.org/pep-0658/
 [hash-checking]: https://pip.pypa.io/en/stable/topics/secure-installs/#hash-checking-mode
