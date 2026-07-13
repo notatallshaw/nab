@@ -737,10 +737,24 @@ class TestFullVersionDeclaration:
             }
         )
 
-    def test_an_operator_with_no_complement_pins_the_value(self) -> None:
-        """``~=`` has no single-clause negation; the exact value is sound."""
+    def test_a_clause_that_held_is_declared_whatever_its_operator(self) -> None:
+        """A clause that held needs no complement, so ``~=`` declares itself.
+
+        Pinning the exact value instead would refuse every other micro of the
+        line the resolve was valid for.
+        """
         declaration = environment_declaration(
             self._target("3.13.2"), [Marker('python_full_version ~= "3.13.0"')]
+        )
+        assert declaration.endswith('and python_full_version ~= "3.13.0"')
+        assert Marker(declaration).evaluate(
+            {**_HOST_ENV, "python_version": "3.13", "python_full_version": "3.13.9"}
+        )
+
+    def test_an_operator_with_no_complement_pins_the_value(self) -> None:
+        """``~=`` read False has no single-clause negation; the value is sound."""
+        declaration = environment_declaration(
+            self._target("3.13.2"), [Marker('python_full_version ~= "3.14.0"')]
         )
         assert declaration.endswith('and python_full_version == "3.13.2"')
 

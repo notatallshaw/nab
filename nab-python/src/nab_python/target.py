@@ -308,13 +308,22 @@ def _declared_clause(
     ``variable`` on one side; packaging decides which way it read.
     None means nab cannot state that outcome as a clause of its own, and the
     caller declares the exact value instead.
+
+    A clause that held is declared as it stands, whatever its operator: an
+    environment satisfying it reads it the way the resolve did, and no
+    complement is needed.  Only a clause that read False needs one, so only
+    an operator PEP 508 cannot complement (``~=``, ``===``, a membership
+    test) sends the caller to the exact value.
     """
     literal = rhs if lhs == variable else lhs
-    if op not in _COMPLEMENT_OPERATOR or not literal.startswith('"'):
+    if not literal.startswith('"'):
+        # A comparison against another variable states nothing about this one.
         return None
     clause = f"{lhs} {op} {rhs}"
     if Marker(clause).evaluate(environment):
         return clause
+    if op not in _COMPLEMENT_OPERATOR:
+        return None
     complement = f"{lhs} {_COMPLEMENT_OPERATOR[op]} {rhs}"
     if not Marker(complement).evaluate(environment):
         return None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -3174,12 +3175,19 @@ class TestLockDeclaresItsEnvironment:
     """
 
     @staticmethod
-    def _resolve(tmp_path: Path, body: str, coordinator: MagicMock) -> ResolutionResult:
+    def _resolve(
+        tmp_path: Path,
+        body: str,
+        coordinator: MagicMock,
+        extras: Sequence[str] = (),
+    ) -> ResolutionResult:
         (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
         with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            return resolve_pyproject(tmp_path / "pyproject.toml", _FAKE_TRANSPORT)
+            return resolve_pyproject(
+                tmp_path / "pyproject.toml", _FAKE_TRANSPORT, extras=extras
+            )
 
     _PYPROJECT = (
         '[project]\nname = "proj"\ndependencies = ["foo"]\n'
@@ -3240,6 +3248,25 @@ class TestLockDeclaresItsEnvironment:
         result = self._resolve(tmp_path, body, self._coordinator())
         (environment,) = result.lock_input.environments
         assert 'implementation_name == "cpython"' in str(environment)
+
+    def test_a_self_extra_marker_declares_its_variable(self, tmp_path: Path) -> None:
+        """A marker on a self-referencing extra decides which extras are active.
+
+        It shapes the package set, so an installer answering it differently
+        needs a different one, and the lock has to say so.
+        """
+        body = (
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            "[project.optional-dependencies]\n"
+            "all = [\"proj[legacy]; os_name == 'nt'\"]\n"
+            'legacy = ["foo"]\n'
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.environment]\n"
+            'python = "3.12"\nplatform = "linux_x86_64"\n'
+        )
+        result = self._resolve(tmp_path, body, self._coordinator(), extras=["all"])
+        (environment,) = result.lock_input.environments
+        assert 'os_name == "posix"' in str(environment)
 
     def test_an_unboundable_marker_warns_and_stays_undeclared(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
