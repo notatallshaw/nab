@@ -588,6 +588,19 @@ class TestLockCommandSpecific:
             lock(pyproject, output=Path("-"))
         assert "is not valid TOML" in capsys.readouterr().err
 
+    def test_pylock_passed_as_the_project_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A PEP 751 lock handed in where a pyproject belongs says so."""
+        pylock = tmp_path / "pylock.toml"
+        pylock.write_text(
+            'lock-version = "1.0"\ncreated-by = "nab"\n\n'
+            '[[packages]]\nname = "idna"\nversion = "3.10"\n'
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pylock)
+        assert "is a PEP 751 lockfile" in capsys.readouterr().err
+
     def test_output_is_directory_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

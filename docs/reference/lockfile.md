@@ -25,18 +25,20 @@ Each pinned package carries:
   index), a `LocalPin` (a directory on disk), a `VcsPin` (a
   git URL with a commit pin), or an `ArchivePin` (a `.tar.gz` URL
   content-pinned by a required `sha256`),
-* every artefact downloaded for that pin (`sdist` and `wheels`),
-  each with its filename, URL, `sha256`, and optional size.
+* every artefact the index listed at that pinned version (`sdist`
+  and `wheels`), each with its filename, URL, `sha256`, and optional
+  size.
 
-The resolver records exactly what it considered, so
-`nab download` can fetch the same files back without consulting
-the index again.
+Nothing is fetched to build a lock: the digests come from the index
+listing, so a resolve reads metadata and never a wheel body.
 
 ## PEP 751 `pylock.toml`
 
 The PEP 751 lockfile is the format for cross-tool Python
-lockfiles. It is what `nab lock --format pylock` produces and
-what `nab download` consumes when handed a lockfile.
+lockfiles. It is what `nab lock --format pylock` produces, and what
+`nab lock --locked` checks against. It is an output. `nab download`
+resolves from project inputs, so hand it a `pyproject.toml`, not a
+lockfile.
 
 A trimmed example, after resolving the
 [getting-started](../tutorial/getting-started.md) project:
@@ -166,11 +168,12 @@ single-environment mode.
 
 ## `nab download`
 
-`nab download` walks the same pin set, fetches every wheel and
-sdist into the `--output` directory (defaults to `wheels/`), and
-verifies each file's `sha256` against the recorded digest. Local
-and VCS pins are skipped. The download is idempotent: a file
-whose digest already matches a local copy is left alone.
+`nab download` resolves the project again, then fetches every wheel
+and sdist on the resulting pins into the `--output` directory
+(defaults to `wheels/`), verifying each file's `sha256` against the
+digest the index published. Local and VCS pins are skipped. The
+download is idempotent: a file whose digest already matches a local
+copy is left alone.
 
 The result is a per-resolve directory of artefacts that any
 installer can consume offline:
@@ -181,8 +184,9 @@ pip install --no-index --find-links wheels/ -r requirements.txt
 ```
 
 This pairs naturally with `--require-hashes`: hashes are baked
-into the requirements file, the artefacts on disk are the exact
-ones verified during resolve, and pip refuses anything else.
+into the requirements file, the artefacts on disk are verified
+against those same digests on the way down, and pip refuses
+anything else.
 
 [PEP 751]: https://peps.python.org/pep-0751/
 [hash-checking]: https://pip.pypa.io/en/stable/topics/secure-installs/#hash-checking-mode
