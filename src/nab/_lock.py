@@ -1,14 +1,13 @@
 """``nab lock`` subcommand and its lockfile-emission helpers.
 
-Wires :func:`resolve_pyproject` / :func:`resolve_universal_pyproject`
-to the writers in :mod:`nab_python.lockfile`, plus the universal-mode
-per-tuple emission shapes (single-tuple file, templated per-tuple
-files, multi-block stdout).
+Wires :func:`resolve_for_targets` to the writers in
+:mod:`nab_python.lockfile`, plus the per-target emission shapes a matrix
+needs (a templated file per tuple, multi-block stdout).
 
-External callers (the resolver entry points, the lockfile writers,
-the merge helper) are accessed through :mod:`nab.cli` so the test
-suite's ``patch("nab.cli.resolve_pyproject")`` style of monkey
-patches keeps working after the per-command split.
+External callers (the resolver entry point, the lockfile writers) are
+accessed through :mod:`nab.cli` so the test suite's
+``patch("nab.cli.resolve_for_targets")`` style of monkey patches keeps
+working after the per-command split.
 """
 
 from __future__ import annotations
@@ -26,6 +25,7 @@ import tyro
 
 from nab._version import __version__
 from nab_python._vendor.packaging.utils import canonicalize_name
+from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     NabProjectConfig,
     ResolveMode,
@@ -35,6 +35,7 @@ from nab_python.lockfile import (
     IndexPin,
     LockInput,
     Provenance,
+    TargetLock,
     is_valid_pylock_path,
     package_metadata_override_records,
     read_lockfile_anchor,
@@ -60,12 +61,6 @@ from .cli import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
-
-    from nab_index.transport import AsyncHttpTransport
-    from nab_python._vendor.packaging.version import Version
-    from nab_python.provider import ResolutionStrategy
-    from nab_python.resolve import ResolutionResult
-    from nab_python.universal.resolve import TupleResult, UniversalResult
 
 
 def _emit_or_exit(emit: Callable[[], None]) -> None:
@@ -202,28 +197,14 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     workspace_to_drop = (
         config.workspace_member_names if no_emit_workspace else frozenset()
     )
+    if config.mode is ResolveMode.UNIVERSAL:
+        sys.stderr.write(
+            "warning: mode = 'universal' is experimental; output format may"
+            " change without notice\n"
+        )
 
     transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
-    if config.mode is ResolveMode.UNIVERSAL:
-        _emit_or_exit(
-            lambda: _emit_universal(
-                path,
-                config=config,
-                cache_dir=effective_cache_dir,
-                transport=transport,
-                offline=settings.offline,
-                output=output,
-                format=format,
-                provenance=provenance,
-                groups=selected_groups,
-                extras=selected_extras,
-                resolution_strategy=settings.resolution,
-                workspace_to_drop=workspace_to_drop,
-            )
-        )
-        return
-
-    result = _cli._resolve_specific(  # noqa: SLF001
+    result = _cli._resolve(  # noqa: SLF001
         path,
         config=config,
         cache_dir=effective_cache_dir,
@@ -235,18 +216,21 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         extras=selected_extras,
         resolution_strategy=settings.resolution,
     )
-    if locked:
-        _check_locked(result, output=output, workspace_to_drop=workspace_to_drop)
-        return
-    _emit_or_exit(
-        lambda: _emit_specific(
+    lock_input = _drop_workspace_pins(
+        _cli.build_lock_input(
             result,
-            format=format,
-            output=output,
-            provenance=provenance,
-            workspace_to_drop=workspace_to_drop,
-        )
+            config=config,
+            extras=selected_extras,
+            dependency_groups=selected_groups,
+        ),
+        workspace_to_drop,
     )
+    lock_input.provenance = provenance
+
+    if locked:
+        _check_locked(lock_input, output=output)
+        return
+    _emit_or_exit(lambda: _emit(lock_input, format=format, output=output))
 
 
 def _drop_workspace_pins(
@@ -256,9 +240,9 @@ def _drop_workspace_pins(
 
     ``workspace_to_drop`` holds canonical workspace member names; pin
     keys are already canonical.  An empty set returns ``lock_input``
-    unchanged.  ``pins`` and ``per_tuple_pins`` are filtered, and the
-    forward dependency graph is filtered too so no edge points at a
-    dropped member with no ``[[packages]]`` entry.
+    unchanged.  Each target's pins are filtered, and its forward
+    dependency graph with them, so no edge points at a dropped member
+    with no ``[[packages]]`` entry.
     """
     if not workspace_to_drop:
         return lock_input
@@ -266,42 +250,34 @@ def _drop_workspace_pins(
     def keep(name: str) -> bool:
         return canonicalize_name(name) not in workspace_to_drop
 
-    filtered_pins = {name: pin for name, pin in lock_input.pins.items() if keep(name)}
-    filtered_per_tuple = {
-        label: {name: pin for name, pin in tuple_pins.items() if keep(name)}
-        for label, tuple_pins in lock_input.per_tuple_pins.items()
+    targets = {
+        label: TargetLock(
+            target=lock.target,
+            pins={name: pin for name, pin in lock.pins.items() if keep(name)},
+            dependencies={
+                name: kept
+                for name, deps in lock.dependencies.items()
+                if keep(name) and (kept := tuple(dep for dep in deps if keep(dep)))
+            },
+        )
+        for label, lock in lock_input.targets.items()
     }
-    filtered_dependencies = {
-        name: kept
-        for name, deps in lock_input.dependencies.items()
-        if keep(name) and (kept := tuple(dep for dep in deps if keep(dep)))
-    }
-    return replace(
-        lock_input,
-        pins=filtered_pins,
-        per_tuple_pins=filtered_per_tuple,
-        dependencies=filtered_dependencies,
-    )
+    return replace(lock_input, targets=targets)
 
 
-def _emit_specific(
-    result: ResolutionResult,
+def _emit(
+    lock_input: LockInput,
     *,
     format: str,  # noqa: A002 - shadows builtin by convention
     output: Path | None,
-    provenance: Provenance | None = None,
-    workspace_to_drop: frozenset[str] = frozenset(),
 ) -> None:
-    """Write a single-environment resolution in the requested format."""
-    lock_input = _drop_workspace_pins(result.lock_input, workspace_to_drop)
-    if provenance is not None:
-        lock_input.provenance = provenance
-
-    try:
-        _write_specific(result, lock_input, format=format, output=output)
-    except _cli.MissingHashError as e:
-        sys.stderr.write(f"Cannot lock: {e}\n")
-        sys.exit(1)
+    """Write the resolved lock in the requested format."""
+    if format == "pylock":
+        _emit_pylock(lock_input, output=output)
+    else:
+        _emit_requirements(
+            lock_input, output=output, with_hashes=format == "requirements"
+        )
 
 
 def _packages_only(text: str) -> str:
@@ -316,12 +292,7 @@ def _packages_only(text: str) -> str:
     return tomli_w.dumps(data)
 
 
-def _check_locked(
-    result: ResolutionResult,
-    *,
-    output: Path | None,
-    workspace_to_drop: frozenset[str],
-) -> None:
+def _check_locked(lock_input: LockInput, *, output: Path | None) -> None:
     """Verify the committed pylock matches a fresh resolve, writing nothing.
 
     The resolve has already run; this renders the lock it would produce and
@@ -329,7 +300,6 @@ def _check_locked(
     both, so only a real change to the locked packages fails.  The committed
     lock is never read back into the resolve.
     """
-    lock_input = _drop_workspace_pins(result.lock_input, workspace_to_drop)
     target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
     if not target.exists():
         sys.stderr.write(
@@ -360,47 +330,56 @@ def _check_locked(
     sys.exit(1)
 
 
-def _write_specific(
-    result: ResolutionResult,
-    lock_input: LockInput,
-    *,
-    format: str,  # noqa: A002 - shadows builtin by convention
-    output: Path | None,
-) -> None:
-    """Render ``lock_input`` in ``format``."""
+def _emit_pylock(lock_input: LockInput, *, output: Path | None) -> None:
+    """Write the PEP 751 lock to a file, or print it."""
     if _cli.is_stdout(output):
-        if format == "pylock":
-            sys.stdout.write(_cli.write_lock(lock_input))
-        elif format == "requirements":
-            sys.stdout.write(_cli.write_requirements_with_hashes(lock_input))
-        else:
-            sys.stdout.write(_cli.write_requirements_without_hashes(lock_input))
+        sys.stdout.write(_render_lock_or_exit(lock_input, target=None))
         return
 
-    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
-    # Report on the emitted set, not result.pins, so --no-emit-workspace
-    # filtering shows up in the diff and the count.
-    emitted_pins = {name: result.pins[name] for name in lock_input.pins}
-    if format == "pylock":
-        # Read the prior pins before write_lock overwrites the file.
-        prior = read_lockfile_packages(target)
-        _cli.write_lock(lock_input, output_path=target)
-        # Index and archive pins record a version; local and VCS pins emit
-        # version=None, so read_lockfile_packages never returns them.
-        # Diff against the same set or they read as added every relock.
-        versioned = {
-            name: version
-            for name, version in emitted_pins.items()
-            if isinstance(lock_input.pins[name], (IndexPin, ArchivePin))
-        }
-        diff = _diff_summary(prior, versioned)
-    elif format == "requirements":
-        _cli.write_requirements_with_hashes(lock_input, output_path=target)
-        diff = ""
-    else:
-        _cli.write_requirements_without_hashes(lock_input, output_path=target)
-        diff = ""
-    sys.stderr.write(f"Wrote {target} ({len(emitted_pins)} packages{diff})\n")
+    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
+    # Read the prior pins before the write overwrites the file.
+    prior = read_lockfile_packages(target)
+    # Pass the target so wheel/sdist/directory paths are written relative
+    # to the lockfile's own directory, not the cwd.
+    _render_lock_or_exit(lock_input, target=target)
+    sys.stderr.write(f"Wrote {target} ({_lock_summary(lock_input, prior)})\n")
+
+
+def _render_lock_or_exit(lock_input: LockInput, *, target: Path | None) -> str:
+    """Render the lock, mapping every emit-time refusal to a clean exit."""
+    try:
+        return _cli.write_lock(lock_input, output_path=target)
+    except _cli.MissingHashError as e:
+        sys.stderr.write(f"Cannot lock: {e}\n")
+        sys.exit(1)
+    except (_cli.DisjointnessError, _cli.DivergentBaseDependencyError) as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
+
+
+def _lock_summary(lock_input: LockInput, prior: Mapping[str, Version] | None) -> str:
+    """Summarise what was written: a package diff, or the tuple count.
+
+    A matrix pins a package once per tuple, and two tuples may disagree,
+    so there is no one version to diff against the prior lock; it reports
+    the tuples it covered instead.
+    """
+    if len(lock_input.targets) > 1:
+        return f"{len(lock_input.targets)} tuples"
+    pins = {
+        name: pin
+        for lock in lock_input.targets.values()
+        for name, pin in lock.pins.items()
+    }
+    # Index and archive pins record a version; local and VCS pins emit
+    # version=None, so read_lockfile_packages never returns them.
+    # Diff against the same set or they read as added every relock.
+    versioned = {
+        name: Version(pin.version)
+        for name, pin in pins.items()
+        if isinstance(pin, (IndexPin, ArchivePin))
+    }
+    return f"{len(pins)} packages{_diff_summary(prior, versioned)}"
 
 
 def _diff_summary(
@@ -436,110 +415,6 @@ def _diff_summary(
         if count
     ]
     return f": {', '.join(parts)}" if parts else ""
-
-
-def _emit_universal(  # noqa: PLR0913 - one wrapper per resolve_universal_pyproject kwarg
-    path: Path,
-    *,
-    config: NabProjectConfig,
-    cache_dir: Path | None,
-    transport: AsyncHttpTransport,
-    offline: bool,
-    output: Path | None,
-    format: str,  # noqa: A002 - shadows builtin by convention
-    provenance: Provenance | None = None,
-    groups: tuple[str, ...] = (),
-    extras: tuple[str, ...] = (),
-    resolution_strategy: ResolutionStrategy | None = None,
-    workspace_to_drop: frozenset[str] = frozenset(),
-) -> None:
-    """Run the universal resolver and emit the requested artefact."""
-    sys.stderr.write(
-        "warning: mode = 'universal' is experimental; output format may"
-        " change without notice\n"
-    )
-
-    result = _cli._resolve_universal(  # noqa: SLF001
-        path,
-        config=config,
-        cache_dir=cache_dir,
-        offline=offline,
-        transport=transport,
-        groups=groups,
-        extras=extras,
-        resolution_strategy=resolution_strategy,
-    )
-
-    if format == "pylock":
-        _emit_universal_pylock(
-            result,
-            config=config,
-            output=output,
-            provenance=provenance,
-            groups=groups,
-            extras=extras,
-            workspace_to_drop=workspace_to_drop,
-        )
-    else:
-        _emit_universal_requirements(
-            result,
-            output=output,
-            with_hashes=format == "requirements",
-            workspace_to_drop=workspace_to_drop,
-        )
-
-
-def _emit_universal_pylock(
-    result: UniversalResult,
-    *,
-    config: NabProjectConfig | None = None,
-    output: Path | None,
-    provenance: Provenance | None = None,
-    groups: tuple[str, ...] = (),
-    extras: tuple[str, ...] = (),
-    workspace_to_drop: frozenset[str] = frozenset(),
-) -> None:
-    """Merge per-tuple LockInputs into one pylock and write/print it.
-
-    ``default_groups`` is taken from ``[tool.nab].default-groups``, not
-    from the CLI ``--groups`` selection: PEP 751 ``default-groups``
-    means the groups a default install applies, which is project
-    policy rather than this run's request.
-    """
-    default_groups = config.default_groups if config is not None else ()
-    conflicts = config.conflicts if config is not None else ()
-    lock_input = _cli.merge_universal_lock_inputs(
-        result,
-        extras=extras,
-        dependency_groups=groups,
-        default_groups=default_groups,
-        conflicts=conflicts,
-    )
-    lock_input = _drop_workspace_pins(lock_input, workspace_to_drop)
-    if provenance is not None:
-        lock_input.provenance = provenance
-
-    target: Path | None
-    if _cli.is_stdout(output):
-        target = None
-    else:
-        target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
-
-    try:
-        # Pass the target so wheel/sdist/directory paths are written
-        # relative to the lockfile's own directory, not the cwd.
-        text = _cli.write_lock(lock_input, output_path=target)
-    except _cli.MissingHashError as e:
-        sys.stderr.write(f"Cannot lock: {e}\n")
-        sys.exit(1)
-    except (_cli.DisjointnessError, _cli.DivergentBaseDependencyError) as e:
-        sys.stderr.write(f"Error: {e}\n")
-        sys.exit(1)
-
-    if target is None:
-        sys.stdout.write(text)
-        return
-    sys.stderr.write(f"Wrote {target} ({len(result.tuple_results)} tuples)\n")
 
 
 def _check_output_template(output: Path, template: str) -> None:
@@ -586,40 +461,34 @@ def _check_output_template(output: Path, template: str) -> None:
         sys.exit(1)
 
 
-def _emit_universal_requirements(
-    result: UniversalResult,
-    *,
-    output: Path | None,
-    with_hashes: bool,
-    workspace_to_drop: frozenset[str] = frozenset(),
+def _emit_requirements(
+    lock_input: LockInput, *, output: Path | None, with_hashes: bool
 ) -> None:
-    """Emit one requirements file per matrix tuple.
+    """Emit the pins as requirements, one file per target where needed.
 
-    Three output shapes:
+    Four output shapes:
 
-    * ``output`` is ``None`` or ``-``: write one stdout dump with
-      ``# label`` blocks separating each tuple's pins.  Inspection /
-      piping shape; pip cannot install a multi-block file directly.
+    * ``output`` is ``None`` or ``-``: write one stdout dump.  A resolve
+      with several targets separates them with ``# label`` blocks, which
+      is an inspection / piping shape: pip cannot install a multi-block
+      file directly.
     * ``output`` contains ``{python_version}`` or ``{platform_id}``:
-      write one file per successful tuple, substituting the tuple's
-      values into the template.  This is the constraints-per-
-      Python-version shape (e.g. ``constraints-{python_version}.txt``).
-    * ``output`` is a plain path AND the matrix has exactly one tuple:
-      write that tuple's pins to ``output`` directly.
+      write one file per target, substituting the target's values into
+      the template.  This is the constraints-per-Python-version shape
+      (e.g. ``constraints-{python_version}.txt``).
+    * ``output`` is a plain path and the resolve ran against one target:
+      write that target's pins there.
 
-    A plain path with multiple tuples errors clearly: there is no
-    one-file shape that pip can install from across all tuples.
+    A plain path with several targets errors clearly: there is no
+    one-file shape that pip can install from across all of them.
     """
     if output is None or _cli.is_stdout(output):
-        _emit_universal_requirements_stdout(
-            result, with_hashes=with_hashes, workspace_to_drop=workspace_to_drop
-        )
+        sys.stdout.write(_render_requirements_or_exit(lock_input, with_hashes))
         return
 
     template = str(output)
-    successful = [tr for tr in result.tuple_results if tr.success]
     if not any(var in template for var in _cli.TUPLE_TEMPLATE_VARS):
-        if len(successful) > 1:
+        if len(lock_input.targets) > 1:
             sys.stderr.write(
                 "Error: universal mode produced multiple tuples but"
                 f" --output {output} has no template variable to"
@@ -628,92 +497,78 @@ def _emit_universal_requirements(
                 "  --output 'constraints-{python_version}.txt'\n"
             )
             sys.exit(1)
-        # Single successful tuple: write directly to the fixed path.
-        _write_one_tuple_requirements(
-            successful[0],
-            output,
-            with_hashes=with_hashes,
-            workspace_to_drop=workspace_to_drop,
-        )
+        _write_target_requirements(lock_input, output, with_hashes=with_hashes)
         return
 
     _check_output_template(output, template)
-    substituted_paths: dict[str, str] = {}
-    for tr in successful:
-        substituted = template.format(
-            python_version=tr.tuple_.python_version,
-            platform_id=tr.tuple_.platform_id,
+    for label, path in _substituted_paths(lock_input, output, template).items():
+        _write_target_requirements(
+            _for_target(lock_input, label),
+            path,
+            with_hashes=with_hashes,
+            label=label,
         )
-        if substituted in substituted_paths:
+
+
+def _substituted_paths(
+    lock_input: LockInput, output: Path, template: str
+) -> dict[str, Path]:
+    """Render the per-target output paths, refusing a template that collides."""
+    by_path: dict[str, str] = {}
+    paths: dict[str, Path] = {}
+    for label, lock in lock_input.targets.items():
+        substituted = template.format(
+            python_version=lock.target.python_version,
+            platform_id=lock.target.platform_id,
+        )
+        if substituted in by_path:
             sys.stderr.write(
                 "Error: tuples"
-                f" {substituted_paths[substituted]!r} and {tr.tuple_.label!r}"
+                f" {by_path[substituted]!r} and {label!r}"
                 f" both map to {substituted!r}; --output {output} is missing"
                 " a template variable to disambiguate.  Use both"
                 " {python_version} and {platform_id} in the path.\n"
             )
             sys.exit(1)
-        substituted_paths[substituted] = tr.tuple_.label
-
-    for tr in successful:
-        substituted = template.format(
-            python_version=tr.tuple_.python_version,
-            platform_id=tr.tuple_.platform_id,
-        )
-        _write_one_tuple_requirements(
-            tr,
-            Path(substituted),
-            with_hashes=with_hashes,
-            workspace_to_drop=workspace_to_drop,
-        )
+        by_path[substituted] = label
+        paths[label] = Path(substituted)
+    return paths
 
 
-def _emit_universal_requirements_stdout(
-    result: UniversalResult,
-    *,
-    with_hashes: bool,
-    workspace_to_drop: frozenset[str] = frozenset(),
-) -> None:
-    """Stdout shape: per-tuple ``# label`` blocks merged into one stream."""
-    lock_input = _drop_workspace_pins(
-        _cli.merge_universal_lock_inputs(result), workspace_to_drop
-    )
-    try:
-        if with_hashes:
-            text = _cli.write_requirements_with_hashes(lock_input)
-        else:
-            text = _cli.write_requirements_without_hashes(lock_input)
-    except _cli.MissingHashError as e:
-        sys.stderr.write(f"Cannot lock: {e}\n")
-        sys.exit(1)
-    sys.stdout.write(text)
+def _for_target(lock_input: LockInput, label: str) -> LockInput:
+    """Narrow ``lock_input`` to the one target ``label`` names."""
+    return replace(lock_input, targets={label: lock_input.targets[label]})
 
 
-def _write_one_tuple_requirements(
-    tr: TupleResult,
+def _write_target_requirements(
+    lock_input: LockInput,
     output: Path,
     *,
     with_hashes: bool,
-    workspace_to_drop: frozenset[str] = frozenset(),
+    label: str | None = None,
 ) -> None:
-    """Write a single TupleResult's pins to ``output``."""
-    if tr.lock_input is None:  # pragma: no cover - successful tuples carry one
-        return
+    """Write one target's pins to ``output``.
 
-    lock_input = _drop_workspace_pins(tr.lock_input, workspace_to_drop)
+    ``label`` names the tuple in the report line, for the templated
+    shape that writes one file per tuple.  Without it the file is the
+    whole lock and there is no other tuple to tell it apart from.
+    """
+    text = _render_requirements_or_exit(lock_input, with_hashes)
+    output.write_text(text, encoding="utf-8")
+    count = sum(len(lock.pins) for lock in lock_input.targets.values())
+    named = f", tuple {label}" if label is not None else ""
+    sys.stderr.write(f"Wrote {output} ({count} packages{named})\n")
+
+
+def _render_requirements_or_exit(lock_input: LockInput, with_hashes: bool) -> str:  # noqa: FBT001 - internal, one call shape
+    """Render the pins as requirements text, exiting on a missing hash."""
     try:
         if with_hashes:
-            text = _cli.write_requirements_with_hashes(lock_input)
-        else:
-            text = _cli.write_requirements_without_hashes(lock_input)
+            return _cli.write_requirements_with_hashes(lock_input)
+        return _cli.write_requirements_without_hashes(lock_input)
     except _cli.MissingHashError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)
-
-    output.write_text(text, encoding="utf-8")
-    sys.stderr.write(
-        f"Wrote {output} ({len(lock_input.pins)} packages, tuple {tr.tuple_.label})\n"
-    )
 
 
 def resolve_group_selection(

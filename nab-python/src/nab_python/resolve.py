@@ -1,11 +1,29 @@
-"""Orchestrate dependency resolution from a pyproject.toml file."""
+"""Resolve a project's dependencies for the environments it targets.
+
+One engine serves every project.  ``[tool.nab.matrix]`` declares many
+environments and a bare project declares none (the host is the target),
+but either way :func:`~nab_python.config.plan_targets` hands back a list
+of :class:`~nab_python.target.ResolveTarget` and each one gets a
+single-environment resolve against a shared
+:class:`~nab_python.fetch.FetchCoordinator`, so metadata is fetched once
+across them.
+
+A declared conflict is the one place the two differ, and it differs by
+what the project declared rather than by how many targets it has: a
+matrix *forks* (it resolves each conflicting member separately and marks
+the pins with a membership clause, so one lock serves both selections),
+while a project resolving for a single environment *refuses* a selection
+that activates two members of one exclusive set, because a single
+environment's lock has nowhere to put the second one.
+"""
 
 from __future__ import annotations
 
 import itertools
 import logging
+import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from nab_resolver.resolver import (
@@ -21,6 +39,7 @@ from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
+from ._vendor.packaging.version import Version
 from .config import (
     ConfigError,
     ConflictFork,
@@ -28,10 +47,8 @@ from .config import (
     ConflictSelectionError,
     ConflictSet,
     NabProjectConfig,
-    ResolveMode,
     conflict_forks,
     index_routes_from_config,
-    matrix_from_config,
     plan_targets,
     read_pyproject_config,
     validate_conflict_exclusions,
@@ -39,7 +56,7 @@ from .config import (
     with_python_override,
 )
 from .fetch import FetchCoordinator
-from .lockfile import LockInput, build_lock_input_from_provider
+from .lockfile import LockInput, TargetLock, build_target_lock
 from .provider import (
     Provider,
     ResolutionStrategy,
@@ -56,60 +73,132 @@ from .requirements_file import (
     read_pyproject_name,
     read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
-    select_optional_dependencies,
 )
 from .target import (
     UNBOUNDABLE_MARKER_VARIABLES,
+    ResolveTarget,
     environment_declaration,
     marker_variables,
-)
-from .universal.resolve import (
-    ResolveFork,
-    UniversalResult,
-    resolve_universal,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from collections.abc import Set as AbstractSet
     from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport
 
-    from ._vendor.packaging.version import Version
-    from .target import ResolveTarget
-
 
 __all__ = [
-    "ResolutionResult",
-    "UnsupportedModeError",
-    "resolve_pyproject",
-    "resolve_universal_pyproject",
+    "ResolveFork",
+    "ResolveResult",
+    "TargetResult",
+    "build_lock_input",
+    "resolve_for_targets",
+    "resolve_with_coordinator",
 ]
 
 
 _logger = logging.getLogger(__name__)
 
+# One environment, as a hashable key: two targets that differ only by
+# their conflict-fork selection share it.
+EnvSignature = tuple[tuple[str, str], ...]
+
 
 @dataclass(frozen=True, slots=True)
-class ResolutionResult:
-    """A finished single-environment resolution and its lock input.
+class ResolveFork:
+    """A conflict fork's resolver input: a selection and its requirements.
 
-    ``pins`` is the canonical-name -> :class:`Version` mapping.
-    ``lock_input`` carries everything needed to write a PEP 751
-    ``pylock.toml`` or a hashed ``requirements.txt`` and to download
-    the chosen artefacts.
+    ``selection`` is the conflicting members active in this fork, empty
+    for an unforked resolve; ``requirements`` are the requirements folded
+    for it (the project's dependencies plus the groups and extras the
+    selection activates).  Each fork runs against every target, with its
+    ``selection`` stamped onto each so the pins land under a distinct
+    label and a membership-gated marker.
     """
 
-    pins: dict[str, Version]
-    lock_input: LockInput
+    selection: tuple[tuple[str, str], ...]
+    requirements: tuple[Requirement, ...]
 
 
-class UnsupportedModeError(NotImplementedError):
-    """Resolve mode requested is not handled by this entry point."""
+@dataclass
+class TargetResult:
+    """One target's resolve: its pins, or why it has none.
+
+    ``lock`` is what this target contributes to the lockfile, and is
+    present exactly when the resolve succeeded.  ``consulted`` is every
+    marker the resolve read (root, constraint, and dependency), which is
+    what the lock declares its environment from.
+    """
+
+    target: ResolveTarget
+    success: bool
+    pins: dict[str, Version] = field(default_factory=dict)
+    error: ResolutionError | None = None
+    consulted: frozenset[Marker] = frozenset()
+    lock: TargetLock | None = None
+    decisions: int = 0
+    rounds: int = 0
+    conflicts: int = 0
+    backjumps: int = 0
+    metadata_fetched: int = 0
+    distributions_seen: int = 0
+    wall_time: float = 0.0
 
 
-def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling into a config object would hide it
+@dataclass
+class ResolveResult:
+    """The finished resolve: one :class:`TargetResult` per target per fork.
+
+    ``base_results`` and ``env_base_names`` are populated only when
+    conflict forks ran: they record what a no-member resolve of each
+    environment produced, which is how the lock writer tells a base
+    dependency from one that only a member requires.  A failed base pass
+    leaves ``env_base_names`` incomplete, so it counts against
+    :attr:`success`.
+    """
+
+    targets: tuple[ResolveTarget, ...]
+    target_results: list[TargetResult] = field(default_factory=list)
+    base_results: list[TargetResult] = field(default_factory=list)
+    env_base_names: dict[EnvSignature, frozenset[str]] = field(default_factory=dict)
+
+    @property
+    def success(self) -> bool:
+        """Whether every target, and every base pass, resolved."""
+        return all(tr.success for tr in self.every_result)
+
+    @property
+    def every_result(self) -> tuple[TargetResult, ...]:
+        """Every per-target resolve, the base passes included."""
+        return (*self.target_results, *self.base_results)
+
+    def raise_for_failure(self) -> None:
+        """Re-raise the first target's :class:`ResolutionError`, if any.
+
+        For a caller with no per-target reporting of its own (a build-env
+        resolve, say), a failed target is just a failed resolve.
+        """
+        for tr in self.every_result:
+            if tr.error is not None:
+                raise tr.error
+
+    def merged_pins(self) -> dict[str, list[tuple[str, str]]]:
+        """Collapse the per-target pins into ``{package: [(version, label)]}``.
+
+        The labels are target ids, not PEP 508 markers; the lockfile
+        writer is what turns them into markers.
+        """
+        out: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
+        for tr in self.target_results:
+            if not tr.success:
+                continue
+            for package, version in tr.pins.items():
+                out[package].append((str(version), tr.target.label))
+        return dict(out)
+
+
+def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundling into a config object would hide it
     path: Path,
     transport: AsyncHttpTransport,
     *,
@@ -120,92 +209,48 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     resolution_strategy: ResolutionStrategy | None = None,
-) -> ResolutionResult:
-    """Resolve a project's dependencies for a single environment.
+) -> ResolveResult:
+    """Resolve the project at ``path`` for every environment it targets.
 
-    ``config`` defaults to :func:`read_pyproject_config(path)`. The
+    ``config`` defaults to :func:`read_pyproject_config(path)`.  The
     caller supplies ``transport`` so the HTTP library choice stays
-    outside nab-python. ``cache_dir``, ``offline`` and
-    ``python_version`` are runtime overrides from the CLI;
-    ``python_version`` backs ``--python`` and moves the resolve target
-    onto that Python, leaving the rest of the environment alone.
+    outside nab-python.  ``cache_dir``, ``offline`` and ``python_version``
+    are runtime overrides from the CLI; ``python_version`` backs
+    ``--python`` and moves the resolve target onto that Python, leaving
+    the rest of the environment alone.
 
     ``groups`` and ``extras`` name PEP 735 groups and
-    ``[project.optional-dependencies]`` keys to fold in.
+    ``[project.optional-dependencies]`` keys to fold in;
     ``resolution_strategy`` overrides ``config.resolution`` when set.
 
-    Use :func:`resolve_universal_pyproject` when
-    ``config.mode is ResolveMode.UNIVERSAL``. Returns a
-    :class:`ResolutionResult` with ``pins`` and ``lock_input``.
+    A target that cannot be resolved is a failed :class:`TargetResult`,
+    not an exception, so a matrix reports every target that failed rather
+    than only the first.  Everything else (an unreadable pyproject, a
+    conflicting selection, an unsupported source) raises.
     """
     if config is None:
         config = read_pyproject_config(path)
-
-    if config.mode is not ResolveMode.SPECIFIC:
-        msg = (
-            f"resolve_pyproject only handles ResolveMode.SPECIFIC; got"
-            f" {config.mode.value}.  Use resolve_universal_pyproject for"
-            " mode = 'universal'."
-        )
-        raise UnsupportedModeError(msg)
-
-    # ``default-groups`` is project policy: every default install
-    # activates them, so the conflict checks and the resolve fold them
-    # into the active group set alongside the CLI selection.
-    effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
-
-    # The host is the target unless the project (or --python) says
-    # otherwise; specific mode carries no matrix, so the plan is one target.
     config = with_python_override(config, python_version)
-    (target,) = plan_targets(config)
-    marker_environment = target.marker_env
-    # A marker on a self-referencing extra decides which extras are active, so
-    # it shapes the package set and the lock has to declare it like any other.
-    extra_markers: set[Marker] = set()
+    targets = plan_targets(config)
 
-    if config.conflicts:
-        # Read each table once and reuse it across the existence check
-        # and the umbrella expansion, so a conflict the selection only
-        # reaches transitively is still caught without re-parsing the
-        # file.  The expansion takes the target environment so a self
-        # reference gated by a PEP 508 marker counts toward the exclusion
-        # check only when its marker holds here; members reached through
-        # disjoint markers never co-select.
-        optional = read_pyproject_optional_dependencies(path)
-        groups_table = read_pyproject_groups(path)
-        project_name = read_pyproject_name(path)
-        _validate_conflict_members_exist(config.conflicts, optional, groups_table)
-        active_extras = expand_self_extras(
-            optional,
-            project_name,
-            extras,
-            marker_environment,
-            consulted=extra_markers,
-        )
-        active_groups = expand_group_includes(groups_table, effective_groups)
-        validate_conflict_exclusions(config.conflicts, active_extras, active_groups)
-        validate_conflict_minimums(config.conflicts, active_extras, active_groups)
-
-    effective_strategy = (
-        resolution_strategy if resolution_strategy is not None else config.resolution
+    tables = _ProjectTables(
+        dependencies=read_pyproject_dependencies(path),
+        groups=read_pyproject_groups(path),
+        optional=read_pyproject_optional_dependencies(path),
+        project_name=read_pyproject_name(path),
     )
-
-    requirements = read_pyproject_dependencies(path)
-    requirements.extend(_load_group_requirements(path, effective_groups))
-    requirements.extend(
-        _load_extra_requirements(path, extras, marker_environment, extra_markers)
-    )
-    if len(effective_groups) > 1:
-        _check_group_disjointness(
-            _load_group_requirements_by_group(path, effective_groups),
-            environment=marker_environment,
-        )
-    resolver_requirements, root_extras = _build_resolver_inputs(
-        requirements, config, environment=marker_environment
-    )
-    resolver_constraints = _build_constraints(config, environment=marker_environment)
-    direct_packages = frozenset(
-        name for name in resolver_requirements if split_extra(name)[1] is None
+    # ``default-groups`` is project policy: every default install
+    # activates them, so the conflict checks, the fork plan, and the
+    # resolves all fold them into the active group set alongside the CLI
+    # selection.
+    effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
+    forks, base_requirements = _plan_forks(
+        path,
+        tables,
+        config,
+        targets,
+        extras=tuple(extras),
+        groups=effective_groups,
     )
 
     with FetchCoordinator(
@@ -215,95 +260,189 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         offline=offline,
         index_routes=index_routes_from_config(config),
     ) as coordinator:
-        provider = Provider(
+        return resolve_with_coordinator(
             coordinator,
-            target=target,
-            root_requirements=resolver_requirements,
-            uploaded_prior_to=config.uploaded_prior_to,
-            root_extras=root_extras,
-            dist_policy=config.dist_policy,
-            build_policy=config.build_policy,
-            package_overrides=config.package_overrides,
-            index_overrides=config.index_overrides,
-            trust_unverified_sdist_deps=config.trust_unverified_sdist_deps,
-            vcs_config=config.vcs,
-            local_sources=list(config.local_sources) or None,
-            vcs_sources=list(config.vcs_sources) or None,
-            vcs_cache_dir=cache_dir / "vcs" if cache_dir is not None else None,
-            archive_sources=list(config.archive_sources) or None,
-            archive_cache_dir=(
-                cache_dir / "archive" if cache_dir is not None else None
-            ),
-            build_config=config,
-            resolution_strategy=effective_strategy,
-            direct_packages=direct_packages,
+            targets,
+            config=config,
+            cache_dir=cache_dir,
+            forks=forks,
+            base_requirements=base_requirements,
+            resolution_strategy=resolution_strategy,
         )
 
-        resolver: Resolver[str, Version] = Resolver(
-            provider, range_type=VersionRange, root_version="0"
+
+def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bare resolve with
+    coordinator: FetchCoordinator,
+    targets: Sequence[ResolveTarget],
+    requirements: Sequence[Requirement] = (),
+    *,
+    config: NabProjectConfig | None = None,
+    cache_dir: Path | None = None,
+    forks: Sequence[ResolveFork] | None = None,
+    base_requirements: Sequence[Requirement] | None = None,
+    resolution_strategy: ResolutionStrategy | None = None,
+    align_across_targets: bool = True,
+    preferences: Mapping[str, Version] | None = None,
+) -> ResolveResult:
+    """Resolve ``targets`` against an already-open coordinator.
+
+    Splitting this from :func:`resolve_for_targets` lets a caller (and
+    every test) drive the engine from requirements it holds, reusing one
+    coordinator across resolves and skipping the pyproject read.
+
+    With ``forks`` every target is resolved once per fork, each fork's
+    ``selection`` stamped onto the target; without them the resolve runs
+    once per target against ``requirements``.
+
+    ``align_across_targets`` threads each target's pins forward as
+    preferences for the next, so a package the matrix does not force
+    apart keeps one version across targets.  ``preferences`` seeds that,
+    e.g. from a previous lock.
+
+    ``base_requirements`` are the no-member requirements (the project
+    deps plus any non-conflicting selection).  When given, a final base
+    pass resolves them per target so the lock writer can tell a true base
+    dependency from one required by every member; pass it only when
+    conflict forks ran.
+    """
+    effective = config if config is not None else NabProjectConfig()
+    settings = _EngineSettings(
+        coordinator=coordinator,
+        config=effective,
+        cache_dir=cache_dir,
+        align=align_across_targets,
+        resolution=(
+            resolution_strategy
+            if resolution_strategy is not None
+            else effective.resolution
+        ),
+    )
+    fork_list = (
+        list(forks) if forks is not None else [ResolveFork((), tuple(requirements))]
+    )
+    constraints = [Requirement(text) for text in effective.constraints]
+
+    accumulated = dict(preferences or {})
+    results: list[TargetResult] = []
+    for fork in fork_list:
+        fork_targets = [
+            t.with_selection(fork.selection) if fork.selection else t for t in targets
+        ]
+        pass_results = _run_pass(
+            fork_targets, fork.requirements, constraints, settings, accumulated
         )
-        try:
-            raw = resolver.resolve(
-                resolver_requirements, constraints=resolver_constraints
-            )
-        except ResolutionError as exc:
-            _augment_resolution_error(exc, provider)
-            raise
-        pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
-        if config.local_sources or config.vcs_sources or config.archive_sources:
-            _raise_for_source_python(provider, pins, target.python_release)
-        lock_input = build_lock_input_from_provider(
-            provider,
-            pins,
-            requires_python=config.requires_python,
-            environments=_declared_environments(
-                target, provider, requirements, config.constraints, extra_markers
-            ),
-            extras=tuple(extras),
-            dependency_groups=tuple(groups),
-            default_groups=config.default_groups,
-            indexes=config.indexes,
-            resolved_keys=raw,
+        results.extend(pass_results)
+        accumulated = _threaded_preferences(
+            accumulated, pass_results, align=settings.align
         )
-        return ResolutionResult(pins=pins, lock_input=lock_input)
+
+    # A base (no-member) pass names the deps that install regardless of
+    # which member is chosen, so the writer keeps the membership clause
+    # on a dep required only by members.
+    base_results: list[TargetResult] = []
+    env_base_names: dict[EnvSignature, frozenset[str]] = {}
+    if base_requirements is not None:
+        base_results = _run_pass(
+            list(targets), base_requirements, constraints, settings, preferences or {}
+        )
+        for tr in base_results:
+            if tr.success:
+                env_base_names[env_signature(tr.target)] = frozenset(
+                    canonicalize_name(name) for name in tr.pins
+                )
+            else:
+                _logger.warning(
+                    "Base attribution skipped for tuple %s: %s",
+                    tr.target.label,
+                    tr.error,
+                )
+
+    return ResolveResult(
+        targets=tuple(targets),
+        target_results=results,
+        base_results=base_results,
+        env_base_names=env_base_names,
+    )
+
+
+def build_lock_input(
+    result: ResolveResult,
+    *,
+    config: NabProjectConfig | None = None,
+    extras: Sequence[str] = (),
+    dependency_groups: Sequence[str] = (),
+    created_by: str = "nab",
+) -> LockInput:
+    """Assemble the lock input from a finished resolve.
+
+    Every target that resolved contributes its pins, its forward
+    dependency edges, and the environment it declares (see
+    :func:`_declared_environments`).  A target that failed contributes
+    nothing, so callers that want the whole matrix represented check
+    ``result.success`` first.
+
+    ``extras`` and ``dependency_groups`` are this run's selection, which
+    the lock records at the top level;  ``default-groups`` and the
+    declared conflicts are project policy and come from ``config``.
+    """
+    effective = config if config is not None else NabProjectConfig()
+    targets: dict[str, TargetLock] = {}
+    consulted: dict[EnvSignature, set[Marker]] = {}
+    declaring: list[ResolveTarget] = []
+    for tr in result.target_results:
+        # A target with no lock is a target that did not resolve.
+        if tr.lock is None:
+            continue
+        targets[tr.target.label] = tr.lock
+        # Conflict forks repeat an environment under different
+        # selections, so the environment is declared once, from
+        # everything every fork of it read.
+        signature = env_signature(tr.target)
+        if signature not in consulted:
+            consulted[signature] = set()
+            declaring.append(tr.target)
+        consulted[signature] |= tr.consulted
+
+    return LockInput(
+        targets=targets,
+        env_base_names=dict(result.env_base_names),
+        environments=_declared_environments(declaring, consulted),
+        requires_python=effective.requires_python,
+        created_by=created_by,
+        extras=tuple(extras),
+        dependency_groups=tuple(dependency_groups),
+        default_groups=effective.default_groups,
+        conflicts=effective.conflicts,
+    )
+
+
+def env_signature(target: ResolveTarget) -> EnvSignature:
+    """Return ``target``'s environment as a hashable key."""
+    return tuple(sorted(target.marker_env.items()))
 
 
 def _declared_environments(
-    target: ResolveTarget,
-    provider: Provider,
-    requirements: Sequence[Requirement],
-    constraints: Sequence[str],
-    extra_markers: AbstractSet[Marker],
+    declaring: Sequence[ResolveTarget],
+    consulted: Mapping[EnvSignature, set[Marker]],
 ) -> list[Marker]:
-    """Build the lock's PEP 751 ``environments`` for this resolve.
+    """Build the lock's PEP 751 ``environments``, one per environment.
 
-    The pins hold for the one environment ``target`` names, so the lock
-    says so: every dependency whose marker was False here was dropped, and
-    an installer that answers one of those markers differently needs a
-    different package set.  The declaration is built from the markers the
-    resolve read (see
-    :func:`~nab_python.target.environment_declaration`).  The provider
-    records the ones it read off the dependency graph; the root
-    requirements and constraints are collected here, since their markers
-    are evaluated before the provider exists.
+    The pins hold for the environments the resolve targeted, so the lock
+    says so: every dependency whose marker was False on a target was
+    dropped there, and an installer that answers one of those markers
+    differently needs a different package set.  Each declaration is built
+    from the markers that target's resolve actually read (see
+    :func:`~nab_python.target.environment_declaration`).
 
     A marker on an axis the lock cannot bound (see
     :data:`~nab_python.target.UNBOUNDABLE_MARKER_VARIABLES`) is reported:
     the lock stays open on it, so an installer whose kernel differs will
     still accept the lock, with the dep that marker gated missing.
     """
-    consulted = set(provider.consulted_markers) | set(extra_markers)
-    for req in requirements:
-        if req.marker is not None:
-            consulted.add(req.marker)
-    for constraint in constraints:
-        marker = Requirement(constraint).marker
-        if marker is not None:
-            consulted.add(marker)
-
     variables: set[str] = set()
-    for marker in consulted:
-        variables |= marker_variables(str(marker))
+    for markers in consulted.values():
+        for marker in markers:
+            variables |= marker_variables(str(marker))
     unboundable = sorted(variables & UNBOUNDABLE_MARKER_VARIABLES)
     if unboundable:
         _logger.warning(
@@ -313,25 +452,302 @@ def _declared_environments(
             " miss the dependencies that marker gates.",
             ", ".join(unboundable),
         )
-    return [Marker(environment_declaration(target, consulted))]
+    return [
+        Marker(environment_declaration(target, consulted[env_signature(target)]))
+        for target in declaring
+    ]
 
 
-def _load_group_requirements(path: Path, selected: Sequence[str]) -> list[Requirement]:
-    """Read [dependency-groups] from ``path`` and expand ``selected``."""
-    if not selected:
-        return []
-    return _group_requirements_from_table(
-        read_pyproject_groups(path), selected, path=path
+@dataclass(frozen=True, slots=True)
+class _EngineSettings:
+    """What every per-target resolve in one run shares."""
+
+    coordinator: FetchCoordinator
+    config: NabProjectConfig
+    cache_dir: Path | None
+    align: bool
+    resolution: ResolutionStrategy
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectTables:
+    """The pyproject tables a resolve reads, read once."""
+
+    dependencies: list[Requirement]
+    groups: Mapping[str, Sequence[str | Mapping[str, str]]]
+    optional: Mapping[str, Sequence[str]]
+    project_name: str | None
+
+
+def _threaded_preferences(
+    accumulated: dict[str, Version],
+    results: Sequence[TargetResult],
+    *,
+    align: bool,
+) -> dict[str, Version]:
+    """Fold a pass's pins into the preferences the next pass starts from."""
+    if not align:
+        return accumulated
+    for tr in results:
+        if tr.success:
+            accumulated.update(tr.pins)
+    return accumulated
+
+
+def _run_pass(
+    targets: Sequence[ResolveTarget],
+    requirements: Sequence[Requirement],
+    constraints: Sequence[Requirement],
+    settings: _EngineSettings,
+    preferences: Mapping[str, Version],
+) -> list[TargetResult]:
+    """Resolve every target in ``targets`` once, in order.
+
+    With alignment on, each target's pins are threaded forward as
+    preferences for the next, so the pins stay aligned across targets
+    wherever the environments admit it.
+    """
+    results: list[TargetResult] = []
+    accumulated = dict(preferences)
+    for target in targets:
+        tr = _resolve_one_target(
+            target, requirements, constraints, settings, accumulated
+        )
+        results.append(tr)
+        accumulated = _threaded_preferences(accumulated, [tr], align=settings.align)
+    return results
+
+
+def _resolve_one_target(
+    target: ResolveTarget,
+    requirements: Sequence[Requirement],
+    constraints: Sequence[Requirement],
+    settings: _EngineSettings,
+    preferences: Mapping[str, Version],
+) -> TargetResult:
+    """Run one single-environment resolve for ``target``."""
+    config = settings.config
+    environment = target.marker_env
+    try:
+        resolver_requirements, root_extras = _build_resolver_inputs(
+            requirements, config, environment=environment
+        )
+        resolver_constraints, _ = _build_resolver_inputs(
+            constraints, config, environment=environment, kind="constraint"
+        )
+    except ResolutionError as exc:
+        return TargetResult(target=target, success=False, error=exc)
+
+    cache_dir = settings.cache_dir
+    provider = Provider(
+        settings.coordinator,
+        target=target,
+        root_requirements=resolver_requirements,
+        root_extras=root_extras,
+        uploaded_prior_to=config.uploaded_prior_to,
+        dist_policy=config.dist_policy,
+        build_policy=config.build_policy,
+        package_overrides=config.package_overrides,
+        index_overrides=config.index_overrides,
+        trust_unverified_sdist_deps=config.trust_unverified_sdist_deps,
+        vcs_config=config.vcs,
+        local_sources=list(config.local_sources) or None,
+        vcs_sources=list(config.vcs_sources) or None,
+        vcs_cache_dir=cache_dir / "vcs" if cache_dir is not None else None,
+        archive_sources=list(config.archive_sources) or None,
+        archive_cache_dir=cache_dir / "archive" if cache_dir is not None else None,
+        build_config=config,
+        resolution_strategy=settings.resolution,
+        direct_packages=frozenset(
+            name for name in resolver_requirements if split_extra(name)[1] is None
+        ),
+        preferences=dict(preferences),
+    )
+    resolver: Resolver[str, Version] = Resolver(
+        provider, range_type=VersionRange, root_version="0"
+    )
+
+    start = time.monotonic()
+    try:
+        raw = resolver.resolve(resolver_requirements, constraints=resolver_constraints)
+        pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
+        _raise_for_source_python(provider, target, pins)
+    except ResolutionError as exc:
+        _augment_resolution_error(exc, provider)
+        return TargetResult(
+            target=target,
+            success=False,
+            error=exc,
+            wall_time=time.monotonic() - start,
+            **_target_stats(resolver, provider),
+        )
+    elapsed = time.monotonic() - start
+    return TargetResult(
+        target=target,
+        success=True,
+        pins=pins,
+        consulted=_consulted_markers(provider, requirements, constraints),
+        lock=build_target_lock(
+            provider,
+            target,
+            pins,
+            indexes=settings.coordinator.indexes,
+            resolved_keys=raw,
+        ),
+        wall_time=elapsed,
+        **_target_stats(resolver, provider),
     )
 
 
-def _group_requirements_from_table(
+def _consulted_markers(
+    provider: Provider,
+    requirements: Sequence[Requirement],
+    constraints: Sequence[Requirement],
+) -> frozenset[Marker]:
+    """Every PEP 508 marker this resolve read.
+
+    The provider records the markers it read off the dependency graph;
+    the root requirements and constraints are collected here, since their
+    markers are evaluated before the provider exists.
+    """
+    consulted = set(provider.consulted_markers)
+    for req in itertools.chain(requirements, constraints):
+        if req.marker is not None:
+            consulted.add(req.marker)
+    return frozenset(consulted)
+
+
+def _target_stats(
+    resolver: Resolver[str, Version], provider: Provider
+) -> dict[str, int]:
+    """Return the resolver and provider counters for a :class:`TargetResult`."""
+    return {
+        "rounds": resolver.stats.rounds,
+        "decisions": resolver.stats.decisions,
+        "conflicts": resolver.stats.conflicts,
+        "backjumps": resolver.stats.backjumps,
+        "metadata_fetched": provider.stats.metadata_fetched,
+        "distributions_seen": provider.stats.distributions_seen,
+    }
+
+
+def _plan_forks(
+    path: Path,
+    tables: _ProjectTables,
+    config: NabProjectConfig,
+    targets: Sequence[ResolveTarget],
+    *,
+    extras: tuple[str, ...],
+    groups: tuple[str, ...],
+) -> tuple[list[ResolveFork], list[Requirement] | None]:
+    """Plan the resolves a selection needs, and the base pass they need.
+
+    A declared matrix forks an engaged conflict: one resolve per choice
+    of member, each carrying its own requirements.  Without one there is
+    a single unforked resolve, and the exclusion check below is what
+    refuses a selection that engages a conflict at all: with nowhere to
+    fork to, two co-selected members cannot both be locked.
+
+    The second element is the no-member requirement list, needed only
+    when the plan actually forked; see :func:`resolve_with_coordinator`.
+    """
+    fork_conflicts = config.matrix is not None
+    if config.conflicts:
+        _validate_conflict_members_exist(
+            config.conflicts, tables.optional, tables.groups
+        )
+        _check_conflict_minimums(
+            config.conflicts,
+            tables,
+            extras,
+            expand_group_includes(tables.groups, groups),
+            targets,
+        )
+
+    plan = conflict_forks(extras, groups, config.conflicts if fork_conflicts else ())
+    forks: list[ResolveFork] = []
+    # Forks of an extra-based conflict share a group selection, so the
+    # (group, group) -> target scan runs once per distinct one.
+    scanned_group_selections: set[tuple[str, ...]] = set()
+    for fork in plan:
+        if config.conflicts:
+            _check_conflict_exclusions(
+                config.conflicts,
+                tables,
+                fork.active_extras,
+                fork.active_groups,
+                targets,
+            )
+        if (
+            len(fork.active_groups) > 1
+            and fork.active_groups not in scanned_group_selections
+        ):
+            scanned_group_selections.add(fork.active_groups)
+            _check_group_disjointness(
+                _group_requirements_by_group(tables.groups, fork.active_groups, path),
+                targets,
+            )
+        forks.append(
+            ResolveFork(
+                selection=fork.selection,
+                requirements=tuple(_fork_requirements(path, tables, fork)),
+            )
+        )
+
+    # With more than one fork the lock writer needs to tell a base
+    # dependency from one required by every member, so the no-member
+    # requirements are resolved too.
+    base_requirements = None
+    if len(plan) > 1:
+        base_requirements = _fork_requirements(path, tables, _base_fork(plan[0]))
+    return forks, base_requirements
+
+
+def _fork_requirements(
+    path: Path, tables: _ProjectTables, fork: ConflictFork
+) -> list[Requirement]:
+    """Fold one fork's active groups and extras onto the project deps.
+
+    Each fork resolves a different slice of the selection (one member per
+    engaged conflict set), so its requirement list is built separately
+    rather than shared.
+    """
+    requirements = list(tables.dependencies)
+    requirements.extend(_group_requirements(tables.groups, fork.active_groups, path))
+    requirements.extend(_extra_requirements(tables, fork.active_extras, path))
+    return requirements
+
+
+def _base_fork(reference: ConflictFork) -> ConflictFork:
+    """Return the no-member fork: a reference fork minus its chosen members.
+
+    Every fork shares the same non-conflicting base selection, so any
+    fork's active sets with its own chosen members removed recover that
+    base.  Resolving it names the deps that install regardless of which
+    member is selected.
+    """
+    chosen = set(reference.selection)
+    rest_extras = tuple(
+        e
+        for e in reference.active_extras
+        if (ConflictKind.EXTRA.value, e) not in chosen
+    )
+    rest_groups = tuple(
+        g
+        for g in reference.active_groups
+        if (ConflictKind.GROUP.value, g) not in chosen
+    )
+    return ConflictFork(
+        selection=(), active_extras=rest_extras, active_groups=rest_groups
+    )
+
+
+def _group_requirements(
     groups: Mapping[str, Sequence[str | Mapping[str, str]]],
     selected: Sequence[str],
-    *,
     path: Path,
 ) -> list[Requirement]:
-    """Expand ``selected`` from an already-read group table.
+    """Expand ``selected`` PEP 735 groups from an already-read table.
 
     ``path`` is used only for the missing-table error message.
     """
@@ -346,37 +762,131 @@ def _group_requirements_from_table(
     return resolve_groups_to_requirements(groups, selected)
 
 
-def _load_group_requirements_by_group(
-    path: Path, selected: Sequence[str]
-) -> dict[str, list[Requirement]]:
-    """Expand ``selected`` groups, keyed by group name.
-
-    Like :func:`_load_group_requirements`, but keeps each group's
-    requirements separate so a caller can name the source group.
-    """
-    return _group_requirements_by_group_from_table(
-        read_pyproject_groups(path), selected, path=path
-    )
-
-
-def _group_requirements_by_group_from_table(
+def _group_requirements_by_group(
     groups: Mapping[str, Sequence[str | Mapping[str, str]]],
     selected: Sequence[str],
-    *,
     path: Path,
 ) -> dict[str, list[Requirement]]:
-    """Per-group expansion from an already-read group table."""
+    """Like :func:`_group_requirements`, but keyed by the source group."""
+    return {group: _group_requirements(groups, [group], path) for group in selected}
+
+
+def _extra_requirements(
+    tables: _ProjectTables, selected: Sequence[str], path: Path
+) -> list[Requirement]:
+    """Flatten ``selected`` extras to requirements.
+
+    A self-reference (``{project_name}[a, b]`` inside an extra's contents)
+    is walked transitively, and its PEP 508 marker is carried onto the
+    requirements it reaches, so a marker-gated self-reference activates
+    its extra only on the targets whose environment satisfies it (see
+    :func:`~nab_python.requirements_file.expand_extra_requirements`).
+    """
     if not selected:
-        return {}
-    if not groups:
+        return []
+    if not tables.optional:
         msg = (
-            "groups requested but [dependency-groups] is missing from"
-            f" {path}: {sorted(selected)!r}"
+            "extras requested but [project.optional-dependencies] is"
+            f" missing from {path}: {sorted(selected)!r}"
         )
         raise LookupError(msg)
-    return {
-        group: resolve_groups_to_requirements(groups, [group]) for group in selected
-    }
+    return expand_extra_requirements(tables.optional, tables.project_name, selected)
+
+
+def _validate_conflict_members_exist(
+    conflicts: Sequence[ConflictSet],
+    optional: Mapping[str, Sequence[str]],
+    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+) -> None:
+    """Raise when a declared conflict names an extra/group the project lacks.
+
+    A member naming an undeclared extra or group can never match, so
+    the conflict would be silently inert.  Names compare under
+    canonicalisation, matching the loaders.
+    """
+    known_extras = {canonicalize_name(name) for name in optional}
+    known_groups = {canonicalize_name(name) for name in groups}
+    unknown: list[str] = []
+    for conflict_set in conflicts:
+        for member in conflict_set.members:
+            known = known_extras if member.kind is ConflictKind.EXTRA else known_groups
+            if member.name not in known:
+                unknown.append(str(member))
+    if unknown:
+        joined = ", ".join(unknown)
+        msg = (
+            f"[tool.nab].conflicts names {joined}, which the project does not"
+            " declare in [project.optional-dependencies] or [dependency-groups]"
+        )
+        raise ConfigError(msg)
+
+
+def _check_conflict_minimums(
+    conflicts: Sequence[ConflictSet],
+    tables: _ProjectTables,
+    selected_extras: Sequence[str],
+    active_groups: Sequence[str],
+    targets: Sequence[ResolveTarget],
+) -> None:
+    """Run the require-one minimums check per target, marker-aware.
+
+    A member reached only through a marker-gated self reference is active
+    only on the targets whose environment satisfies that marker, so the
+    check expands the self-extra closure against each target's
+    environment.  A target on which no member is active fails the policy
+    even when another target satisfies it.
+    """
+    for target in targets:
+        active_extras = expand_self_extras(
+            tables.optional, tables.project_name, selected_extras, target.marker_env
+        )
+        try:
+            validate_conflict_minimums(conflicts, active_extras, active_groups)
+        except ConflictSelectionError as exc:
+            raise _named_for_target(exc, target, targets) from exc
+
+
+def _check_conflict_exclusions(
+    conflicts: Sequence[ConflictSet],
+    tables: _ProjectTables,
+    active_extras: Sequence[str],
+    active_groups: Sequence[str],
+    targets: Sequence[ResolveTarget],
+) -> None:
+    """Run the at-most-one exclusion check per target, marker-aware.
+
+    A self reference reaches its target only on the targets whose
+    environment satisfies its marker, so the self-extra closure is
+    expanded against each one.  Members reached under disjoint markers
+    never share a target and pass; two that co-activate on one target
+    fail.
+
+    A matrix runs this once per fork, where each fork holds at most one
+    member of an engaged set, so it only catches the members an umbrella
+    selection reaches transitively.  Without a matrix there is one fork
+    carrying the whole selection, so this is also what refuses two
+    co-selected members outright.
+    """
+    expanded_groups = expand_group_includes(tables.groups, active_groups)
+    for target in targets:
+        expanded_extras = expand_self_extras(
+            tables.optional, tables.project_name, active_extras, target.marker_env
+        )
+        try:
+            validate_conflict_exclusions(conflicts, expanded_extras, expanded_groups)
+        except ConflictSelectionError as exc:
+            raise _named_for_target(exc, target, targets) from exc
+
+
+def _named_for_target(
+    exc: ConflictSelectionError,
+    target: ResolveTarget,
+    targets: Sequence[ResolveTarget],
+) -> ConflictSelectionError:
+    """Name the offending tuple, when there is more than one to name."""
+    if len(targets) == 1:
+        return exc
+    return ConflictSelectionError(f"{exc} (tuple {target.label})")
 
 
 def _group_package_ranges(
@@ -467,43 +977,25 @@ def _find_group_conflicts(
                     )
                 )
 
-    # Sort so the first conflict, which specific mode reports, is stable.
+    # Sort so the reported conflict order is stable.
     conflicts.sort(key=lambda c: (c.left_group, c.right_group, c.package))
     return conflicts
 
 
 def _check_group_disjointness(
     per_group: Mapping[str, list[Requirement]],
-    *,
-    environment: Mapping[str, str],
+    targets: Sequence[ResolveTarget],
 ) -> None:
-    """Raise on the first direct conflict between two groups, naming them.
+    """Raise on a direct conflict between two selected groups, naming them.
 
-    Single-environment wrapper over :func:`_find_group_conflicts`.
-    """
-    for conflict in _find_group_conflicts(per_group, environment):
-        msg = (
-            f"Dependency groups {conflict.left_group!r} and"
-            f" {conflict.right_group!r} conflict on {conflict.package!r}: group"
-            f" {conflict.left_group!r} requires {conflict.left_req} but group"
-            f" {conflict.right_group!r} requires {conflict.right_req}."
-        )
-        raise ResolutionError(msg)
-
-
-def _check_group_disjointness_across_tuples(
-    per_group: Mapping[str, list[Requirement]],
-    tuples: Sequence[ResolveTarget],
-) -> None:
-    """Raise if a direct group conflict holds on any targeted tuple.
-
-    Checks each tuple's marker environment, aggregates conflicts by
-    identity, and names the affected tuples. A no-op below two groups.
+    A conflict is reported when it holds on any target; the offending
+    tuples are named when there is more than one to name.  A no-op below
+    two groups.
     """
     affected: dict[_GroupConflict, set[str]] = defaultdict(set)
-    for t in tuples:
-        for conflict in _find_group_conflicts(per_group, t.marker_env):
-            affected[conflict].add(t.label)
+    for target in targets:
+        for conflict in _find_group_conflicts(per_group, target.marker_env):
+            affected[conflict].add(target.label)
     if not affected:
         return
     clauses: list[str] = []
@@ -511,156 +1003,125 @@ def _check_group_disjointness_across_tuples(
         affected,
         key=lambda c: (c.left_group, c.right_group, c.package),
     ):
-        labels = ", ".join(sorted(affected[conflict]))
+        where = (
+            f" for tuple(s) {', '.join(sorted(affected[conflict]))}"
+            if len(targets) > 1
+            else ""
+        )
         clauses.append(
             f"Dependency groups {conflict.left_group!r} and"
-            f" {conflict.right_group!r} conflict on {conflict.package!r} for"
-            f" tuple(s) {labels}: group {conflict.left_group!r} requires"
-            f" {conflict.left_req} but group {conflict.right_group!r} requires"
-            f" {conflict.right_req}."
+            f" {conflict.right_group!r} conflict on {conflict.package!r}{where}:"
+            f" group {conflict.left_group!r} requires {conflict.left_req} but group"
+            f" {conflict.right_group!r} requires {conflict.right_req}."
         )
     raise ResolutionError("; ".join(clauses))
 
 
-def _load_extra_requirements(
-    path: Path,
-    selected: Sequence[str],
-    environment: Mapping[str, str] | None = None,
-    consulted: set[Marker] | None = None,
-) -> list[Requirement]:
-    """Read [project.optional-dependencies] from ``path`` and expand ``selected``.
+def _warn_dropped_root_marker(req: Requirement) -> None:
+    """Warn when a dropped root requirement tests an extra/group membership.
 
-    Self-references (``{project_name}[a, b]`` inside an extra's
-    contents) are expanded transitively so that the third-party deps
-    they ultimately reach reach the resolver as root requirements.
-    A marker-gated self-reference is walked only when its marker holds
-    under ``environment``; see :func:`expand_self_extras`.
+    A root marker testing ``extra``, ``extras``, or ``dependency_groups``
+    evaluates False at resolve time (root activates no extra or group), so the
+    dep would otherwise be dropped silently.
     """
-    if not selected:
-        return []
-    return _extra_requirements_from_table(
-        read_pyproject_optional_dependencies(path),
-        read_pyproject_name(path),
-        selected,
-        path=path,
-        environment=environment,
-        consulted=consulted,
-    )
+    marker_text = str(req.marker)
+    if "extra ==" in marker_text or membership_set_in_marker(marker_text):
+        _logger.warning(
+            "Root requirement %r tests an extra or dependency-group membership "
+            "marker; the dep is dropped because root activates no extra or group "
+            "at resolve time. For an extra, use pkg[extra] (extras-of-package).",
+            str(req),
+        )
 
 
-def _extra_requirements_from_table(
-    optional: Mapping[str, Sequence[str]],
-    project_name: str | None,
-    selected: Sequence[str],
+def _build_resolver_inputs(
+    requirements: Sequence[Requirement],
+    config: NabProjectConfig,
     *,
-    path: Path,
-    environment: Mapping[str, str] | None = None,
-    consulted: set[Marker] | None = None,
-) -> list[Requirement]:
-    """Expand ``selected`` extras from an already-read optional-deps table.
+    environment: Mapping[str, str],
+    kind: str = "requirement",
+) -> tuple[dict[str, VersionRange], set[tuple[str, str]]]:
+    """Convert PEP 508 requirements to the resolver's input shape.
 
-    See :func:`_load_extra_requirements` for the self-reference rules;
-    ``path`` is used only for the missing-table error message.
+    Requirements whose PEP 508 marker evaluates to ``False`` under
+    ``environment`` are skipped, matching pip/uv's root-requirement
+    handling.  Repeated package names are intersected into one range;
+    an empty intersection raises :class:`ResolutionError`.  A direct-URL
+    or VCS requirement is refused by :func:`admit_vcs_url`; resolving one
+    is not implemented.
+
+    ``kind`` is ``"requirement"`` or ``"constraint"``.  A constraint may
+    not carry extras, and shapes the error wording; the returned extras
+    set is empty for one.
     """
-    if not optional:
-        msg = (
-            "extras requested but [project.optional-dependencies] is"
-            f" missing from {path}: {sorted(selected)!r}"
+    resolver_requirements: dict[str, VersionRange] = {}
+    sources: defaultdict[str, list[str]] = defaultdict(list)
+    root_extras: set[tuple[str, str]] = set()
+    for req in requirements:
+        if kind == "constraint" and req.extras:
+            msg = f"Constraints cannot have extras: {req}"
+            raise ConfigError(msg)
+        if req.marker is not None and not dependency_marker_holds(
+            req.marker, environment
+        ):
+            _warn_dropped_root_marker(req)
+            continue
+        if req.url is not None:
+            admit_vcs_url(req.url, config.vcs)
+            msg = (
+                f"VCS {kind} admitted by policy but resolver path is not"
+                f" implemented: {req.name} @ {req.url}"
+            )
+            raise NotImplementedError(msg)
+        name = str(canonicalize_name(req.name))
+        previous = resolver_requirements.get(name, VersionRange.full())
+        term = (
+            req.specifier.to_range()
+            if req.specifier
+            else VersionRange.full(admit_arbitrary=False)
         )
-        raise LookupError(msg)
-    expanded = expand_self_extras(
-        optional, project_name, selected, environment, consulted
-    )
-    return select_optional_dependencies(optional, expanded, project_name)
+        resolver_requirements[name] = previous & term
+        sources[name].append(str(req))
+        for extra in sorted(req.extras):
+            extra_key = join_extra(name, extra)
+            resolver_requirements[extra_key] = VersionRange.full(admit_arbitrary=False)
+            _, normalized_extra = split_extra(extra_key)
+            assert normalized_extra is not None  # join_extra always sets one
+            root_extras.add((name, normalized_extra))
+    raise_for_unsatisfiable(resolver_requirements, sources, kind=kind)
+    return resolver_requirements, root_extras
 
 
-def _validate_conflict_members_exist(
-    conflicts: Sequence[ConflictSet],
-    optional: Mapping[str, Sequence[str]],
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+def _raise_for_source_python(
+    provider: Provider,
+    target: ResolveTarget,
+    pins: Mapping[str, Version],
 ) -> None:
-    """Raise when a declared conflict names an extra/group the project lacks.
+    """Reject a local, VCS, or archive pin whose Requires-Python excludes ``target``.
 
-    A member naming an undeclared extra or group can never match, so
-    the conflict would be silently inert.  Names compare under
-    canonicalisation, matching the loaders.  The caller passes the
-    already-read ``optional`` and ``groups`` tables so this does not
-    re-parse pyproject.toml.
+    Index candidates are filtered by Requires-Python while listing; local,
+    VCS, and archive sources skip that filter, so a source that rejects the
+    resolve target could otherwise reach the lock.
     """
-    known_extras = {canonicalize_name(name) for name in optional}
-    known_groups = {canonicalize_name(name) for name in groups}
-    unknown: list[str] = []
-    for conflict_set in conflicts:
-        for member in conflict_set.members:
-            known = known_extras if member.kind is ConflictKind.EXTRA else known_groups
-            if member.name not in known:
-                unknown.append(str(member))
-    if unknown:
-        joined = ", ".join(unknown)
-        msg = (
-            f"[tool.nab].conflicts names {joined}, which the project does not"
-            " declare in [project.optional-dependencies] or [dependency-groups]"
-        )
-        raise ConfigError(msg)
-
-
-@dataclass(frozen=True, slots=True)
-class _ForkTables:
-    """Pyproject tables read once and reused across every conflict fork."""
-
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]]
-    optional: Mapping[str, Sequence[str]]
-    project_name: str | None
-
-
-def _fork_requirement_strings(
-    path: Path,
-    base_dependencies: Sequence[Requirement],
-    fork: ConflictFork,
-    tables: _ForkTables,
-) -> list[str]:
-    """Fold one conflict fork's active groups and extras onto the base deps.
-
-    Each fork resolves a different slice of the selection (one member
-    per engaged conflict set), so its requirement list is built
-    separately rather than shared across forks.  ``tables`` carries the
-    group and optional-dependency tables read once for the whole
-    resolve, so the per-fork loop does not re-read the file.
-    """
-    requirements = list(base_dependencies)
-    requirements.extend(
-        _group_requirements_from_table(tables.groups, fork.active_groups, path=path)
+    managed = (
+        provider.local_sources.keys()
+        | provider.vcs_sources.keys()
+        | provider.archive_sources.keys()
     )
-    requirements.extend(
-        expand_extra_requirements(
-            tables.optional, tables.project_name, fork.active_extras
-        )
-    )
-    return [str(r) for r in requirements]
-
-
-def _base_fork(reference: ConflictFork) -> ConflictFork:
-    """Return the no-member fork: a reference fork minus its chosen members.
-
-    Every fork shares the same non-conflicting base selection, so any
-    fork's active sets with its own chosen members removed recover that
-    base.  Resolving it names the deps that install regardless of which
-    member is selected.
-    """
-    chosen = set(reference.selection)
-    rest_extras = tuple(
-        e
-        for e in reference.active_extras
-        if (ConflictKind.EXTRA.value, e) not in chosen
-    )
-    rest_groups = tuple(
-        g
-        for g in reference.active_groups
-        if (ConflictKind.GROUP.value, g) not in chosen
-    )
-    return ConflictFork(
-        selection=(), active_extras=rest_extras, active_groups=rest_groups
-    )
+    if not managed:
+        return
+    python = target.python_release
+    for name, version in pins.items():
+        normalized = canonicalize_name(name)
+        if normalized not in managed:
+            continue
+        spec = provider.metadata_cache[(normalized, version)].requires_python
+        if spec is not None and python not in spec:
+            msg = (
+                f"{normalized} {version} requires Python {spec} but the"
+                f" {target.label} resolve targets Python {python}"
+            )
+            raise ResolutionError(msg)
 
 
 def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
@@ -715,332 +1176,4 @@ def _walk_no_versions_packages(
             visit(node.cause_right)
 
     visit(incompatibility)
-    return out
-
-
-def _warn_dropped_root_marker(req: Requirement) -> None:
-    """Warn when a dropped root requirement tests an extra/group membership.
-
-    A root marker testing ``extra``, ``extras``, or ``dependency_groups``
-    evaluates False at resolve time (root activates no extra or group), so the
-    dep would otherwise be dropped silently.
-    """
-    marker_text = str(req.marker)
-    if "extra ==" in marker_text or membership_set_in_marker(marker_text):
-        _logger.warning(
-            "Root requirement %r tests an extra or dependency-group membership "
-            "marker; the dep is dropped because root activates no extra or group "
-            "at resolve time. For an extra, use pkg[extra] (extras-of-package).",
-            str(req),
-        )
-
-
-def _build_resolver_inputs(
-    requirements: list[Requirement],
-    config: NabProjectConfig,
-    *,
-    environment: Mapping[str, str],
-) -> tuple[dict[str, VersionRange], set[tuple[str, str]]]:
-    """Convert PEP 508 ``Requirement`` objects to the resolver's input shape.
-
-    Requirements whose PEP 508 marker evaluates to ``False`` under
-    ``environment`` are skipped, matching pip/uv's root-requirement
-    handling.  Repeated package names are intersected into one range;
-    an empty intersection raises :class:`ResolutionError`.
-    """
-    resolver_requirements: dict[str, VersionRange] = {}
-    sources: defaultdict[str, list[str]] = defaultdict(list)
-    root_extras: set[tuple[str, str]] = set()
-    for req in requirements:
-        if req.marker is not None and not dependency_marker_holds(
-            req.marker, environment
-        ):
-            _warn_dropped_root_marker(req)
-            continue
-        if req.url is not None:
-            admit_vcs_url(req.url, config.vcs)
-            msg = (
-                f"VCS requirement admitted by policy but resolver path is not"
-                f" implemented: {req.name} @ {req.url}"
-            )
-            raise NotImplementedError(msg)
-        name = str(canonicalize_name(req.name))
-        previous = resolver_requirements.get(name, VersionRange.full())
-        term = (
-            req.specifier.to_range()
-            if req.specifier
-            else VersionRange.full(admit_arbitrary=False)
-        )
-        resolver_requirements[name] = previous & term
-        sources[name].append(str(req))
-        for extra in sorted(req.extras):
-            extra_key = join_extra(name, extra)
-            resolver_requirements[extra_key] = VersionRange.full(admit_arbitrary=False)
-            _, normalized_extra = split_extra(extra_key)
-            assert normalized_extra is not None  # join_extra always sets one
-            root_extras.add((name, normalized_extra))
-    raise_for_unsatisfiable(resolver_requirements, sources, kind="requirement")
-    return resolver_requirements, root_extras
-
-
-def _raise_for_source_python(
-    provider: Provider,
-    pins: Mapping[str, Version],
-    target: Version,
-) -> None:
-    """Reject a local, VCS, or archive pin whose Requires-Python excludes ``target``.
-
-    Index candidates are filtered by Requires-Python while listing; local,
-    VCS, and archive sources skip that filter, so a source that rejects the
-    resolve target could otherwise reach the lock. Mirrors the per-tuple check
-    in :mod:`nab_python.universal.resolve`.
-    """
-    managed = (
-        provider.local_sources.keys()
-        | provider.vcs_sources.keys()
-        | provider.archive_sources.keys()
-    )
-    for name, version in pins.items():
-        normalized = canonicalize_name(name)
-        if normalized not in managed:
-            continue
-        spec = provider.metadata_cache[(normalized, version)].requires_python
-        if spec is not None and target not in spec:
-            msg = (
-                f"{normalized} {version} requires Python {spec} but the resolve"
-                f" targets Python {target}"
-            )
-            raise ResolutionError(msg)
-
-
-def _validate_universal_conflict_minimums(
-    conflicts: Sequence[ConflictSet],
-    tables: _ForkTables,
-    selected_extras: Sequence[str],
-    active_groups: Sequence[str],
-    tuples: Sequence[ResolveTarget],
-) -> None:
-    """Run the require-one minimums check per tuple, marker-aware.
-
-    A member reached only through a marker-gated self reference is active
-    only on the tuples whose environment satisfies that marker, so the
-    check expands the self-extra closure against each tuple's environment.
-    A tuple on which no member is active fails the policy even when another
-    tuple satisfies it.
-    """
-    for t in tuples:
-        active_extras = expand_self_extras(
-            tables.optional, tables.project_name, selected_extras, t.marker_env
-        )
-        try:
-            validate_conflict_minimums(conflicts, active_extras, active_groups)
-        except ConflictSelectionError as exc:
-            msg = f"{exc} (tuple {t.label})"
-            raise ConflictSelectionError(msg) from exc
-
-
-def _validate_universal_conflict_exclusions(
-    conflicts: Sequence[ConflictSet],
-    tables: _ForkTables,
-    active_extras: Sequence[str],
-    active_groups: Sequence[str],
-    tuples: Sequence[ResolveTarget],
-) -> None:
-    """Run the at-most-one exclusion check per tuple, marker-aware.
-
-    A self reference reaches its target only on tuples whose environment
-    satisfies its marker, so the self-extra closure is expanded against each
-    tuple's environment. Members reached under disjoint markers never share a
-    tuple and pass; two that co-activate on one tuple fail.
-    """
-    expanded_groups = expand_group_includes(tables.groups, active_groups)
-    for t in tuples:
-        expanded_extras = expand_self_extras(
-            tables.optional, tables.project_name, active_extras, t.marker_env
-        )
-        try:
-            validate_conflict_exclusions(conflicts, expanded_extras, expanded_groups)
-        except ConflictSelectionError as exc:
-            msg = f"{exc} (tuple {t.label})"
-            raise ConflictSelectionError(msg) from exc
-
-
-def resolve_universal_pyproject(
-    path: Path,
-    *,
-    config: NabProjectConfig | None = None,
-    cache_dir: Path | None = None,
-    transport: AsyncHttpTransport | None = None,
-    offline: bool = False,
-    groups: Sequence[str] = (),
-    extras: Sequence[str] = (),
-    resolution_strategy: ResolutionStrategy | None = None,
-) -> UniversalResult:
-    """Run a universal resolve for the project at ``path``.
-
-    Reads ``[project].dependencies`` as the requirement list and the
-    matrix declaration from ``[tool.nab.matrix]``.  Requires
-    ``config.mode == ResolveMode.UNIVERSAL``.
-
-    ``groups`` names PEP 735 dependency groups; ``extras`` names
-    entries from ``[project.optional-dependencies]``.  Both are
-    folded into every per-tuple resolve.  The CLI passes the
-    selections through to ``merge_universal_lock_inputs`` so the
-    lockfile records what produced the pin set.
-    """
-    if config is None:
-        config = read_pyproject_config(path)
-    if config.mode is not ResolveMode.UNIVERSAL:
-        msg = (
-            f"resolve_universal_pyproject requires mode = 'universal'; got"
-            f" {config.mode.value}.  Set [tool.nab].mode = 'universal'."
-        )
-        raise UnsupportedModeError(msg)
-    if config.matrix is None:  # pragma: no cover - guarded at config parse
-        msg = "mode = 'universal' requires a [tool.nab.matrix] table"
-        raise UnsupportedModeError(msg)
-
-    base_dependencies = read_pyproject_dependencies(path)
-    matrix = matrix_from_config(config.matrix)
-    expanded_tuples = matrix.expand()
-    group_table = read_pyproject_groups(path)
-    tables = _ForkTables(
-        groups=group_table,
-        optional=read_pyproject_optional_dependencies(path),
-        project_name=read_pyproject_name(path),
-    )
-
-    # ``default-groups`` is project policy: every default install
-    # activates them, so the conflict checks, the fork plan, and the
-    # per-fork resolves all fold them into the active group set
-    # alongside the CLI selection.
-    effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
-
-    if config.conflicts:
-        # Reuse the already-read tables for every conflict check, and
-        # expand the selection so an umbrella extra or include-group
-        # counts toward both the existence and the require-one checks.
-        _validate_conflict_members_exist(
-            config.conflicts, tables.optional, tables.groups
-        )
-        _validate_universal_conflict_minimums(
-            config.conflicts,
-            tables,
-            extras,
-            expand_group_includes(tables.groups, effective_groups),
-            expanded_tuples,
-        )
-
-    conflict_fork_list = conflict_forks(extras, effective_groups, config.conflicts)
-    forks: list[ResolveFork] = []
-    # Forks of an extra-based conflict share the same group selection,
-    # so dedupe to skip the (group, group)->tuple scan once it has run
-    # for an active_groups tuple.
-    seen_group_selections: set[tuple[str, ...]] = set()
-    for fork in conflict_fork_list:
-        if config.conflicts:
-            # Refuse a fork that reaches two members of one exclusive set on a
-            # single tuple (for example through an umbrella extra).
-            _validate_universal_conflict_exclusions(
-                config.conflicts,
-                tables,
-                fork.active_extras,
-                fork.active_groups,
-                expanded_tuples,
-            )
-        if (
-            len(fork.active_groups) > 1
-            and fork.active_groups not in seen_group_selections
-        ):
-            seen_group_selections.add(fork.active_groups)
-            _check_group_disjointness_across_tuples(
-                _group_requirements_by_group_from_table(
-                    group_table, fork.active_groups, path=path
-                ),
-                expanded_tuples,
-            )
-        forks.append(
-            ResolveFork(
-                selection=fork.selection,
-                requirements=_fork_requirement_strings(
-                    path, base_dependencies, fork, tables
-                ),
-            )
-        )
-
-    # With more than one fork the lock writer needs to tell a base
-    # dependency from one required by every member, so resolve the
-    # no-member requirements too.
-    base_requirements = None
-    if len(conflict_fork_list) > 1:
-        base_requirements = _fork_requirement_strings(
-            path, base_dependencies, _base_fork(conflict_fork_list[0]), tables
-        )
-
-    effective_strategy = (
-        resolution_strategy if resolution_strategy is not None else config.resolution
-    )
-    return resolve_universal(
-        matrix=matrix,
-        forks=forks,
-        base_requirements=base_requirements,
-        transport=transport,
-        offline=offline,
-        constraints=list(config.constraints) or None,
-        cache_dir=cache_dir,
-        uploaded_prior_to=config.uploaded_prior_to,
-        dist_policy=config.dist_policy,
-        build_policy=config.build_policy,
-        package_overrides=config.package_overrides,
-        index_overrides=config.index_overrides,
-        vcs_config=config.vcs,
-        local_sources=list(config.local_sources) or None,
-        vcs_sources=list(config.vcs_sources) or None,
-        vcs_cache_dir=cache_dir / "vcs" if cache_dir is not None else None,
-        archive_sources=list(config.archive_sources) or None,
-        archive_cache_dir=cache_dir / "archive" if cache_dir is not None else None,
-        build_config=config,
-        indexes=list(config.indexes),
-        index_routes=index_routes_from_config(config) or None,
-        resolution_strategy=effective_strategy.value,
-    )
-
-
-def _build_constraints(
-    config: NabProjectConfig, *, environment: Mapping[str, str]
-) -> dict[str, VersionRange]:
-    """Parse constraint strings from config into resolver-input ranges.
-
-    Marker-gated constraints whose marker is False in ``environment`` are
-    dropped, matching the universal path and pip. Repeated package names are
-    intersected into one range; an empty intersection raises
-    :class:`ResolutionError`.
-    """
-    out: dict[str, VersionRange] = {}
-    sources: defaultdict[str, list[str]] = defaultdict(list)
-    for cstr in config.constraints:
-        req = Requirement(cstr)
-        if req.extras:
-            msg = f"Constraints cannot have extras: {cstr}"
-            raise ConfigError(msg)
-        if req.marker is not None and not dependency_marker_holds(
-            req.marker, environment
-        ):
-            continue
-        if req.url is not None:
-            admit_vcs_url(req.url, config.vcs)
-            msg = (
-                f"VCS constraint admitted by policy but resolver path is not"
-                f" implemented: {req.name} @ {req.url}"
-            )
-            raise NotImplementedError(msg)
-        name = str(canonicalize_name(req.name))
-        term = (
-            req.specifier.to_range()
-            if req.specifier
-            else VersionRange.full(admit_arbitrary=False)
-        )
-        out[name] = out.get(name, VersionRange.full()) & term
-        sources[name].append(cstr)
-    raise_for_unsatisfiable(out, sources, kind="constraint")
     return out

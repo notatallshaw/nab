@@ -1,7 +1,7 @@
-"""Run universal-resolution benchmark scenarios against nab_python.universal.
+"""Run universal-resolution benchmark scenarios against nab_python.
 
 Reads scenarios from ``scenarios/universal.toml`` and resolves each
-via ``nab_python.universal.resolve_universal``, sharing a single
+via ``nab_python.resolve.resolve_with_coordinator``, sharing a single
 ``FetchCoordinator`` per scenario for metadata reuse across tuples.
 
 Output mirrors ``scenarios.py`` but with a ``per_tuple`` array so the
@@ -31,15 +31,20 @@ else:
     # nab pins py>=3.10 but the import fallback matches scenarios.py
     import tomli as tomllib  # type: ignore[no-redef] # pragma: no cover
 
+from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python._lockfile.pylock import build_pylock
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
-from nab_python.tags import PlatformSpec
-from nab_python.universal.matrix import Matrix
-from nab_python.universal.resolve import (
-    UniversalResult,
-    merge_universal_lock_inputs,
-    resolve_universal,
+from nab_python.config import NabProjectConfig
+from nab_python.fetch import FetchCoordinator
+from nab_python.provider import ResolutionStrategy
+from nab_python.resolve import (
+    ResolveResult,
+    build_lock_input,
+    resolve_with_coordinator,
 )
+from nab_python.tags import PlatformSpec
+from nab_python.target import Matrix
 
 BENCHMARKS_DIR = Path(__file__).parent
 SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
@@ -87,7 +92,7 @@ def parse_datetime(value: str) -> datetime:
     return dt
 
 
-def check_lock_consistency(result: UniversalResult) -> tuple[bool, list[str]]:
+def check_lock_consistency(result: ResolveResult) -> tuple[bool, list[str]]:
     """Verify the marker-gated lock reproduces each tuple's solution.
 
     Builds the real PEP 751 lock and, for each tuple, projects every
@@ -100,20 +105,20 @@ def check_lock_consistency(result: UniversalResult) -> tuple[bool, list[str]]:
 
     Call only when ``result.success`` so the lock covers every tuple.
     """
-    lock_input = merge_universal_lock_inputs(result)
+    lock_input = build_lock_input(result)
     try:
         pylock = build_pylock(lock_input)
     except Exception as exc:
         return False, [f"build_pylock raised {type(exc).__name__}: {exc}"[:200]]
 
     problems: list[str] = []
-    for tr in result.tuple_results:
+    for tr in result.target_results:
         expected = {canonicalize_name(n): str(v) for n, v in tr.pins.items()}
         selected: dict[str, str | None] = {}
         duplicates: set[str] = set()
         for pkg in pylock.packages:
             marker = pkg.marker
-            if marker is not None and not marker.evaluate(tr.tuple_.environment):
+            if marker is not None and not marker.evaluate(tr.target.marker_env):
                 continue
             name = canonicalize_name(str(pkg.name))
             if name in selected:
@@ -128,7 +133,7 @@ def check_lock_consistency(result: UniversalResult) -> tuple[bool, list[str]]:
                 if expected[k] != selected[k]
             )
             problems.append(
-                f"{tr.tuple_.label}: missing={missing} extra={extra} "
+                f"{tr.target.label}: missing={missing} extra={extra} "
                 f"mismatch={mismatch} duplicate={sorted(duplicates)}"
             )
     return not problems, problems
@@ -189,23 +194,32 @@ def process_scenario(
     start = time.monotonic()
     timed_out = False
     try:
-        result = resolve_universal(
-            matrix=matrix,
-            requirements=requirement_strings,
-            constraints=constraint_strings or None,
-            cache_dir=CACHE_DIR,
+        config = NabProjectConfig(
+            constraints=tuple(constraint_strings),
             uploaded_prior_to=uploaded_prior_to,
-            resolution_strategy=resolution_strategy,
-            align_across_tuples=align,
         )
+        with FetchCoordinator(
+            Urllib3AsyncTransport(),
+            indexes=list(config.indexes),
+            cache_dir=CACHE_DIR,
+        ) as coordinator:
+            result = resolve_with_coordinator(
+                coordinator,
+                matrix.expand(),
+                [Requirement(text) for text in requirement_strings],
+                config=config,
+                cache_dir=CACHE_DIR,
+                resolution_strategy=ResolutionStrategy(resolution_strategy),
+                align_across_targets=align,
+            )
         elapsed = time.monotonic() - start
         per_tuple = [
             {
-                "label": tr.tuple_.label,
-                "python_version": tr.tuple_.python_version,
-                "platform_id": tr.tuple_.platform_id,
+                "label": tr.target.label,
+                "python_version": tr.target.python_version,
+                "platform_id": tr.target.platform_id,
                 "success": tr.success,
-                "error": tr.error,
+                "error": str(tr.error) if tr.error is not None else None,
                 "decisions": tr.decisions,
                 "rounds": tr.rounds,
                 "conflicts": tr.conflicts,
@@ -215,9 +229,9 @@ def process_scenario(
                 "wall_time_seconds": round(tr.wall_time, 3),
                 "package_count": len(tr.pins),
             }
-            for tr in result.tuple_results
+            for tr in result.target_results
         ]
-        merged = result.merged_lock()
+        merged = result.merged_pins()
         diverging_packages = sum(
             1 for pins in merged.values() if len({version for version, _ in pins}) > 1
         )

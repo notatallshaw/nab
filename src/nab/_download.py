@@ -1,10 +1,8 @@
 """``nab download`` subcommand.
 
 Resolves a project and fetches every wheel and sdist into a local
-directory.  Single-environment mode downloads the one resolved
-environment's artefacts; universal mode re-resolves across the
-matrix and downloads the union of every tuple's artefacts,
-deduplicated by URL, to pre-populate a directory for offline
+directory: the union of every target's artefacts, deduplicated by URL,
+which for a declared matrix pre-populates a directory for offline
 deployment across platforms.
 
 External callers (the resolver entry point and the download
@@ -21,7 +19,6 @@ from typing import Annotated
 
 import tyro
 
-from nab_python.config import ResolveMode
 from nab_python.download import DownloadError
 
 from . import cli as _cli
@@ -117,32 +114,24 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     )
     _cli._reject_python_override_in_universal(config, python)  # noqa: SLF001
     transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
-    if config.mode is ResolveMode.UNIVERSAL:
-        universal = _cli._resolve_universal(  # noqa: SLF001
-            path,
-            config=config,
-            cache_dir=effective_cache_dir,
-            offline=settings.offline,
-            transport=transport,
-            groups=selected_groups,
-            extras=selected_extras,
-            resolution_strategy=settings.resolution,
-        )
-        lock_input = _cli.merge_universal_lock_inputs(universal)
-    else:
-        result = _cli._resolve_specific(  # noqa: SLF001
-            path,
-            config=config,
-            cache_dir=effective_cache_dir,
-            offline=settings.offline,
-            transport=transport,
-            failure_prefix="Cannot download",
-            python=python,
-            groups=selected_groups,
-            extras=selected_extras,
-            resolution_strategy=settings.resolution,
-        )
-        lock_input = result.lock_input
+    result = _cli._resolve(  # noqa: SLF001
+        path,
+        config=config,
+        cache_dir=effective_cache_dir,
+        offline=settings.offline,
+        transport=transport,
+        failure_prefix="Cannot download",
+        python=python,
+        groups=selected_groups,
+        extras=selected_extras,
+        resolution_strategy=settings.resolution,
+    )
+    lock_input = _cli.build_lock_input(
+        result,
+        config=config,
+        extras=selected_extras,
+        dependency_groups=selected_groups,
+    )
 
     download_transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
     try:
