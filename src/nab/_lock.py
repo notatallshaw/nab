@@ -251,8 +251,8 @@ def _drop_workspace_pins(
     ``workspace_to_drop`` holds canonical workspace member names; pin
     keys are already canonical.  An empty set returns ``lock_input``
     unchanged.  Each target's pins are filtered, and its forward
-    dependency graph with them, so no edge points at a dropped member
-    with no ``[[packages]]`` entry.
+    dependency graph and membership gates with them, so no edge or gate
+    names a dropped member with no ``[[packages]]`` entry.
     """
     if not workspace_to_drop:
         return lock_input
@@ -268,6 +268,9 @@ def _drop_workspace_pins(
                 name: kept
                 for name, deps in lock.dependencies.items()
                 if keep(name) and (kept := tuple(dep for dep in deps if keep(dep)))
+            },
+            package_gates={
+                name: gate for name, gate in lock.package_gates.items() if keep(name)
             },
         )
         for label, lock in lock_input.targets.items()

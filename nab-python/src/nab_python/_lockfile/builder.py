@@ -247,6 +247,8 @@ def build_target_lock(
     *,
     indexes: Sequence[IndexConfig] = (),
     resolved_keys: Iterable[str] = (),
+    base_roots: Iterable[str] | None = None,
+    selector_roots: Mapping[tuple[str, str], Iterable[str]] | None = None,
 ) -> TargetLock:
     """Build one target's :class:`~nab_python.lockfile.TargetLock`.
 
@@ -260,10 +262,28 @@ def build_target_lock(
     ``name[extra]`` proxies; it is read to find which extras activated
     so their edges join the forward dependency graph.
 
+    ``base_roots`` and ``selector_roots`` are the resolver keys each
+    install context requires directly: the project's own dependencies,
+    and those of each selected extra and each selected group, keyed by
+    its ``(kind, name)`` member.  :func:`_membership_gates` walks the
+    resolve from them to find the packages only a selection reaches.  An
+    empty ``base_roots`` is a project with no dependencies of its own, so
+    it does not stand in for ``None``: omitting it while passing selector
+    roots raises.
+
     Every wheel the target can install, plus the sdist, is recorded for
     each pinned version.
     """
     from ..lockfile import LocalPin, TargetLock
+
+    if base_roots is None:
+        if selector_roots:
+            msg = (
+                "selector_roots need base_roots:"
+                " without them every package looks selector-only"
+            )
+            raise ValueError(msg)
+        base_roots = ()
 
     lock_pins: dict[str, PinShape] = {}
     for raw_name, version in pins.items():
@@ -305,7 +325,86 @@ def build_target_lock(
         pins=lock_pins,
         dependencies=dependencies,
         base_dependencies=base_dependencies,
+        package_gates=_membership_gates(
+            provider,
+            pins,
+            base_roots=base_roots,
+            selector_roots=selector_roots or {},
+        ),
     )
+
+
+def _membership_gates(
+    provider: LockInputProvider,
+    pins: Mapping[str, Version],
+    *,
+    base_roots: Iterable[str],
+    selector_roots: Mapping[tuple[str, str], Iterable[str]],
+) -> dict[str, tuple[tuple[str, str], ...]]:
+    """Name the selections that gate each package no base dependency reaches.
+
+    A selected extra or group is folded into the resolve that produces
+    the lock, so its requirements pin packages a default install must not
+    receive.  PEP 751 defaults an install to no extras and to
+    ``default-groups``, and decides per package from ``packages.marker``,
+    so a package only a selection reaches has to name every selection
+    that reaches it; the writer turns each ``(kind, name)`` member into
+    ``'name' in extras`` / ``'name' in dependency_groups``.  A package
+    the project's own dependencies reach is unconditional.
+
+    Reachability is over this target's resolved graph, so an extras proxy
+    (an extra requiring ``pkg[fancy]`` while the project requires plain
+    ``pkg``) gates what ``fancy`` adds without gating ``pkg``.
+    """
+    if not selector_roots:
+        return {}
+
+    pinned = {canonicalize_name(name): version for name, version in pins.items()}
+    base_reachable = _reachable_names(provider, pinned, base_roots)
+
+    gates: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
+    for member in sorted(selector_roots):
+        gated = _reachable_names(provider, pinned, selector_roots[member])
+        for name in gated - base_reachable:
+            gates[name].append(member)
+    return {name: tuple(members) for name, members in gates.items()}
+
+
+def _reachable_names(
+    provider: LockInputProvider,
+    pinned: Mapping[str, Version],
+    roots: Iterable[str],
+) -> set[str]:
+    """Return the pinned names reachable from ``roots`` at their pinned versions.
+
+    The walk is over resolver keys, so a ``name[extra]`` root pulls in
+    that extra's dependencies on top of the package's own.
+    """
+    from ..provider import split_extra
+
+    reached: set[str] = set()
+    seen: set[str] = set()
+    stack = list(roots)
+
+    while stack:
+        key = stack.pop()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        raw_name, extra = split_extra(key)
+        canonical = canonicalize_name(raw_name)
+        version = pinned.get(canonical)
+        if version is None:
+            continue
+        reached.add(canonical)
+
+        cache_key = (canonical, version)
+        stack.extend(provider.deps_cache.get(cache_key, {}))
+        if extra is not None:
+            stack.extend(provider.extra_deps_map.get(cache_key, {}).get(extra, {}))
+
+    return reached
 
 
 def _forward_dependency_graph(

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import tomli_w
 
+from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.pylock import (
     Package,
@@ -345,6 +346,11 @@ def _build_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
     The emitted marker is the raw OR of the per-target marker
     expressions; no Boolean minimisation runs.
 
+    A package a selected extra or group reaches while the project's own
+    dependencies do not is gated on that selection, so a default install
+    (no extras, the default groups) leaves it out.  See
+    :func:`_build_marker`.
+
     A conflict fork injects a membership clause into every target's
     marker, including the forks' base dependencies.  A base dependency
     present in every fork of an environment must install regardless of
@@ -649,10 +655,22 @@ def _build_marker(
     membership OR and does not install when no member is selected.
     An environment with no base-name set (no conflict fork ran) leaves
     the gate open.
+
+    A package a selected extra or group reaches while the project's own
+    dependencies do not carries that selection's gate (see
+    :attr:`~nab_python.lockfile.TargetLock.package_gates`), which is
+    joined by ``and`` onto each contribution.  An env collapses only when
+    its forks agree on the gate, since one entry cannot carry two.  When the
+    package covers every target, every env collapsed, and every target
+    gates it the same way, the env clauses are dropped and the gate
+    stands alone: a selection is a property of the install context, not
+    of the platform, so ``"cli" in extras`` is the whole marker.
     """
     by_env: defaultdict[tuple[tuple[str, str], ...], list[str]] = defaultdict(list)
     for label in labels:
         by_env[env_signatures[label]].append(label)
+
+    gates = {label: targets[label].package_gates.get(name, ()) for label in labels}
 
     # The package is unconditional only when it covers every target AND
     # every environment collapsed to its env-only marker. A member-only
@@ -672,18 +690,53 @@ def _build_marker(
             if base_names is not None
             else (env_fork_counts[signature] == 1)
         )
-        if len(env_labels) >= env_fork_counts[signature] and is_base:
+        agreed_gate = len({gates[label] for label in env_labels}) == 1
+        if len(env_labels) >= env_fork_counts[signature] and is_base and agreed_gate:
             head = targets[env_labels[0]].target
-            contributions.append(Marker(head.environment_marker_string))
+            contributions.append(
+                Marker(_with_gate(head.environment_marker_string, gates[env_labels[0]]))
+            )
         else:
             contributions.extend(
-                Marker(targets[label].target.marker_string) for label in env_labels
+                Marker(_with_gate(targets[label].target.marker_string, gates[label]))
+                for label in env_labels
             )
             unconditional = False
 
-    if unconditional:
+    if not unconditional:
+        return _or_markers(contributions)
+
+    # Every env collapsed at full coverage: the environment is not what
+    # selects this package, so only the gate can, and only when every
+    # target agrees on it.
+    common = set(gates.values())
+    if common == {()}:
         return None
+    if len(common) == 1:
+        return Marker(_gate_clause(next(iter(common))))
     return _or_markers(contributions)
+
+
+def _gate_clause(gate: Sequence[tuple[str, str]]) -> str:
+    """Render a package's membership gate as a PEP 508 clause.
+
+    Each ``(kind, name)`` member becomes ``'name' in extras`` or
+    ``'name' in dependency_groups``; a package two selections reach
+    disjoins them, since either one installs it.
+    """
+    return " or ".join(
+        f'"{name}" in {MARKER_VARIABLE_FOR_KIND[kind]}' for kind, name in sorted(gate)
+    )
+
+
+def _with_gate(marker: str, gate: Sequence[tuple[str, str]]) -> str:
+    """AND a package's membership gate onto the marker of one target."""
+    if not gate:
+        return marker
+    clause = _gate_clause(gate)
+    if len(gate) > 1:
+        clause = f"({clause})"
+    return f"{marker} and {clause}"
 
 
 def _env_signatures(

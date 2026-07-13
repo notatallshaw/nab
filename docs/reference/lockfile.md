@@ -90,6 +90,48 @@ size = 286433
   requires at least one of the three so the lockfile is
   consumable by pip's hash-checking mode.
 
+### Extras and dependency groups
+
+`nab lock --extras cli --groups dev` resolves the project, the `cli`
+extra and the `dev` group together, and records the selection in the
+top-level `extras` and `dependency-groups` keys. PEP 751 has an
+installer read those keys as what the lock offers, and install with
+no extras and only the `default-groups` unless it is asked for more.
+So a package that only `cli` or only `dev` reaches is emitted with a
+marker naming the selection that brought it in:
+
+```toml
+[[packages]]
+name = "mytool"
+version = "2.0.0"
+marker = "\"cli\" in extras"
+
+[[packages]]
+name = "mydev"
+version = "3.0.0"
+marker = "\"dev\" in dependency_groups"
+```
+
+Reachability is what decides: a package the project's own
+dependencies pull in is unconditional even when a selected extra
+also asks for it, and a package that two selections reach disjoins
+both (`"cli" in extras or "dev" in dependency_groups`). A group
+named in `[tool.nab].default-groups` still installs by default,
+because PEP 751 seeds `dependency_groups` from `default-groups`
+when the installer is given no group selection.
+
+The gate is a property of the install context, not of the platform.
+A matrix folds the selection into every target, so an extra that
+reaches a package on every target gives it the bare membership
+clause; one that reaches it on only some targets gets that clause
+joined by `and` onto those targets' environment markers.
+
+The versions are one joint resolution, so an extra's constraints
+shape the pins of the packages it shares with the project. A
+conflict between two selections is a resolution failure, not two
+lockfiles, unless it is declared; see
+[Conflicting extras and groups](../explanation/conflicts.md).
+
 ### Portable paths
 
 A lockfile can reference content on disk: a `LocalPin`'s
