@@ -668,7 +668,8 @@ def _build_provenance(
     return Provenance(
         nab_version=__version__,
         created_at=anchor,
-        command_line=tuple(sys.argv),
+        # argv[0] is a path into the checkout or venv, not the program name.
+        command_line=("nab", *sys.argv[1:]),
         input_path=str(path),
         mode=config.mode.value,
         python_specifier=python_specifier,
