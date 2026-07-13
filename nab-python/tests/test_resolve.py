@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -20,7 +19,9 @@ from nab_python.config import (
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
+    read_pyproject_config,
 )
+from nab_python.lockfile import LockInput, PinShape
 from nab_python.provider import (
     BuildPolicy,
     LocalSource,
@@ -28,22 +29,25 @@ from nab_python.provider import (
     ResolutionStrategy,
     UnsupportedVcsError,
 )
+from nab_python.requirements_file import (
+    read_pyproject_groups,
+    read_pyproject_name,
+    read_pyproject_optional_dependencies,
+)
 from nab_python.resolve import (
-    ResolutionResult,
-    UnsupportedModeError,
+    ResolveResult,
     _augment_resolution_error,
-    _build_constraints,
     _build_resolver_inputs,
     _check_group_disjointness,
-    _check_group_disjointness_across_tuples,
+    _extra_requirements,
     _find_group_conflicts,
-    _load_extra_requirements,
-    _load_group_requirements,
-    _load_group_requirements_by_group,
+    _group_requirements,
+    _group_requirements_by_group,
+    _ProjectTables,
     _raise_for_source_python,
     _walk_no_versions_packages,
-    resolve_pyproject,
-    resolve_universal_pyproject,
+    build_lock_input,
+    resolve_for_targets,
 )
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
@@ -64,6 +68,65 @@ _FAKE_TRANSPORT = MagicMock(name="FakeTransport")
 _FORTY = "0123456789abcdef0123456789abcdef01234567"
 
 
+def _resolved(path: Path, transport: object = None, **kwargs: object) -> ResolveResult:
+    """Resolve and surface a failed target's error.
+
+    The engine records a target that did not resolve rather than raising,
+    so a caller resolving for one environment re-raises it; that is what
+    every test below asserts against.
+    """
+    result = resolve_for_targets(path, transport, **kwargs)  # type: ignore[arg-type]
+    result.raise_for_failure()
+    return result
+
+
+def _target(environment: dict[str, str]) -> ResolveTarget:
+    """A host target whose marker environment is ``environment``.
+
+    The group-disjointness check reads only ``marker_env``, so an overlay
+    onto the host names the environment a group's markers evaluate under.
+    """
+    return ResolveTarget.for_host().with_marker_overrides(environment)
+
+
+def _pins(result: ResolveResult) -> dict[str, Version]:
+    """The pins of a single-environment resolve."""
+    return result.target_results[0].pins
+
+
+def _locked(lock_input: LockInput) -> dict[str, PinShape]:
+    """The pins a single-environment lock carries."""
+    (lock,) = lock_input.targets.values()
+    return dict(lock.pins)
+
+
+def _tables(path: Path) -> _ProjectTables:
+    """The pyproject tables the requirement loaders read."""
+    return _ProjectTables(
+        dependencies=[],
+        groups=read_pyproject_groups(path),
+        optional=read_pyproject_optional_dependencies(path),
+        project_name=read_pyproject_name(path),
+    )
+
+
+def _build_constraints(
+    config: NabProjectConfig, *, environment: dict[str, str]
+) -> dict[str, Range]:
+    """The resolver-input ranges ``config``'s constraints fold to.
+
+    The parser is shared with the requirement side; ``kind`` is what
+    tells the two apart.
+    """
+    ranges, _ = _build_resolver_inputs(
+        [Requirement(text) for text in config.constraints],
+        config,
+        environment=environment,
+        kind="constraint",
+    )
+    return ranges
+
+
 class TestSpecificModeConflictValidation:
     """A declared conflict fails fast in specific mode, before any network."""
 
@@ -81,7 +144,7 @@ class TestSpecificModeConflictValidation:
         # No FetchCoordinator patch: the validation must raise before any
         # network work is attempted.
         with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 extras=("cpu", "gpu"),
@@ -102,7 +165,7 @@ class TestSpecificModeConflictValidation:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -110,7 +173,7 @@ class TestSpecificModeConflictValidation:
             mock_provider.choose_version.return_value = V("1.0")
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
-            result = resolve_pyproject(
+            result = _resolved(
                 pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
             )
         # The selected extra's pin reached the Provider as a root
@@ -119,7 +182,7 @@ class TestSpecificModeConflictValidation:
         assert "foo" in root_reqs
         assert V("1.0") in root_reqs["foo"]
         assert V("2.0") not in root_reqs["foo"]
-        assert result.pins == {"foo": V("1.0")}
+        assert _pins(result) == {"foo": V("1.0")}
 
     def test_unknown_conflict_member_raises(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
@@ -134,7 +197,7 @@ class TestSpecificModeConflictValidation:
         # No FetchCoordinator patch: the existence check raises before
         # any network work is attempted.
         with pytest.raises(ConfigError, match="gpuu"):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 extras=("cpu",),
@@ -152,7 +215,7 @@ class TestSpecificModeConflictValidation:
             'conflicts = [[{ group = "a" }, { group = "missing" }]]\n'
         )
         with pytest.raises(ConfigError, match="missing"):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 groups=("a",),
@@ -173,7 +236,7 @@ class TestSpecificModeConflictValidation:
             'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
         )
         with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 extras=("all",),
@@ -195,7 +258,7 @@ class TestSpecificModeConflictValidation:
             'conflicts = [[{ group = "b22" }, { group = "b23" }]]\n'
         )
         with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 groups=("all-tools",),
@@ -222,7 +285,7 @@ class TestSpecificModeConflictValidation:
             'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
         )
         with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 extras=("all",),
@@ -249,7 +312,7 @@ class TestSpecificModeConflictValidation:
             'conflicts = [[{ group = "b22" }, { group = "b23" }]]\n'
         )
         with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 groups=("all-tools",),
@@ -272,7 +335,7 @@ class TestSpecificModeConflictValidation:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -280,7 +343,7 @@ class TestSpecificModeConflictValidation:
             mock_provider.choose_version.return_value = V("1.0")
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
-            result = resolve_pyproject(
+            result = _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 extras=("accel",),
@@ -288,7 +351,7 @@ class TestSpecificModeConflictValidation:
             )
         # Reaching here means the conflict check did not raise; cpu's dep
         # is pulled in through the self-reference.
-        assert result.pins["foo"] == V("1.0")
+        assert _pins(result)["foo"] == V("1.0")
 
     def test_umbrella_extra_disjoint_markers_resolve(self, tmp_path: Path) -> None:
         """Self-refs to both members under disjoint markers do not co-select.
@@ -315,7 +378,7 @@ class TestSpecificModeConflictValidation:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -323,7 +386,7 @@ class TestSpecificModeConflictValidation:
             mock_provider.choose_version.return_value = V("2.0")
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
-            result = resolve_pyproject(
+            result = _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 extras=("all",),
@@ -334,7 +397,7 @@ class TestSpecificModeConflictValidation:
         root_reqs = mock_provider_cls.call_args.kwargs["root_requirements"]
         assert V("2.0") in root_reqs["foo"]
         assert V("1.0") not in root_reqs["foo"]
-        assert result.pins == {"foo": V("2.0")}
+        assert _pins(result) == {"foo": V("2.0")}
 
     def test_specific_mode_exactly_one_with_no_member_raises(
         self, tmp_path: Path
@@ -354,7 +417,7 @@ class TestSpecificModeConflictValidation:
             "]\n"
         )
         with pytest.raises(ConflictSelectionError, match="exactly one"):
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
     def test_specific_mode_at_least_one_with_no_member_raises(
         self, tmp_path: Path
@@ -374,7 +437,7 @@ class TestSpecificModeConflictValidation:
             "]\n"
         )
         with pytest.raises(ConflictSelectionError, match="at least one"):
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
     def test_specific_mode_exactly_one_with_one_member_resolves(
         self, tmp_path: Path
@@ -395,7 +458,7 @@ class TestSpecificModeConflictValidation:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -403,10 +466,10 @@ class TestSpecificModeConflictValidation:
             mock_provider.choose_version.return_value = V("1.0")
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
-            result = resolve_pyproject(
+            result = _resolved(
                 pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
             )
-        assert result.pins == {"foo": V("1.0")}
+        assert _pins(result) == {"foo": V("1.0")}
 
     def test_default_groups_satisfy_exactly_one(self, tmp_path: Path) -> None:
         # ``default-groups`` activates ``a`` on every default install, so
@@ -427,7 +490,7 @@ class TestSpecificModeConflictValidation:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -435,10 +498,8 @@ class TestSpecificModeConflictValidation:
             mock_provider.choose_version.return_value = V("1.0")
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
-            result = resolve_pyproject(
-                pyproject, _FAKE_TRANSPORT, python_version="3.12.0"
-            )
-        assert result.pins == {"foo": V("1.0")}
+            result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        assert _pins(result) == {"foo": V("1.0")}
 
     def test_default_groups_deps_are_loaded(self, tmp_path: Path) -> None:
         # ``default-groups`` deps reach the resolver even without ``--groups``.
@@ -454,7 +515,7 @@ class TestSpecificModeConflictValidation:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -462,7 +523,7 @@ class TestSpecificModeConflictValidation:
             mock_provider.choose_version.return_value = V("2.0")
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
         root_reqs = mock_provider_cls.call_args.kwargs["root_requirements"]
         assert "bar" in root_reqs
 
@@ -481,7 +542,7 @@ class TestSpecificModeConflictValidation:
             'conflicts = [[{ group = "a" }, { group = "b" }]]\n'
         )
         with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 groups=("b",),
@@ -500,7 +561,7 @@ class TestResolvePyproject:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -509,11 +570,9 @@ class TestResolvePyproject:
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
 
-            result = resolve_pyproject(
-                pyproject, _FAKE_TRANSPORT, python_version="3.12.0"
-            )
+            result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        assert result.pins == {"foo": V("2.0")}
+        assert _pins(result) == {"foo": V("2.0")}
 
     def test_uses_current_python_version(self, tmp_path: Path) -> None:
         """When python_version is None, uses sys.version_info."""
@@ -525,7 +584,7 @@ class TestResolvePyproject:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -534,7 +593,7 @@ class TestResolvePyproject:
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
 
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT)
+            _resolved(pyproject, _FAKE_TRANSPORT)
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target.host_faithful
@@ -553,7 +612,7 @@ class TestResolvePyproject:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -562,7 +621,7 @@ class TestResolvePyproject:
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
 
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 python_version="3.12.0",
@@ -592,7 +651,7 @@ class TestResolvePyproject:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -601,7 +660,7 @@ class TestResolvePyproject:
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
 
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         routes = mock_coord_cls.call_args.kwargs["index_routes"]
         assert [(r.name, r.index) for r in routes] == [("baz", "private")]
@@ -624,7 +683,7 @@ class TestResolvePyproject:
             patch("nab_python.resolve.Resolver") as mock_resolver_cls,
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider"),
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -633,7 +692,7 @@ class TestResolvePyproject:
                 "foo": V("1.0"),
                 "bar": V("1.0"),
             }
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         forwarded = mock_resolver.resolve.call_args.args[0]
         assert "foo" in forwarded
@@ -649,17 +708,15 @@ class TestResolvePyproject:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider"),
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            result = resolve_pyproject(
-                pyproject, _FAKE_TRANSPORT, python_version="3.12.0"
-            )
+            result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        assert result.pins == {}
+        assert _pins(result) == {}
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -683,7 +740,7 @@ class TestResolvePyproject:
         mock_resolver = mock_resolver_cls.return_value
         mock_resolver.resolve.return_value = {"foo": V("2.0")}
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         call_kwargs = mock_resolver.resolve.call_args
         assert "constraints" in call_kwargs.kwargs
@@ -693,7 +750,7 @@ class TestResolvePyproject:
         assert "custom" in constraints["skip"]
         assert V("1.0") not in constraints["skip"]
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -716,7 +773,7 @@ class TestResolvePyproject:
         mock_resolver = mock_resolver_cls.return_value
         mock_resolver.resolve.return_value = {"requests": V("2.0")}
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         call_args = mock_resolver.resolve.call_args
         requirements = call_args.args[0]
@@ -726,7 +783,7 @@ class TestResolvePyproject:
         provider_kwargs = mock_provider_cls.call_args.kwargs
         assert ("requests", "security") in provider_kwargs["root_extras"]
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -751,13 +808,13 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {"foo": V("1.0")}
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
         assert "foo" in requirements
         assert "windows-only" not in requirements
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -792,13 +849,13 @@ class TestResolvePyproject:
             "legacy": V("1.0"),
         }
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
+        _resolved(pyproject, _FAKE_TRANSPORT)
 
         requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
         assert "foo" in requirements
         assert "legacy" in requirements
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -826,12 +883,12 @@ class TestResolvePyproject:
             "linux-only": V("1.0"),
         }
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
         assert "linux-only" in requirements
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -852,7 +909,7 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {"foo": V("1.0")}
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.10.0")
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.10.0")
 
         requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
         assert "newer" not in requirements
@@ -866,11 +923,9 @@ class TestResolvePyproject:
             '[project]\ndependencies = ["foo"]\n',
         )
         with pytest.raises(ConfigError, match="'not-a-version'"):
-            resolve_pyproject(
-                pyproject, _FAKE_TRANSPORT, python_version="not-a-version"
-            )
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="not-a-version")
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -897,7 +952,7 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {}
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.4")
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.4")
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target.python_full_version == "3.12.4"
@@ -913,24 +968,9 @@ class TestResolvePyproject:
             'requires-python = ">=3.11"\n',
         )
         with pytest.raises(ConfigError, match="excludes the resolve target"):
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.9")
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.9")
 
-    def test_universal_mode_rejected(self, tmp_path: Path) -> None:
-        """resolve_pyproject refuses to handle mode = 'universal'."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            '[project]\ndependencies = ["foo"]\n'
-            "[tool.nab]\n"
-            'mode = "universal"\n'
-            "[tool.nab.matrix]\n"
-            'python = ">=3.11,<3.13"\n'
-            'platforms = ["linux_x86_64"]\n',
-        )
-
-        with pytest.raises(UnsupportedModeError, match="resolve_universal"):
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
-
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -951,7 +991,7 @@ class TestResolvePyproject:
         mock_resolver_cls.return_value.resolve.return_value = {}
 
         explicit = NabProjectConfig(constraints=("urllib3<2",))
-        resolve_pyproject(
+        _resolved(
             pyproject,
             _FAKE_TRANSPORT,
             config=explicit,
@@ -963,7 +1003,7 @@ class TestResolvePyproject:
         ]
         assert "urllib3" in forwarded
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -986,14 +1026,14 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {}
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         kwargs = mock_provider_cls.call_args.kwargs
         assert kwargs["resolution_strategy"] is ResolutionStrategy.LOWEST_DIRECT
         # The direct set holds the canonical names of the project's own deps.
         assert kwargs["direct_packages"] == frozenset({"foo"})
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -1014,7 +1054,7 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {}
 
-        resolve_pyproject(
+        _resolved(
             pyproject,
             _FAKE_TRANSPORT,
             python_version="3.12.0",
@@ -1024,7 +1064,7 @@ class TestResolvePyproject:
         kwargs = mock_provider_cls.call_args.kwargs
         assert kwargs["resolution_strategy"] is ResolutionStrategy.HIGHEST
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -1043,12 +1083,12 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {}
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         kwargs = mock_provider_cls.call_args.kwargs
         assert kwargs["resolution_strategy"] is ResolutionStrategy.HIGHEST
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -1069,7 +1109,7 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {}
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         kwargs = mock_provider_cls.call_args.kwargs
         # Only the base canonical names; the extras-proxy key
@@ -1077,7 +1117,7 @@ class TestResolvePyproject:
         # the strategy decision is keyed on the underlying package.
         assert kwargs["direct_packages"] == frozenset({"requests", "foo"})
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -1100,15 +1140,19 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {}
 
-        resolve_pyproject(
+        result = _resolved(
             pyproject, _FAKE_TRANSPORT, python_version="3.12.0", groups=("test",)
         )
 
-        kwargs = mock_build_lock.call_args.kwargs
-        assert kwargs["dependency_groups"] == ("test",)
-        assert kwargs["default_groups"] == ("dev",)
+        lock_input = build_lock_input(
+            result,
+            config=read_pyproject_config(pyproject),
+            dependency_groups=("test",),
+        )
+        assert lock_input.dependency_groups == ("test",)
+        assert lock_input.default_groups == ("dev",)
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -1129,18 +1173,23 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {}
 
-        resolve_pyproject(
+        result = _resolved(
             pyproject, _FAKE_TRANSPORT, python_version="3.12.0", groups=("test",)
         )
 
-        assert mock_build_lock.call_args.kwargs["default_groups"] == ()
+        lock_input = build_lock_input(
+            result,
+            config=read_pyproject_config(pyproject),
+            dependency_groups=("test",),
+        )
+        assert lock_input.default_groups == ()
 
 
 class TestResolveUniversalPyproject:
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_dispatches_to_universal_resolver(
         self,
-        mock_resolve_universal: MagicMock,
+        mock_engine: MagicMock,
         tmp_path: Path,
     ) -> None:
         """The wrapper builds a Matrix and forwards to resolve_universal."""
@@ -1153,27 +1202,25 @@ class TestResolveUniversalPyproject:
             'python = ">=3.11,<3.13"\n'
             'platforms = ["linux_x86_64", "macos_arm64"]\n',
         )
-        sentinel = MagicMock()
-        mock_resolve_universal.return_value = sentinel
+        result = _resolved(pyproject)
 
-        result = resolve_universal_pyproject(pyproject)
-
-        assert result is sentinel
-        kwargs = mock_resolve_universal.call_args.kwargs
-        assert kwargs["matrix"].python == ">=3.11,<3.13"
-        assert kwargs["matrix"].platforms == (
-            PlatformSpec("linux_x86_64"),
-            PlatformSpec("macos_arm64"),
-        )
+        assert result is mock_engine.return_value
+        targets = mock_engine.call_args.args[1]
+        assert [t.label for t in targets] == [
+            "py311-linux_x86_64",
+            "py311-macos_arm64",
+            "py312-linux_x86_64",
+            "py312-macos_arm64",
+        ]
         # No conflicts: a single unforked fork carrying the base deps.
-        (fork,) = kwargs["forks"]
+        (fork,) = mock_engine.call_args.kwargs["forks"]
         assert fork.selection == ()
-        assert fork.requirements == ["foo"]
+        assert [str(r) for r in fork.requirements] == ["foo"]
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_passes_python_patches_when_set(
         self,
-        mock_resolve_universal: MagicMock,
+        mock_engine: MagicMock,
         tmp_path: Path,
     ) -> None:
         """python-patches in the matrix table flow to the Matrix object."""
@@ -1187,14 +1234,14 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
             'python-patches = { "3.11" = "3.11.4" }\n',
         )
-        resolve_universal_pyproject(pyproject)
-        kwargs = mock_resolve_universal.call_args.kwargs
-        assert kwargs["matrix"].python_patches == {"3.11": "3.11.4"}
+        _resolved(pyproject)
+        targets = mock_engine.call_args.args[1]
+        assert [t.python_full_version for t in targets] == ["3.11.4", "3.12.0"]
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_explicit_config_arg(
         self,
-        mock_resolve_universal: MagicMock,
+        mock_engine: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Caller can pass a constructed config rather than reading the file."""
@@ -1206,20 +1253,16 @@ class TestResolveUniversalPyproject:
                 python=">=3.12,<3.14", platforms=(PlatformSpec("linux_x86_64"),)
             ),
         )
-        resolve_universal_pyproject(pyproject, config=config)
-        kwargs = mock_resolve_universal.call_args.kwargs
-        assert kwargs["matrix"].python == ">=3.12,<3.14"
+        _resolved(pyproject, config=config)
+        targets = mock_engine.call_args.args[1]
+        assert [t.label for t in targets] == [
+            "py312-linux_x86_64",
+            "py313-linux_x86_64",
+        ]
 
-    def test_specific_mode_rejected(self, tmp_path: Path) -> None:
-        """Calling with mode != universal raises UnsupportedModeError."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text('[project]\ndependencies = ["foo"]\n')
-        with pytest.raises(UnsupportedModeError, match="requires mode = 'universal'"):
-            resolve_universal_pyproject(pyproject)
-
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_co_selected_members_build_multiple_forks(
-        self, mock_resolve_universal: MagicMock, tmp_path: Path
+        self, mock_engine: MagicMock, tmp_path: Path
     ) -> None:
         """Two co-selected conflicting extras fork into two resolves."""
         pyproject = tmp_path / "pyproject.toml"
@@ -1235,15 +1278,21 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        resolve_universal_pyproject(pyproject, extras=["cpu", "gpu"])
-        forks = mock_resolve_universal.call_args.kwargs["forks"]
+        _resolved(pyproject, extras=["cpu", "gpu"])
+        forks = mock_engine.call_args.kwargs["forks"]
         assert {f.selection for f in forks} == {
             (("extra", "cpu"),),
             (("extra", "gpu"),),
         }
         by_selection = {f.selection: f.requirements for f in forks}
-        assert by_selection[(("extra", "cpu"),)] == ["base", "torch==2.0+cpu"]
-        assert by_selection[(("extra", "gpu"),)] == ["base", "torch==2.0+gpu"]
+        assert [str(r) for r in by_selection[(("extra", "cpu"),)]] == [
+            "base",
+            "torch==2.0+cpu",
+        ]
+        assert [str(r) for r in by_selection[(("extra", "gpu"),)]] == [
+            "base",
+            "torch==2.0+gpu",
+        ]
 
     def test_exactly_one_with_no_member_raises(self, tmp_path: Path) -> None:
         """A universal exactly-one set with no active member raises."""
@@ -1262,10 +1311,10 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
         )
         with (
-            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="exactly one"),
         ):
-            resolve_universal_pyproject(pyproject)
+            _resolved(pyproject)
         mock_universal.assert_not_called()
 
     def test_at_least_one_with_no_member_raises(self, tmp_path: Path) -> None:
@@ -1285,15 +1334,15 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
         )
         with (
-            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="at least one"),
         ):
-            resolve_universal_pyproject(pyproject)
+            _resolved(pyproject)
         mock_universal.assert_not_called()
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_at_most_one_empty_does_not_raise(
-        self, mock_resolve_universal: MagicMock, tmp_path: Path
+        self, mock_engine: MagicMock, tmp_path: Path
     ) -> None:
         """An at-most-one set with no member selected is fine."""
         pyproject = tmp_path / "pyproject.toml"
@@ -1309,13 +1358,13 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        resolve_universal_pyproject(pyproject)
-        (fork,) = mock_resolve_universal.call_args.kwargs["forks"]
+        _resolved(pyproject)
+        (fork,) = mock_engine.call_args.kwargs["forks"]
         assert fork.selection == ()
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_co_selection_does_not_raise_minimum(
-        self, mock_resolve_universal: MagicMock, tmp_path: Path
+        self, mock_engine: MagicMock, tmp_path: Path
     ) -> None:
         """Co-selecting an exactly-one set forks rather than raising."""
         pyproject = tmp_path / "pyproject.toml"
@@ -1332,8 +1381,8 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        resolve_universal_pyproject(pyproject, extras=["cpu", "gpu"])
-        forks = mock_resolve_universal.call_args.kwargs["forks"]
+        _resolved(pyproject, extras=["cpu", "gpu"])
+        forks = mock_engine.call_args.kwargs["forks"]
         assert len(forks) == 2
 
     def test_marker_gated_member_unreachable_on_a_tuple_raises(
@@ -1357,15 +1406,15 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64", "windows_amd64"]\n'
         )
         with (
-            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="exactly one"),
         ):
-            resolve_universal_pyproject(pyproject, extras=["all"])
+            _resolved(pyproject, extras=["all"])
         mock_universal.assert_not_called()
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_marker_gated_member_reachable_on_every_tuple_passes(
-        self, mock_resolve_universal: MagicMock, tmp_path: Path
+        self, mock_engine: MagicMock, tmp_path: Path
     ) -> None:
         """A self reference whose marker holds on every tuple keeps the
         require-one set satisfied, so the resolve proceeds."""
@@ -1384,15 +1433,15 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64", "windows_amd64"]\n'
         )
-        resolve_universal_pyproject(pyproject, extras=["all"])
-        mock_resolve_universal.assert_called_once()
+        _resolved(pyproject, extras=["all"])
+        mock_engine.assert_called_once()
 
-    @patch("nab_python.resolve.resolve_universal")
-    @patch("nab_python.resolve._check_group_disjointness_across_tuples")
+    @patch("nab_python.resolve.resolve_with_coordinator")
+    @patch("nab_python.resolve._check_group_disjointness")
     def test_repeated_active_groups_check_once(
         self,
         mock_check: MagicMock,
-        mock_resolve_universal: MagicMock,
+        mock_engine: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Forks sharing the same multi-group active set check disjointness once."""
@@ -1412,9 +1461,7 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        resolve_universal_pyproject(
-            pyproject, extras=["cpu", "gpu"], groups=["dev", "lint"]
-        )
+        _resolved(pyproject, extras=["cpu", "gpu"], groups=["dev", "lint"])
         # Two forks, both with active_groups=("dev", "lint"): scan once.
         assert mock_check.call_count == 1
 
@@ -1435,10 +1482,10 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
         )
         with (
-            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
-            resolve_universal_pyproject(pyproject, extras=["all"])
+            _resolved(pyproject, extras=["all"])
         mock_universal.assert_not_called()
 
     def test_umbrella_group_co_selecting_conflict_raises(self, tmp_path: Path) -> None:
@@ -1459,10 +1506,10 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
         )
         with (
-            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
-            resolve_universal_pyproject(pyproject, groups=["all-tools"])
+            _resolved(pyproject, groups=["all-tools"])
         mock_universal.assert_not_called()
 
     def test_universal_umbrella_extra_transitively_co_selects_conflict_raises(
@@ -1487,15 +1534,15 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
         )
         with (
-            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
-            resolve_universal_pyproject(pyproject, extras=["all"])
+            _resolved(pyproject, extras=["all"])
         mock_universal.assert_not_called()
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_umbrella_extra_disjoint_markers_resolve(
-        self, mock_resolve_universal: MagicMock, tmp_path: Path
+        self, mock_engine: MagicMock, tmp_path: Path
     ) -> None:
         """Self-refs to both members under disjoint markers do not co-select.
 
@@ -1520,8 +1567,8 @@ class TestResolveUniversalPyproject:
             'python = ">=3.9,<3.13"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        resolve_universal_pyproject(pyproject, extras=["all"])
-        mock_resolve_universal.assert_called_once()
+        _resolved(pyproject, extras=["all"])
+        mock_engine.assert_called_once()
 
     def test_umbrella_extra_co_selecting_on_one_tuple_raises(
         self, tmp_path: Path
@@ -1550,15 +1597,15 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
         )
         with (
-            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
-            resolve_universal_pyproject(pyproject, extras=["all"])
+            _resolved(pyproject, extras=["all"])
         mock_universal.assert_not_called()
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_umbrella_extra_reaching_one_member_single_fork(
-        self, mock_resolve_universal: MagicMock, tmp_path: Path
+        self, mock_engine: MagicMock, tmp_path: Path
     ) -> None:
         """An umbrella reaching one member yields one fork with its deps."""
         pyproject = tmp_path / "pyproject.toml"
@@ -1575,11 +1622,12 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        resolve_universal_pyproject(pyproject, extras=["accel"])
-        (fork,) = mock_resolve_universal.call_args.kwargs["forks"]
+        _resolved(pyproject, extras=["accel"])
+        (fork,) = mock_engine.call_args.kwargs["forks"]
         assert fork.selection == ()
-        assert "torch==2.0+cpu" in fork.requirements
-        assert "torch==2.0+gpu" not in fork.requirements
+        rendered = [str(r) for r in fork.requirements]
+        assert "torch==2.0+cpu" in rendered
+        assert "torch==2.0+gpu" not in rendered
 
     def test_unknown_conflict_member_raises(self, tmp_path: Path) -> None:
         """A conflict member naming an undeclared extra raises ConfigError."""
@@ -1596,15 +1644,15 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
         )
         with (
-            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConfigError, match="gpuu"),
         ):
-            resolve_universal_pyproject(pyproject)
+            _resolved(pyproject)
         mock_universal.assert_not_called()
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_default_groups_satisfy_exactly_one(
-        self, mock_resolve_universal: MagicMock, tmp_path: Path
+        self, mock_engine: MagicMock, tmp_path: Path
     ) -> None:
         # ``default-groups`` activates ``a`` on every default install, so
         # ``nab lock`` without ``--groups`` clears the exactly-one minimum.
@@ -1624,13 +1672,13 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        resolve_universal_pyproject(pyproject)
-        (fork,) = mock_resolve_universal.call_args.kwargs["forks"]
-        assert "foo==1.0" in fork.requirements
+        _resolved(pyproject)
+        (fork,) = mock_engine.call_args.kwargs["forks"]
+        assert "foo==1.0" in [str(r) for r in fork.requirements]
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_default_groups_drive_forking_with_cli_groups(
-        self, mock_resolve_universal: MagicMock, tmp_path: Path
+        self, mock_engine: MagicMock, tmp_path: Path
     ) -> None:
         # ``default-groups = ["b22"]`` plus ``--groups b23`` activates two
         # members of an at-most-one set: each fork carries one member.
@@ -1648,8 +1696,8 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        resolve_universal_pyproject(pyproject, groups=["b23"])
-        forks = mock_resolve_universal.call_args.kwargs["forks"]
+        _resolved(pyproject, groups=["b23"])
+        forks = mock_engine.call_args.kwargs["forks"]
         assert len(forks) == 2
         selections = {f.selection for f in forks}
         assert selections == {
@@ -1669,7 +1717,7 @@ class TestResolvePyprojectVcs:
         )
 
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
     def test_block_default_refuses_vcs_constraint(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
@@ -1680,7 +1728,7 @@ class TestResolvePyprojectVcs:
         )
 
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
     def test_admitted_vcs_dependency_raises_not_implemented(
         self, tmp_path: Path
@@ -1696,7 +1744,7 @@ class TestResolvePyprojectVcs:
         )
 
         with pytest.raises(NotImplementedError, match="not implemented"):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 python_version="3.12.0",
@@ -1717,7 +1765,7 @@ class TestResolvePyprojectVcs:
         )
 
         with pytest.raises(NotImplementedError, match="not implemented"):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 python_version="3.12.0",
@@ -1734,7 +1782,7 @@ class TestResolvePyprojectLockShape:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider") as mock_build,
+            patch("nab_python.resolve.build_target_lock") as mock_build,
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -1742,16 +1790,14 @@ class TestResolvePyprojectLockShape:
             mock_provider.choose_version.return_value = V("2.0")
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
-            lock_sentinel = MagicMock(name="LockInput")
+            lock_sentinel = MagicMock(name="TargetLock")
             mock_build.return_value = lock_sentinel
 
-            result = resolve_pyproject(
-                pyproject, _FAKE_TRANSPORT, python_version="3.12.0"
-            )
+            result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        assert isinstance(result, ResolutionResult)
-        assert result.lock_input is lock_sentinel
-        assert "foo" in result.pins
+        assert isinstance(result, ResolveResult)
+        assert result.target_results[0].lock is lock_sentinel
+        assert "foo" in _pins(result)
 
     def test_default_indexes_pypi_when_no_indexes(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
@@ -1759,12 +1805,12 @@ class TestResolvePyprojectLockShape:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider"),
-            patch("nab_python.resolve.build_lock_input_from_provider") as mock_build,
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
-        passed = mock_build.call_args.kwargs["indexes"]
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        passed = mock_coord_cls.call_args.kwargs["indexes"]
         assert tuple(ix.url for ix in passed) == ("https://pypi.org/simple/",)
 
     def test_configured_indexes_passed_through(self, tmp_path: Path) -> None:
@@ -1778,12 +1824,12 @@ class TestResolvePyprojectLockShape:
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
             patch("nab_python.resolve.Provider"),
-            patch("nab_python.resolve.build_lock_input_from_provider") as mock_build,
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
-        passed = mock_build.call_args.kwargs["indexes"]
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        passed = mock_coord_cls.call_args.kwargs["indexes"]
         assert tuple(ix.url for ix in passed) == ("https://custom.index/simple/",)
 
 
@@ -1796,7 +1842,7 @@ class TestSpecificModeTargetPlan:
         coord.return_value.__exit__ = MagicMock(return_value=False)
         resolver.return_value.resolve.return_value = {}
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -1813,13 +1859,13 @@ class TestSpecificModeTargetPlan:
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
         self._mock_resolve(mock_coord_cls, mock_resolver_cls)
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
+        _resolved(pyproject, _FAKE_TRANSPORT)
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target == ResolveTarget.for_host()
         assert target.host_faithful
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -1842,13 +1888,15 @@ class TestSpecificModeTargetPlan:
         )
         self._mock_resolve(mock_coord_cls, mock_resolver_cls)
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
+        result = _resolved(pyproject, _FAKE_TRANSPORT)
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target == ResolveTarget.for_host()
-        assert mock_build_lock.call_args.kwargs["requires_python"] == ">=3.9"
+        assert (
+            build_lock_input(result, config=read_pyproject_config(pyproject))
+        ).requires_python == ">=3.9"
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -1869,13 +1917,13 @@ class TestSpecificModeTargetPlan:
         )
         self._mock_resolve(mock_coord_cls, mock_resolver_cls)
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
+        _resolved(pyproject, _FAKE_TRANSPORT)
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target.python_full_version == "3.10.5"
         assert target.platform_id == "host"
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -1897,7 +1945,7 @@ class TestSpecificModeTargetPlan:
         )
         self._mock_resolve(mock_coord_cls, mock_resolver_cls)
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
+        _resolved(pyproject, _FAKE_TRANSPORT)
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target.platform_id == "windows_amd64"
@@ -1905,7 +1953,7 @@ class TestSpecificModeTargetPlan:
         assert target.python_version == "3.11"
         assert not target.host_faithful
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -1929,7 +1977,7 @@ class TestSpecificModeTargetPlan:
         )
         self._mock_resolve(mock_coord_cls, mock_resolver_cls)
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.4")
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.4")
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target.python_full_version == "3.12.4"
@@ -1944,13 +1992,13 @@ class TestLoadGroupRequirements:
     def test_empty_selection_returns_empty(self, tmp_path: Path) -> None:
         path = tmp_path / "pyproject.toml"
         path.write_text("[project]\nname = 'x'\n")
-        assert _load_group_requirements(path, []) == []
+        assert _group_requirements(read_pyproject_groups(path), [], path) == []
 
     def test_missing_table_raises_with_selected_names(self, tmp_path: Path) -> None:
         path = tmp_path / "pyproject.toml"
         path.write_text("[project]\nname = 'x'\n")
         with pytest.raises(LookupError, match=r"\[dependency-groups\] is missing"):
-            _load_group_requirements(path, ["dev"])
+            _group_requirements(read_pyproject_groups(path), ["dev"], path)
 
     def test_returns_requirements_for_selected_groups(self, tmp_path: Path) -> None:
         """Selected groups expand into ``Requirement`` instances."""
@@ -1958,7 +2006,7 @@ class TestLoadGroupRequirements:
         path.write_text(
             "[project]\nname = 'x'\n[dependency-groups]\ndev = ['pytest>=7']\n"
         )
-        reqs = _load_group_requirements(path, ["dev"])
+        reqs = _group_requirements(read_pyproject_groups(path), ["dev"], path)
         assert [str(r) for r in reqs] == ["pytest>=7"]
 
 
@@ -1972,7 +2020,7 @@ class TestLoadExtraRequirements:
     def test_empty_selection_returns_empty(self, tmp_path: Path) -> None:
         path = tmp_path / "pyproject.toml"
         path.write_text("[project]\nname = 'x'\n")
-        assert _load_extra_requirements(path, []) == []
+        assert _extra_requirements(_tables(path), [], path) == []
 
     def test_missing_table_raises_with_selected_names(self, tmp_path: Path) -> None:
         path = tmp_path / "pyproject.toml"
@@ -1981,7 +2029,7 @@ class TestLoadExtraRequirements:
             LookupError,
             match=r"\[project.optional-dependencies\] is",
         ):
-            _load_extra_requirements(path, ["test"])
+            _extra_requirements(_tables(path), ["test"], path)
 
     def test_returns_requirements_for_selected_extras(self, tmp_path: Path) -> None:
         """Selected extras expand into ``Requirement`` instances, with
@@ -1996,7 +2044,7 @@ class TestLoadExtraRequirements:
             "test = ['pytest>=7']\n"
             "all = ['x[test]']\n"
         )
-        reqs = _load_extra_requirements(path, ["all"])
+        reqs = _extra_requirements(_tables(path), ["all"], path)
         names = sorted(r.name for r in reqs)
         assert "pytest" in names
         assert "x" not in names
@@ -2009,13 +2057,18 @@ class TestLoadExtraRequirements:
             "[project.optional-dependencies]\n"
             "my-extra = ['requests']\n"
         )
-        reqs = _load_extra_requirements(path, ["My_Extra"])
+        reqs = _extra_requirements(_tables(path), ["My_Extra"], path)
         assert [r.name for r in reqs] == ["requests"]
 
-    def test_self_ref_marker_excludes_dep_in_wrong_environment(
+    def test_self_ref_marker_rides_onto_the_deps_it_reaches(
         self, tmp_path: Path
     ) -> None:
-        """A marker-false self-ref does not flatten its extra's deps into roots."""
+        """A marker-gated self-ref gates the deps its extra pulls in.
+
+        The gate is carried rather than evaluated here, so the per-target
+        parse is what drops the dep on an environment the marker excludes;
+        ``_build_resolver_inputs`` below is where that is asserted.
+        """
         path = tmp_path / "pyproject.toml"
         path.write_text(
             "[project]\nname = 'x'\n"
@@ -2023,9 +2076,16 @@ class TestLoadExtraRequirements:
             "fast = ['some-dep']\n"
             "all = [\"x[fast]; python_version < '3.10'\"]\n"
         )
-        env = {"python_version": "3.12", "python_full_version": "3.12.0"}
-        reqs = _load_extra_requirements(path, ["all"], env)
-        assert "some-dep" not in [r.name for r in reqs]
+        (req,) = _extra_requirements(_tables(path), ["all"], path)
+        assert req.name == "some-dep"
+        assert str(req.marker) == 'python_version < "3.10"'
+
+        excluded, _ = _build_resolver_inputs(
+            [req],
+            NabProjectConfig(),
+            environment={"python_version": "3.12", "python_full_version": "3.12.0"},
+        )
+        assert "some-dep" not in excluded
 
 
 class TestBuildResolverInputs:
@@ -2202,7 +2262,7 @@ class TestResolvePyprojectConflicts:
             patch("nab_python.resolve.FetchCoordinator"),
             pytest.raises(ResolutionError, match="bar=="),
         ):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 python_version="3.12.0",
@@ -2221,13 +2281,13 @@ class TestLoadGroupRequirementsByGroup:
     def test_empty_selection_returns_empty(self, tmp_path: Path) -> None:
         path = tmp_path / "pyproject.toml"
         path.write_text("[project]\nname = 'x'\n")
-        assert _load_group_requirements_by_group(path, []) == {}
+        assert _group_requirements_by_group(read_pyproject_groups(path), [], path) == {}
 
     def test_missing_table_raises_with_selected_names(self, tmp_path: Path) -> None:
         path = tmp_path / "pyproject.toml"
         path.write_text("[project]\nname = 'x'\n")
         with pytest.raises(LookupError, match=r"\[dependency-groups\] is missing"):
-            _load_group_requirements_by_group(path, ["dev"])
+            _group_requirements_by_group(read_pyproject_groups(path), ["dev"], path)
 
     def test_maps_each_group_to_its_requirements(self, tmp_path: Path) -> None:
         path = tmp_path / "pyproject.toml"
@@ -2237,7 +2297,9 @@ class TestLoadGroupRequirementsByGroup:
             "dev = ['pytest>=7']\n"
             "docs = ['sphinx<7', 'furo']\n"
         )
-        per_group = _load_group_requirements_by_group(path, ["dev", "docs"])
+        per_group = _group_requirements_by_group(
+            read_pyproject_groups(path), ["dev", "docs"], path
+        )
         assert [str(r) for r in per_group["dev"]] == ["pytest>=7"]
         assert [str(r) for r in per_group["docs"]] == ["sphinx<7", "furo"]
 
@@ -2251,7 +2313,7 @@ class TestCheckGroupDisjointness:
             "test": [Requirement("sphinx>=7")],
         }
         with pytest.raises(ResolutionError) as info:
-            _check_group_disjointness(per_group, environment={})
+            _check_group_disjointness(per_group, [_target({})])
         message = str(info.value)
         assert "'docs'" in message
         assert "'test'" in message
@@ -2266,7 +2328,7 @@ class TestCheckGroupDisjointness:
             "docs": [Requirement("sphinx<7")],
         }
         with pytest.raises(ResolutionError) as info:
-            _check_group_disjointness(per_group, environment={})
+            _check_group_disjointness(per_group, [_target({})])
         message = str(info.value)
         assert message.index("'docs'") < message.index("'test'")
 
@@ -2275,7 +2337,7 @@ class TestCheckGroupDisjointness:
             "docs": [Requirement("sphinx>=6,<8")],
             "test": [Requirement("sphinx>=7")],
         }
-        _check_group_disjointness(per_group, environment={})
+        _check_group_disjointness(per_group, [_target({})])
 
     def test_disjoint_packages_do_not_conflict(self) -> None:
         """Groups touching different packages never conflict."""
@@ -2283,14 +2345,14 @@ class TestCheckGroupDisjointness:
             "docs": [Requirement("sphinx<7")],
             "test": [Requirement("pytest>=8")],
         }
-        _check_group_disjointness(per_group, environment={})
+        _check_group_disjointness(per_group, [_target({})])
 
     def test_single_group_is_noop(self) -> None:
         per_group = {"docs": [Requirement("sphinx<7"), Requirement("sphinx>=7")]}
-        _check_group_disjointness(per_group, environment={})
+        _check_group_disjointness(per_group, [_target({})])
 
     def test_empty_mapping_is_noop(self) -> None:
-        _check_group_disjointness({}, environment={})
+        _check_group_disjointness({}, [_target({})])
 
     def test_marker_filtered_requirement_is_skipped(self) -> None:
         """A requirement whose marker is False under the env is ignored."""
@@ -2298,7 +2360,7 @@ class TestCheckGroupDisjointness:
             "docs": [Requirement("sphinx<7")],
             "test": [Requirement("sphinx>=7 ; python_version < '3'")],
         }
-        _check_group_disjointness(per_group, environment={"python_version": "3.12"})
+        _check_group_disjointness(per_group, [_target({"python_version": "3.12"})])
 
     def test_within_group_intersection_before_pairwise(self) -> None:
         """A group's own two ranges fold before the cross-group check.
@@ -2311,7 +2373,7 @@ class TestCheckGroupDisjointness:
             "test": [Requirement("sphinx>=7")],
         }
         with pytest.raises(ResolutionError) as info:
-            _check_group_disjointness(per_group, environment={})
+            _check_group_disjointness(per_group, [_target({})])
         assert "sphinx" in str(info.value)
 
     def test_three_groups_names_the_conflicting_pair(self) -> None:
@@ -2322,7 +2384,7 @@ class TestCheckGroupDisjointness:
             "test": [Requirement("sphinx>=7")],
         }
         with pytest.raises(ResolutionError) as info:
-            _check_group_disjointness(per_group, environment={})
+            _check_group_disjointness(per_group, [_target({})])
         message = str(info.value)
         assert "'docs'" in message
         assert "'test'" in message
@@ -2334,7 +2396,7 @@ class TestCheckGroupDisjointness:
             "docs": [Requirement("sphinx @ https://example.com/sphinx.whl")],
             "test": [Requirement("sphinx>=7")],
         }
-        _check_group_disjointness(per_group, environment={})
+        _check_group_disjointness(per_group, [_target({})])
 
     def test_extras_only_requirement_does_not_conflict(self) -> None:
         """An extras-only requirement carries a full range, so no conflict."""
@@ -2342,7 +2404,7 @@ class TestCheckGroupDisjointness:
             "docs": [Requirement("sphinx[docs]")],
             "test": [Requirement("sphinx>=7")],
         }
-        _check_group_disjointness(per_group, environment={})
+        _check_group_disjointness(per_group, [_target({})])
 
 
 class TestFindGroupConflictsManyGroups:
@@ -2402,7 +2464,7 @@ class TestResolvePyprojectGroupConflict:
             patch("nab_python.resolve.FetchCoordinator"),
             pytest.raises(ResolutionError) as info,
         ):
-            resolve_pyproject(
+            _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
                 python_version="3.12.0",
@@ -2414,7 +2476,7 @@ class TestResolvePyprojectGroupConflict:
         assert "'test'" in message
         assert "sphinx" in message
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -2437,15 +2499,15 @@ class TestResolvePyprojectGroupConflict:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {"foo": V("2.0")}
 
-        result = resolve_pyproject(
+        result = _resolved(
             pyproject,
             _FAKE_TRANSPORT,
             python_version="3.12.0",
             groups=["docs"],
         )
-        assert "foo" in result.pins
+        assert "foo" in _pins(result)
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -2464,10 +2526,10 @@ class TestResolvePyprojectGroupConflict:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {"foo": V("2.0")}
 
-        result = resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
-        assert "foo" in result.pins
+        result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        assert "foo" in _pins(result)
 
-    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
@@ -2491,13 +2553,13 @@ class TestResolvePyprojectGroupConflict:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {"foo": V("2.0")}
 
-        result = resolve_pyproject(
+        result = _resolved(
             pyproject,
             _FAKE_TRANSPORT,
             python_version="3.12.0",
             groups=["docs", "test"],
         )
-        assert "foo" in result.pins
+        assert "foo" in _pins(result)
 
 
 class TestAugmentResolutionError:
@@ -2625,7 +2687,7 @@ class TestAugmentResolutionError:
                 "base", incompatibility=clause
             )
             with pytest.raises(ResolutionError) as info:
-                resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
         assert "Diagnostics:" in str(info.value)
         assert "foo: package not found on any configured index" in str(info.value)
 
@@ -2662,7 +2724,7 @@ class TestCheckGroupDisjointnessAcrossTuples:
         }
         tuples = [_tuple_for_python("3.10"), _tuple_for_python("3.12")]
         with pytest.raises(ResolutionError) as info:
-            _check_group_disjointness_across_tuples(per_group, tuples)
+            _check_group_disjointness(per_group, tuples)
         message = str(info.value)
         assert "'a'" in message
         assert "'b'" in message
@@ -2678,7 +2740,7 @@ class TestCheckGroupDisjointnessAcrossTuples:
         }
         tuples = [_tuple_for_python("3.10"), _tuple_for_python("3.12")]
         with pytest.raises(ResolutionError) as info:
-            _check_group_disjointness_across_tuples(per_group, tuples)
+            _check_group_disjointness(per_group, tuples)
         message = str(info.value)
         assert "py310-linux_x86_64" in message
         assert "py312-linux_x86_64" in message
@@ -2690,16 +2752,16 @@ class TestCheckGroupDisjointnessAcrossTuples:
             "b": [Requirement("foo<5")],
         }
         tuples = [_tuple_for_python("3.10"), _tuple_for_python("3.12")]
-        _check_group_disjointness_across_tuples(per_group, tuples)
+        _check_group_disjointness(per_group, tuples)
 
     def test_single_group_is_noop(self) -> None:
         per_group = {"a": [Requirement("foo<2"), Requirement("foo>=2")]}
         tuples = [_tuple_for_python("3.10"), _tuple_for_python("3.12")]
-        _check_group_disjointness_across_tuples(per_group, tuples)
+        _check_group_disjointness(per_group, tuples)
 
     def test_empty_mapping_is_noop(self) -> None:
         tuples = [_tuple_for_python("3.12")]
-        _check_group_disjointness_across_tuples({}, tuples)
+        _check_group_disjointness({}, tuples)
 
     def test_three_groups_names_only_conflicting_pair(self) -> None:
         """With three groups, the message names the conflicting pair only."""
@@ -2710,7 +2772,7 @@ class TestCheckGroupDisjointnessAcrossTuples:
         }
         tuples = [_tuple_for_python("3.12")]
         with pytest.raises(ResolutionError) as info:
-            _check_group_disjointness_across_tuples(per_group, tuples)
+            _check_group_disjointness(per_group, tuples)
         message = str(info.value)
         assert "'a'" in message
         assert "'b'" in message
@@ -2724,7 +2786,7 @@ class TestCheckGroupDisjointnessAcrossTuples:
         }
         tuples = [_tuple_for_python("3.12")]
         with pytest.raises(ResolutionError) as info:
-            _check_group_disjointness_across_tuples(per_group, tuples)
+            _check_group_disjointness(per_group, tuples)
         message = str(info.value)
         assert message.index("'a'") < message.index("'b'")
 
@@ -2741,7 +2803,7 @@ class TestCheckGroupDisjointnessAcrossTuples:
         }
         tuples = [_tuple_for_python("3.12"), _tuple_for_python("3.10")]
         with pytest.raises(ResolutionError) as info:
-            _check_group_disjointness_across_tuples(per_group, tuples)
+            _check_group_disjointness(per_group, tuples)
         message = str(info.value)
         assert message.index("py310-linux_x86_64") < message.index("py312-linux_x86_64")
 
@@ -2771,10 +2833,10 @@ class TestResolveUniversalPyprojectGroupConflict:
             'platforms = ["linux_x86_64"]\n'
         )
         with (
-            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ResolutionError) as info,
         ):
-            resolve_universal_pyproject(pyproject, groups=["a", "b"])
+            _resolved(pyproject, groups=["a", "b"])
         mock_universal.assert_not_called()
         message = str(info.value)
         assert "Dependency groups" in message
@@ -2799,16 +2861,16 @@ class TestResolveUniversalPyprojectGroupConflict:
             'platforms = ["linux_x86_64"]\n'
         )
         with (
-            patch("nab_python.resolve.resolve_universal") as mock_universal,
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ResolutionError) as info,
         ):
-            resolve_universal_pyproject(pyproject, groups=["a", "b"])
+            _resolved(pyproject, groups=["a", "b"])
         mock_universal.assert_not_called()
         message = str(info.value)
         assert "py311-linux_x86_64" in message
         assert "py312-linux_x86_64" in message
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_no_conflict_proceeds_to_resolve(
         self, mock_universal: MagicMock, tmp_path: Path
     ) -> None:
@@ -2827,10 +2889,10 @@ class TestResolveUniversalPyprojectGroupConflict:
         )
         sentinel = MagicMock()
         mock_universal.return_value = sentinel
-        result = resolve_universal_pyproject(pyproject, groups=["a", "b"])
+        result = _resolved(pyproject, groups=["a", "b"])
         assert result is sentinel
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_single_group_skips_prepass(
         self, mock_universal: MagicMock, tmp_path: Path
     ) -> None:
@@ -2848,10 +2910,10 @@ class TestResolveUniversalPyprojectGroupConflict:
         )
         sentinel = MagicMock()
         mock_universal.return_value = sentinel
-        result = resolve_universal_pyproject(pyproject, groups=["a"])
+        result = _resolved(pyproject, groups=["a"])
         assert result is sentinel
 
-    @patch("nab_python.resolve.resolve_universal")
+    @patch("nab_python.resolve.resolve_with_coordinator")
     def test_no_groups_skips_prepass(
         self, mock_universal: MagicMock, tmp_path: Path
     ) -> None:
@@ -2867,7 +2929,7 @@ class TestResolveUniversalPyprojectGroupConflict:
         )
         sentinel = MagicMock()
         mock_universal.return_value = sentinel
-        result = resolve_universal_pyproject(pyproject)
+        result = _resolved(pyproject)
         assert result is sentinel
 
 
@@ -2899,28 +2961,28 @@ class TestLocalVcsRequiresPython:
             '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n',
         )
         with pytest.raises(ResolutionError, match="foo 1.0 requires Python"):
-            _raise_for_source_python(provider, {"foo": V("1.0")}, V("3.10.0"))
+            _raise_for_source_python(provider, provider.target, {"foo": V("1.0")})
 
     def test_compatible_python_does_not_raise(self, tmp_path: Path) -> None:
         provider = self._provider_with_local(
             tmp_path,
             '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.10"\n',
         )
-        _raise_for_source_python(provider, {"foo": V("1.0")}, V("3.10.0"))
+        _raise_for_source_python(provider, provider.target, {"foo": V("1.0")})
 
     def test_no_requires_python_does_not_raise(self, tmp_path: Path) -> None:
         provider = self._provider_with_local(
             tmp_path,
             '[project]\nname = "foo"\nversion = "1.0"\n',
         )
-        _raise_for_source_python(provider, {"foo": V("1.0")}, V("3.10.0"))
+        _raise_for_source_python(provider, provider.target, {"foo": V("1.0")})
 
     def test_non_managed_pin_is_skipped(self, tmp_path: Path) -> None:
         provider = self._provider_with_local(
             tmp_path,
             '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n',
         )
-        _raise_for_source_python(provider, {"bar": V("9.0")}, V("3.10.0"))
+        _raise_for_source_python(provider, provider.target, {"bar": V("9.0")})
 
     def test_resolve_pyproject_excluding_python_raises(self, tmp_path: Path) -> None:
         member = tmp_path / "foo"
@@ -2939,12 +3001,12 @@ class TestLocalVcsRequiresPython:
         fake = make_coordinator([], package="foo")
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             with pytest.raises(ResolutionError, match="foo 1.0 requires Python"):
-                resolve_pyproject(root, _FAKE_TRANSPORT, python_version="3.10.0")
+                _resolved(root, _FAKE_TRANSPORT, python_version="3.10.0")
 
     def test_resolve_pyproject_declared_target_satisfies_local(
         self, tmp_path: Path
@@ -2972,12 +3034,12 @@ class TestLocalVcsRequiresPython:
         fake = make_coordinator([], package="foo")
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            result = resolve_pyproject(root, _FAKE_TRANSPORT)
-        assert result.pins["foo"] == V("1.0")
+            result = _resolved(root, _FAKE_TRANSPORT)
+        assert _pins(result)["foo"] == V("1.0")
 
     def test_resolve_pyproject_declared_target_satisfies_index(
         self, tmp_path: Path
@@ -3007,12 +3069,12 @@ class TestLocalVcsRequiresPython:
         fake = make_coordinator([wheel], package="foo", auto_metadata=True)
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            result = resolve_pyproject(root, _FAKE_TRANSPORT)
-        assert result.pins["foo"] == V("1.0")
+            result = _resolved(root, _FAKE_TRANSPORT)
+        assert _pins(result)["foo"] == V("1.0")
 
 
 def _index_wheels(name: str, *versions: str) -> list[WheelFile]:
@@ -3048,7 +3110,7 @@ class TestLocalSourceExtrasMarkers:
         members: dict[str, str],
         coordinator: MagicMock,
         python_version: str,
-    ) -> ResolutionResult:
+    ) -> ResolveResult:
         (tmp_path / "pyproject.toml").write_text(root_body, encoding="utf-8")
         for name, body in members.items():
             member = tmp_path / name
@@ -3056,11 +3118,11 @@ class TestLocalSourceExtrasMarkers:
             (member / "pyproject.toml").write_text(body, encoding="utf-8")
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.build_lock_input_from_provider"),
+            patch("nab_python.resolve.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            return resolve_pyproject(
+            return _resolved(
                 tmp_path / "pyproject.toml",
                 _FAKE_TRANSPORT,
                 python_version=python_version,
@@ -3086,7 +3148,7 @@ class TestLocalSourceExtrasMarkers:
             coordinator,
             "3.12.0",
         )
-        assert result.pins == {"foo": V("1.0"), "bar": V("3.0")}
+        assert _pins(result) == {"foo": V("1.0"), "bar": V("3.0")}
 
     @pytest.mark.parametrize(
         ("python_version", "expects_bar"),
@@ -3112,7 +3174,7 @@ class TestLocalSourceExtrasMarkers:
         expected = {"foo": V("1.0")}
         if expects_bar:
             expected["bar"] = V("2.0")
-        assert result.pins == expected
+        assert _pins(result) == expected
 
     @pytest.mark.parametrize(
         ("python_version", "expects_bar"),
@@ -3138,7 +3200,7 @@ class TestLocalSourceExtrasMarkers:
         expected = {"foo": V("1.0")}
         if expects_bar:
             expected["bar"] = V("1.0")
-        assert result.pins == expected
+        assert _pins(result) == expected
 
     def test_version_mismatch_is_unsat_not_a_wrong_pin(self, tmp_path: Path) -> None:
         coordinator = make_coordinator(listings={})
@@ -3175,19 +3237,14 @@ class TestLockDeclaresItsEnvironment:
     """
 
     @staticmethod
-    def _resolve(
-        tmp_path: Path,
-        body: str,
-        coordinator: MagicMock,
-        extras: Sequence[str] = (),
-    ) -> ResolutionResult:
-        (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
+    def _resolve(tmp_path: Path, body: str, coordinator: MagicMock) -> LockInput:
+        path = tmp_path / "pyproject.toml"
+        path.write_text(body, encoding="utf-8")
         with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            return resolve_pyproject(
-                tmp_path / "pyproject.toml", _FAKE_TRANSPORT, extras=extras
-            )
+            result = _resolved(path, _FAKE_TRANSPORT)
+        return build_lock_input(result, config=read_pyproject_config(path))
 
     _PYPROJECT = (
         '[project]\nname = "proj"\ndependencies = ["foo"]\n'
@@ -3207,8 +3264,8 @@ class TestLockDeclaresItsEnvironment:
         )
 
     def test_the_three_axes_are_always_declared(self, tmp_path: Path) -> None:
-        result = self._resolve(tmp_path, self._PYPROJECT, self._coordinator())
-        (environment,) = result.lock_input.environments
+        lock_input = self._resolve(tmp_path, self._PYPROJECT, self._coordinator())
+        (environment,) = lock_input.environments
         assert str(environment) == (
             'python_version == "3.12" and sys_platform == "linux"'
             ' and platform_machine == "x86_64"'
@@ -3216,16 +3273,16 @@ class TestLockDeclaresItsEnvironment:
 
     def test_a_dependency_marker_declares_its_variable(self, tmp_path: Path) -> None:
         """tqdm's ``colorama ; platform_system == "Windows"`` is the real case."""
-        result = self._resolve(
+        lock_input = self._resolve(
             tmp_path,
             self._PYPROJECT,
             self._coordinator(
                 'Requires-Dist: colorama ; platform_system == "Windows"\n'
             ),
         )
-        (environment,) = result.lock_input.environments
+        (environment,) = lock_input.environments
         assert 'platform_system == "Linux"' in str(environment)
-        assert "colorama" not in result.pins
+        assert "colorama" not in _locked(lock_input)
 
     def test_a_root_requirement_marker_declares_its_variable(
         self, tmp_path: Path
@@ -3235,8 +3292,8 @@ class TestLockDeclaresItsEnvironment:
             'dependencies = ["foo"]',
             'dependencies = ["foo", "winonly; os_name == \'nt\'"]',
         )
-        result = self._resolve(tmp_path, body, self._coordinator())
-        (environment,) = result.lock_input.environments
+        lock_input = self._resolve(tmp_path, body, self._coordinator())
+        (environment,) = lock_input.environments
         assert 'os_name == "posix"' in str(environment)
 
     def test_a_constraint_marker_declares_its_variable(self, tmp_path: Path) -> None:
@@ -3245,40 +3302,21 @@ class TestLockDeclaresItsEnvironment:
             '[tool.nab]\nbuild-policy = "never"\n'
             "constraints = [\"foo<9; implementation_name == 'cpython'\"]\n",
         )
-        result = self._resolve(tmp_path, body, self._coordinator())
-        (environment,) = result.lock_input.environments
+        lock_input = self._resolve(tmp_path, body, self._coordinator())
+        (environment,) = lock_input.environments
         assert 'implementation_name == "cpython"' in str(environment)
-
-    def test_a_self_extra_marker_declares_its_variable(self, tmp_path: Path) -> None:
-        """A marker on a self-referencing extra decides which extras are active.
-
-        It shapes the package set, so an installer answering it differently
-        needs a different one, and the lock has to say so.
-        """
-        body = (
-            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
-            "[project.optional-dependencies]\n"
-            "all = [\"proj[legacy]; os_name == 'nt'\"]\n"
-            'legacy = ["foo"]\n'
-            '[tool.nab]\nbuild-policy = "never"\n'
-            "[tool.nab.environment]\n"
-            'python = "3.12"\nplatform = "linux_x86_64"\n'
-        )
-        result = self._resolve(tmp_path, body, self._coordinator(), extras=["all"])
-        (environment,) = result.lock_input.environments
-        assert 'os_name == "posix"' in str(environment)
 
     def test_an_unboundable_marker_warns_and_stays_undeclared(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A kernel-versioned marker names one machine; the lock cannot bound it."""
         with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
-            result = self._resolve(
+            lock_input = self._resolve(
                 tmp_path,
                 self._PYPROJECT,
                 self._coordinator('Requires-Dist: bar ; platform_release >= "5.10"\n'),
             )
-        (environment,) = result.lock_input.environments
+        (environment,) = lock_input.environments
         assert "platform_release" not in str(environment)
         assert "platform_release" in caplog.text
 
@@ -3291,31 +3329,31 @@ class TestLockDeclaresItsEnvironment:
         the resolve actually depends on: the marker read false, and it
         reads false on every 3.12.
         """
-        result = self._resolve(
+        lock_input = self._resolve(
             tmp_path,
             self._PYPROJECT,
             self._coordinator(
                 'Requires-Dist: tomli ; python_full_version <= "3.11.0a6"\n'
             ),
         )
-        (environment,) = result.lock_input.environments
+        (environment,) = lock_input.environments
         assert 'python_full_version > "3.11.0a6"' in str(environment)
         assert "python_full_version ==" not in str(environment)
-        assert "tomli" not in result.pins
+        assert "tomli" not in _locked(lock_input)
         assert Marker(str(environment)).evaluate(_PY312_ENV)
 
     def test_a_marker_that_splits_the_micros_refuses_the_other_side(
         self, tmp_path: Path
     ) -> None:
         """Here the micro really does change the pins, so the lock says so."""
-        result = self._resolve(
+        lock_input = self._resolve(
             tmp_path,
             self._PYPROJECT,
             self._coordinator('Requires-Dist: bar ; python_full_version >= "3.12.4"\n'),
         )
-        (environment,) = result.lock_input.environments
+        (environment,) = lock_input.environments
         assert 'python_full_version < "3.12.4"' in str(environment)
-        assert "bar" not in result.pins
+        assert "bar" not in _locked(lock_input)
         assert Marker(str(environment)).evaluate(_PY312_ENV)
         assert not Marker(str(environment)).evaluate(
             {**_PY312_ENV, "python_full_version": "3.12.5"}
