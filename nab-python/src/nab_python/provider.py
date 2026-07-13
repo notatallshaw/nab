@@ -419,9 +419,10 @@ class Provider:
     resolve targets.
 
     ``preferences`` are versions another resolve already decided, tried
-    first when they are usable here.  The universal path passes the pins
-    of an already-resolved tuple, which aligns the matrix on one version
-    where every tuple can take it.
+    first when they are usable here.  A multi-target resolve passes the
+    pins of an already-resolved target, which aligns the matrix on one
+    version where every target can take it.  A package the strategy wants
+    lowest for ignores the preference and takes its own floor.
 
     ``listing_filter_cache`` shares the platform-independent half of the
     listing filter with the other targets of the same resolve; see
@@ -1204,10 +1205,12 @@ class Provider:
 
         A preference is honored only when it is in range and usable here: a
         base version needs extractable metadata, an extras proxy
-        additionally needs to declare the extra.
+        additionally needs to declare the extra.  A package the strategy
+        wants lowest for keeps its own floor, so alignment cannot make the
+        result depend on the order the targets resolve in.
         """
         preferred = self._preferences.get(normalized)
-        if preferred is None:
+        if preferred is None or self.wants_lowest(normalized):
             return None
 
         all_versions = self.versions_only(normalized, self.fetch_versions(package))

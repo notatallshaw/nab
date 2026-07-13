@@ -646,6 +646,81 @@ class TestDirectPackages:
         assert self._direct_packages("pkg[foo]") == {"pkg"}
 
 
+class TestLowestDirectAcrossTargets:
+    """``lowest-direct`` reads the direct set per target, after markers,
+    and the floor it gives a direct package survives cross-target alignment.
+
+    ``foo`` is a root gated on windows and a dependency of ``bar``
+    everywhere.  A target whose markers drop the root treats ``foo`` as
+    transitive; a target that keeps it floors it, whichever target
+    resolves first.
+    """
+
+    def _coordinator(self) -> MagicMock:
+        return make_coordinator(
+            listings={
+                "bar": [_make_wheel("5.0", package="bar")],
+                "foo": [
+                    _make_wheel("1.0", package="foo"),
+                    _make_wheel("2.0", package="foo"),
+                ],
+            },
+            metadata_by_version={
+                "5.0": (
+                    "Metadata-Version: 2.1\nName: bar\nVersion: 5.0\n"
+                    "Requires-Dist: foo>=1\n\n"
+                ),
+                "1.0": "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n\n",
+                "2.0": "Metadata-Version: 2.1\nName: foo\nVersion: 2.0\n\n",
+            },
+        )
+
+    def _pins(self, *platform_ids: str) -> dict[str, dict[str, Version]]:
+        targets = Matrix(
+            python="==3.11",
+            platforms=tuple(PlatformSpec(p) for p in platform_ids),
+        ).expand()
+        result = resolve_with_coordinator(
+            self._coordinator(),
+            targets,
+            _reqs('foo; sys_platform == "win32"', "bar"),
+            config=_no_build(),
+            resolution_strategy=ResolutionStrategy.LOWEST_DIRECT,
+        )
+        assert result.success
+        return {
+            tr.target.platform_spec.platform_id: tr.pins
+            for tr in result.target_results
+            if tr.target.platform_spec is not None
+        }
+
+    def test_marker_excluded_root_takes_the_transitive_newest(self) -> None:
+        """On linux ``foo`` reaches the graph only through ``bar``."""
+        assert self._pins("linux_x86_64") == {
+            "linux_x86_64": {"bar": Version("5.0"), "foo": Version("2.0")},
+        }
+
+    def test_marker_included_root_still_takes_its_floor(self) -> None:
+        """On windows the same ``foo`` requirement is direct, so it floors."""
+        assert self._pins("windows_amd64") == {
+            "windows_amd64": {"bar": Version("5.0"), "foo": Version("1.0")},
+        }
+
+    def test_floor_survives_a_leading_transitive_target(self) -> None:
+        """Linux pins the newest first; windows still floors its direct ``foo``."""
+        assert self._pins("linux_x86_64", "windows_amd64") == {
+            "linux_x86_64": {"bar": Version("5.0"), "foo": Version("2.0")},
+            "windows_amd64": {"bar": Version("5.0"), "foo": Version("1.0")},
+        }
+
+    def test_leading_floor_aligns_the_transitive_target(self) -> None:
+        """Windows floors first, and linux takes that pin as its preference."""
+        assert self._pins("windows_amd64", "linux_x86_64") == {
+            "windows_amd64": {"bar": Version("5.0"), "foo": Version("1.0")},
+            "linux_x86_64": {"bar": Version("5.0"), "foo": Version("1.0")},
+        }
+
+
 _FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
