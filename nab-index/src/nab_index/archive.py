@@ -4,9 +4,9 @@ Parses a pip-style archive URL such as
 ``https://example.com/foo-1.0.tar.gz#sha256=<hex>&subdirectory=pkg`` into
 its bare URL, the declared hashes, and any subdirectory.
 
-The download and hash verification happen in the fetch coordinator (the
-same path a remote sdist takes); which archives are permitted is a
-policy decision in :mod:`nab_python.config`.
+The download happens in the fetch coordinator, which reads the URL by its
+own scheme; which archives are permitted is a policy decision in
+:mod:`nab_python.config`.
 """
 
 from __future__ import annotations

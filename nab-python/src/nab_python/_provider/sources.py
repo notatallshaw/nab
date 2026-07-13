@@ -269,9 +269,8 @@ def _fetch_archive_bytes(
     """Return ``(cache_dir, request, digest, data)`` for a verified archive.
 
     Raises before returning if the cache dir is missing, the download failed,
-    or the bytes fail their hash.  The hash is re-checked here rather than
-    trusted to the serving client: a ``file://`` index reads archive bytes
-    without verifying them, so this is the one place the check always runs.
+    or the bytes fail their hash.  The coordinator reads the declared URL
+    without verifying it, so every declared hash is checked here.
     """
     from ..provider import UnsupportedSdistError
 
@@ -291,24 +290,13 @@ def _fetch_archive_bytes(
     # only carries accepted algorithms, so every pair is verifiable.
     digest = request.hashes[0][1]
 
-    # Fetch through the shared coordinator; a recorded integrity error or an
-    # absent download both fail the resolve here.
-    event = provider.coordinator.request_sdist_archive(
-        canonical, digest, request.url, request.hashes
-    )
+    event = provider.coordinator.request_direct_archive(canonical, digest, request.url)
     event.wait()
-    error = provider.coordinator.index.get_sdist_archive_error(canonical, digest)
-    if error is not None:
-        raise error
     data = provider.coordinator.index.get_sdist_archive(canonical, digest)
     if data is None:
         msg = f"archive source {source.name!r}: download from {request.url} failed"
         raise UnsupportedSdistError(msg)
 
-    # Verify every declared hash rather than trust the serving client, so a
-    # file:// index (which does not check) cannot slip an unverified archive
-    # through, and so this layer never disagrees with a client that verified a
-    # different algorithm.
     for pinned_hash in request.hashes:
         _verify_sdist_hash(data, pinned_hash)
     return cache_dir, request, digest, data

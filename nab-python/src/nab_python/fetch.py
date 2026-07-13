@@ -17,16 +17,18 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import (
+    AsyncSimpleClient,
     MetadataHashMismatchError,
     SdistFile,
     SdistHashMismatchError,
     WheelFile,
 )
-from nab_index.local_index import LocalIndexClient
+from nab_index.local_index import LocalIndexClient, parse_file_url
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 
 from ._vendor.packaging.utils import canonicalize_name
@@ -63,12 +65,13 @@ logger = logging.getLogger(__name__)
 
 
 class FetchKind(enum.Enum):
-    """Distinguishes the four kinds of fetches the coordinator handles."""
+    """Distinguishes the kinds of fetches the coordinator handles."""
 
     LISTING = "listing"
     METADATA = "metadata"
     SDIST = "sdist"
     SDIST_ARCHIVE = "sdist-archive"
+    DIRECT_ARCHIVE = "direct-archive"
 
 
 @dataclass(frozen=True, slots=True)
@@ -730,6 +733,33 @@ class FetchCoordinator:
             )
         return pending.event
 
+    def request_direct_archive(
+        self,
+        package: str,
+        version: str,
+        url: str,
+    ) -> threading.Event:
+        """Request the bytes of an archive named by URL rather than by an index.
+
+        Used by ``[[tool.nab.archive-sources]]``, whose URL is declared
+        independently of every index, so the URL's own scheme decides how it is
+        read.  The bytes land unverified in the same slot as
+        :meth:`request_sdist_archive`; the caller checks the declared hashes.
+        """
+        self._check_alive()
+        key = f"sdist-archive:{package}:{version}"
+        pending, existed = self.index.get_or_create_pending(key)
+        if not existed:
+            self._submit(
+                FetchRequest(
+                    kind=FetchKind.DIRECT_ARCHIVE,
+                    package=package,
+                    version=version,
+                    url=url,
+                )
+            )
+        return pending.event
+
     def request_metadata_batch(
         self, items: list[tuple[str, str, str, tuple[str, str] | None]]
     ) -> list[tuple[str, str, threading.Event]]:
@@ -892,8 +922,10 @@ class FetchCoordinator:
                     await self._fetch_metadata(client, req)
                 elif req.kind is FetchKind.SDIST:
                     await self._fetch_sdist(client, req)
-                else:
+                elif req.kind is FetchKind.SDIST_ARCHIVE:
                     await self._fetch_sdist_archive(client, req)
+                else:
+                    await self._fetch_direct_archive(req)
             except Exception as exc:
                 logger.exception("Fetch failed: %s %s", req.kind.value, req.package)
                 self._record_fetch_failure(client, req, exc)
@@ -1020,4 +1052,19 @@ class FetchCoordinator:
         data = await client.get_sdist_archive(
             req.package, req.version, req.url, req.sdist_hashes
         )
+        self.index.store_sdist_archive(req.package, req.version, data)
+
+    async def _fetch_direct_archive(self, req: FetchRequest) -> None:
+        """Read an archive declared by URL, by that URL's own scheme."""
+        assert req.version is not None
+        assert req.url is not None
+
+        if urlsplit(req.url).scheme == "file":
+            data = parse_file_url(req.url).read_bytes()
+        else:
+            if self._offline:
+                msg = f"archive fetch unavailable in offline mode ({req.url})"
+                raise OfflineError(msg)
+            data = await AsyncSimpleClient(self._transport).download(req.url)
+
         self.index.store_sdist_archive(req.package, req.version, data)
