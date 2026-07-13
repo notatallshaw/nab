@@ -79,9 +79,8 @@ def write_lock(
 
     Returns the TOML text.  When ``output_path`` is provided, also
     writes it there; the caller chooses the path (PEP 751 does not
-    mandate one).  The write goes through a temp file and a rename, so a
-    failed write leaves any previously committed lockfile intact rather
-    than replacing it with a valid-looking prefix of the new one.
+    mandate one).  The write is staged and renamed into place, so a
+    failed write leaves any existing file intact.
 
     Directory, wheel and sdist paths are written relative to
     ``output_path``'s parent so the lockfile stays portable between

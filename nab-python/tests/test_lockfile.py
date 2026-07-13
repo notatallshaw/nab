@@ -1321,11 +1321,8 @@ class TestErrorPaths:
 class TestFailedWriteKeepsCommittedFile:
     """A write that dies partway must not leave a shortened lockfile behind.
 
-    The emitters replace an existing file, and both formats are
-    newline-delimited records, so a prefix of the new text parses as a
-    complete lock holding a subset of the pins.  A consumer would install
-    that subset without complaint, so the previously committed file has to
-    survive a failed write untouched.
+    Both formats are newline-delimited records, so a prefix of the new text
+    parses as a complete lock holding a subset of the pins.
     """
 
     def _committed(self) -> LockInput:

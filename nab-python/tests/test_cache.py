@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from nab_index.atomic import atomic_write_text
 from nab_index.cache import (
     CachePolicy,
     NullCache,
@@ -118,6 +120,43 @@ class TestAtomicWrite:
         monkeypatch.setattr("nab_index.atomic.os.unlink", fail_unlink)
         with pytest.raises(RuntimeError, match="rep"):
             _atomic_write(target, b"data")
+
+    def test_new_file_gets_the_mode_open_would_have_given_it(
+        self, tmp_path: Path
+    ) -> None:
+        reference = tmp_path / "reference.txt"
+        reference.write_bytes(b"x")
+        target = tmp_path / "x.txt"
+        _atomic_write(target, b"data")
+        assert target.stat().st_mode == reference.stat().st_mode
+
+    def test_mode_of_the_replaced_file_is_kept(self, tmp_path: Path) -> None:
+        target = tmp_path / "x.txt"
+        target.write_bytes(b"old")
+        target.chmod(0o640)
+        mode = target.stat().st_mode
+        _atomic_write(target, b"new")
+        assert target.stat().st_mode == mode
+
+    def test_content_is_synced_before_the_rename(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+        real_fsync = os.fsync
+        real_replace = os.replace
+
+        def spy_fsync(fd: int) -> None:
+            calls.append("fsync")
+            real_fsync(fd)
+
+        def spy_replace(src: Path, dst: Path) -> None:
+            calls.append("replace")
+            real_replace(src, dst)
+
+        monkeypatch.setattr("nab_index.atomic.os.fsync", spy_fsync)
+        monkeypatch.setattr("nab_index.atomic.os.replace", spy_replace)
+        atomic_write_text(tmp_path / "x.txt", "data")
+        assert calls == ["fsync", "replace"]
 
 
 class TestOnDiskCache:

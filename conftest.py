@@ -15,9 +15,8 @@ The property suite under ``nab-*/tests/property*/`` uses explicit
 ``PROPERTY_SETTINGS``/``DEEP_SETTINGS``/``BRUTE_FORCE_SETTINGS``
 decorators so its example budget is independent of the profile.
 
-``cap_writes`` lives here because both the ``nab-python`` suite and the
-CLI suite need it to exercise a filesystem that fills up partway through
-a write.
+``cap_writes`` is here rather than in one suite's conftest because both the
+``nab-python`` suite and the CLI suite use it.
 """
 
 from __future__ import annotations
@@ -69,9 +68,17 @@ class _CappedHandle:
             self._budget = 0
             msg = os.strerror(errno.ENOSPC)
             raise OSError(errno.ENOSPC, msg)
+
         self._budget -= len(payload)
         written: int = self._handle.write(payload)
         return written
+
+    def flush(self) -> None:
+        self._handle.flush()
+
+    def fileno(self) -> int:
+        fd: int = self._handle.fileno()
+        return fd
 
     def __enter__(self) -> Self:
         return self
@@ -106,10 +113,9 @@ def _cap_writes(budget: int) -> Iterator[None]:
 def cap_writes() -> Callable[[int], AbstractContextManager[None]]:
     """Simulate a filesystem that fills up partway through a write.
 
-    Inside ``cap_writes(n)`` every file opened for writing takes the first
-    ``n`` bytes and then raises ``ENOSPC``, leaving those bytes on disk.
-    Patching ``io.open`` rather than a specific writer keeps the fixture
-    honest about how the file is written: both ``Path.write_text`` and a
-    ``tempfile``-staged write route through it.
+    Inside ``cap_writes(n)`` every file opened for writing takes the first ``n``
+    bytes and then raises ``ENOSPC``, leaving those bytes on disk. Patching
+    ``io.open`` rather than a writer keeps the fixture agnostic about how the
+    file gets written.
     """
     return _cap_writes
