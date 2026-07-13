@@ -564,9 +564,15 @@ on Apple Silicon) there is no machine to model and no tag to name, so
 that is a config error.
 
 A knob belongs to its platform.  `libc` and `libc-version` are Linux
-knobs and `macos-min` is a macOS one; declaring one on a platform that
-cannot read it is a config error, not a target carrying a setting that
-selects no wheel and still names the machine in the lock.
+knobs and `macos-min` is a macOS one, so declaring one on a platform
+that cannot read it is a config error.  It would select no wheel, and it
+would still name the machine the lock was resolved for.
+
+`platform-release` and `platform-version` are the exception: they set
+PEP 508 marker values and never enter wheel-tag selection.  Left empty,
+every comparison against them evaluates False, so a dependency gated on
+`platform_release >= "5.10"` (or on any other comparison) is dropped.  A
+target that does run that kernel has to say so.
 
 `free-threaded` picks the `cp3XXt` ABI, so the target takes the
 free-threaded wheels and neither the ordinary `cp3XX` ones nor `abi3`

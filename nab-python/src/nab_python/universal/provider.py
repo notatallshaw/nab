@@ -15,12 +15,11 @@ inherited from :class:`Provider` and threaded through via the
 parent's ``resolution_strategy`` and ``direct_packages`` kwargs.
 
 When ``platform_spec`` is supplied, the provider also filters wheel
-candidates by tag compatibility at resolve time.  Versions whose only wheels
-are for
-another libc family, or above the spec's libc/macOS version, become
-unavailable unless an sdist is present, which keeps the version alive
-at every ``build_policy`` level (look-ahead rejects an unreadable
-sdist).
+candidates by tag compatibility at resolve time.  Versions whose only
+wheels are for another libc family, or above the spec's libc/macOS
+version, become unavailable unless an sdist is present, which keeps the
+version alive at every ``build_policy`` level (look-ahead rejects an
+unreadable sdist).
 """
 
 from __future__ import annotations
@@ -198,9 +197,9 @@ class UniversalProvider(Provider):
     ) -> list[tuple[Version, DistFile]]:
         """Filter parent's result by wheel-tag compatibility.
 
-        A version is unavailable to the resolver if its
-        only wheels are tag-incompatible with this tuple's
-        ``platform_spec``.  Sdists keep the version alive at every
+        A version is unavailable to the resolver if its only wheels are
+        tag-incompatible with this tuple's ``platform_spec``.  Sdists
+        keep the version alive at every
         :class:`BuildPolicy` level because static PKG-INFO and the
         bundled ``pyproject.toml`` fallback are read unconditionally;
         ``BUILD_LOCAL`` adds backend invocation on local checkouts and

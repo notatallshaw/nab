@@ -107,6 +107,16 @@ class TestMatrixExpand:
         with pytest.raises(ValueError, match="Unknown platform"):
             matrix.expand()
 
+    def test_unknown_platform_id_wins_over_the_free_threaded_rule(self) -> None:
+        """A bad id is the error to report; the rest of the target is moot."""
+        matrix = Matrix(
+            python=">=3.13",
+            platforms=(PlatformSpec("freebsd_amd64", free_threaded=True),),
+            implementations=("pypy",),
+        )
+        with pytest.raises(ValueError, match="Unknown platform"):
+            matrix.expand()
+
     def test_empty_python_range_raises(self) -> None:
         """A python spec satisfied by no known minor is a user error."""
         matrix = Matrix(python=">=4.0", platforms=(PlatformSpec("linux_x86_64"),))

@@ -2229,7 +2229,7 @@ _PLATFORM_TABLE_KEYS = frozenset(
         "free-threaded",
     }
 )
-# The platform kind each knob key belongs to.  Every other kind ignores it.
+# The platform kind that reads each knob key; any other kind rejects it.
 _PLATFORM_KNOB_OWNER: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "linux": frozenset({"libc", "libc-version"}),

@@ -238,7 +238,6 @@ class Matrix:
         if self.python_order not in {"asc", "desc"}:
             msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
             raise ValueError(msg)
-        self._check_free_threaded()
         unknown = [
             s.platform_id
             for s in self.platforms
@@ -261,6 +260,7 @@ class Matrix:
                 " keys must be major.minor like '3.11'"
             )
             raise ValueError(msg)
+        self._check_free_threaded()
         py_versions = list(_pythons_in_range(self.python))
         if not py_versions:
             msg = f"No known Python versions match {self.python!r}"
