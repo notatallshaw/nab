@@ -46,8 +46,12 @@ __all__ = [
     "TagSet",
     "TagsSource",
     "platform_kind",
+    "supports_free_threading",
     "wheel_tag_set",
 ]
+
+# The free-threaded build ships from CPython 3.13 (PEP 703).
+FREE_THREADED_MIN_PYTHON = (3, 13)
 
 Libc = Literal["glibc", "musl"]
 
@@ -578,13 +582,19 @@ class TagSet:
             if host[0].interpreter.startswith(_PYPY_INTERPRETER_PREFIX)
             else "cpython"
         )
+        # The host's free-threaded ABI only carries to a Python that has one:
+        # ``cp310t`` has never existed, and a target advertising it matches no
+        # wheel at all.  The declared-target path refuses the same combination.
+        free_threaded = host[0].abi.endswith(
+            _FREE_THREADED_ABI_SUFFIX
+        ) and supports_free_threading(python)
         return cls(
             tuple(
                 _tags_in_order(
                     python,
                     platforms,
                     implementation,
-                    free_threaded=host[0].abi.endswith(_FREE_THREADED_ABI_SUFFIX),
+                    free_threaded=free_threaded,
                 )
             )
         )
@@ -615,6 +625,11 @@ def _python_pair(python_version: str) -> tuple[int, int]:
     release = Version(python_version).release
     major, minor = (*release, 0)[:2]
     return major, minor
+
+
+def supports_free_threading(python_version: str) -> bool:
+    """Whether ``python_version`` has a free-threaded build at all (:pep:`703`)."""
+    return _python_pair(python_version) >= FREE_THREADED_MIN_PYTHON
 
 
 def _tags_in_order(

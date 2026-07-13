@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from nab_index.client import WheelFile
+from nab_python._vendor.packaging.tags import Tag
 from nab_python.tags import (
     _PLATFORM_ARCH,
     _PLATFORM_KIND,
@@ -904,3 +905,82 @@ class TestPyPyTags:
         assert pp_native
         assert cp_native.isdisjoint(pp)
         assert pp_native.isdisjoint(cp)
+
+
+class TestTagSetHostConstructors:
+    """The host constructors take their tags from an injected source."""
+
+    _HOST = (
+        Tag("cp313", "cp313", "manylinux_2_39_x86_64"),
+        Tag("cp313", "cp313", "linux_x86_64"),
+        Tag("py3", "none", "any"),
+    )
+
+    def _host_tags(self) -> tuple[Tag, ...]:
+        return self._HOST
+
+    def test_for_host_takes_the_source_verbatim(self) -> None:
+        """packaging already answers this for the live machine."""
+        tags = TagSet.for_host(tags_source=self._host_tags)
+        assert tags.ordered == self._HOST
+        assert tags.members == frozenset(self._HOST)
+
+    def test_for_host_defaults_to_sys_tags(self) -> None:
+        """Without a source, the running interpreter's tags are used."""
+        assert TagSet.for_host().ordered
+
+    def test_for_host_python_keeps_the_host_platform_order(self) -> None:
+        """The platform axis carries over, in the host's own preference order."""
+        tags = TagSet.for_host_python("3.11", tags_source=self._host_tags)
+        platforms = [t.platform for t in tags.ordered if t.interpreter == "cp311"]
+        assert platforms[:2] == ["manylinux_2_39_x86_64", "linux_x86_64"]
+
+    def test_for_host_python_drops_the_any_platform(self) -> None:
+        """``any`` is not a machine, so it never seeds the platform axis."""
+        tags = TagSet.for_host_python("3.11", tags_source=self._host_tags)
+        assert Tag("cp311", "cp311", "any") not in tags.members
+        assert Tag("py3", "none", "any") in tags.members
+
+    def test_for_host_python_needs_a_non_empty_source(self) -> None:
+        with pytest.raises(ValueError, match="no tags"):
+            TagSet.for_host_python("3.11", tags_source=tuple)
+
+    def _free_threaded_host(self) -> tuple[Tag, ...]:
+        return (
+            Tag("cp314", "cp314t", "manylinux_2_39_x86_64"),
+            Tag("py3", "none", "any"),
+        )
+
+    def test_free_threaded_host_does_not_carry_to_an_older_python(self) -> None:
+        """``cp310t`` never existed, so a target naming it matches no wheel."""
+        tags = TagSet.for_host_python("3.10", tags_source=self._free_threaded_host)
+        assert {t.abi for t in tags.ordered if t.interpreter == "cp310"} == {
+            "cp310",
+            "abi3",
+            "none",
+        }
+
+    def test_free_threaded_host_carries_to_a_python_that_has_it(self) -> None:
+        tags = TagSet.for_host_python("3.13", tags_source=self._free_threaded_host)
+        assert "cp313t" in {t.abi for t in tags.ordered}
+
+
+class TestTagSetAccepts:
+    """``accepts`` answers wheel compatibility from the filename alone."""
+
+    _TAGS = TagSet.for_spec(python_version="3.11", spec=PlatformSpec("linux_x86_64"))
+
+    def test_compatible_wheel_accepted(self) -> None:
+        assert self._TAGS.accepts("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+
+    def test_incompatible_wheel_rejected(self) -> None:
+        assert not self._TAGS.accepts("pkg-1.0-cp311-cp311-win_amd64.whl")
+
+    def test_unparseable_filename_rejected(self) -> None:
+        assert not self._TAGS.accepts("pkg-1.0.tar.gz")
+
+    def test_rank_orders_specific_before_generic(self) -> None:
+        """The rank drives the install pick: lowest index wins."""
+        specific = Tag("cp311", "cp311", "manylinux_2_28_x86_64")
+        generic = Tag("py3", "none", "any")
+        assert self._TAGS.rank[specific] < self._TAGS.rank[generic]
