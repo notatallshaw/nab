@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
+import tomli
 import tyro
 from tyro.extras import SubcommandApp
 
@@ -388,6 +389,20 @@ def _fail_config(exc: SourceConfigError) -> NoReturn:
     sys.exit(1)
 
 
+def _is_pylock(path: Path) -> bool:
+    """Whether ``path`` holds a PEP 751 lock rather than a pyproject.
+
+    ``lock-version`` is the one required key PEP 751 gives a lock and a
+    pyproject never carries.  An unreadable or malformed file is left for
+    the pyproject parser to report.
+    """
+    try:
+        data = tomli.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError):
+        return False
+    return "lock-version" in data and "project" not in data
+
+
 def _require_pyproject_file(path: Path) -> None:
     """Exit 1 if ``path`` is not a readable pyproject file.
 
@@ -398,6 +413,12 @@ def _require_pyproject_file(path: Path) -> None:
     if not path.is_file():
         reason = "is a directory" if path.is_dir() else "not found"
         sys.stderr.write(f"Error: {path} {reason}\n")
+        sys.exit(1)
+    if _is_pylock(path):
+        sys.stderr.write(
+            f"Error: {path} is a PEP 751 lockfile, not a pyproject.  nab resolves"
+            f" from project inputs, so pass the pyproject.toml instead.\n"
+        )
         sys.exit(1)
 
 
