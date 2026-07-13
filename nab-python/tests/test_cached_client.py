@@ -10,7 +10,7 @@ import tarfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import pytest
 
@@ -98,6 +98,29 @@ class _FakeTransport:
             msg = f"unexpected request to {url}"
             raise AssertionError(msg)
         return self._responses.pop(0)
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _PathRoutingTransport:
+    """Serves bodies by URL path, as a server does.
+
+    RFC 3986 keeps the fragment off the wire, so a request whose
+    ``.metadata`` suffix landed inside the fragment reaches the wheel's
+    own path and is served the wheel.
+    """
+
+    def __init__(self, bodies: dict[str, bytes]) -> None:
+        self._bodies = bodies
+        self.paths: list[str] = []
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> _FakeResponse:
+        path = urlsplit(url).path
+        self.paths.append(path)
+        return _FakeResponse(self._bodies[path])
 
     async def aclose(self) -> None:
         return None
@@ -515,6 +538,99 @@ class TestRelativeUrlResolution:
         data = {"files": [{"filename": "foo-1.0-py3-none-any.whl", "url": raw}]}
         files = _parse_files(data, "https://example.com/simple/", "foo")
         assert files[0].url == urljoin(base, raw) != raw
+
+
+class TestMetadataUrl:
+    """PEP 658/714 sidecar URL derived from the PEP 691 file URL."""
+
+    def _wheel(self, url: str, *, has_metadata: bool = True) -> WheelFile:
+        return WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url=url,
+            version="1.0",
+            requires_python=None,
+            has_metadata=has_metadata,
+            upload_time=None,
+        )
+
+    def test_suffix_appended_to_path(self) -> None:
+        wheel = self._wheel("https://files.example.com/foo-1.0-py3-none-any.whl")
+        assert (
+            wheel.metadata_url
+            == "https://files.example.com/foo-1.0-py3-none-any.whl.metadata"
+        )
+
+    def test_hash_fragment_dropped(self) -> None:
+        wheel = self._wheel(
+            "https://files.example.com/foo-1.0-py3-none-any.whl#sha256=" + "a" * 64
+        )
+        assert (
+            wheel.metadata_url
+            == "https://files.example.com/foo-1.0-py3-none-any.whl.metadata"
+        )
+
+    def test_query_string_preserved(self) -> None:
+        wheel = self._wheel(
+            "https://files.example.com/foo-1.0-py3-none-any.whl?token=x#sha256=abc"
+        )
+        assert (
+            wheel.metadata_url
+            == "https://files.example.com/foo-1.0-py3-none-any.whl.metadata?token=x"
+        )
+
+    def test_file_url(self) -> None:
+        wheel = self._wheel("file:///srv/wheels/foo-1.0-py3-none-any.whl")
+        assert (
+            wheel.metadata_url == "file:///srv/wheels/foo-1.0-py3-none-any.whl.metadata"
+        )
+
+    def test_no_sidecar_yields_none(self) -> None:
+        wheel = self._wheel(
+            "https://files.example.com/foo-1.0-py3-none-any.whl", has_metadata=False
+        )
+        assert wheel.metadata_url is None
+
+
+class TestFragmentedUrlSidecarFetch:
+    """A PEP 503 hash fragment on the file URL must not divert the sidecar fetch."""
+
+    def test_sidecar_fetched_and_verified(self, tmp_path: Path) -> None:
+        wheel_bytes = b"PK\x03\x04 not really a wheel"
+        sidecar = b"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+        wheel_path = "/packages/foo-1.0-py3-none-any.whl"
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": (
+                        f"https://files.example.com{wheel_path}"
+                        f"#sha256={hashlib.sha256(wheel_bytes).hexdigest()}"
+                    ),
+                    "core-metadata": {
+                        "sha256": hashlib.sha256(sidecar).hexdigest(),
+                    },
+                },
+            ],
+        }
+        files = _parse_files(data, "https://example.com/simple/", "foo")
+        wheel = files[0]
+        assert isinstance(wheel, WheelFile)
+        transport = _PathRoutingTransport(
+            {wheel_path: wheel_bytes, wheel_path + ".metadata": sidecar}
+        )
+
+        async def go() -> str:
+            client = CachedAsyncSimpleClient(transport, _make_cache(tmp_path))
+            try:
+                assert wheel.metadata_url is not None
+                return await client.get_metadata_text(
+                    "foo", "1.0", wheel.metadata_url, wheel.metadata_hash
+                )
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == sidecar.decode()
+        assert transport.paths == [wheel_path + ".metadata"]
 
 
 class TestParseHashes:
