@@ -543,7 +543,7 @@ def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
     """
     try:
         return _read_tar_sdist_files(data)
-    except (tarfile.TarError, OSError, UnicodeDecodeError, KeyError):
+    except (tarfile.TarError, OSError, UnicodeDecodeError, KeyError, EOFError):
         return (None, None)
 
 
@@ -608,13 +608,14 @@ def _sdist_member_top_level(name: str) -> tuple[int, str, str]:
 def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
     """Extract a .tar.gz sdist into ``target_dir`` and return the source root.
 
-    Extraction goes through the tar ``data`` filter (:pep:`706`), which refuses
-    any member that would write outside ``target_dir`` (absolute paths, ``..``,
-    escaping links) or is a special file (device node, FIFO); a rejected member
-    surfaces as a :class:`ValueError`.  A hard link whose target is not present
-    in the archive surfaces the same way.  A lone top-level directory that
-    wraps every member is the source root; otherwise (top-level files, as in a
-    flat sdist, or several top-level directories) the root is ``target_dir``.
+    Anything the extractor cannot read raises :class:`ValueError`: a corrupt or
+    truncated stream, a tar that will not open, and a member the tar ``data``
+    filter (:pep:`706`) refuses.  The filter refuses any member that would write
+    outside ``target_dir`` (absolute paths, ``..``, escaping links), is a special
+    file (device node, FIFO), or is a hard link whose target the archive does not
+    carry.  A lone top-level directory that wraps every member is the source
+    root; otherwise (top-level files, as in a flat sdist, or several top-level
+    directories) the root is ``target_dir``.
 
     The data filter is required; a Python that lacks it (before 3.10.12 /
     3.11.4 / 3.12) is unsupported and extraction raises.
@@ -635,6 +636,11 @@ def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
         raise ValueError(msg) from exc
     except KeyError as exc:
         msg = f"broken link in sdist member: {exc}"
+        raise ValueError(msg) from exc
+    except (tarfile.TarError, OSError, EOFError) as exc:
+        # gzip raises BadGzipFile (an OSError) on a bad header, and a bare
+        # EOFError on a truncated stream; neither is a TarError.
+        msg = f"unreadable sdist archive: {exc}"
         raise ValueError(msg) from exc
 
     # A lone wrapping directory is the source root; top-level files (a flat
