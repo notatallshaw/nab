@@ -2712,6 +2712,46 @@ class TestAugmentResolutionError:
         assert "Diagnostics:" in str(info.value)
         assert "foo: package not found on any configured index" in str(info.value)
 
+    def test_transitive_conflict_reports_the_blocker(self, tmp_path: Path) -> None:
+        """A transitive conflict names the blocker instead of a bare no-match.
+
+        ``foo`` needs ``bar>=2`` and ``baz`` needs ``bar==1.0``, so
+        look-ahead rejects every ``foo`` candidate.  The project wrote no
+        specifier on ``foo``, so "no version matches the requirement"
+        would point the user at a fix that does not exist.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo", "baz"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": _index_wheels("foo", "3.0", "3.1"),
+                "bar": _index_wheels("bar", "1.0", "2.0"),
+                "baz": _index_wheels("baz", "5.0"),
+            },
+            metadata_by_version={
+                "3.0": _metadata("foo", "3.0", "bar>=2"),
+                "3.1": _metadata("foo", "3.1", "bar>=2"),
+                "1.0": _metadata("bar", "1.0"),
+                "2.0": _metadata("bar", "2.0"),
+                "5.0": _metadata("baz", "5.0", "bar==1.0"),
+            },
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        diagnostics = str(info.value).split("Diagnostics:")[1]
+        assert "foo: every version in range was rejected" in diagnostics
+        assert "bar" in diagnostics
+        assert "foo: no version matches the requirement" not in diagnostics
+
 
 def _tuple_for_python(python_version: str) -> ResolveTarget:
     """Build a linux_x86_64 target for ``python_version``.
@@ -3096,6 +3136,12 @@ class TestLocalVcsRequiresPython:
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             result = _resolved(root, _FAKE_TRANSPORT)
         assert _pins(result)["foo"] == V("1.0")
+
+
+def _metadata(name: str, version: str, *requires: str) -> str:
+    """METADATA text for ``name`` ``version`` with one Requires-Dist per entry."""
+    body = "".join(f"Requires-Dist: {req}\n" for req in requires)
+    return f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n{body}\n"
 
 
 def _index_wheels(name: str, *versions: str) -> list[WheelFile]:
