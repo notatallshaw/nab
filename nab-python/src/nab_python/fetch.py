@@ -989,8 +989,16 @@ class FetchCoordinator:
                     await self._fetch_sdist_archive(client, req)
                 else:
                     await self._fetch_direct_archive(req)
-            except Exception as exc:
-                logger.exception("Fetch failed: %s %s", req.kind.value, req.package)
+            except OfflineError as exc:
+                # Offline with a cold cache is an expected miss.
+                logger.debug(
+                    "Fetch failed: %s %s: %s", req.kind.value, req.package, exc
+                )
+                self._record_fetch_failure(client, req, exc)
+            except Exception as exc:  # noqa: BLE001 - failures must unblock the waiter
+                logger.warning(
+                    "Fetch failed: %s %s: %s", req.kind.value, req.package, exc
+                )
                 self._record_fetch_failure(client, req, exc)
 
     def _record_fetch_failure(

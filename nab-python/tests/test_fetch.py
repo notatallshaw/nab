@@ -6,11 +6,12 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
 import tarfile
 import tempfile
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import httpx
@@ -595,6 +596,57 @@ class TestFetchCoordinator:
             # but the coordinator shouldn't crash
             event.wait(timeout=2)
             assert not coord._crashed
+
+    @pytest.mark.parametrize(
+        ("kind", "request_fetch"),
+        [
+            ("listing", lambda coord: coord.request_listing("bad")),
+            (
+                "metadata",
+                lambda coord: coord.request_metadata(
+                    "bad", "1.0", "https://files.example.com/bad-1.0.whl.metadata"
+                ),
+            ),
+            (
+                "sdist",
+                lambda coord: coord.request_sdist(
+                    "bad", "1.0", "https://files.example.com/bad-1.0.tar.gz"
+                ),
+            ),
+            (
+                "sdist-archive",
+                lambda coord: coord.request_sdist_archive(
+                    "bad", "1.0", "https://files.example.com/bad-1.0.tar.gz"
+                ),
+            ),
+        ],
+    )
+    @respx.mock
+    def test_fetch_failure_warns_with_cause_and_no_traceback(
+        self,
+        kind: str,
+        request_fetch: Callable[[FetchCoordinator], threading.Event],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failed fetch warns with its cause, and no traceback."""
+        respx.get(url__regex=r".*").mock(return_value=httpx.Response(500))
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="nab_python.fetch"),
+            _coord() as coord,
+        ):
+            request_fetch(coord).wait(timeout=5)
+
+        failures = [
+            r
+            for r in caplog.records
+            if r.name == "nab_python.fetch" and r.msg.startswith("Fetch failed")
+        ]
+        assert len(failures) == 1
+        assert failures[0].levelno == logging.WARNING
+        assert failures[0].exc_info is None
+        assert failures[0].args[0] == kind
+        assert "500" in failures[0].getMessage()
 
     @respx.mock
     def test_listing_transport_error_not_masked_as_empty(self) -> None:
@@ -1491,6 +1543,34 @@ class TestFetchCoordinatorCache:
             assert coord.index.get_sdist_archive("pkg", "3.0") is None
             assert coord.index.get_sdist_archive_error("pkg", "3.0") is None
         assert not coord._crashed
+
+    @respx.mock
+    def test_offline_with_cold_cache_logs_at_debug(
+        self, tmp_path: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Offline + cache miss is an expected result, so it stays at debug."""
+        cache_dir = Path(str(tmp_path))
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="nab_python.fetch"),
+            FetchCoordinator(
+                transport=HttpxAsyncTransport(),
+                cache_dir=cache_dir,
+                offline=True,
+            ) as coord,
+        ):
+            event = coord.request_listing("missing")
+            event.wait(timeout=5)
+            assert coord.index.get_listing("missing") == []
+
+        failures = [
+            r
+            for r in caplog.records
+            if r.name == "nab_python.fetch" and r.msg.startswith("Fetch failed")
+        ]
+        assert len(failures) == 1
+        assert failures[0].levelno == logging.DEBUG
+        assert failures[0].exc_info is None
 
     def test_explicit_cache_backend_takes_precedence(self) -> None:
         """A passed-in cache_backend wins over cache_dir."""
