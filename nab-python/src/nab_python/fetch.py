@@ -1049,8 +1049,8 @@ class FetchCoordinator:
         # one the provider picks for that version's metadata.
         first_wheel: dict[str, tuple[WheelFile, str]] = {}
         for f in files:
-            if isinstance(f, WheelFile) and f.metadata_url is not None:
-                first_wheel.setdefault(f.version, (f, f.metadata_url))
+            if isinstance(f, WheelFile) and (url := f.metadata_url) is not None:
+                first_wheel.setdefault(f.version, (f, url))
 
         newest = list(first_wheel.values())[-self.PREFETCH_METADATA_COUNT :]
         for w, metadata_url in newest:

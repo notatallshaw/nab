@@ -144,7 +144,7 @@ def _prefer_metadata_source(current: DistFile | None, candidate: DistFile) -> Di
 def _metadata_rank(dist: DistFile) -> int:
     """Rank a dist by metadata-fetch cost (lower is cheaper)."""
     if isinstance(dist, WheelFile):
-        return 0 if dist.metadata_url is not None else 1
+        return 0 if dist.has_metadata else 1
     return 2
 
 
@@ -209,10 +209,8 @@ def prefetch_root_batch(
             continue
         if _has_complete_override(provider, normalized, version):
             continue
-        if isinstance(dist, WheelFile) and dist.metadata_url is not None:
-            items.append(
-                (normalized, dist.version, dist.metadata_url, dist.metadata_hash)
-            )
+        if isinstance(dist, WheelFile) and (url := dist.metadata_url) is not None:
+            items.append((normalized, dist.version, url, dist.metadata_hash))
     if items:
         provider.coordinator.request_metadata_batch(items)
 
@@ -236,10 +234,10 @@ def prefetch_transitive_best(
     if (
         cache_key not in provider.deps_cache
         and isinstance(dist, WheelFile)
-        and dist.metadata_url is not None
+        and (url := dist.metadata_url) is not None
     ):
         provider.coordinator.request_metadata(
-            normalized, dist.version, dist.metadata_url, dist.metadata_hash
+            normalized, dist.version, url, dist.metadata_hash
         )
 
 
@@ -609,7 +607,7 @@ def _first_wheel_per_version(
     """First wheel-with-PEP-658-metadata per unique version, in list order."""
     out: dict[Version, WheelFile] = {}
     for version, dist in versions_list:
-        if isinstance(dist, WheelFile) and dist.metadata_url is not None:
+        if isinstance(dist, WheelFile) and dist.has_metadata:
             out.setdefault(version, dist)
     return out
 
@@ -649,7 +647,7 @@ def prefetch_walk_ahead(
             continue
         if _has_complete_override(provider, normalized, version):
             continue
-        # ``_first_wheel_per_version`` filters out wheels without metadata_url.
+        # ``_first_wheel_per_version`` keeps only wheels with a sidecar.
         metadata_url = wheel.metadata_url
         assert metadata_url is not None
         if coordinator_index.has_metadata(normalized, wheel.version, metadata_url):
@@ -683,11 +681,9 @@ def prefetch_batch(
         if _has_complete_override(provider, package, v):
             continue
         wheel = wheel_by_version_map[v]
-        if isinstance(wheel, WheelFile) and wheel.metadata_url is not None:
-            items.append(
-                (package, wheel.version, wheel.metadata_url, wheel.metadata_hash)
-            )
-            version_map.append((v, wheel.version, wheel.metadata_url))
+        if isinstance(wheel, WheelFile) and (url := wheel.metadata_url) is not None:
+            items.append((package, wheel.version, url, wheel.metadata_hash))
+            version_map.append((v, wheel.version, url))
 
     if not items:
         return []

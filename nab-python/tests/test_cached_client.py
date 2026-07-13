@@ -104,12 +104,7 @@ class _FakeTransport:
 
 
 class _PathRoutingTransport:
-    """Serves bodies by URL path, as a server does.
-
-    RFC 3986 keeps the fragment off the wire, so a request whose
-    ``.metadata`` suffix landed inside the fragment reaches the wheel's
-    own path and is served the wheel.
-    """
+    """Serves bodies by URL path, as a server does: the fragment is not sent."""
 
     def __init__(self, bodies: dict[str, bytes]) -> None:
         self._bodies = bodies
@@ -612,9 +607,11 @@ class TestFragmentedUrlSidecarFetch:
                 },
             ],
         }
+
         files = _parse_files(data, "https://example.com/simple/", "foo")
         wheel = files[0]
         assert isinstance(wheel, WheelFile)
+
         transport = _PathRoutingTransport(
             {wheel_path: wheel_bytes, wheel_path + ".metadata": sidecar}
         )

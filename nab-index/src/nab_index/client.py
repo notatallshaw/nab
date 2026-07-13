@@ -206,13 +206,11 @@ class WheelFile:
     def metadata_url(self) -> str | None:
         """Return the PEP 658/714 metadata URL, or None when unsupported.
 
-        The ``.metadata`` suffix goes on the path, so a PEP 503
-        ``#<algo>=<digest>`` fragment carried by the file URL is dropped
-        first: appended to the fragment it would never reach the wire,
-        and the request would fetch the wheel itself.
+        The suffix goes on the path, so a PEP 503 hash fragment is dropped.
         """
         if not self.has_metadata:
             return None
+
         parts = urlsplit(self.url)
         return urlunsplit(parts._replace(path=parts.path + ".metadata", fragment=""))
 

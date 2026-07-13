@@ -76,9 +76,9 @@ def resolve_metadata(
         raise MetadataError(msg)
 
     from_sdist = False
-    if isinstance(dist, WheelFile) and dist.metadata_url is not None:
+    if isinstance(dist, WheelFile) and (url := dist.metadata_url) is not None:
         event = provider.coordinator.request_metadata(
-            normalized, ver_str, dist.metadata_url, dist.metadata_hash
+            normalized, ver_str, url, dist.metadata_hash
         )
         event.wait()
         integrity_error = index.get_metadata_error(
@@ -140,7 +140,7 @@ def pick_dist_for_metadata(
         if v != version:
             continue
         if isinstance(d, WheelFile):
-            if d.metadata_url is not None:
+            if d.has_metadata:
                 if wheel_with_meta is None:
                     wheel_with_meta = d
             elif wheel_without_meta is None:
