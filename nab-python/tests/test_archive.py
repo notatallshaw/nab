@@ -24,6 +24,7 @@ from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.client import SdistHashMismatchError, extract_sdist_archive
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.multi_index import IndexConfig
+from nab_python._provider import sources
 from nab_python._provider.sources import _fetch_archive_bytes
 from nab_python.download import (
     DownloadError,
@@ -299,6 +300,7 @@ class TestArchiveMaterialize:
         provider.coordinator.index.store_sdist_archive("foo", digest, data)
         with pytest.raises(UnsupportedSdistError, match="could not be extracted"):
             provider.fetch_versions("foo")
+        assert list((tmp_path / "arch").iterdir()) == []
 
     def test_truncated_archive_raises(self, tmp_path: Path) -> None:
         # The hash covers the truncated bytes, so this fails in extraction
@@ -312,6 +314,7 @@ class TestArchiveMaterialize:
         provider.coordinator.index.store_sdist_archive("foo", digest, data)
         with pytest.raises(UnsupportedSdistError, match="could not be extracted"):
             provider.fetch_versions("foo")
+        assert list((tmp_path / "arch").iterdir()) == []
 
     @requires_data_filter
     def test_reextraction_replaces_stale_partial_tree(self, tmp_path: Path) -> None:
@@ -355,6 +358,100 @@ class TestArchiveMaterialize:
 
         assert str(versions[0][0]) == "1.0.0"
         assert sentinel.exists()
+
+    @requires_data_filter
+    def test_partial_tree_never_visible_at_cache_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The marker is the only completeness signal, so a concurrent run would
+        # read a half-written tree at the cache path as its own to wipe or to
+        # mark complete.  Nothing may appear there until extraction is done.
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        target = cache / digest
+        seen_mid_extract: list[bool] = []
+
+        def watching_extract(payload: bytes, target_dir: Path) -> Path:
+            seen_mid_extract.append(target.exists())
+            return extract_sdist_archive(payload, target_dir)
+
+        monkeypatch.setattr(sources, "extract_sdist_archive", watching_extract)
+        provider = _provider([source], cache)
+        provider.coordinator.index.store_sdist_archive("foo", digest, data)
+
+        versions = provider.fetch_versions("foo")
+
+        assert seen_mid_extract == [False]
+        assert str(versions[0][0]) == "1.0.0"
+        assert (target / "foo-1.0.0" / "pyproject.toml").is_file()
+        assert (target / ".nab-extracted").read_text(encoding="utf-8") == "foo-1.0.0"
+
+    @requires_data_filter
+    def test_lost_publish_race_uses_the_finished_tree(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # When a concurrent run publishes its own finished tree first, that tree
+        # is used as-is and the temporary one is dropped.
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        target = cache / digest
+        seen_mid_extract: list[bool] = []
+
+        def racing_extract(payload: bytes, target_dir: Path) -> Path:
+            seen_mid_extract.append(target.exists())
+            root = extract_sdist_archive(payload, target_dir)
+            winner = target / "foo-1.0.0"
+            winner.mkdir(parents=True, exist_ok=True)
+            (winner / "pyproject.toml").write_text(_PYPROJECT, encoding="utf-8")
+            (winner / "WINNER").write_text("", encoding="utf-8")
+            (target / ".nab-extracted").write_text("foo-1.0.0", encoding="utf-8")
+            return root
+
+        monkeypatch.setattr(sources, "extract_sdist_archive", racing_extract)
+        provider = _provider([source], cache)
+        provider.coordinator.index.store_sdist_archive("foo", digest, data)
+
+        versions = provider.fetch_versions("foo")
+
+        assert seen_mid_extract == [False]
+        assert str(versions[0][0]) == "1.0.0"
+        assert (target / "foo-1.0.0" / "WINNER").is_file()
+        assert list(cache.iterdir()) == [target]
+
+    @requires_data_filter
+    def test_interrupted_extraction_leaves_no_temp_tree(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # An interrupt lands after the bytes are on disk but before the rename.
+        # Nothing sweeps the cache later, so the temp tree has to go now.
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        digest = hashlib.sha256(data).hexdigest()
+        cache = tmp_path / "arch"
+
+        def interrupted_extract(payload: bytes, target_dir: Path) -> Path:
+            extract_sdist_archive(payload, target_dir)
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(sources, "extract_sdist_archive", interrupted_extract)
+
+        with pytest.raises(KeyboardInterrupt):
+            sources._extract_archive(cache, digest, data)
+
+        assert list(cache.iterdir()) == []
 
     @requires_data_filter
     def test_flat_archive_without_root_dir(self, tmp_path: Path) -> None:
