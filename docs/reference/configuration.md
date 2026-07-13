@@ -552,9 +552,10 @@ a `glibc` target takes manylinux wheels and never musllinux ones, and a
 `musl` target the reverse.  `libc-version` is the version the target
 guarantees, and a wheel built against an older libc runs on a newer one,
 so the target accepts every version at or below it.  The glibc default
-is 2.28 because numpy, pandas and scipy publish nothing older.
-`macos-min` works the same way in the other direction: `mac_platforms`
-treats it as the newest macOS a wheel may target.
+is 2.28 because numpy, pandas and scipy publish nothing older.  Its
+major has to match the family (glibc `2.x`, musl `1.x`): those are the
+only majors either has shipped, so no wheel targets another.
+`macos-min` reads the same way, as the newest macOS a wheel may target.
 
 `free-threaded` picks the `cp3XXt` ABI, so the target takes the
 free-threaded wheels and neither the ordinary `cp3XX` ones nor `abi3`

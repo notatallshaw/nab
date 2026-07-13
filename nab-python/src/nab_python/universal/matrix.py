@@ -127,8 +127,8 @@ class MatrixTuple:
 
         Uses the interpreter prefix (``py`` for CPython, ``pp`` for
         PyPy) so tuples that differ only by implementation get distinct
-        labels, and appends the platform spec's knob discriminator so
-        the label names the target the spec declares.  A
+        labels, and appends the platform spec's knob discriminator so a
+        spec off the platform defaults keeps its own label.  A
         conflict-fork ``selection`` then appends each active member as
         ``kind-name``, joined by ``.``, in sorted order so the forks of
         one python/platform stay distinct, e.g.

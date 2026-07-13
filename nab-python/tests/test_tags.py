@@ -83,7 +83,7 @@ class TestPlatformSpec:
     """``PlatformSpec`` exposes per-platform tag knobs."""
 
     def test_default_libc_is_glibc_2_28(self) -> None:
-        """An undeclared Linux target is glibc, at the modern baseline."""
+        """An undeclared Linux target is glibc 2.28."""
         spec = PlatformSpec("linux_x86_64")
         assert spec.libc == "glibc"
         assert spec.effective_libc_version == (2, 28)
@@ -155,11 +155,7 @@ class TestPlatformSpec:
 
 
 class TestLibcFamilyExclusivity:
-    """A target links one C library, so it accepts one family's wheels.
-
-    Emitting both families let a declared glibc target install a
-    musllinux wheel, which cannot run there.
-    """
+    """A target links one C library, so it accepts one family's wheels."""
 
     def test_glibc_target_emits_no_musllinux(self) -> None:
         """The default (glibc) linux target has no musllinux platform tag."""
@@ -307,7 +303,7 @@ class TestTagsForTarget:
         assert "cp311-cp311-manylinux_2_28_x86_64" not in tag_strs
 
     def test_default_linux_admits_manylinux_2_28(self) -> None:
-        """The default glibc version admits the modern manylinux baseline."""
+        """The default glibc version admits manylinux_2_28."""
         spec = PlatformSpec("linux_x86_64")
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux_2_28_x86_64" in tag_strs
@@ -353,7 +349,10 @@ class TestTagsForTarget:
         assert "cp311-cp311-manylinux_2_5_x86_64" in tag_strs
 
     def test_non_glibc2_major_descends_to_x_0(self) -> None:
-        """A glibc 3.x target descends to 3.0 on any arch (the 2.17 cap is glibc 2.x only)."""
+        """A glibc 3.x target descends to 3.0 on any arch.
+
+        The 2.17 floor is a glibc 2.x rule only.
+        """
         spec = PlatformSpec("linux_aarch64", libc_version=(3, 1))
         tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
         assert "cp311-cp311-manylinux_3_1_aarch64" in tag_strs
@@ -518,9 +517,8 @@ class TestWheelCompatibility:
             has_metadata=False,
             upload_time=None,
         )
-        # Clear any prior cached result on this tag suffix so the patched
-        # ``parse_tag`` is exercised, and clear the None it caches so no
-        # later test sees this common suffix as unparseable.
+        # Clear before, so the patched ``parse_tag`` runs, and after, so no
+        # later test sees this suffix cached as unparseable.
         _parse_tag_str.cache_clear()
         try:
             with patch(

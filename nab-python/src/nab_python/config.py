@@ -57,7 +57,7 @@ from .provider import (
     VcsSource,
     _normalize_extra,
 )
-from .tags import Libc, PlatformSpec
+from .tags import LIBC_MAJOR, Libc, PlatformSpec
 from .universal.matrix import Matrix
 from .workspace import (
     WorkspaceConfig,
@@ -2243,10 +2243,9 @@ _FREE_THREADED_MIN_PYTHON = (3, 13)
 def _parse_matrix_platforms(value: object) -> tuple[str | PlatformSpec, ...]:
     """Parse ``matrix.platforms``: bare ids, tables, or a mix of both.
 
-    A bare id takes the platform's default tag knobs.  The table form
-    declares the knobs a bare id cannot reach: the libc family and
-    version, the macOS deployment target, the kernel marker values, and
-    the free-threaded build.
+    A bare id takes the platform's default tag knobs; the table form declares
+    them (libc family and version, macOS deployment target, kernel marker
+    values, free-threaded build).
     """
     if not isinstance(value, list):
         msg = f"matrix.platforms must be a list, got {type(value).__name__}"
@@ -2278,16 +2277,28 @@ def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
     if "id" not in value:
         msg = f"{where} missing required key 'id'"
         raise ConfigError(msg)
+
     libc = value.get("libc", "glibc")
     if libc not in _KNOWN_LIBC:
         msg = f"{where}.libc must be one of {list(_KNOWN_LIBC)!r}, got {libc!r}"
         raise ConfigError(msg)
+
+    libc_version = _parse_major_minor(
+        f"{where}.libc-version", value.get("libc-version")
+    )
+    # A foreign major (glibc 3.0, musl 2.0) names tags no wheel carries.
+    expected_major = LIBC_MAJOR[libc]
+    if libc_version is not None and libc_version[0] != expected_major:
+        msg = (
+            f"{where}.libc-version must be a {expected_major}.x version"
+            f" for {libc}, got {libc_version[0]}.{libc_version[1]}"
+        )
+        raise ConfigError(msg)
+
     return PlatformSpec(
         platform_id=_parse_string_value(f"{where}.id", value["id"]),
         libc=libc,
-        libc_version=_parse_major_minor(
-            f"{where}.libc-version", value.get("libc-version")
-        ),
+        libc_version=libc_version,
         macos_min=_parse_major_minor(f"{where}.macos-min", value.get("macos-min")),
         platform_release=_parse_string_value(
             f"{where}.platform-release", value.get("platform-release", "")
@@ -2313,8 +2324,8 @@ def _parse_major_minor(key: str, value: object) -> tuple[int, int] | None:
         raise ConfigError(msg) from exc
     release = version.release
     two_part = len(release) == _MINOR_RELEASE_PARTS
-    # str() round-trips the normalized version, so an epoch or a
-    # pre/post/dev/local qualifier shows up as a mismatch here.
+    # str() renders the normalized version, so an epoch or a pre/post/dev/local
+    # qualifier shows up as a mismatch here.
     if not two_part or str(version) != f"{release[0]}.{release[1]}":
         msg = f"{key} must be exactly 'major.minor', got {text!r}"
         raise ConfigError(msg)
@@ -2352,10 +2363,9 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
     if not platforms:
         msg = "matrix.platforms must list at least one platform id"
         raise ConfigError(msg)
-    # One target per platform id: a lockfile entry is selected by a PEP 508
+    # One target per platform id.  A lockfile entry is selected by a PEP 508
     # marker, which has no libc or free-threading variable, so two targets
-    # sharing an id would render the same marker and the lock could not tell
-    # their pins apart.  The other libc family needs its own lock run.
+    # sharing an id would render the same marker.
     _reject_duplicates(
         "matrix.platforms",
         tuple(p if isinstance(p, str) else p.platform_id for p in platforms),
@@ -2399,9 +2409,7 @@ def _validate_matrix_axes(config: MatrixConfig) -> None:
 def _validate_free_threaded(tuples: Iterable[MatrixTuple]) -> None:
     """Reject free-threaded targets no interpreter build can satisfy.
 
-    A ``cpXYt`` ABI exists only for CPython 3.13 and up, so any other
-    tuple would advertise an ABI no wheel carries and silently lose
-    every binary wheel.
+    A ``cpXYt`` ABI exists only for CPython 3.13 and up.
     """
     for tup in tuples:
         if not tup.platform_spec.free_threaded:

@@ -2857,6 +2857,30 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="libc-version must be a string"):
             read_pyproject_config(path)
 
+    def test_platform_table_glibc_version_major_must_be_2(self, tmp_path: Path) -> None:
+        """A glibc major other than 2 tags a platform no wheel is built for."""
+        path = write(
+            tmp_path,
+            self._platforms_body('[{ id = "linux_x86_64", libc-version = "3.0" }]'),
+        )
+        with pytest.raises(
+            ConfigError, match=r"libc-version must be a 2.x version for glibc, got 3.0"
+        ):
+            read_pyproject_config(path)
+
+    def test_platform_table_musl_version_major_must_be_1(self, tmp_path: Path) -> None:
+        """musl has only ever shipped 1.x, so a 2.x target is a typo."""
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '[{ id = "linux_x86_64", libc = "musl", libc-version = "2.0" }]'
+            ),
+        )
+        with pytest.raises(
+            ConfigError, match=r"libc-version must be a 1.x version for musl, got 2.0"
+        ):
+            read_pyproject_config(path)
+
     def test_same_id_under_two_libc_families_is_a_duplicate(
         self, tmp_path: Path
     ) -> None:

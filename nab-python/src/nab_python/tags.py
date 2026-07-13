@@ -17,12 +17,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from functools import cache, lru_cache
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from ._vendor.packaging import tags as ptags
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from nab_index.client import WheelFile
 
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "LIBC_MAJOR",
     "Libc",
     "PlatformSpec",
     "platform_label",
@@ -50,16 +52,19 @@ _MIN_WHEEL_FILENAME_PARTS = 5
 _WHEEL_PARTS_WITH_BUILD = 6
 _BUILD_TAG_RE = re.compile(r"(\d+)(.*)", re.ASCII)
 
-# manylinux_2_28 is the modern baseline: numpy, pandas and scipy ship
-# nothing older, so a lower default rejects their only Linux wheels.
+# numpy, pandas and scipy ship no manylinux wheel below 2_28, and a target
+# under 2.28 would not accept one.
 _DEFAULT_GLIBC_VERSION = (2, 28)
-# musl 1.2 is the Alpine 3.13+ (2021) baseline that musllinux wheels target.
+# The Alpine 3.13+ baseline that musllinux wheels target.
 _DEFAULT_MUSL_VERSION = (1, 2)
 _DEFAULT_LIBC: Libc = "glibc"
 _DEFAULT_LIBC_VERSION: dict[Libc, tuple[int, int]] = {
     "glibc": _DEFAULT_GLIBC_VERSION,
     "musl": _DEFAULT_MUSL_VERSION,
 }
+# The only major each family has shipped.  Tags expand within the declared
+# major, so a foreign major names platform tags no wheel is built for.
+LIBC_MAJOR: Mapping[Libc, int] = MappingProxyType({"glibc": 2, "musl": 1})
 # The macOS defaults model the deployment-target (system) macOS version.
 # ``mac_platforms`` treats this as a ceiling: a system at macOS V installs
 # wheels built for V and older, never newer, so a higher value accepts more
@@ -83,7 +88,6 @@ _LEGACY_MANYLINUX: dict[tuple[int, int], str] = {
 # (PEP 513) and manylinux2010 (PEP 571) cover only x86_64/i686; manylinux2014
 # (PEP 599, glibc 2.17) was the first to add other arches, so every other arch
 # stops at glibc 2.17.
-_LEGACY_GLIBC_MAJOR = 2
 _X86_MANYLINUX_ARCHS = frozenset({"x86_64", "i686"})
 _X86_MIN_GLIBC2_MINOR = 5
 _OTHER_MIN_GLIBC2_MINOR = 17
@@ -93,25 +97,19 @@ _OTHER_MIN_GLIBC2_MINOR = 17
 class PlatformSpec:
     """Concrete tag knobs for one matrix platform_id.
 
-    ``libc`` names the C library the Linux target runs.  A machine
-    has one, so a target emits that family's wheel tags and never the
-    other's.  ``libc_version`` is the version the target guarantees:
-    a wheel built against an older libc runs on a newer one, so every
-    version at or below it is accepted.  Unset, it takes the family
-    default (glibc 2.28, musl 1.2).
+    ``libc`` names the C library the Linux target runs; a machine links one,
+    so the target emits that family's wheel tags and never the other's.
+    ``libc_version`` is the version the target guarantees, and a wheel built
+    against an older libc runs on a newer one, so every version at or below
+    it is accepted.  Unset, it takes the family default.
 
-    ``platform_release`` and ``platform_version`` set the
-    corresponding PEP 508 marker values on this platform's tuples.
-    When unset, both default to the empty string, which makes any
-    kernel-version-conditioned marker (``platform_release >= "5.10"``)
-    evaluate False (the safe direction: drop the gated dep) but a
-    silent failure if the target machine actually has that kernel.
-    Users who declare a minimum target kernel get the gated deps
-    included.
+    ``platform_release`` and ``platform_version`` set the corresponding PEP 508
+    marker values.  Left empty, a kernel-conditioned marker
+    (``platform_release >= "5.10"``) evaluates False and its dependency is
+    dropped, so a target that does have that kernel has to declare it.
 
-    ``free_threaded`` declares a CPython 3.13+ free-threaded target.
-    It picks the ``cpXYt`` ABI (and with it ``abi3t`` in place of
-    ``abi3``), which is what such an interpreter installs.
+    ``free_threaded`` picks the ``cpXYt`` ABI (and ``abi3t`` in place of
+    ``abi3``) of a CPython 3.13+ free-threaded build.
     """
 
     platform_id: str
@@ -137,21 +135,23 @@ class PlatformSpec:
     def label_suffix(self) -> str:
         """Return a label discriminator, empty for the platform default.
 
-        A tuple's label names its target, so the suffix encodes the
-        knobs that set this spec apart from the platform's defaults and
-        two distinct specs never render the same suffix.  A spec left at
-        the platform default emits no suffix and keeps the plain
-        ``pyXY-platform`` label.
+        The suffix encodes the knobs that set this spec apart from the
+        platform defaults, so two distinct specs never render the same
+        label.  A spec left at the defaults emits no suffix and keeps the
+        plain ``pyXY-platform`` label.
         """
         if self == PlatformSpec(self.platform_id):
             return ""
+
         parts: list[str] = []
         if self.free_threaded:
             parts.append("-ft")
-        # A non-default libc always shows, with or without a version, so a
-        # musl target can never render the suffix of a glibc one.
+
+        # The family shows even without a version, so a musl target never
+        # renders the suffix of a glibc one.
         if self.libc != _DEFAULT_LIBC or self.libc_version is not None:
             parts.append(f"-{self.libc}{_version_tag(self.libc_version)}")
+
         fields = (
             ("macos", _version_tag(self.macos_min)),
             ("rel", _escape_label_value(self.platform_release)),
@@ -221,7 +221,7 @@ def _manylinux_platform_tags(arch: str, glibc_version: tuple[int, int]) -> list[
     2.17 otherwise); any other major stops at minor 0.
     """
     major, minor = glibc_version
-    if major == _LEGACY_GLIBC_MAJOR:
+    if major == LIBC_MAJOR["glibc"]:
         min_minor = (
             _X86_MIN_GLIBC2_MINOR
             if arch in _X86_MANYLINUX_ARCHS
@@ -243,11 +243,9 @@ def _linux_platform_tags(
 ) -> list[str]:
     """Generate the declared libc family's tags plus plain linux, for an arch.
 
-    Returns the tag list in install-preference order: most-specific
-    (highest libc version) first, down to the oldest the family and arch
-    allow.  A target links one C library, so a glibc target emits no
-    musllinux tags and a musl target emits no manylinux tags; the other
-    family's wheels do not run there.
+    Ordered by install preference: most-specific (highest libc version)
+    first, down to the oldest the family and arch allow.  A target links one
+    C library, so only that family's tags are emitted.
     """
     major, minor = libc_version
     if libc == "musl":
@@ -421,14 +419,13 @@ def _tags_in_order(
     """Yield the tags a target accepts in install preference order.
 
     CPython targets use ``packaging.tags.cpython_tags`` (cpXY-cpXY,
-    cpXY-abi3 forward-compat, cpXY-none).  The abi is named from the
-    declared target (``cpXYt`` for a free-threaded one, ``cpXY``
-    otherwise): left to packaging it would come from the config vars of
-    the interpreter running nab, which would make a target's wheels a
-    function of the host.  PyPy targets cannot reuse ``cpython_tags``
-    (it forces the ``cp`` interpreter and abi3, which PyPy lacks), so
-    their interpreter/abi/none tags are emitted directly.  Both then add
-    the interpreter-agnostic tags (pyXY-none-any, py3-none-any, ...).
+    cpXY-abi3 forward-compat, cpXY-none), with the abi named from the
+    declared target (``cpXYt`` when free-threaded); left to packaging it
+    would come from the config vars of the host interpreter.  PyPy targets
+    cannot reuse ``cpython_tags`` (it forces the ``cp`` interpreter and abi3,
+    which PyPy lacks), so their interpreter/abi/none tags are emitted
+    directly.  Both then add the interpreter-agnostic tags (pyXY-none-any,
+    py3-none-any, ...).
     """
     major, minor = (int(p) for p in python_version.split("."))
     py_version = (major, minor)

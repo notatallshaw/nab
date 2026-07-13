@@ -18,8 +18,9 @@ When ``platform_spec`` is supplied, the provider also filters wheel
 candidates by tag compatibility at resolve time (hole 2 in
 ``universal_open_questions.md``).  Versions whose only wheels are for
 another libc family, or above the spec's libc/macOS version, become
-unavailable unless an sdist is present, which keeps the version alive at every
-``build_policy`` level (look-ahead rejects an unreadable sdist).
+unavailable unless an sdist is present, which keeps the version alive
+at every ``build_policy`` level (look-ahead rejects an unreadable
+sdist).
 """
 
 from __future__ import annotations
