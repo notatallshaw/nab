@@ -189,14 +189,42 @@ class TestSpeculativePrefetch:
         assert "bar" in deps
 
     def test_root_requirement_prefetches_within_range(self) -> None:
-        """A root batch holds the top PREFETCH_BATCH in-range versions, best first."""
+        """The root batch holds the newest in-range versions, PREFETCH_BATCH of them."""
         wheels = [make_wheel(f"{n}.0") for n in range(20, 0, -1)]
         coordinator = make_coordinator(wheels, package="foo")
         root_reqs = {"foo": SpecifierSet("<15.0").to_range()}
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.fetch_versions("foo")
-        expected = [f"{n}.0" for n in range(14, 14 - Provider.PREFETCH_BATCH, -1)]
-        assert _prefetched_batch_versions(coordinator) == expected
+        newest_first = [f"{n}.0" for n in range(14, 0, -1)]
+        assert (
+            _prefetched_batch_versions(coordinator)
+            == newest_first[: Provider.PREFETCH_BATCH]
+        )
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [ResolutionStrategy.LOWEST, ResolutionStrategy.LOWEST_DIRECT],
+    )
+    def test_root_batch_is_oldest_first_under_lowest(
+        self, strategy: ResolutionStrategy
+    ) -> None:
+        """Under a lowest strategy the batch follows choose_version: oldest first."""
+        wheels = [make_wheel(f"{n}.0") for n in range(20, 0, -1)]
+        coordinator = make_coordinator(wheels, package="foo")
+        root_reqs = {"foo": SpecifierSet("<15.0").to_range()}
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements=root_reqs,
+            resolution_strategy=strategy,
+            direct_packages=frozenset({"foo"}),
+        )
+        provider.fetch_versions("foo")
+        oldest_first = [f"{n}.0" for n in range(1, 15)]
+        assert (
+            _prefetched_batch_versions(coordinator)
+            == oldest_first[: Provider.PREFETCH_BATCH]
+        )
 
     def test_no_prefetch_when_no_versions(self) -> None:
         """No speculative prefetch for empty package listings."""
@@ -3634,10 +3662,7 @@ class TestSkipFetch:
         provider.fetch_versions("pkg")
         coordinator.reset_mock()
         provider.prefetch_walk_ahead("pkg")
-        items = coordinator.request_metadata_batch.call_args[0][0]
-        versions = [ver for _, ver, _, _ in items]
-        assert "2.0" not in versions
-        assert "1.0" in versions
+        assert _prefetched_batch_versions(coordinator) == ["1.0"]
 
 
 class TestLocalVcsPythonGuardOverride:
@@ -5351,12 +5376,11 @@ class TestSpeculativePrefetchBatchLimit:
         root_reqs = {"foo": SpecifierSet(">=1.0").to_range()}
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.fetch_versions("foo")
-        # request_metadata_batch should have been called with at most
-        # PREFETCH_BATCH items.
-        call_args = coordinator.request_metadata_batch.call_args
-        assert call_args is not None
-        items = call_args[0][0]
-        assert len(items) <= provider.PREFETCH_BATCH
+        newest_first = [f"{i}.0" for i in range(40, 0, -1)]
+        assert (
+            _prefetched_batch_versions(coordinator)
+            == newest_first[: Provider.PREFETCH_BATCH]
+        )
 
     def test_batch_skips_already_cached_deps(self) -> None:
         """Prefetch skips versions with deps already in cache."""
