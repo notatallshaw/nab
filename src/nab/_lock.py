@@ -197,6 +197,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     workspace_to_drop = (
         config.workspace_member_names if no_emit_workspace else frozenset()
     )
+
     if config.mode is ResolveMode.UNIVERSAL:
         sys.stderr.write(
             "warning: mode = 'universal' is experimental; output format may"
@@ -216,6 +217,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         extras=selected_extras,
         resolution_strategy=settings.resolution,
     )
+
     lock_input = _drop_workspace_pins(
         _cli.build_lock_input(
             result,
@@ -364,11 +366,13 @@ def _lock_summary(lock_input: LockInput, prior: Mapping[str, Version] | None) ->
     """
     if len(lock_input.targets) > 1:
         return f"{len(lock_input.targets)} tuples"
+
     pins = {
         name: pin
         for lock in lock_input.targets.values()
         for name, pin in lock.pins.items()
     }
+
     # Index and archive pins record a version; local and VCS pins emit
     # version=None, so read_lockfile_packages never returns them.
     # Diff against the same set or they read as added every relock.

@@ -453,6 +453,7 @@ class Provider:
                     f" got {resolution_strategy!r}"
                 )
                 raise ValueError(msg) from exc
+
         self.coordinator = coordinator
         self.target = target
         self.uploaded_prior_to = uploaded_prior_to
@@ -1140,6 +1141,7 @@ class Provider:
         preferred = self._preferences.get(normalized)
         if preferred is None:
             return None
+
         all_versions = self.versions_only(normalized, self.fetch_versions(package))
 
         # The proxy's range is built full(), so intersect it with the base's
@@ -1154,6 +1156,7 @@ class Provider:
 
         if preferred not in set(admit_range.filter(all_versions)):
             return None
+
         usable = (
             _extras.version_provides_extra(self, base, extra, preferred)
             if extra is not None

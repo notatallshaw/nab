@@ -297,6 +297,7 @@ def build_target_lock(
         lock_pins[canonical] = _index_pin_from_listing(
             provider, canonical, version, indexes
         )
+
     return TargetLock(
         target=target,
         pins=lock_pins,

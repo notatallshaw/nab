@@ -1056,12 +1056,14 @@ def with_python_override(
             " target.  Narrow matrix.python instead."
         )
         raise ConfigError(msg)
+
     _validate_environment_values({"python": python})
     environment = (
         EnvironmentConfig(python=python)
         if config.environment is None
         else replace(config.environment, python=python)
     )
+
     build_policy = enforce_build_policy_for_targets(
         targets=_plan_targets(config.matrix, environment),
         build_policy=config.build_policy,
@@ -1071,6 +1073,7 @@ def with_python_override(
         package_overrides=config.package_overrides,
         index_overrides=config.index_overrides,
     )
+
     retargeted = replace(config, environment=environment, build_policy=build_policy)
     _check_requires_python_admits_target(
         retargeted.requires_python, plan_targets(retargeted)[0]
@@ -1464,6 +1467,7 @@ def _environment_from_marker_environment(
         " declare [tool.nab.environment] with python/platform/implementation"
         " instead.  Translating the overlay for this run."
     )
+
     translatable = {
         *_MARKER_PYTHON_KEYS,
         *_MARKER_IMPLEMENTATION_KEYS,
@@ -1490,6 +1494,7 @@ def _environment_from_marker_environment(
             # platform_python_implementation is title-cased ("CPython").
             environment["implementation"] = marker_environment[key].lower()
             break
+
     implied = [k for k in _MARKER_PLATFORM_IMPLIED_KEYS if k in marker_environment]
     if implied and not any(k in marker_environment for k in _MARKER_PLATFORM_KEYS):
         msg = (
@@ -1499,6 +1504,7 @@ def _environment_from_marker_environment(
             " half a machine would keep the other half of the host's."
         )
         raise ConfigError(msg)
+
     if any(key in marker_environment for key in _MARKER_PLATFORM_KEYS):
         pair = (
             marker_environment.get("sys_platform", ""),

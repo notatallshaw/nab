@@ -264,6 +264,7 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     variables: set[str] = set()
     for text in texts:
         variables |= marker_variables(text)
+
     always = list(_ALWAYS_DECLARED)
     if target.declares_implementation:
         always.append("implementation_name")
@@ -271,6 +272,7 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
         *always,
         *sorted(variables - set(always) - UNBOUNDABLE_MARKER_VARIABLES),
     ]
+
     clauses: list[str] = []
     for name in names:
         if name in _BY_CONSTRAINT:
@@ -324,6 +326,7 @@ def _version_clauses(
             if declaration is None:
                 return [exact]
             declared.add(declaration)
+
     return sorted(declared) or [exact]
 
 
@@ -788,6 +791,7 @@ class Matrix:
         if self.python_order not in {"asc", "desc"}:
             msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
             raise ValueError(msg)
+
         unknown = [
             s.platform_id
             for s in self.platforms
@@ -796,12 +800,14 @@ class Matrix:
         if unknown:
             msg = f"Unknown platform ids: {unknown!r}"
             raise ValueError(msg)
+
         unknown_impl = [
             i for i in self.implementations if i not in IMPLEMENTATION_MARKERS
         ]
         if unknown_impl:
             msg = f"Unknown implementations: {unknown_impl!r}"
             raise ValueError(msg)
+
         patches = self.python_patches or {}
         unknown_patches = [m for m in patches if m not in KNOWN_PYTHON_MINORS]
         if unknown_patches:
@@ -810,13 +816,16 @@ class Matrix:
                 " keys must be major.minor like '3.11'"
             )
             raise ValueError(msg)
+
         self._check_free_threaded()
+
         py_versions = list(_pythons_in_range(self.python))
         if not py_versions:
             msg = f"No known Python versions match {self.python!r}"
             raise ValueError(msg)
         if self.python_order == "desc":
             py_versions.reverse()
+
         multi_impl = len(self.implementations) > 1
         return [
             ResolveTarget.for_declared(
@@ -840,6 +849,7 @@ class Matrix:
         """
         if not any(spec.free_threaded for spec in self.platforms):
             return
+
         foreign = [i for i in self.implementations if i != "cpython"]
         if foreign:
             msg = (
@@ -847,6 +857,7 @@ class Matrix:
                 f" only CPython has a free-threaded build"
             )
             raise ValueError(msg)
+
         floor = ".".join(str(p) for p in FREE_THREADED_MIN_PYTHON)
         too_old = [
             py

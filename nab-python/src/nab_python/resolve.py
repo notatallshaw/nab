@@ -240,11 +240,13 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
         optional=read_pyproject_optional_dependencies(path),
         project_name=read_pyproject_name(path),
     )
+
     # ``default-groups`` is project policy: every default install
     # activates them, so the conflict checks, the fork plan, and the
     # resolves all fold them into the active group set alongside the CLI
     # selection.
     effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
+
     forks, base_requirements = _plan_forks(
         path,
         tables,
@@ -394,7 +396,9 @@ def build_lock_input(
         # A target with no lock is a target that did not resolve.
         if tr.lock is None:
             continue
+
         targets[tr.target.label] = tr.lock
+
         # Conflict forks repeat an environment under different
         # selections, so the environment is declared once, from
         # everything every fork of it read.
@@ -444,6 +448,7 @@ def _declared_environments(
     for markers in consulted.values():
         for marker in markers:
             variables |= marker_variables(str(marker))
+
     unboundable = sorted(variables & UNBOUNDABLE_MARKER_VARIABLES)
     if unboundable:
         _logger.warning(
@@ -679,6 +684,7 @@ def _plan_forks(
                 fork.active_groups,
                 targets,
             )
+
         if (
             len(fork.active_groups) > 1
             and fork.active_groups not in scanned_group_selections
@@ -688,6 +694,7 @@ def _plan_forks(
                 _group_requirements_by_group(tables.groups, fork.active_groups, path),
                 targets,
             )
+
         forks.append(
             ResolveFork(
                 selection=fork.selection,

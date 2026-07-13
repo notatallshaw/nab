@@ -174,11 +174,13 @@ class PlatformSpec:
         kind = platform_kind(self.platform_id)
         if kind is None:
             return
+
         if kind == "linux":
             self._check_libc_version()
         elif self.libc != DEFAULT_LIBC or self.libc_version is not None:
             msg = f"libc is a Linux knob, and {self.platform_id} is not Linux"
             raise ValueError(msg)
+
         if kind == "macos":
             self._check_macos_min()
         elif self.macos_min is not None:
@@ -454,12 +456,12 @@ def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     """
     if not filename.endswith(".whl"):
         return None
+
     stem = filename[:-4]
     parts = stem.split("-")
-    # PEP 427: filename has 5 segments (no build tag) or 6 (with build).
     if len(parts) < _MIN_WHEEL_FILENAME_PARTS:
         return None
-    # The last three dash-separated segments are python-abi-platform.
+
     return _parse_tag_str("-".join(parts[-3:]))
 
 
@@ -582,20 +584,24 @@ class TagSet:
         if not host:
             msg = "tags_source yielded no tags, so the host platform is unknown"
             raise ValueError(msg)
+
         platforms = [
             platform
             for platform in dict.fromkeys(tag.platform for tag in host)
             if platform != _ANY_PLATFORM
         ]
+
         # sys_tags yields the most specific tag first, so the running
         # interpreter names itself in the first entry.
         implementation = _host_implementation(host[0].interpreter)
+
         # The host's free-threaded ABI only carries to a Python that has one:
         # ``cp310t`` has never existed, and a target advertising it matches no
         # wheel at all.  The declared-target path refuses the same combination.
         free_threaded = host[0].abi.endswith(
             _FREE_THREADED_ABI_SUFFIX
         ) and supports_free_threading(python)
+
         return cls(
             tuple(
                 _tags_in_order(
@@ -677,6 +683,7 @@ def _tags_in_order(
     """
     py_version = _python_pair(python_version)
     major, minor = py_version
+
     if implementation == "pypy":
         interpreter = f"pp{major}{minor}"
         abi = f"pypy{major}{minor}_pp{_PYPY_SOABI}"
@@ -690,6 +697,7 @@ def _tags_in_order(
         yield from ptags.cpython_tags(
             python_version=py_version, abis=[abi], platforms=platforms
         )
+
     yield from ptags.compatible_tags(
         python_version=py_version, interpreter=interpreter, platforms=platforms
     )

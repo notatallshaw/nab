@@ -364,6 +364,7 @@ def _build_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
     by_name = _group_by_name(targets)
     env_signatures = _env_signatures(targets)
     env_fork_counts = _count(env_signatures.values())
+
     for canonical_name, per_target in by_name.items():
         groups = _group_pins_by_pin(per_target)
         _check_base_fork_agreement(
@@ -374,6 +375,7 @@ def _build_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
             env_fork_counts,
             lock_input.env_base_names,
         )
+
         for pins, labels in groups:
             marker = _build_marker(
                 canonical_name,
@@ -391,6 +393,7 @@ def _build_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
                     dependencies=_dependency_entries(canonical_name, labels, targets),
                 )
             )
+
     return out
 
 
