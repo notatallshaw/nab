@@ -3,10 +3,11 @@
 Public surface for producing lockfiles from a resolve. The three
 emitters are :func:`write_lock` (PEP 751 ``pylock.toml``),
 :func:`write_requirements_with_hashes`, and
-:func:`write_requirements_without_hashes`. Per-tuple pins from a
-universal resolve are collapsed into one ``Package`` per distinct
-``(name, version, source)`` with a marker disjoining the matching
-tuples; same-version tuples emit a single entry with no marker.
+:func:`write_requirements_without_hashes`. A resolve contributes one
+:class:`TargetLock` per environment it ran against; the writer
+collapses them into one ``Package`` per distinct ``(name, version,
+source)`` with a marker disjoining the targets that chose it, and drops
+the marker when every target agrees.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from ._lockfile.builder import (
     MissingHashError,
     MissingSdistError,
     MissingVcsCommitError,
-    build_lock_input_from_provider,
+    build_target_lock,
     read_lockfile_anchor,
     read_lockfile_packages,
 )
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 
     from ._vendor.packaging.markers import Marker
     from .config import ConflictSet, PackageOverride
+    from .target import ResolveTarget
 
 
 __all__ = [
@@ -60,10 +62,11 @@ __all__ = [
     "PinShape",
     "Provenance",
     "SdistArtifact",
+    "TargetLock",
     "VcsPin",
     "WheelArtifact",
-    "build_lock_input_from_provider",
     "build_pylock",
+    "build_target_lock",
     "is_valid_pylock_path",
     "package_metadata_override_records",
     "read_lockfile_anchor",
@@ -334,28 +337,37 @@ def package_metadata_override_records(
     return tuple(records)
 
 
+@dataclass(frozen=True, slots=True)
+class TargetLock:
+    """What one target contributed to the lock.
+
+    ``pins`` is keyed by canonical package name; each value is the pin
+    that target resolved to.  ``dependencies`` is the forward edge set
+    among those pins, keyed the same way, which the writer emits as
+    PEP 751 ``packages.dependencies``.
+
+    ``target`` is the environment the pins hold for.  The writer reads
+    its markers (see :attr:`~nab_python.target.ResolveTarget.marker_string`)
+    rather than being handed a projection of them, so a lock entry and
+    the environment it was resolved for cannot drift apart.
+    """
+
+    target: ResolveTarget
+    pins: Mapping[str, PinShape]
+    dependencies: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+
+
 @dataclass
 class LockInput:
     """Everything the writer needs to produce a Pylock.
 
-    ``pins`` is keyed by canonical package name; each value is the
-    single pin chosen for that package across the resolve.
-
-    ``per_tuple_pins`` is the per-tuple expansion when a universal
-    resolve produced different pins for different environments.  The
-    writer collapses these into one or more ``Package`` entries with
-    markers attached.  When ``per_tuple_pins`` is empty, ``pins`` is
-    used directly with no markers.
-
-    ``tuple_markers`` maps each tuple label (the keys of
-    ``per_tuple_pins``) to the PEP 508 marker that selects that
-    tuple.  The writer uses these to build per-package markers.
-
-    ``tuple_env_markers`` maps each tuple label to its
-    environment-only marker (no conflict-fork membership clause).
-    A base dependency present in every fork of an environment emits
-    this marker so it installs even when no conflicting member is
-    selected; with no conflict forks it equals ``tuple_markers``.
+    ``targets`` maps a target's label to what that target contributed.
+    A resolve always runs against at least one target, so there is
+    always at least one entry; a declared matrix (and each conflict
+    fork of it) adds more.  The writer collapses them into one
+    ``[[packages]]`` entry per distinct ``(name, version, source)``,
+    with a marker disjoining the targets that chose it, and omits the
+    marker when the entry covers every target.
 
     ``env_base_names`` maps an environment signature
     (``tuple(sorted(env.items()))``) to the canonical names that the
@@ -374,25 +386,15 @@ class LockInput:
     Empty when no conflict fork ran.
 
     ``environments`` is the lockfile-level set of permitted
-    environments (PEP 751 ``environments``).  Independent from
-    ``tuple_markers``; intended for declaring the universe.
+    environments (PEP 751 ``environments``): what each target declared
+    of the environment it resolved for.
 
     ``provenance`` is optional metadata about the inputs that
     produced this lock.  When present, it lands in the ``[tool.nab]``
     block of the emitted ``pylock.toml``.
-
-    ``dependencies`` is the forward dependency graph, keyed by
-    canonical package name; each value lists the canonical names of
-    that package's direct dependencies that are themselves locked.
-    The writer emits it as PEP 751 ``packages.dependencies``.  Empty
-    in universal mode, which does not track per-tuple edges.
     """
 
-    pins: Mapping[str, PinShape] = field(default_factory=dict)
-    per_tuple_pins: Mapping[str, Mapping[str, PinShape]] = field(default_factory=dict)
-    tuple_markers: Mapping[str, Marker] = field(default_factory=dict)
-    tuple_env_markers: Mapping[str, Marker] = field(default_factory=dict)
-    tuple_environments: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    targets: Mapping[str, TargetLock] = field(default_factory=dict)
     env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]] = field(
         default_factory=dict
     )
@@ -402,9 +404,13 @@ class LockInput:
     extras: tuple[str, ...] = ()
     dependency_groups: tuple[str, ...] = ()
     default_groups: tuple[str, ...] = ()
-    dependencies: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     provenance: Provenance | None = None
     conflicts: tuple[ConflictSet, ...] = ()
     """Declared ``[tool.nab].conflicts``.  Prunes the disjointness
     validator's install-context universe so a per-fork lock (one entry
     per mutually-exclusive extra/group) validates."""
+
+    @property
+    def marker_envs(self) -> dict[str, Mapping[str, str]]:
+        """The PEP 508 marker environment each target resolved under."""
+        return {label: lock.target.marker_env for label, lock in self.targets.items()}
