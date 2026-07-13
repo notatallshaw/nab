@@ -558,11 +558,11 @@ def prefetch_walk_ahead(
             continue
         if _has_complete_override(provider, normalized, version):
             continue
-        if coordinator_index.has_metadata(normalized, wheel.version):
-            continue
         # ``_first_wheel_per_version`` filters out wheels without metadata_url.
         metadata_url = wheel.metadata_url
         assert metadata_url is not None
+        if coordinator_index.has_metadata_for(normalized, wheel.version, metadata_url):
+            continue
         items.append((normalized, wheel.version, metadata_url, wheel.metadata_hash))
     if items:
         provider.coordinator.request_metadata_batch(items)

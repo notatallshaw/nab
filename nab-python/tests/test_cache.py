@@ -249,7 +249,7 @@ class TestOnDiskCache:
 
     def test_sdist_corrupt_record_is_a_miss(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
-        path = cache._entry_path(cache._sdist_dir, "foo", "1.0", ".json")
+        path = cache._sdist_path("foo", "1.0")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("not-json", encoding="utf-8")
         assert cache.get_sdist_files("foo", "1.0") is None

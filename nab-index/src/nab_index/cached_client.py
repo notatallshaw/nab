@@ -72,11 +72,8 @@ def _header(response: HttpResponse, key: str) -> str | None:
 class CachedAsyncSimpleClient:
     """Async PyPI Simple API client with on-disk caching.
 
-    Distinct from :class:`AsyncSimpleClient`: its methods take the
-    ``(package, version)`` coordinate alongside the artifact URL, so the
-    cache can key sdist records by coordinate and offline misses can name
-    what was being resolved. The interface mirrors what
-    :class:`FetchCoordinator` actually needs.
+    Distinct from :class:`AsyncSimpleClient`: the interface mirrors what
+    :class:`FetchCoordinator` actually needs rather than the Simple API.
     """
 
     def __init__(
@@ -206,11 +203,8 @@ class CachedAsyncSimpleClient:
     ) -> str:
         """Return the PEP 658 metadata text published at ``metadata_url``.
 
-        The cache entry stands for the sidecar at that URL, not for the
-        ``(package, version)`` coordinate: a version's wheels each publish
-        their own sidecar, and per-platform wheels can declare different
-        dependencies, so keying by version would serve one wheel's METADATA
-        for another.  ``version`` names the coordinate being resolved.
+        ``version`` names the coordinate being resolved; the cache entry
+        stands for the sidecar at the URL.
 
         Treated as immutable: cached forever, never revalidated.  A
         cache hit is returned without re-checking, since it was

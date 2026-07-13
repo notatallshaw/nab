@@ -1071,9 +1071,7 @@ class TestGetMetadataText:
     def test_sibling_wheel_of_same_version_is_not_served(self, tmp_path: Path) -> None:
         """A cached sidecar is not reused for another wheel of the same version.
 
-        PEP 658 publishes a sidecar per file, and per-platform wheels of one
-        version can declare different dependencies, so the second wheel must
-        be fetched and verified against its own digest.
+        The second wheel is fetched and verified against its own digest.
         """
         linux_url = "https://f.example/foo-1.0-cp311-manylinux_2_17_x86_64.whl.metadata"
         win_url = "https://f.example/foo-1.0-cp311-win_amd64.whl.metadata"

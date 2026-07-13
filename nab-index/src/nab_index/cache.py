@@ -137,19 +137,17 @@ class OnDiskCache:
         policy = self._simple_dir / f"{segment}.policy"
         return (body, policy)
 
-    def _entry_path(self, base: Path, package: str, version: str, suffix: str) -> Path:
+    def _sdist_path(self, package: str, version: str) -> Path:
         package_segment = _require_single_segment(package)
         version_segment = _require_single_segment(version)
-        return base / package_segment / f"{version_segment}{suffix}"
+        return self._sdist_dir / package_segment / f"{version_segment}.json"
 
     def _metadata_path(self, package: str, metadata_url: str) -> Path:
         """Return the file holding the sidecar published at ``metadata_url``.
 
-        Keyed by the URL rather than by version: :pep:`658` attaches a
-        sidecar to one file, so the wheels of a single version each have
-        their own, and per-platform wheels can declare different
-        dependencies. The URL is digested because an index may serve
-        artifacts from any path shape, while the key must be one segment.
+        :pep:`658` attaches a sidecar to one file, so the wheels of a version
+        each have their own. The URL is digested to keep the key a single
+        path segment whatever path shape the index serves.
         """
         package_segment = _require_single_segment(package)
         digest = hashlib.sha256(metadata_url.encode("utf-8")).hexdigest()
@@ -206,7 +204,7 @@ class OnDiskCache:
         whose ``pyproject_toml`` is ``None`` means the sdist ships no
         pyproject.toml, which is not the same as a miss.
         """
-        text = _read_text(self._entry_path(self._sdist_dir, package, version, ".json"))
+        text = _read_text(self._sdist_path(package, version))
         if text is None:
             return None
         try:
@@ -224,7 +222,7 @@ class OnDiskCache:
     ) -> None:
         """Write the ``(pkg_info, pyproject_toml)`` pair as one record."""
         _atomic_write(
-            self._entry_path(self._sdist_dir, package, version, ".json"),
+            self._sdist_path(package, version),
             json.dumps({"pkg_info": pkg_info, "pyproject": pyproject_toml}).encode(
                 "utf-8"
             ),
