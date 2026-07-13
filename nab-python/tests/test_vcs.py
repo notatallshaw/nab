@@ -42,6 +42,29 @@ def _mark_complete(clone_dir: Path) -> None:
     (clone_dir / ".git" / _COMPLETE_MARKER).touch()
 
 
+# One per transport git can speak, including the ``git://`` daemon protocol
+# that no client-side git config reaches.
+_STALLED_REPO_URLS = [
+    "https://example.invalid/x/y.git",
+    "ssh://git@example.invalid/x/y.git",
+    "git://example.invalid/x/y.git",
+]
+
+
+def _stalled_remote(cmd: list[str], **kwargs: object) -> object:
+    """Stand in for git talking to a remote that goes quiet after the handshake."""
+    if cmd[1] in {"ls-remote", "fetch"}:
+        timeout = kwargs.get("timeout")
+        if not isinstance(timeout, (int, float)):
+            msg = f"unbounded git {cmd[1]} hangs on a stalled remote"
+            raise AssertionError(msg)
+        raise subprocess.TimeoutExpired(cmd, float(timeout))
+
+    if cmd[1] == "init":
+        (Path(str(kwargs["cwd"])) / ".git").mkdir(exist_ok=True)
+    return type("P", (), {"returncode": 0})()
+
+
 class TestVcsRequestParse:
     def test_https_with_sha(self) -> None:
         req = VcsRequest.parse("git+https://github.com/x/y.git@" + "a" * 40)
@@ -270,6 +293,58 @@ class TestResolveShaAnnotatedTag:
         assert "v1^{}" in queried
 
 
+class TestStalledRemote:
+    """A remote that accepts the connection and then goes quiet must not hang."""
+
+    @pytest.mark.parametrize("repo_url", _STALLED_REPO_URLS)
+    def test_ls_remote_gives_up(
+        self,
+        repo_url: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(subprocess, "run", _stalled_remote)
+        req = VcsRequest("git", repo_url, "main", "")
+        with pytest.raises(VcsCloneError, match="ls-remote"):
+            _resolve_sha(req, require_pin=False)
+
+    @pytest.mark.parametrize("repo_url", _STALLED_REPO_URLS)
+    def test_fetch_gives_up_and_rolls_back(
+        self,
+        repo_url: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(subprocess, "run", _stalled_remote)
+        req = VcsRequest("git", repo_url, "a" * 40, "")
+        with pytest.raises(VcsCloneError, match="failed to clone"):
+            prepare_clone(tmp_path, req, require_pin=True)
+
+        repo_dir = next((tmp_path / "vcs").iterdir())
+        assert list(repo_dir.iterdir()) == []
+
+    def test_fetch_bound_outlasts_a_quiet_pack_build(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A big repo sends nothing but keepalives while the server packs it."""
+        bounds: dict[str, float] = {}
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            timeout = kwargs.get("timeout")
+            if isinstance(timeout, (int, float)):
+                bounds[cmd[1]] = float(timeout)
+            if cmd[1] == "init":
+                (Path(str(kwargs["cwd"])) / ".git").mkdir(exist_ok=True)
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://example.invalid/x/y.git", "a" * 40, "")
+        prepare_clone(tmp_path, req, require_pin=True)
+
+        assert bounds["fetch"] >= 15 * 60
+
+
 class TestPrepareClone:
     def test_idempotent_when_marked_complete(
         self,
@@ -335,7 +410,7 @@ class TestPrepareClone:
         sha = "e" * 40
 
         def fake_run(cmd: list[str], **_kwargs: object) -> object:
-            if "fetch" in cmd:
+            if cmd[:2] == ["git", "fetch"]:
                 raise subprocess.CalledProcessError(128, cmd)
             return type("P", (), {"returncode": 0})()
 
