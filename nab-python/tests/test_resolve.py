@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+import respx
 
 from nab_index.client import WheelFile
+from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_index.transport import HttpError
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.markers import Marker, default_environment
 from nab_python._vendor.packaging.pylock import Pylock
@@ -3734,3 +3739,56 @@ class TestExtraAndGroupMembershipMarkers:
             "mytool": '"cli" in extras',
             "subtool": '"cli" in extras',
         }
+
+
+class TestSidecarFetchFailure:
+    """An advertised sidecar the index fails to serve fails the resolve."""
+
+    @staticmethod
+    def _wheel_only_listing(*versions: str) -> dict[str, object]:
+        return {
+            "meta": {"api-version": "1.0"},
+            "name": "pkg",
+            "files": [
+                {
+                    "filename": f"pkg-{v}-py3-none-any.whl",
+                    "url": f"https://files.example.com/pkg-{v}-py3-none-any.whl",
+                    "core-metadata": True,
+                }
+                for v in versions
+            ],
+        }
+
+    @respx.mock
+    def test_persistent_503_on_a_sidecar_does_not_pin_an_older_version(
+        self, tmp_path: Path
+    ) -> None:
+        """A 503 that outlives the retries must not read as "no sidecar here".
+
+        pkg 2.0 is wheel-only, so a sidecar recorded absent leaves the version
+        with no metadata source: the resolver would drop 2.0 and quietly pin 1.0.
+        """
+        respx.get("https://pypi.org/simple/pkg/").mock(
+            return_value=httpx.Response(
+                200, json=self._wheel_only_listing("1.0", "2.0")
+            )
+        )
+        respx.get("https://files.example.com/pkg-1.0-py3-none-any.whl.metadata").mock(
+            return_value=httpx.Response(
+                200, text="Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            )
+        )
+        respx.get("https://files.example.com/pkg-2.0-py3-none-any.whl.metadata").mock(
+            return_value=httpx.Response(503)
+        )
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\nversion = "0"\ndependencies = ["pkg"]\n'
+        )
+        transport = HttpxAsyncTransport()
+        try:
+            with pytest.raises(HttpError, match="503"):
+                _resolved(pyproject, transport, python_version="3.12.0")
+        finally:
+            asyncio.run(transport.aclose())

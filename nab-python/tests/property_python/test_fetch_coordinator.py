@@ -226,37 +226,55 @@ def test_every_request_gets_exactly_one_correct_reply(
 
         index = coord.index
 
-        # Routing + error-as-reply checks per key.
+        # Routing + error-as-reply checks per key.  A fetch that failed replies
+        # in the error slot, so the metadata slot holds only what a fetch that
+        # succeeded wrote.
         meta_keys = {k for k, _ in requested if k[0] == "metadata"}
         sdist_keys = {k for k, _ in requested if k[0] == "sdist"}
         for key in meta_keys | sdist_keys:
-            _, pkg, ver = key
-            # Metadata is keyed by the artifact it came from, so read back the
-            # slot the request was for: a metadata request asks about one
-            # sidecar, an sdist request about the version.  The listing
-            # prefetch writes that same sidecar slot from the same plan entry,
-            # so it can only produce text the sidecar request already allows.
-            asked_for_sidecar = ("metadata", pkg, ver) in meta_keys
-            sidecar = _metadata_url(pkg, ver) if asked_for_sidecar else None
-            assert index.has_metadata(pkg, ver, sidecar), f"no metadata slot for {key}"
-            value = index.get_metadata(pkg, ver, sidecar)
-            allowed: set[str | None] = set()
+            kind, pkg, ver = key
             base_ver = ver.split("#", 1)[0]
-            if asked_for_sidecar:
+            # Metadata is keyed by the artifact it came from, so read back the
+            # slot the request was for: a metadata request asks about its own
+            # sidecar, an sdist request about the version.
+            if kind == "metadata":
+                sidecar = _metadata_url(pkg, ver)
                 mode, _ = client.plan.get(("metadata", pkg, ver), ("ok", 0.0))
-                allowed.add(f"META:{pkg}:{ver}" if mode == "ok" else None)
-            if ("sdist", pkg, ver) in sdist_keys:
+                expected = f"META:{pkg}:{ver}"
+            else:
+                sidecar = None
                 mode, _ = client.plan.get(("sdist", pkg, base_ver), ("ok", 0.0))
-                allowed.add(f"PKGINFO:{pkg}:{ver}" if mode == "ok" else None)
-            assert value in allowed, f"cross-talk at {key}: {value!r} not in {allowed}"
+                expected = f"PKGINFO:{pkg}:{ver}"
+
+            if mode == "ok":
+                # A served fetch wrote its own slot, and it holds only its own
+                # text: no cross-talk from another key.
+                assert index.has_metadata(pkg, ver, sidecar), (
+                    f"no metadata slot for {key}"
+                )
+                got = index.get_metadata(pkg, ver, sidecar)
+                assert got == expected, f"cross-talk at {key}: {got!r} != {expected!r}"
+            else:
+                # A failed advertised fetch is recorded as an error, not an empty
+                # slot, so the resolve surfaces it instead of falling through.
+                assert isinstance(
+                    index.get_metadata_error(pkg, ver, sidecar), RuntimeError
+                ), f"no error for {key}"
 
         for key, _ in requested:
             if key[0] == "sdist-archive":
                 _, pkg, ver = key
                 mode, _delay = client.plan.get(key, ("ok", 0.0))
                 got = index.get_sdist_archive(pkg, ver)
-                expected = f"BYTES:{pkg}:{ver}".encode() if mode == "ok" else None
-                assert got == expected, f"archive mismatch for {key}"
+                if mode == "ok":
+                    assert got == f"BYTES:{pkg}:{ver}".encode(), (
+                        f"archive mismatch for {key}"
+                    )
+                else:
+                    assert got is None, f"archive bytes for a failed {key}"
+                    assert isinstance(
+                        index.get_sdist_archive_error(pkg, ver), RuntimeError
+                    ), f"no archive error for {key}"
 
         for key, _ in requested:
             if key[0] == "listing":
