@@ -56,22 +56,32 @@ def explain_incompatibility(
     visited_ids: set[int],
     narrow: _NarrowFn | None = None,
 ) -> None:
-    """Walk the cause tree appending one explanatory line per node."""
-    if id(incompatibility) in visited_ids:
-        return
-    visited_ids.add(id(incompatibility))
+    """Walk the cause tree appending one explanatory line per node.
 
-    if incompatibility.cause == IncompatibilityCause.DERIVED:
-        if incompatibility.cause_left:
-            explain_incompatibility(
-                incompatibility.cause_left, lines, visited_ids, narrow
-            )
-        if incompatibility.cause_right:
-            explain_incompatibility(
-                incompatibility.cause_right, lines, visited_ids, narrow
-            )
+    The walk is iterative: the tree gains a level per conflict, so a deeply
+    backtracked resolve overflows the recursion limit.
+    """
+    # The flag marks a node whose children are already pushed: it renders after them.
+    stack: list[tuple[Incompatibility[Any, Any], bool]] = [(incompatibility, False)]
 
-    lines.append(_render_line(incompatibility, narrow))
+    while stack:
+        node, expanded = stack.pop()
+        if expanded:
+            lines.append(_render_line(node, narrow))
+            continue
+
+        if id(node) in visited_ids:
+            continue
+        visited_ids.add(id(node))
+
+        stack.append((node, True))
+
+        # Right before left, so the left cause pops first and lines keep their order.
+        if node.cause == IncompatibilityCause.DERIVED:
+            if node.cause_right:
+                stack.append((node.cause_right, False))
+            if node.cause_left:
+                stack.append((node.cause_left, False))
 
 
 def _narrow_positive(term: Term[Any, Any], narrow: _NarrowFn) -> Term[Any, Any]:

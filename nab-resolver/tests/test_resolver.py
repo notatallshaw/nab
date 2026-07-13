@@ -3,6 +3,7 @@ and end-to-end resolution with a simple in-memory provider."""
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping
 from typing import Any
 
@@ -1853,6 +1854,37 @@ class TestErrorMessages:
         negative = format_term(Term("a", Range.at_least(1), positive=False))
         assert positive == "a [1, +inf)"
         assert negative == "not a [1, +inf)"
+
+    def test_derivation_deeper_than_the_recursion_limit_renders(self) -> None:
+        """A chain longer than the recursion limit renders instead of overflowing."""
+        depth = sys.getrecursionlimit() + 100
+        node = Incompatibility(
+            [Term("tail", Range.at_least(1), positive=True)],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+        for index in range(depth):
+            satisfier = Incompatibility(
+                [
+                    Term(f"p{index}", Range.singleton(1), positive=True),
+                    Term("tail", Range.at_least(1), positive=False),
+                ],
+                cause=IncompatibilityCause.DEPENDENCY,
+            )
+            node = Incompatibility(
+                [Term(f"p{index}", Range.singleton(1), positive=True)],
+                cause=IncompatibilityCause.DERIVED,
+                cause_left=node,
+                cause_right=satisfier,
+            )
+
+        lines = format_error(node).splitlines()
+
+        assert len(lines) == 2 * depth + 1
+        assert lines[0] == "because no versions of tail [1, +inf) are available"
+        assert lines[1] == "because p0 1 depends on tail [1, +inf)"
+        assert lines[2] == "so p0 1"
+        assert lines[-2] == f"because p{depth - 1} 1 depends on tail [1, +inf)"
+        assert lines[-1] == f"so p{depth - 1} 1"
 
 
 class TestConstraints:
