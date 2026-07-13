@@ -760,6 +760,64 @@ class TestLockCommandSpecific:
         assert "typoo" in err
 
 
+class TestPythonFlag:
+    """``--python`` retargets the resolve for one run."""
+
+    def test_threads_the_python_version_to_the_resolver(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+        ) as mock_resolve:
+            lock(pyproject, output=out, python="3.11")
+        assert mock_resolve.call_args.kwargs["python_version"] == "3.11"
+
+    def test_absent_flag_leaves_the_host_target(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+        ) as mock_resolve:
+            lock(pyproject, output=out)
+        assert mock_resolve.call_args.kwargs["python_version"] is None
+
+    def test_rejected_in_universal_mode(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The matrix declares the python axis, so the flag has nowhere to land."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(pyproject, output=out, python="3.11")
+        assert exc.value.code == 1
+        assert "--python is not supported in universal mode" in capsys.readouterr().err
+        assert not out.exists()
+
+    def test_download_threads_the_python_version(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "wheels"
+        with (
+            patch(
+                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            ) as mock_resolve,
+            patch(
+                "nab.cli.download_lock",
+                return_value=MagicMock(written=(out / "x.whl",), skipped=()),
+            ),
+        ):
+            download(pyproject, output=out, python="3.11")
+        assert mock_resolve.call_args.kwargs["python_version"] == "3.11"
+
+    def test_download_rejects_it_in_universal_mode(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            download(pyproject, output=tmp_path / "wheels", python="3.11")
+        assert exc.value.code == 1
+        assert "--python is not supported in universal mode" in capsys.readouterr().err
+
+
 class TestLockCommandUniversal:
     """Tests for `nab lock` in universal mode."""
 

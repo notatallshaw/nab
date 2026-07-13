@@ -87,6 +87,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     cache_dir: Path | None = None,
     cache: bool = True,
     offline: OfflineFlag = None,
+    python: str | None = None,
     groups: tuple[str, ...] = (),
     all_groups: bool = False,
     extras: tuple[str, ...] = (),
@@ -127,6 +128,10 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     with ``pip install --no-deps -e <member>`` when consuming the
     lockfile via pip's PEP 751 install or ``--require-hashes``: both
     refuse directory entries because they cannot be hashed.
+
+    ``--python X.Y`` resolves for that Python on this machine instead of
+    the running interpreter, like pip's ``--python-version``.  It is
+    rejected in universal mode, where the matrix declares the Python axis.
 
     ``--project-resolution`` overrides ``[tool.nab].resolution`` for this
     run (a PROJECT-scope override, so it is layered through the config
@@ -176,6 +181,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     if locked and config.mode is ResolveMode.UNIVERSAL:
         sys.stderr.write("Error: --locked is not supported in universal mode.\n")
         sys.exit(1)
+    _cli._reject_python_override_in_universal(config, python)  # noqa: SLF001
     settings = _cli._layered_run_settings_or_exit(path, overrides)  # noqa: SLF001
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
         settings.cache_dir, cache=cache
@@ -224,6 +230,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         offline=settings.offline,
         transport=transport,
         failure_prefix="Cannot lock",
+        python=python,
         groups=selected_groups,
         extras=selected_extras,
         resolution_strategy=settings.resolution,

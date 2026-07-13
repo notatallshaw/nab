@@ -9,14 +9,12 @@ import pytest
 
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import InvalidVersion, Version
+from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConfigError,
     ConflictSelectionError,
-    IndexOverride,
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
@@ -36,13 +34,11 @@ from nab_python.resolve import (
     _build_resolver_inputs,
     _check_group_disjointness,
     _check_group_disjointness_across_tuples,
-    _check_marker_overlay_build_policy,
     _find_group_conflicts,
     _load_extra_requirements,
     _load_group_requirements,
     _load_group_requirements_by_group,
     _raise_for_source_python,
-    _resolve_target_python,
     _walk_no_versions_packages,
     resolve_pyproject,
     resolve_universal_pyproject,
@@ -746,8 +742,8 @@ class TestResolvePyproject:
             "[project]\n"
             'dependencies = ["foo", "windows-only; sys_platform == \'win32\'"]\n'
             '[tool.nab]\nbuild-policy = "never"\n'
-            "[tool.nab.marker-environment]\n"
-            'sys_platform = "linux"\n',
+            "[tool.nab.environment]\n"
+            'platform = "linux_x86_64"\n',
         )
         mock_coord_cls.return_value.__enter__ = lambda s: s
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -771,12 +767,12 @@ class TestResolvePyproject:
         mock_build_lock: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """A python_full_version-gated dep follows the impersonated Python.
+        """A python_full_version-gated dep follows the declared Python.
 
-        Overlaying only ``python_version = "3.8"`` on a 3.12 host must keep
-        ``legacy; python_full_version < '3.10'``: the user is impersonating
-        Python 3.8, so the marker holds. The host patch level must not leak
-        in through ``python_full_version``.
+        Declaring only ``python = "3.8"`` on a 3.12 host must keep
+        ``legacy; python_full_version < '3.10'``: the resolve targets Python
+        3.8, so the marker holds. The host patch level must not leak in
+        through ``python_full_version``.
         """
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
@@ -784,8 +780,8 @@ class TestResolvePyproject:
             "dependencies = ["
             '"foo", "legacy; python_full_version < \'3.10\'"]\n'
             '[tool.nab]\nbuild-policy = "never"\n'
-            "[tool.nab.marker-environment]\n"
-            'python_version = "3.8"\n',
+            "[tool.nab.environment]\n"
+            'python = "3.8"\n',
         )
         mock_coord_cls.return_value.__enter__ = lambda s: s
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -794,7 +790,7 @@ class TestResolvePyproject:
             "legacy": V("1.0"),
         }
 
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
 
         requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
         assert "foo" in requirements
@@ -818,8 +814,8 @@ class TestResolvePyproject:
             "[project]\n"
             'dependencies = ["foo", "linux-only; sys_platform == \'linux\'"]\n'
             '[tool.nab]\nbuild-policy = "never"\n'
-            "[tool.nab.marker-environment]\n"
-            'sys_platform = "linux"\n',
+            "[tool.nab.environment]\n"
+            'platform = "linux_x86_64"\n',
         )
         mock_coord_cls.return_value.__enter__ = lambda s: s
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -867,7 +863,7 @@ class TestResolvePyproject:
         pyproject.write_text(
             '[project]\ndependencies = ["foo"]\n',
         )
-        with pytest.raises(InvalidVersion, match="'not-a-version'"):
+        with pytest.raises(ConfigError, match="'not-a-version'"):
             resolve_pyproject(
                 pyproject, _FAKE_TRANSPORT, python_version="not-a-version"
             )
@@ -876,7 +872,7 @@ class TestResolvePyproject:
     @patch("nab_python.resolve.Resolver")
     @patch("nab_python.resolve.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
-    def test_config_requires_python_used_when_set(
+    def test_python_version_arg_retargets_the_python_axis(
         self,
         mock_coord_cls: MagicMock,
         mock_provider_cls: MagicMock,
@@ -884,45 +880,16 @@ class TestResolvePyproject:
         mock_build_lock: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """[tool.nab].requires-python derives the resolve target Python.
+        """The ``python_version`` arg (``--python``) sets the target Python.
 
-        ``==3.10.5`` is a single-version specifier, so the resolve
-        target is exactly 3.10.5; ``>=3.10`` would resolve to 3.10.0
-        (the lowest enumerated candidate the specifier admits).
+        ``requires-python`` is only a declaration, so it neither steers the
+        target nor conflicts with an override it admits.
         """
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\ndependencies = ["foo"]\n'
             "[tool.nab]\n"
-            'requires-python = "==3.10.5"\n',
-        )
-        mock_coord_cls.return_value.__enter__ = lambda s: s
-        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-        mock_resolver_cls.return_value.resolve.return_value = {}
-
-        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
-
-        target = mock_provider_cls.call_args.kwargs["target"]
-        assert target.python_full_version == "3.10.5"
-
-    @patch("nab_python.resolve.build_lock_input_from_provider")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
-    @patch("nab_python.resolve.FetchCoordinator")
-    def test_cli_python_overrides_config(
-        self,
-        mock_coord_cls: MagicMock,
-        mock_provider_cls: MagicMock,
-        mock_resolver_cls: MagicMock,
-        mock_build_lock: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """An explicit python_version arg wins over the config value."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            '[project]\ndependencies = ["foo"]\n'
-            "[tool.nab]\n"
-            'requires-python = "==3.10.5"\n',
+            'requires-python = ">=3.10"\n',
         )
         mock_coord_cls.return_value.__enter__ = lambda s: s
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -932,6 +899,19 @@ class TestResolvePyproject:
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target.python_full_version == "3.12.4"
+
+    def test_python_version_arg_outside_requires_python_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """A retarget the declaration excludes fails loud, not silently."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\ndependencies = ["foo"]\n'
+            "[tool.nab]\n"
+            'requires-python = ">=3.11"\n',
+        )
+        with pytest.raises(ConfigError, match="excludes the resolve target"):
+            resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.9")
 
     def test_universal_mode_rejected(self, tmp_path: Path) -> None:
         """resolve_pyproject refuses to handle mode = 'universal'."""
@@ -1805,54 +1785,153 @@ class TestResolvePyprojectLockShape:
         assert tuple(ix.url for ix in passed) == ("https://custom.index/simple/",)
 
 
-class TestResolveTargetPython:
-    """``_resolve_target_python`` derives a concrete Python version."""
+class TestSpecificModeTargetPlan:
+    """The resolve target: the host, or the environment the project declares."""
 
-    def test_exact_specifier(self) -> None:
-        """``==3.10.5`` resolves to exactly 3.10.5."""
-        assert _resolve_target_python("==3.10.5") == "3.10.5"
+    @staticmethod
+    def _mock_resolve(coord: MagicMock, resolver: MagicMock) -> None:
+        coord.return_value.__enter__ = lambda s: s
+        coord.return_value.__exit__ = MagicMock(return_value=False)
+        resolver.return_value.resolve.return_value = {}
 
-    def test_lower_bound_only(self) -> None:
-        """``>=3.13`` resolves to 3.13.0 (the lowest enumerated match)."""
-        assert _resolve_target_python(">=3.13") == "3.13.0"
-
-    def test_range(self) -> None:
-        """``>=3.13,<3.14`` resolves to 3.13.0."""
-        assert _resolve_target_python(">=3.13,<3.14") == "3.13.0"
-
-    def test_excluded_minor(self) -> None:
-        """``>=3.10,!=3.12,<3.15`` skips the excluded minor."""
-        # 3.10.0 is the lowest enumerated match; the !=3.12 hole only
-        # matters when the lower bound forces the search past 3.12.
-        assert _resolve_target_python(">=3.10,!=3.12,<3.15") == "3.10.0"
-
-    def test_unbounded_below_falls_back_to_host(
-        self, caplog: pytest.LogCaptureFixture
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
+    def test_host_is_the_default_target(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
     ) -> None:
-        """Open-ended ``<X.Y`` falls back to the host Python with a warning."""
-        with caplog.at_level("WARNING", logger="nab_python.resolve"):
-            target = _resolve_target_python("<3.14")
-        # ``<3.14`` admits ``3.0.0`` (the lowest enumerated candidate),
-        # so the helper returns 3.0.0; fallback only fires when the
-        # specifier admits *nothing* in the candidate grid.  We verify
-        # that with a separate impossible-range case below.
-        assert target == "3.0.0"
-        assert not caplog.records
+        """A project that declares no environment resolves for the host."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\ndependencies = ["foo"]\n')
+        self._mock_resolve(mock_coord_cls, mock_resolver_cls)
 
-    def test_no_match_falls_back_to_host(
-        self, caplog: pytest.LogCaptureFixture
+        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
+
+        target = mock_provider_cls.call_args.kwargs["target"]
+        assert target == ResolveTarget.for_host()
+        assert target.host_faithful
+
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
+    def test_requires_python_does_not_steer_the_target(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
     ) -> None:
-        """A specifier that admits nothing in the grid logs and falls back."""
-        with caplog.at_level("WARNING", logger="nab_python.resolve"):
-            target = _resolve_target_python(">=99.0")
-        # The candidate grid stops at major 4, so ``>=99.0`` admits
-        # nothing and the helper falls back to the host (whatever the
-        # test runner is using).  We check the warning was emitted.
-        assert target  # non-empty
-        assert any(
-            "matches no enumerated CPython release" in rec.message
-            for rec in caplog.records
+        """``requires-python`` is a declaration: the host stays the target.
+
+        It is recorded as the lock's ``requires-python`` and nothing else,
+        so a project supporting 3.9 and up still resolves for the host.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = ">=3.9"\n'
         )
+        self._mock_resolve(mock_coord_cls, mock_resolver_cls)
+
+        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
+
+        target = mock_provider_cls.call_args.kwargs["target"]
+        assert target == ResolveTarget.for_host()
+        assert mock_build_lock.call_args.kwargs["requires_python"] == ">=3.9"
+
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
+    def test_environment_python_retargets_the_host(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """``[tool.nab.environment].python`` moves the python axis only."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\ndependencies = ["foo"]\n'
+            "[tool.nab.environment]\n"
+            'python = "3.10.5"\n'
+        )
+        self._mock_resolve(mock_coord_cls, mock_resolver_cls)
+
+        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
+
+        target = mock_provider_cls.call_args.kwargs["target"]
+        assert target.python_full_version == "3.10.5"
+        assert target.platform_id == "host"
+
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
+    def test_environment_platform_declares_the_target(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A declared platform builds a synthesized (non-host) target."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\ndependencies = ["foo"]\n'
+            "[tool.nab.environment]\n"
+            'python = "3.11"\n'
+            'platform = "windows_amd64"\n'
+        )
+        self._mock_resolve(mock_coord_cls, mock_resolver_cls)
+
+        resolve_pyproject(pyproject, _FAKE_TRANSPORT)
+
+        target = mock_provider_cls.call_args.kwargs["target"]
+        assert target.platform_id == "windows_amd64"
+        assert target.marker_env["sys_platform"] == "win32"
+        assert target.python_version == "3.11"
+        assert not target.host_faithful
+
+    @patch("nab_python.resolve.build_lock_input_from_provider")
+    @patch("nab_python.resolve.Resolver")
+    @patch("nab_python.resolve.Provider")
+    @patch("nab_python.resolve.FetchCoordinator")
+    def test_python_override_wins_over_the_environment(
+        self,
+        mock_coord_cls: MagicMock,
+        mock_provider_cls: MagicMock,
+        mock_resolver_cls: MagicMock,
+        mock_build_lock: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """``--python`` moves the python axis of a declared environment."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\ndependencies = ["foo"]\n'
+            "[tool.nab]\n"
+            'build-policy = "never"\n'
+            "[tool.nab.environment]\n"
+            'python = "3.11"\n'
+            'platform = "linux_aarch64"\n'
+        )
+        self._mock_resolve(mock_coord_cls, mock_resolver_cls)
+
+        resolve_pyproject(pyproject, _FAKE_TRANSPORT, python_version="3.12.4")
+
+        target = mock_provider_cls.call_args.kwargs["target"]
+        assert target.python_full_version == "3.12.4"
+        assert target.platform_id == "linux_aarch64"
 
 
 class TestLoadGroupRequirements:
@@ -2563,81 +2642,6 @@ def _tuple_for_python(python_version: str) -> ResolveTarget:
     )
 
 
-class TestCheckMarkerOverlayBuildPolicy:
-    """A marker overlay forces ``BuildPolicy.NEVER`` everywhere it can build."""
-
-    def test_default_policy_blocked_when_overlay_used(self) -> None:
-        """The default ``BUILD_LOCAL`` is rejected with a marker overlay.
-
-        Users who want a marker overlay must opt into ``never`` explicitly,
-        since a host-side backend cannot reflect the impersonated target.
-        """
-        config = NabProjectConfig(
-            marker_environment={"platform_system": "Windows"},
-        )
-        with pytest.raises(ValueError, match="marker_environment overlay requires"):
-            _check_marker_overlay_build_policy(config)
-
-    def test_overlay_with_build_remote_policy_raises(self) -> None:
-        """Non-``NEVER`` global + a marker overlay is rejected."""
-        config = NabProjectConfig(
-            build_policy=BuildPolicy.BUILD_REMOTE,
-            marker_environment={"platform_system": "Windows"},
-        )
-        with pytest.raises(ValueError, match="marker_environment overlay requires"):
-            _check_marker_overlay_build_policy(config)
-
-    def test_overlay_with_build_remote_override_raises(self) -> None:
-        """A build override that escapes ``NEVER`` also fails the guard."""
-        config = NabProjectConfig(
-            build_policy=BuildPolicy.NEVER,
-            package_overrides=(
-                pkg_override("foo", build_policy=BuildPolicy.BUILD_REMOTE),
-            ),
-            marker_environment={"platform_system": "Windows"},
-        )
-        with pytest.raises(ValueError, match="marker_environment overlay requires"):
-            _check_marker_overlay_build_policy(config)
-
-    def test_overlay_with_build_remote_index_override_raises(self) -> None:
-        """A per-index build override that escapes ``NEVER`` fails the guard."""
-        config = NabProjectConfig(
-            build_policy=BuildPolicy.NEVER,
-            index_overrides={
-                "internal": IndexOverride(build_policy=BuildPolicy.BUILD_REMOTE)
-            },
-            marker_environment={"platform_system": "Windows"},
-        )
-        with pytest.raises(ValueError, match="marker_environment overlay requires"):
-            _check_marker_overlay_build_policy(config)
-
-    def test_overlay_with_never_override_passes(self) -> None:
-        """An override already at ``NEVER`` is not offending."""
-        config = NabProjectConfig(
-            build_policy=BuildPolicy.NEVER,
-            package_overrides=(
-                pkg_override("quarantined", build_policy=BuildPolicy.NEVER),
-            ),
-            marker_environment={"platform_system": "Windows"},
-        )
-        _check_marker_overlay_build_policy(config)
-
-    def test_no_overlay_no_constraint(self) -> None:
-        """Without an overlay, a looser ``BuildPolicy`` is fine."""
-        _check_marker_overlay_build_policy(
-            NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
-        )
-
-    def test_empty_overlay_no_constraint(self) -> None:
-        """An empty overlay does not trigger the build-policy check."""
-        _check_marker_overlay_build_policy(
-            NabProjectConfig(
-                build_policy=BuildPolicy.BUILD_REMOTE,
-                marker_environment={},
-            )
-        )
-
-
 class TestCheckGroupDisjointnessAcrossTuples:
     """``_check_group_disjointness_across_tuples`` runs the per-group
     range check under each tuple's marker environment and raises early
@@ -2940,13 +2944,13 @@ class TestLocalVcsRequiresPython:
             with pytest.raises(ResolutionError, match="foo 1.0 requires Python"):
                 resolve_pyproject(root, _FAKE_TRANSPORT, python_version="3.10.0")
 
-    def test_resolve_pyproject_overlay_target_satisfies_local(
+    def test_resolve_pyproject_declared_target_satisfies_local(
         self, tmp_path: Path
     ) -> None:
-        """A marker overlay's impersonated Python is the local-source target.
+        """The declared environment's Python is the local-source target.
 
-        A source valid only for the impersonated Python must not be refused
-        for failing the host Python. Mirrors the universal per-tuple check.
+        A source valid only for the declared Python must not be refused for
+        failing the host Python. Mirrors the universal per-tuple check.
         """
         member = tmp_path / "foo"
         member.mkdir()
@@ -2958,8 +2962,8 @@ class TestLocalVcsRequiresPython:
         root.write_text(
             '[project]\nname = "proj"\ndependencies = ["foo"]\n'
             '[tool.nab]\nbuild-policy = "never"\n'
-            "[tool.nab.marker-environment]\n"
-            'python_version = "3.12"\npython_full_version = "3.12.1"\n'
+            "[tool.nab.environment]\n"
+            'python = "3.12.1"\n'
             '[[tool.nab.local-sources]]\nname = "foo"\npath = "foo"\n',
             encoding="utf-8",
         )
@@ -2970,15 +2974,15 @@ class TestLocalVcsRequiresPython:
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            result = resolve_pyproject(root, _FAKE_TRANSPORT, python_version="3.10.0")
+            result = resolve_pyproject(root, _FAKE_TRANSPORT)
         assert result.pins["foo"] == V("1.0")
 
-    def test_resolve_pyproject_overlay_target_satisfies_index(
+    def test_resolve_pyproject_declared_target_satisfies_index(
         self, tmp_path: Path
     ) -> None:
-        """The overlay's impersonated Python also gates index candidates.
+        """The declared environment's Python also gates index candidates.
 
-        An index candidate whose Requires-Python admits only the overlaid
+        An index candidate whose Requires-Python admits only the declared
         Python must survive the listing filter, matching the local-source
         check so both judge the same Requires-Python identically.
         """
@@ -2994,8 +2998,8 @@ class TestLocalVcsRequiresPython:
         root.write_text(
             '[project]\nname = "proj"\ndependencies = ["foo"]\n'
             '[tool.nab]\nbuild-policy = "never"\n'
-            "[tool.nab.marker-environment]\n"
-            'python_version = "3.12"\npython_full_version = "3.12.1"\n',
+            "[tool.nab.environment]\n"
+            'python = "3.12.1"\n',
             encoding="utf-8",
         )
         fake = make_coordinator([wheel], package="foo", auto_metadata=True)
@@ -3005,7 +3009,7 @@ class TestLocalVcsRequiresPython:
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            result = resolve_pyproject(root, _FAKE_TRANSPORT, python_version="3.10.0")
+            result = resolve_pyproject(root, _FAKE_TRANSPORT)
         assert result.pins["foo"] == V("1.0")
 
 

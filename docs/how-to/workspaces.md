@@ -72,7 +72,7 @@ above. Everything else under `[tool.nab]` is scoped to the
 pyproject being locked: `conflicts`, `default-groups`, `constraints`,
 `matrix`, `mode`, `requires-python`, `uploaded-prior-to`,
 `build-policy` itself, `dist-policy`, `vcs`, `indexes`, and
-`marker-environment`. Locking a member with `nab lock
+`environment`. Locking a member with `nab lock
 packages/core/pyproject.toml` reads only that file's keys; the
 root's are ignored.
 

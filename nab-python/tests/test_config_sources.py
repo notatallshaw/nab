@@ -784,6 +784,7 @@ class TestParserFoldHelpers:
                 "uploaded-prior-to",
                 "dist-policy",
                 "build-policy",
+                "environment",
                 "marker-environment",
                 "vcs",
                 "workspace",

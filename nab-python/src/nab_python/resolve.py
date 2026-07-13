@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import itertools
 import logging
-import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -20,7 +19,6 @@ from ._conflict_kind import dependency_marker_holds, membership_set_in_marker
 from ._vcs_admission import admit_vcs_url
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.requirements import Requirement
-from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import Version
 from .config import (
@@ -33,14 +31,16 @@ from .config import (
     ResolveMode,
     conflict_forks,
     index_routes_from_config,
+    matrix_from_config,
+    plan_targets,
     read_pyproject_config,
     validate_conflict_exclusions,
     validate_conflict_minimums,
+    with_python_override,
 )
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, build_lock_input_from_provider
 from .provider import (
-    BuildPolicy,
     Provider,
     ResolutionStrategy,
     join_extra,
@@ -58,8 +58,6 @@ from .requirements_file import (
     resolve_groups_to_requirements,
     select_optional_dependencies,
 )
-from .target import ResolveTarget
-from .universal.matrix import Matrix
 from .universal.resolve import (
     ResolveFork,
     UniversalResult,
@@ -71,6 +69,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport
+
+    from .target import ResolveTarget
 
 
 __all__ = [
@@ -119,7 +119,9 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     ``config`` defaults to :func:`read_pyproject_config(path)`. The
     caller supplies ``transport`` so the HTTP library choice stays
     outside nab-python. ``cache_dir``, ``offline`` and
-    ``python_version`` are runtime overrides from the CLI.
+    ``python_version`` are runtime overrides from the CLI;
+    ``python_version`` backs ``--python`` and moves the resolve target
+    onto that Python, leaving the rest of the environment alone.
 
     ``groups`` and ``extras`` name PEP 735 groups and
     ``[project.optional-dependencies]`` keys to fold in.
@@ -145,16 +147,10 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     # into the active group set alongside the CLI selection.
     effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
 
-    if python_version is not None:
-        target = ResolveTarget.for_host_python(python_version)
-    elif config.requires_python is not None:
-        target = ResolveTarget.for_host_python(
-            _resolve_target_python(config.requires_python)
-        )
-    else:
-        target = ResolveTarget.for_host()
-    _check_marker_overlay_build_policy(config)
-    target = target.with_marker_overrides(config.marker_environment)
+    # The host is the target unless the project (or --python) says
+    # otherwise; specific mode carries no matrix, so the plan is one target.
+    config = with_python_override(config, python_version)
+    (target,) = plan_targets(config)
     marker_environment = target.marker_env
 
     if config.conflicts:
@@ -715,42 +711,6 @@ def _build_resolver_inputs(
     return resolver_requirements, root_extras
 
 
-def _check_marker_overlay_build_policy(config: NabProjectConfig) -> None:
-    """Reject a non-``NEVER`` build policy under a marker-environment overlay.
-
-    Backends run on the host, so invoking one under an overlay would
-    produce metadata that does not match the impersonated target.  The
-    guard inspects both override surfaces as well as the global, so a
-    single build override cannot quietly opt out of the soundness check.
-    A config with no overlay resolves against the host and builds freely.
-    """
-    if not config.marker_environment:
-        return
-    offending: list[tuple[str, BuildPolicy]] = []
-    if config.build_policy is not BuildPolicy.NEVER:
-        offending.append(("<global>", config.build_policy))
-    offending.extend(
-        (o.name, o.build_policy)
-        for o in config.package_overrides
-        if o.build_policy not in (None, BuildPolicy.NEVER)
-    )
-    offending.extend(
-        (f"index:{name}", o.build_policy)
-        for name, o in config.index_overrides.items()
-        if o.build_policy not in (None, BuildPolicy.NEVER)
-    )
-    if not offending:
-        return
-    rendered = ", ".join(f"{name}={policy.value}" for name, policy in offending)
-    msg = (
-        "marker_environment overlay requires BuildPolicy.NEVER globally"
-        " and in every override that sets build-policy; got"
-        f" {rendered}.  Backends run on the host and report metadata for"
-        " the host, not the impersonated target."
-    )
-    raise ValueError(msg)
-
-
 def _raise_for_source_python(
     provider: Provider,
     pins: Mapping[str, Version],
@@ -869,17 +829,7 @@ def resolve_universal_pyproject(
         raise UnsupportedModeError(msg)
 
     base_dependencies = read_pyproject_dependencies(path)
-    matrix = Matrix(
-        python=config.matrix.python,
-        platforms=config.matrix.platforms,
-        python_order=config.matrix.python_order,
-        python_patches=(
-            dict(config.matrix.python_patches)
-            if config.matrix.python_patches is not None
-            else None
-        ),
-        implementations=config.matrix.implementations,
-    )
+    matrix = matrix_from_config(config.matrix)
     expanded_tuples = matrix.expand()
     group_table = read_pyproject_groups(path)
     tables = _ForkTables(
@@ -982,55 +932,6 @@ def resolve_universal_pyproject(
         index_routes=index_routes_from_config(config) or None,
         resolution_strategy=effective_strategy.value,
     )
-
-
-_PYTHON_CANDIDATE_MAJORS = (3, 4)
-_PYTHON_CANDIDATE_MINORS = range(30)
-_PYTHON_CANDIDATE_PATCHES = range(30)
-
-
-def _resolve_target_python(specifier: str) -> str:
-    """Pick a concrete Python version that satisfies ``specifier``.
-
-    ``specifier`` is a PEP 440 specifier set (already validated at
-    config-parse time, see :func:`_parse_requires_python`).  The
-    resolve target is the lowest enumerated ``M.N.P`` release that the
-    specifier admits: deterministic regardless of host, and matches
-    the user's written intent ("lock for >=3.13" -> "use 3.13.0
-    markers"; "lock for ==3.10.5" -> "use 3.10.5 markers").
-
-    Falls back to the host Python when no enumerated candidate
-    satisfies (e.g. an open-ended ``<X.Y`` specifier with no lower
-    bound, or a range that admits only versions outside the candidate
-    grid).  The host fallback warns via the logger so the operator can
-    notice when their lockfile's ``requires-python`` field implies a
-    target the resolve could not actually impersonate.
-    """
-    spec_set = SpecifierSet(specifier)
-
-    # M.N.0 first so >=3.13 resolves to 3.13.0 (not 3.13.<something>).
-    # filter() preserves input order, so the first match is the lowest.
-    candidates: list[Version] = []
-    for major in _PYTHON_CANDIDATE_MAJORS:
-        for minor in _PYTHON_CANDIDATE_MINORS:
-            candidates.append(Version(f"{major}.{minor}.0"))
-            for patch in _PYTHON_CANDIDATE_PATCHES:
-                if patch == 0:
-                    continue
-                candidates.append(Version(f"{major}.{minor}.{patch}"))
-
-    matches = [str(v) for v in spec_set.filter(candidates)]
-    if matches:
-        return matches[0]
-    vi = sys.version_info
-    host = f"{vi.major}.{vi.minor}.{vi.micro}"
-    _logger.warning(
-        "requires-python = %r matches no enumerated CPython release;"
-        " falling back to host Python %s for the resolve target",
-        specifier,
-        host,
-    )
-    return host
 
 
 def _build_constraints(
