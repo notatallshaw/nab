@@ -35,7 +35,6 @@ __all__ = [
     "read_pyproject_name",
     "read_pyproject_optional_dependencies",
     "resolve_groups_to_requirements",
-    "select_optional_dependencies",
 ]
 
 
@@ -210,47 +209,6 @@ def _canonicalize_optional_deps(
     return canonical
 
 
-def select_optional_dependencies(
-    optional_deps: Mapping[str, Sequence[str]],
-    selected: Sequence[str],
-    project_name: str | None = None,
-) -> list[Requirement]:
-    """Return the union of requirement strings for ``selected`` extras.
-
-    Extra names are compared under PEP 685 normalization, so
-    ``My_Extra`` selects a declared ``my-extra``.  Unknown extra names
-    raise ``LookupError``.  Returns an empty list when ``selected`` is
-    empty.  A self-reference (a requirement naming ``project_name``) has
-    its extras reached through the expanded selection, so it is dropped
-    here rather than returned as a dependency on the project itself.
-    """
-    if not selected:
-        return []
-    canonical_project = (
-        canonicalize_name(project_name) if project_name is not None else None
-    )
-    canonical_deps = _canonicalize_optional_deps(optional_deps)
-    out: list[Requirement] = []
-    for name in selected:
-        canonical = canonicalize_name(name)
-        if canonical not in canonical_deps:
-            msg = (
-                f"extra {name!r} is not declared in"
-                f" [project.optional-dependencies]; defined: {sorted(optional_deps)!r}"
-            )
-            raise LookupError(msg)
-        for req in _parse_requirements(
-            canonical_deps[canonical],
-            f"[project.optional-dependencies] extra {name!r}",
-        ):
-            if canonical_project is not None and (
-                canonicalize_name(req.name) == canonical_project
-            ):
-                continue
-            out.append(req)
-    return out
-
-
 def expand_self_extras(
     optional_deps: Mapping[str, Sequence[str]],
     project_name: str | None,
@@ -287,8 +245,8 @@ def expand_self_extras(
     duplicates.  ``project_name`` ``None`` short-circuits to the
     input list (no project name = nothing to self-reference).
     Unknown extras are tolerated here; the caller is expected to
-    feed the result into :func:`select_optional_dependencies`, which
-    raises if an extra is not declared.
+    feed the result into :func:`expand_extra_requirements`, which raises
+    if an extra is not declared.
     """
     if project_name is None:
         return list(selected)
@@ -496,9 +454,9 @@ def expand_extra_requirements(
 ) -> list[Requirement]:
     """Flatten ``selected`` extras to requirements, propagating self-ref markers.
 
-    This is :func:`select_optional_dependencies` over the self-reference
-    closure :func:`expand_self_extras` walks, except a self-reference's
-    PEP 508 marker is carried onto the requirements it pulls in.  With
+    Flattens each selected extra over the self-reference closure
+    :func:`expand_self_extras` walks, carrying a self-reference's PEP 508
+    marker onto the requirements it pulls in.  With
     ``all = ["pkg[fast]; python_version < '3.10'"]`` and ``fast =
     ["dep"]``, selecting ``all`` yields ``dep; python_version < '3.10'``
     rather than a bare ``dep`` that survives on every environment, so the

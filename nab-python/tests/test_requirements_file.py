@@ -22,7 +22,6 @@ from nab_python.requirements_file import (
     read_pyproject_name,
     read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
-    select_optional_dependencies,
 )
 from nab_resolver.errors import ResolutionError
 
@@ -325,41 +324,6 @@ class TestReadPyprojectOptionalDependencies:
             read_pyproject_optional_dependencies(p)
 
 
-class TestSelectOptionalDependencies:
-    def test_returns_empty_when_nothing_selected(self) -> None:
-        assert select_optional_dependencies({"cpu": ["torch"]}, ()) == []
-
-    def test_expands_selected_extras(self) -> None:
-        opt = {"cpu": ["torch"], "gpu": ["torch[cuda]", "nvidia-pyindex"]}
-        reqs = select_optional_dependencies(opt, ("gpu",))
-        names = sorted(r.name for r in reqs)
-        assert names == ["nvidia-pyindex", "torch"]
-
-    def test_unknown_extra_raises(self) -> None:
-        with pytest.raises(LookupError, match="nope"):
-            select_optional_dependencies({"cpu": ["torch"]}, ("nope",))
-
-    def test_malformed_requirement_string_raises(self) -> None:
-        with pytest.raises(InvalidProjectRequirementError, match="gpu"):
-            select_optional_dependencies({"gpu": ["torch >= bad junk"]}, ("gpu",))
-
-    def test_string_extra_value_raises(self) -> None:
-        """An extra whose value is a bare string is rejected, not char-iterated."""
-        with pytest.raises(InvalidProjectRequirementError, match="gpu"):
-            select_optional_dependencies({"gpu": "torch"}, ("gpu",))
-
-    def test_selected_extra_name_canonicalized(self) -> None:
-        """PEP 685: a request differing only by case/separator still matches."""
-        opt = {"my-extra": ["requests"]}
-        names = [r.name for r in select_optional_dependencies(opt, ("My_Extra",))]
-        assert names == ["requests"]
-
-    def test_declared_extra_key_canonicalized(self) -> None:
-        opt = {"My_Extra": ["requests"]}
-        names = [r.name for r in select_optional_dependencies(opt, ("my-extra",))]
-        assert names == ["requests"]
-
-
 class TestReadPyprojectName:
     def test_reads_name(self, tmp_path: object) -> None:
         p = Path(str(tmp_path)) / "pyproject.toml"
@@ -463,7 +427,7 @@ class TestExpandSelfExtras:
         assert sorted(expand_self_extras(opt, "mypkg", ["a"])) == ["a", "b"]
 
     def test_unknown_extra_in_self_reference_tolerated(self) -> None:
-        """Unknown extras are surfaced by ``select_optional_dependencies``,
+        """Unknown extras are surfaced by ``expand_extra_requirements``,
         not here; expansion must keep walking what it can.
         """
         opt = {"all": ["mypkg[a, missing]"], "a": ["depA"]}

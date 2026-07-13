@@ -2142,6 +2142,27 @@ class TestBuildResolverInputs:
         assert "foo" not in resolver_requirements
         assert any("membership marker" in rec.message for rec in caplog.records)
 
+    def test_extra_marker_without_spaces_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """packaging normalises the spelling, so the scan sees one form."""
+        reqs = [Requirement('foo ; extra=="test"')]
+        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+            _build_resolver_inputs(reqs, NabProjectConfig(), environment={})
+        assert any("membership marker" in rec.message for rec in caplog.records)
+
+    def test_extras_of_package_syntax_does_not_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``pkg[redis]`` is the syntax the warning points at; it must not warn."""
+        reqs = [Requirement("foo[redis]")]
+        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+            resolver_requirements, _ = _build_resolver_inputs(
+                reqs, NabProjectConfig(), environment={}
+            )
+        assert "foo" in resolver_requirements
+        assert not caplog.records
+
     def test_env_gated_drop_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
         """A requirement dropped by a plain env marker stays silent."""
         reqs = [Requirement('foo ; python_version < "3.0"')]

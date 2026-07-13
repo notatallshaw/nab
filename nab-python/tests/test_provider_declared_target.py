@@ -4,8 +4,9 @@ A declared target names the machine it resolves for, so its markers and
 its wheel tags are synthesized rather than read off the host.  These
 exercise the paths that only a declared target reaches: the wheel-tag
 filter, cross-target preferences, the resolution strategy, and the
-per-target Requires-Python patch level.  ``nab-python/tests/universal/``
-drives the same provider through the matrix.
+per-target Requires-Python patch level.
+``nab-python/tests/test_resolve_targets.py`` drives the same provider
+through a matrix.
 """
 
 from __future__ import annotations

@@ -2739,6 +2739,20 @@ class TestEmitHelpers:
         text = out.read_text()
         assert 'lock-version = "1.0"' in text
 
+    def test_a_matrix_lock_reports_its_tuples(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Two tuples may disagree on a version, so there is no diff to report."""
+        first, second = _target("3.11"), _target("3.12")
+        lock_input = LockInput(
+            targets={
+                first.label: _target_lock(first, {"foo": V("1.0")}),
+                second.label: _target_lock(second, {"foo": V("2.0")}),
+            }
+        )
+        _emit_pylock(lock_input, output=tmp_path / "pylock.toml")
+        assert "(2 tuples)" in capsys.readouterr().err
+
 
 class TestCacheFlags:
     """Tests for --cache-dir, --no-cache, --offline."""

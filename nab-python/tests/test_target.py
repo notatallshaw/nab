@@ -18,6 +18,7 @@ from nab_python.target import (
     IMPLEMENTATION_MARKERS,
     PEP508_MARKER_VARIABLES,
     PLATFORM_MARKERS,
+    Matrix,
     ResolveTarget,
     apply_python_axis_overlay,
     declared_environment,
@@ -647,6 +648,38 @@ class TestEnvironmentDeclaration:
         )
         windows = {**_HOST_ENV, "sys_platform": "win32", "platform_system": "Windows"}
         assert not Marker(declaration).evaluate(windows)
+
+    def test_a_lone_cpython_target_leaves_the_interpreter_open(self) -> None:
+        """CPython alone is the default, so the axis is nobody's question."""
+        assert "implementation_name" not in environment_declaration(self._target(), ())
+
+    def test_a_pypy_target_declares_its_interpreter(self) -> None:
+        """The pins were chosen for PyPy's wheels, so a CPython must not take them."""
+        target = ResolveTarget.for_declared(
+            python_version="3.11",
+            spec=PlatformSpec("linux_x86_64"),
+            implementation="pypy",
+        )
+        declaration = environment_declaration(target, ())
+        assert 'implementation_name == "pypy"' in declaration
+        assert not Marker(declaration).evaluate(
+            {**_HOST_ENV, "python_version": "3.11", "implementation_name": "cpython"}
+        )
+
+    def test_a_multi_implementation_matrix_declares_both_sides(self) -> None:
+        """The two entries for one (python, platform) point must stay disjoint."""
+        matrix = Matrix(
+            python="==3.11",
+            platforms=("linux_x86_64",),
+            implementations=("cpython", "pypy"),
+        )
+        cpython, pypy = (environment_declaration(t, ()) for t in matrix.expand())
+        assert 'implementation_name == "cpython"' in cpython
+        assert 'implementation_name == "pypy"' in pypy
+
+        on_pypy = declared_environment("3.11", PlatformSpec("linux_x86_64"), "pypy")
+        assert Marker(pypy).evaluate(on_pypy)
+        assert not Marker(cpython).evaluate(on_pypy)
 
 
 class TestFullVersionDeclaration:
