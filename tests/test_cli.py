@@ -22,8 +22,8 @@ from nab._download import download
 from nab._lock import (
     _determine_lock_anchor,
     _drop_workspace_pins,
-    _emit_specific,
-    _emit_universal_pylock,
+    _emit,
+    _emit_pylock,
     lock,
     resolve_extra_selection,
     resolve_group_selection,
@@ -52,7 +52,9 @@ from nab_python.lockfile import (
     LockInput,
     MissingHashError,
     MissingSdistError,
+    PinShape,
     SdistArtifact,
+    TargetLock,
     WheelArtifact,
 )
 from nab_python.provider import (
@@ -61,11 +63,9 @@ from nab_python.provider import (
     UnsupportedVcsError,
 )
 from nab_python.requirements_file import InvalidProjectRequirementError
-from nab_python.resolve import ResolutionResult
+from nab_python.resolve import ResolveResult, TargetResult
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
-from nab_python.universal.matrix import Matrix
-from nab_python.universal.resolve import TupleResult, UniversalResult
 from nab_resolver.resolver import ResolutionError
 
 V = Version
@@ -76,7 +76,7 @@ def _target(
     platform_id: str = "linux_x86_64",
     selection: tuple[tuple[str, str], ...] = (),
 ) -> ResolveTarget:
-    """A declared CPython target for the universal-result fixtures."""
+    """A declared CPython target for the matrix-result fixtures."""
     target = ResolveTarget.for_declared(
         python_version=py_minor, spec=PlatformSpec(platform_id)
     )
@@ -104,15 +104,84 @@ def _foo_index_pin(version: str = "1.0", name: str = "foo") -> IndexPin:
     )
 
 
-def _stub_resolution_result(
-    *, version: str = "1.0", pins: dict[str, Version] | None = None
-) -> ResolutionResult:
-    """Build a real :class:`ResolutionResult` with a populated lock input."""
-    real_pins = pins if pins is not None else {"foo": V(version)}
-    lock_input = LockInput(
-        pins={name: _foo_index_pin(str(ver), name) for name, ver in real_pins.items()},
+def _index_pins(pins: dict[str, Version]) -> dict[str, PinShape]:
+    """One :class:`IndexPin` per resolved pin."""
+    return {name: _foo_index_pin(str(ver), name) for name, ver in pins.items()}
+
+
+def _target_lock(
+    target: ResolveTarget,
+    pins: dict[str, Version],
+    dependencies: dict[str, tuple[str, ...]] | None = None,
+) -> TargetLock:
+    """What one target contributes to the lock: its pins and its edges."""
+    return TargetLock(
+        target=target,
+        pins=_index_pins(pins),
+        dependencies=dependencies if dependencies is not None else {},
     )
-    return ResolutionResult(pins=real_pins, lock_input=lock_input)
+
+
+def _resolved(target: ResolveTarget, pins: dict[str, Version]) -> TargetResult:
+    """A successful :class:`TargetResult` for ``target``."""
+    return TargetResult(
+        target=target, success=True, pins=pins, lock=_target_lock(target, pins)
+    )
+
+
+def _failed(target: ResolveTarget, error: ResolutionError | None) -> TargetResult:
+    """A failed :class:`TargetResult`: no pins, no lock, just the error."""
+    return TargetResult(target=target, success=False, pins={}, error=error, lock=None)
+
+
+def _lock_input(pins: dict[str, PinShape]) -> LockInput:
+    """The lock input one host-target resolve of ``pins`` produces."""
+    target = ResolveTarget.for_host()
+    return LockInput(targets={target.label: TargetLock(target=target, pins=pins)})
+
+
+def _stub_lock_input(pins: dict[str, Version] | None = None) -> LockInput:
+    """``_lock_input`` over index pins, for the emit helpers."""
+    return _lock_input(_index_pins(pins if pins is not None else {"foo": V("1.0")}))
+
+
+def _stub_resolve_result(
+    *, version: str = "1.0", pins: dict[str, Version] | None = None
+) -> ResolveResult:
+    """Build a real :class:`ResolveResult` for the host target."""
+    real_pins = pins if pins is not None else {"foo": V(version)}
+    target = ResolveTarget.for_host()
+    return ResolveResult(
+        targets=(target,), target_results=[_resolved(target, real_pins)]
+    )
+
+
+def _hashless_resolve_result() -> ResolveResult:
+    """A host resolve whose one wheel carries no hash at all."""
+    target = ResolveTarget.for_host()
+    pin = IndexPin(
+        name="foo",
+        version="1.0",
+        index="pypi",
+        wheels=(
+            WheelArtifact(
+                filename="foo-1.0-py3-none-any.whl",
+                url="https://example.com/foo-1.0-py3-none-any.whl",
+                hashes=(),
+            ),
+        ),
+    )
+    return ResolveResult(
+        targets=(target,),
+        target_results=[
+            TargetResult(
+                target=target,
+                success=True,
+                pins={"foo": V("1.0")},
+                lock=TargetLock(target=target, pins={"foo": pin}),
+            )
+        ],
+    )
 
 
 def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
@@ -153,39 +222,22 @@ def _workspace_pyproject(tmp_path: Path, *, universal: bool = False) -> Path:
     return _make_pyproject(tmp_path, body)
 
 
-def _universal_result(*, success: bool, error: str | None = None) -> UniversalResult:
-    """Build a real :class:`UniversalResult` with one matrix tuple."""
-    matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
+def _universal_result(
+    *, success: bool, error: ResolutionError | None = None
+) -> ResolveResult:
+    """Build a real :class:`ResolveResult` with one matrix tuple."""
     tup = _target()
-    lock_input = LockInput(pins={"foo": _foo_index_pin()}) if success else None
-    tr = TupleResult(
-        tuple_=tup,
-        success=success,
-        pins={"foo": V("1.0")} if success else {},
-        error=error,
-        lock_input=lock_input,
+    tr = _resolved(tup, {"foo": V("1.0")}) if success else _failed(tup, error)
+    return ResolveResult(targets=(tup,), target_results=[tr])
+
+
+def _multi_tuple_universal_result() -> ResolveResult:
+    """Build a successful ResolveResult with two tuples (3.11 and 3.12)."""
+    tuples = tuple(_target(py_minor) for py_minor in ("3.11", "3.12"))
+    return ResolveResult(
+        targets=tuples,
+        target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
     )
-    return UniversalResult(matrix=matrix, tuple_results=[tr])
-
-
-def _multi_tuple_universal_result() -> UniversalResult:
-    """Build a successful UniversalResult with two tuples (3.11 and 3.12)."""
-    matrix = Matrix(python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),))
-    tuples = []
-    results = []
-    for py_minor in ("3.11", "3.12"):
-        tup = _target(py_minor)
-        tuples.append(tup)
-        results.append(
-            TupleResult(
-                tuple_=tup,
-                success=True,
-                pins={"foo": V("1.0")},
-                error=None,
-                lock_input=LockInput(pins={"foo": _foo_index_pin()}),
-            )
-        )
-    return UniversalResult(matrix=matrix, tuple_results=results)
 
 
 class TestLockCommandSpecific:
@@ -195,7 +247,7 @@ class TestLockCommandSpecific:
         """Default format writes a real pylock.toml at the requested path."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out)
         text = out.read_text()
         assert 'lock-version = "1.0"' in text
@@ -207,7 +259,7 @@ class TestLockCommandSpecific:
         """No --output: pylock format defaults to pylock.toml."""
         monkeypatch.chdir(tmp_path)
         pyproject = _make_pyproject(tmp_path)
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject)
         assert (tmp_path / "pylock.toml").exists()
 
@@ -217,7 +269,7 @@ class TestLockCommandSpecific:
         """No --output: requirements format defaults to requirements.txt."""
         monkeypatch.chdir(tmp_path)
         pyproject = _make_pyproject(tmp_path)
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, format="requirements")
         text = (tmp_path / "requirements.txt").read_text()
         assert "foo==1.0" in text
@@ -229,7 +281,7 @@ class TestLockCommandSpecific:
         """requirements-without-hashes defaults to requirements.txt."""
         monkeypatch.chdir(tmp_path)
         pyproject = _make_pyproject(tmp_path)
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, format="requirements-without-hashes")
         text = (tmp_path / "requirements.txt").read_text()
         assert "foo==1.0" in text
@@ -239,7 +291,7 @@ class TestLockCommandSpecific:
         """`requirements` format renders --hash lines."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "requirements.txt"
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out, format="requirements")
         text = out.read_text()
         assert "foo==1.0" in text
@@ -249,7 +301,7 @@ class TestLockCommandSpecific:
         """requirements-without-hashes renders one name==version per line."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "requirements.txt"
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out, format="requirements-without-hashes")
         text = out.read_text()
         assert text.strip() == "foo==1.0"
@@ -258,26 +310,8 @@ class TestLockCommandSpecific:
         """A pin whose artefact lacks a usable hash still locks plain pins."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "requirements.txt"
-        result = ResolutionResult(
-            pins={"foo": V("1.0")},
-            lock_input=LockInput(
-                pins={
-                    "foo": IndexPin(
-                        name="foo",
-                        version="1.0",
-                        index="pypi",
-                        wheels=(
-                            WheelArtifact(
-                                filename="foo-1.0-py3-none-any.whl",
-                                url="https://example.com/foo-1.0-py3-none-any.whl",
-                                hashes=(),
-                            ),
-                        ),
-                    )
-                }
-            ),
-        )
-        with patch("nab.cli.resolve_pyproject", return_value=result):
+        result = _hashless_resolve_result()
+        with patch("nab.cli.resolve_for_targets", return_value=result):
             lock(pyproject, output=out, format="requirements-without-hashes")
         assert out.read_text().strip() == "foo==1.0"
 
@@ -287,38 +321,37 @@ class TestLockCommandSpecific:
         """The same hashless pin is fatal for the hash-bearing pylock format."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        result = ResolutionResult(
-            pins={"foo": V("1.0")},
-            lock_input=LockInput(
-                pins={
-                    "foo": IndexPin(
-                        name="foo",
-                        version="1.0",
-                        index="pypi",
-                        wheels=(
-                            WheelArtifact(
-                                filename="foo-1.0-py3-none-any.whl",
-                                url="https://example.com/foo-1.0-py3-none-any.whl",
-                                hashes=(),
-                            ),
-                        ),
-                    )
-                }
-            ),
-        )
+        result = _hashless_resolve_result()
         with (
-            patch("nab.cli.resolve_pyproject", return_value=result),
+            patch("nab.cli.resolve_for_targets", return_value=result),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=out, format="pylock")
         assert "no acceptable hash" in capsys.readouterr().err
+
+    def test_failed_target_reports_resolution_failure(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """One environment has one error, so it is the run's error."""
+        pyproject = _make_pyproject(tmp_path)
+        target = ResolveTarget.for_host()
+        result = ResolveResult(
+            targets=(target,),
+            target_results=[_failed(target, ResolutionError("conflict"))],
+        )
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=result),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        assert "Resolution failed: conflict" in capsys.readouterr().err
 
     def test_pylock_to_stdout(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """`--output -` routes pylock format to stdout."""
         pyproject = _make_pyproject(tmp_path)
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=Path("-"))
         out = capsys.readouterr().out
         assert 'lock-version = "1.0"' in out
@@ -329,7 +362,7 @@ class TestLockCommandSpecific:
     ) -> None:
         """`--output -` routes requirements format to stdout."""
         pyproject = _make_pyproject(tmp_path)
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=Path("-"), format="requirements")
         out = capsys.readouterr().out
         assert "foo==1.0" in out
@@ -340,7 +373,7 @@ class TestLockCommandSpecific:
     ) -> None:
         """`--output -` routes requirements-without-hashes to stdout."""
         pyproject = _make_pyproject(tmp_path)
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=Path("-"), format="requirements-without-hashes")
         assert capsys.readouterr().out.strip() == "foo==1.0"
 
@@ -349,7 +382,9 @@ class TestLockCommandSpecific:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         with (
-            patch("nab.cli.resolve_pyproject", side_effect=ResolutionError("conflict")),
+            patch(
+                "nab.cli.resolve_for_targets", side_effect=ResolutionError("conflict")
+            ),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject)
@@ -375,7 +410,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=UnsupportedVcsError("refusing direct-URL requirement"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -390,7 +425,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=InvalidUploadTimeError("foo 1.0 has a naive upload time"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -405,7 +440,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=NotImplementedError("resolver path is not implemented"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -420,7 +455,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=ConfigError("Constraints cannot have extras: idna[foo]<3"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -433,7 +468,7 @@ class TestLockCommandSpecific:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         with (
-            patch("nab.cli.resolve_pyproject", side_effect=KeyError("dependencies")),
+            patch("nab.cli.resolve_for_targets", side_effect=KeyError("dependencies")),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject)
@@ -466,7 +501,9 @@ class TestLockCommandSpecific:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         with (
-            patch("nab.cli.resolve_pyproject", side_effect=MissingHashError("no hash")),
+            patch(
+                "nab.cli.resolve_for_targets", side_effect=MissingHashError("no hash")
+            ),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject)
@@ -479,7 +516,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=InvalidProjectRequirementError("invalid requirement 'x y'"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -494,7 +531,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=HttpError("GET https://pypi.org/simple/foo/ failed: 503"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -519,7 +556,7 @@ class TestLockCommandSpecific:
 
         pyproject = _make_pyproject(tmp_path)
         with (
-            patch("nab.cli.resolve_pyproject", side_effect=caught.value),
+            patch("nab.cli.resolve_for_targets", side_effect=caught.value),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject)
@@ -534,7 +571,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=MissingSdistError("foo==1.0 has no sdist"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -553,7 +590,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=LookupError("unknown group 'ghost'"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -605,7 +642,7 @@ class TestLockCommandSpecific:
         out = tmp_path / "pylock.toml"
         out.mkdir()
         with (
-            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=out)
@@ -618,29 +655,29 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "nope" / "pylock.toml"
         with (
-            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=out)
         assert "cannot write output" in capsys.readouterr().err
 
     def test_resolution_flag_threads_to_resolver(self, tmp_path: Path) -> None:
-        """``--project-resolution lowest`` reaches resolve_pyproject as the enum."""
+        """``--project-resolution lowest`` reaches resolve_for_targets as the enum."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(pyproject, output=out, project_resolution="lowest")
         kwargs = mock_resolve.call_args.kwargs
         assert kwargs["resolution_strategy"] is ResolutionStrategy.LOWEST
 
     def test_resolution_flag_default_none(self, tmp_path: Path) -> None:
-        """No --project-resolution: resolve_pyproject sees ``None`` (config wins)."""
+        """No --project-resolution: resolve_for_targets sees ``None`` (config wins)."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(pyproject, output=out)
         assert mock_resolve.call_args.kwargs["resolution_strategy"] is None
@@ -658,7 +695,7 @@ class TestLockCommandSpecific:
             "nab.cli._config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out, project_resolution="lowest")
         err = capsys.readouterr().err
         assert "does not derive from the committed" in err
@@ -677,7 +714,7 @@ class TestLockCommandSpecific:
             "nab.cli._config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out)
         assert "does not derive from the committed" not in capsys.readouterr().err
 
@@ -699,7 +736,7 @@ class TestLockCommandSpecific:
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         with (
-            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=out)
@@ -728,7 +765,7 @@ class TestLockCommandSpecific:
             lambda p: SourceRoots(user_toml=user, project_dir=p.parent, pyproject=p),
         )
         with (
-            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=out)
@@ -751,7 +788,7 @@ class TestLockCommandSpecific:
             lambda p: SourceRoots(user_toml=user, project_dir=p.parent, pyproject=p),
         )
         with (
-            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=out)
@@ -767,7 +804,7 @@ class TestPythonFlag:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(pyproject, output=out, python="3.11")
         assert mock_resolve.call_args.kwargs["python_version"] == "3.11"
@@ -776,7 +813,7 @@ class TestPythonFlag:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(pyproject, output=out)
         assert mock_resolve.call_args.kwargs["python_version"] is None
@@ -798,7 +835,7 @@ class TestPythonFlag:
         out = tmp_path / "wheels"
         with (
             patch(
-                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch(
                 "nab.cli.download_lock",
@@ -829,7 +866,7 @@ class TestLockCommandUniversal:
         out = tmp_path / "pylock.toml"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=InvalidProjectRequirementError("invalid requirement 'x y'"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -845,7 +882,7 @@ class TestLockCommandUniversal:
         out = tmp_path / "pylock.toml"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=InvalidUploadTimeError("foo 1.0 has a naive upload time"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -861,7 +898,7 @@ class TestLockCommandUniversal:
         out = tmp_path / "pylock.toml"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=ConfigError(
                     "[tool.nab].conflicts names extra 'gpuu', which the project"
                     " does not declare in [project.optional-dependencies]"
@@ -882,7 +919,7 @@ class TestLockCommandUniversal:
         out = tmp_path / "pylock.toml"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=NotImplementedError("resolver path is not implemented"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -914,7 +951,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_universal_result(success=True),
         ):
             lock(pyproject, output=out)
@@ -937,7 +974,7 @@ class TestLockCommandUniversal:
         )
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_universal_result(success=True),
         ):
             lock(pyproject, output=out, groups=("test",))
@@ -946,17 +983,17 @@ class TestLockCommandUniversal:
         assert pylock.default_groups == ["dev"]
 
     def test_offline_and_http_backend_passed_to_universal(self, tmp_path: Path) -> None:
-        """--http-backend and --offline reach resolve_universal_pyproject."""
+        """--http-backend and --offline reach resolve_for_targets."""
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_universal_result(success=True),
         ) as mock_resolve:
             lock(pyproject, output=out, http_backend="urllib3", offline=True)
-        kwargs = mock_resolve.call_args.kwargs
-        assert kwargs["offline"] is True
-        assert kwargs["transport"] is not None
+        assert mock_resolve.call_args.kwargs["offline"] is True
+        # The transport is the second positional argument.
+        assert mock_resolve.call_args.args[1] is not None
 
     def test_requirements_with_hashes_single_tuple_to_file(
         self, tmp_path: Path
@@ -965,7 +1002,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "requirements.txt"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_universal_result(success=True),
         ):
             lock(pyproject, format="requirements", output=out)
@@ -981,7 +1018,7 @@ class TestLockCommandUniversal:
         """Universal + pylock + --output - writes lock text to stdout."""
         pyproject = _universal_pyproject(tmp_path)
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_universal_result(success=True),
         ):
             lock(pyproject, output=Path("-"))
@@ -995,7 +1032,7 @@ class TestLockCommandUniversal:
         monkeypatch.chdir(tmp_path)
         pyproject = _universal_pyproject(tmp_path)
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_universal_result(success=True),
         ):
             lock(pyproject)
@@ -1008,7 +1045,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             patch("nab.cli.write_lock", side_effect=MissingHashError("no hash")),
@@ -1033,7 +1070,7 @@ class TestLockCommandUniversal:
         )
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             patch("nab.cli.write_lock", side_effect=DisjointnessError(hint)),
@@ -1056,7 +1093,7 @@ class TestLockCommandUniversal:
         )
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             patch(
@@ -1088,23 +1125,19 @@ class TestLockCommandUniversal:
             'platforms = ["linux_x86_64"]\n',
         )
 
-        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
-        results: list[TupleResult] = []
-        for member, version in (("cpu", "1.0"), ("gpu", "2.0")):
-            tup = _target(selection=(("extra", member),))
-            results.append(
-                TupleResult(
-                    tuple_=tup,
-                    success=True,
-                    pins={"foo": V(version)},
-                    error=None,
-                    lock_input=LockInput(pins={"foo": _foo_index_pin(version)}),
-                )
-            )
-        result = UniversalResult(matrix=matrix, tuple_results=results)
+        tuples = tuple(
+            _target(selection=(("extra", member),)) for member in ("cpu", "gpu")
+        )
+        result = ResolveResult(
+            targets=tuples,
+            target_results=[
+                _resolved(tup, {"foo": V(version)})
+                for tup, version in zip(tuples, ("1.0", "2.0"), strict=True)
+            ],
+        )
 
         with (
-            patch("nab.cli.resolve_universal_pyproject", return_value=result),
+            patch("nab.cli.resolve_for_targets", return_value=result),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(
@@ -1124,7 +1157,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=UnsupportedVcsError("refusing direct-URL requirement"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -1137,16 +1170,21 @@ class TestLockCommandUniversal:
     def test_per_tuple_pins_to_stdout_by_default(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Universal + requirements-without-hashes prints per-tuple blocks."""
+        """Universal + requirements-without-hashes prints per-tuple blocks.
+
+        A matrix of several tuples has no one installable file, so the
+        stdout dump separates them with ``# label`` headers.
+        """
         pyproject = _universal_pyproject(tmp_path)
         with patch(
-            "nab.cli.resolve_universal_pyproject",
-            return_value=_universal_result(success=True),
+            "nab.cli.resolve_for_targets",
+            return_value=_multi_tuple_universal_result(),
         ):
             lock(pyproject, format="requirements-without-hashes")
         captured = capsys.readouterr()
         assert "experimental" in captured.err
         assert "# py311-linux_x86_64" in captured.out
+        assert "# py312-linux_x86_64" in captured.out
         assert "foo==1.0" in captured.out
 
     def test_per_tuple_pins_to_explicit_file_single_tuple(self, tmp_path: Path) -> None:
@@ -1157,7 +1195,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "pins.txt"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_universal_result(success=True),
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
@@ -1172,11 +1210,11 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             patch(
-                "nab.cli.merge_universal_lock_inputs",
+                "nab.cli.build_lock_input",
                 return_value=MagicMock(name="LockInput"),
             ),
             patch(
@@ -1198,15 +1236,17 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
-                return_value=_universal_result(success=False, error="conflict"),
+                "nab.cli.resolve_for_targets",
+                return_value=_universal_result(
+                    success=False, error=ResolutionError("conflict")
+                ),
             ),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
         out = capsys.readouterr().out
         assert "FAILED" in out
-        assert "#   conflict" in out
+        assert "#   ResolutionError: conflict" in out
 
     def test_failed_tuple_multi_line_error(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1216,14 +1256,16 @@ class TestLockCommandUniversal:
         multi = "first line\nsecond line\nthird line"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
-                return_value=_universal_result(success=False, error=multi),
+                "nab.cli.resolve_for_targets",
+                return_value=_universal_result(
+                    success=False, error=ResolutionError(multi)
+                ),
             ),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
         out = capsys.readouterr().out
-        assert "#   first line" in out
+        assert "#   ResolutionError: first line" in out
         assert "#   second line" in out
         assert "#   third line" in out
 
@@ -1234,7 +1276,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=False, error=None),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -1249,7 +1291,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=KeyError("dependencies"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -1264,7 +1306,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=LookupError("unknown group 'ghost'"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -1279,7 +1321,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=HttpError("GET https://pypi.org/simple/foo/ failed: 503"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -1300,7 +1342,7 @@ class TestLockCommandUniversal:
 
         pyproject = _universal_pyproject(tmp_path)
         with (
-            patch("nab.cli.resolve_universal_pyproject", side_effect=caught.value),
+            patch("nab.cli.resolve_for_targets", side_effect=caught.value),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
@@ -1315,7 +1357,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             patch(
@@ -1332,35 +1374,22 @@ class TestLockCommandUniversal:
     ) -> None:
         """When some tuples succeed and one fails, both render as blocks.
 
-        ``_print_universal_blocks`` runs whenever any tuple failed; it
-        must print the failing tuple's ``# label: FAILED`` block AND
-        each successful tuple's ``# label`` + pins block.
+        ``_report_failures`` runs whenever any tuple failed; it must
+        print the failing tuple's ``# label: FAILED`` block AND each
+        successful tuple's ``# label`` + pins block.
         """
         pyproject = _universal_pyproject(tmp_path)
         ok_tuple = _target()
         bad_tuple = _target(platform_id="windows_amd64")
-        ok_tr = TupleResult(
-            tuple_=ok_tuple,
-            success=True,
-            pins={"foo": V("1.0")},
-            lock_input=LockInput(pins={"foo": _foo_index_pin()}),
-        )
-        bad_tr = TupleResult(
-            tuple_=bad_tuple,
-            success=False,
-            pins={},
-            error="conflict",
-            lock_input=None,
-        )
-        mixed = UniversalResult(
-            matrix=Matrix(
-                python="==3.11",
-                platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
-            ),
-            tuple_results=[ok_tr, bad_tr],
+        mixed = ResolveResult(
+            targets=(ok_tuple, bad_tuple),
+            target_results=[
+                _resolved(ok_tuple, {"foo": V("1.0")}),
+                _failed(bad_tuple, ResolutionError("conflict")),
+            ],
         )
         with (
-            patch("nab.cli.resolve_universal_pyproject", return_value=mixed),
+            patch("nab.cli.resolve_for_targets", return_value=mixed),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
@@ -1375,39 +1404,25 @@ class TestLockCommandUniversal:
         # All per-tuple pins succeeded, the first env's base pass
         # succeeded, and the second env's base pass failed: only the
         # failed one renders a ``base/<label>: FAILED`` block.  One
-        # tuple has to fail so ``_print_universal_blocks`` runs at all.
+        # tuple has to fail so ``_report_failures`` runs at all.
         pyproject = _universal_pyproject(tmp_path)
         env_a = _target()
         env_b = _target("3.12")
-        bad_tr = TupleResult(
-            tuple_=env_b,
-            success=False,
-            pins={},
-            error="conflict",
-            lock_input=None,
-        )
-        ok_tr = TupleResult(
-            tuple_=env_a,
-            success=True,
-            pins={"foo": V("1.0")},
-            lock_input=LockInput(pins={"foo": _foo_index_pin()}),
-        )
-        ok_base = TupleResult(tuple_=env_a, success=True, pins={"foo": V("1.0")})
-        bad_base = TupleResult(
-            tuple_=env_b,
-            success=False,
-            pins={},
-            error="ResolutionError: base unresolvable\nDiagnostics: missing",
-        )
-        mixed = UniversalResult(
-            matrix=Matrix(
-                python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
-            ),
-            tuple_results=[ok_tr, bad_tr],
-            base_results=[ok_base, bad_base],
+        mixed = ResolveResult(
+            targets=(env_a, env_b),
+            target_results=[
+                _resolved(env_a, {"foo": V("1.0")}),
+                _failed(env_b, ResolutionError("conflict")),
+            ],
+            base_results=[
+                _resolved(env_a, {"foo": V("1.0")}),
+                _failed(
+                    env_b, ResolutionError("base unresolvable\nDiagnostics: missing")
+                ),
+            ],
         )
         with (
-            patch("nab.cli.resolve_universal_pyproject", return_value=mixed),
+            patch("nab.cli.resolve_for_targets", return_value=mixed),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
@@ -1425,7 +1440,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "constraints-{python_version}.txt"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_multi_tuple_universal_result(),
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
@@ -1440,7 +1455,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "constraints-{python_version}-{platform_id}.txt"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_multi_tuple_universal_result(),
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
@@ -1451,7 +1466,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "req-{python_version}.txt"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_multi_tuple_universal_result(),
         ):
             lock(pyproject, format="requirements", output=out)
@@ -1467,7 +1482,7 @@ class TestLockCommandUniversal:
         out = tmp_path / "requirements.txt"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_multi_tuple_universal_result(),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -1484,27 +1499,18 @@ class TestLockCommandUniversal:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """A template missing ``{platform_id}`` on a multi-platform matrix exits 1."""
-        matrix = Matrix(
-            python="==3.11",
-            platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
+        tuples = tuple(
+            _target(platform_id=platform_id)
+            for platform_id in ("linux_x86_64", "windows_amd64")
         )
-        tuples_results = []
-        for platform_id in ("linux_x86_64", "windows_amd64"):
-            tup = _target(platform_id=platform_id)
-            tuples_results.append(
-                TupleResult(
-                    tuple_=tup,
-                    success=True,
-                    pins={"foo": V("1.0")},
-                    error=None,
-                    lock_input=LockInput(pins={"foo": _foo_index_pin()}),
-                )
-            )
-        result = UniversalResult(matrix=matrix, tuple_results=tuples_results)
+        result = ResolveResult(
+            targets=tuples,
+            target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
+        )
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "constraints-{python_version}.txt"
         with (
-            patch("nab.cli.resolve_universal_pyproject", return_value=result),
+            patch("nab.cli.resolve_for_targets", return_value=result),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
@@ -1521,7 +1527,7 @@ class TestLockCommandUniversal:
         out = tmp_path / "req-{python_version}-{foo}.txt"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -1539,7 +1545,7 @@ class TestLockCommandUniversal:
         out = tmp_path / "req-{python_version}-{.txt"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -1555,7 +1561,7 @@ class TestLockCommandUniversal:
         out = tmp_path / "req-{python_version}-{platform_id:d}.txt"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -1572,7 +1578,7 @@ class TestLockCommandUniversal:
         out = tmp_path / "req-{platform_id}-{python_version!r}.txt"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -1586,7 +1592,7 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "constraints-{python_version}.txt"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=_universal_result(success=True),
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
@@ -1600,7 +1606,7 @@ class TestLockCommandUniversal:
         out = tmp_path / "req-{python_version}.txt"
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             patch(
@@ -1618,29 +1624,16 @@ class TestLockCommandUniversal:
         # Build a mixed matrix: 3.11 succeeds, 3.12 fails.
         good_tup = _target()
         bad_tup = _target("3.12")
-        good_tr = TupleResult(
-            tuple_=good_tup,
-            success=True,
-            pins={"foo": V("1.0")},
-            error=None,
-            lock_input=LockInput(pins={"foo": _foo_index_pin()}),
-        )
-        bad_tr = TupleResult(
-            tuple_=bad_tup,
-            success=False,
-            pins={},
-            error="boom",
-            lock_input=None,
-        )
-        mixed = UniversalResult(
-            matrix=Matrix(
-                python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
-            ),
-            tuple_results=[good_tr, bad_tr],
+        mixed = ResolveResult(
+            targets=(good_tup, bad_tup),
+            target_results=[
+                _resolved(good_tup, {"foo": V("1.0")}),
+                _failed(bad_tup, ResolutionError("boom")),
+            ],
         )
         out = tmp_path / "constraints-{python_version}.txt"
         with (
-            patch("nab.cli.resolve_universal_pyproject", return_value=mixed),
+            patch("nab.cli.resolve_for_targets", return_value=mixed),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
@@ -1654,41 +1647,25 @@ class TestNoEmitWorkspace:
     """``--no-emit-workspace`` drops workspace pins from the lockfile."""
 
     @staticmethod
-    def _alpha_and_foo_result() -> ResolutionResult:
-        """A specific-mode result with a workspace pin (alpha) and foo."""
-        return ResolutionResult(
-            pins={"alpha": V("0"), "foo": V("1.0")},
-            lock_input=LockInput(
-                pins={
-                    "alpha": _foo_index_pin("0", "alpha"),
-                    "foo": _foo_index_pin("1.0", "foo"),
-                }
-            ),
-        )
+    def _alpha_and_foo_result() -> ResolveResult:
+        """A single-environment result with a workspace pin (alpha) and foo."""
+        return _stub_resolve_result(pins={"alpha": V("0"), "foo": V("1.0")})
 
     @staticmethod
-    def _alpha_and_foo_universal() -> UniversalResult:
+    def _alpha_and_foo_universal() -> ResolveResult:
         """A universal result with alpha + foo on a single tuple."""
-        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         tup = _target()
-        pins = {"alpha": V("0"), "foo": V("1.0")}
-        lock_input = LockInput(
-            pins={
-                "alpha": _foo_index_pin("0", "alpha"),
-                "foo": _foo_index_pin("1.0", "foo"),
-            }
+        return ResolveResult(
+            targets=(tup,),
+            target_results=[_resolved(tup, {"alpha": V("0"), "foo": V("1.0")})],
         )
-        tr = TupleResult(
-            tuple_=tup, success=True, pins=pins, error=None, lock_input=lock_input
-        )
-        return UniversalResult(matrix=matrix, tuple_results=[tr])
 
     def test_specific_pylock_drops_workspace_pin(self, tmp_path: Path) -> None:
         """Specific mode + pylock with the flag set drops the workspace pin."""
         pyproject = _workspace_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_pyproject", return_value=self._alpha_and_foo_result()
+            "nab.cli.resolve_for_targets", return_value=self._alpha_and_foo_result()
         ):
             lock(pyproject, output=out, no_emit_workspace=True)
         text = out.read_text()
@@ -1700,7 +1677,7 @@ class TestNoEmitWorkspace:
         pyproject = _workspace_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_pyproject", return_value=self._alpha_and_foo_result()
+            "nab.cli.resolve_for_targets", return_value=self._alpha_and_foo_result()
         ):
             lock(pyproject, output=out)
         text = out.read_text()
@@ -1713,7 +1690,7 @@ class TestNoEmitWorkspace:
         pyproject = _workspace_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_pyproject", return_value=self._alpha_and_foo_result()
+            "nab.cli.resolve_for_targets", return_value=self._alpha_and_foo_result()
         ):
             lock(pyproject, output=out, no_emit_workspace=True)
         assert "(1 packages)" in capsys.readouterr().err
@@ -1723,7 +1700,7 @@ class TestNoEmitWorkspace:
         pyproject = _workspace_pyproject(tmp_path)
         out = tmp_path / "requirements.txt"
         with patch(
-            "nab.cli.resolve_pyproject", return_value=self._alpha_and_foo_result()
+            "nab.cli.resolve_for_targets", return_value=self._alpha_and_foo_result()
         ):
             lock(pyproject, output=out, format="requirements", no_emit_workspace=True)
         text = out.read_text()
@@ -1735,7 +1712,7 @@ class TestNoEmitWorkspace:
         pyproject = _workspace_pyproject(tmp_path, universal=True)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=self._alpha_and_foo_universal(),
         ):
             lock(pyproject, output=out, no_emit_workspace=True)
@@ -1749,11 +1726,12 @@ class TestNoEmitWorkspace:
         """Universal requirements + stdout drops workspace pin lines."""
         pyproject = _workspace_pyproject(tmp_path, universal=True)
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=self._alpha_and_foo_universal(),
         ):
             lock(
                 pyproject,
+                output=Path("-"),
                 format="requirements-without-hashes",
                 no_emit_workspace=True,
             )
@@ -1768,7 +1746,7 @@ class TestNoEmitWorkspace:
         pyproject = _workspace_pyproject(tmp_path, universal=True)
         out = tmp_path / "constraints-{python_version}.txt"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=self._alpha_and_foo_universal(),
         ):
             lock(
@@ -1788,7 +1766,7 @@ class TestNoEmitWorkspace:
         pyproject = _workspace_pyproject(tmp_path, universal=True)
         out = tmp_path / "requirements.txt"
         with patch(
-            "nab.cli.resolve_universal_pyproject",
+            "nab.cli.resolve_for_targets",
             return_value=self._alpha_and_foo_universal(),
         ):
             lock(
@@ -1807,7 +1785,7 @@ class TestNoEmitWorkspace:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
-            "nab.cli.resolve_pyproject", return_value=self._alpha_and_foo_result()
+            "nab.cli.resolve_for_targets", return_value=self._alpha_and_foo_result()
         ):
             lock(pyproject, output=out, no_emit_workspace=True)
         text = out.read_text()
@@ -1818,19 +1796,22 @@ class TestNoEmitWorkspace:
         self, tmp_path: Path
     ) -> None:
         """A retained package keeps no forward edge to the dropped member."""
-        result = ResolutionResult(
-            pins={"alpha": V("0"), "foo": V("1.0")},
-            lock_input=LockInput(
-                pins={
-                    "alpha": _foo_index_pin("0", "alpha"),
-                    "foo": _foo_index_pin("1.0", "foo"),
-                },
-                dependencies={"foo": ("alpha",)},
-            ),
+        target = ResolveTarget.for_host()
+        pins = {"alpha": V("0"), "foo": V("1.0")}
+        result = ResolveResult(
+            targets=(target,),
+            target_results=[
+                TargetResult(
+                    target=target,
+                    success=True,
+                    pins=pins,
+                    lock=_target_lock(target, pins, {"foo": ("alpha",)}),
+                )
+            ],
         )
         pyproject = _workspace_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        with patch("nab.cli.resolve_pyproject", return_value=result):
+        with patch("nab.cli.resolve_for_targets", return_value=result):
             lock(pyproject, output=out, no_emit_workspace=True)
         text = out.read_text()
         assert 'name = "foo"' in text
@@ -1839,34 +1820,32 @@ class TestNoEmitWorkspace:
 
     def test_drop_filters_dependency_graph(self) -> None:
         """Dropped members vanish as graph keys and as edge targets."""
+        target = ResolveTarget.for_host()
         lock_input = LockInput(
-            pins={
-                "foo": _foo_index_pin("1.0", "foo"),
-                "bar": _foo_index_pin("2.0", "bar"),
-            },
-            dependencies={
-                "foo": ("alpha", "bar"),
-                "bar": ("alpha",),
-                "alpha": ("bar",),
-            },
+            targets={
+                target.label: _target_lock(
+                    target,
+                    {"foo": V("1.0"), "bar": V("2.0")},
+                    {
+                        "foo": ("alpha", "bar"),
+                        "bar": ("alpha",),
+                        "alpha": ("bar",),
+                    },
+                )
+            }
         )
         dropped = _drop_workspace_pins(lock_input, frozenset({"alpha"}))
-        assert dropped.dependencies == {"foo": ("bar",)}
+        assert dropped.targets[target.label].dependencies == {"foo": ("bar",)}
 
 
 class TestRelockDiffSummary:
-    """``_emit_specific`` reports what changed against the prior pylock."""
+    """``_emit`` reports what changed against the prior pylock."""
 
     def test_first_lock_prints_plain_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         out = tmp_path / "pylock.toml"
-        _emit_specific(
-            _stub_resolution_result(pins={"foo": V("1.0")}),
-            format="pylock",
-            output=out,
-            provenance=None,
-        )
+        _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
         err = capsys.readouterr().err
         assert err.strip().endswith("(1 packages)")
 
@@ -1874,19 +1853,17 @@ class TestRelockDiffSummary:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         out = tmp_path / "pylock.toml"
-        _emit_specific(
-            _stub_resolution_result(pins={"foo": V("1.0"), "bar": V("1.0")}),
+        _emit(
+            _stub_lock_input({"foo": V("1.0"), "bar": V("1.0")}),
             format="pylock",
             output=out,
-            provenance=None,
         )
         capsys.readouterr()
         # foo upgraded 1.0 -> 2.0, bar removed, baz added.
-        _emit_specific(
-            _stub_resolution_result(pins={"foo": V("2.0"), "baz": V("1.0")}),
+        _emit(
+            _stub_lock_input({"foo": V("2.0"), "baz": V("1.0")}),
             format="pylock",
             output=out,
-            provenance=None,
         )
         err = capsys.readouterr().err.strip()
         assert err.endswith("(2 packages: 1 added, 1 upgraded, 1 removed)")
@@ -1895,19 +1872,9 @@ class TestRelockDiffSummary:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         out = tmp_path / "pylock.toml"
-        _emit_specific(
-            _stub_resolution_result(pins={"foo": V("2.0")}),
-            format="pylock",
-            output=out,
-            provenance=None,
-        )
+        _emit(_stub_lock_input({"foo": V("2.0")}), format="pylock", output=out)
         capsys.readouterr()
-        _emit_specific(
-            _stub_resolution_result(pins={"foo": V("1.0")}),
-            format="pylock",
-            output=out,
-            provenance=None,
-        )
+        _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
         assert capsys.readouterr().err.strip().endswith("(1 packages: 1 downgraded)")
 
     def test_relock_unchanged_prints_plain_line(
@@ -1916,12 +1883,7 @@ class TestRelockDiffSummary:
         """A re-lock with identical pins prints no diff suffix."""
         out = tmp_path / "pylock.toml"
         for _ in range(2):
-            _emit_specific(
-                _stub_resolution_result(pins={"foo": V("1.0")}),
-                format="pylock",
-                output=out,
-                provenance=None,
-            )
+            _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
         assert capsys.readouterr().err.strip().endswith("(1 packages)")
 
     def test_relock_unchanged_with_local_pin_prints_plain_line(
@@ -1932,21 +1894,14 @@ class TestRelockDiffSummary:
         out = tmp_path / "pylock.toml"
         src = tmp_path / "alpha"
         src.mkdir()
-        lock_input = LockInput(
-            pins={
+        lock_input = _lock_input(
+            {
                 "foo": _foo_index_pin("1.0", "foo"),
                 "alpha": LocalPin(name="alpha", version="0", path=str(src)),
             }
         )
         for _ in range(2):
-            _emit_specific(
-                ResolutionResult(
-                    pins={"foo": V("1.0"), "alpha": V("0")}, lock_input=lock_input
-                ),
-                format="pylock",
-                output=out,
-                provenance=None,
-            )
+            _emit(lock_input, format="pylock", output=out)
         assert capsys.readouterr().err.strip().endswith("(2 packages)")
 
     def test_relock_unchanged_with_archive_pin_prints_plain_line(
@@ -1955,8 +1910,8 @@ class TestRelockDiffSummary:
         """An archive pin records a version, so an unchanged relock must
         diff it (not count it as removed)."""
         out = tmp_path / "pylock.toml"
-        lock_input = LockInput(
-            pins={
+        lock_input = _lock_input(
+            {
                 "foo": ArchivePin(
                     name="foo",
                     version="1.0",
@@ -1966,12 +1921,7 @@ class TestRelockDiffSummary:
             }
         )
         for _ in range(2):
-            _emit_specific(
-                ResolutionResult(pins={"foo": V("1.0")}, lock_input=lock_input),
-                format="pylock",
-                output=out,
-                provenance=None,
-            )
+            _emit(lock_input, format="pylock", output=out)
         assert capsys.readouterr().err.strip().endswith("(1 packages)")
 
     def test_unparseable_prior_falls_back_to_plain_line(
@@ -1979,21 +1929,11 @@ class TestRelockDiffSummary:
     ) -> None:
         out = tmp_path / "pylock.toml"
         out.write_text("this is not valid toml === {[\n")
-        _emit_specific(
-            _stub_resolution_result(pins={"foo": V("1.0")}),
-            format="pylock",
-            output=out,
-            provenance=None,
-        )
+        _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
         assert capsys.readouterr().err.strip().endswith("(1 packages)")
 
     def test_stdout_emits_no_diff(self, capsys: pytest.CaptureFixture[str]) -> None:
-        _emit_specific(
-            _stub_resolution_result(pins={"foo": V("1.0")}),
-            format="pylock",
-            output=Path("-"),
-            provenance=None,
-        )
+        _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=Path("-"))
         captured = capsys.readouterr()
         assert "added" not in captured.err
         assert "packages" not in captured.err
@@ -2004,11 +1944,8 @@ class TestRelockDiffSummary:
         """A requirements re-lock keeps the plain line; only pylock diffs."""
         out = tmp_path / "requirements.txt"
         for _ in range(2):
-            _emit_specific(
-                _stub_resolution_result(pins={"foo": V("1.0")}),
-                format="requirements",
-                output=out,
-                provenance=None,
+            _emit(
+                _stub_lock_input({"foo": V("1.0")}), format="requirements", output=out
             )
         assert capsys.readouterr().err.strip().endswith("(1 packages)")
 
@@ -2032,7 +1969,7 @@ class TestPylockOutputNameValidation:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -2043,7 +1980,7 @@ class TestPylockOutputNameValidation:
     def test_specific_accepts_named_pylock(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.dev.toml"
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out)
         assert out.exists()
 
@@ -2060,7 +1997,7 @@ class TestPylockOutputNameValidation:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=Path("-"))
         assert 'lock-version = "1.0"' in capsys.readouterr().out
 
@@ -2068,7 +2005,7 @@ class TestPylockOutputNameValidation:
         """A non-pylock format is free to use any output name."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "constraints.txt"
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out, format="requirements")
         assert out.exists()
 
@@ -2322,7 +2259,7 @@ class TestLockAnchorReuse:
             tmp_path,
             '[project]\ndependencies = ["foo"]\n[tool.nab]\nuploaded-prior-to = "P4D"\n',
         )
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=prior)
         # New pylock's [tool.nab].created-at must equal the prior anchor.
         from nab_python.lockfile import read_lockfile_anchor
@@ -2338,7 +2275,7 @@ class TestLockAnchorReuse:
             tmp_path,
             '[project]\ndependencies = ["foo"]\n[tool.nab]\nuploaded-prior-to = "P4D"\n',
         )
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=prior, upgrade=True)
         from nab_python.lockfile import read_lockfile_anchor
 
@@ -2356,7 +2293,7 @@ class TestLockAnchorReuse:
             f'[tool.nab]\nuploaded-prior-to = "{absolute.isoformat()}"\n',
         )
         out = tmp_path / "pylock.toml"
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out)
         from nab_python.lockfile import read_lockfile_anchor
 
@@ -2384,15 +2321,33 @@ def _hashed_pin(version: str, name: str, *, sha: str) -> IndexPin:
     )
 
 
+def _hashed_resolve_result(*, sha: str) -> ResolveResult:
+    """A host resolve pinning foo 1.0 with caller-chosen artifact hashes."""
+    target = ResolveTarget.for_host()
+    return ResolveResult(
+        targets=(target,),
+        target_results=[
+            TargetResult(
+                target=target,
+                success=True,
+                pins={"foo": V("1.0")},
+                lock=TargetLock(
+                    target=target, pins={"foo": _hashed_pin("1.0", "foo", sha=sha)}
+                ),
+            )
+        ],
+    )
+
+
 class TestLockedFlag:
     """``nab lock --locked`` re-resolves and verifies the committed pylock."""
 
-    def _write_lock(self, pyproject: Path, out: Path, result: ResolutionResult) -> None:
-        with patch("nab.cli.resolve_pyproject", return_value=result):
+    def _write_lock(self, pyproject: Path, out: Path, result: ResolveResult) -> None:
+        with patch("nab.cli.resolve_for_targets", return_value=result):
             app.cli(args=["lock", str(pyproject), "--output", str(out)], prog="nab")
 
-    def _run_locked(self, pyproject: Path, out: Path, result: ResolutionResult) -> None:
-        with patch("nab.cli.resolve_pyproject", return_value=result):
+    def _run_locked(self, pyproject: Path, out: Path, result: ResolveResult) -> None:
+        with patch("nab.cli.resolve_for_targets", return_value=result):
             app.cli(
                 args=["lock", str(pyproject), "--output", str(out), "--locked"],
                 prog="nab",
@@ -2403,14 +2358,10 @@ class TestLockedFlag:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        self._write_lock(
-            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
-        )
+        self._write_lock(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         capsys.readouterr()
         before = out.read_bytes()
-        self._run_locked(
-            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
-        )
+        self._run_locked(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         assert "is up to date" in capsys.readouterr().err
         assert out.read_bytes() == before
 
@@ -2419,14 +2370,12 @@ class TestLockedFlag:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        self._write_lock(
-            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
-        )
+        self._write_lock(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         capsys.readouterr()
         before = out.read_bytes()
         with pytest.raises(SystemExit) as exc:
             self._run_locked(
-                pyproject, out, _stub_resolution_result(pins={"foo": V("2.0")})
+                pyproject, out, _stub_resolve_result(pins={"foo": V("2.0")})
             )
         assert exc.value.code == 1
         assert "out of date" in capsys.readouterr().err
@@ -2439,16 +2388,10 @@ class TestLockedFlag:
         # version, so a re-upload is still caught.
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        first = ResolutionResult(
-            pins={"foo": V("1.0")},
-            lock_input=LockInput(pins={"foo": _hashed_pin("1.0", "foo", sha="a" * 64)}),
-        )
+        first = _hashed_resolve_result(sha="a" * 64)
         self._write_lock(pyproject, out, first)
         capsys.readouterr()
-        changed = ResolutionResult(
-            pins={"foo": V("1.0")},
-            lock_input=LockInput(pins={"foo": _hashed_pin("1.0", "foo", sha="c" * 64)}),
-        )
+        changed = _hashed_resolve_result(sha="c" * 64)
         with pytest.raises(SystemExit) as exc:
             self._run_locked(pyproject, out, changed)
         assert exc.value.code == 1
@@ -2460,7 +2403,7 @@ class TestLockedFlag:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with pytest.raises(SystemExit) as exc:
-            self._run_locked(pyproject, out, _stub_resolution_result())
+            self._run_locked(pyproject, out, _stub_resolve_result())
         assert exc.value.code == 1
         assert "no lockfile" in capsys.readouterr().err
 
@@ -2471,15 +2414,13 @@ class TestLockedFlag:
         # it and exits without touching the committed lock, like a normal lock.
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        self._write_lock(
-            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
-        )
+        self._write_lock(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         capsys.readouterr()
         before = out.read_bytes()
         with (
             patch(
-                "nab.cli.resolve_pyproject",
-                return_value=_stub_resolution_result(pins={"foo": V("1.0")}),
+                "nab.cli.resolve_for_targets",
+                return_value=_stub_resolve_result(pins={"foo": V("1.0")}),
             ),
             patch("nab.cli.render_lock", side_effect=MissingHashError("no hash")),
             pytest.raises(SystemExit) as exc,
@@ -2499,14 +2440,12 @@ class TestLockedFlag:
         # not a raw TOMLDecodeError.
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        self._write_lock(
-            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
-        )
+        self._write_lock(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         capsys.readouterr()
         out.write_text('lock-version = "1.0"\n<<<<<<< HEAD\n', encoding="utf-8")
         with pytest.raises(SystemExit) as exc:
             self._run_locked(
-                pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+                pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")})
             )
         assert exc.value.code == 1
         assert "is not valid TOML" in capsys.readouterr().err
@@ -2518,14 +2457,12 @@ class TestLockedFlag:
         # not a raw UnicodeDecodeError.
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        self._write_lock(
-            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
-        )
+        self._write_lock(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         capsys.readouterr()
         out.write_bytes(b"\xff\xfe not utf-8")
         with pytest.raises(SystemExit) as exc:
             self._run_locked(
-                pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
+                pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")})
             )
         assert exc.value.code == 1
         assert "is not valid TOML" in capsys.readouterr().err
@@ -2590,12 +2527,10 @@ class TestLockedFlag:
             'name = "foo"\npath = "vendor"\n',
         )
         out = tmp_path / "pylock.toml"
-        result = _stub_resolution_result(pins={"foo": V("1.0")})
+        result = _stub_resolve_result(pins={"foo": V("1.0")})
         self._write_lock(pyproject, out, result)
         capsys.readouterr()
-        self._run_locked(
-            pyproject, out, _stub_resolution_result(pins={"foo": V("1.0")})
-        )
+        self._run_locked(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         assert "is up to date" in capsys.readouterr().err
 
 
@@ -2605,7 +2540,7 @@ class TestLockProvenanceCliOverrides:
     def test_cli_override_recorded_in_pylock(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             app.cli(
                 args=[
                     "lock",
@@ -2623,7 +2558,7 @@ class TestLockProvenanceCliOverrides:
     def test_no_cli_override_omits_key(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        with patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()):
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             app.cli(args=["lock", str(pyproject), "--output", str(out)], prog="nab")
         block = tomli.loads(out.read_text())["tool"]["nab"]
         assert "cli-project-overrides" not in block
@@ -2780,30 +2715,27 @@ class TestGroupAndExtraSelection:
 
 
 class TestEmitHelpers:
-    """Helpers accept ``provenance=None``.
+    """The emit helpers accept a lock input with no provenance.
 
-    ``_emit_specific`` and ``_emit_universal_pylock`` skip the
-    provenance assignment when called with ``None`` so callers
-    that do not want a ``[tool.nab]`` block can pass nothing.
+    ``LockInput.provenance`` defaults to ``None``, so a caller that does
+    not want a ``[tool.nab]`` block simply never sets it.
     """
 
-    def test_emit_specific_without_provenance(self, tmp_path: Path) -> None:
+    def test_emit_without_provenance(self, tmp_path: Path) -> None:
         out = tmp_path / "pylock.toml"
-        _emit_specific(
-            _stub_resolution_result(),
-            format="pylock",
-            output=out,
-            provenance=None,
-        )
+        _emit(_stub_lock_input(), format="pylock", output=out)
         # The output is a valid pylock without [tool.nab] provenance.
         text = out.read_text()
         assert 'lock-version = "1.0"' in text
         assert "[tool.nab]" not in text
 
-    def test_emit_universal_pylock_without_provenance(self, tmp_path: Path) -> None:
-        result = _universal_result(success=True)
+    def test_emit_pylock_without_provenance(self, tmp_path: Path) -> None:
+        tup = _target()
+        lock_input = LockInput(
+            targets={tup.label: _target_lock(tup, {"foo": V("1.0")})}
+        )
         out = tmp_path / "pylock.toml"
-        _emit_universal_pylock(result, output=out, provenance=None)
+        _emit_pylock(lock_input, output=out)
         text = out.read_text()
         assert 'lock-version = "1.0"' in text
 
@@ -2816,8 +2748,8 @@ class TestCacheFlags:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
-                return_value=_stub_resolution_result(pins={}),
+                "nab.cli.resolve_for_targets",
+                return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
             patch("nab.cli.write_lock"),
         ):
@@ -2827,13 +2759,13 @@ class TestCacheFlags:
         assert kwargs["offline"] is False
 
     def test_explicit_cache_dir_passed_through(self, tmp_path: Path) -> None:
-        """An explicit --cache-dir flows through to resolve_pyproject."""
+        """An explicit --cache-dir flows through to resolve_for_targets."""
         pyproject = _make_pyproject(tmp_path)
         cache = tmp_path / "mycache"
         with (
             patch(
-                "nab.cli.resolve_pyproject",
-                return_value=_stub_resolution_result(pins={}),
+                "nab.cli.resolve_for_targets",
+                return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
             patch("nab.cli.write_lock"),
         ):
@@ -2845,8 +2777,8 @@ class TestCacheFlags:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
-                return_value=_stub_resolution_result(pins={}),
+                "nab.cli.resolve_for_targets",
+                return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
             patch("nab.cli.write_lock"),
         ):
@@ -2854,12 +2786,12 @@ class TestCacheFlags:
         assert mock_resolve.call_args.kwargs["cache_dir"] is None
 
     def test_offline_passed_through(self, tmp_path: Path) -> None:
-        """--offline flows through to resolve_pyproject."""
+        """--offline flows through to resolve_for_targets."""
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
-                return_value=_stub_resolution_result(pins={}),
+                "nab.cli.resolve_for_targets",
+                return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
             patch("nab.cli.write_lock"),
         ):
@@ -2933,8 +2865,8 @@ class TestOfflineFlagContract:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
-                return_value=_stub_resolution_result(pins={}),
+                "nab.cli.resolve_for_targets",
+                return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
             patch("nab.cli.write_lock"),
         ):
@@ -3016,8 +2948,8 @@ class TestMainNormalizesOfflineFlag:
         )
         with (
             patch(
-                "nab.cli.resolve_pyproject",
-                return_value=_stub_resolution_result(pins={}),
+                "nab.cli.resolve_for_targets",
+                return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
             patch("nab.cli.write_lock"),
         ):
@@ -3079,8 +3011,8 @@ class TestLayeredRunKnobFlagContract:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_pyproject",
-                return_value=_stub_resolution_result(pins={}),
+                "nab.cli.resolve_for_targets",
+                return_value=_stub_resolve_result(pins={}),
             ),
             patch("nab.cli.write_lock"),
             patch("nab.cli._make_transport") as mock_transport,
@@ -3221,7 +3153,7 @@ class TestDownloadCommand:
         out = tmp_path / "vendor"
         download_result = MagicMock(written=(out / "x.whl",), skipped=())
         with (
-            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             patch("nab.cli.download_lock", return_value=download_result) as mock_dl,
         ):
             download(pyproject, output=out)
@@ -3242,7 +3174,7 @@ class TestDownloadCommand:
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         with (
-            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             patch("nab.cli.download_lock", return_value=download_result),
         ):
             download(pyproject, output=out, project_resolution="lowest")
@@ -3258,14 +3190,14 @@ class TestDownloadCommand:
         download_result = MagicMock(written=(out / "foo.whl",), skipped=())
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_multi_tuple_universal_result(),
             ),
             patch("nab.cli.download_lock", return_value=download_result) as mock_dl,
         ):
             download(pyproject, output=out)
         lock_input = mock_dl.call_args.args[0]
-        assert set(lock_input.per_tuple_pins) == {
+        assert set(lock_input.targets) == {
             "py311-linux_x86_64",
             "py312-linux_x86_64",
         }
@@ -3277,7 +3209,7 @@ class TestDownloadCommand:
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 side_effect=ConfigError(
                     "exactly one of [extra 'cpu', extra 'gpu'] must be selected"
                 ),
@@ -3303,7 +3235,9 @@ class TestDownloadCommand:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         with (
-            patch("nab.cli.resolve_pyproject", side_effect=ResolutionError("conflict")),
+            patch(
+                "nab.cli.resolve_for_targets", side_effect=ResolutionError("conflict")
+            ),
             pytest.raises(SystemExit, match="1"),
         ):
             download(pyproject)
@@ -3314,7 +3248,7 @@ class TestDownloadCommand:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         with (
-            patch("nab.cli.resolve_pyproject", side_effect=KeyError("dependencies")),
+            patch("nab.cli.resolve_for_targets", side_effect=KeyError("dependencies")),
             pytest.raises(SystemExit, match="1"),
         ):
             download(pyproject)
@@ -3325,7 +3259,9 @@ class TestDownloadCommand:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         with (
-            patch("nab.cli.resolve_pyproject", side_effect=MissingHashError("no hash")),
+            patch(
+                "nab.cli.resolve_for_targets", side_effect=MissingHashError("no hash")
+            ),
             pytest.raises(SystemExit, match="1"),
         ):
             download(pyproject)
@@ -3336,7 +3272,7 @@ class TestDownloadCommand:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         with (
-            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             patch("nab.cli.download_lock", side_effect=DownloadError("sha mismatch")),
             pytest.raises(SystemExit, match="1"),
         ):
@@ -3351,7 +3287,7 @@ class TestDownloadCommand:
         out = tmp_path / "wheels"
         out.write_text("not a directory")
         with (
-            patch("nab.cli.resolve_pyproject", return_value=_stub_resolution_result()),
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             pytest.raises(SystemExit, match="1"),
         ):
             download(pyproject, output=out)
@@ -3393,7 +3329,7 @@ class TestDownloadCommand:
         download_result = MagicMock(written=(), skipped=())
         with (
             patch(
-                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab.cli.download_lock", return_value=download_result),
         ):
@@ -3409,7 +3345,7 @@ class TestDownloadCommand:
         download_result = MagicMock(written=(), skipped=())
         with (
             patch(
-                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab.cli.download_lock", return_value=download_result),
         ):
@@ -3425,7 +3361,7 @@ class TestDownloadCommand:
         download_result = MagicMock(written=(), skipped=())
         with (
             patch(
-                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab.cli.download_lock", return_value=download_result),
         ):
@@ -3441,7 +3377,7 @@ class TestDownloadCommand:
         download_result = MagicMock(written=(), skipped=())
         with (
             patch(
-                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab.cli.download_lock", return_value=download_result),
         ):
@@ -3453,7 +3389,7 @@ class TestDownloadCommand:
         download_result = MagicMock(written=(), skipped=())
         with (
             patch(
-                "nab.cli.resolve_universal_pyproject",
+                "nab.cli.resolve_for_targets",
                 return_value=_multi_tuple_universal_result(),
             ) as mock_resolve,
             patch("nab.cli.download_lock", return_value=download_result),

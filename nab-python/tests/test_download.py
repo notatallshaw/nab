@@ -23,10 +23,43 @@ from nab_python.lockfile import (
     IndexPin,
     LocalPin,
     LockInput,
+    PinShape,
     SdistArtifact,
+    TargetLock,
     VcsPin,
     WheelArtifact,
 )
+from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
+
+
+def _target(
+    python_version: str = "3.11", platform: str = "linux_x86_64"
+) -> ResolveTarget:
+    """One declared (python, platform) target of a resolve."""
+    return ResolveTarget.for_declared(
+        python_version=python_version, spec=PlatformSpec(platform)
+    )
+
+
+# A resolve always runs against at least one target, so one entry is the
+# smallest lock there is.
+_HOST = _target()
+
+
+def _one(pins: Mapping[str, PinShape]) -> dict[str, TargetLock]:
+    """Return the one-target map a single-environment resolve produces."""
+    return {_HOST.label: TargetLock(target=_HOST, pins=dict(pins))}
+
+
+def _targets(
+    *entries: tuple[ResolveTarget, Mapping[str, PinShape]],
+) -> dict[str, TargetLock]:
+    """Return the per-target map for the given ``(target, pins)`` pairs."""
+    return {
+        target.label: TargetLock(target=target, pins=dict(pins))
+        for target, pins in entries
+    }
 
 
 def _wheel(name: str, version: str, *, sha256: str) -> WheelArtifact:
@@ -112,7 +145,7 @@ class _FakeTransport:
 class TestIterArtifacts:
     def test_index_pin_yields_sdist_and_wheels(self) -> None:
         pin = _index_pin(sdist_sha="b" * 64, wheel_sha="a" * 64)
-        entries = list(iter_artifacts(LockInput(pins={"foo": pin})))
+        entries = list(iter_artifacts(LockInput(targets=_one({"foo": pin}))))
         assert [e.filename for e in entries] == [
             "foo-1.0.tar.gz",
             "foo-1.0-py3-none-any.whl",
@@ -122,9 +155,9 @@ class TestIterArtifacts:
         entries = list(
             iter_artifacts(
                 LockInput(
-                    pins={
-                        "foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))
-                    }
+                    targets=_one(
+                        {"foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))}
+                    )
                 )
             )
         )
@@ -134,15 +167,17 @@ class TestIterArtifacts:
         entries = list(
             iter_artifacts(
                 LockInput(
-                    pins={
-                        "foo": VcsPin(
-                            name="foo",
-                            version="1.0",
-                            repo_url="git+https://x/y.git",
-                            bare_repo_url="https://x/y.git",
-                            commit_id="a" * 40,
-                        ),
-                    },
+                    targets=_one(
+                        {
+                            "foo": VcsPin(
+                                name="foo",
+                                version="1.0",
+                                repo_url="git+https://x/y.git",
+                                bare_repo_url="https://x/y.git",
+                                commit_id="a" * 40,
+                            ),
+                        }
+                    )
                 )
             )
         )
@@ -150,17 +185,17 @@ class TestIterArtifacts:
 
     def test_index_pin_without_artefacts(self) -> None:
         pin = _index_pin()
-        entries = list(iter_artifacts(LockInput(pins={"foo": pin})))
+        entries = list(iter_artifacts(LockInput(targets=_one({"foo": pin}))))
         assert entries == []
 
-    def test_universal_unions_every_tuple(self) -> None:
+    def test_universal_unions_every_target(self) -> None:
         linux = _index_pin(name="foo", version="1.0", wheel_sha="a" * 64)
         windows = _index_pin(name="bar", version="2.0", wheel_sha="b" * 64)
         lock = LockInput(
-            per_tuple_pins={
-                "py3.12-linux": {"foo": linux},
-                "py3.12-windows": {"bar": windows},
-            }
+            targets=_targets(
+                (_target("3.12", "linux_x86_64"), {"foo": linux}),
+                (_target("3.12", "windows_amd64"), {"bar": windows}),
+            )
         )
         assert sorted(e.filename for e in iter_artifacts(lock)) == [
             "bar-2.0-py3-none-any.whl",
@@ -170,10 +205,10 @@ class TestIterArtifacts:
     def test_universal_dedups_shared_artefact_by_url(self) -> None:
         shared = _index_pin(name="foo", version="1.0", wheel_sha="a" * 64)
         lock = LockInput(
-            per_tuple_pins={
-                "py3.12-linux": {"foo": shared},
-                "py3.12-windows": {"foo": shared},
-            }
+            targets=_targets(
+                (_target("3.12", "linux_x86_64"), {"foo": shared}),
+                (_target("3.12", "windows_amd64"), {"foo": shared}),
+            )
         )
         assert [e.filename for e in iter_artifacts(lock)] == [
             "foo-1.0-py3-none-any.whl"
@@ -181,35 +216,27 @@ class TestIterArtifacts:
 
     def test_universal_skips_local_and_vcs_pins(self, tmp_path: Path) -> None:
         lock = LockInput(
-            per_tuple_pins={
-                "py3.12-linux": {
-                    "loc": LocalPin(name="loc", version="1.0", path=str(tmp_path)),
-                    "vcs": VcsPin(
-                        name="vcs",
-                        version="1.0",
-                        repo_url="git+https://x/y.git",
-                        bare_repo_url="https://x/y.git",
-                        commit_id="a" * 40,
-                    ),
-                    "idx": _index_pin(name="idx", version="1.0", wheel_sha="c" * 64),
-                }
-            }
+            targets=_targets(
+                (
+                    _target("3.12", "linux_x86_64"),
+                    {
+                        "loc": LocalPin(name="loc", version="1.0", path=str(tmp_path)),
+                        "vcs": VcsPin(
+                            name="vcs",
+                            version="1.0",
+                            repo_url="git+https://x/y.git",
+                            bare_repo_url="https://x/y.git",
+                            commit_id="a" * 40,
+                        ),
+                        "idx": _index_pin(
+                            name="idx", version="1.0", wheel_sha="c" * 64
+                        ),
+                    },
+                )
+            )
         )
         assert [e.filename for e in iter_artifacts(lock)] == [
             "idx-1.0-py3-none-any.whl"
-        ]
-
-    def test_per_tuple_pins_take_precedence_over_pins(self) -> None:
-        lock = LockInput(
-            pins={"foo": _index_pin(name="foo", version="1.0", wheel_sha="a" * 64)},
-            per_tuple_pins={
-                "py3.12-linux": {
-                    "bar": _index_pin(name="bar", version="2.0", wheel_sha="b" * 64)
-                }
-            },
-        )
-        assert [e.filename for e in iter_artifacts(lock)] == [
-            "bar-2.0-py3-none-any.whl"
         ]
 
 
@@ -227,7 +254,7 @@ class TestDownloadLock:
             }
         )
         result = download_lock(
-            LockInput(pins={"foo": pin}),
+            LockInput(targets=_one({"foo": pin})),
             transport,
             tmp_path,  # type: ignore[arg-type]
         )
@@ -246,7 +273,7 @@ class TestDownloadLock:
         pin = _index_pin(wheel_sha=wheel_sha)
         transport = _FakeTransport({"https://example.com/foo-1.0.whl": wheel_bytes})
         result = download_lock(
-            LockInput(pins={"foo": pin}),
+            LockInput(targets=_one({"foo": pin})),
             transport,
             tmp_path,  # type: ignore[arg-type]
         )
@@ -261,7 +288,7 @@ class TestDownloadLock:
         pin = _index_pin(wheel_sha=wheel_sha)
         transport = _FakeTransport({"https://example.com/foo-1.0.whl": wheel_bytes})
         result = download_lock(
-            LockInput(pins={"foo": pin}),
+            LockInput(targets=_one({"foo": pin})),
             transport,
             tmp_path,  # type: ignore[arg-type]
         )
@@ -274,7 +301,7 @@ class TestDownloadLock:
         pin = _index_pin(wheel_sha=wheel_sha)
         transport = _FakeTransport({"https://example.com/foo-1.0.whl": wheel_bytes})
         result = download_lock(
-            LockInput(pins={"foo": pin}),
+            LockInput(targets=_one({"foo": pin})),
             transport,
             tmp_path,  # type: ignore[arg-type]
         )
@@ -290,7 +317,7 @@ class TestDownloadLock:
         pin = _index_pin(wheel_sha=wheel_sha)
         transport = _FakeTransport({"https://example.com/foo-1.0.whl": wheel_bytes})
         result = download_lock(
-            LockInput(pins={"foo": pin}),
+            LockInput(targets=_one({"foo": pin})),
             transport,
             tmp_path,  # type: ignore[arg-type]
         )
@@ -304,7 +331,7 @@ class TestDownloadLock:
         transport = _FakeTransport({"https://example.com/foo-1.0.whl": wheel_bytes})
         with pytest.raises(DownloadError, match="sha256 mismatch"):
             download_lock(
-                LockInput(pins={"foo": pin}),
+                LockInput(targets=_one({"foo": pin})),
                 transport,  # type: ignore[arg-type]
                 tmp_path,
             )
@@ -316,7 +343,7 @@ class TestDownloadLock:
         )
         with pytest.raises(DownloadError, match="failed to fetch foo-1.0-py3-none-any"):
             download_lock(
-                LockInput(pins={"foo": pin}),
+                LockInput(targets=_one({"foo": pin})),
                 transport,  # type: ignore[arg-type]
                 tmp_path,
             )
@@ -356,7 +383,7 @@ class TestDownloadLock:
         transport = _MixedTransport()
         with pytest.raises(DownloadError, match="sha256 mismatch"):
             download_lock(
-                LockInput(pins={"fail": fail_pin, "slow": slow_pin}),
+                LockInput(targets=_one({"fail": fail_pin, "slow": slow_pin})),
                 transport,  # type: ignore[arg-type]
                 tmp_path,
                 max_concurrency=2,
@@ -367,7 +394,7 @@ class TestDownloadLock:
     def test_creates_output_dir(self, tmp_path: Path) -> None:
         target = tmp_path / "nested" / "vendor"
         download_lock(
-            LockInput(pins={}),
+            LockInput(targets=_one({})),
             _FakeTransport({}),
             target,  # type: ignore[arg-type]
         )
@@ -389,7 +416,7 @@ class TestDownloadLock:
         output_dir = tmp_path / "wheels"
         with pytest.raises(DownloadError, match="unsafe"):
             download_lock(
-                LockInput(pins={"foo": pin}),
+                LockInput(targets=_one({"foo": pin})),
                 transport,  # type: ignore[arg-type]
                 output_dir,
             )
@@ -413,7 +440,7 @@ class TestDownloadLock:
         transport = _FakeTransport({"https://example.com/foo-1.0.whl": payload})
         with pytest.raises(DownloadError, match="unsafe"):
             download_lock(
-                LockInput(pins={"foo": pin}),
+                LockInput(targets=_one({"foo": pin})),
                 transport,  # type: ignore[arg-type]
                 tmp_path / "wheels",
             )
@@ -431,7 +458,7 @@ class TestLocalIndexArtefacts:
             local_path=tmp_path / "foo-1.0-py3-none-any.whl",
         )
         pin = IndexPin(name="foo", version="1.0", index="local", wheels=(wheel,))
-        (entry,) = list(iter_artifacts(LockInput(pins={"foo": pin})))
+        (entry,) = list(iter_artifacts(LockInput(targets=_one({"foo": pin}))))
         assert entry.local_path == tmp_path / "foo-1.0-py3-none-any.whl"
 
     def test_wheel_and_sdist_copied_from_disk(self, tmp_path: Path) -> None:
@@ -465,7 +492,7 @@ class TestLocalIndexArtefacts:
             {wheel_file.as_uri(): b"WRONG", sdist_file.as_uri(): b"WRONG"}
         )
         result = download_lock(
-            LockInput(pins={"foo": pin}),
+            LockInput(targets=_one({"foo": pin})),
             transport,  # type: ignore[arg-type]
             out,
         )
@@ -489,7 +516,7 @@ class TestLocalIndexArtefacts:
         )
         transport = _FakeTransport({archive_file.as_uri(): b"WRONG"})
         result = download_lock(
-            LockInput(pins={"foo": pin}),
+            LockInput(targets=_one({"foo": pin})),
             transport,  # type: ignore[arg-type]
             out,
         )
@@ -508,7 +535,7 @@ class TestLocalIndexArtefacts:
         pin = IndexPin(name="foo", version="1.0", index="local", wheels=(wheel,))
         with pytest.raises(DownloadError, match="failed to read foo-1.0-py3-none-any"):
             download_lock(
-                LockInput(pins={"foo": pin}),
+                LockInput(targets=_one({"foo": pin})),
                 _FakeTransport({}),  # type: ignore[arg-type]
                 tmp_path / "out",
             )
@@ -539,4 +566,4 @@ def test_download_event_loop_runs(tmp_path: Path) -> None:
     """Cover the asyncio.run() branch by exercising it with no work."""
     # download_lock spins up its own loop; make sure repeated calls work.
     asyncio.run(asyncio.sleep(0))
-    download_lock(LockInput(pins={}), _FakeTransport({}), tmp_path)  # type: ignore[arg-type]
+    download_lock(LockInput(targets=_one({})), _FakeTransport({}), tmp_path)  # type: ignore[arg-type]

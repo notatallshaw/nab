@@ -32,16 +32,20 @@ from nab_python.download import (
     iter_artifacts,
 )
 from nab_python.fetch import FetchCoordinator, InMemoryIndex
-from nab_python.lockfile import ArchivePin, LockInput
+from nab_python.lockfile import ArchivePin, LockInput, TargetLock
 from nab_python.provider import (
     ArchiveSource,
     BuildPolicy,
     Provider,
     UnsupportedSdistError,
 )
+from nab_python.target import ResolveTarget
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
+
+    from nab_python.lockfile import PinShape
 
 
 def _make_sdist(name: str, version: str, pyproject: str) -> bytes:
@@ -95,6 +99,12 @@ def _fetching_provider(
         archive_cache_dir=cache_dir,
         build_policy=BuildPolicy.NEVER,
     )
+
+
+def _lock_input(pins: Mapping[str, PinShape]) -> LockInput:
+    """Wrap ``pins`` as the one-target lock input the downloader reads."""
+    target = ResolveTarget.for_host()
+    return LockInput(targets={target.label: TargetLock(target=target, pins=pins)})
 
 
 # Extraction requires the tar data filter (PEP 706), so skip the paths that
@@ -569,7 +579,7 @@ class TestArchiveDownload:
             url="https://ex.com/foo-1.0.tar.gz",
             hashes=(("sha256", "e" * 64),),
         )
-        (entry,) = list(iter_artifacts(LockInput(pins={"foo": pin})))
+        (entry,) = list(iter_artifacts(_lock_input({"foo": pin})))
         assert entry.url == "https://ex.com/foo-1.0.tar.gz"
         assert entry.filename == "foo-1.0.tar.gz"
         assert entry.hash_algo == "sha256"
@@ -585,7 +595,7 @@ class TestArchiveDownload:
             url=archive.as_uri(),
             hashes=(("sha256", hashlib.sha256(b"ARCHIVE").hexdigest()),),
         )
-        (entry,) = list(iter_artifacts(LockInput(pins={"foo": pin})))
+        (entry,) = list(iter_artifacts(_lock_input({"foo": pin})))
         assert entry.filename == "foo-1.0.0.tar.gz"
         assert entry.local_path == archive
 
@@ -611,7 +621,7 @@ class TestArchiveDownload:
                 hashes=(("sha256", "b" * 64),),
             ),
         }
-        entries = list(iter_artifacts(LockInput(pins=pins)))
+        entries = list(iter_artifacts(_lock_input(pins)))
         with pytest.raises(DownloadError, match="collide on output filename"):
             _reject_colliding_targets(entries)
 
@@ -627,7 +637,7 @@ class TestArchiveDownload:
                 name="bar", version="1.0", url=url, hashes=(("sha256", "a" * 64),)
             ),
         }
-        entries = list(iter_artifacts(LockInput(pins=pins)))
+        entries = list(iter_artifacts(_lock_input(pins)))
         _reject_colliding_targets(entries)
 
 

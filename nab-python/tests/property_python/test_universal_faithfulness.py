@@ -33,20 +33,23 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover - 3.10 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
-from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python.lockfile import (
     IndexPin,
     LockInput,
+    PinShape,
+    TargetLock,
     WheelArtifact,
     write_lock,
 )
+from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
 
 from .strategies import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 
-PLATFORMS = ("linux", "win32", "darwin")
+PLATFORMS = ("linux_x86_64", "windows_amd64", "macos_arm64")
 PYTHONS = ("3.10", "3.11")
 NAMES = ("aa", "bb", "cc")
 VERSIONS = ("1.0", "2.0", "3.0")
@@ -61,9 +64,7 @@ WHEEL_TAGS = (
 class UniversalCase(NamedTuple):
     """One generated universal-lock scenario."""
 
-    labels: list[str]
-    tuple_markers: dict[str, Marker]
-    tuple_environments: dict[str, dict[str, str]]
+    targets: list[ResolveTarget]
     pinned: dict[str, dict[str, str]]
     n_wheels: int
 
@@ -94,46 +95,37 @@ def universal_cases(draw: st.DrawFn) -> UniversalCase:
             unique=True,
         )
     )
-    labels = [f"cp{py.replace('.', '')}-{plat}" for plat, py in combos]
-    tuple_markers = {
-        label: Marker(f'python_version == "{py}" and sys_platform == "{plat}"')
-        for label, (plat, py) in zip(labels, combos, strict=True)
-    }
-    tuple_environments = {
-        label: {
-            "python_version": py,
-            "python_full_version": f"{py}.0",
-            "sys_platform": plat,
-        }
-        for label, (plat, py) in zip(labels, combos, strict=True)
-    }
+    targets = [
+        ResolveTarget.for_declared(python_version=py, spec=PlatformSpec(plat))
+        for plat, py in combos
+    ]
     pinned: dict[str, dict[str, str]] = {}
-    for label in labels:
+    for target in targets:
         names = draw(
             st.lists(st.sampled_from(NAMES), min_size=1, max_size=3, unique=True)
         )
-        pinned[label] = {name: draw(st.sampled_from(VERSIONS)) for name in names}
+        pinned[target.label] = {name: draw(st.sampled_from(VERSIONS)) for name in names}
     n_wheels = draw(st.integers(min_value=1, max_value=3))
-    return UniversalCase(labels, tuple_markers, tuple_environments, pinned, n_wheels)
+    return UniversalCase(targets, pinned, n_wheels)
 
 
 def _build_input(
     case: UniversalCase,
     *,
-    label_order: list[str] | None = None,
+    target_order: list[ResolveTarget] | None = None,
     name_shift: int = 0,
     wheel_shift: int = 0,
 ) -> LockInput:
     """Assemble a per-tuple ``LockInput``, optionally rotating each axis."""
-    ordered_labels = label_order if label_order is not None else case.labels
-    per_tuple_pins: dict[str, dict[str, IndexPin]] = {}
-    for label in ordered_labels:
-        names = list(case.pinned[label])
+    ordered = target_order if target_order is not None else case.targets
+    targets: dict[str, TargetLock] = {}
+    for target in ordered:
+        names = list(case.pinned[target.label])
         shift = name_shift % len(names)
         names = names[shift:] + names[:shift]
-        per_name: dict[str, IndexPin] = {}
+        per_name: dict[str, PinShape] = {}
         for name in names:
-            version = case.pinned[label][name]
+            version = case.pinned[target.label][name]
             wheels = list(_wheels(name, version, WHEEL_TAGS[: case.n_wheels]))
             shift = wheel_shift % len(wheels)
             wheels = wheels[shift:] + wheels[:shift]
@@ -143,14 +135,8 @@ def _build_input(
                 index="https://pypi.org/simple/",
                 wheels=tuple(wheels),
             )
-        per_tuple_pins[label] = per_name
-    return LockInput(
-        per_tuple_pins=per_tuple_pins,
-        tuple_markers={label: case.tuple_markers[label] for label in ordered_labels},
-        tuple_environments={
-            label: case.tuple_environments[label] for label in ordered_labels
-        },
-    )
+        targets[target.label] = TargetLock(target=target, pins=per_name)
+    return LockInput(targets=targets)
 
 
 class TestQuotePerTupleFaithfulness:
@@ -174,8 +160,9 @@ class TestQuotePerTupleFaithfulness:
         """Each tuple's environment selects exactly that tuple's pins."""
         text = write_lock(_build_input(case))
         pylock = Pylock.from_dict(tomllib.loads(text))
-        for label in case.labels:
-            env = case.tuple_environments[label]
+        for target in case.targets:
+            label = target.label
+            env = dict(target.marker_env)
             for name in NAMES:
                 matching = [
                     p
@@ -230,11 +217,11 @@ class TestQuoteByteStabilityUnderShuffle:
     ) -> None:
         """Shuffled-but-equivalent input emits byte-identical output."""
         canonical = write_lock(_build_input(case))
-        label_order = list(reversed(case.labels)) if reverse_labels else case.labels
+        target_order = list(reversed(case.targets)) if reverse_labels else case.targets
         shuffled = write_lock(
             _build_input(
                 case,
-                label_order=label_order,
+                target_order=target_order,
                 name_shift=name_shift,
                 wheel_shift=wheel_shift,
             )

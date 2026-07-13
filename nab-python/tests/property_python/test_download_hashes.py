@@ -19,7 +19,9 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from nab_python.download import DownloadError, download_lock
-from nab_python.lockfile import IndexPin, LockInput, WheelArtifact
+from nab_python.lockfile import IndexPin, LockInput, TargetLock, WheelArtifact
+from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
 
 from .strategies import PROPERTY_SETTINGS
 
@@ -28,6 +30,12 @@ pytestmark = pytest.mark.property
 ALGOS = ["sha256", "sha384", "sha512"]
 
 HEX = "0123456789abcdef"
+
+# A resolve always runs against at least one target, so one entry is the
+# smallest lock there is.
+_HOST = ResolveTarget.for_declared(
+    python_version="3.11", spec=PlatformSpec("linux_x86_64")
+)
 
 
 @dataclass
@@ -71,7 +79,8 @@ def _lock_input(algo: str, digest: str) -> tuple[LockInput, str]:
         hashes=((algo, digest),),
     )
     pin = IndexPin(name="foo", version="1.0", index="pypi", sdist=None, wheels=(wheel,))
-    return LockInput(pins={"foo": pin}), url
+    lock = TargetLock(target=_HOST, pins={"foo": pin})
+    return LockInput(targets={_HOST.label: lock}), url
 
 
 @st.composite

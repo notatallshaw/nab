@@ -3673,7 +3673,7 @@ class TestLocalVcsPythonGuardOverride:
         provider = self._local_provider(tmp_path, ">=3.11", ">=3.0")
         stamped = provider.metadata_cache[("foo", V("1.0"))].requires_python
         assert stamped == SpecifierSet(">=3.0")
-        _raise_for_source_python(provider, {"foo": V("1.0")}, V("3.9"))
+        _raise_for_source_python(provider, provider.target, {"foo": V("1.0")})
 
     def test_narrow_rejects(self, tmp_path: Path) -> None:
         # pyproject allows >=3.0; the override narrows to >=3.11, so the
@@ -3682,7 +3682,7 @@ class TestLocalVcsPythonGuardOverride:
         stamped = provider.metadata_cache[("foo", V("1.0"))].requires_python
         assert stamped == SpecifierSet(">=3.11")
         with pytest.raises(ResolutionError):
-            _raise_for_source_python(provider, {"foo": V("1.0")}, V("3.9"))
+            _raise_for_source_python(provider, provider.target, {"foo": V("1.0")})
 
 
 class TestEffectiveFieldResolution:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar, cast
@@ -53,12 +54,14 @@ from nab_python.lockfile import (
     MissingHashError,
     MissingSdistError,
     MissingVcsCommitError,
+    PinShape,
     Provenance,
     SdistArtifact,
+    TargetLock,
     VcsPin,
     WheelArtifact,
-    build_lock_input_from_provider,
     build_pylock,
+    build_target_lock,
     package_metadata_override_records,
     read_lockfile_anchor,
     read_lockfile_packages,
@@ -76,7 +79,54 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
+
+
+def _target(
+    python_version: str = "3.11", platform: str = "linux_x86_64"
+) -> ResolveTarget:
+    """One declared (python, platform) target of a resolve."""
+    return ResolveTarget.for_declared(
+        python_version=python_version, spec=PlatformSpec(platform)
+    )
+
+
+# A resolve always runs against at least one target, so one entry is the
+# smallest lock there is; its packages carry no marker.
+_HOST = _target()
+
+
+def _one(
+    pins: Mapping[str, PinShape],
+    dependencies: Mapping[str, tuple[str, ...]] | None = None,
+) -> dict[str, TargetLock]:
+    """Return the one-target map a single-environment resolve produces."""
+    return {
+        _HOST.label: TargetLock(
+            target=_HOST, pins=dict(pins), dependencies=dict(dependencies or {})
+        )
+    }
+
+
+def _targets(
+    *entries: tuple[ResolveTarget, Mapping[str, PinShape]],
+) -> dict[str, TargetLock]:
+    """Return the per-target map for the given ``(target, pins)`` pairs."""
+    return {
+        target.label: TargetLock(target=target, pins=dict(pins))
+        for target, pins in entries
+    }
+
+
+def _lock_from(target_lock: TargetLock) -> LockInput:
+    """Wrap one target's contribution as the lock its resolve would write."""
+    return LockInput(targets={target_lock.target.label: target_lock})
+
+
+def _env_signature(target: ResolveTarget) -> tuple[tuple[str, str], ...]:
+    """Return the ``env_base_names`` key for ``target``'s environment."""
+    return tuple(sorted(target.marker_env.items()))
 
 
 def _wheel(name: str = "foo", version: str = "1.0") -> WheelArtifact:
@@ -112,9 +162,9 @@ def _index_pin(
     )
 
 
-class TestSingleTuple:
+class TestSingleTarget:
     def test_index_pin_round_trips(self) -> None:
-        text = write_lock(LockInput(pins={"foo": _index_pin()}))
+        text = write_lock(LockInput(targets=_one({"foo": _index_pin()})))
         data = tomllib.loads(text)
         assert data["lock-version"] == LOCK_VERSION
         assert data["created-by"] == "nab"
@@ -130,7 +180,9 @@ class TestSingleTuple:
         src = tmp_path / "libs" / "foo"
         text = write_lock(
             LockInput(
-                pins={"foo": LocalPin(name="foo", version="1.0", path=str(src))},
+                targets=_one(
+                    {"foo": LocalPin(name="foo", version="1.0", path=str(src))}
+                )
             ),
             output_path=tmp_path / "pylock.toml",
         )
@@ -146,16 +198,18 @@ class TestSingleTuple:
     def test_vcs_pin(self) -> None:
         text = write_lock(
             LockInput(
-                pins={
-                    "foo": VcsPin(
-                        name="foo",
-                        version="1.0",
-                        repo_url="https://github.com/x/y.git",
-                        bare_repo_url="https://github.com/x/y.git",
-                        commit_id="a" * 40,
-                        subdirectory="pkg",
-                    ),
-                },
+                targets=_one(
+                    {
+                        "foo": VcsPin(
+                            name="foo",
+                            version="1.0",
+                            repo_url="https://github.com/x/y.git",
+                            bare_repo_url="https://github.com/x/y.git",
+                            commit_id="a" * 40,
+                            subdirectory="pkg",
+                        ),
+                    }
+                )
             )
         )
         data = tomllib.loads(text)
@@ -171,16 +225,18 @@ class TestSingleTuple:
     def test_vcs_pin_non_git_type(self) -> None:
         text = write_lock(
             LockInput(
-                pins={
-                    "foo": VcsPin(
-                        name="foo",
-                        version="1.0",
-                        repo_url="https://example.com/x/y",
-                        bare_repo_url="https://example.com/x/y",
-                        commit_id="a" * 40,
-                        vcs_type="hg",
-                    ),
-                },
+                targets=_one(
+                    {
+                        "foo": VcsPin(
+                            name="foo",
+                            version="1.0",
+                            repo_url="https://example.com/x/y",
+                            bare_repo_url="https://example.com/x/y",
+                            commit_id="a" * 40,
+                            vcs_type="hg",
+                        ),
+                    }
+                )
             )
         )
         data = tomllib.loads(text)
@@ -189,15 +245,17 @@ class TestSingleTuple:
     def test_archive_pin(self) -> None:
         text = write_lock(
             LockInput(
-                pins={
-                    "foo": ArchivePin(
-                        name="foo",
-                        version="1.0",
-                        url="https://ex.com/foo-1.0.tar.gz",
-                        hashes=(("sha256", "e" * 64),),
-                        subdirectory="pkg",
-                    ),
-                },
+                targets=_one(
+                    {
+                        "foo": ArchivePin(
+                            name="foo",
+                            version="1.0",
+                            url="https://ex.com/foo-1.0.tar.gz",
+                            hashes=(("sha256", "e" * 64),),
+                            subdirectory="pkg",
+                        ),
+                    }
+                )
             )
         )
         data = tomllib.loads(text)
@@ -219,7 +277,7 @@ class TestSingleTuple:
                 subdirectory="pkg",
             ),
         }
-        text = write_requirements_with_hashes(LockInput(pins=pins))
+        text = write_requirements_with_hashes(LockInput(targets=_one(pins)))
         assert (
             "foo @ https://ex.com/foo-1.0.tar.gz#sha256="
             + "e" * 64
@@ -235,18 +293,20 @@ class TestSingleTuple:
                 hashes=(("sha256", "e" * 64),),
             ),
         }
-        text = write_requirements_with_hashes(LockInput(pins=pins))
+        text = write_requirements_with_hashes(LockInput(targets=_one(pins)))
         assert "foo @ https://ex.com/foo-1.0.tar.gz#sha256=" + "e" * 64 in text
         assert "subdirectory" not in text
 
     def test_multiple_packages_sorted_by_name(self) -> None:
         text = write_lock(
             LockInput(
-                pins={
-                    "foo": _index_pin("foo"),
-                    "bar": _index_pin("bar"),
-                    "baz": _index_pin("baz"),
-                },
+                targets=_one(
+                    {
+                        "foo": _index_pin("foo"),
+                        "bar": _index_pin("bar"),
+                        "baz": _index_pin("baz"),
+                    }
+                )
             )
         )
         data = tomllib.loads(text)
@@ -256,57 +316,48 @@ class TestSingleTuple:
     def test_writes_to_file(self, tmp_path: Path) -> None:
         out = tmp_path / "pylock.toml"
         text = write_lock(
-            LockInput(pins={"foo": _index_pin()}),
+            LockInput(targets=_one({"foo": _index_pin()})),
             output_path=out,
         )
         assert out.read_text(encoding="utf-8") == text
 
     def test_extras_canonicalised(self) -> None:
         text = write_lock(
-            LockInput(
-                pins={"foo": _index_pin()},
-                extras=("My-Extra",),
-            )
+            LockInput(targets=_one({"foo": _index_pin()}), extras=("My-Extra",))
         )
         data = tomllib.loads(text)
         assert "my-extra" in data["extras"]
 
     def test_canonicalises_package_name(self) -> None:
         text = write_lock(
-            LockInput(pins={"foo": _index_pin(name="Foo_Bar")}),
+            LockInput(targets=_one({"foo": _index_pin(name="Foo_Bar")})),
         )
         data = tomllib.loads(text)
         assert data["packages"][0]["name"] == "foo-bar"
 
 
-class TestPerTupleMarkerSimplification:
-    def test_all_tuples_agree_no_marker(self) -> None:
-        per_tuple = {
-            "py310-linux": {"foo": _index_pin(version="1.0")},
-            "py311-linux": {"foo": _index_pin(version="1.0")},
-        }
-        tuple_markers = {
-            "py310-linux": Marker('python_version == "3.10"'),
-            "py311-linux": Marker('python_version == "3.11"'),
-        }
+class TestPerTargetMarkerSimplification:
+    def test_all_targets_agree_no_marker(self) -> None:
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (_target("3.10"), {"foo": _index_pin(version="1.0")}),
+                    (_target("3.11"), {"foo": _index_pin(version="1.0")}),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 1
         assert "marker" not in data["packages"][0]
 
     def test_diverging_pins_get_markers(self) -> None:
-        per_tuple = {
-            "py310-linux": {"foo": _index_pin(version="1.0")},
-            "py311-linux": {"foo": _index_pin(version="2.0")},
-        }
-        tuple_markers = {
-            "py310-linux": Marker('python_version == "3.10"'),
-            "py311-linux": Marker('python_version == "3.11"'),
-        }
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (_target("3.10"), {"foo": _index_pin(version="1.0")}),
+                    (_target("3.11"), {"foo": _index_pin(version="2.0")}),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 2
@@ -315,48 +366,47 @@ class TestPerTupleMarkerSimplification:
         assert any('python_version == "3.10"' in m for m in markers)
         assert any('python_version == "3.11"' in m for m in markers)
 
-    def test_three_tuples_two_groups(self) -> None:
+    def test_three_targets_two_groups(self) -> None:
         # 3.10 + 3.11 share v1.0; 3.12 has v2.0 -> two groups
-        per_tuple = {
-            "py310": {"foo": _index_pin(version="1.0")},
-            "py311": {"foo": _index_pin(version="1.0")},
-            "py312": {"foo": _index_pin(version="2.0")},
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-            "py312": Marker('python_version == "3.12"'),
-        }
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (_target("3.10"), {"foo": _index_pin(version="1.0")}),
+                    (_target("3.11"), {"foo": _index_pin(version="1.0")}),
+                    (_target("3.12"), {"foo": _index_pin(version="2.0")}),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 2
         # The v1.0 group has an OR marker; the v2.0 group has a single marker
         v1_pkg = next(p for p in data["packages"] if p["version"] == "1.0")
         v2_pkg = next(p for p in data["packages"] if p["version"] == "2.0")
-        assert "or" in v1_pkg["marker"]
-        assert "or" not in v2_pkg["marker"]
+        assert " or " in v1_pkg["marker"]
+        assert " or " not in v2_pkg["marker"]
 
-    def test_local_pin_per_tuple(self) -> None:
+    def test_local_pin_per_target(self) -> None:
         # LocalPin discriminator coverage
-        per_tuple = {
-            "py310": {"foo": LocalPin(name="foo", version="1.0", path="/a")},
-            "py311": {"foo": LocalPin(name="foo", version="1.0", path="/b")},
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-        }
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (
+                        _target("3.10"),
+                        {"foo": LocalPin(name="foo", version="1.0", path="/a")},
+                    ),
+                    (
+                        _target("3.11"),
+                        {"foo": LocalPin(name="foo", version="1.0", path="/b")},
+                    ),
+                )
+            )
         )
         data = tomllib.loads(text)
         # Different paths -> different groups -> two packages
         assert len(data["packages"]) == 2
 
-    def test_tuple_specific_wheels_merged_within_group(self) -> None:
-        """Two tuples sharing version/index keep both tuples' wheel filenames."""
+    def test_target_specific_wheels_merged_within_group(self) -> None:
+        """Two targets sharing version/index keep both targets' wheel filenames."""
         linux_wheel = WheelArtifact(
             filename="foo-1.0-cp310-cp310-linux_x86_64.whl",
             url="https://example.com/foo-1.0-cp310-cp310-linux_x86_64.whl",
@@ -369,30 +419,33 @@ class TestPerTupleMarkerSimplification:
             hashes=(("sha256", "d" * 64),),
             size=1024,
         )
-        per_tuple = {
-            "linux": {
-                "foo": IndexPin(
-                    name="foo",
-                    version="1.0",
-                    index="pypi",
-                    wheels=(linux_wheel,),
-                ),
-            },
-            "macos": {
-                "foo": IndexPin(
-                    name="foo",
-                    version="1.0",
-                    index="pypi",
-                    wheels=(macos_wheel,),
-                ),
-            },
-        }
-        tuple_markers = {
-            "linux": Marker('sys_platform == "linux"'),
-            "macos": Marker('sys_platform == "darwin"'),
-        }
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (
+                        _target(platform="linux_x86_64"),
+                        {
+                            "foo": IndexPin(
+                                name="foo",
+                                version="1.0",
+                                index="pypi",
+                                wheels=(linux_wheel,),
+                            )
+                        },
+                    ),
+                    (
+                        _target(platform="macos_arm64"),
+                        {
+                            "foo": IndexPin(
+                                name="foo",
+                                version="1.0",
+                                index="pypi",
+                                wheels=(macos_wheel,),
+                            )
+                        },
+                    ),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 1
@@ -402,155 +455,152 @@ class TestPerTupleMarkerSimplification:
             "foo-1.0-cp310-cp310-macosx_11_0_arm64.whl",
         ]
 
-    def test_requires_python_drops_when_tuples_disagree(self) -> None:
-        """``requires_python`` survives merging only when every tuple agrees."""
+    def test_requires_python_drops_when_targets_disagree(self) -> None:
+        """``requires_python`` survives merging only when every target agrees."""
         wheel = _wheel()
-        per_tuple = {
-            "a": {
-                "foo": IndexPin(
-                    name="foo",
-                    version="1.0",
-                    index="pypi",
-                    wheels=(wheel,),
-                    requires_python=">=3.10",
-                ),
-            },
-            "b": {
-                "foo": IndexPin(
-                    name="foo",
-                    version="1.0",
-                    index="pypi",
-                    wheels=(wheel,),
-                    requires_python=">=3.11",
-                ),
-            },
-        }
-        tuple_markers = {
-            "a": Marker('python_version == "3.10"'),
-            "b": Marker('python_version == "3.11"'),
-        }
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (
+                        _target("3.10"),
+                        {
+                            "foo": IndexPin(
+                                name="foo",
+                                version="1.0",
+                                index="pypi",
+                                wheels=(wheel,),
+                                requires_python=">=3.10",
+                            )
+                        },
+                    ),
+                    (
+                        _target("3.11"),
+                        {
+                            "foo": IndexPin(
+                                name="foo",
+                                version="1.0",
+                                index="pypi",
+                                wheels=(wheel,),
+                                requires_python=">=3.11",
+                            )
+                        },
+                    ),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 1
         assert "requires-python" not in data["packages"][0]
 
-    def test_sdist_filled_from_any_tuple(self) -> None:
-        """An sdist appearing in only some tuples is preserved on the merge."""
+    def test_sdist_filled_from_any_target(self) -> None:
+        """An sdist appearing in only some targets is preserved on the merge."""
         sdist = _sdist()
         wheel = _wheel()
-        per_tuple = {
-            "a": {
-                "foo": IndexPin(
-                    name="foo",
-                    version="1.0",
-                    index="pypi",
-                    sdist=None,
-                    wheels=(wheel,),
-                ),
-            },
-            "b": {
-                "foo": IndexPin(
-                    name="foo",
-                    version="1.0",
-                    index="pypi",
-                    sdist=sdist,
-                    wheels=(wheel,),
-                ),
-            },
-        }
-        tuple_markers = {
-            "a": Marker('python_version == "3.10"'),
-            "b": Marker('python_version == "3.11"'),
-        }
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (
+                        _target("3.10"),
+                        {
+                            "foo": IndexPin(
+                                name="foo",
+                                version="1.0",
+                                index="pypi",
+                                sdist=None,
+                                wheels=(wheel,),
+                            )
+                        },
+                    ),
+                    (
+                        _target("3.11"),
+                        {
+                            "foo": IndexPin(
+                                name="foo",
+                                version="1.0",
+                                index="pypi",
+                                sdist=sdist,
+                                wheels=(wheel,),
+                            )
+                        },
+                    ),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert data["packages"][0]["sdist"]["url"].endswith("foo-1.0.tar.gz")
 
-    def test_vcs_pin_per_tuple(self) -> None:
+    def test_vcs_pin_per_target(self) -> None:
         # VcsPin discriminator coverage
-        per_tuple = {
-            "py310": {
-                "foo": VcsPin(
-                    name="foo",
-                    version="1.0",
-                    repo_url="https://x/y.git",
-                    bare_repo_url="https://x/y.git",
-                    commit_id="a" * 40,
-                ),
-            },
-            "py311": {
-                "foo": VcsPin(
-                    name="foo",
-                    version="1.0",
-                    repo_url="https://x/y.git",
-                    bare_repo_url="https://x/y.git",
-                    commit_id="a" * 40,
-                ),
-            },
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-        }
+        pin = VcsPin(
+            name="foo",
+            version="1.0",
+            repo_url="https://x/y.git",
+            bare_repo_url="https://x/y.git",
+            commit_id="a" * 40,
+        )
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (_target("3.10"), {"foo": pin}),
+                    (_target("3.11"), {"foo": pin}),
+                )
+            )
         )
         data = tomllib.loads(text)
         # Same VCS commit -> single group -> one package
         assert len(data["packages"]) == 1
 
-    def test_archive_pin_per_tuple(self) -> None:
-        # ArchivePin merged across tuples: same archive -> one group -> one package.
+    def test_archive_pin_per_target(self) -> None:
+        # ArchivePin merged across targets: same archive -> one group -> one package.
         pin = ArchivePin(
             name="foo",
             version="1.0",
             url="https://ex.com/foo-1.0.tar.gz",
             hashes=(("sha256", "e" * 64),),
         )
-        per_tuple = {"py310": {"foo": pin}, "py311": {"foo": pin}}
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-        }
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (_target("3.10"), {"foo": pin}),
+                    (_target("3.11"), {"foo": pin}),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 1
         assert data["packages"][0]["archive"]["url"] == "https://ex.com/foo-1.0.tar.gz"
 
-    def test_vcs_pin_per_tuple_diverging_commit(self) -> None:
+    def test_vcs_pin_per_target_diverging_commit(self) -> None:
         # Diverging commit -> two groups -> two packages
-        per_tuple = {
-            "py310": {
-                "foo": VcsPin(
-                    name="foo",
-                    version="1.0",
-                    repo_url="https://x/y.git",
-                    bare_repo_url="https://x/y.git",
-                    commit_id="a" * 40,
-                ),
-            },
-            "py311": {
-                "foo": VcsPin(
-                    name="foo",
-                    version="1.0",
-                    repo_url="https://x/y.git",
-                    bare_repo_url="https://x/y.git",
-                    commit_id="b" * 40,
-                ),
-            },
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-        }
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (
+                        _target("3.10"),
+                        {
+                            "foo": VcsPin(
+                                name="foo",
+                                version="1.0",
+                                repo_url="https://x/y.git",
+                                bare_repo_url="https://x/y.git",
+                                commit_id="a" * 40,
+                            )
+                        },
+                    ),
+                    (
+                        _target("3.11"),
+                        {
+                            "foo": VcsPin(
+                                name="foo",
+                                version="1.0",
+                                repo_url="https://x/y.git",
+                                bare_repo_url="https://x/y.git",
+                                commit_id="b" * 40,
+                            )
+                        },
+                    ),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 2
@@ -592,121 +642,34 @@ class TestPerTupleMarkerSimplification:
         )
         assert _pin_discriminator(plain) != _pin_discriminator(sub)
 
-    def test_pin_in_both_pins_and_per_tuple_emits_once(self) -> None:
-        # When the same package appears in both pins and per_tuple_pins,
-        # the per_tuple_pins entry wins (single emission per name).
-        per_tuple = {
-            "py310": {"foo": _index_pin(version="1.0")},
-            "py311": {"foo": _index_pin(version="1.0")},
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-        }
+    def test_package_in_only_one_of_two_targets_gets_marker(self) -> None:
+        # ``foo`` resolves on py3.10 only, so its entry is gated on that
+        # target's marker rather than emitted unconditionally.
+        py310 = _target("3.10")
         text = write_lock(
             LockInput(
-                pins={"foo": _index_pin(version="9.9")},
-                per_tuple_pins=per_tuple,
-                tuple_markers=tuple_markers,
+                targets=_targets(
+                    (py310, {"foo": _index_pin(version="1.0")}),
+                    (_target("3.11"), {}),
+                )
             )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 1
-        assert data["packages"][0]["version"] == "1.0"
+        assert data["packages"][0]["marker"] == str(Marker(py310.marker_string))
 
-    def test_diverging_pins_without_tuple_markers(self) -> None:
-        # group_count > 1 but no tuple_markers -> _build_marker returns None
-        per_tuple = {
-            "py310": {"foo": _index_pin(version="1.0")},
-            "py311": {"foo": _index_pin(version="2.0")},
-        }
-        text = write_lock(LockInput(per_tuple_pins=per_tuple))
-        data = tomllib.loads(text)
-        assert len(data["packages"]) == 2
-        # No markers since tuple_markers is empty
-        assert all("marker" not in p for p in data["packages"])
-
-    def test_pin_labels_outside_tuple_universe_get_no_marker(self) -> None:
-        # Defensive guard: a per-tuple pin labelled with a tuple that
-        # was never declared in tuple_markers must not crash. With one
-        # orphan label and two declared tuples, the marker filter
-        # returns empty and the package is emitted without a marker.
-        per_tuple = {
-            "orphan": {"foo": _index_pin(version="1.0")},
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-        }
-        text = write_lock(
-            LockInput(
-                per_tuple_pins=per_tuple,
-                tuple_markers=tuple_markers,
-            )
-        )
-        data = tomllib.loads(text)
-        assert len(data["packages"]) == 1
-        assert data["packages"][0]["version"] == "1.0"
-        assert "marker" not in data["packages"][0]
-
-    def test_extra_pin_in_top_level_emitted(self) -> None:
-        # ``foo`` lives in per_tuple_pins; ``bar`` only in pins.
-        # Both should appear in the lock.
-        per_tuple = {
-            "py310-linux": {"foo": _index_pin(name="foo", version="1.0")},
-            "py311-linux": {"foo": _index_pin(name="foo", version="1.0")},
-        }
-        tuple_markers = {
-            "py310-linux": Marker('python_version == "3.10"'),
-            "py311-linux": Marker('python_version == "3.11"'),
-        }
-        pins = {"bar": _index_pin(name="bar", version="2.0")}
-        text = write_lock(
-            LockInput(
-                pins=pins,
-                per_tuple_pins=per_tuple,
-                tuple_markers=tuple_markers,
-            )
-        )
-        data = tomllib.loads(text)
-        names = sorted(p["name"] for p in data["packages"])
-        assert names == ["bar", "foo"]
-
-    def test_package_in_only_one_of_two_tuples_gets_marker(self) -> None:
-        # ``foo`` resolves on py3.10 only.  The 1-of-2-tuples shape used
-        # to fall through ``group_count == 1`` and emit unconditionally.
-        per_tuple = {
-            "py310": {"foo": _index_pin(version="1.0")},
-            "py311": {},
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-        }
-        text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
-        )
-        data = tomllib.loads(text)
-        assert len(data["packages"]) == 1
-        assert data["packages"][0]["marker"] == 'python_version == "3.10"'
-
-    def test_package_in_two_of_four_tuples_gets_or_marker(self) -> None:
+    def test_package_in_two_of_four_targets_gets_or_marker(self) -> None:
         # ``foo`` resolves on py3.10 and py3.11 only with the same pin.
-        # The marker is the OR of those two tuple markers.
-        per_tuple = {
-            "py310": {"foo": _index_pin(version="1.0")},
-            "py311": {"foo": _index_pin(version="1.0")},
-            "py312": {},
-            "py313": {},
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-            "py312": Marker('python_version == "3.12"'),
-            "py313": Marker('python_version == "3.13"'),
-        }
+        # The marker is the OR of those two targets' markers.
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (_target("3.10"), {"foo": _index_pin(version="1.0")}),
+                    (_target("3.11"), {"foo": _index_pin(version="1.0")}),
+                    (_target("3.12"), {}),
+                    (_target("3.13"), {}),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 1
@@ -717,23 +680,18 @@ class TestPerTupleMarkerSimplification:
         assert 'python_version == "3.13"' not in marker
         assert " or " in marker
 
-    def test_package_in_all_four_tuples_same_version_no_marker(self) -> None:
-        # Regression check: the existing "all four agree on a single
-        # version" path stays unmarkered after the fix.
-        per_tuple = {
-            "py310": {"foo": _index_pin(version="1.0")},
-            "py311": {"foo": _index_pin(version="1.0")},
-            "py312": {"foo": _index_pin(version="1.0")},
-            "py313": {"foo": _index_pin(version="1.0")},
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-            "py312": Marker('python_version == "3.12"'),
-            "py313": Marker('python_version == "3.13"'),
-        }
+    def test_package_in_all_four_targets_same_version_no_marker(self) -> None:
+        # Regression check: the "all four agree on a single version" path
+        # stays unmarkered.
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (_target("3.10"), {"foo": _index_pin(version="1.0")}),
+                    (_target("3.11"), {"foo": _index_pin(version="1.0")}),
+                    (_target("3.12"), {"foo": _index_pin(version="1.0")}),
+                    (_target("3.13"), {"foo": _index_pin(version="1.0")}),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 1
@@ -743,26 +701,22 @@ class TestPerTupleMarkerSimplification:
         # ``foo`` resolves on py3.10 (v1) and py3.11+py3.12 (v2); absent
         # from py3.13.  Two groups; both must be marker-gated, and
         # neither group should claim py3.13.
-        per_tuple = {
-            "py310": {"foo": _index_pin(version="1.0")},
-            "py311": {"foo": _index_pin(version="2.0")},
-            "py312": {"foo": _index_pin(version="2.0")},
-            "py313": {},
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-            "py312": Marker('python_version == "3.12"'),
-            "py313": Marker('python_version == "3.13"'),
-        }
+        py310 = _target("3.10")
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (py310, {"foo": _index_pin(version="1.0")}),
+                    (_target("3.11"), {"foo": _index_pin(version="2.0")}),
+                    (_target("3.12"), {"foo": _index_pin(version="2.0")}),
+                    (_target("3.13"), {}),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 2
         v1_marker = next(p["marker"] for p in data["packages"] if p["version"] == "1.0")
         v2_marker = next(p["marker"] for p in data["packages"] if p["version"] == "2.0")
-        assert v1_marker == 'python_version == "3.10"'
+        assert v1_marker == str(Marker(py310.marker_string))
         assert 'python_version == "3.11"' in v2_marker
         assert 'python_version == "3.12"' in v2_marker
         assert 'python_version == "3.13"' not in v2_marker
@@ -773,73 +727,58 @@ class TestConflictForkBaseDepMarkers:
     conflict-fork membership clause, so it installs even when no member
     is selected (the env-conditional-base-dep regression)."""
 
-    _LINUX_ENV: ClassVar[dict[str, str]] = {
-        "sys_platform": "linux",
-        "platform_machine": "x86_64",
-    }
-    _WIN_ENV: ClassVar[dict[str, str]] = {
-        "sys_platform": "win32",
-        "platform_machine": "AMD64",
-    }
+    _LINUX: ClassVar[ResolveTarget] = _target(platform="linux_x86_64")
+    _WIN: ClassVar[ResolveTarget] = _target(platform="windows_amd64")
+    _CPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "cpu"),)
+    _GPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "gpu"),)
 
     def _lock_input(self) -> LockInput:
-        linux_env_marker = Marker('sys_platform == "linux"')
-        win_env_marker = Marker('sys_platform == "win32"')
-
         # ``tensorrt`` is a member-only dep: required by every fork but
         # absent from the base resolve, so its membership clause must
         # survive even though it appears in both linux forks at the same
         # version.  Without ``env_base_names`` the writer cannot tell
         # this case apart from a true base dep.
-        per_tuple = {
-            "linux-cpu": {
-                "basepkg": _index_pin(name="basepkg", version="1.0"),
-                "tensorrt": _index_pin(name="tensorrt", version="1.0"),
-                "torch": _index_pin(name="torch", version="2.0+cpu"),
-                "universal": _index_pin(name="universal", version="9.0"),
-            },
-            "linux-gpu": {
-                "basepkg": _index_pin(name="basepkg", version="1.0"),
-                "tensorrt": _index_pin(name="tensorrt", version="1.0"),
-                "torch": _index_pin(name="torch", version="2.0+gpu"),
-                "universal": _index_pin(name="universal", version="9.0"),
-            },
-            "win-cpu": {
-                "torch": _index_pin(name="torch", version="2.0+cpu"),
-                "universal": _index_pin(name="universal", version="9.0"),
-            },
-            "win-gpu": {
-                "torch": _index_pin(name="torch", version="2.0+gpu"),
-                "universal": _index_pin(name="universal", version="9.0"),
-            },
-        }
-        tuple_markers = {
-            "linux-cpu": Marker('sys_platform == "linux" and "cpu" in extras'),
-            "linux-gpu": Marker('sys_platform == "linux" and "gpu" in extras'),
-            "win-cpu": Marker('sys_platform == "win32" and "cpu" in extras'),
-            "win-gpu": Marker('sys_platform == "win32" and "gpu" in extras'),
-        }
-        tuple_env_markers = {
-            "linux-cpu": linux_env_marker,
-            "linux-gpu": linux_env_marker,
-            "win-cpu": win_env_marker,
-            "win-gpu": win_env_marker,
-        }
-        tuple_environments = {
-            "linux-cpu": self._LINUX_ENV,
-            "linux-gpu": self._LINUX_ENV,
-            "win-cpu": self._WIN_ENV,
-            "win-gpu": self._WIN_ENV,
-        }
+        targets = _targets(
+            (
+                self._LINUX.with_selection(self._CPU),
+                {
+                    "basepkg": _index_pin(name="basepkg", version="1.0"),
+                    "tensorrt": _index_pin(name="tensorrt", version="1.0"),
+                    "torch": _index_pin(name="torch", version="2.0+cpu"),
+                    "universal": _index_pin(name="universal", version="9.0"),
+                },
+            ),
+            (
+                self._LINUX.with_selection(self._GPU),
+                {
+                    "basepkg": _index_pin(name="basepkg", version="1.0"),
+                    "tensorrt": _index_pin(name="tensorrt", version="1.0"),
+                    "torch": _index_pin(name="torch", version="2.0+gpu"),
+                    "universal": _index_pin(name="universal", version="9.0"),
+                },
+            ),
+            (
+                self._WIN.with_selection(self._CPU),
+                {
+                    "torch": _index_pin(name="torch", version="2.0+cpu"),
+                    "universal": _index_pin(name="universal", version="9.0"),
+                },
+            ),
+            (
+                self._WIN.with_selection(self._GPU),
+                {
+                    "torch": _index_pin(name="torch", version="2.0+gpu"),
+                    "universal": _index_pin(name="universal", version="9.0"),
+                },
+            ),
+        )
 
         # Mirror the resolver shape: a base pass ran for both envs and
         # told the writer which deps install regardless of which member
         # is selected.  ``tensorrt`` is intentionally absent.
-        linux_sig = tuple(sorted(self._LINUX_ENV.items()))
-        win_sig = tuple(sorted(self._WIN_ENV.items()))
         env_base_names = {
-            linux_sig: frozenset({"basepkg", "universal"}),
-            win_sig: frozenset({"universal"}),
+            _env_signature(self._LINUX): frozenset({"basepkg", "universal"}),
+            _env_signature(self._WIN): frozenset({"universal"}),
         }
 
         conflicts = (
@@ -852,10 +791,7 @@ class TestConflictForkBaseDepMarkers:
             ),
         )
         return LockInput(
-            per_tuple_pins=per_tuple,
-            tuple_markers=tuple_markers,
-            tuple_env_markers=tuple_env_markers,
-            tuple_environments=tuple_environments,
+            targets=targets,
             env_base_names=env_base_names,
             extras=("cpu", "gpu"),
             conflicts=conflicts,
@@ -869,10 +805,8 @@ class TestConflictForkBaseDepMarkers:
         assert base_marker is not None
         # The bug ORs the per-fork membership markers, which is False on
         # linux with no extras.  The fix emits the env-only marker.
-        assert base_marker.evaluate({"sys_platform": "linux", "extras": frozenset()})
-        assert not base_marker.evaluate(
-            {"sys_platform": "win32", "extras": frozenset()}
-        )
+        assert base_marker.evaluate(self._LINUX.env_with_membership())
+        assert not base_marker.evaluate(self._WIN.env_with_membership())
         assert "in extras" not in str(base_marker)
 
     def test_conflicting_dep_keeps_membership_markers(self) -> None:
@@ -896,8 +830,10 @@ class TestConflictForkBaseDepMarkers:
         assert marker is not None
         assert '"cpu" in extras' in str(marker)
         assert '"gpu" in extras' in str(marker)
-        assert not marker.evaluate({"sys_platform": "linux", "extras": frozenset()})
-        assert marker.evaluate({"sys_platform": "linux", "extras": frozenset({"cpu"})})
+        assert not marker.evaluate(self._LINUX.env_with_membership())
+        assert marker.evaluate(
+            {**self._LINUX.env_with_membership(), "extras": frozenset({"cpu"})}
+        )
 
     def test_fully_universal_dep_has_no_marker(self) -> None:
         pylock = build_pylock(self._lock_input())
@@ -912,7 +848,9 @@ class TestConflictForkBaseDepDivergence:
     zero).  The writer raises instead of emitting a lock that silently
     skips the dependency."""
 
-    _ENV: ClassVar[dict[str, str]] = {"sys_platform": "linux"}
+    _LINUX: ClassVar[ResolveTarget] = _target()
+    _CPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "cpu"),)
+    _GPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "gpu"),)
 
     def _lock_input(
         self,
@@ -920,22 +858,20 @@ class TestConflictForkBaseDepDivergence:
         base_names: frozenset[str] = frozenset({"shared"}),
         gpu_has_shared: bool = True,
     ) -> LockInput:
-        env_marker = Marker('sys_platform == "linux"')
-        per_tuple: dict[str, dict[str, IndexPin]] = {
-            "cpu": {"shared": _index_pin(name="shared", version="1.0")},
-            "gpu": {"shared": _index_pin(name="shared", version="2.0")},
+        cpu_pins: dict[str, PinShape] = {
+            "shared": _index_pin(name="shared", version="1.0")
+        }
+        gpu_pins: dict[str, PinShape] = {
+            "shared": _index_pin(name="shared", version="2.0")
         }
         if not gpu_has_shared:
-            del per_tuple["gpu"]["shared"]
+            del gpu_pins["shared"]
         return LockInput(
-            per_tuple_pins=per_tuple,
-            tuple_markers={
-                "cpu": Marker('sys_platform == "linux" and "cpu" in extras'),
-                "gpu": Marker('sys_platform == "linux" and "gpu" in extras'),
-            },
-            tuple_env_markers={"cpu": env_marker, "gpu": env_marker},
-            tuple_environments={"cpu": self._ENV, "gpu": self._ENV},
-            env_base_names={tuple(sorted(self._ENV.items())): base_names},
+            targets=_targets(
+                (self._LINUX.with_selection(self._CPU), cpu_pins),
+                (self._LINUX.with_selection(self._GPU), gpu_pins),
+            ),
+            env_base_names={_env_signature(self._LINUX): base_names},
             extras=("cpu", "gpu"),
             conflicts=(
                 ConflictSet(
@@ -949,12 +885,14 @@ class TestConflictForkBaseDepDivergence:
         )
 
     def test_divergent_base_dep_raises_with_per_fork_pins(self) -> None:
+        cpu = self._LINUX.with_selection(self._CPU)
+        gpu = self._LINUX.with_selection(self._GPU)
         with pytest.raises(DivergentBaseDependencyError) as info:
             build_pylock(self._lock_input())
         message = str(info.value)
         assert "shared" in message
-        assert "cpu -> 1.0" in message
-        assert "gpu -> 2.0" in message
+        assert f"{cpu.label} -> 1.0" in message
+        assert f"{gpu.label} -> 2.0" in message
 
     def test_write_lock_raises_and_writes_nothing(self, tmp_path: Path) -> None:
         target = tmp_path / "pylock.toml"
@@ -989,18 +927,11 @@ class TestConflictForksWithoutBaseAttribution:
     so a dep present in every fork at the same version must keep its
     membership OR rather than collapse to an env-only marker."""
 
-    _ENV: ClassVar[dict[str, str]] = {"sys_platform": "linux"}
+    _LINUX: ClassVar[ResolveTarget] = _target()
+    _CPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "cpu"),)
+    _GPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "gpu"),)
 
     def _lock_input(self) -> LockInput:
-        per_tuple = {
-            "cpu": {"shared": _index_pin(name="shared", version="1.0")},
-            "gpu": {"shared": _index_pin(name="shared", version="1.0")},
-        }
-        env_marker = Marker('sys_platform == "linux"')
-        tuple_markers = {
-            "cpu": Marker('sys_platform == "linux" and "cpu" in extras'),
-            "gpu": Marker('sys_platform == "linux" and "gpu" in extras'),
-        }
         conflicts = (
             ConflictSet(
                 members=(
@@ -1011,10 +942,16 @@ class TestConflictForksWithoutBaseAttribution:
             ),
         )
         return LockInput(
-            per_tuple_pins=per_tuple,
-            tuple_markers=tuple_markers,
-            tuple_env_markers={"cpu": env_marker, "gpu": env_marker},
-            tuple_environments={"cpu": self._ENV, "gpu": self._ENV},
+            targets=_targets(
+                (
+                    self._LINUX.with_selection(self._CPU),
+                    {"shared": _index_pin(name="shared", version="1.0")},
+                ),
+                (
+                    self._LINUX.with_selection(self._GPU),
+                    {"shared": _index_pin(name="shared", version="1.0")},
+                ),
+            ),
             extras=("cpu", "gpu"),
             conflicts=conflicts,
         )
@@ -1026,7 +963,7 @@ class TestConflictForksWithoutBaseAttribution:
         assert marker is not None
         assert '"cpu" in extras' in str(marker)
         assert '"gpu" in extras' in str(marker)
-        assert not marker.evaluate({"sys_platform": "linux", "extras": frozenset()})
+        assert not marker.evaluate(self._LINUX.env_with_membership())
 
 
 class TestConflictForkRequiresPythonMerge:
@@ -1034,7 +971,9 @@ class TestConflictForkRequiresPythonMerge:
     collapse to one entry; ``requires_python`` survives only when every
     fork agreed, matching :func:`_common_requires_python`'s rule."""
 
-    _ENV: ClassVar[dict[str, str]] = {"sys_platform": "linux"}
+    _LINUX: ClassVar[ResolveTarget] = _target()
+    _CPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "cpu"),)
+    _GPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "gpu"),)
 
     @staticmethod
     def _pin(requires_python: str | None) -> IndexPin:
@@ -1049,15 +988,10 @@ class TestConflictForkRequiresPythonMerge:
 
     def _build(self, cpu_req: str | None, gpu_req: str | None) -> LockInput:
         return LockInput(
-            per_tuple_pins={
-                "cpu": {"foo": self._pin(cpu_req)},
-                "gpu": {"foo": self._pin(gpu_req)},
-            },
-            tuple_markers={
-                "cpu": Marker('"cpu" in extras'),
-                "gpu": Marker('"gpu" in extras'),
-            },
-            tuple_environments={"cpu": self._ENV, "gpu": self._ENV},
+            targets=_targets(
+                (self._LINUX.with_selection(self._CPU), {"foo": self._pin(cpu_req)}),
+                (self._LINUX.with_selection(self._GPU), {"foo": self._pin(gpu_req)}),
+            ),
             extras=("cpu", "gpu"),
             conflicts=(
                 ConflictSet(
@@ -1092,49 +1026,31 @@ class TestConflictForkRequiresPythonMerge:
 class TestConflictForkByteStability:
     """``write_lock`` is deterministic across multiple conflict forks.
 
-    Every per-tuple grouping, marker disjunction, and wheel listing must
+    Every per-target grouping, marker disjunction, and wheel listing must
     pivot through sorted iteration so two calls on the same
     :class:`LockInput` produce byte-identical TOML.  Without this, a
     re-resolve that only re-orders dict insertion would write a
     spurious diff."""
 
-    _LINUX: ClassVar[dict[str, str]] = {
-        "sys_platform": "linux",
-        "platform_machine": "x86_64",
-    }
-    _DARWIN: ClassVar[dict[str, str]] = {
-        "sys_platform": "darwin",
-        "platform_machine": "arm64",
-    }
+    _LINUX: ClassVar[ResolveTarget] = _target(platform="linux_x86_64")
+    _DARWIN: ClassVar[ResolveTarget] = _target(platform="macos_arm64")
 
     def _two_by_two(self) -> LockInput:
-        # Two pythons (linux, darwin) x two conflict members (cpu, gpu).
-        per_tuple: dict[str, dict[str, IndexPin]] = {}
-        tuple_markers: dict[str, Marker] = {}
-        tuple_env_markers: dict[str, Marker] = {}
-        tuple_environments: dict[str, dict[str, str]] = {}
-        env_marker = {
-            "linux": Marker('sys_platform == "linux"'),
-            "darwin": Marker('sys_platform == "darwin"'),
-        }
-        env_dict = {"linux": self._LINUX, "darwin": self._DARWIN}
-        for sys_plat in ("darwin", "linux"):
+        # Two platforms (linux, darwin) x two conflict members (cpu, gpu).
+        entries: list[tuple[ResolveTarget, Mapping[str, PinShape]]] = []
+        for platform in (self._DARWIN, self._LINUX):
             for member in ("gpu", "cpu"):
-                label = f"{sys_plat}-{member}"
-                per_tuple[label] = {
-                    "torch": _index_pin(name="torch", version=f"2.0+{member}"),
-                    "universal": _index_pin(name="universal", version="9.0"),
-                }
-                tuple_markers[label] = Marker(
-                    f'sys_platform == "{sys_plat}" and "{member}" in extras'
+                entries.append(
+                    (
+                        platform.with_selection((("extra", member),)),
+                        {
+                            "torch": _index_pin(name="torch", version=f"2.0+{member}"),
+                            "universal": _index_pin(name="universal", version="9.0"),
+                        },
+                    )
                 )
-                tuple_env_markers[label] = env_marker[sys_plat]
-                tuple_environments[label] = env_dict[sys_plat]
         return LockInput(
-            per_tuple_pins=per_tuple,
-            tuple_markers=tuple_markers,
-            tuple_env_markers=tuple_env_markers,
-            tuple_environments=tuple_environments,
+            targets=_targets(*entries),
             extras=("cpu", "gpu"),
             conflicts=(
                 ConflictSet(
@@ -1154,7 +1070,7 @@ class TestConflictForkByteStability:
 
 class TestBuildPylockReturnsValidPylock:
     def test_can_be_validated(self) -> None:
-        pylock = build_pylock(LockInput(pins={"foo": _index_pin()}))
+        pylock = build_pylock(LockInput(targets=_one({"foo": _index_pin()})))
         assert isinstance(pylock, Pylock)
         # Should not raise
         pylock.validate()
@@ -1210,10 +1126,12 @@ class TestRoundTrip:
     def test_pylock_can_be_re_parsed(self) -> None:
         text = write_lock(
             LockInput(
-                pins={
-                    "foo": _index_pin(),
-                    "bar": LocalPin(name="bar", version="2.0", path="/tmp/bar"),
-                },
+                targets=_one(
+                    {
+                        "foo": _index_pin(),
+                        "bar": LocalPin(name="bar", version="2.0", path="/tmp/bar"),
+                    }
+                )
             )
         )
         data = tomllib.loads(text)
@@ -1231,7 +1149,9 @@ class TestProvenance:
             input_path="pyproject.toml",
             mode="specific",
         )
-        text = write_lock(LockInput(pins={"foo": _index_pin()}, provenance=prov))
+        text = write_lock(
+            LockInput(targets=_one({"foo": _index_pin()}), provenance=prov)
+        )
         data = tomllib.loads(text)
         assert data["tool"]["nab"]["nab-version"] == "9.9.9"
         assert data["tool"]["nab"]["mode"] == "specific"
@@ -1257,7 +1177,9 @@ class TestProvenance:
                 ("--project-constraint", "urllib3<2"),
             ),
         )
-        text = write_lock(LockInput(pins={"foo": _index_pin()}, provenance=prov))
+        text = write_lock(
+            LockInput(targets=_one({"foo": _index_pin()}), provenance=prov)
+        )
         data = tomllib.loads(text)
         assert data["tool"]["nab"]["cli-project-overrides"] == [
             "--project-resolution=lowest",
@@ -1274,7 +1196,9 @@ class TestProvenance:
             python_specifier=">=3.11,<3.14",
             platforms=("linux_x86_64", "macos_arm64"),
         )
-        text = write_lock(LockInput(pins={"foo": _index_pin()}, provenance=prov))
+        text = write_lock(
+            LockInput(targets=_one({"foo": _index_pin()}), provenance=prov)
+        )
         data = tomllib.loads(text)
         assert data["tool"]["nab"]["mode"] == "universal"
         assert data["tool"]["nab"]["python-specifier"] == ">=3.11,<3.14"
@@ -1295,7 +1219,9 @@ class TestProvenance:
                 ("broken<=1.0", ("dependencies",)),
             ),
         )
-        text = write_lock(LockInput(pins={"foo": _index_pin()}, provenance=prov))
+        text = write_lock(
+            LockInput(targets=_one({"foo": _index_pin()}), provenance=prov)
+        )
         data = tomllib.loads(text)
         assert data["tool"]["nab"]["package-metadata-overrides"] == [
             "chumpy: dependencies",
@@ -1310,12 +1236,14 @@ class TestProvenance:
             input_path="pyproject.toml",
             mode="specific",
         )
-        text = write_lock(LockInput(pins={"foo": _index_pin()}, provenance=prov))
+        text = write_lock(
+            LockInput(targets=_one({"foo": _index_pin()}), provenance=prov)
+        )
         data = tomllib.loads(text)
         assert "package-metadata-overrides" not in data["tool"]["nab"]
 
     def test_absent_provenance_means_no_tool_block(self) -> None:
-        text = write_lock(LockInput(pins={"foo": _index_pin()}))
+        text = write_lock(LockInput(targets=_one({"foo": _index_pin()})))
         data = tomllib.loads(text)
         assert "tool" not in data
 
@@ -1472,10 +1400,12 @@ class TestReadLockfilePackages:
 
     def test_reads_name_to_version_map(self, tmp_path: Path) -> None:
         lock_input = LockInput(
-            pins={
-                "foo": _index_pin("foo", "1.2.3"),
-                "bar": _index_pin("bar", "4.5"),
-            }
+            targets=_one(
+                {
+                    "foo": _index_pin("foo", "1.2.3"),
+                    "bar": _index_pin("bar", "4.5"),
+                }
+            )
         )
         path = tmp_path / "pylock.toml"
         write_lock(lock_input, output_path=path)
@@ -1502,7 +1432,7 @@ class TestDependencyGroups:
     def test_emits_top_level_arrays(self) -> None:
         text = write_lock(
             LockInput(
-                pins={"foo": _index_pin()},
+                targets=_one({"foo": _index_pin()}),
                 dependency_groups=("dev", "docs"),
                 default_groups=("dev",),
             )
@@ -1512,7 +1442,7 @@ class TestDependencyGroups:
         assert data["default-groups"] == ["dev"]
 
     def test_omits_arrays_when_empty(self) -> None:
-        text = write_lock(LockInput(pins={"foo": _index_pin()}))
+        text = write_lock(LockInput(targets=_one({"foo": _index_pin()})))
         data = tomllib.loads(text)
         assert "dependency-groups" not in data
         assert "default-groups" not in data
@@ -1520,7 +1450,7 @@ class TestDependencyGroups:
     def test_group_names_normalized(self) -> None:
         text = write_lock(
             LockInput(
-                pins={"foo": _index_pin()},
+                targets=_one({"foo": _index_pin()}),
                 dependency_groups=("Dev_Group", "Doc.s"),
                 default_groups=("Dev_Group",),
             )
@@ -2251,7 +2181,7 @@ def _sdist_file(name: str = "foo", version: str = "1.0") -> SdistFile:
     )
 
 
-class TestBuildLockInputFromProvider:
+class TestBuildTargetLock:
     def test_index_pin_from_listing(self) -> None:
         provider = _FakeProvider(
             listings={
@@ -2261,10 +2191,8 @@ class TestBuildLockInputFromProvider:
                 ]
             }
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("1.0")}, requires_python=">=3.10"
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.version == "1.0"
         assert pin.index == "https://pypi.org/simple/"
@@ -2273,7 +2201,7 @@ class TestBuildLockInputFromProvider:
         assert pin.sdist.hashes == (("sha256", "b" * 64),)
         assert len(pin.wheels) == 1
         assert pin.wheels[0].hashes == (("sha256", "a" * 64),)
-        assert lock_input.requires_python == ">=3.10"
+        assert lock.target is _HOST
 
     def test_index_pin_prefers_requires_python_override(self) -> None:
         """A widened requires-python override is what the pin records.
@@ -2292,8 +2220,8 @@ class TestBuildLockInputFromProvider:
             },
             requires_python_overrides={"foo": ">=3.9"},
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.requires_python == ">=3.9"
 
@@ -2321,8 +2249,8 @@ class TestBuildLockInputFromProvider:
                 ]
             },
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.requires_python is None
 
@@ -2342,11 +2270,11 @@ class TestBuildLockInputFromProvider:
             },
             requires_python_overrides={"foo": ""},
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.requires_python == ""
-        assert "requires-python" not in write_lock(lock_input)
+        assert "requires-python" not in write_lock(_lock_from(lock))
 
     def test_malformed_requires_python_dropped_and_emittable(self) -> None:
         """A malformed listing Requires-Python is dropped, so the lock still emits.
@@ -2358,11 +2286,11 @@ class TestBuildLockInputFromProvider:
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file(requires_python=">=3.6.*"))]}
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.requires_python is None
-        text = write_lock(lock_input)
+        text = write_lock(_lock_from(lock))
         assert ">=3.6.*" not in text
 
     def test_common_requires_python_malformed_with_valid_stays_unconstrained(
@@ -2401,8 +2329,8 @@ class TestBuildLockInputFromProvider:
         coordinator.request_metadata.assert_not_called()
         coordinator.request_metadata_batch.assert_not_called()
 
-        lock_input = build_lock_input_from_provider(provider, {"pkg": Version("2.0")})
-        text = write_lock(lock_input)
+        lock = build_target_lock(provider, _HOST, {"pkg": Version("2.0")})
+        text = write_lock(_lock_from(lock))
         assert "pkg-2.0.tar.gz" in text
         assert "b" * 64 in text
 
@@ -2415,8 +2343,8 @@ class TestBuildLockInputFromProvider:
             ),
         )
         provider = _FakeProvider(archive_sources={"foo": source})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, ArchivePin)
         assert pin.url == "https://ex.com/foo-1.0.tar.gz"
         assert pin.hashes == (("sha256", "e" * 64),)
@@ -2430,12 +2358,12 @@ class TestBuildLockInputFromProvider:
             url="https://user:token@private.example/foo-1.0.tar.gz#sha256=" + "e" * 64,
         )
         provider = _FakeProvider(archive_sources={"foo": source})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, ArchivePin)
         assert pin.url == "https://private.example/foo-1.0.tar.gz"
-        assert "user:token@" not in write_lock(lock_input)
-        assert "user:token@" not in write_requirements_with_hashes(lock_input)
+        assert "user:token@" not in write_lock(_lock_from(lock))
+        assert "user:token@" not in write_requirements_with_hashes(_lock_from(lock))
 
     def test_local_path_threads_to_artifact(self, tmp_path: Path) -> None:
         """A WheelFile.local_path reaches the emitted WheelArtifact."""
@@ -2443,8 +2371,8 @@ class TestBuildLockInputFromProvider:
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file(local_path=wheel_path))]}
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].local_path == wheel_path
 
@@ -2466,8 +2394,8 @@ class TestBuildLockInputFromProvider:
             },
             dist_policy_overrides={"foo": DistPolicy.SDIST_INSTALL},
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.wheels == ()
         assert pin.sdist is not None
@@ -2480,7 +2408,7 @@ class TestBuildLockInputFromProvider:
             dist_policy_overrides={"foo": DistPolicy.SDIST_INSTALL},
         )
         with pytest.raises(MissingSdistError, match="foo==1.0 has no sdist"):
-            build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+            build_target_lock(provider, _HOST, {"foo": Version("1.0")})
 
     def test_index_pin_records_serving_index(self) -> None:
         provider = _FakeProvider(
@@ -2492,15 +2420,16 @@ class TestBuildLockInputFromProvider:
             },
             listing_indexes={"foo": "torch-cpu"},
         )
-        lock_input = build_lock_input_from_provider(
+        lock = build_target_lock(
             provider,
+            _HOST,
             {"foo": Version("1.0")},
             indexes=(
                 IndexConfig("pypi", "https://pypi.org/simple/"),
                 IndexConfig("torch-cpu", "https://download.pytorch.org/whl/cpu/"),
             ),
         )
-        pin = lock_input.pins["foo"]
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.index == "https://download.pytorch.org/whl/cpu/"
 
@@ -2515,8 +2444,9 @@ class TestBuildLockInputFromProvider:
             },
         )
         with pytest.raises(AssertionError, match="not one of the configured indexes"):
-            build_lock_input_from_provider(
+            build_target_lock(
                 provider,
+                _HOST,
                 {"foo": Version("1.0")},
                 indexes=(IndexConfig("custom", "https://custom.example/simple/"),),
             )
@@ -2526,8 +2456,9 @@ class TestBuildLockInputFromProvider:
             listings={"foo": [(Version("1.0"), _wheel_file())]},
             listing_indexes={"foo": "private"},
         )
-        lock_input = build_lock_input_from_provider(
+        lock = build_target_lock(
             provider,
+            _HOST,
             {"foo": Version("1.0")},
             indexes=(
                 IndexConfig(
@@ -2535,7 +2466,7 @@ class TestBuildLockInputFromProvider:
                 ),
             ),
         )
-        pin = lock_input.pins["foo"]
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.index == "https://Private.Example:8443/simple/"
 
@@ -2544,12 +2475,13 @@ class TestBuildLockInputFromProvider:
             listings={"foo": [(Version("1.0"), _wheel_file())]},
             listing_indexes={"foo": "plain"},
         )
-        lock_input = build_lock_input_from_provider(
+        lock = build_target_lock(
             provider,
+            _HOST,
             {"foo": Version("1.0")},
             indexes=(IndexConfig("plain", "https://Plain.Example/simple/"),),
         )
-        pin = lock_input.pins["foo"]
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.index == "https://Plain.Example/simple/"
 
@@ -2558,12 +2490,13 @@ class TestBuildLockInputFromProvider:
             listings={"foo": [(Version("1.0"), _wheel_file())]},
             listing_indexes={"foo": "useronly"},
         )
-        lock_input = build_lock_input_from_provider(
+        lock = build_target_lock(
             provider,
+            _HOST,
             {"foo": Version("1.0")},
             indexes=(IndexConfig("useronly", "https://user@example.com/simple/"),),
         )
-        pin = lock_input.pins["foo"]
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.index == "https://example.com/simple/"
 
@@ -2597,16 +2530,17 @@ class TestBuildLockInputFromProvider:
             listings={"foo": [(Version("1.0"), wheel), (Version("1.0"), sdist)]},
             listing_indexes={"foo": "private"},
         )
-        lock_input = build_lock_input_from_provider(
+        lock = build_target_lock(
             provider,
+            _HOST,
             {"foo": Version("1.0")},
             indexes=(
                 IndexConfig("private", "https://user:token@private.example/simple/"),
             ),
         )
-        text = write_lock(lock_input)
+        text = write_lock(_lock_from(lock))
         assert "user:token@" not in text
-        pin = lock_input.pins["foo"]
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].url == (
             "https://private.example/simple/foo/foo-1.0-py3-none-any.whl"
@@ -2618,10 +2552,8 @@ class TestBuildLockInputFromProvider:
         provider = _FakeProvider(
             local_sources={"foo": LocalSource(name="foo", path=str(tmp_path))}
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+local")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+local")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, LocalPin)
         assert pin.path == str(tmp_path.resolve())
 
@@ -2635,10 +2567,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": "a" * 40},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.commit_id == "a" * 40
 
@@ -2654,10 +2584,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": sha},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.subdirectory == "pkg/sub"
 
@@ -2678,10 +2606,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": sha},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert (
             pin.repo_url == f"git+https://example.com/r.git@{sha}#subdirectory=pkg/sub"
@@ -2705,10 +2631,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": sha},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert (
             pin.repo_url == f"git+https://example.com/r.git@{sha}#subdirectory=my%20pkg"
@@ -2729,10 +2653,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": sha},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        text = write_requirements_with_hashes(lock_input)
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        text = write_requirements_with_hashes(_lock_from(lock))
         assert f"foo @ git+https://example.com/r.git@{sha}" in text
         assert "@main" not in text
 
@@ -2748,10 +2670,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": sha},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        vcs = tomllib.loads(write_lock(lock_input))["packages"][0]["vcs"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        vcs = tomllib.loads(write_lock(_lock_from(lock)))["packages"][0]["vcs"]
         assert vcs["url"] == "https://example.com/r.git"
         assert vcs["commit-id"] == sha
         assert vcs["subdirectory"] == "pkg/sub"
@@ -2769,10 +2689,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": sha},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.bare_repo_url == "https://example.com/r.git"
 
@@ -2792,10 +2710,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": sha},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.bare_repo_url == "ssh://git@github.com/foo/bar.git"
         assert pin.repo_url == f"git+ssh://git@github.com/foo/bar.git@{sha}"
@@ -2812,10 +2728,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": sha},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.bare_repo_url == "ssh://git@github.com/foo/bar.git"
 
@@ -2833,7 +2747,7 @@ class TestBuildLockInputFromProvider:
             },
         )
         with pytest.raises(MissingVcsCommitError, match="resolved commit SHA"):
-            build_lock_input_from_provider(provider, {"foo": Version("0.0.0+vcs")})
+            build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
 
     def test_vcs_source_prefers_resolved_sha_over_url_ref(self) -> None:
         """The post-clone SHA on the provider wins over the URL's ``@<ref>``."""
@@ -2847,10 +2761,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": resolved},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.commit_id == resolved
 
@@ -2864,10 +2776,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": "a" * 40},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.repo_url == "git+https://GitHub.com/org/repo.git@" + "a" * 40
 
@@ -2878,10 +2788,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": "a" * 40},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.repo_url == "git+https://github.com/org/repo.git@" + "a" * 40
 
@@ -2896,10 +2804,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": "b" * 40},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.requested_revision == "v1.0"
 
@@ -2915,10 +2821,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": sha},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.requested_revision is None
 
@@ -2930,10 +2834,8 @@ class TestBuildLockInputFromProvider:
             },
             vcs_pins={"foo": "a" * 40},
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+vcs")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+vcs")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.requested_revision is None
 
@@ -2943,10 +2845,8 @@ class TestBuildLockInputFromProvider:
                 "foo": LocalSource(name="foo", path=str(tmp_path), editable=True)
             }
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+local")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+local")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, LocalPin)
         assert pin.editable is True
 
@@ -2958,10 +2858,8 @@ class TestBuildLockInputFromProvider:
                 )
             }
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+local")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+local")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, LocalPin)
         assert pin.subdirectory == "pkg/lib"
 
@@ -2971,10 +2869,8 @@ class TestBuildLockInputFromProvider:
         provider = _FakeProvider(
             local_sources={"foo": LocalSource(name="foo", path=str(tmp_path))}
         )
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("0.0.0+local")}
-        )
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("0.0.0+local")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, LocalPin)
         assert pin.editable is False
         assert pin.subdirectory is None
@@ -2991,8 +2887,8 @@ class TestBuildLockInputFromProvider:
             size=1234,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].upload_time == datetime(
             2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc
@@ -3009,8 +2905,8 @@ class TestBuildLockInputFromProvider:
             size=4321,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), sdist)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.sdist is not None
         assert pin.sdist.upload_time == datetime(
@@ -3019,8 +2915,8 @@ class TestBuildLockInputFromProvider:
 
     def test_upload_time_none_when_index_omits_it(self) -> None:
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), _wheel_file())]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].upload_time is None
 
@@ -3036,8 +2932,8 @@ class TestBuildLockInputFromProvider:
             size=1234,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].upload_time is None
 
@@ -3053,8 +2949,8 @@ class TestBuildLockInputFromProvider:
             size=1234,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].upload_time == datetime(
             2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc
@@ -3072,17 +2968,17 @@ class TestBuildLockInputFromProvider:
             size=1234,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].upload_time is None
 
     def test_missing_acceptable_hash_raises(self) -> None:
         wheel = _wheel_file(sha256=None)
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
         with pytest.raises(MissingHashError, match="no acceptable hash"):
-            write_lock(lock_input)
+            write_lock(_lock_from(lock))
 
     def test_unsupported_algorithm_raises(self) -> None:
         wheel_md5_only = WheelFile(
@@ -3096,9 +2992,9 @@ class TestBuildLockInputFromProvider:
             size=1234,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel_md5_only)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
         with pytest.raises(MissingHashError, match="no acceptable hash"):
-            write_lock(lock_input)
+            write_lock(_lock_from(lock))
 
     def test_sha384_and_sha512_emit(self) -> None:
         wheel = WheelFile(
@@ -3112,8 +3008,8 @@ class TestBuildLockInputFromProvider:
             size=1234,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert dict(pin.wheels[0].hashes) == {
             "sha384": "d" * 96,
@@ -3136,8 +3032,8 @@ class TestBuildLockInputFromProvider:
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), wheel_a), (Version("1.0"), wheel_b)]}
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.requires_python is None
 
@@ -3148,18 +3044,12 @@ class TestBuildLockInputFromProvider:
             listing_indexes={"foo": "gone"},
         )
         with pytest.raises(AssertionError, match="not one of the configured indexes"):
-            build_lock_input_from_provider(
+            build_target_lock(
                 provider,
+                _HOST,
                 {"foo": Version("1.0")},
                 indexes=(IndexConfig("primary", "https://primary.example/simple/"),),
             )
-
-    def test_extras_passed_through(self) -> None:
-        provider = _FakeProvider(listings={"foo": [(Version("1.0"), _wheel_file())]})
-        lock_input = build_lock_input_from_provider(
-            provider, {"foo": Version("1.0")}, extras=("dev", "test")
-        )
-        assert lock_input.extras == ("dev", "test")
 
     def test_only_md5_hash_raises(self) -> None:
         wheel = WheelFile(
@@ -3173,15 +3063,15 @@ class TestBuildLockInputFromProvider:
             size=None,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
         with pytest.raises(MissingHashError, match="sha256"):
-            write_requirements_with_hashes(lock_input)
+            write_requirements_with_hashes(_lock_from(lock))
 
     def test_files_without_requires_python_drop_field(self) -> None:
         wheel = _wheel_file(requires_python=None)
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.requires_python is None
 
@@ -3193,8 +3083,8 @@ class TestMissingHashFormatAware:
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file(sha256=None))]}
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].hashes == ()
 
@@ -3210,8 +3100,8 @@ class TestMissingHashFormatAware:
             size=None,
         )
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].hashes == ()
 
@@ -3219,25 +3109,25 @@ class TestMissingHashFormatAware:
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file(sha256=None))]}
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
-        text = write_requirements_without_hashes(lock_input)
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        text = write_requirements_without_hashes(_lock_from(lock))
         assert text.strip() == "foo==1.0"
 
     def test_with_hashes_raises_on_hashless_pin(self) -> None:
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file(sha256=None))]}
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
         with pytest.raises(MissingHashError, match="no acceptable hash"):
-            write_requirements_with_hashes(lock_input)
+            write_requirements_with_hashes(_lock_from(lock))
 
     def test_pylock_raises_on_hashless_pin(self) -> None:
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file(sha256=None))]}
         )
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0")})
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
         with pytest.raises(MissingHashError, match="no acceptable hash"):
-            write_lock(lock_input)
+            write_lock(_lock_from(lock))
 
 
 class TestDirectoryFields:
@@ -3246,14 +3136,16 @@ class TestDirectoryFields:
     def test_editable_emitted_when_true(self, tmp_path: Path) -> None:
         text = write_lock(
             LockInput(
-                pins={
-                    "foo": LocalPin(
-                        name="foo",
-                        version="1.0",
-                        path=str(tmp_path),
-                        editable=True,
-                    )
-                },
+                targets=_one(
+                    {
+                        "foo": LocalPin(
+                            name="foo",
+                            version="1.0",
+                            path=str(tmp_path),
+                            editable=True,
+                        )
+                    }
+                )
             )
         )
         data = tomllib.loads(text)
@@ -3262,7 +3154,9 @@ class TestDirectoryFields:
     def test_editable_false_by_default(self, tmp_path: Path) -> None:
         text = write_lock(
             LockInput(
-                pins={"foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))},
+                targets=_one(
+                    {"foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))}
+                )
             )
         )
         data = tomllib.loads(text)
@@ -3271,14 +3165,16 @@ class TestDirectoryFields:
     def test_subdirectory_emitted(self, tmp_path: Path) -> None:
         text = write_lock(
             LockInput(
-                pins={
-                    "foo": LocalPin(
-                        name="foo",
-                        version="1.0",
-                        path=str(tmp_path),
-                        subdirectory="pkg/lib",
-                    )
-                },
+                targets=_one(
+                    {
+                        "foo": LocalPin(
+                            name="foo",
+                            version="1.0",
+                            path=str(tmp_path),
+                            subdirectory="pkg/lib",
+                        )
+                    }
+                )
             )
         )
         data = tomllib.loads(text)
@@ -3287,7 +3183,9 @@ class TestDirectoryFields:
     def test_subdirectory_omitted_when_none(self, tmp_path: Path) -> None:
         text = write_lock(
             LockInput(
-                pins={"foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))},
+                targets=_one(
+                    {"foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))}
+                )
             )
         )
         data = tomllib.loads(text)
@@ -3303,21 +3201,28 @@ class TestDirectoryFields:
         plain = LocalPin(name="foo", version="1.0", path="/a")
         assert _pin_discriminator(sub) != _pin_discriminator(plain)
 
-    def test_per_tuple_editable_diverges(self) -> None:
-        per_tuple = {
-            "py310": {
-                "foo": LocalPin(name="foo", version="1.0", path="/a", editable=True)
-            },
-            "py311": {
-                "foo": LocalPin(name="foo", version="1.0", path="/a", editable=False)
-            },
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-        }
+    def test_per_target_editable_diverges(self) -> None:
         text = write_lock(
-            LockInput(per_tuple_pins=per_tuple, tuple_markers=tuple_markers)
+            LockInput(
+                targets=_targets(
+                    (
+                        _target("3.10"),
+                        {
+                            "foo": LocalPin(
+                                name="foo", version="1.0", path="/a", editable=True
+                            )
+                        },
+                    ),
+                    (
+                        _target("3.11"),
+                        {
+                            "foo": LocalPin(
+                                name="foo", version="1.0", path="/a", editable=False
+                            )
+                        },
+                    ),
+                )
+            )
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 2
@@ -3329,16 +3234,18 @@ class TestVcsRequestedRevision:
     def test_requested_revision_emitted(self) -> None:
         text = write_lock(
             LockInput(
-                pins={
-                    "foo": VcsPin(
-                        name="foo",
-                        version="1.0",
-                        repo_url="https://github.com/x/y.git",
-                        bare_repo_url="https://github.com/x/y.git",
-                        commit_id="a" * 40,
-                        requested_revision="v2.1.0",
-                    ),
-                },
+                targets=_one(
+                    {
+                        "foo": VcsPin(
+                            name="foo",
+                            version="1.0",
+                            repo_url="https://github.com/x/y.git",
+                            bare_repo_url="https://github.com/x/y.git",
+                            commit_id="a" * 40,
+                            requested_revision="v2.1.0",
+                        ),
+                    }
+                )
             )
         )
         data = tomllib.loads(text)
@@ -3347,15 +3254,17 @@ class TestVcsRequestedRevision:
     def test_requested_revision_omitted_when_none(self) -> None:
         text = write_lock(
             LockInput(
-                pins={
-                    "foo": VcsPin(
-                        name="foo",
-                        version="1.0",
-                        repo_url="https://github.com/x/y.git",
-                        bare_repo_url="https://github.com/x/y.git",
-                        commit_id="a" * 40,
-                    ),
-                },
+                targets=_one(
+                    {
+                        "foo": VcsPin(
+                            name="foo",
+                            version="1.0",
+                            repo_url="https://github.com/x/y.git",
+                            bare_repo_url="https://github.com/x/y.git",
+                            commit_id="a" * 40,
+                        ),
+                    }
+                )
             )
         )
         data = tomllib.loads(text)
@@ -3380,7 +3289,7 @@ class TestUploadTime:
                 ),
             ),
         )
-        text = write_lock(LockInput(pins={"foo": pin}))
+        text = write_lock(LockInput(targets=_one({"foo": pin})))
         data = tomllib.loads(text)
         assert data["packages"][0]["wheels"][0]["upload-time"] == ts
 
@@ -3397,12 +3306,12 @@ class TestUploadTime:
                 upload_time=ts,
             ),
         )
-        text = write_lock(LockInput(pins={"foo": pin}))
+        text = write_lock(LockInput(targets=_one({"foo": pin})))
         data = tomllib.loads(text)
         assert data["packages"][0]["sdist"]["upload-time"] == ts
 
     def test_upload_time_omitted_when_none(self) -> None:
-        text = write_lock(LockInput(pins={"foo": _index_pin()}))
+        text = write_lock(LockInput(targets=_one({"foo": _index_pin()})))
         data = tomllib.loads(text)
         assert "upload-time" not in data["packages"][0]["wheels"][0]
         assert "upload-time" not in data["packages"][0]["sdist"]
@@ -3414,7 +3323,11 @@ class TestRelativeDirectoryPath:
     def test_path_inside_lock_dir_is_relative(self, tmp_path: Path) -> None:
         src = tmp_path / "libs" / "foo"
         text = write_lock(
-            LockInput(pins={"foo": LocalPin(name="foo", version="1.0", path=str(src))}),
+            LockInput(
+                targets=_one(
+                    {"foo": LocalPin(name="foo", version="1.0", path=str(src))}
+                )
+            ),
             output_path=tmp_path / "pylock.toml",
         )
         data = tomllib.loads(text)
@@ -3425,7 +3338,11 @@ class TestRelativeDirectoryPath:
         out_dir = tmp_path / "locks"
         out_dir.mkdir()
         text = write_lock(
-            LockInput(pins={"foo": LocalPin(name="foo", version="1.0", path=str(src))}),
+            LockInput(
+                targets=_one(
+                    {"foo": LocalPin(name="foo", version="1.0", path=str(src))}
+                )
+            ),
             output_path=out_dir / "pylock.toml",
         )
         data = tomllib.loads(text)
@@ -3437,7 +3354,11 @@ class TestRelativeDirectoryPath:
         monkeypatch.chdir(tmp_path)
         src = tmp_path / "pkg"
         text = write_lock(
-            LockInput(pins={"foo": LocalPin(name="foo", version="1.0", path=str(src))})
+            LockInput(
+                targets=_one(
+                    {"foo": LocalPin(name="foo", version="1.0", path=str(src))}
+                )
+            )
         )
         data = tomllib.loads(text)
         assert data["packages"][0]["directory"]["path"] == "pkg"
@@ -3445,7 +3366,11 @@ class TestRelativeDirectoryPath:
     def test_build_pylock_honours_explicit_lock_dir(self, tmp_path: Path) -> None:
         src = tmp_path / "a" / "b" / "foo"
         pylock = build_pylock(
-            LockInput(pins={"foo": LocalPin(name="foo", version="1.0", path=str(src))}),
+            LockInput(
+                targets=_one(
+                    {"foo": LocalPin(name="foo", version="1.0", path=str(src))}
+                )
+            ),
             lock_dir=tmp_path / "a",
         )
         directory = pylock.packages[0].directory
@@ -3477,7 +3402,7 @@ class TestRelativeArtifactPath:
             ),
         )
         text = write_lock(
-            LockInput(pins={"foo": pin}), output_path=tmp_path / "pylock.toml"
+            LockInput(targets=_one({"foo": pin})), output_path=tmp_path / "pylock.toml"
         )
         wheel = tomllib.loads(text)["packages"][0]["wheels"][0]
         assert wheel["path"] == "wheels/foo-1.0-py3-none-any.whl"
@@ -3497,7 +3422,7 @@ class TestRelativeArtifactPath:
             ),
         )
         text = write_lock(
-            LockInput(pins={"foo": pin}), output_path=tmp_path / "pylock.toml"
+            LockInput(targets=_one({"foo": pin})), output_path=tmp_path / "pylock.toml"
         )
         sdist = tomllib.loads(text)["packages"][0]["sdist"]
         assert sdist["path"] == "dist/foo-1.0.tar.gz"
@@ -3505,7 +3430,7 @@ class TestRelativeArtifactPath:
 
     def test_remote_artifacts_keep_url(self, tmp_path: Path) -> None:
         text = write_lock(
-            LockInput(pins={"foo": _index_pin()}),
+            LockInput(targets=_one({"foo": _index_pin()})),
             output_path=tmp_path / "pylock.toml",
         )
         package = tomllib.loads(text)["packages"][0]
@@ -3532,7 +3457,7 @@ class TestRelativeArtifactPath:
             ),
         )
         text = write_lock(
-            LockInput(pins={"foo": pin}), output_path=out_dir / "pylock.toml"
+            LockInput(targets=_one({"foo": pin})), output_path=out_dir / "pylock.toml"
         )
         wheel = tomllib.loads(text)["packages"][0]["wheels"][0]
         assert wheel["path"] == "../../wheelhouse/foo-1.0-py3-none-any.whl"
@@ -3562,7 +3487,9 @@ class TestPathHelpers:
 
 class TestWriteRequirementsWithHashes:
     def test_index_pin_emits_hashes(self) -> None:
-        text = write_requirements_with_hashes(LockInput(pins={"foo": _index_pin()}))
+        text = write_requirements_with_hashes(
+            LockInput(targets=_one({"foo": _index_pin()}))
+        )
         assert "foo==1.0" in text
         assert "--hash=sha256:" + "a" * 64 in text
         assert "--hash=sha256:" + "b" * 64 in text
@@ -3586,14 +3513,20 @@ class TestWriteRequirementsWithHashes:
         reverse = IndexPin(
             name="foo", version="1.0", index="pypi", wheels=(wheel_b, wheel_a)
         )
-        text_forward = write_requirements_with_hashes(LockInput(pins={"foo": forward}))
-        text_reverse = write_requirements_with_hashes(LockInput(pins={"foo": reverse}))
+        text_forward = write_requirements_with_hashes(
+            LockInput(targets=_one({"foo": forward}))
+        )
+        text_reverse = write_requirements_with_hashes(
+            LockInput(targets=_one({"foo": reverse}))
+        )
         assert text_forward == text_reverse
 
     def test_local_pin_uses_file_url(self, tmp_path: Path) -> None:
         text = write_requirements_with_hashes(
             LockInput(
-                pins={"foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))}
+                targets=_one(
+                    {"foo": LocalPin(name="foo", version="1.0", path=str(tmp_path))}
+                )
             )
         )
         assert "foo @ file://" in text
@@ -3601,11 +3534,13 @@ class TestWriteRequirementsWithHashes:
     def test_local_pin_editable_renders_dash_e(self, tmp_path: Path) -> None:
         text = write_requirements_with_hashes(
             LockInput(
-                pins={
-                    "foo": LocalPin(
-                        name="foo", version="1.0", path=str(tmp_path), editable=True
-                    )
-                }
+                targets=_one(
+                    {
+                        "foo": LocalPin(
+                            name="foo", version="1.0", path=str(tmp_path), editable=True
+                        )
+                    }
+                )
             )
         )
         assert text.strip() == f"-e {tmp_path.resolve().as_uri()}"
@@ -3613,14 +3548,16 @@ class TestWriteRequirementsWithHashes:
     def test_local_pin_subdirectory_renders_fragment(self, tmp_path: Path) -> None:
         text = write_requirements_without_hashes(
             LockInput(
-                pins={
-                    "foo": LocalPin(
-                        name="foo",
-                        version="1.0",
-                        path=str(tmp_path),
-                        subdirectory="packages/foo",
-                    )
-                }
+                targets=_one(
+                    {
+                        "foo": LocalPin(
+                            name="foo",
+                            version="1.0",
+                            path=str(tmp_path),
+                            subdirectory="packages/foo",
+                        )
+                    }
+                )
             )
         )
         url = tmp_path.resolve().as_uri()
@@ -3629,15 +3566,17 @@ class TestWriteRequirementsWithHashes:
     def test_local_pin_editable_with_subdirectory(self, tmp_path: Path) -> None:
         text = write_requirements_with_hashes(
             LockInput(
-                pins={
-                    "foo": LocalPin(
-                        name="foo",
-                        version="1.0",
-                        path=str(tmp_path),
-                        editable=True,
-                        subdirectory="packages/foo",
-                    )
-                }
+                targets=_one(
+                    {
+                        "foo": LocalPin(
+                            name="foo",
+                            version="1.0",
+                            path=str(tmp_path),
+                            editable=True,
+                            subdirectory="packages/foo",
+                        )
+                    }
+                )
             )
         )
         url = tmp_path.resolve().as_uri()
@@ -3651,14 +3590,16 @@ class TestWriteRequirementsWithHashes:
         """
         text = write_requirements_without_hashes(
             LockInput(
-                pins={
-                    "foo": LocalPin(
-                        name="foo",
-                        version="1.0",
-                        path=str(tmp_path),
-                        subdirectory="my pkg",
-                    )
-                }
+                targets=_one(
+                    {
+                        "foo": LocalPin(
+                            name="foo",
+                            version="1.0",
+                            path=str(tmp_path),
+                            subdirectory="my pkg",
+                        )
+                    }
+                )
             )
         )
         url = tmp_path.resolve().as_uri()
@@ -3667,45 +3608,59 @@ class TestWriteRequirementsWithHashes:
     def test_vcs_pin_round_trips_url(self) -> None:
         text = write_requirements_with_hashes(
             LockInput(
-                pins={
-                    "foo": VcsPin(
-                        name="foo",
-                        version="1.0",
-                        repo_url="git+https://example.com/r.git@abc",
-                        bare_repo_url="https://example.com/r.git",
-                        commit_id="abc",
-                    ),
-                },
+                targets=_one(
+                    {
+                        "foo": VcsPin(
+                            name="foo",
+                            version="1.0",
+                            repo_url="git+https://example.com/r.git@abc",
+                            bare_repo_url="https://example.com/r.git",
+                            commit_id="abc",
+                        ),
+                    }
+                )
             )
         )
         assert "foo @ git+https://example.com/r.git@abc" in text
 
     def test_index_pin_without_hashes_falls_back(self) -> None:
         bare = IndexPin(name="foo", version="1.0", index="pypi")
-        text = write_requirements_with_hashes(LockInput(pins={"foo": bare}))
+        text = write_requirements_with_hashes(LockInput(targets=_one({"foo": bare})))
         assert text.strip() == "foo==1.0"
 
     def test_writes_to_file(self, tmp_path: Path) -> None:
         out = tmp_path / "requirements.txt"
         text = write_requirements_with_hashes(
-            LockInput(pins={"foo": _index_pin()}),
+            LockInput(targets=_one({"foo": _index_pin()})),
             output_path=out,
         )
         assert out.read_text(encoding="utf-8") == text
 
 
-class TestWriteRequirementsPerTuple:
+class TestWriteRequirementsPerTarget:
     def test_blocks_sorted_by_label(self) -> None:
         # Blocks must come out in sorted label order regardless of the
-        # per_tuple_pins insertion order, matching the pylock writer so
+        # targets insertion order, matching the pylock writer so
         # equivalent matrices declared in a different order render the
         # same bytes.
-        per_tuple = {
-            "py311-linux": {"foo": _index_pin(version="2.0")},
-            "py310-linux": {"foo": _index_pin(version="1.0")},
-        }
-        text = write_requirements_without_hashes(LockInput(per_tuple_pins=per_tuple))
-        assert text.index("# py310-linux") < text.index("# py311-linux")
+        py310 = _target("3.10")
+        py311 = _target("3.11")
+        text = write_requirements_without_hashes(
+            LockInput(
+                targets=_targets(
+                    (py311, {"foo": _index_pin(version="2.0")}),
+                    (py310, {"foo": _index_pin(version="1.0")}),
+                )
+            )
+        )
+        assert text.index(f"# {py310.label}") < text.index(f"# {py311.label}")
+
+    def test_one_target_renders_flat(self) -> None:
+        # One target is one installable file, so it carries no label header.
+        text = write_requirements_without_hashes(
+            LockInput(targets=_one({"foo": _index_pin(version="1.0")}))
+        )
+        assert text == "foo==1.0\n"
 
 
 def test_vcs_config_unused_in_lockfile_path() -> None:
@@ -3726,14 +3681,15 @@ class TestDependencyGraph:
                 ("bar", Version("1.0")): {},
             },
         )
-        lock_input = build_lock_input_from_provider(
+        lock = build_target_lock(
             provider,
+            _HOST,
             {"foo": Version("1.0"), "bar": Version("1.0"), "baz": Version("1.0")},
             resolved_keys=("foo", "bar", "baz"),
         )
         # ``missing`` is not locked, so it is dropped; bar and baz have no
         # locked dependencies, so they are absent from the graph.
-        assert lock_input.dependencies == {"foo": ("bar",)}
+        assert lock.dependencies == {"foo": ("bar",)}
 
     def test_activated_extra_edges_join_graph(self) -> None:
         provider = _FakeProvider(
@@ -3746,13 +3702,13 @@ class TestDependencyGraph:
                 ("foo", Version("1.0")): {"cli": dict.fromkeys(["plugin"])}
             },
         )
-        lock_input = build_lock_input_from_provider(
+        lock = build_target_lock(
             provider,
+            _HOST,
             {"foo": Version("1.0"), "plugin": Version("1.0")},
-            # ``doc`` is activated but has no recorded deps; ``cli`` pulls plugin.
             resolved_keys=("foo", "foo[cli]", "foo[doc]", "plugin"),
         )
-        assert lock_input.dependencies == {"foo": ("plugin",)}
+        assert lock.dependencies == {"foo": ("plugin",)}
 
     def test_umbrella_extra_drops_self_edge(self) -> None:
         # ``all`` pulls ``mypkg[graphviz]`` and ``mypkg[otel]``, so its recorded
@@ -3771,8 +3727,9 @@ class TestDependencyGraph:
                 }
             },
         )
-        lock_input = build_lock_input_from_provider(
+        lock = build_target_lock(
             provider,
+            _HOST,
             {
                 "mypkg": Version("1.0"),
                 "graphviz-lib": Version("1.0"),
@@ -3787,13 +3744,15 @@ class TestDependencyGraph:
                 "otel-lib",
             ),
         )
-        assert lock_input.dependencies == {"mypkg": ("graphviz-lib", "otel-lib")}
+        assert lock.dependencies == {"mypkg": ("graphviz-lib", "otel-lib")}
 
     def test_emitted_as_pep751_dependencies(self) -> None:
         text = write_lock(
             LockInput(
-                pins={"foo": _index_pin("foo"), "bar": _index_pin("bar")},
-                dependencies={"foo": ("bar",)},
+                targets=_one(
+                    {"foo": _index_pin("foo"), "bar": _index_pin("bar")},
+                    {"foo": ("bar",)},
+                )
             )
         )
         data = tomllib.loads(text)
@@ -3804,16 +3763,45 @@ class TestDependencyGraph:
     def test_local_pin_carries_dependencies(self, tmp_path: Path) -> None:
         text = write_lock(
             LockInput(
-                pins={
-                    "foo": LocalPin(
-                        name="foo", version="1.0", path=str(tmp_path / "foo")
-                    ),
-                    "bar": _index_pin("bar"),
-                },
-                dependencies={"foo": ("bar",)},
+                targets=_one(
+                    {
+                        "foo": LocalPin(
+                            name="foo", version="1.0", path=str(tmp_path / "foo")
+                        ),
+                        "bar": _index_pin("bar"),
+                    },
+                    {"foo": ("bar",)},
+                )
             ),
             output_path=tmp_path / "pylock.toml",
         )
         data = tomllib.loads(text)
         by_name = {p["name"]: p for p in data["packages"]}
         assert by_name["foo"]["dependencies"] == [{"name": "bar"}]
+
+    def test_entry_covering_two_targets_unions_edges(self) -> None:
+        # One entry covers both targets, and they disagree on what ``foo``
+        # depends on (a marker-gated dep answered differently), so the
+        # emitted edges are the union over the targets the entry covers.
+        pins = {
+            "foo": _index_pin("foo"),
+            "bar": _index_pin("bar"),
+            "baz": _index_pin("baz"),
+        }
+        py310 = _target("3.10")
+        py311 = _target("3.11")
+        text = write_lock(
+            LockInput(
+                targets={
+                    py310.label: TargetLock(
+                        target=py310, pins=pins, dependencies={"foo": ("bar",)}
+                    ),
+                    py311.label: TargetLock(
+                        target=py311, pins=pins, dependencies={"foo": ("baz",)}
+                    ),
+                }
+            )
+        )
+        data = tomllib.loads(text)
+        by_name = {p["name"]: p for p in data["packages"]}
+        assert by_name["foo"]["dependencies"] == [{"name": "bar"}, {"name": "baz"}]

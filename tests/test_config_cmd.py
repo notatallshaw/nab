@@ -33,13 +33,14 @@ from nab_python.config import NabProjectConfig
 from nab_python.config_sources import OPTIONS, SourceRoots
 from nab_python.lockfile import (
     IndexPin,
-    LockInput,
     SdistArtifact,
+    TargetLock,
     WheelArtifact,
     read_lockfile_anchor,
 )
 from nab_python.provider import DistPolicy, ResolutionStrategy
-from nab_python.resolve import ResolutionResult
+from nab_python.resolve import ResolveResult, TargetResult
+from nab_python.target import ResolveTarget
 
 
 def _write(path: Path, body: str) -> Path:
@@ -55,7 +56,7 @@ def _project(tmp_path: Path, tool_nab: str = "") -> Path:
     return _write(tmp_path / "pyproject.toml", body)
 
 
-def _stub_resolution_result() -> ResolutionResult:
+def _stub_resolve_result() -> ResolveResult:
     pin = IndexPin(
         name="foo",
         version="1.0",
@@ -73,8 +74,17 @@ def _stub_resolution_result() -> ResolutionResult:
             ),
         ),
     )
-    return ResolutionResult(
-        pins={"foo": Version("1.0")}, lock_input=LockInput(pins={"foo": pin})
+    target = ResolveTarget.for_host()
+    return ResolveResult(
+        targets=(target,),
+        target_results=[
+            TargetResult(
+                target=target,
+                success=True,
+                pins={"foo": Version("1.0")},
+                lock=TargetLock(target=target, pins={"foo": pin}),
+            )
+        ],
     )
 
 
@@ -692,7 +702,7 @@ class TestNoOpLock:
 
     def _lock_bytes(self, proj: Path, out: Path) -> bytes:
         with patch(
-            "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(proj, output=out, cache=False)
         # The config layer must not perturb the resolve knobs at defaults.
@@ -745,7 +755,7 @@ class TestProjectCliOverrides:
     ) -> tuple[NabProjectConfig, Path]:
         with (
             patch(
-                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab.cli.write_lock"),
         ):
@@ -802,7 +812,7 @@ class TestProjectCliOverrides:
         out = hermetic_roots / "pylock.toml"
         with (
             patch(
-                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab.cli.write_lock"),
         ):
@@ -844,7 +854,7 @@ class TestProjectCliOverrides:
         proj = _project(hermetic_roots)
         out = hermetic_roots / "pylock.toml"
         with patch(
-            "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             app.cli(
                 args=[
@@ -890,7 +900,7 @@ class TestDownloadLadder:
         download_result = MagicMock(written=(), skipped=())
         with (
             patch(
-                "nab.cli.resolve_pyproject", return_value=_stub_resolution_result()
+                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab.cli.download_lock", return_value=download_result),
         ):
