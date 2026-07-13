@@ -12,7 +12,7 @@
   resolved wheels into a temp directory.
 * :func:`installer.install` writes each wheel into the venv via
   ``installer.SchemeDictionaryDestination``, configured from the
-  venv's own ``sysconfig.get_paths()``.
+  venv's own scheme paths.
 
 The env is a context manager.  Entering it builds the venv and
 installs the requirements; exiting removes the temp tree.  The
@@ -80,6 +80,15 @@ _LAUNCHER_KIND = (
     else "win-ia32"
     if sys.platform == "win32"
     else "posix"
+)
+
+_SCHEME_PROBE = (
+    "import json, sys, sysconfig;"
+    "print(json.dumps({"
+    "'paths': sysconfig.get_paths(),"
+    "'prefix': sys.prefix,"
+    "'py_version': '%d.%d' % sys.version_info[:2],"
+    "}))"
 )
 
 
@@ -151,21 +160,27 @@ class NabBuildEnv:
         self._python_executable = _venv_python(self._venv_path)
         self._scripts_dir = self._python_executable.parent
 
-        scheme_dict = _venv_scheme_paths(self._python_executable)
+        scheme_paths = _venv_scheme_paths(self._python_executable)
 
         if not self._requires:
             return
-        wheel_paths = self._resolve_and_download(wheel_dir)
-        destination = _FastSchemeDictionaryDestination(
-            scheme_dict=scheme_dict,
-            interpreter=str(self._python_executable),
-            script_kind=_LAUNCHER_KIND,
-            bytecode_optimization_levels=(),
-            overwrite_existing=True,
-        )
+
+        self._install_wheels(self._resolve_and_download(wheel_dir), scheme_paths)
+
+    def _install_wheels(
+        self, wheel_paths: list[Path], scheme_paths: dict[str, str]
+    ) -> None:
+        """Write each wheel into the venv with ``installer``."""
         for wheel_path in wheel_paths:
             logger.debug("installing %s", wheel_path.name)
             with WheelFile.open(wheel_path) as source:
+                destination = _FastSchemeDictionaryDestination(
+                    scheme_dict=_dist_scheme_paths(scheme_paths, source.distribution),
+                    interpreter=str(self._python_executable),
+                    script_kind=_LAUNCHER_KIND,
+                    bytecode_optimization_levels=(),
+                    overwrite_existing=True,
+                )
                 installer_install(
                     source=source,
                     destination=destination,
@@ -224,21 +239,7 @@ class NabBuildEnv:
         sub = wheel_dir / f"_extra_{len(list(wheel_dir.iterdir()))}"
         sub.mkdir(parents=True, exist_ok=True)
         wheel_paths = self._resolve_and_download(sub, extra=requirements)
-        scheme_dict = _venv_scheme_paths(self._python_executable)
-        destination = SchemeDictionaryDestination(
-            scheme_dict=scheme_dict,
-            interpreter=str(self._python_executable),
-            script_kind=_LAUNCHER_KIND,
-            bytecode_optimization_levels=(),
-            overwrite_existing=True,
-        )
-        for wheel_path in wheel_paths:
-            with WheelFile.open(wheel_path) as source:
-                installer_install(
-                    source=source,
-                    destination=destination,
-                    additional_metadata={"INSTALLER": b"nab\n"},
-                )
+        self._install_wheels(wheel_paths, _venv_scheme_paths(self._python_executable))
 
     def _resolve_and_download(
         self,
@@ -326,24 +327,39 @@ def _venv_python(venv_path: Path) -> Path:
 
 
 def _venv_scheme_paths(python_executable: Path) -> dict[str, str]:
-    """Ask the venv's interpreter for its own ``sysconfig.get_paths()``.
+    """Ask the venv's interpreter for the scheme paths ``installer`` writes to.
 
     Subprocessing the venv guarantees the returned paths reflect the
     venv's layout (``site-packages`` under the venv root, scripts in
     its ``bin``/``Scripts`` dir, etc.) regardless of how nab itself
     was installed.  One subprocess per env construction; negligible.
+
+    ``sysconfig`` has no ``headers`` scheme, and its ``include`` names
+    the base interpreter rather than the venv, so the header root comes
+    from the venv's own prefix instead.
     """
     result = subprocess.run(  # noqa: S603 - controlled command, no shell
-        [
-            str(python_executable),
-            "-c",
-            "import json, sysconfig; print(json.dumps(sysconfig.get_paths()))",
-        ],
+        [str(python_executable), "-c", _SCHEME_PROBE],
         capture_output=True,
         text=True,
         check=True,
     )
-    return dict(json.loads(result.stdout))
+    probe = json.loads(result.stdout)
+
+    paths: dict[str, str] = dict(probe["paths"])
+    paths["headers"] = str(
+        Path(probe["prefix"], "include", "site", f"python{probe['py_version']}")
+    )
+    return paths
+
+
+def _dist_scheme_paths(
+    scheme_paths: dict[str, str], distribution: str
+) -> dict[str, str]:
+    """Scheme paths for one wheel; its headers go in a directory of its own."""
+    paths = dict(scheme_paths)
+    paths["headers"] = str(Path(paths["headers"], distribution))
+    return paths
 
 
 def _supports_symlinks() -> bool:
