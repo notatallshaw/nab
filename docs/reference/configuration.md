@@ -539,7 +539,7 @@ platforms = [
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `id` | required | One of the five platform ids |
+| `id` | required | `linux_x86_64`, `linux_aarch64`, `macos_arm64`, `macos_x86_64`, or `windows_amd64` |
 | `libc` | `"glibc"` | The Linux C library: `"glibc"` or `"musl"` |
 | `libc-version` | glibc `2.28`, musl `1.2` | The libc version the target runs |
 | `macos-min` | arm64 `12.0`, x86_64 `10.13` | The macOS deployment target |
@@ -556,11 +556,12 @@ therefore accepts more wheels, not fewer.  The glibc default is 2.28,
 the `manylinux_2_28` build image; a target that runs a newer glibc
 should say so, because a wheel built above 2.28 is otherwise rejected.
 Its major has to match the family (glibc `2.x`, musl `1.x`): those are
-the only majors either has shipped, so no wheel targets another.  `macos-min` reads the
-same way, as the newest macOS a wheel may target.  Below the oldest
-macOS the architecture ever ran (10.4 on x86_64, 11.0 on Apple Silicon)
-there is no machine to model and no tag to name, so that is a config
-error.
+the only majors either has shipped, so no wheel targets another.
+
+`macos-min` reads the same way, as the newest macOS a wheel may target.
+Below the oldest macOS the architecture ever ran (10.4 on x86_64, 11.0
+on Apple Silicon) there is no machine to model and no tag to name, so
+that is a config error.
 
 A knob belongs to its platform.  `libc` and `libc-version` are Linux
 knobs and `macos-min` is a macOS one; declaring one on a platform that

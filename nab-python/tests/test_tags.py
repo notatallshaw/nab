@@ -1,13 +1,13 @@
-"""Tests for the wheel-selection logic backed by ``packaging.tags``.
+"""Tests for ``nab_python.tags``: the tags a target accepts, and the wheel it picks.
 
-These tests pin the spec-compliant tag selector's behavior on the
-common cases that real resolvers encounter:
+Pins:
 
+- the knobs a platform can carry, and the ones it refuses
 - one libc family per target, at or below its version (PEP 600 / PEP 656)
-- macOS arch + version compatibility
-- Windows arch matching
+- the macOS deployment target as a ceiling, and its floor per arch
+- the free-threaded ``cpXYt`` ABI, and ``abi3t`` in place of ``abi3``
 - ``py3-none-any`` fallback ordering
-- Compressed-tag-set wheels (``cp310.cp311``)
+- compressed-tag-set wheels (``cp310.cp311``)
 """
 
 from __future__ import annotations
@@ -743,6 +743,14 @@ class TestSelectWheel:
         build3 = _wheel("pkg-1.0-3-cp311-cp311-manylinux_2_17_x86_64.whl")
         chosen = select_wheel([untagged, build3], python_version="3.11", spec=spec)
         assert chosen is build3
+
+    def test_an_absurd_build_number_is_malformed(self) -> None:
+        """The index names the build tag, and int() raises above 4300 digits."""
+        spec = PlatformSpec("linux_x86_64")
+        build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
+        absurd = _wheel(f"pkg-1.0-{'9' * 5000}-cp311-cp311-manylinux_2_17_x86_64.whl")
+        chosen = select_wheel([absurd, build5], python_version="3.11", spec=spec)
+        assert chosen is build5
 
     def test_malformed_build_tag_treated_as_absent(self) -> None:
         """A build segment without a leading digit sorts lowest."""

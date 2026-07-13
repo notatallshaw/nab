@@ -57,23 +57,22 @@ _MIN_WHEEL_FILENAME_PARTS = 5
 # 64000 tags.  No real wheel comes close to this bound.
 _MAX_WHEEL_TAGS = 4096
 
-# PEP 427: a build tag adds a sixth dash-separated segment at index 2,
-# and build tags start with a digit (captured here for ordering).
+# PEP 427: a build tag adds a sixth dash-separated segment at index 2, and
+# starts with a digit (captured here for ordering).  The digit run is bounded
+# because the index names it and int() raises above 4300 digits, so an absurd
+# one is malformed and sorts lowest, like any other unreadable build tag.
 _WHEEL_PARTS_WITH_BUILD = 6
-_BUILD_TAG_RE = re.compile(r"(\d+)(.*)", re.ASCII)
+_BUILD_TAG_RE = re.compile(r"(\d{1,9})(\D.*)?$", re.ASCII)
 
 # A libc version is a floor on the machine and a ceiling on the tag: the
 # target accepts every manylinux/musllinux tag at or below it, so a target
 # that runs a newer libc has to say so to reach the wheels built above the
 # default.  glibc 2.28 is the manylinux_2_28 build image; musl 1.2 is the
 # Alpine 3.13 baseline musllinux wheels target.
-_DEFAULT_GLIBC_VERSION = (2, 28)
-_DEFAULT_MUSL_VERSION = (1, 2)
 DEFAULT_LIBC: Libc = "glibc"
-_DEFAULT_LIBC_VERSION: dict[Libc, tuple[int, int]] = {
-    "glibc": _DEFAULT_GLIBC_VERSION,
-    "musl": _DEFAULT_MUSL_VERSION,
-}
+_DEFAULT_LIBC_VERSION: Mapping[Libc, tuple[int, int]] = MappingProxyType(
+    {"glibc": (2, 28), "musl": (1, 2)}
+)
 # The only major each family has shipped.  Tags expand within the declared
 # major, so a foreign major names platform tags no wheel is built for.
 LIBC_MAJOR: Mapping[Libc, int] = MappingProxyType({"glibc": 2, "musl": 1})
@@ -237,8 +236,7 @@ class PlatformSpec:
         return "".join(parts)
 
 
-# Map our matrix platform_ids to (kind, arch).  Kind is one of
-# "linux", "macos", "windows".  Used for tag generation.
+# The arch suffix each platform id names in its wheel tags.
 _PLATFORM_ARCH: dict[str, str] = {
     "linux_x86_64": "x86_64",
     "linux_aarch64": "aarch64",
@@ -247,6 +245,8 @@ _PLATFORM_ARCH: dict[str, str] = {
     "windows_amd64": "amd64",
 }
 
+# The kind behind :func:`platform_kind`, which both tag generation and the
+# knob checks read.
 _PLATFORM_KIND: dict[str, str] = {
     "linux_x86_64": "linux",
     "linux_aarch64": "linux",
@@ -486,7 +486,7 @@ def _build_tag_sort_key(filename: str) -> tuple[int, str]:
     match = _BUILD_TAG_RE.match(parts[2])
     if match is None:
         return (-1, "")
-    return (int(match.group(1)), match.group(2))
+    return (int(match.group(1)), match.group(2) or "")
 
 
 def _tags_in_order(
