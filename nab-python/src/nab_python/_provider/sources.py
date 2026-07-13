@@ -10,6 +10,8 @@ downloads and hash-verifies a ``.tar.gz`` and extracts it; both reuse the
 from __future__ import annotations
 
 import shutil
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,6 +25,8 @@ if TYPE_CHECKING:
     from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
     from ..provider import ArchiveSource, LocalSource, Provider, VcsSource
+
+_EXTRACTED_MARKER = ".nab-extracted"
 
 
 def index_local_sources(
@@ -346,38 +350,52 @@ def _extract_archive(
 
     Idempotent, like :func:`prepare_clone`: a digest already extracted in a
     prior resolve is reused rather than re-extracted, since the tree is
-    content-addressed by its verified hash.  The completion marker also
-    distinguishes a finished tree from a partial one left by a crashed run,
-    which is discarded and redone.
+    content-addressed by its verified hash.  A fresh extraction lands in a
+    temporary sibling and is renamed into place once its completion marker is
+    written, so the cache path never holds a partial tree.
     """
     from ..provider import UnsupportedSdistError
 
     target = cache_dir / digest
-    marker = target / ".nab-extracted"
+    marker = target / _EXTRACTED_MARKER
 
-    # Reuse a tree a prior resolve already extracted for this digest.
-    if marker.is_file():
-        root_name = marker.read_text(encoding="utf-8").strip()
-        # Resolve to match the fresh-extract branch, so the file URI works
-        # even for a relative cache dir.
-        base = target / root_name if root_name else target
-        return base.resolve()
+    if not marker.is_file():
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = Path(tempfile.mkdtemp(dir=cache_dir, prefix=f"{digest}.", suffix=".tmp"))
 
-    # Discard any partial tree left by a crashed run, then extract afresh.
-    if target.exists():
-        shutil.rmtree(target)
-    target.mkdir(parents=True)
-    try:
-        root = extract_sdist_archive(data, target)
-    except ValueError as exc:
-        shutil.rmtree(target, ignore_errors=True)
-        msg = f"archive could not be extracted: {exc}"
-        raise UnsupportedSdistError(msg) from exc
+        try:
+            try:
+                root = extract_sdist_archive(data, tmp)
+            except ValueError as exc:
+                msg = f"archive could not be extracted: {exc}"
+                raise UnsupportedSdistError(msg) from exc
 
-    # Record the root name (empty for a flat archive) so the next resolve
-    # reuses the tree without re-reading the bytes.  Compare against the
-    # resolved target since extract_sdist_archive resolves symlinks and
-    # relative cache dirs, which would otherwise misrecord a flat root.
-    root_name = root.name if root != target.resolve() else ""
-    marker.write_text(root_name, encoding="utf-8")
-    return root
+            # An empty root name means a flat archive.  Compare against the
+            # resolved temp dir, since extract_sdist_archive resolves symlinks
+            # and relative cache dirs.
+            root_name = root.name if root != tmp.resolve() else ""
+            (tmp / _EXTRACTED_MARKER).write_text(root_name, encoding="utf-8")
+
+            try:
+                tmp.rename(target)
+            except OSError as exc:
+                # The cache path is taken.  A marker there means another run
+                # got there first, so keep its tree; without one it is a partial
+                # left by an interrupted run, so wipe it and retry the rename.
+                if not marker.is_file():
+                    shutil.rmtree(target, ignore_errors=True)
+                    with suppress(OSError):
+                        tmp.rename(target)
+                if not marker.is_file():
+                    msg = f"extracted archive could not be moved into place: {exc}"
+                    raise UnsupportedSdistError(msg) from exc
+        finally:
+            # A successful rename leaves nothing here; any other exit, an
+            # interrupt included, would leak the temp tree.
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    root_name = marker.read_text(encoding="utf-8").strip()
+
+    # Resolve so the file URI works even for a relative cache dir.
+    base = target / root_name if root_name else target
+    return base.resolve()
