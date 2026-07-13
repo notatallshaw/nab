@@ -16,10 +16,10 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from nab_python.tags import (
+    _MACOS_TAG_FLOOR,
     _PLATFORM_ARCH,
     _PLATFORM_KIND,
     LIBC_MAJOR,
-    MACOS_TAG_FLOOR,
     PlatformSpec,
 )
 from nab_python.universal.matrix import (
@@ -46,8 +46,8 @@ python_specs = st.one_of(
     st.sampled_from(_KNOWN_PYTHON_MINORS).map(lambda v: f"!={v}"),
 )
 
-# No whitespace: the label collapses runs of it into "_", which collides
-# with a literal underscore.
+# The alphabet a real platform_release or platform_version draws from, which
+# also keeps a shrunk counterexample readable.
 rel_strings = st.text(alphabet="_-abc0123456789.", min_size=0, max_size=8)
 
 
@@ -70,7 +70,7 @@ def _macos_knobs(platform_id: str) -> st.SearchStrategy[dict[str, object]]:
     """Draw the macOS knob the platform admits: none unless it is macOS."""
     if _PLATFORM_KIND[platform_id] != "macos":
         return st.just({})
-    floor = MACOS_TAG_FLOOR[_PLATFORM_ARCH[platform_id]]
+    floor = _MACOS_TAG_FLOOR[_PLATFORM_ARCH[platform_id]]
     return st.fixed_dictionaries(
         {
             "macos_min": st.none()

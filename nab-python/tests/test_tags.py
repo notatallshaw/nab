@@ -125,6 +125,24 @@ class TestPlatformSpecKnobsBelongToTheirPlatform:
         with pytest.raises(ValueError, match=f"below {floor}"):
             PlatformSpec(platform_id, macos_min=macos_min)
 
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"platform_id": "linux_x86_64", "libc_version": (2, 500)}, "libc-version"),
+            ({"platform_id": "macos_arm64", "macos_min": (500, 0)}, "macos-min"),
+        ],
+    )
+    def test_a_version_above_every_release_raises(
+        self, kwargs: dict[str, object], message: str
+    ) -> None:
+        """One tag is named per version below the declared one.
+
+        A typo of a few extra digits would otherwise build platform tags
+        until the process ran out of memory.
+        """
+        with pytest.raises(ValueError, match=f"{message}.*higher than any release"):
+            PlatformSpec(**kwargs)  # type: ignore[arg-type]
+
     def test_unknown_platform_id_defers_to_the_matrix(self) -> None:
         """An unknown id is the matrix's error to report, not the spec's."""
         assert PlatformSpec("freebsd_amd64", libc="musl").libc == "musl"
@@ -720,16 +738,14 @@ class TestSelectWheel:
 
 
 class TestUnknownPlatformKindGuard:
-    """Explicit guard for the unreachable platform-kind branch."""
+    """A platform kind with no tag rule raises rather than tagging as Windows."""
 
-    def test_unknown_kind_raises_via_indirection(self) -> None:
-        """Constructing a PlatformSpec with an unmapped id has no kind.
+    def test_unknown_kind_raises(self) -> None:
+        """A kind the tag generator does not handle is a loud error.
 
-        We don't expose a way to construct one in normal use; the
-        Matrix.expand validator catches unknown ids.  This test pokes
-        the helper directly to cover the unreachable branch.
+        No id maps to a fourth kind today, so the branch is reachable only
+        by adding one, which is what this test stands in for.
         """
-        # Add a fake entry to test the unknown-kind branch.
         _PLATFORM_ARCH["fake_x"] = "x"
         _PLATFORM_KIND["fake_x"] = "exotic"
         try:

@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_LIBC",
     "LIBC_MAJOR",
-    "MACOS_TAG_FLOOR",
     "Libc",
     "PlatformSpec",
     "platform_kind",
@@ -55,12 +54,11 @@ _WHEEL_PARTS_WITH_BUILD = 6
 _BUILD_TAG_RE = re.compile(r"(\d+)(.*)", re.ASCII)
 
 # A libc version is a floor on the machine and a ceiling on the tag: the
-# target accepts every manylinux/musllinux tag at or below it.  glibc 2.28
-# is the manylinux_2_28 build image, and the oldest glibc the distros still
-# under support ship, so it accepts every manylinux wheel published today
-# without claiming a machine nobody runs.
+# target accepts every manylinux/musllinux tag at or below it, so a target
+# that runs a newer libc has to say so to reach the wheels built above the
+# default.  glibc 2.28 is the manylinux_2_28 build image; musl 1.2 is the
+# Alpine 3.13 baseline musllinux wheels target.
 _DEFAULT_GLIBC_VERSION = (2, 28)
-# The Alpine 3.13+ baseline that musllinux wheels target.
 _DEFAULT_MUSL_VERSION = (1, 2)
 DEFAULT_LIBC: Libc = "glibc"
 _DEFAULT_LIBC_VERSION: dict[Libc, tuple[int, int]] = {
@@ -86,7 +84,7 @@ _DEFAULT_MACOS_X86_64_MIN = (10, 13)
 # 11.0, so below these there is no machine to model.  An empty platform list
 # also reads to packaging as "unset", which would silently hand the target
 # the tags of whatever host nab is running on.
-MACOS_TAG_FLOOR: Mapping[str, tuple[int, int]] = MappingProxyType(
+_MACOS_TAG_FLOOR: Mapping[str, tuple[int, int]] = MappingProxyType(
     {"x86_64": (10, 4), "arm64": (11, 0)}
 )
 
@@ -96,6 +94,11 @@ _LEGACY_MANYLINUX: dict[tuple[int, int], str] = {
     (2, 12): "manylinux2010",
     (2, 5): "manylinux1",
 }
+
+# A tag list runs one entry per version below the declared one, so a typo
+# like "2.99999999" would build tags until it ran out of memory.  No libc or
+# macOS release is anywhere near this cap.
+_MAX_VERSION_PART = 99
 
 # Lowest glibc 2.x minor a manylinux wheel may target, by arch.  manylinux1
 # (PEP 513) and manylinux2010 (PEP 571) cover only x86_64/i686; manylinux2014
@@ -161,24 +164,30 @@ class PlatformSpec:
 
     def _check_libc_version(self) -> None:
         """Reject a libc version outside its family's only major."""
+        if self.libc_version is None:
+            return
         major = LIBC_MAJOR[self.libc]
-        if self.libc_version is not None and self.libc_version[0] != major:
+        if self.libc_version[0] != major:
             msg = (
                 f"{self.libc} has only a {major}.x series, so libc-version"
                 f" {_version_tag(self.libc_version)} names platform tags"
                 f" nothing is built for"
             )
             raise ValueError(msg)
+        _check_version_cap("libc-version", self.libc_version)
 
     def _check_macos_min(self) -> None:
         """Reject a macOS version below the oldest this arch can name a tag for."""
-        floor = MACOS_TAG_FLOOR[self.arch]
-        if self.macos_min is not None and self.macos_min < floor:
+        if self.macos_min is None:
+            return
+        floor = _MACOS_TAG_FLOOR[self.arch]
+        if self.macos_min < floor:
             msg = (
                 f"macos-min {_version_tag(self.macos_min)} is below"
                 f" {_version_tag(floor)}, the oldest macOS {self.arch} runs"
             )
             raise ValueError(msg)
+        _check_version_cap("macos-min", self.macos_min)
 
     @property
     def arch(self) -> str:
@@ -235,6 +244,16 @@ _PLATFORM_KIND: dict[str, str] = {
     "macos_x86_64": "macos",
     "windows_amd64": "windows",
 }
+
+
+def _check_version_cap(key: str, version: tuple[int, int]) -> None:
+    """Reject a version so high the tag list it names would exhaust memory."""
+    if max(version) > _MAX_VERSION_PART:
+        msg = (
+            f"{key} {_version_tag(version)} is higher than any release,"
+            f" and one tag is named per version below it"
+        )
+        raise ValueError(msg)
 
 
 def platform_kind(platform_id: str) -> str | None:
@@ -305,8 +324,7 @@ def _linux_platform_tags(
     else:
         # manylinux_X_Y: PEP 600.
         out = _manylinux_platform_tags(arch, libc_version)
-    # Plain linux_<arch>: the most generic Linux tag.  Most installers
-    # accept this only when no manylinux/musllinux wheel is present.
+    # The most generic Linux tag, so it ranks below every libc-specific one.
     out.append(f"linux_{arch}")
     return out
 
@@ -333,9 +351,10 @@ def _platform_tags_for_spec(spec: PlatformSpec) -> list[str]:
     if kind == "windows":
         return [f"win_{arch}"]
 
-    # Unreachable; PlatformSpec construction validates.
-    msg = f"Unknown platform kind: {kind}"  # pragma: no cover
-    raise ValueError(msg)  # pragma: no cover
+    # No id maps to a fourth kind today, so this fires only for one added
+    # without a tag rule, where a silent fallthrough would tag it as Windows.
+    msg = f"Unknown platform kind: {kind}"
+    raise ValueError(msg)
 
 
 # PyPy 7.3.x soabi, stable across every Python minor PyPy 3 ships

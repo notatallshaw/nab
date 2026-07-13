@@ -553,11 +553,10 @@ a `glibc` target takes manylinux wheels and never musllinux ones, and a
 guarantees, and a wheel built against an older libc runs on a newer one,
 so the target accepts every version at or below it.  A higher value
 therefore accepts more wheels, not fewer.  The glibc default is 2.28,
-which is the `manylinux_2_28` build image and the oldest glibc a
-supported distribution still ships: it accepts every manylinux wheel
-published today without naming a machine nobody runs.  Its major has to
-match the family (glibc `2.x`, musl `1.x`): those are the only majors
-either has shipped, so no wheel targets another.  `macos-min` reads the
+the `manylinux_2_28` build image; a target that runs a newer glibc
+should say so, because a wheel built above 2.28 is otherwise rejected.
+Its major has to match the family (glibc `2.x`, musl `1.x`): those are
+the only majors either has shipped, so no wheel targets another.  `macos-min` reads the
 same way, as the newest macOS a wheel may target.  Below the oldest
 macOS the architecture ever ran (10.4 on x86_64, 11.0 on Apple Silicon)
 there is no machine to model and no tag to name, so that is a config

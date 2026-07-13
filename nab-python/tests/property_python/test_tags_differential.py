@@ -31,8 +31,8 @@ from packaging.version import InvalidVersion
 from nab_index.client import WheelFile
 from nab_python._vendor.packaging import tags as vendored_tags
 from nab_python.tags import (
+    _MACOS_TAG_FLOOR,
     _PLATFORM_ARCH,
-    MACOS_TAG_FLOOR,
     PlatformSpec,
     _platform_tags_for_spec,
     _tags_in_order,
@@ -80,7 +80,7 @@ macos_specs = st.sampled_from(MACOS_IDS).flatmap(
         platform_id=st.just(platform_id),
         macos_min=st.none()
         | st.tuples(st.integers(10, 15), st.integers(0, 15)).filter(
-            lambda v: v >= MACOS_TAG_FLOOR[_PLATFORM_ARCH[platform_id]]
+            lambda v: v >= _MACOS_TAG_FLOOR[_PLATFORM_ARCH[platform_id]]
         ),
         free_threaded=st.booleans(),
     )
