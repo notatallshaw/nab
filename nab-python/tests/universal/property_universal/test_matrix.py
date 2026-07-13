@@ -60,8 +60,8 @@ def python_specs_admitting_some_minor(draw: st.DrawFn) -> str:
 
 
 @st.composite
-def platform_subsets(draw: st.DrawFn) -> tuple[str, ...]:
-    """Sample a non-empty subset of known platform ids."""
+def platform_subsets(draw: st.DrawFn) -> tuple[PlatformSpec, ...]:
+    """Sample a non-empty subset of the known platforms, at their defaults."""
     chosen = draw(
         st.lists(
             st.sampled_from(PLATFORM_IDS),
@@ -70,7 +70,7 @@ def platform_subsets(draw: st.DrawFn) -> tuple[str, ...]:
             unique=True,
         )
     )
-    return tuple(chosen)
+    return tuple(PlatformSpec(platform_id) for platform_id in chosen)
 
 
 class TestCartesianCardinality:
@@ -88,7 +88,7 @@ class TestCartesianCardinality:
     @given(spec=python_specs_admitting_some_minor(), platforms=platform_subsets())
     @PROPERTY_SETTINGS
     def test_cardinality_equals_pythons_times_platforms(
-        self, spec: str, platforms: tuple[str, ...]
+        self, spec: str, platforms: tuple[PlatformSpec, ...]
     ) -> None:
         """``|tuples|`` is the cross-product of admitted Pythons and platforms."""
         matrix = Matrix(python=spec, platforms=platforms)
@@ -109,7 +109,9 @@ class TestExpansionDeterminism:
 
     @given(spec=python_specs_admitting_some_minor(), platforms=platform_subsets())
     @PROPERTY_SETTINGS
-    def test_expand_is_idempotent(self, spec: str, platforms: tuple[str, ...]) -> None:
+    def test_expand_is_idempotent(
+        self, spec: str, platforms: tuple[PlatformSpec, ...]
+    ) -> None:
         """Two ``expand()`` calls on the same Matrix produce equal sequences."""
         matrix = Matrix(python=spec, platforms=platforms)
         first = matrix.expand()
@@ -121,7 +123,7 @@ class TestExpansionDeterminism:
     @given(spec=python_specs_admitting_some_minor(), platforms=platform_subsets())
     @PROPERTY_SETTINGS
     def test_expand_environment_dict_stable(
-        self, spec: str, platforms: tuple[str, ...]
+        self, spec: str, platforms: tuple[PlatformSpec, ...]
     ) -> None:
         """The per-tuple ``environment`` dict is identical across calls.
 
@@ -154,7 +156,7 @@ class TestPythonOrderingFlip:
     @given(spec=python_specs_admitting_some_minor(), platforms=platform_subsets())
     @PROPERTY_SETTINGS
     def test_desc_is_reverse_of_asc(
-        self, spec: str, platforms: tuple[str, ...]
+        self, spec: str, platforms: tuple[PlatformSpec, ...]
     ) -> None:
         """``desc`` reverses the Python axis but keeps platform order."""
         asc = Matrix(python=spec, platforms=platforms).expand()
@@ -236,7 +238,7 @@ class TestQuotePEP508MarkerKeys:
     @given(spec=python_specs_admitting_some_minor(), platforms=platform_subsets())
     @PROPERTY_SETTINGS
     def test_every_tuple_has_required_marker_keys(
-        self, spec: str, platforms: tuple[str, ...]
+        self, spec: str, platforms: tuple[PlatformSpec, ...]
     ) -> None:
         """Every per-tuple environment has the full PEP 508 key set."""
         required = {
@@ -276,7 +278,7 @@ class TestQuoteSysPlatformConsistency:
     @given(platforms=platform_subsets())
     @PROPERTY_SETTINGS
     def test_sys_platform_marker_consistent_with_platform_id(
-        self, platforms: tuple[str, ...]
+        self, platforms: tuple[PlatformSpec, ...]
     ) -> None:
         """``sys_platform == 'X'`` evaluates True iff ``platform_id`` matches."""
         matrix = Matrix(python="==3.11", platforms=platforms)
@@ -294,7 +296,7 @@ class TestQuoteSysPlatformConsistency:
     @given(spec=python_specs_admitting_some_minor(), platforms=platform_subsets())
     @PROPERTY_SETTINGS
     def test_python_version_marker_matches_axis(
-        self, spec: str, platforms: tuple[str, ...]
+        self, spec: str, platforms: tuple[PlatformSpec, ...]
     ) -> None:
         """``python_version == X`` evaluates True iff ``X`` is the tuple's value."""
         matrix = Matrix(python=spec, platforms=platforms)

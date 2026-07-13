@@ -105,15 +105,25 @@ class TestPlatformSpecKnobsBelongToTheirPlatform:
         with pytest.raises(ValueError, match="macos-min is a macOS knob"):
             PlatformSpec(platform_id, macos_min=(14, 0))
 
-    def test_macos_min_below_the_tag_floor_raises(self) -> None:
-        """No wheel tag names a macOS older than 10.0.
+    @pytest.mark.parametrize(
+        ("platform_id", "macos_min", "floor"),
+        [
+            ("macos_x86_64", (10, 3), "10.4"),
+            ("macos_arm64", (10, 15), "11.0"),
+        ],
+    )
+    def test_macos_min_below_the_arch_floor_raises(
+        self, platform_id: str, macos_min: tuple[int, int], floor: str
+    ) -> None:
+        """No wheel tag names a macOS older than the arch itself.
 
-        ``mac_platforms`` yields nothing below it, and packaging reads an
-        empty platform list as "unset", which would silently hand the
-        target the tags of the host nab happens to be running on.
+        ``mac_platforms`` yields no x86_64 binary format below 10.4, and
+        Apple Silicon shipped at 11.0.  An empty platform list also reads to
+        packaging as "unset", which would hand the target the tags of the
+        host nab happens to be running on.
         """
-        with pytest.raises(ValueError, match="below 10.0"):
-            PlatformSpec("macos_arm64", macos_min=(9, 0))
+        with pytest.raises(ValueError, match=f"below {floor}"):
+            PlatformSpec(platform_id, macos_min=macos_min)
 
     def test_unknown_platform_id_defers_to_the_matrix(self) -> None:
         """An unknown id is the matrix's error to report, not the spec's."""
@@ -126,8 +136,7 @@ class TestPlatformSpec:
     def test_default_libc_is_glibc_2_28(self) -> None:
         """An undeclared Linux target is glibc 2.28."""
         spec = PlatformSpec("linux_x86_64")
-        assert spec.libc is None
-        assert spec.effective_libc == "glibc"
+        assert spec.libc == "glibc"
         assert spec.effective_libc_version == (2, 28)
 
     def test_musl_libc_version_defaults_per_family(self) -> None:

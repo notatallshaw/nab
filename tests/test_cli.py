@@ -151,7 +151,6 @@ def _universal_result(*, success: bool, error: str | None = None) -> UniversalRe
     matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
     tup = MatrixTuple(
         python_version="3.11",
-        platform_id="linux_x86_64",
         environment=dict(_LINUX_311_ENV),
         platform_spec=PlatformSpec("linux_x86_64"),
     )
@@ -175,7 +174,6 @@ def _multi_tuple_universal_result() -> UniversalResult:
         env = {**_LINUX_311_ENV, "python_version": py_minor}
         tup = MatrixTuple(
             python_version=py_minor,
-            platform_id="linux_x86_64",
             environment=env,
             platform_spec=PlatformSpec("linux_x86_64"),
         )
@@ -1039,7 +1037,6 @@ class TestLockCommandUniversal:
         for member, version in (("cpu", "1.0"), ("gpu", "2.0")):
             tup = MatrixTuple(
                 python_version="3.11",
-                platform_id="linux_x86_64",
                 environment=dict(_LINUX_311_ENV),
                 platform_spec=PlatformSpec("linux_x86_64"),
                 selection=(("extra", member),),
@@ -1291,13 +1288,11 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         ok_tuple = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
             environment=dict(_LINUX_311_ENV),
             platform_spec=PlatformSpec("linux_x86_64"),
         )
         bad_tuple = MatrixTuple(
             python_version="3.11",
-            platform_id="windows_amd64",
             environment=dict(_LINUX_311_ENV),
             platform_spec=PlatformSpec("windows_amd64"),
         )
@@ -1341,13 +1336,11 @@ class TestLockCommandUniversal:
         pyproject = _universal_pyproject(tmp_path)
         env_a = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
             environment=dict(_LINUX_311_ENV),
             platform_spec=PlatformSpec("linux_x86_64"),
         )
         env_b = MatrixTuple(
             python_version="3.12",
-            platform_id="linux_x86_64",
             environment={**_LINUX_311_ENV, "python_version": "3.12"},
             platform_spec=PlatformSpec("linux_x86_64"),
         )
@@ -1465,7 +1458,6 @@ class TestLockCommandUniversal:
             env = {**_LINUX_311_ENV, "python_version": "3.11"}
             tup = MatrixTuple(
                 python_version="3.11",
-                platform_id=platform_id,
                 environment=env,
                 platform_spec=PlatformSpec(platform_id),
             )
@@ -1596,13 +1588,11 @@ class TestLockCommandUniversal:
         # Build a mixed matrix: 3.11 succeeds, 3.12 fails.
         good_tup = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
             environment={**_LINUX_311_ENV, "python_version": "3.11"},
             platform_spec=PlatformSpec("linux_x86_64"),
         )
         bad_tup = MatrixTuple(
             python_version="3.12",
-            platform_id="linux_x86_64",
             environment={**_LINUX_311_ENV, "python_version": "3.12"},
             platform_spec=PlatformSpec("linux_x86_64"),
         )
@@ -1660,7 +1650,6 @@ class TestNoEmitWorkspace:
         matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         tup = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
             environment=dict(_LINUX_311_ENV),
             platform_spec=PlatformSpec("linux_x86_64"),
         )

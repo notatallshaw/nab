@@ -104,7 +104,6 @@ def _wheel(filename: str) -> WheelFile:
 def _linux_311() -> MatrixTuple:
     return MatrixTuple(
         python_version="3.11",
-        platform_id="linux_x86_64",
         environment={
             "python_version": "3.11",
             "python_full_version": "3.11.0",
@@ -125,7 +124,6 @@ def _linux_311() -> MatrixTuple:
 def _windows_311() -> MatrixTuple:
     return MatrixTuple(
         python_version="3.11",
-        platform_id="windows_amd64",
         environment={
             "python_version": "3.11",
             "python_full_version": "3.11.0",

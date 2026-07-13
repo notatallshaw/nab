@@ -15,7 +15,13 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from nab_python.tags import _PLATFORM_KIND, LIBC_MAJOR, PlatformSpec
+from nab_python.tags import (
+    _PLATFORM_ARCH,
+    _PLATFORM_KIND,
+    LIBC_MAJOR,
+    MACOS_TAG_FLOOR,
+    PlatformSpec,
+)
 from nab_python.universal.matrix import (
     _IMPLEMENTATION_DEFAULTS,
     _KNOWN_PYTHON_MINORS,
@@ -64,8 +70,14 @@ def _macos_knobs(platform_id: str) -> st.SearchStrategy[dict[str, object]]:
     """Draw the macOS knob the platform admits: none unless it is macOS."""
     if _PLATFORM_KIND[platform_id] != "macos":
         return st.just({})
+    floor = MACOS_TAG_FLOOR[_PLATFORM_ARCH[platform_id]]
     return st.fixed_dictionaries(
-        {"macos_min": st.none() | st.tuples(st.integers(10, 15), st.integers(0, 3))}
+        {
+            "macos_min": st.none()
+            | st.tuples(st.integers(10, 15), st.integers(0, 3)).filter(
+                lambda version: version >= floor
+            )
+        }
     )
 
 

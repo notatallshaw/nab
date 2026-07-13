@@ -31,6 +31,8 @@ from packaging.version import InvalidVersion
 from nab_index.client import WheelFile
 from nab_python._vendor.packaging import tags as vendored_tags
 from nab_python.tags import (
+    _PLATFORM_ARCH,
+    MACOS_TAG_FLOOR,
     PlatformSpec,
     _platform_tags_for_spec,
     _tags_in_order,
@@ -51,24 +53,44 @@ PLATFORM_IDS = (
     "windows_amd64",
 )
 
-specs = st.one_of(
+LINUX_IDS = tuple(p for p in PLATFORM_IDS if p.startswith("linux_"))
+MACOS_IDS = tuple(p for p in PLATFORM_IDS if p.startswith("macos_"))
+
+# A knob only its own platform reads is a construction error, so each
+# platform draws its own.
+linux_specs = st.one_of(
     st.builds(
         PlatformSpec,
-        platform_id=st.sampled_from(PLATFORM_IDS),
+        platform_id=st.sampled_from(LINUX_IDS),
         libc=st.just("glibc"),
         libc_version=st.tuples(st.just(2), st.integers(0, 35)),
-        macos_min=st.none() | st.tuples(st.integers(10, 14), st.integers(0, 15)),
         free_threaded=st.booleans(),
     ),
     st.builds(
         PlatformSpec,
-        platform_id=st.sampled_from(PLATFORM_IDS),
+        platform_id=st.sampled_from(LINUX_IDS),
         libc=st.just("musl"),
         libc_version=st.tuples(st.just(1), st.integers(0, 4)),
-        macos_min=st.none() | st.tuples(st.integers(10, 14), st.integers(0, 15)),
         free_threaded=st.booleans(),
     ),
 )
+macos_specs = st.sampled_from(MACOS_IDS).flatmap(
+    lambda platform_id: st.builds(
+        PlatformSpec,
+        platform_id=st.just(platform_id),
+        macos_min=st.none()
+        | st.tuples(st.integers(10, 15), st.integers(0, 15)).filter(
+            lambda v: v >= MACOS_TAG_FLOOR[_PLATFORM_ARCH[platform_id]]
+        ),
+        free_threaded=st.booleans(),
+    )
+)
+windows_specs = st.builds(
+    PlatformSpec,
+    platform_id=st.just("windows_amd64"),
+    free_threaded=st.booleans(),
+)
+specs = st.one_of(linux_specs, macos_specs, windows_specs)
 
 
 def _triples(tag_iter: object) -> list[tuple[str, str, str]]:
@@ -340,3 +362,20 @@ class TestSelectWheelMinimizesUpstreamRank:
             f"chose {chosen.filename} rank {best_rank(chosen)}; "
             f"best available {min(oracle_ranks)}"
         )
+
+
+class TestAcceptedSpecNamesAPlatform:
+    """Every spec :class:`PlatformSpec` accepts names at least one platform tag.
+
+    ``packaging.tags`` reads an empty ``platforms`` argument as "unset" and
+    falls back to the tags of the running host, so a spec that named no
+    platform tag would not resolve for the machine it declares: it would
+    resolve for nab's own.  The knob checks exist to make that unreachable,
+    and this is the invariant they buy.
+    """
+
+    @given(spec=specs)
+    @PROPERTY_SETTINGS
+    def test_platform_tags_are_never_empty(self, spec: PlatformSpec) -> None:
+        """An accepted spec always names a platform tag of its own."""
+        assert _platform_tags_for_spec(spec)

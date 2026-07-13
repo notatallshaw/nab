@@ -2764,13 +2764,12 @@ class TestMatrix:
     @pytest.mark.parametrize(
         ("entry", "message"),
         [
-            ('{ id = "windows_amd64", libc = "musl" }', "libc is a Linux knob"),
-            ('{ id = "macos_arm64", libc-version = "2.28" }', "libc is a Linux knob"),
-            (
-                '{ id = "linux_x86_64", macos-min = "14.0" }',
-                "macos-min is a macOS knob",
-            ),
-            ('{ id = "macos_arm64", macos-min = "9.0" }', "below 10.0"),
+            ('{ id = "windows_amd64", libc = "musl" }', "only a linux platform"),
+            ('{ id = "windows_amd64", libc = "glibc" }', "only a linux platform"),
+            ('{ id = "macos_arm64", libc-version = "2.28" }', "only a linux platform"),
+            ('{ id = "linux_x86_64", macos-min = "14.0" }', "only a macos platform"),
+            ('{ id = "macos_arm64", macos-min = "10.15" }', "below 11.0"),
+            ('{ id = "macos_x86_64", macos-min = "10.3" }', "below 10.4"),
         ],
     )
     def test_platform_table_rejects_a_knob_the_platform_cannot_use(

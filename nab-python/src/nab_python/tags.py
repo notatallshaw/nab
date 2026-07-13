@@ -36,6 +36,7 @@ __all__ = [
     "MACOS_TAG_FLOOR",
     "Libc",
     "PlatformSpec",
+    "platform_kind",
     "select_wheel",
     "tags_for_target",
     "wheel_tag_set",
@@ -70,16 +71,24 @@ _DEFAULT_LIBC_VERSION: dict[Libc, tuple[int, int]] = {
 # major, so a foreign major names platform tags no wheel is built for.
 LIBC_MAJOR: Mapping[Libc, int] = MappingProxyType({"glibc": 2, "musl": 1})
 
-# ``mac_platforms`` reads the macOS version as a ceiling: a system at macOS V
-# installs wheels built for V and older, never newer, so a higher value
-# accepts more wheels.  Apple Silicon arrived at 11.0, but most arm64 wheels
-# published since 2023 target macosx_12_0 or newer, so a lower default would
-# reject them; 10.13 was the last x86_64 version with wide wheel coverage.
+# The macOS version is the deployment target of the machine, which
+# ``mac_platforms`` reads as a ceiling: the target accepts a wheel built for
+# its own version and older, never newer.  The defaults are deliberately
+# conservative, because the two ways to be wrong are not symmetric: too low
+# only misses the newest wheels and falls back to an older version or an
+# sdist, while too high writes a wheel into the lock that an older machine
+# cannot install.
 _DEFAULT_MACOS_MIN = (12, 0)
 _DEFAULT_MACOS_X86_64_MIN = (10, 13)
-# ``mac_platforms`` names no tag below 10.0, and an empty platform list reads
-# to packaging as "unset", which falls back to the tags of the running host.
-MACOS_TAG_FLOOR = (10, 0)
+
+# The oldest macOS each arch can name a wheel tag for.  ``mac_platforms``
+# yields no x86_64 binary format below 10.4, and Apple Silicon shipped at
+# 11.0, so below these there is no machine to model.  An empty platform list
+# also reads to packaging as "unset", which would silently hand the target
+# the tags of whatever host nab is running on.
+MACOS_TAG_FLOOR: Mapping[str, tuple[int, int]] = MappingProxyType(
+    {"x86_64": (10, 4), "arm64": (11, 0)}
+)
 
 # Legacy manylinux aliases (PEPs 513/571/599) keyed by the glibc they mean.
 _LEGACY_MANYLINUX: dict[tuple[int, int], str] = {
@@ -117,7 +126,7 @@ class PlatformSpec:
     """
 
     platform_id: str
-    libc: Libc | None = None  # unset: the platform default
+    libc: Libc = DEFAULT_LIBC
     libc_version: tuple[int, int] | None = None  # unset: the family default
     macos_min: tuple[int, int] | None = None  # unset: the arch default
     platform_release: str = ""
@@ -136,12 +145,12 @@ class PlatformSpec:
         whole unknown set at once, and that says more than a complaint
         about a knob on a platform that does not exist.
         """
-        kind = _PLATFORM_KIND.get(self.platform_id)
+        kind = platform_kind(self.platform_id)
         if kind is None:
             return
         if kind == "linux":
             self._check_libc_version()
-        elif self.libc is not None or self.libc_version is not None:
+        elif self.libc != DEFAULT_LIBC or self.libc_version is not None:
             msg = f"libc is a Linux knob, and {self.platform_id} is not Linux"
             raise ValueError(msg)
         if kind == "macos":
@@ -152,22 +161,22 @@ class PlatformSpec:
 
     def _check_libc_version(self) -> None:
         """Reject a libc version outside its family's only major."""
-        major = LIBC_MAJOR[self.effective_libc]
+        major = LIBC_MAJOR[self.libc]
         if self.libc_version is not None and self.libc_version[0] != major:
             msg = (
-                f"{self.effective_libc} has only a {major}.x series, so"
-                f" libc-version {_version_tag(self.libc_version)} names"
-                f" platform tags nothing is built for"
+                f"{self.libc} has only a {major}.x series, so libc-version"
+                f" {_version_tag(self.libc_version)} names platform tags"
+                f" nothing is built for"
             )
             raise ValueError(msg)
 
     def _check_macos_min(self) -> None:
-        """Reject a macOS version below the oldest that names a platform tag."""
-        if self.macos_min is not None and self.macos_min < MACOS_TAG_FLOOR:
+        """Reject a macOS version below the oldest this arch can name a tag for."""
+        floor = MACOS_TAG_FLOOR[self.arch]
+        if self.macos_min is not None and self.macos_min < floor:
             msg = (
                 f"macos-min {_version_tag(self.macos_min)} is below"
-                f" {_version_tag(MACOS_TAG_FLOOR)}, the oldest macOS a wheel"
-                f" tag can name"
+                f" {_version_tag(floor)}, the oldest macOS {self.arch} runs"
             )
             raise ValueError(msg)
 
@@ -177,17 +186,10 @@ class PlatformSpec:
         return _PLATFORM_ARCH[self.platform_id]
 
     @property
-    def effective_libc(self) -> Libc:
-        """The declared C library, or the default family."""
-        if self.libc is None:
-            return DEFAULT_LIBC
-        return self.libc
-
-    @property
     def effective_libc_version(self) -> tuple[int, int]:
         """The declared libc version, or this family's default."""
         if self.libc_version is None:
-            return _DEFAULT_LIBC_VERSION[self.effective_libc]
+            return _DEFAULT_LIBC_VERSION[self.libc]
         return self.libc_version
 
     @property
@@ -204,8 +206,8 @@ class PlatformSpec:
 
         # The family shows even without a version, so a musl target never
         # renders the label of a glibc one.
-        if self.libc is not None or self.libc_version is not None:
-            parts.append(f"-{self.effective_libc}{_version_tag(self.libc_version)}")
+        if self.libc != DEFAULT_LIBC or self.libc_version is not None:
+            parts.append(f"-{self.libc}{_version_tag(self.libc_version)}")
 
         fields = (
             ("macos", _version_tag(self.macos_min)),
@@ -233,6 +235,11 @@ _PLATFORM_KIND: dict[str, str] = {
     "macos_x86_64": "macos",
     "windows_amd64": "windows",
 }
+
+
+def platform_kind(platform_id: str) -> str | None:
+    """Return a platform id's kind, or ``None`` if nab does not know the id."""
+    return _PLATFORM_KIND.get(platform_id)
 
 
 def _version_tag(version: tuple[int, int] | None) -> str:
@@ -311,9 +318,7 @@ def _platform_tags_for_spec(spec: PlatformSpec) -> list[str]:
 
     if kind == "linux":
         return _linux_platform_tags(
-            arch,
-            libc=spec.effective_libc,
-            libc_version=spec.effective_libc_version,
+            arch, libc=spec.libc, libc_version=spec.effective_libc_version
         )
 
     if kind == "macos":

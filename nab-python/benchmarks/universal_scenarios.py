@@ -33,6 +33,7 @@ else:
 
 from nab_python._lockfile.pylock import build_pylock
 from nab_python._vendor.packaging.utils import canonicalize_name
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import Matrix
 from nab_python.universal.resolve import (
     UniversalResult,
@@ -177,7 +178,11 @@ def process_scenario(
             return
 
     print(f"  {scenario_name} ", end="", flush=True)
-    matrix = Matrix(python=python_spec, platforms=platforms, python_order=python_order)
+    matrix = Matrix(
+        python=python_spec,
+        platforms=tuple(PlatformSpec(p) for p in platforms),
+        python_order=python_order,
+    )
 
     previous_handler = signal.signal(signal.SIGALRM, _alarm_handler)
     signal.alarm(SCENARIO_WALL_TIMEOUT_SECONDS)

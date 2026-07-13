@@ -55,7 +55,6 @@ def _make_coordinator(
 def _linux_311(full_version: str = "3.11.0") -> MatrixTuple:
     return MatrixTuple(
         python_version="3.11",
-        platform_id="linux_x86_64",
         environment={
             "python_version": "3.11",
             "python_full_version": full_version,

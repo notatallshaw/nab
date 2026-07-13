@@ -16,10 +16,11 @@ from typing import TYPE_CHECKING
 from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.version import Version
-from ..tags import PlatformSpec
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from ..tags import PlatformSpec
 
 # Common Python minor releases. An unrecognized minor declared in the
 # user range raises.
@@ -110,16 +111,16 @@ class MatrixTuple:
     """
 
     python_version: str
-    platform_id: str
+    platform_spec: PlatformSpec
     environment: dict[str, str] = field(hash=False, compare=False)
-    platform_spec: PlatformSpec = field(
-        hash=False,
-        compare=False,
-        default_factory=lambda: PlatformSpec("linux_x86_64"),
-    )
     implementation: str = "cpython"
     multi_implementation: bool = field(default=False, hash=False, compare=False)
     selection: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def platform_id(self) -> str:
+        """The platform this tuple models, as the spec declares it."""
+        return self.platform_spec.platform_id
 
     @property
     def label(self) -> str:
@@ -267,9 +268,8 @@ class Matrix:
         return [
             MatrixTuple(
                 python_version=py,
-                platform_id=spec.platform_id,
-                environment=_build_environment(py, spec, impl, patches.get(py)),
                 platform_spec=spec,
+                environment=_build_environment(py, spec, impl, patches.get(py)),
                 implementation=impl,
                 multi_implementation=multi_impl,
             )

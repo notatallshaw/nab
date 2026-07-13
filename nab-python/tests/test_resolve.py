@@ -2557,7 +2557,7 @@ def _tuple_for_python(python_version: str) -> MatrixTuple:
     """
     return MatrixTuple(
         python_version=python_version,
-        platform_id="linux_x86_64",
+        platform_spec=PlatformSpec("linux_x86_64"),
         environment={
             "python_version": python_version,
             "python_full_version": f"{python_version}.0",

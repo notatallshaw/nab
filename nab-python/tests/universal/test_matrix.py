@@ -291,7 +291,7 @@ class TestMatrixTuple:
         """``label`` is a short id suitable for filenames and logs."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
         )
         assert t.label == "py311-linux_x86_64"
@@ -300,7 +300,7 @@ class TestMatrixTuple:
         """A PyPy tuple's label uses the ``pp`` interpreter prefix."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             implementation="pypy",
         )
@@ -310,7 +310,7 @@ class TestMatrixTuple:
         """A conflict-fork selection appends sorted ``kind-name`` members."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("group", "isort5"), ("group", "black22")),
         )
@@ -325,7 +325,7 @@ class TestMatrixTuple:
         """
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("group", "isort5"), ("extra", "cpu")),
         )
@@ -341,13 +341,13 @@ class TestMatrixTuple:
         """
         first = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("extra", "a-b"), ("extra", "c")),
         )
         second = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("extra", "a"), ("extra", "b-c")),
         )
@@ -357,13 +357,13 @@ class TestMatrixTuple:
         """An extra and a group of the same name get distinct labels."""
         as_extra = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("extra", "cpu"),),
         )
         as_group = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("group", "cpu"),),
         )
@@ -373,7 +373,7 @@ class TestMatrixTuple:
         """An extra member adds a bare ``in extras`` clause to the marker."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -387,7 +387,7 @@ class TestMatrixTuple:
         """A group member adds a bare ``in dependency_groups`` clause."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -401,7 +401,7 @@ class TestMatrixTuple:
         """Selection clauses emit in sorted order for byte-stable output."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -418,7 +418,7 @@ class TestMatrixTuple:
         """The env-only marker drops the conflict membership clause."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -435,7 +435,7 @@ class TestMatrixTuple:
         """The default empty selection is a no-op (back-compat)."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -471,7 +471,7 @@ class TestMatrixTuple:
         """The default CPython marker keeps its three-clause form."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -484,7 +484,7 @@ class TestMatrixTuple:
         """A PyPy marker adds an ``implementation_name`` clause."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",

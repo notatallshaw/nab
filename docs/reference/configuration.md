@@ -558,8 +558,10 @@ supported distribution still ships: it accepts every manylinux wheel
 published today without naming a machine nobody runs.  Its major has to
 match the family (glibc `2.x`, musl `1.x`): those are the only majors
 either has shipped, so no wheel targets another.  `macos-min` reads the
-same way, as the newest macOS a wheel may target; below 10.0 no wheel
-tag exists to name, so that is a config error.
+same way, as the newest macOS a wheel may target.  Below the oldest
+macOS the architecture ever ran (10.4 on x86_64, 11.0 on Apple Silicon)
+there is no machine to model and no tag to name, so that is a config
+error.
 
 A knob belongs to its platform.  `libc` and `libc-version` are Linux
 knobs and `macos-min` is a macOS one; declaring one on a platform that

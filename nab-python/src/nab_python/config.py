@@ -14,6 +14,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
@@ -57,7 +58,7 @@ from .provider import (
     VcsSource,
     _normalize_extra,
 )
-from .tags import LIBC_MAJOR, Libc, PlatformSpec
+from .tags import DEFAULT_LIBC, LIBC_MAJOR, Libc, PlatformSpec, platform_kind
 from .universal.matrix import Matrix
 from .workspace import (
     WorkspaceConfig,
@@ -2229,6 +2230,13 @@ _PLATFORM_TABLE_KEYS = frozenset(
         "free-threaded",
     }
 )
+# The platform kind each knob key belongs to.  Every other kind ignores it.
+_PLATFORM_KNOB_OWNER: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "linux": frozenset({"libc", "libc-version"}),
+        "macos": frozenset({"macos-min"}),
+    }
+)
 
 # The free-threaded build ships from CPython 3.13 (PEP 703).
 _FREE_THREADED_MIN_PYTHON = (3, 13)
@@ -2280,9 +2288,12 @@ def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
         msg = f"{where} missing required key 'id'"
         raise ConfigError(msg)
 
+    platform_id = _parse_string_value(f"{where}.id", value["id"])
+    _reject_foreign_knobs(where, value, platform_id)
+
     return _platform_spec(
         where,
-        platform_id=_parse_string_value(f"{where}.id", value["id"]),
+        platform_id=platform_id,
         libc=_parse_libc(f"{where}.libc", value.get("libc")),
         libc_version=_parse_major_minor(
             f"{where}.libc-version", value.get("libc-version")
@@ -2300,10 +2311,34 @@ def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
     )
 
 
-def _parse_libc(key: str, value: object) -> Libc | None:
-    """Parse a libc family name; an absent key leaves the family undeclared."""
+def _reject_foreign_knobs(where: str, value: dict[str, Any], platform_id: str) -> None:
+    """Reject a knob key the declared platform's kind cannot read.
+
+    :class:`PlatformSpec` refuses a knob whose *value* moves a platform that
+    ignores it, but it cannot see a key written at its own default.  The
+    table can, and a key that selects no wheel is a mistake either way.  An
+    unknown ``platform_id`` is left to the matrix, which names the whole
+    unknown set at once.
+    """
+    kind = platform_kind(platform_id)
+    if kind is None:
+        return
+    for owner, keys in _PLATFORM_KNOB_OWNER.items():
+        if kind == owner:
+            continue
+        foreign = sorted(keys & set(value))
+        if foreign:
+            msg = (
+                f"{where} declares {foreign!r}, which only a {owner} platform"
+                f" reads, but its id is {platform_id!r}"
+            )
+            raise ConfigError(msg)
+
+
+def _parse_libc(key: str, value: object) -> Libc:
+    """Parse a libc family name; an absent key takes the default family."""
     if value is None:
-        return None
+        return DEFAULT_LIBC
     text = _parse_string_value(key, value)
     if text not in LIBC_MAJOR:
         msg = f"{key} must be one of {sorted(LIBC_MAJOR)!r}, got {text!r}"
