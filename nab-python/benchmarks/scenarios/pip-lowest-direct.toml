@@ -203,8 +203,14 @@ requirements = ["mem0ai[graph,extras]"]
 
 [langchain-ml-course]
 # https://github.com/pypa/pip/issues/13281#issuecomment-3813389543
+# Reported on 3.14, but no solution exists there at this cutoff:
+# langchain-chroma pulls chromadb, which requires onnxruntime, and
+# onnxruntime publishes no sdist and no cp314 wheel until 2026-02-05.
+# pip refuses it too.  Targeted at 3.13, where onnxruntime does ship
+# wheels, so the scenario still exercises the backtracking it was added
+# for instead of measuring an impossible resolve.
 resolution = "lowest-direct"
-python_version = "3.14"
+python_version = "3.13"
 platform_system = "Linux"
 datetime = "2026-01-28 19:21:17"
 requirements = [
@@ -786,8 +792,10 @@ requirements = ["trustllm"]
 # https://github.com/pypa/pip/issues/13281#issuecomment-3813389543
 # Near-duplicate of [langchain-ml-course] but on Darwin with a slightly different
 # datetime, capturing the repeated report from a different user environment.
+# Targeted at 3.13 for the same reason: onnxruntime ships no cp314 wheel before
+# the cutoff and no sdist, so 3.14 has no solution here.
 resolution = "lowest-direct"
-python_version = "3.14"
+python_version = "3.13"
 platform_system = "Darwin"
 datetime = "2026-01-28 19:21:17"
 requirements = [
