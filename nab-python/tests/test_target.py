@@ -715,6 +715,28 @@ class TestFullVersionDeclaration:
             ' and python_full_version >= "3.10.2"'
         )
 
+    def test_implementation_version_is_declared_by_constraint(self) -> None:
+        """It is the micro release under another name, so pinning it is the same bug.
+
+        On CPython ``implementation_version`` reports
+        ``sys.implementation.version``, which is the same release
+        ``python_full_version`` reports, so declaring its value would refuse
+        every interpreter but the one micro the target names.
+        """
+        declaration = environment_declaration(
+            self._target("3.13.2"),
+            [Marker('implementation_version >= "3.0"')],
+        )
+        assert 'implementation_version >= "3.0"' in declaration
+        assert 'implementation_version == "3.13.2"' not in declaration
+        assert Marker(declaration).evaluate(
+            {
+                **_HOST_ENV,
+                "python_full_version": "3.13.9",
+                "implementation_version": "3.13.9",
+            }
+        )
+
     def test_an_operator_with_no_complement_pins_the_value(self) -> None:
         """``~=`` has no single-clause negation; the exact value is sound."""
         declaration = environment_declaration(

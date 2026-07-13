@@ -173,9 +173,12 @@ _MARKER_VARIABLE_RE = re.compile(
     r"\b(" + "|".join(sorted(PEP508_MARKER_VARIABLES)) + r")\b"
 )
 
-# The one variable a lock declares by constraint rather than by value: see
-# :func:`_full_version_clauses`.
-_PYTHON_FULL_VERSION = "python_full_version"
+# The variables a lock declares by constraint rather than by value: see
+# :func:`_version_clauses`.  Both carry a micro release, and on CPython they
+# carry the same one (``implementation_version`` comes from
+# ``sys.implementation.version``), so pinning either collapses the lock to a
+# single patch release.
+_BY_CONSTRAINT = ("python_full_version", "implementation_version")
 
 # The operator that states the complement of each comparison.  PEP 508 has no
 # ``not``, so a clause the resolve found False is declared by flipping its
@@ -225,12 +228,12 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     same variable and gets a different answer would be missing the deps
     that environment needs: the declaration refuses it instead.
 
-    Every variable but one is declared by value: a marker on
-    ``platform_system`` pins the OS.  ``python_full_version`` is declared
-    by constraint (see :func:`_full_version_clauses`), because a lock that
-    pinned the micro release would refuse the very interpreters it
-    resolved for.  Variables in :data:`UNBOUNDABLE_MARKER_VARIABLES` are
-    dropped (see there).
+    Most variables are declared by value: a marker on ``platform_system``
+    pins the OS.  The variables in :data:`_BY_CONSTRAINT` are declared by
+    constraint (see :func:`_version_clauses`), because a lock that pinned
+    the micro release would refuse the very interpreters it resolved for.
+    Variables in :data:`UNBOUNDABLE_MARKER_VARIABLES` are dropped (see
+    there).
     """
     texts = sorted({str(marker) for marker in consulted})
     variables: set[str] = set()
@@ -242,15 +245,17 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     ]
     clauses: list[str] = []
     for name in names:
-        if name == _PYTHON_FULL_VERSION:
-            clauses.extend(_full_version_clauses(target, texts))
+        if name in _BY_CONSTRAINT:
+            clauses.extend(_version_clauses(target, texts, name))
         else:
             clauses.append(f'{name} == "{target.marker_env[name]}"')
     return " and ".join(clauses)
 
 
-def _full_version_clauses(target: ResolveTarget, texts: Sequence[str]) -> list[str]:
-    """Declare how the resolve read ``python_full_version``, not its value.
+def _version_clauses(
+    target: ResolveTarget, texts: Sequence[str], variable: str
+) -> list[str]:
+    """Declare how the resolve read ``variable``, not its value.
 
     Pinning the target's own ``python_full_version`` would refuse every
     other micro release, including every real one when the target names a
@@ -278,14 +283,16 @@ def _full_version_clauses(target: ResolveTarget, texts: Sequence[str]) -> list[s
     spells the name inside a literal, which leaves nothing to declare.
     """
     environment = dict(target.marker_env)
-    exact = f'{_PYTHON_FULL_VERSION} == "{environment[_PYTHON_FULL_VERSION]}"'
+    exact = f'{variable} == "{environment[variable]}"'
     declared: set[str] = set()
     for text in texts:
         for match in _MARKER_CLAUSE_RE.finditer(text):
             lhs, op, rhs = match.group("lhs", "op", "rhs")
-            if _PYTHON_FULL_VERSION not in (lhs, rhs):
+            if variable not in (lhs, rhs):
                 continue
-            declaration = _declared_clause(lhs, " ".join(op.split()), rhs, environment)
+            declaration = _declared_clause(
+                lhs, " ".join(op.split()), rhs, environment, variable
+            )
             if declaration is None:
                 return [exact]
             declared.add(declaration)
@@ -293,16 +300,16 @@ def _full_version_clauses(target: ResolveTarget, texts: Sequence[str]) -> list[s
 
 
 def _declared_clause(
-    lhs: str, op: str, rhs: str, environment: Mapping[str, str]
+    lhs: str, op: str, rhs: str, environment: Mapping[str, str], variable: str
 ) -> str | None:
     """Return the clause declaring how ``lhs op rhs`` read, or None.
 
     The clause is one comparison of a marker the resolve evaluated, with
-    ``python_full_version`` on one side; packaging decides which way it read.
+    ``variable`` on one side; packaging decides which way it read.
     None means nab cannot state that outcome as a clause of its own, and the
     caller declares the exact value instead.
     """
-    literal = rhs if lhs == _PYTHON_FULL_VERSION else lhs
+    literal = rhs if lhs == variable else lhs
     if op not in _COMPLEMENT_OPERATOR or not literal.startswith('"'):
         return None
     clause = f"{lhs} {op} {rhs}"
