@@ -11,9 +11,11 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
+# NAB_* is nab's own settings namespace and it rejects any variable in it that
+# is not a setting, so the override for which nab to run lives outside it.
 NAB=(.venv/bin/python -m nab)
-if [[ -n "${NAB_BIN:-}" ]]; then
-    read -ra NAB <<<"${NAB_BIN}"
+if [[ -n "${REFRESH_NAB_BIN:-}" ]]; then
+    read -ra NAB <<<"${REFRESH_NAB_BIN}"
 fi
 
 EXTRA_ARGS=("$@")
