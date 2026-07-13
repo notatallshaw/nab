@@ -1,4 +1,4 @@
-"""Property tests for the matrix-expansion logic in :mod:`nab_python.universal.matrix`.
+"""Property tests for the matrix-expansion logic in :mod:`nab_python.target`.
 
 The matrix expansion produces one ``ResolveTarget`` per
 ``(python_version, platform_id)`` pair admitted by a PEP 440
@@ -24,9 +24,9 @@ from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
 from nab_python.tags import PlatformSpec
-from nab_python.target import PLATFORM_MARKERS
-from nab_python.universal.matrix import (
-    _KNOWN_PYTHON_MINORS,
+from nab_python.target import (
+    KNOWN_PYTHON_MINORS,
+    PLATFORM_MARKERS,
     Matrix,
     _pythons_in_range,
 )
@@ -43,19 +43,19 @@ def python_specs_admitting_some_minor(draw: st.DrawFn) -> str:
     """Generate a PEP 440 spec admitting at least one known minor.
 
     Random specifiers can intersect to empty; we constrain to bounded
-    ranges that include at least one ``_KNOWN_PYTHON_MINORS`` value
+    ranges that include at least one ``KNOWN_PYTHON_MINORS`` value
     so that expansion is non-trivial.
     """
     lo_minor_index = draw(
-        st.integers(min_value=0, max_value=len(_KNOWN_PYTHON_MINORS) - 1)
+        st.integers(min_value=0, max_value=len(KNOWN_PYTHON_MINORS) - 1)
     )
     hi_minor_index = draw(
-        st.integers(min_value=lo_minor_index + 1, max_value=len(_KNOWN_PYTHON_MINORS))
+        st.integers(min_value=lo_minor_index + 1, max_value=len(KNOWN_PYTHON_MINORS))
     )
-    lo = _KNOWN_PYTHON_MINORS[lo_minor_index]
-    if hi_minor_index >= len(_KNOWN_PYTHON_MINORS):
+    lo = KNOWN_PYTHON_MINORS[lo_minor_index]
+    if hi_minor_index >= len(KNOWN_PYTHON_MINORS):
         return f">={lo}"
-    hi = _KNOWN_PYTHON_MINORS[hi_minor_index]
+    hi = KNOWN_PYTHON_MINORS[hi_minor_index]
     return f">={lo}, <{hi}"
 
 
@@ -94,7 +94,7 @@ class TestCartesianCardinality:
         matrix = Matrix(python=spec, platforms=platforms)
         tuples = matrix.expand()
         parsed = SpecifierSet(spec)
-        admitted = [m for m in _KNOWN_PYTHON_MINORS if Version(f"{m}.0") in parsed]
+        admitted = [m for m in KNOWN_PYTHON_MINORS if Version(f"{m}.0") in parsed]
         assert len(tuples) == len(admitted) * len(platforms)
 
 
@@ -188,7 +188,7 @@ class TestPythonsInRange:
     axis.  Three guarantees are load-bearing:
 
     1. Every output is an ``M.N`` minor string drawn from
-       :data:`_KNOWN_PYTHON_MINORS`.  Downstream consumers
+       :data:`KNOWN_PYTHON_MINORS`.  Downstream consumers
        (marker evaluation, wheel-tag selection) depend on this
        shape; emitting ``M.N.P`` patch strings would break tag
        generation.
@@ -196,7 +196,7 @@ class TestPythonsInRange:
        entries would inflate the matrix and silently change
        cross-tuple alignment ordering.
     3. Output order matches the canonical ascending order in
-       :data:`_KNOWN_PYTHON_MINORS`.  Callers rely on this to keep
+       :data:`KNOWN_PYTHON_MINORS`.  Callers rely on this to keep
        lockfile output diff-friendly.
     """
 
@@ -210,10 +210,10 @@ class TestPythonsInRange:
             parts = minor.split(".")
             assert len(parts) == 2
             assert all(part.isdigit() for part in parts)
-            assert minor in _KNOWN_PYTHON_MINORS
+            assert minor in KNOWN_PYTHON_MINORS
 
-        # Order matches the canonical _KNOWN_PYTHON_MINORS order.
-        canonical_index = {m: i for i, m in enumerate(_KNOWN_PYTHON_MINORS)}
+        # Order matches the canonical KNOWN_PYTHON_MINORS order.
+        canonical_index = {m: i for i, m in enumerate(KNOWN_PYTHON_MINORS)}
         indices = [canonical_index[m] for m in result]
         assert indices == sorted(indices)
 

@@ -61,11 +61,11 @@ from .provider import (
 from .tags import DEFAULT_LIBC, LIBC_MAJOR, Libc, PlatformSpec, platform_kind
 from .target import (
     PLATFORM_MARKERS,
+    Matrix,
     ResolveTarget,
     host_environment,
     python_axis_environment,
 )
-from .universal.matrix import Matrix
 from .workspace import (
     WorkspaceConfig,
     auto_promote_build_policy_for_workspace,
