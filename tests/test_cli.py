@@ -59,6 +59,7 @@ from nab_python.lockfile import (
 )
 from nab_python.provider import (
     InvalidUploadTimeError,
+    MissingExtraError,
     ResolutionStrategy,
     UnsupportedVcsError,
 )
@@ -578,6 +579,27 @@ class TestLockCommandSpecific:
         ):
             lock(pyproject)
         assert "Cannot lock" in capsys.readouterr().err
+
+    def test_missing_extra_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """MissingExtraError exits 1 with the message instead of a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                side_effect=MissingExtraError(
+                    "pkg==1.0 does not provide extra 'bogus'"
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "does not provide extra 'bogus'" in err
+        assert "Traceback" not in err
 
     def test_lookup_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

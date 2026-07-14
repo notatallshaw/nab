@@ -60,7 +60,11 @@ from nab_python.lockfile import (
     write_requirements_with_hashes,  # noqa: F401 - re-exported for tests
     write_requirements_without_hashes,  # noqa: F401 - re-exported for tests
 )
-from nab_python.provider import InvalidUploadTimeError, UnsupportedVcsError
+from nab_python.provider import (
+    InvalidUploadTimeError,
+    MissingExtraError,
+    UnsupportedVcsError,
+)
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
@@ -498,7 +502,7 @@ def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg
     except ResolutionError as e:
         sys.stderr.write(f"Resolution failed: {e}\n")
         sys.exit(1)
-    except UnsupportedVcsError as e:
+    except (UnsupportedVcsError, MissingExtraError) as e:
         sys.stderr.write(f"{failure_prefix}: {e}\n")
         sys.exit(1)
     except InvalidUploadTimeError as e:
