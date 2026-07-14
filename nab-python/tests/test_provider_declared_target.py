@@ -788,3 +788,122 @@ class TestVcsConfigPlumbing:
             build_policy=BuildPolicy.NEVER,
         )
         assert provider.vcs_cache_dir is None
+
+
+_WHEEL_METADATA = (
+    "Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\nRequires-Dist: dep-from-wheel\n\n"
+)
+
+# Metadata-Version 2.1 predates PEP 643, so this text read as an sdist's
+# PKG-INFO fails the static gate and its deps are treated as dynamic.
+_LEGACY_WHEEL_METADATA = (
+    "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: dep-from-wheel\n\n"
+)
+
+# Metadata-Version 2.1 keeps these Requires-Dist lines outside the PEP 643
+# static guarantee, so the sdist's deps come from its pyproject.toml instead.
+_SDIST_PKG_INFO = (
+    "Metadata-Version: 2.1\n"
+    "Name: pkg\n"
+    "Version: 1.0\n"
+    "Requires-Dist: dep-from-untrusted-pkginfo\n"
+    "\n"
+)
+
+_SDIST_PYPROJECT = """
+[project]
+name = "pkg"
+version = "1.0"
+dependencies = ["dep-from-static-pyproject"]
+"""
+
+
+def _wheel_and_sdist_targets(
+    *, wheel_metadata: str = _WHEEL_METADATA
+) -> tuple[MagicMock, Provider, Provider]:
+    """Two targets over one (pkg, 1.0) published as a manylinux wheel and an sdist.
+
+    The macOS target has no compatible wheel and takes the sdist path; the
+    Linux target takes the wheel.  Both share one coordinator, so both
+    artifacts of (pkg, 1.0) write one metadata slot.
+    """
+    coordinator = make_coordinator(
+        [
+            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
+            _sdist("1.0"),
+        ],
+        package="pkg",
+        metadata_text=wheel_metadata,
+        sdist_pkg_info=_SDIST_PKG_INFO,
+        sdist_pyproject_toml=_SDIST_PYPROJECT,
+    )
+    macos = Provider(
+        coordinator,
+        ResolveTarget.for_declared(
+            python_version="3.11", spec=PlatformSpec("macos_arm64")
+        ),
+    )
+    linux = Provider(coordinator, _LINUX_TARGET)
+    return coordinator, macos, linux
+
+
+class TestSharedMetadataSlot:
+    """Wheel METADATA and sdist PKG-INFO share one slot across the targets."""
+
+    def test_late_wheel_sidecar_supersedes_the_sdist_parse(self) -> None:
+        """A sidecar landing after the sdist gives the wheel's deps, not the sdist's.
+
+        The listing prefetch is not tag-filtered, so the wheel's PEP 658
+        sidecar for (pkg, 1.0) is in flight while the macOS target fetches the
+        same version's sdist.  Whichever lands last owns the slot, and every
+        later reader has to resolve against that text.
+        """
+        coordinator, macos, linux = _wheel_and_sdist_targets()
+        assert set(macos.get_dependencies("pkg", Version("1.0"))) == {
+            "dep-from-static-pyproject"
+        }
+
+        coordinator.index.store_metadata("pkg", "1.0", _WHEEL_METADATA)
+        assert set(linux.get_dependencies("pkg", Version("1.0"))) == {"dep-from-wheel"}
+
+    def test_deps_do_not_depend_on_which_fetch_lands_first(self) -> None:
+        """The same sidecar landing first gives the Linux target the same deps."""
+        coordinator, macos, linux = _wheel_and_sdist_targets()
+        coordinator.index.store_metadata("pkg", "1.0", _WHEEL_METADATA)
+        assert set(macos.get_dependencies("pkg", Version("1.0"))) == {"dep-from-wheel"}
+        assert set(linux.get_dependencies("pkg", Version("1.0"))) == {"dep-from-wheel"}
+
+    def test_sidecar_landing_before_the_sdist_read_keeps_the_origin_with_the_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sdist waiter reads back the origin of the text it was handed.
+
+        The listing prefetch fires the wheel's sidecar without waiting on it,
+        so the sidecar can land on the shared slot between the sdist write and
+        the waiter's read.  The waiter reads the slot, not its own result, so
+        assuming the sdist still owns it puts a wheel's METADATA through the
+        PEP 643 gate, where a Metadata-Version 2.1 wheel is judged dynamic and
+        its deps are replaced by the sdist's pyproject.
+        """
+        coordinator, macos, _linux = _wheel_and_sdist_targets(
+            wheel_metadata=_LEGACY_WHEEL_METADATA
+        )
+        coordinator.request_metadata.side_effect = lambda *_args: _done_event()
+        coordinator.request_metadata_batch.side_effect = lambda items: [
+            (pkg, ver, _done_event()) for pkg, ver, _url, _hash in items
+        ]
+
+        index = coordinator.index
+        recorded_error = index.get_metadata_error
+
+        # The waiter's own error check is the last thing it does before reading
+        # the slot, so landing the sidecar here lands it inside the window.
+        def _land_sidecar_then_report(
+            package: str, version: str
+        ) -> BaseException | None:
+            index.store_metadata(package, version, _LEGACY_WHEEL_METADATA)
+            return recorded_error(package, version)
+
+        monkeypatch.setattr(index, "get_metadata_error", _land_sidecar_then_report)
+
+        assert set(macos.get_dependencies("pkg", Version("1.0"))) == {"dep-from-wheel"}

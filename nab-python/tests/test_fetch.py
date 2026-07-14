@@ -230,17 +230,38 @@ class TestInMemoryIndex:
         """``store_parsed_metadata`` and ``get_parsed_metadata`` round-trip."""
         idx = InMemoryIndex()
         sentinel = object()
-        assert idx.get_parsed_metadata("foo", "1.0") is None
-        idx.store_parsed_metadata("foo", "1.0", sentinel)
-        assert idx.get_parsed_metadata("foo", "1.0") is sentinel
+        assert idx.get_parsed_metadata("foo", "1.0", "METADATA") is None
+        idx.store_parsed_metadata("foo", "1.0", sentinel, "METADATA")
+        assert idx.get_parsed_metadata("foo", "1.0", "METADATA") is sentinel
 
     def test_parsed_metadata_per_version(self) -> None:
         """Each ``(package, version)`` pair has its own slot."""
         idx = InMemoryIndex()
-        idx.store_parsed_metadata("foo", "1.0", "v1")
-        idx.store_parsed_metadata("foo", "2.0", "v2")
-        assert idx.get_parsed_metadata("foo", "1.0") == "v1"
-        assert idx.get_parsed_metadata("foo", "2.0") == "v2"
+        idx.store_parsed_metadata("foo", "1.0", "v1", "TEXT-1")
+        idx.store_parsed_metadata("foo", "2.0", "v2", "TEXT-2")
+        assert idx.get_parsed_metadata("foo", "1.0", "TEXT-1") == "v1"
+        assert idx.get_parsed_metadata("foo", "2.0", "TEXT-2") == "v2"
+
+    def test_parsed_metadata_answers_only_for_its_own_text(self) -> None:
+        """The sdist's parse is not served to a reader holding wheel METADATA.
+
+        Both kinds write one ``(package, version)`` slot, so the wheel's
+        PEP 658 sidecar can replace PKG-INFO a previous tuple already parsed.
+        """
+        idx = InMemoryIndex()
+        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
+        idx.store_parsed_metadata("foo", "1.0", "sdist-parse", "PKG-INFO")
+        idx.store_metadata("foo", "1.0", "METADATA")
+        assert idx.get_parsed_metadata("foo", "1.0", "METADATA") is None
+
+    def test_get_metadata_with_origin_reports_the_last_write(self) -> None:
+        """Text and origin come back together, from whichever kind wrote last."""
+        idx = InMemoryIndex()
+        assert idx.get_metadata_with_origin("foo", "1.0") == (None, False)
+        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
+        assert idx.get_metadata_with_origin("foo", "1.0") == ("PKG-INFO", True)
+        idx.store_metadata("foo", "1.0", "METADATA")
+        assert idx.get_metadata_with_origin("foo", "1.0") == ("METADATA", False)
 
     def test_resolved_sdist_metadata_roundtrip(self) -> None:
         """``store_resolved_sdist_metadata`` round-trips through ``get``."""
@@ -250,20 +271,25 @@ class TestInMemoryIndex:
         idx.store_resolved_sdist_metadata("foo", "1.0", sentinel)
         assert idx.get_resolved_sdist_metadata("foo", "1.0") is sentinel
 
-    def test_pop_parsed_metadata_invalidates_resolved(self) -> None:
-        """Popping the raw parse drops the post-reconciliation entry too.
+    def test_metadata_rewrite_drops_the_reconciled_sdist_view(self) -> None:
+        """Replacing the raw text drops the post-reconciliation entry too.
 
-        Downstream code reads the reconciled value when raising the
-        bundled-pyproject fallback or after a PEP 517 build; if the
-        raw text is replaced (re-resolve), the reconciliation must be
-        recomputed against the new text.
+        The reconciled record is the PKG-INFO in the slot plus the bundled
+        pyproject.toml or a PEP 517 build, so it cannot outlive that text.
         """
         idx = InMemoryIndex()
-        idx.store_parsed_metadata("foo", "1.0", "raw")
+        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
         idx.store_resolved_sdist_metadata("foo", "1.0", "resolved")
-        idx.pop_parsed_metadata("foo", "1.0")
-        assert idx.get_parsed_metadata("foo", "1.0") is None
+        idx.store_metadata("foo", "1.0", "METADATA")
         assert idx.get_resolved_sdist_metadata("foo", "1.0") is None
+
+    def test_restoring_the_same_text_keeps_the_reconciled_sdist_view(self) -> None:
+        """Re-storing identical text is not a rewrite, so the entry survives."""
+        idx = InMemoryIndex()
+        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
+        idx.store_resolved_sdist_metadata("foo", "1.0", "resolved")
+        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
+        assert idx.get_resolved_sdist_metadata("foo", "1.0") == "resolved"
 
     def test_listing_index_roundtrip(self) -> None:
         """``store_listing_index`` records the serving index name, and
