@@ -74,6 +74,7 @@ from .workspace import (
     discover_workspace_root,
     merge_workspace_local_sources,
     read_workspace_members,
+    workspace_local_sources,
 )
 
 if TYPE_CHECKING:
@@ -580,16 +581,18 @@ def read_pyproject_config(
     Returns the default ``NabProjectConfig`` when the table is absent.
     Unknown keys at the top level are rejected so typos fail loud.
 
-    When ``discover_workspace`` is true (the default), this function
-    also walks up from ``path`` looking for a ``pyproject.toml`` whose
-    ``[tool.nab.workspace]`` table is present.  If found, every member
+    When ``discover_workspace`` is true (the default), the merged
+    ``workspace`` table drives discovery: its members resolve against the
+    project directory.  A project declaring no workspace of its own walks
+    up from ``path`` for the first ancestor ``pyproject.toml`` whose
+    ``[tool.nab.workspace]`` table is present.  Either way every member
     is materialised as an additional :class:`LocalSource` (explicit
     ``[[tool.nab.local-sources]]`` entries win on collision) and the
     effective ``build-policy`` is floored at
     :attr:`BuildPolicy.BUILD_LOCAL`, except under ``mode = "universal"``,
     where ``build-policy`` stays at ``never`` (host builds are forbidden)
     and the floor is not applied.  Pass ``discover_workspace=False``
-    to skip the walk; useful for tests or for callers that layer their
+    to skip discovery; useful for tests or for callers that layer their
     own workspace logic on top of a base config.
 
     The ``[tool.nab]``-config portion is sourced from the registry merged
@@ -641,7 +644,9 @@ def read_pyproject_config(
         project_requires_python=project_requires_python,
     )
     if discover_workspace:
-        config = _apply_workspace_discovery(path, config)
+        config = _apply_workspace_discovery(
+            path, config, declared_in=effective["workspace"].origin.label
+        )
     return config
 
 
@@ -820,12 +825,29 @@ _logger = logging.getLogger(__name__)
 
 
 def _apply_workspace_discovery(
-    path: Path, config: NabProjectConfig
+    path: Path, config: NabProjectConfig, *, declared_in: str
 ) -> NabProjectConfig:
-    root_pyproject = discover_workspace_root(path)
-    if root_pyproject is None:
-        return config
-    discovered = read_workspace_members(root_pyproject)
+    """Materialise the workspace members and floor the build policy.
+
+    The project's own ``workspace`` table wins, whichever project file
+    declared it (``declared_in`` names that file), and its members resolve
+    against the project directory.  A project that declares none walks up
+    for an ancestor ``pyproject.toml`` that does, which is what makes
+    ``nab lock <member>`` resolve against the workspace root.
+    """
+    if config.workspace is not None:
+        root_label = declared_in
+        discovered = workspace_local_sources(
+            config.workspace.members,
+            root_dir=path.parent.resolve(),
+            declared_in=declared_in,
+        )
+    else:
+        root_pyproject = discover_workspace_root(path)
+        if root_pyproject is None:
+            return config
+        root_label = str(root_pyproject)
+        discovered = read_workspace_members(root_pyproject)
     if not discovered:
         return config
     merged = merge_workspace_local_sources(config.local_sources, discovered)
@@ -847,7 +869,7 @@ def _apply_workspace_discovery(
             " (workspace root: %s)",
             config.build_policy.value,
             promoted_policy.value,
-            root_pyproject,
+            root_label,
         )
     return replace(
         config,

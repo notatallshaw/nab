@@ -1,12 +1,16 @@
 """Workspace discovery for member ``pyproject.toml`` files.
 
-A "workspace" here is the ``[tool.nab.workspace]`` table on a parent
-``pyproject.toml``.  When ``nab lock`` is invoked against a member, this
-module walks up to the root, reads the members, and synthesises a
-:class:`~nab_python.provider.LocalSource` per member.  The provider then
-prefers those local sources over PyPI by canonical name, so a member
-package resolves against its in-tree source instead of being fetched
-from the index.
+A "workspace" is a table of members declared by a project: either
+``[tool.nab.workspace]`` in its ``pyproject.toml`` or ``[workspace]`` in
+the project-dir ``nab.toml``.  Every member is synthesised into a
+:class:`~nab_python.provider.LocalSource`.  The provider then prefers
+those local sources over PyPI by canonical name, so a member package
+resolves against its in-tree source instead of being fetched from the
+index.
+
+A project that declares no workspace of its own walks up to an ancestor
+``pyproject.toml`` that does, so ``nab lock`` invoked against a member
+still resolves against the root's members.
 
 Members are listed literally; globs are refused with an error.  Users
 coming from other tools that allow globs get a clear migration
@@ -37,6 +41,7 @@ __all__ = [
     "discover_workspace_root",
     "merge_workspace_local_sources",
     "read_workspace_members",
+    "workspace_local_sources",
 ]
 
 
@@ -111,15 +116,19 @@ def discover_workspace_root(member_pyproject: Path) -> Path | None:
     return None
 
 
-def read_workspace_members(root_pyproject: Path) -> tuple[LocalSource, ...]:
-    """Synthesise :class:`LocalSource` entries from a workspace root.
+def workspace_local_sources(
+    members: Iterable[str], *, root_dir: Path, declared_in: str
+) -> tuple[LocalSource, ...]:
+    """Synthesise a :class:`LocalSource` per declared workspace member.
 
-    Reads ``[tool.nab.workspace].members`` from ``root_pyproject``.  Each
-    entry must be a literal path; any entry containing ``*``, ``?`` or
-    ``[`` raises :class:`WorkspaceDiscoveryError` with a message naming
-    the offending entry.  For every member directory the function opens
-    ``<member>/pyproject.toml`` and requires ``[project].name``;
-    missing pyproject or missing name is a hard error.
+    ``members`` are the paths the workspace declared, resolved against
+    ``root_dir``; ``declared_in`` names the file that declared them and
+    prefixes the errors.  Each entry must be a literal path; any entry
+    containing ``*``, ``?`` or ``[`` raises
+    :class:`WorkspaceDiscoveryError` with a message naming the offending
+    entry.  For every member directory the function opens
+    ``<member>/pyproject.toml`` and requires ``[project].name``; missing
+    pyproject or missing name is a hard error.
 
     Two members declaring the same canonical name raises
     :class:`WorkspaceDiscoveryError`.  The returned tuple preserves
@@ -130,43 +139,21 @@ def read_workspace_members(root_pyproject: Path) -> tuple[LocalSource, ...]:
     editably by default, matching uv.  Explicit
     ``[[tool.nab.local-sources]]`` entries default to non-editable.
     """
-    root_data = _load_member_toml(root_pyproject)
-    raw_workspace = root_data.get("tool", {}).get("nab", {}).get("workspace")
-    if not isinstance(raw_workspace, dict):
-        msg = (
-            f"{root_pyproject}: [tool.nab.workspace] must be a table,"
-            f" got {type(raw_workspace).__name__}"
-        )
-        raise WorkspaceDiscoveryError(msg)
-    raw_members = raw_workspace.get("members")
-    if not isinstance(raw_members, list):
-        msg = (
-            f"{root_pyproject}: [tool.nab.workspace].members must be a list of"
-            f" strings, got {type(raw_members).__name__}"
-        )
-        raise WorkspaceDiscoveryError(msg)
-
     sources: list[LocalSource] = []
     seen: dict[str, str] = {}
-    for entry in raw_members:
-        if not isinstance(entry, str):
-            msg = (
-                f"{root_pyproject}: [tool.nab.workspace].members entries must be"
-                f" strings, got {type(entry).__name__}: {entry!r}"
-            )
-            raise WorkspaceDiscoveryError(msg)
+    for entry in members:
         if any(ch in entry for ch in "*?["):
             msg = (
-                f"{root_pyproject}: globs in [tool.nab.workspace].members are not"
-                f" supported in nab; list members literally."
+                f"{declared_in}: globs in workspace members are not supported"
+                f" in nab; list members literally."
                 f"  Offending entry: {entry!r}"
             )
             raise WorkspaceDiscoveryError(msg)
-        member_dir = (root_pyproject.parent / entry).resolve()
+        member_dir = (root_dir / entry).resolve()
         member_pyproject = member_dir / "pyproject.toml"
         if not member_pyproject.is_file():
             msg = (
-                f"{root_pyproject}: workspace member {entry!r} has no"
+                f"{declared_in}: workspace member {entry!r} has no"
                 f" pyproject.toml at {member_pyproject}"
             )
             raise WorkspaceDiscoveryError(msg)
@@ -188,7 +175,7 @@ def read_workspace_members(root_pyproject: Path) -> tuple[LocalSource, ...]:
         canonical = canonicalize_name(name)
         if canonical in seen:
             msg = (
-                f"{root_pyproject}: workspace members declare duplicate"
+                f"{declared_in}: workspace members declare duplicate"
                 f" canonical name {canonical!r} via entries {seen[canonical]!r}"
                 f" and {entry!r}"
             )
@@ -196,6 +183,46 @@ def read_workspace_members(root_pyproject: Path) -> tuple[LocalSource, ...]:
         seen[canonical] = entry
         sources.append(LocalSource(name=name, path=str(member_dir), editable=True))
     return tuple(sources)
+
+
+def read_workspace_members(root_pyproject: Path) -> tuple[LocalSource, ...]:
+    """Synthesise :class:`LocalSource` entries from a workspace root.
+
+    Reads ``[tool.nab.workspace].members`` from ``root_pyproject`` and
+    materialises them with :func:`workspace_local_sources`, resolving each
+    member path against the root's directory.  Used for the root an
+    ancestor walk finds, which is read straight off disk rather than
+    through the config registry.
+    """
+    root_data = _load_member_toml(root_pyproject)
+    raw_workspace = root_data.get("tool", {}).get("nab", {}).get("workspace")
+    if not isinstance(raw_workspace, dict):
+        msg = (
+            f"{root_pyproject}: [tool.nab.workspace] must be a table,"
+            f" got {type(raw_workspace).__name__}"
+        )
+        raise WorkspaceDiscoveryError(msg)
+    raw_members = raw_workspace.get("members")
+    if not isinstance(raw_members, list):
+        msg = (
+            f"{root_pyproject}: [tool.nab.workspace].members must be a list of"
+            f" strings, got {type(raw_members).__name__}"
+        )
+        raise WorkspaceDiscoveryError(msg)
+    members: list[str] = []
+    for entry in raw_members:
+        if not isinstance(entry, str):
+            msg = (
+                f"{root_pyproject}: [tool.nab.workspace].members entries must be"
+                f" strings, got {type(entry).__name__}: {entry!r}"
+            )
+            raise WorkspaceDiscoveryError(msg)
+        members.append(entry)
+    return workspace_local_sources(
+        members,
+        root_dir=root_pyproject.parent,
+        declared_in=str(root_pyproject),
+    )
 
 
 def merge_workspace_local_sources(
