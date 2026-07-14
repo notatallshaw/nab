@@ -367,6 +367,13 @@ def _platform_tags_for_spec(spec: PlatformSpec) -> list[str]:
 # (pp36..pp311 all use ``_pp73``); the abi tag is ``pypyXY_pp73``.
 _PYPY_SOABI = "73"
 
+# CPython carried the pymalloc flag in its ABI tag through 3.7, so its wheels
+# are tagged cp37m, not cp37.  3.8 dropped the flag.  Left to packaging the
+# flag would come from the config vars of the host interpreter, which says
+# nothing about a declared target.
+_PYMALLOC_ABI_SUFFIX = "m"
+_PYMALLOC_LAST_VERSION = (3, 7)
+
 
 @cache
 def tags_for_target(
@@ -489,6 +496,16 @@ def _build_tag_sort_key(filename: str) -> tuple[int, str]:
     return (int(match.group(1)), match.group(2) or "")
 
 
+def _cpython_abi(py_version: tuple[int, int], *, free_threaded: bool) -> str:
+    """Name the ABI a CPython target loads."""
+    abi = f"cp{py_version[0]}{py_version[1]}"
+    if free_threaded:
+        return abi + "t"
+    if py_version <= _PYMALLOC_LAST_VERSION:
+        return abi + _PYMALLOC_ABI_SUFFIX
+    return abi
+
+
 def _tags_in_order(
     python_version: str, spec: PlatformSpec, implementation: str = "cpython"
 ) -> Iterable[Tag]:
@@ -515,7 +532,7 @@ def _tags_in_order(
             yield ptags.Tag(interpreter, "none", platform_)
     else:
         interpreter = f"cp{major}{minor}"
-        abi = interpreter + ("t" if spec.free_threaded else "")
+        abi = _cpython_abi(py_version, free_threaded=spec.free_threaded)
         yield from ptags.cpython_tags(
             python_version=py_version, abis=[abi], platforms=platforms
         )

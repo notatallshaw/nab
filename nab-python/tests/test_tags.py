@@ -320,6 +320,29 @@ class TestFreeThreadedTarget:
         assert spec.label == "linux_x86_64-ft"
 
 
+class TestPymallocAbi:
+    """CPython carried the pymalloc flag in its ABI tag through 3.7."""
+
+    def test_a_37_target_names_the_m_abi(self) -> None:
+        """Every 3.7 wheel is tagged cp37m, so a cp37 target matches none."""
+        spec = PlatformSpec("linux_x86_64")
+        tags = tags_for_target(python_version="3.7", spec=spec)
+        assert "cp37m" in {t.abi for t in tags}
+        wheel = wheel_tag_set(
+            "numpy-1.21.6-cp37-cp37m-manylinux_2_12_x86_64.manylinux2010_x86_64.whl"
+        )
+        assert wheel is not None
+        assert wheel & tags
+
+    def test_38_dropped_the_flag(self) -> None:
+        spec = PlatformSpec("linux_x86_64")
+        tags = tags_for_target(python_version="3.8", spec=spec)
+        assert "cp38m" not in {t.abi for t in tags}
+        wheel = wheel_tag_set("numpy-1.24.4-cp38-cp38-manylinux_2_17_x86_64.whl")
+        assert wheel is not None
+        assert wheel & tags
+
+
 class TestAbiIsHostIndependent:
     """The ABI comes from the declared target, not from the running host.
 
