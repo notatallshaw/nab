@@ -1271,7 +1271,9 @@ class TestEnvironment:
         )
         config = read_pyproject_config(path)
         assert config.environment == EnvironmentConfig(
-            python="3.11", platform="macos_arm64", implementation="pypy"
+            python="3.11",
+            platform=PlatformSpec("macos_arm64"),
+            implementation="pypy",
         )
         (target,) = plan_targets(config)
         assert target.marker_env["sys_platform"] == "darwin"
@@ -1290,6 +1292,139 @@ class TestEnvironment:
         host = ResolveTarget.for_host()
         assert target.python_full_version == host.python_full_version
         assert target.platform_id == "linux_x86_64"
+
+    def test_platform_table_declares_the_tag_knobs(self, tmp_path: Path) -> None:
+        """The table form of matrix.platforms works on the one environment too."""
+        path = write(
+            tmp_path,
+            "[tool.nab.environment]\n"
+            'python = "3.12"\n'
+            'platform = { id = "macos_arm64", macos-min = "14.0" }\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(
+            python="3.12", platform=PlatformSpec("macos_arm64", macos_min=(14, 0))
+        )
+        (target,) = plan_targets(config)
+        wheel = "somepkg-1.0-cp312-cp312-macosx_14_0_arm64.whl"
+        assert target.tags.accepts(wheel)
+        assert "platform=macos_arm64[macos-min=14.0]" in _inspect(path, "environment")
+
+    def test_the_inspector_renders_a_knobless_table(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\nplatform = { id = "linux_x86_64" }\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        assert "platform=linux_x86_64" in _inspect(path, "environment")
+
+    def test_bare_platform_id_keeps_the_default_knobs(self, tmp_path: Path) -> None:
+        """Without macos-min the deployment target is the arch default (12.0)."""
+        path = write(
+            tmp_path,
+            "[tool.nab.environment]\n"
+            'python = "3.12"\n'
+            'platform = "macos_arm64"\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
+        wheel = "somepkg-1.0-cp312-cp312-macosx_14_0_arm64.whl"
+        assert not target.tags.accepts(wheel)
+
+    def test_platform_table_rejects_a_foreign_knob(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.environment]\n"
+            'platform = { id = "linux_x86_64", macos-min = "14.0" }\n',
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"environment.platform declares \['macos-min'\]",
+        ):
+            read_pyproject_config(path)
+
+    def test_platform_table_needs_an_id(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[tool.nab.environment]\nplatform = { macos-min = "14.0" }\n'
+        )
+        with pytest.raises(
+            ConfigError, match="environment.platform missing required key 'id'"
+        ):
+            read_pyproject_config(path)
+
+    def test_platform_table_rejects_a_bad_knob_value(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\nplatform = { id = "linux_x86_64", libc = 1 }\n',
+        )
+        with pytest.raises(ConfigError, match="environment.platform.libc must be a"):
+            read_pyproject_config(path)
+
+    def test_platform_table_rejects_an_unknown_knob(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\nplatform = { id = "linux_x86_64", cpu = "8" }\n',
+        )
+        with pytest.raises(
+            ConfigError, match=r"unknown environment.platform keys: \['cpu'\]"
+        ):
+            read_pyproject_config(path)
+
+    def test_platform_must_be_an_id_or_a_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab.environment]\nplatform = 3\n")
+        with pytest.raises(
+            ConfigError,
+            match="environment.platform must be a platform id or a table, got int",
+        ):
+            read_pyproject_config(path)
+
+    def test_unknown_platform_id_in_a_table_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[tool.nab.environment]\nplatform = { id = "linux_i686" }\n'
+        )
+        with pytest.raises(
+            ConfigError, match="unknown environment.platform 'linux_i686'"
+        ):
+            read_pyproject_config(path)
+
+    def test_free_threaded_platform_takes_the_t_abi(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.environment]\n"
+            'python = "3.13"\n'
+            'platform = { id = "linux_x86_64", free-threaded = true }\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
+        assert target.tags.accepts("somepkg-1.0-cp313-cp313t-manylinux_2_28_x86_64.whl")
+        assert not target.tags.accepts(
+            "somepkg-1.0-cp313-cp313-manylinux_2_28_x86_64.whl"
+        )
+
+    def test_free_threaded_rejects_python_below_3_13(self, tmp_path: Path) -> None:
+        """3.12 has no free-threaded build, so its cp312t ABI matches nothing."""
+        path = write(
+            tmp_path,
+            "[tool.nab.environment]\n"
+            'python = "3.12"\n'
+            'platform = { id = "linux_x86_64", free-threaded = true }\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        with pytest.raises(ConfigError, match="needs CPython 3.13 or newer"):
+            read_pyproject_config(path)
+
+    def test_free_threaded_rejects_pypy(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.environment]\n"
+            'python = "3.13"\n'
+            'implementation = "pypy"\n'
+            'platform = { id = "linux_x86_64", free-threaded = true }\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        with pytest.raises(ConfigError, match="needs CPython, not"):
+            read_pyproject_config(path)
 
     def test_must_be_table(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nenvironment = "no"\n')
@@ -1391,7 +1526,7 @@ class TestMarkerEnvironmentDeprecation:
         )
         config = read_pyproject_config(path)
         assert config.environment == EnvironmentConfig(
-            platform="windows_amd64", implementation="cpython"
+            platform=PlatformSpec("windows_amd64"), implementation="cpython"
         )
 
     def test_the_platform_id_carries_the_markers_it_implies(
@@ -1407,7 +1542,9 @@ class TestMarkerEnvironmentDeprecation:
             'platform_machine = "x86_64"\n',
         )
         config = read_pyproject_config(path)
-        assert config.environment == EnvironmentConfig(platform="linux_x86_64")
+        assert config.environment == EnvironmentConfig(
+            platform=PlatformSpec("linux_x86_64")
+        )
 
     def test_an_implied_marker_that_contradicts_the_platform_is_an_error(
         self, tmp_path: Path
@@ -1456,11 +1593,40 @@ class TestMarkerEnvironmentDeprecation:
         """A variable no environment axis carries cannot be translated."""
         path = write(
             tmp_path,
-            '[tool.nab.marker-environment]\nplatform_release = "6.8.0"\n',
+            '[tool.nab.marker-environment]\nimplementation_version = "3.12.4"\n',
         )
         with pytest.raises(
-            ConfigError, match=r"variable\(s\) \['platform_release'\] cannot be"
+            ConfigError, match=r"variable\(s\) \['implementation_version'\] cannot be"
         ):
+            read_pyproject_config(path)
+
+    def test_kernel_markers_translate_to_platform_knobs(self, tmp_path: Path) -> None:
+        """The kernel markers are platform knobs, so the platform table carries them."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'sys_platform = "linux"\n'
+            'platform_machine = "x86_64"\n'
+            'platform_release = "6.8.0"\n'
+            'platform_version = "#1 SMP"\n',
+        )
+        config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(
+            platform=PlatformSpec(
+                "linux_x86_64", platform_release="6.8.0", platform_version="#1 SMP"
+            )
+        )
+        (target,) = plan_targets(config)
+        assert target.marker_env["platform_release"] == "6.8.0"
+
+    def test_a_kernel_marker_alone_is_an_error(self, tmp_path: Path) -> None:
+        """A kernel marker is a knob of a machine, so it needs the pair that names one."""
+        path = write(
+            tmp_path,
+            '[tool.nab.marker-environment]\nplatform_release = "6.8.0"\n',
+        )
+        with pytest.raises(ConfigError, match="which is the pair that names"):
             read_pyproject_config(path)
 
     def test_unknown_implementation_is_an_error(self, tmp_path: Path) -> None:

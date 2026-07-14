@@ -50,6 +50,7 @@ __all__ = [
     "Matrix",
     "ResolveTarget",
     "apply_python_axis_overlay",
+    "check_free_threaded",
     "declared_environment",
     "environment_declaration",
     "host_environment",
@@ -817,7 +818,11 @@ class Matrix:
             )
             raise ValueError(msg)
 
-        self._check_free_threaded()
+        check_free_threaded(
+            platforms=self.platforms,
+            implementations=self.implementations,
+            python_versions=tuple(_pythons_in_range(self.python)),
+        )
 
         py_versions = list(_pythons_in_range(self.python))
         if not py_versions:
@@ -840,36 +845,38 @@ class Matrix:
             for impl in self.implementations
         ]
 
-    def _check_free_threaded(self) -> None:
-        """Reject a free-threaded platform no interpreter build can satisfy.
 
-        The ``cpXYt`` ABI ships only from CPython 3.13, and only the matrix
-        sees both axes the rule needs: the platform carries the flag, and the
-        implementation and the python range live here.
-        """
-        if not any(spec.free_threaded for spec in self.platforms):
-            return
+def check_free_threaded(
+    *,
+    platforms: Sequence[PlatformSpec],
+    implementations: Sequence[str],
+    python_versions: Sequence[str],
+) -> None:
+    """Reject a free-threaded platform no interpreter build can satisfy.
 
-        foreign = [i for i in self.implementations if i != "cpython"]
-        if foreign:
-            msg = (
-                f"a free-threaded platform needs CPython, not {foreign!r};"
-                f" only CPython has a free-threaded build"
-            )
-            raise ValueError(msg)
+    The ``cpXYt`` ABI ships only from CPython 3.13, and the rule needs all
+    three axes: the platform carries the flag, and only the declaration
+    around it knows the implementation and the python versions.  Both
+    declaring surfaces (the matrix and the single environment) call this.
+    """
+    if not any(spec.free_threaded for spec in platforms):
+        return
 
-        floor = ".".join(str(p) for p in FREE_THREADED_MIN_PYTHON)
-        too_old = [
-            py
-            for py in _pythons_in_range(self.python)
-            if not supports_free_threading(py)
-        ]
-        if too_old:
-            msg = (
-                f"a free-threaded platform needs CPython {floor} or newer,"
-                f" but matrix.python admits {too_old!r}"
-            )
-            raise ValueError(msg)
+    foreign = [i for i in implementations if i != "cpython"]
+    if foreign:
+        msg = (
+            f"a free-threaded platform needs CPython, not {foreign!r};"
+            f" only CPython has a free-threaded build"
+        )
+        raise ValueError(msg)
+
+    floor = ".".join(str(p) for p in FREE_THREADED_MIN_PYTHON)
+    too_old = [py for py in python_versions if not supports_free_threading(py)]
+    if too_old:
+        msg = (
+            f"a free-threaded platform needs CPython {floor} or newer, not {too_old!r}"
+        )
+        raise ValueError(msg)
 
 
 def _pythons_in_range(spec: str) -> Iterable[str]:
