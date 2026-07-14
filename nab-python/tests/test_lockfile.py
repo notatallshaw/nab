@@ -3017,6 +3017,27 @@ class TestBuildTargetLock:
         }
         assert pin.wheels[0].primary_digest == ("sha384", "d" * 96)
 
+    def test_md5_dropped_when_sha256_present(self) -> None:
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://pypi.org/simple/foo/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=">=3.10",
+            has_metadata=False,
+            upload_time=None,
+            hashes=(("md5", "0" * 32), ("sha256", "a" * 64)),
+            size=1234,
+        )
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+
+        pin = lock.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].hashes == (("sha256", "a" * 64),)
+
+        text = write_requirements_with_hashes(_lock_from(lock))
+        assert text == f"foo==1.0 \\\n    --hash=sha256:{'a' * 64}\n"
+
     def test_diverging_requires_python_drops_field(self) -> None:
         wheel_a = _wheel_file(requires_python=">=3.10")
         wheel_b = WheelFile(
@@ -3520,6 +3541,29 @@ class TestWriteRequirementsWithHashes:
             LockInput(targets=_one({"foo": reverse}))
         )
         assert text_forward == text_reverse
+
+    def test_hash_lines_sorted_across_sdist_and_wheel(self) -> None:
+        sdist = SdistArtifact(
+            filename="foo-1.0.tar.gz",
+            url="https://example.com/foo-1.0.tar.gz",
+            hashes=(("sha256", "f" * 64),),
+        )
+        wheel = WheelArtifact(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://example.com/foo-1.0-py3-none-any.whl",
+            hashes=(("sha256", "0" * 64), ("sha512", "9" * 128)),
+        )
+        pin = IndexPin(
+            name="foo", version="1.0", index="pypi", sdist=sdist, wheels=(wheel,)
+        )
+
+        text = write_requirements_with_hashes(LockInput(targets=_one({"foo": pin})))
+        assert text == (
+            "foo==1.0 \\\n"
+            f"    --hash=sha256:{'0' * 64} \\\n"
+            f"    --hash=sha256:{'f' * 64} \\\n"
+            f"    --hash=sha512:{'9' * 128}\n"
+        )
 
     def test_local_pin_uses_file_url(self, tmp_path: Path) -> None:
         text = write_requirements_with_hashes(
