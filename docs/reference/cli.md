@@ -56,7 +56,10 @@ the lockfile records the selection but does not emit per-package
 
 `--output` defaults to `pylock.toml` for `pylock` and
 `requirements.txt` for the two requirements formats. Pass
-`--output -` to write to stdout instead.
+`--output -` to write to stdout instead. A matrix has no default
+requirements file: no one file can carry every tuple's pins (see
+below), so the requirements formats print to stdout unless `--output`
+names a template.
 
 Exits non-zero on resolution failure; the message starts with
 `Resolution failed:` followed by a derivation tree, and any

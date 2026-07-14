@@ -23,7 +23,7 @@ from nab_index.vcs import (
 )
 from nab_python._vendor.packaging.version import Version
 from nab_python.fetch import InMemoryIndex
-from nab_python.lockfile import VcsPin, build_lock_input_from_provider
+from nab_python.lockfile import VcsPin, build_target_lock
 from nab_python.provider import (
     BuildPolicy,
     LocalSource,
@@ -33,6 +33,7 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_python.target import ResolveTarget
 
 
 def _mark_complete(clone_dir: Path) -> None:
@@ -566,8 +567,10 @@ class TestProviderVcsIntegration:
             build_policy=BuildPolicy.NEVER,
         )
         provider.fetch_versions("foo")
-        lock_input = build_lock_input_from_provider(provider, {"foo": Version("1.0.0")})
-        pin = lock_input.pins["foo"]
+        lock = build_target_lock(
+            provider, ResolveTarget.for_host(), {"foo": Version("1.0.0")}
+        )
+        pin = lock.pins["foo"]
         assert isinstance(pin, VcsPin)
         assert pin.commit_id == sha
         assert pin.requested_revision == "main"

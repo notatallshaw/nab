@@ -1,8 +1,4 @@
-"""Unit tests for the matrix-expansion logic.
-
-Run with ``.venv/bin/python -m pytest examples/universal/test_matrix.py``
-from the ``nab/`` directory.
-"""
+"""Unit tests for the matrix-expansion logic."""
 
 from __future__ import annotations
 
@@ -10,8 +6,8 @@ import pytest
 
 from nab_python._vendor.packaging.markers import Marker
 from nab_python.tags import PlatformSpec
-from nab_python.universal.matrix import (
-    _KNOWN_PYTHON_MINORS,
+from nab_python.target import (
+    KNOWN_PYTHON_MINORS,
     Matrix,
     _pythons_in_range,
 )
@@ -335,6 +331,6 @@ class TestKnownConstants:
     def test_known_python_minors_are_sorted(self) -> None:
         """Stability matters because callers rely on iteration order."""
         as_versions = [
-            tuple(int(part) for part in m.split(".")) for m in _KNOWN_PYTHON_MINORS
+            tuple(int(part) for part in m.split(".")) for m in KNOWN_PYTHON_MINORS
         ]
         assert as_versions == sorted(as_versions)

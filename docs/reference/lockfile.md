@@ -100,22 +100,26 @@ committed lockfile therefore stays usable on another machine as
 long as the surrounding layout is preserved; it never carries an
 absolute, machine-specific path.
 
-### The environment the lock is for
+### The environments the lock is for
 
-A specific-mode resolve answers for one environment: the
-[resolve target](configuration.md). Every dependency whose
-PEP 508 marker was false there was dropped, so the
-pins are not a package set another environment can install. The lock
-says so in the top-level `environments`, and a PEP 751 consumer
-refuses a lock whose declared environments none of its own satisfies.
+A resolve answers for the environments it targeted: the
+[resolve target](configuration.md), or one per tuple of a declared
+matrix. Every dependency whose PEP 508 marker was false on a target
+was dropped there, so the pins are not a package set another
+environment can install. The lock says so in the top-level
+`environments`, one entry per environment resolved, and a PEP 751
+consumer refuses a lock whose declared environments none of its own
+satisfies.
 
-The declaration always pins `python_version`, `sys_platform` and
-`platform_machine`. It also pins every other PEP 508 variable that
-a marker in the resolve consulted: a dependency, root requirement,
-or constraint marker on `platform_system` pins `platform_system`.
-This is deliberately narrow. A marker nab evaluated is a question
-whose answer changed the package set, so an installer that answers
-it differently must not use this lock.
+Each declaration always pins `python_version`, `sys_platform` and
+`platform_machine`, plus `implementation_name` when the target runs
+an interpreter other than CPython or the matrix models more than one.
+It also pins every other PEP 508 variable that a marker in the resolve
+consulted: a dependency, root requirement, or constraint marker on
+`platform_system` pins `platform_system`. This is deliberately narrow.
+A marker nab evaluated is a question whose answer changed the package
+set, so an installer that answers it differently must not use this
+lock.
 
 `python_full_version` is the exception: it is declared by
 constraint, not by value. The pins do not depend on the micro
@@ -148,7 +152,7 @@ lock time; the lock stays open on that axis.
 `requires-python` is the project's declaration
 (`[tool.nab].requires-python`, or `[project].requires-python`), not
 the target's Python. It bounds what the project supports; the
-`environments` entry names what was resolved.
+`environments` entries name what was resolved.
 
 ### Universal mode
 
@@ -159,6 +163,11 @@ every tuple appear once with no marker; packages that diverge
 appear as multiple `Package` entries with PEP 508 markers built
 from each tuple's `python_version`, `sys_platform`, and
 `platform_machine`.
+
+`environments` carries one declaration per tuple, built the same way
+a single-environment lock builds its one: from the markers that
+tuple's resolve consulted. A tuple's `packages.dependencies` edges
+are the union across the tuples an entry covers.
 
 ## Pip-compatible `requirements.txt`
 

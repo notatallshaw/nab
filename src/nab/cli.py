@@ -66,11 +66,8 @@ from nab_python.requirements_file import (
     InvalidProjectTableError,
 )
 from nab_python.resolve import (
-    resolve_pyproject,
-    resolve_universal_pyproject,
-)
-from nab_python.universal.resolve import (
-    merge_universal_lock_inputs,  # noqa: F401 - re-exported for tests
+    build_lock_input,  # noqa: F401 - referenced as _cli.build_lock_input in _lock
+    resolve_for_targets,
 )
 from nab_python.workspace import WorkspaceDiscoveryError
 from nab_resolver.resolver import ResolutionError
@@ -80,8 +77,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
     from nab_python.provider import ResolutionStrategy
-    from nab_python.resolve import ResolutionResult
-    from nab_python.universal.resolve import UniversalResult
+    from nab_python.resolve import ResolveResult
 
 __all__ = [
     "main",
@@ -468,7 +464,7 @@ def _reject_python_override_in_universal(
         sys.exit(1)
 
 
-def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyproject kwarg / exit-mapped error
+def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg / exit-mapped error
     path: Path,
     *,
     config: NabProjectConfig,
@@ -480,10 +476,15 @@ def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyprojec
     groups: tuple[str, ...] = (),
     extras: tuple[str, ...] = (),
     resolution_strategy: ResolutionStrategy | None = None,
-) -> ResolutionResult:
-    """Run the single-environment resolver and translate errors to exits."""
+) -> ResolveResult:
+    """Run the resolver and translate every failure to an exit.
+
+    A returned result is always fully successful: a target that did not
+    resolve is reported (one line for a single environment, a per-tuple
+    block for a matrix) and the process exits 1.
+    """
     try:
-        return resolve_pyproject(
+        result = resolve_for_targets(
             path,
             transport,
             config=config,
@@ -528,77 +529,31 @@ def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyprojec
         sys.stderr.write(f"{failure_prefix}: {e}\n")
         sys.exit(1)
 
-
-def _resolve_universal(  # noqa: C901 - one except per exit-mapped error
-    path: Path,
-    *,
-    config: NabProjectConfig,
-    cache_dir: Path | None,
-    offline: bool,
-    transport: AsyncHttpTransport,
-    groups: tuple[str, ...] = (),
-    extras: tuple[str, ...] = (),
-    resolution_strategy: ResolutionStrategy | None = None,
-) -> UniversalResult:
-    """Run the universal resolver, translating errors to exits.
-
-    On a partial failure (any tuple unresolved) the per-tuple blocks
-    are printed and the process exits 1, so a returned result is
-    always fully successful.
-    """
-    try:
-        result = resolve_universal_pyproject(
-            path,
-            config=config,
-            cache_dir=cache_dir,
-            transport=transport,
-            offline=offline,
-            groups=groups,
-            extras=extras,
-            resolution_strategy=resolution_strategy,
-        )
-    except InvalidUploadTimeError as e:
-        sys.stderr.write(f"Error: {e}\n")
-        sys.exit(1)
-    except KeyError:
-        sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
-        sys.exit(1)
-    except InvalidProjectTableError as e:
-        sys.stderr.write(f"Error in {path}: {e}\n")
-        sys.exit(1)
-    except InvalidProjectRequirementError as e:
-        sys.stderr.write(f"Error: {e}\n")
-        sys.exit(1)
-    except LookupError as e:
-        sys.stderr.write(f"Error: {e}\n")
-        sys.exit(1)
-    except ConfigError as e:
-        sys.stderr.write(f"Error in [tool.nab]: {e}\n")
-        sys.exit(1)
-    except HttpError as e:
-        sys.stderr.write(f"Cannot lock: {e}\n")
-        sys.exit(1)
-    except UnsupportedVcsError as e:
-        sys.stderr.write(f"Cannot lock: {e}\n")
-        sys.exit(1)
-    except NotImplementedError as e:
-        sys.stderr.write(f"Cannot lock: {e}\n")
-        sys.exit(1)
-
     if not result.success:
-        _print_universal_blocks(result)
+        _report_failures(result, matrix=config.matrix is not None)
         sys.exit(1)
     return result
 
 
-def _print_universal_blocks(result: UniversalResult) -> None:
-    """Write per-tuple pin blocks (with FAILED markers) to stdout."""
+def _report_failures(result: ResolveResult, *, matrix: bool) -> None:
+    """Report the targets that did not resolve.
+
+    A project resolving for one environment has one error, and it is the
+    run's error.  A matrix has one per tuple, and the pins that did
+    resolve are as informative as the failures, so each tuple gets a
+    labelled block on stdout.
+    """
+    if not matrix:
+        first = next(tr.error for tr in result.every_result if tr.error is not None)
+        sys.stderr.write(f"Resolution failed: {first}\n")
+        return
+
     blocks: list[str] = []
-    for tr in result.tuple_results:
-        label = tr.tuple_.label
+    for tr in result.target_results:
+        label = tr.target.label
         if not tr.success:
             blocks.append(f"# {label}: FAILED")
-            blocks.extend(f"#   {raw}" for raw in (tr.error or "").splitlines())
+            blocks.extend(_error_lines(tr.error))
             continue
         blocks.append(f"# {label}")
         blocks.extend(f"{name}=={tr.pins[name]}" for name in sorted(tr.pins))
@@ -608,10 +563,16 @@ def _print_universal_blocks(result: UniversalResult) -> None:
     for br in result.base_results:
         if br.success:
             continue
-        blocks.append(f"# base/{br.tuple_.label}: FAILED")
-        blocks.extend(f"#   {raw}" for raw in (br.error or "").splitlines())
+        blocks.append(f"# base/{br.target.label}: FAILED")
+        blocks.extend(_error_lines(br.error))
 
     sys.stdout.write("\n".join(blocks) + "\n")
+
+
+def _error_lines(error: ResolutionError | None) -> list[str]:
+    """Render a failed target's error as commented block lines."""
+    text = f"{type(error).__name__}: {error}" if error is not None else ""
+    return [f"#   {line}" for line in text.splitlines()]
 
 
 # Layered boolean flags (currently just --offline) are tri-state, which tyro

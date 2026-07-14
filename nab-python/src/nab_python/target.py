@@ -1,11 +1,12 @@
-"""The environment one resolve runs against.
+"""The environments one resolve runs against.
 
 A :class:`ResolveTarget` is a complete PEP 508 marker environment plus
-the wheel tags that environment accepts.  Specific mode resolves
-against one, built from the host interpreter; universal mode builds one
-per (python, platform, implementation) point of the declared matrix.
-Both feed the same provider, so the resolver has a single notion of
-"the environment we are resolving for".
+the wheel tags that environment accepts.  A resolve runs against a list
+of them: the host interpreter alone, the one target
+``[tool.nab.environment]`` declares, or one per (python, platform,
+implementation) point a :class:`Matrix` expands to.  They all feed the
+same provider, so the resolver has a single notion of "the environment
+we are resolving for".
 
 A declared target synthesizes its markers from the platform and
 implementation it names, never from the interpreter running nab: a
@@ -26,19 +27,27 @@ from typing import TYPE_CHECKING
 from ._conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
 from ._vendor.packaging import tags as ptags
 from ._vendor.packaging.markers import Marker, default_environment
+from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.version import InvalidVersion, Version
-from .tags import TagSet
+from .tags import (
+    FREE_THREADED_MIN_PYTHON,
+    PlatformSpec,
+    TagSet,
+    supports_free_threading,
+)
 
 if TYPE_CHECKING:
-    from .tags import PlatformSpec, TagsSource
+    from .tags import TagsSource
 
 
 __all__ = [
     "IMPLEMENTATION_MARKERS",
+    "KNOWN_PYTHON_MINORS",
     "PEP508_MARKER_VARIABLES",
     "PLATFORM_MARKERS",
     "UNBOUNDABLE_MARKER_VARIABLES",
     "EnvironmentSource",
+    "Matrix",
     "ResolveTarget",
     "apply_python_axis_overlay",
     "declared_environment",
@@ -132,6 +141,19 @@ _HOST_PLATFORM_LABEL = "host"
 _PYTHON_VERSION_PARTS = 2
 _PYTHON_FULL_VERSION_PARTS = 3
 
+# The Python minors a :class:`Matrix` can expand to.  A minor outside this
+# set cannot be modelled (nab has no tag knobs for it), so a declared range
+# that names one raises rather than silently skipping it.
+KNOWN_PYTHON_MINORS: tuple[str, ...] = (
+    "3.8",
+    "3.9",
+    "3.10",
+    "3.11",
+    "3.12",
+    "3.13",
+    "3.14",
+)
+
 
 # Every environment variable PEP 508 defines.  A lock declares the target's
 # value for each one the resolve consulted, so the set has to be the spec's.
@@ -223,7 +245,10 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     """Render the PEP 751 ``environments`` marker for ``target``.
 
     Declares every variable the ``consulted`` markers named, plus
-    :data:`_ALWAYS_DECLARED`.  A resolve drops every dependency whose
+    :data:`_ALWAYS_DECLARED` and, when the target names an interpreter
+    other than the sole default (see
+    :attr:`ResolveTarget.declares_implementation`),
+    ``implementation_name``.  A resolve drops every dependency whose
     marker is False under the target, so an installer that consults the
     same variable and gets a different answer would be missing the deps
     that environment needs: the declaration refuses it instead.
@@ -239,10 +264,15 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     variables: set[str] = set()
     for text in texts:
         variables |= marker_variables(text)
+
+    always = list(_ALWAYS_DECLARED)
+    if target.declares_implementation:
+        always.append("implementation_name")
     names = [
-        *_ALWAYS_DECLARED,
-        *sorted(variables - set(_ALWAYS_DECLARED) - UNBOUNDABLE_MARKER_VARIABLES),
+        *always,
+        *sorted(variables - set(always) - UNBOUNDABLE_MARKER_VARIABLES),
     ]
+
     clauses: list[str] = []
     for name in names:
         if name in _BY_CONSTRAINT:
@@ -296,6 +326,7 @@ def _version_clauses(
             if declaration is None:
                 return [exact]
             declared.add(declaration)
+
     return sorted(declared) or [exact]
 
 
@@ -500,15 +531,25 @@ class ResolveTarget:
         return {**self.marker_env, **EMPTY_MEMBERSHIP_SETS}
 
     @property
+    def declares_implementation(self) -> bool:
+        """Whether the interpreter is an axis this target has to name.
+
+        CPython alone is the default, so a lone CPython target leaves the
+        axis open.  A matrix modelling more than one implementation, or a
+        target on any other interpreter, has to say which one it is, or its
+        markers would also select the interpreter it is not.
+        """
+        return self.multi_implementation or self.implementation != "cpython"
+
+    @property
     def environment_marker_string(self) -> str:
         """Return the PEP 508 marker for this target's environment only.
 
         Combines ``python_version``, ``sys_platform`` and
-        ``platform_machine``, plus ``implementation_name`` when the
-        matrix models more than one implementation.  It carries no
-        conflict-fork ``selection``, so it is what the lockfile's
-        top-level ``environments`` list declares: the platform/Python
-        universe, not which extras or groups are active.
+        ``platform_machine``, plus ``implementation_name`` when
+        :attr:`declares_implementation`.  It carries no conflict-fork
+        ``selection``, so it selects this target's platform/Python point,
+        not which extras or groups are active.
         """
         env = self.marker_env
         marker = (
@@ -516,7 +557,7 @@ class ResolveTarget:
             f' and sys_platform == "{env["sys_platform"]}"'
             f' and platform_machine == "{env["platform_machine"]}"'
         )
-        if self.multi_implementation or self.implementation != "cpython":
+        if self.declares_implementation:
             marker += f' and implementation_name == "{self.implementation}"'
         return marker
 
@@ -700,6 +741,148 @@ def declared_environment(
         "platform_release": spec.platform_release,
         "platform_version": spec.platform_version,
     }
+
+
+@dataclass
+class Matrix:
+    """The declared set of targets a resolve covers.
+
+    Expands a python range, a platform list, and an implementation list
+    into a finite list of :class:`ResolveTarget`.  Every PEP 508 variable
+    any marker on the dep graph names has a value in every target;
+    ``Requires-Python`` filtering happens elsewhere.
+
+    ``python_order``: ``"asc"`` (default, oldest first) or ``"desc"``.
+    Combined with cross-target alignment in the resolver this selects
+    between ``fork-strategy=fewest`` (asc: the oldest-Python pin
+    propagates forward, so the lowest common version wins) and
+    ``fork-strategy=requires-python`` (desc: the newest-Python pin
+    propagates, so older Pythons diverge only when the new version is
+    incompatible).
+
+    ``python_patches``: optional ``{minor: full_version}`` mapping that
+    sets the per-target ``python_full_version`` marker.  Defaults to
+    ``{minor}.0`` per target, which makes a marker like
+    ``python_full_version >= "3.11.4"`` evaluate False on a 3.11 target.
+    Users with deployments on later patch releases should declare them
+    here so marker evaluation matches reality.  Example:
+    ``python_patches={"3.11": "3.11.4", "3.12": "3.12.1"}``.
+
+    ``implementations``: the interpreter implementations to model
+    (``"cpython"``, ``"pypy"``).  Each multiplies the target count;
+    markers and wheel tags resolve per implementation.
+    """
+
+    python: str
+    platforms: tuple[PlatformSpec, ...]
+    python_order: str = "asc"
+    python_patches: dict[str, str] | None = None
+    implementations: tuple[str, ...] = ("cpython",)
+
+    def expand(self) -> list[ResolveTarget]:
+        """Expand the matrix into concrete targets.
+
+        Validates inputs eagerly: unknown platform ids, unknown
+        implementations, ``python_patches`` keys that are not known
+        minors, an empty python range, an invalid ``python_order``, or a
+        free-threaded platform no interpreter build can satisfy each raise a
+        ``ValueError`` before any work happens.
+        """
+        if self.python_order not in {"asc", "desc"}:
+            msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
+            raise ValueError(msg)
+
+        unknown = [
+            s.platform_id
+            for s in self.platforms
+            if s.platform_id not in PLATFORM_MARKERS
+        ]
+        if unknown:
+            msg = f"Unknown platform ids: {unknown!r}"
+            raise ValueError(msg)
+
+        unknown_impl = [
+            i for i in self.implementations if i not in IMPLEMENTATION_MARKERS
+        ]
+        if unknown_impl:
+            msg = f"Unknown implementations: {unknown_impl!r}"
+            raise ValueError(msg)
+
+        patches = self.python_patches or {}
+        unknown_patches = [m for m in patches if m not in KNOWN_PYTHON_MINORS]
+        if unknown_patches:
+            msg = (
+                f"Unknown python_patches minors: {unknown_patches!r};"
+                " keys must be major.minor like '3.11'"
+            )
+            raise ValueError(msg)
+
+        self._check_free_threaded()
+
+        py_versions = list(_pythons_in_range(self.python))
+        if not py_versions:
+            msg = f"No known Python versions match {self.python!r}"
+            raise ValueError(msg)
+        if self.python_order == "desc":
+            py_versions.reverse()
+
+        multi_impl = len(self.implementations) > 1
+        return [
+            ResolveTarget.for_declared(
+                python_version=py,
+                spec=spec,
+                implementation=impl,
+                python_full_version=patches.get(py),
+                multi_implementation=multi_impl,
+            )
+            for py in py_versions
+            for spec in self.platforms
+            for impl in self.implementations
+        ]
+
+    def _check_free_threaded(self) -> None:
+        """Reject a free-threaded platform no interpreter build can satisfy.
+
+        The ``cpXYt`` ABI ships only from CPython 3.13, and only the matrix
+        sees both axes the rule needs: the platform carries the flag, and the
+        implementation and the python range live here.
+        """
+        if not any(spec.free_threaded for spec in self.platforms):
+            return
+
+        foreign = [i for i in self.implementations if i != "cpython"]
+        if foreign:
+            msg = (
+                f"a free-threaded platform needs CPython, not {foreign!r};"
+                f" only CPython has a free-threaded build"
+            )
+            raise ValueError(msg)
+
+        floor = ".".join(str(p) for p in FREE_THREADED_MIN_PYTHON)
+        too_old = [
+            py
+            for py in _pythons_in_range(self.python)
+            if not supports_free_threading(py)
+        ]
+        if too_old:
+            msg = (
+                f"a free-threaded platform needs CPython {floor} or newer,"
+                f" but matrix.python admits {too_old!r}"
+            )
+            raise ValueError(msg)
+
+
+def _pythons_in_range(spec: str) -> Iterable[str]:
+    """Yield the known Python minors that satisfy ``spec``.
+
+    ``spec`` is a PEP 440 specifier set, e.g. ``">=3.11, <3.14"``.
+    """
+    parsed = SpecifierSet(spec)
+    for minor in KNOWN_PYTHON_MINORS:
+        # Test membership on the .0 patch so a >=3.11 specifier admits
+        # "3.11" through "3.11.0".
+        if Version(f"{minor}.0") in parsed:
+            yield minor
 
 
 def _python_label(python_version: str, implementation: str) -> str:

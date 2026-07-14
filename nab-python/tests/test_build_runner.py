@@ -37,6 +37,7 @@ from nab_python._build.env import (
 from nab_python._build.runner import BuildBackendError, run_build_backend
 from nab_python.config import NabProjectConfig
 from nab_python.download import DownloadResult
+from nab_python.lockfile import LockInput
 from nab_resolver.resolver import ResolutionError
 
 # A minimal, in-tree PEP 517 backend.  Implements
@@ -597,13 +598,14 @@ class TestRunBuildBackendDefaults:
         config = NabProjectConfig(indexes=(IndexConfig("local", index_dir.as_uri()),))
 
         def fake_download_lock(
-            lock_input: object, _transport: object, wheel_dir: Path, *_a: object
+            lock_input: LockInput, _transport: object, wheel_dir: Path, *_a: object
         ) -> DownloadResult:
             written = []
-            for name, pin in lock_input.pins.items():  # type: ignore[attr-defined]
-                wheel = wheel_dir / f"{name}-{pin.version}-py3-none-any.whl"
-                _make_installable_wheel(wheel, name, pin.version)
-                written.append(wheel)
+            for lock in lock_input.targets.values():
+                for name, pin in lock.pins.items():
+                    wheel = wheel_dir / f"{name}-{pin.version}-py3-none-any.whl"
+                    _make_installable_wheel(wheel, name, pin.version)
+                    written.append(wheel)
             return DownloadResult(written=tuple(written), skipped=())
 
         monkeypatch.setattr("nab_python._build.env.download_lock", fake_download_lock)
@@ -778,8 +780,10 @@ class TestResolveAndDownload:
     def test_sdist_only_pin_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from nab_python.lockfile import IndexPin, LockInput
-        from nab_python.resolve import ResolutionResult
+        from nab_python._vendor.packaging.version import Version
+        from nab_python.lockfile import IndexPin, TargetLock
+        from nab_python.resolve import ResolveResult, TargetResult
+        from nab_python.target import ResolveTarget
 
         env = NabBuildEnv(requires=["foo"], config=NabProjectConfig())
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]
@@ -792,11 +796,19 @@ class TestResolveAndDownload:
             wheels=(),
             sdist=None,
         )
-        fake_result = ResolutionResult(
-            pins={"foo": MagicMock()},
-            lock_input=LockInput(pins={"foo": sdist_pin}),
+        target = ResolveTarget.for_host()
+        fake_result = ResolveResult(
+            targets=(target,),
+            target_results=[
+                TargetResult(
+                    target=target,
+                    success=True,
+                    pins={"foo": Version("1.0")},
+                    lock=TargetLock(target=target, pins={"foo": sdist_pin}),
+                )
+            ],
         )
-        with patch("nab_python.resolve.resolve_pyproject", return_value=fake_result):
+        with patch("nab_python.resolve.resolve_for_targets", return_value=fake_result):
             wheel_dir = tmp_path / "wheels"
             wheel_dir.mkdir()
             with pytest.raises(BuildEnvError, match="sdist-only"):

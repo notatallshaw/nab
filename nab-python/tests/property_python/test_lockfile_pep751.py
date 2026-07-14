@@ -23,18 +23,21 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover - 3.10 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
-from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python.lockfile import (
     IndexPin,
     LocalPin,
     LockInput,
+    PinShape,
     SdistArtifact,
+    TargetLock,
     VcsPin,
     WheelArtifact,
     build_pylock,
     write_lock,
 )
+from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
 
 from .strategies import (
     PROPERTY_SETTINGS,
@@ -47,6 +50,35 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
 pytestmark = pytest.mark.property
+
+
+def _target(
+    python_version: str = "3.11", platform: str = "linux_x86_64"
+) -> ResolveTarget:
+    """One declared (python, platform) target of a resolve."""
+    return ResolveTarget.for_declared(
+        python_version=python_version, spec=PlatformSpec(platform)
+    )
+
+
+# A resolve always runs against at least one target, so one entry is the
+# smallest lock there is; its packages carry no marker.
+_HOST = _target()
+
+
+def _one(pins: Mapping[str, PinShape]) -> dict[str, TargetLock]:
+    """Return the one-target map a single-environment resolve produces."""
+    return {_HOST.label: TargetLock(target=_HOST, pins=dict(pins))}
+
+
+def _targets(
+    *entries: tuple[ResolveTarget, Mapping[str, PinShape]],
+) -> dict[str, TargetLock]:
+    """Return the per-target map for the given ``(target, pins)`` pairs."""
+    return {
+        target.label: TargetLock(target=target, pins=dict(pins))
+        for target, pins in entries
+    }
 
 
 def _wheel(name: str, version: str, sha: str) -> WheelArtifact:
@@ -133,7 +165,7 @@ def lock_inputs(draw: st.DrawFn) -> LockInput:
     for pin in pins:
         if pin.name not in by_name:
             by_name[pin.name] = pin
-    return LockInput(pins=by_name)
+    return LockInput(targets=_one(by_name))
 
 
 class TestQuoteSpecCompliantOutput:
@@ -156,7 +188,7 @@ class TestQuoteSpecCompliantOutput:
         text = write_lock(lock_input)
         data = tomllib.loads(text)
         pylock = Pylock.from_dict(data)
-        assert len(pylock.packages) == len(lock_input.pins)
+        assert len(pylock.packages) == len(lock_input.targets[_HOST.label].pins)
 
 
 class TestQuoteStablePackageOrdering:
@@ -242,25 +274,24 @@ def _reorder(seq: Sequence[object], shift: int) -> list[object]:
     return items[shift:] + items[:shift]
 
 
-def _per_tuple_input(
+def _per_target_input(
     *,
     names: Sequence[str],
-    labels: Sequence[str],
-    versions_by_label: Mapping[str, str],
-    markers_by_label: Mapping[str, str],
+    pythons: Sequence[str],
+    versions_by_python: Mapping[str, str],
     wheel_shift: int,
 ) -> LockInput:
-    """Assemble a per-tuple ``LockInput`` over the given orderings.
+    """Assemble a per-target ``LockInput`` over the given orderings.
 
-    ``labels`` fixes the tuple order, the ``per_tuple_pins`` dict is
-    built in that order, and each pin's wheels are rotated by
-    ``wheel_shift`` so two calls with different orderings exercise the
-    insertion-order paths the emitter must neutralise.
+    ``pythons`` fixes the target order, the ``targets`` dict is built in
+    that order, and each pin's wheels are rotated by ``wheel_shift`` so
+    two calls with different orderings exercise the insertion-order paths
+    the emitter must neutralise.
     """
-    per_tuple_pins: dict[str, dict[str, IndexPin]] = {}
-    for label in labels:
-        version = versions_by_label[label]
-        per_name: dict[str, IndexPin] = {}
+    targets: dict[str, TargetLock] = {}
+    for python in pythons:
+        version = versions_by_python[python]
+        per_name: dict[str, PinShape] = {}
         for name in names:
             wheels = tuple(_reorder(_multi_wheel(name, version), wheel_shift))
             per_name[name] = IndexPin(
@@ -269,9 +300,9 @@ def _per_tuple_input(
                 index="pypi",
                 wheels=wheels,  # type: ignore[arg-type]
             )
-        per_tuple_pins[label] = per_name
-    tuple_markers = {label: Marker(markers_by_label[label]) for label in labels}
-    return LockInput(per_tuple_pins=per_tuple_pins, tuple_markers=tuple_markers)
+        target = _target(python)
+        targets[target.label] = TargetLock(target=target, pins=per_name)
+    return LockInput(targets=targets)
 
 
 class TestQuoteShuffledInputInvariant:
@@ -282,7 +313,7 @@ class TestQuoteShuffledInputInvariant:
     > arrays in consistent order."
 
     The byte-stability guarantee must survive a reordering of every
-    insertion-ordered input: the package map, the per-tuple map, each
+    insertion-ordered input: the package map, the per-target map, each
     pin's wheel list, each wheel's hash pairs, and the OR-marker
     fragments. Emitting a shuffled-but-equivalent input must produce
     identical bytes; otherwise a re-resolve that happened to populate
@@ -291,37 +322,29 @@ class TestQuoteShuffledInputInvariant:
     Reference: https://peps.python.org/pep-0751/#file-format
     """
 
-    def test_shuffled_per_tuple_input_is_byte_equal(self) -> None:
+    def test_shuffled_per_target_input_is_byte_equal(self) -> None:
         """Reordering every input axis yields byte-identical output."""
         names = ["alpha", "beta", "gamma"]
-        labels = ["py310", "py311", "py312", "py313"]
-        versions_by_label = {
-            "py310": "1.0",
-            "py311": "1.0",
-            "py312": "2.0",
-            "py313": "2.0",
-        }
-        markers_by_label = {
-            "py310": 'python_version == "3.10"',
-            "py311": 'python_version == "3.11"',
-            "py312": 'python_version == "3.12"',
-            "py313": 'python_version == "3.13"',
+        pythons = ["3.10", "3.11", "3.12", "3.13"]
+        versions_by_python = {
+            "3.10": "1.0",
+            "3.11": "1.0",
+            "3.12": "2.0",
+            "3.13": "2.0",
         }
         canonical = write_lock(
-            _per_tuple_input(
+            _per_target_input(
                 names=names,
-                labels=labels,
-                versions_by_label=versions_by_label,
-                markers_by_label=markers_by_label,
+                pythons=pythons,
+                versions_by_python=versions_by_python,
                 wheel_shift=0,
             )
         )
         shuffled = write_lock(
-            _per_tuple_input(
+            _per_target_input(
                 names=list(reversed(names)),
-                labels=list(reversed(labels)),
-                versions_by_label=versions_by_label,
-                markers_by_label=markers_by_label,
+                pythons=list(reversed(pythons)),
+                versions_by_python=versions_by_python,
                 wheel_shift=1,
             )
         )
@@ -336,7 +359,7 @@ class TestQuoteMarkerCollisionOrdering:
     > at install time."
 
     Two entries with the same name and version but different markers
-    are a legal per-tuple shape (e.g. one index per environment). The
+    are a legal per-target shape (e.g. one index per environment). The
     name+version sort key alone cannot separate them, so the emitter
     must break the tie on the marker string. Both entries must survive
     and their relative order must not depend on insertion order.
@@ -344,9 +367,9 @@ class TestQuoteMarkerCollisionOrdering:
     Reference: https://peps.python.org/pep-0751/#packages
     """
 
-    def _collision_input(self, *, labels: Sequence[str]) -> LockInput:
-        per_tuple_pins = {
-            "linux": {
+    def _collision_input(self, *, platforms: Sequence[str]) -> LockInput:
+        pins_by_platform: Mapping[str, Mapping[str, PinShape]] = {
+            "linux_x86_64": {
                 "foo": IndexPin(
                     name="foo",
                     version="1.0",
@@ -354,7 +377,7 @@ class TestQuoteMarkerCollisionOrdering:
                     wheels=(_wheel("foo", "1.0", "a" * 64),),
                 )
             },
-            "darwin": {
+            "macos_arm64": {
                 "foo": IndexPin(
                     name="foo",
                     version="1.0",
@@ -363,17 +386,23 @@ class TestQuoteMarkerCollisionOrdering:
                 )
             },
         }
-        ordered = {label: per_tuple_pins[label] for label in labels}
-        tuple_markers = {
-            "linux": Marker('sys_platform == "linux"'),
-            "darwin": Marker('sys_platform == "darwin"'),
-        }
-        return LockInput(per_tuple_pins=ordered, tuple_markers=tuple_markers)
+        return LockInput(
+            targets=_targets(
+                *(
+                    (_target(platform=platform), pins_by_platform[platform])
+                    for platform in platforms
+                )
+            )
+        )
 
     def test_same_name_version_distinct_markers_stable(self) -> None:
         """A same-name same-version marker pair sorts stably by marker."""
-        forward = write_lock(self._collision_input(labels=["linux", "darwin"]))
-        reverse = write_lock(self._collision_input(labels=["darwin", "linux"]))
+        forward = write_lock(
+            self._collision_input(platforms=["linux_x86_64", "macos_arm64"])
+        )
+        reverse = write_lock(
+            self._collision_input(platforms=["macos_arm64", "linux_x86_64"])
+        )
         assert forward == reverse
         data: Mapping[str, object] = tomllib.loads(forward)
         packages = data["packages"]
@@ -404,7 +433,7 @@ class TestQuoteWheelOrdering:
             _wheel_named("foo-1.0-cp311-cp311-macosx_11_0_arm64.whl", "c" * 64),
         )
         pin = IndexPin(name="foo", version="1.0", index="pypi", wheels=wheels)
-        text = write_lock(LockInput(pins={"foo": pin}))
+        text = write_lock(LockInput(targets=_one({"foo": pin})))
         data: Mapping[str, object] = tomllib.loads(text)
         packages = data["packages"]
         assert isinstance(packages, list)
@@ -417,7 +446,7 @@ class TestQuoteWheelOrdering:
         ]
 
 
-class TestQuoteUniversalPerTuplePackages:
+class TestQuoteUniversalPerTargetPackages:
     """PEP 751, § ``[[packages]]``:
 
     > "An array containing all packages that *may* be installed.
@@ -428,7 +457,7 @@ class TestQuoteUniversalPerTuplePackages:
     > "The environment marker which specify when the package should
     > be installed." (The ``marker`` field of a packages entry.)
 
-    Universal locks contain per-tuple groups: a package may resolve
+    Universal locks contain per-target groups: a package may resolve
     to different versions on Python 3.10 vs 3.11, in which case the
     writer emits two ``[[packages]]`` entries with disjoint
     ``marker`` strings.
@@ -448,37 +477,37 @@ class TestQuoteUniversalPerTuplePackages:
         version_a: str,
         version_b: str,
     ) -> None:
-        """Diverging per-tuple pins emit one ``packages`` entry per group."""
+        """Diverging per-target pins emit one ``packages`` entry per group."""
         sha_a = "a" * 64
         sha_b = "b" * 64
-        per_tuple_pins = {
-            "py310": {
-                name: IndexPin(
-                    name=name,
-                    version=version_a,
-                    index="pypi",
-                    wheels=(_wheel(name, version_a, sha_a),),
-                )
-                for name in names
-            },
-            "py311": {
-                name: IndexPin(
-                    name=name,
-                    version=version_b,
-                    index="pypi",
-                    wheels=(_wheel(name, version_b, sha_b),),
-                )
-                for name in names
-            },
-        }
-        tuple_markers = {
-            "py310": Marker('python_version == "3.10"'),
-            "py311": Marker('python_version == "3.11"'),
-        }
         text = write_lock(
             LockInput(
-                per_tuple_pins=per_tuple_pins,
-                tuple_markers=tuple_markers,
+                targets=_targets(
+                    (
+                        _target("3.10"),
+                        {
+                            name: IndexPin(
+                                name=name,
+                                version=version_a,
+                                index="pypi",
+                                wheels=(_wheel(name, version_a, sha_a),),
+                            )
+                            for name in names
+                        },
+                    ),
+                    (
+                        _target("3.11"),
+                        {
+                            name: IndexPin(
+                                name=name,
+                                version=version_b,
+                                index="pypi",
+                                wheels=(_wheel(name, version_b, sha_b),),
+                            )
+                            for name in names
+                        },
+                    ),
+                )
             )
         )
         data: Mapping[str, object] = tomllib.loads(text)

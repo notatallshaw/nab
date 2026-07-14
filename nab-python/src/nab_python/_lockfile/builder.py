@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 
     from nab_index.multi_index import IndexConfig
 
-    from .._vendor.packaging.markers import Marker
     from .._vendor.packaging.version import Version
     from ..lockfile import (
         ArchivePin,
@@ -37,17 +36,19 @@ if TYPE_CHECKING:
         LockInput,
         PinShape,
         SdistArtifact,
+        TargetLock,
         VcsPin,
         WheelArtifact,
     )
     from ..provider import ArchiveSource, DistPolicy, LocalSource, VcsSource
+    from ..target import ResolveTarget
 
 
 __all__ = [
     "MissingHashError",
     "MissingSdistError",
     "MissingVcsCommitError",
-    "build_lock_input_from_provider",
+    "build_target_lock",
     "read_lockfile_anchor",
     "read_lockfile_packages",
     "require_artifact_hashes",
@@ -75,7 +76,7 @@ class LockInputProvider(Protocol):
     """Structural protocol for the provider slice the builder reads.
 
     Mirrors the public surface :class:`~nab_python.provider.Provider`
-    exposes that :func:`build_lock_input_from_provider` consumes; tests
+    exposes that :func:`build_target_lock` consumes; tests
     may supply a stub without inheriting the full Provider class.
     """
 
@@ -240,35 +241,21 @@ def _strip_userinfo(url: str) -> str:
     return urlunsplit(parts._replace(netloc=host))
 
 
-def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a distinct lockfile field
+def build_target_lock(
     provider: LockInputProvider,
+    target: ResolveTarget,
     pins: Mapping[str, Version],
     *,
-    requires_python: str | None = None,
-    environments: Sequence[Marker] = (),
-    extras: Sequence[str] = (),
-    dependency_groups: Sequence[str] = (),
-    default_groups: Sequence[str] = (),
-    created_by: str = "nab",
     indexes: Sequence[IndexConfig] = (),
     resolved_keys: Iterable[str] = (),
-) -> LockInput:
-    """Build a :class:`LockInput` from a finished resolve.
+) -> TargetLock:
+    """Build one target's :class:`~nab_python.lockfile.TargetLock`.
 
-    ``provider`` is the :class:`Provider` that drove the resolve;
-    its caches still hold the listings the resolver consumed.  ``pins``
-    is the canonical-name -> :class:`Version` mapping returned by the
-    resolver after extras keys have been stripped.
-
-    ``environments`` is the PEP 751 ``environments`` declaration: the
-    environments the pins are valid for.  A single-environment resolve
-    passes the one its target declares (see
-    :func:`~nab_python.target.environment_declaration`); the universal
-    path builds its own from the matrix and leaves this unset.
-
-    ``dependency_groups`` lists the PEP 735 groups whose requirements
-    were folded into this resolve; ``default_groups`` is the subset
-    that a default install (no ``--group`` flag) should apply.
+    ``provider`` is the :class:`Provider` that drove the resolve for
+    ``target``; its caches still hold the listings the resolver
+    consumed.  ``pins`` is the canonical-name -> :class:`Version`
+    mapping returned by the resolver after extras keys have been
+    stripped.
 
     ``resolved_keys`` is the full set of resolver result keys, including
     ``name[extra]`` proxies; it is read to find which extras activated
@@ -277,7 +264,7 @@ def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a disti
     Every wheel the target can install, plus the sdist, is recorded for
     each pinned version.
     """
-    from ..lockfile import LocalPin, LockInput
+    from ..lockfile import LocalPin, TargetLock
 
     lock_pins: dict[str, PinShape] = {}
     for raw_name, version in pins.items():
@@ -310,14 +297,10 @@ def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a disti
         lock_pins[canonical] = _index_pin_from_listing(
             provider, canonical, version, indexes
         )
-    return LockInput(
+
+    return TargetLock(
+        target=target,
         pins=lock_pins,
-        requires_python=requires_python,
-        environments=list(environments),
-        created_by=created_by,
-        extras=tuple(extras),
-        dependency_groups=tuple(dependency_groups),
-        default_groups=tuple(default_groups),
         dependencies=_forward_dependency_graph(provider, pins, resolved_keys),
     )
 
@@ -523,12 +506,8 @@ def require_artifact_hashes(lock_input: LockInput) -> None:
     """
     from ..lockfile import ACCEPTED_HASH_ALGORITHMS, IndexPin
 
-    pin_groups: Iterable[Mapping[str, PinShape]] = (
-        lock_input.pins,
-        *lock_input.per_tuple_pins.values(),
-    )
-    for pins in pin_groups:
-        for pin in pins.values():
+    for lock in lock_input.targets.values():
+        for pin in lock.pins.values():
             if not isinstance(pin, IndexPin):
                 continue
             artefacts = (*pin.wheels, *((pin.sdist,) if pin.sdist is not None else ()))

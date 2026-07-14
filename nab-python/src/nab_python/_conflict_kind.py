@@ -1,7 +1,7 @@
 """Conflict-kind constants and PEP 508 marker-variable mapping.
 
-A leaf module that :mod:`nab_python.config`, :mod:`nab_python.universal.matrix`,
-and :mod:`nab_python._lockfile.disjointness` can import without forming a
+A leaf module that :mod:`nab_python.config`, :mod:`nab_python.target`, and
+:mod:`nab_python._lockfile.disjointness` can import without forming a
 cycle.  :class:`nab_python.config.ConflictKind` takes its enum values from
 ``KIND_EXTRA`` / ``KIND_GROUP`` so a rename here flows to every consumer.
 """

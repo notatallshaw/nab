@@ -139,15 +139,15 @@ class InMemoryIndex:
         self._sdist_archive_errors: dict[tuple[str, str], BaseException] = {}
         self._pending: dict[str, _Pending] = {}
 
-        # Parsed metadata is a pure function of the underlying text, so we
-        # share it across tuple providers in universal mode.
+        # Parsed metadata is a pure function of the underlying text, so it
+        # is shared across the per-target providers of one resolve.
         self._parsed_metadata: dict[tuple[str, str], Any] = {}
 
         # Post-reconciliation sdist metadata: the result after
         # PEP 643 dynamic deps have been resolved via the bundled
         # pyproject.toml fallback or a PEP 517 backend invocation.
-        # Shared across tuples so universal mode does not re-augment
-        # (or, more importantly, re-build) the same sdist N times.
+        # Shared across targets so a matrix does not re-augment (or, more
+        # importantly, re-build) the same sdist once per tuple.
         self._resolved_sdist_metadata: dict[tuple[str, str], Any] = {}
 
     def get_listing(self, package: str) -> list[WheelFile | SdistFile] | None:
@@ -629,43 +629,6 @@ class FetchCoordinator:
                     kind=FetchKind.METADATA,
                     package=package,
                     version=version,
-                    url=url,
-                    metadata_hash=metadata_hash,
-                )
-            )
-        return pending.event
-
-    def request_wheel_metadata(
-        self,
-        package: str,
-        version: str,
-        wheel_filename: str,
-        url: str,
-        metadata_hash: tuple[str, str] | None = None,
-    ) -> threading.Event:
-        """Request metadata for one specific wheel of ``(package, version)``.
-
-        Used by the universal-resolution validation pass to fetch each
-        tuple's chosen wheel metadata separately from the resolver's
-        baseline.  Cached under the sentinel key ``f"{version}#{wheel_filename}"``
-        so the resolver-time cache (keyed on plain ``version``) is
-        untouched.  Goes through the same async transport and shares
-        connection pooling.
-        """
-        self._check_alive()
-        sentinel_version = f"{version}#{wheel_filename}"
-        if self.index.has_metadata(package, sentinel_version):
-            done = threading.Event()
-            done.set()
-            return done
-        key = f"metadata:{package}:{sentinel_version}"
-        pending, existed = self.index.get_or_create_pending(key)
-        if not existed:
-            self._submit(
-                FetchRequest(
-                    kind=FetchKind.METADATA,
-                    package=package,
-                    version=sentinel_version,
                     url=url,
                     metadata_hash=metadata_hash,
                 )

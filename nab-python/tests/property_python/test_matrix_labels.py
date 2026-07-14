@@ -2,7 +2,7 @@
 
 Tuple labels are used downstream as dict keys for per-tuple pins, so
 two distinct matrix points must never share a label
-(:mod:`nab_python.universal.matrix` docstrings make this claim for
+(:mod:`nab_python.target` docstrings make this claim for
 both selections and platform specs).  A collision silently merges
 two tuples' pins under one key.
 """
@@ -22,9 +22,10 @@ from nab_python.tags import (
     LIBC_MAJOR,
     PlatformSpec,
 )
-from nab_python.target import IMPLEMENTATION_MARKERS, PLATFORM_MARKERS
-from nab_python.universal.matrix import (
-    _KNOWN_PYTHON_MINORS,
+from nab_python.target import (
+    IMPLEMENTATION_MARKERS,
+    KNOWN_PYTHON_MINORS,
+    PLATFORM_MARKERS,
     Matrix,
 )
 
@@ -36,13 +37,13 @@ PLATFORM_IDS = sorted(PLATFORM_MARKERS)
 IMPLS = sorted(IMPLEMENTATION_MARKERS)
 
 python_specs = st.one_of(
-    st.sampled_from(_KNOWN_PYTHON_MINORS).map(lambda v: f"=={v}"),
-    st.sampled_from(_KNOWN_PYTHON_MINORS).map(lambda v: f">={v}"),
-    st.sampled_from(_KNOWN_PYTHON_MINORS).map(lambda v: f"~={v}"),
+    st.sampled_from(KNOWN_PYTHON_MINORS).map(lambda v: f"=={v}"),
+    st.sampled_from(KNOWN_PYTHON_MINORS).map(lambda v: f">={v}"),
+    st.sampled_from(KNOWN_PYTHON_MINORS).map(lambda v: f"~={v}"),
     st.tuples(
-        st.sampled_from(_KNOWN_PYTHON_MINORS), st.sampled_from(_KNOWN_PYTHON_MINORS)
+        st.sampled_from(KNOWN_PYTHON_MINORS), st.sampled_from(KNOWN_PYTHON_MINORS)
     ).map(lambda t: f">={t[0]}, <={t[1]}"),
-    st.sampled_from(_KNOWN_PYTHON_MINORS).map(lambda v: f"!={v}"),
+    st.sampled_from(KNOWN_PYTHON_MINORS).map(lambda v: f"!={v}"),
 )
 
 # The alphabet a real platform_release or platform_version draws from, which
@@ -180,7 +181,7 @@ class TestPythonPatchesEnvironment:
     """
 
     @given(
-        minor=st.sampled_from(_KNOWN_PYTHON_MINORS),
+        minor=st.sampled_from(KNOWN_PYTHON_MINORS),
         patch=st.integers(0, 20),
     )
     @PROPERTY_SETTINGS

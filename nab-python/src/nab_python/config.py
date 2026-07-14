@@ -61,11 +61,11 @@ from .provider import (
 from .tags import DEFAULT_LIBC, LIBC_MAJOR, Libc, PlatformSpec, platform_kind
 from .target import (
     PLATFORM_MARKERS,
+    Matrix,
     ResolveTarget,
     host_environment,
     python_axis_environment,
 )
-from .universal.matrix import Matrix
 from .workspace import (
     WorkspaceConfig,
     auto_promote_build_policy_for_workspace,
@@ -454,9 +454,11 @@ class NabProjectConfig:
 class ConflictSelectionError(ConfigError):
     """A requested extra/group selection violates a declared conflict.
 
-    Raised on the single-environment path, where one resolution cannot
-    serve two mutually-exclusive members at once.  Universal mode forks
-    the resolve instead of raising.
+    Raised when one resolve cannot serve the selection: a project
+    resolving for a single environment cannot install two
+    mutually-exclusive members at once.  A declared matrix forks the
+    resolve instead of raising, and only raises when one fork still
+    reaches two members (through an umbrella extra, say).
     """
 
 
@@ -876,10 +878,15 @@ def plan_targets(config: NabProjectConfig) -> tuple[ResolveTarget, ...]:
     The ``requires-python`` declaration is checked here rather than at parse
     time because ``--python`` moves the target after the config is read, and
     it is the flag that rescues a project whose declaration excludes the host.
+
+    Every target is checked, matrix included: the lock records the
+    declaration at top level and the targets in ``environments``, so a
+    target the declaration excludes would be a lock that contradicts itself
+    and that a PEP 751 installer refuses.
     """
     targets = _plan_targets(config.matrix, config.environment)
-    if config.matrix is None:
-        _check_requires_python_admits_target(config.requires_python, targets[0])
+    for target in targets:
+        _check_requires_python_admits_target(config.requires_python, target)
     return targets
 
 
@@ -1031,19 +1038,32 @@ def with_python_override(
     """Return ``config`` with its resolve target moved onto ``python``.
 
     The ``--python`` flag (and the ``python_version`` argument of
-    :func:`~nab_python.resolve.resolve_pyproject`) retargets the python
+    :func:`~nab_python.resolve.resolve_for_targets`) retargets the python
     axis for one run, leaving any declared platform in place.  The
     build-policy guard runs again over the new plan, so a runtime retarget
     is held to the same rule as a declared one.  ``None`` is a no-op.
+
+    A matrix already declares the python axis for every target it names, so
+    retargeting one of them would resolve for a python the matrix does not
+    model and record it under that target's label.
     """
     if python is None:
         return config
+    if config.matrix is not None:
+        msg = (
+            "--python cannot retarget a resolve that declares"
+            " [tool.nab.matrix]: the matrix names the python axis of every"
+            " target.  Narrow matrix.python instead."
+        )
+        raise ConfigError(msg)
+
     _validate_environment_values({"python": python})
     environment = (
         EnvironmentConfig(python=python)
         if config.environment is None
         else replace(config.environment, python=python)
     )
+
     build_policy = enforce_build_policy_for_targets(
         targets=_plan_targets(config.matrix, environment),
         build_policy=config.build_policy,
@@ -1053,6 +1073,7 @@ def with_python_override(
         package_overrides=config.package_overrides,
         index_overrides=config.index_overrides,
     )
+
     retargeted = replace(config, environment=environment, build_policy=build_policy)
     _check_requires_python_admits_target(
         retargeted.requires_python, plan_targets(retargeted)[0]
@@ -1446,6 +1467,7 @@ def _environment_from_marker_environment(
         " declare [tool.nab.environment] with python/platform/implementation"
         " instead.  Translating the overlay for this run."
     )
+
     translatable = {
         *_MARKER_PYTHON_KEYS,
         *_MARKER_IMPLEMENTATION_KEYS,
@@ -1472,6 +1494,7 @@ def _environment_from_marker_environment(
             # platform_python_implementation is title-cased ("CPython").
             environment["implementation"] = marker_environment[key].lower()
             break
+
     implied = [k for k in _MARKER_PLATFORM_IMPLIED_KEYS if k in marker_environment]
     if implied and not any(k in marker_environment for k in _MARKER_PLATFORM_KEYS):
         msg = (
@@ -1481,6 +1504,7 @@ def _environment_from_marker_environment(
             " half a machine would keep the other half of the host's."
         )
         raise ConfigError(msg)
+
     if any(key in marker_environment for key in _MARKER_PLATFORM_KEYS):
         pair = (
             marker_environment.get("sys_platform", ""),

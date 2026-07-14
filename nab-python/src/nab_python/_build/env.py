@@ -250,7 +250,7 @@ class NabBuildEnv:
         """Resolve ``requires`` (+ ``extra``) and write wheels under ``wheel_dir``.
 
         The inner resolve runs against a synthetic pyproject so it
-        can reuse :func:`nab_python.resolve.resolve_pyproject` and
+        can reuse :func:`nab_python.resolve.resolve_for_targets` and
         :func:`nab_python.download.download_lock` end-to-end.  No
         local sources / workspace / marker overlay; build deps
         come from the configured indexes only.
@@ -258,7 +258,7 @@ class NabBuildEnv:
         # Late import: avoids a cycle through ``resolve.py`` which
         # itself imports ``pypi.py`` which imports ``build_backend``
         # which imports this module.
-        from ..resolve import resolve_pyproject
+        from ..resolve import build_lock_input, resolve_for_targets
 
         requires = list(self._requires)
         if extra:
@@ -280,12 +280,15 @@ class NabBuildEnv:
         # build a fresh transport each time.
         transport = self._transport_factory()
         try:
-            result = resolve_pyproject(
+            result = resolve_for_targets(
                 synthetic,
                 transport,
                 config=inner_config,
                 python_version=self._python_version,
             )
+            # The build env resolves for the host alone, so its one
+            # target's failure is the whole resolve's.
+            result.raise_for_failure()
         except (UnsupportedVcsError, NotImplementedError) as exc:
             # A direct-URL/VCS build requirement means nab cannot build this
             # sdist. Report it as a build-env failure so the outer resolve
@@ -293,14 +296,21 @@ class NabBuildEnv:
             msg = f"build env resolve failed: {exc}"
             raise BuildEnvError(msg) from exc
 
+        lock_input = build_lock_input(result, config=inner_config)
+
         # Reject sdist-only pins early: build deps that ship only an
         # sdist trigger a recursive backend invocation that this
         # builder does not handle.  Most build tools (hatchling,
         # setuptools, flit, pdm-backend) publish wheels.
         from ..lockfile import IndexPin
 
+        pins = {
+            name: pin
+            for lock in lock_input.targets.values()
+            for name, pin in lock.pins.items()
+        }
         sdist_only: list[str] = []
-        for canonical, pin in result.lock_input.pins.items():
+        for canonical, pin in pins.items():
             if isinstance(pin, IndexPin) and not pin.wheels:
                 sdist_only.append(f"{canonical}=={pin.version}")
         if sdist_only:
@@ -311,7 +321,7 @@ class NabBuildEnv:
             )
             raise BuildEnvError(msg)
 
-        download_result = download_lock(result.lock_input, transport, wheel_dir)
+        download_result = download_lock(lock_input, transport, wheel_dir)
         # Both wheels and sdists are downloaded; only wheels feed
         # ``installer.install``.  The sdists are inert clutter under
         # the temp dir, cleaned up with the env.

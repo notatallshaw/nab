@@ -9,7 +9,7 @@ index entry or a direct-URL archive) is copied from its on-disk path
 rather than fetched over HTTP.
 
 Use as a one-shot from the CLI ``nab download`` command, or
-programmatically after :func:`~nab_python.resolve.resolve_pyproject_to_lock`.
+programmatically after :func:`~nab_python.resolve.build_lock_input`.
 """
 
 from __future__ import annotations
@@ -87,21 +87,16 @@ class DownloadResult:
 def iter_artifacts(lock_input: LockInput) -> Iterable[DownloadEntry]:
     """Yield every wheel/sdist artefact referenced by ``lock_input``.
 
-    A universal lock (``per_tuple_pins`` populated) yields the union of
-    every tuple's artefacts, deduplicated by URL so a wheel shared
-    across platform tuples is downloaded once.
+    The union across the targets the resolve ran against, deduplicated
+    by URL so a wheel shared by several of them is downloaded once.
     """
-    if lock_input.per_tuple_pins:
-        seen: set[str] = set()
-        for label in sorted(lock_input.per_tuple_pins):
-            for canonical, pin in sorted(lock_input.per_tuple_pins[label].items()):
-                for entry in _entries_for_pin(canonical, pin):
-                    if entry.url not in seen:
-                        seen.add(entry.url)
-                        yield entry
-        return
-    for canonical, pin in sorted(lock_input.pins.items()):
-        yield from _entries_for_pin(canonical, pin)
+    seen: set[str] = set()
+    for label in sorted(lock_input.targets):
+        for canonical, pin in sorted(lock_input.targets[label].pins.items()):
+            for entry in _entries_for_pin(canonical, pin):
+                if entry.url not in seen:
+                    seen.add(entry.url)
+                    yield entry
 
 
 def _entries_for_pin(canonical: str, pin: PinShape) -> Iterable[DownloadEntry]:

@@ -15,12 +15,18 @@ they declared.
 
 ## How it works
 
-For each `(python, platform)` cell in the matrix, nab runs the
-single-environment resolver against an impersonated marker
-environment. All cells share one fetcher, so each package's
-metadata is fetched at most once across the whole matrix. After
-each cell resolves, its pins flow forward as preferences for the
-next cell, providing best-effort cross-tuple alignment.
+A matrix is a list of resolve targets, and nab resolves one target at
+a time: the same engine, and the same single-environment resolve, a
+project without a matrix runs once for the host. All cells share one
+fetcher, so each package's metadata is fetched at most once across the
+whole matrix. After each cell resolves, its pins flow forward as
+preferences for the next cell, providing best-effort cross-tuple
+alignment.
+
+The lock a matrix produces is the lock a single environment produces,
+with more environments in it: same shape, same
+[environment declaration](../reference/lockfile.md) per tuple, same
+dependency edges.
 
 ## Declaring the matrix
 
@@ -136,10 +142,12 @@ implementations). A PyPy tuple sets `platform_python_implementation =
 accepts `ppXY-pypyXY_pp73` wheel tags instead of `cpXY`. Labels use the
 `pp` interpreter prefix (`pp311-linux_x86_64`).
 
-The CPython tuple's lockfile marker stays unconstrained
-(`python_version`, `sys_platform`, `platform_machine` only) for
-backward compatibility; a non-CPython tuple adds an
-`implementation_name` clause so its entry is distinguishable. PyPy's
+A matrix modelling one implementation leaves the axis open: its
+lockfile markers carry `python_version`, `sys_platform` and
+`platform_machine` only. Declaring a second one puts
+`implementation_name` on every tuple's marker, and on the
+`environments` entry it declares, so the CPython and PyPy entries for
+one `(python, platform)` point stay mutually exclusive. PyPy's
 `implementation_version` is modelled as the Python level, not PyPy's
 own release, so the rare marker comparing `implementation_version`
 against a PyPy version misevaluates.

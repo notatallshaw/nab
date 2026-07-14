@@ -73,9 +73,9 @@ def validate_marker_disjointness(
     The empty-environments path skips validation: a producer that
     does not declare a universe cannot specify what "all envs" means
     and the validator would over-report when entries have ``marker
-    is None``.  Callers that emit per-tuple markers (universal
-    mode) populate ``LockInput.tuple_environments`` from the
-    matrix.
+    is None``.  Every resolve declares one environment per target, so
+    that path is reached only by a caller that builds a
+    :class:`~nab_python.lockfile.LockInput` with no targets of its own.
 
     Powerset pruning: ``extras`` and ``dependency_groups`` are PEP
     685 / PEP 735 marker variables that markers may or may not

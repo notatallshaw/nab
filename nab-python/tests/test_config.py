@@ -756,20 +756,44 @@ class TestRequiresPython:
         ):
             plan_targets(config)
 
-    def test_a_matrix_declares_its_own_pythons(self, tmp_path: Path) -> None:
-        """The matrix names the targets, so requires-python does not gate them.
+    def test_every_matrix_target_is_checked(self, tmp_path: Path) -> None:
+        """The lock carries the declaration and the targets, so they must agree.
 
-        The declaration is about the project, and a matrix that admits a
-        Python the project excludes is caught where the matrix is parsed.
+        A target the declaration excludes would be a lock that contradicts
+        itself, and a PEP 751 installer refuses it.
         """
         path = write(
             tmp_path,
-            '[tool.nab]\nmode = "universal"\nrequires-python = "==3.9.*"\n'
-            '[tool.nab.matrix]\npython = "==3.12"\n'
+            '[tool.nab]\nmode = "universal"\nrequires-python = ">=3.13"\n'
+            '[tool.nab.matrix]\npython = ">=3.11,<3.14"\n'
             'platforms = ["linux_x86_64"]\n',
         )
         config = read_pyproject_config(path)
-        (target,) = plan_targets(config)
+        with pytest.raises(
+            ConfigError, match="excludes the resolve target Python 3.11"
+        ):
+            plan_targets(config)
+
+    def test_python_cannot_retarget_a_matrix(self, tmp_path: Path) -> None:
+        """The matrix names the python axis of every target it declares."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            '[tool.nab.matrix]\npython = ">=3.12,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        config = read_pyproject_config(path)
+        with pytest.raises(ConfigError, match="cannot retarget a resolve"):
+            with_python_override(config, "3.11")
+
+    def test_a_matrix_the_declaration_admits_plans(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\nrequires-python = ">=3.11"\n'
+            '[tool.nab.matrix]\npython = ">=3.12,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
         assert target.python_version == "3.12"
 
     def test_a_release_candidate_host_satisfies_its_own_release(

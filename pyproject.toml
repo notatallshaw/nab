@@ -98,7 +98,7 @@ uploaded-prior-to = "P7D"
 
 [tool.nab.matrix]
 python = ">=3.10,<3.15"
-# Platform IDs from nab_python.universal.matrix._PLATFORM_DEFAULTS.
+# Platform IDs from nab_python.target.PLATFORM_MARKERS.
 platforms = [
     "linux_x86_64",
     "linux_aarch64",
@@ -154,7 +154,6 @@ source = []
 omit = [
     "*/tests/property/*",
     "*/tests/property_python/*",
-    "*/tests/universal/property_universal/*",
     "*/test_crosshair_*.py",
     "*/_vendor/*",
     "*/nab_python/_testing/*",

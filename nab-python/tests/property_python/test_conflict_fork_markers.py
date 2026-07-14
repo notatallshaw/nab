@@ -35,7 +35,6 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover - 3.10 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
-from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python.config import (
     ConflictKind,
@@ -46,9 +45,12 @@ from nab_python.config import (
 from nab_python.lockfile import (
     IndexPin,
     LockInput,
+    TargetLock,
     WheelArtifact,
     write_lock,
 )
+from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
 
 from .strategies import PROPERTY_SETTINGS
 
@@ -58,8 +60,8 @@ MEMBERS = ("a", "b")
 NAMES = ("p1", "p2", "p3")
 VERSIONS = ("1.0", "2.0")
 ENVS = (
-    ("linux", "3.11"),
-    ("win32", "3.11"),
+    ("linux_x86_64", "3.11"),
+    ("windows_amd64", "3.11"),
 )
 
 
@@ -119,37 +121,31 @@ def fork_cases(draw: st.DrawFn) -> list[EnvForks]:
     return case
 
 
+def _base_target(env_forks: EnvForks) -> ResolveTarget:
+    """The unforked target for one generated environment."""
+    return ResolveTarget.for_declared(
+        python_version=env_forks.python, spec=PlatformSpec(env_forks.platform)
+    )
+
+
 def _environment(env_forks: EnvForks) -> dict[str, str]:
     """Build the marker environment for one generated environment."""
-    return {
-        "python_version": env_forks.python,
-        "python_full_version": f"{env_forks.python}.0",
-        "sys_platform": env_forks.platform,
-    }
+    return dict(_base_target(env_forks).marker_env)
 
 
 def _build_input(case: list[EnvForks]) -> LockInput:
     """Assemble the per-tuple ``LockInput`` for the generated forks."""
-    per_tuple_pins: dict[str, dict[str, IndexPin]] = {}
-    tuple_markers: dict[str, Marker] = {}
-    tuple_env_markers: dict[str, Marker] = {}
-    tuple_environments: dict[str, dict[str, str]] = {}
+    targets: dict[str, TargetLock] = {}
     env_base_names: dict[tuple[tuple[str, str], ...], frozenset[str]] = {}
     for env_forks in case:
-        env = _environment(env_forks)
-        env_marker = (
-            f'python_version == "{env_forks.python}" '
-            f'and sys_platform == "{env_forks.platform}"'
-        )
-        env_base_names[tuple(sorted(env.items()))] = env_forks.base_names
+        base = _base_target(env_forks)
+        env_base_names[tuple(sorted(base.marker_env.items()))] = env_forks.base_names
         for member in MEMBERS:
-            label = f"{env_forks.platform}-{member}"
-            tuple_markers[label] = Marker(f'({env_marker}) and "{member}" in extras')
-            tuple_env_markers[label] = Marker(env_marker)
-            tuple_environments[label] = env
-            per_tuple_pins[label] = {
-                n: _pin(n, v) for n, v in env_forks.fork_pins[member].items()
-            }
+            target = base.with_selection(((ConflictKind.EXTRA.value, member),))
+            targets[target.label] = TargetLock(
+                target=target,
+                pins={n: _pin(n, v) for n, v in env_forks.fork_pins[member].items()},
+            )
     conflicts = (
         ConflictSet(
             members=tuple(
@@ -159,10 +155,7 @@ def _build_input(case: list[EnvForks]) -> LockInput:
         ),
     )
     return LockInput(
-        per_tuple_pins=per_tuple_pins,
-        tuple_markers=tuple_markers,
-        tuple_env_markers=tuple_env_markers,
-        tuple_environments=tuple_environments,
+        targets=targets,
         env_base_names=env_base_names,
         extras=tuple(MEMBERS),
         conflicts=conflicts,

@@ -67,32 +67,34 @@ def _render_requirements(
     with_hashes: bool,
     output_path: str | os.PathLike[str] | None,
 ) -> str:
-    if lock_input.per_tuple_pins:
-        text = _render_per_tuple_requirements(lock_input, with_hashes=with_hashes)
+    """Render one target's pins flat, or several as labelled blocks.
+
+    Pip cannot install a single requirements.txt across several
+    ``(python, platform)`` targets in hash-checking mode, so a resolve
+    that ran against more than one serialises as commented sections that
+    callers are expected to extract per environment.  One target is one
+    installable file, so it carries no section header.
+    """
+    targets = lock_input.targets
+    if len(targets) > 1:
+        blocks = [
+            "\n".join(
+                [
+                    f"# {label}",
+                    *_render_pins(targets[label].pins, with_hashes=with_hashes),
+                ]
+            )
+            for label in sorted(targets)
+        ]
+        text = "\n\n".join(blocks) + "\n"
     else:
-        lines = _render_pins(lock_input.pins, with_hashes=with_hashes)
-        text = "\n".join(lines) + "\n"
+        pins = {
+            name: pin for lock in targets.values() for name, pin in lock.pins.items()
+        }
+        text = "\n".join(_render_pins(pins, with_hashes=with_hashes)) + "\n"
     if output_path is not None:
         Path(output_path).write_text(text, encoding="utf-8")
     return text
-
-
-def _render_per_tuple_requirements(lock_input: LockInput, *, with_hashes: bool) -> str:
-    """Emit one ``# label`` block per tuple in sorted label order.
-
-    Each block is followed by that tuple's pins.  Pip cannot install a
-    single requirements.txt across multiple ``(python, platform)``
-    tuples in hash-checking mode, so a multi-tuple resolve serialises as
-    commented sections that callers are expected to extract per
-    environment.
-    """
-    blocks: list[str] = []
-    for label in sorted(lock_input.per_tuple_pins):
-        pins = lock_input.per_tuple_pins[label]
-        block = [f"# {label}"]
-        block.extend(_render_pins(pins, with_hashes=with_hashes))
-        blocks.append("\n".join(block))
-    return "\n\n".join(blocks) + "\n"
 
 
 def _render_pins(pins: Mapping[str, PinShape], *, with_hashes: bool) -> list[str]:
