@@ -832,6 +832,22 @@ class TestResolveAndDownload:
         with pytest.raises(BuildEnvError, match="build env resolve"):
             env._resolve_and_download(wheel_dir)
 
+    def test_control_char_build_requirement_wrapped(self, tmp_path: Path) -> None:
+        """A control character makes a build requirement invalid PEP 508, so
+        _resolve_and_download raises BuildEnvError rather than a raw error.
+        """
+        env = NabBuildEnv(
+            requires=["setuptools\n>=61"],
+            config=NabProjectConfig(),
+        )
+        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
+        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
+        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        with pytest.raises(BuildEnvError, match="build env resolve"):
+            env._resolve_and_download(wheel_dir)
+
 
 class TestNabBuildEnvLifecycle:
     """Edge cases of the context-manager lifecycle that fall outside
@@ -855,6 +871,18 @@ class TestNabBuildEnvLifecycle:
 
         text = _render_synthetic_pyproject([])
         assert "dependencies = []" in text
+
+    def test_render_synthetic_pyproject_escapes_control_chars(self) -> None:
+        """Control characters, quotes, and backslashes in a requirement
+        round-trip through the synthetic pyproject as valid TOML.
+        """
+        import tomli
+
+        from nab_python._build.env import _render_synthetic_pyproject
+
+        requires = ["a\nb", 'c"d\\e', "f\x00g", "h\x7fi", "plain>=1"]
+        rendered = _render_synthetic_pyproject(requires)
+        assert tomli.loads(rendered)["project"]["dependencies"] == requires
 
 
 class TestNabBuildEnvEnterInstall:
