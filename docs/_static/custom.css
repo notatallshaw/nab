@@ -1,0 +1,8 @@
+/* Furo sizes a sidebar caption ("Reference") at --font-size--small--2, smaller
+   than the page links beneath it, so a section title reads as less important
+   than its own contents.  Lift it above the links and widen the gap between
+   sections. */
+body {
+  --sidebar-caption-font-size: var(--font-size--normal);
+  --sidebar-caption-space-above: 2rem;
+}

@@ -16,6 +16,7 @@ extensions = [
 ]
 
 myst_enable_extensions = [
+    "alert",
     "colon_fence",
     "deflist",
     "linkify",
@@ -31,7 +32,8 @@ intersphinx_mapping = {
 
 html_theme = "furo"
 html_title = "nab"
-html_static_path: list[str] = []
+html_static_path: list[str] = ["_static"]
+html_css_files = ["custom.css"]
 
 # Read the Docs serves several versions from one domain.  Without a canonical
 # URL, search engines and link previews pick an arbitrary one.

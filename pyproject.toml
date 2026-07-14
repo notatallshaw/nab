@@ -70,10 +70,14 @@ types = [
 pre-commit = [
     "pre-commit>=4",
 ]
+# Locked as a single resolution for one interpreter, not against the project's
+# universal matrix; see tasks/refresh-locks.sh.  myst-parser 5.1 is the floor
+# that carries the `alert` extension conf.py enables to render the GitHub alert
+# syntax the guides use; it needs Python 3.11 or newer.
 docs = [
     "sphinx>=8",
     "furo>=2024.8",
-    "myst-parser>=4",
+    "myst-parser>=5.1",
     "linkify-it-py>=2",
     "sphinx-design>=0.6",
     "sphinx-copybutton>=0.5",
