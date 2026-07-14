@@ -2587,6 +2587,18 @@ class TestLockProvenanceCliOverrides:
         block = tomli.loads(out.read_text())["tool"]["nab"]
         assert "cli-project-overrides" not in block
 
+    def test_command_line_records_the_program_name(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        argv = ["/somewhere/on/this/machine/src/nab/__main__.py", "lock", "--offline"]
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
+            patch.object(sys, "argv", argv),
+        ):
+            app.cli(args=["lock", str(pyproject), "--output", str(out)], prog="nab")
+        recorded = tomli.loads(out.read_text())["tool"]["nab"]["command-line"]
+        assert recorded == ["nab", "lock", "--offline"]
+
 
 class TestGroupAndExtraSelection:
     """Selection guards for ``--all-groups`` / ``--all-extras``.
