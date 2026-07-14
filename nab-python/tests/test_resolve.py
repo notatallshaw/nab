@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -2687,6 +2688,19 @@ class TestAugmentResolutionError:
         # Walk should record ``shared`` exactly once even though ``leaf``
         # is reachable from two branches of the derivation DAG.
         assert _walk_no_versions_packages(top) == ["shared"]
+
+    def test_walks_a_chain_deeper_than_the_recursion_limit(self) -> None:
+        """A derivation longer than the recursion limit is still walked."""
+        node: Incompatibility = self._no_versions_clause("buried-pkg")
+        for _ in range(sys.getrecursionlimit() + 100):
+            node = Incompatibility(
+                [Term("buried-pkg", Range.full(), positive=True)],
+                cause=IncompatibilityCause.DERIVED,
+                cause_left=node,
+                cause_right=None,
+            )
+
+        assert _walk_no_versions_packages(node) == ["buried-pkg"]
 
     def test_resolve_pyproject_re_raises_with_diagnostic(self, tmp_path: Path) -> None:
         """``resolve_pyproject`` re-raises the augmented ResolutionError."""

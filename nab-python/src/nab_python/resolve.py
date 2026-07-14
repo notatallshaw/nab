@@ -1170,23 +1170,31 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
 def _walk_no_versions_packages(
     incompatibility: Incompatibility[Any, Any],
 ) -> list[str]:
-    """Return package names from every NO_VERSIONS clause in the tree."""
+    """Return package names from every NO_VERSIONS clause in the tree.
+
+    The walk is iterative: the tree gains a level per conflict, so a deeply
+    backtracked resolve overflows the recursion limit.
+    """
     out: list[str] = []
     seen_ids: set[int] = set()
+    stack: list[Incompatibility[Any, Any]] = [incompatibility]
 
-    def visit(node: Incompatibility[Any, Any]) -> None:
+    while stack:
+        node = stack.pop()
         if id(node) in seen_ids:
-            return
+            continue
         seen_ids.add(id(node))
+
         if node.cause is IncompatibilityCause.NO_VERSIONS:
             for term in node.terms:
                 pkg = term.package
                 if isinstance(pkg, str):
                     out.append(pkg)
-        if node.cause_left is not None:
-            visit(node.cause_left)
-        if node.cause_right is not None:
-            visit(node.cause_right)
 
-    visit(incompatibility)
+        # Right before left, so the left cause pops first and names keep their order.
+        if node.cause_right is not None:
+            stack.append(node.cause_right)
+        if node.cause_left is not None:
+            stack.append(node.cause_left)
+
     return out
