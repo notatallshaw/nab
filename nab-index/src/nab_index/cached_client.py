@@ -151,9 +151,15 @@ class CachedAsyncSimpleClient:
             headers["If-None-Match"] = policy.etag
         response = await self._transport.get(url, headers=headers)
         if response.status_code == _HTTP_NOT_MODIFIED:
+            # A 304 without cache-control keeps the stored max-age.
+            cache_control = _header(response, "cache-control")
             new_policy = CachePolicy(
                 fetched_at=int(time.time()),
-                max_age=_parse_max_age(_header(response, "cache-control")),
+                max_age=(
+                    _parse_max_age(cache_control)
+                    if cache_control is not None
+                    else policy.max_age
+                ),
                 etag=_header(response, "etag") or policy.etag,
             )
             self._cache.refresh_simple_policy(package, new_policy)
