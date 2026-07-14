@@ -1,29 +1,36 @@
 """Predict which wheel a target environment would install.
 
 Resolution needs the install-time wheel selection answer without a
-live interpreter, so the tag set is computed from :class:`PlatformSpec`
-and the implementation name directly, never from the interpreter
-running nab. CPython tags come from ``packaging.tags.cpython_tags``;
-PyPy tags are emitted directly (interpreter ``ppXY``, abi
-``pypyXY_pp73``). Both add interpreter-agnostic tags from
-``packaging.tags.compatible_tags``. Platform tags use ``mac_platforms``
-for macOS and expand the declared libc family's tags on Linux. A wheel
-matches the target iff its parsed tags share a member with the target's
-accepted tag set.
+live interpreter, so a declared target's tag set is computed from
+:class:`PlatformSpec` and the implementation name directly, never from
+the interpreter running nab. CPython tags come from
+``packaging.tags.cpython_tags``; PyPy tags are emitted directly
+(interpreter ``ppXY``, abi ``pypyXY_pp73``). Both add
+interpreter-agnostic tags from ``packaging.tags.compatible_tags``.
+Platform tags use ``mac_platforms`` for macOS and expand the declared
+libc family's tags on Linux. A wheel matches the target iff its parsed
+tags share a member with the target's accepted tag set.
+
+:class:`TagSet` is that accepted set, in install-preference order. The
+host builds one from ``packaging.tags.sys_tags``; a target Python on
+the host machine keeps the host's platform axis and moves only the
+interpreter and abi, which is what pip's ``--python-version`` does.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from functools import cache, lru_cache
+from functools import cache, cached_property, lru_cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from ._vendor.packaging import tags as ptags
+from ._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Mapping, Sequence
 
     from nab_index.client import WheelFile
 
@@ -36,9 +43,10 @@ __all__ = [
     "LIBC_MAJOR",
     "Libc",
     "PlatformSpec",
+    "TagSet",
+    "TagsSource",
     "platform_kind",
-    "select_wheel",
-    "tags_for_target",
+    "supports_free_threading",
     "wheel_tag_set",
 ]
 
@@ -46,6 +54,10 @@ Libc = Literal["glibc", "musl"]
 
 # The free-threaded build ships from CPython 3.13 (PEP 703).
 FREE_THREADED_MIN_PYTHON = (3, 13)
+
+# Where a host tag set comes from.  Injected so a caller (and every
+# test) can name the interpreter it means instead of the one running.
+TagsSource = Callable[[], "Iterable[Tag]"]
 
 
 # PEP 427: a wheel filename has at least 5 dash-separated segments
@@ -374,23 +386,19 @@ _PYPY_SOABI = "73"
 _PYMALLOC_ABI_SUFFIX = "m"
 _PYMALLOC_LAST_VERSION = (3, 7)
 
+# PEP 425 interpreter short code for PyPy, and the abi suffix CPython's
+# free-threaded build carries (``cp313t``).  Both are read back off a
+# host tag set to name the interpreter a bare ``sys_tags()`` came from.
+# The PEP 425 interpreter prefix each implementation names itself with.
+_IMPLEMENTATION_FOR_PREFIX: Mapping[str, str] = MappingProxyType(
+    {"cp": "cpython", "pp": "pypy"}
+)
+_INTERPRETER_PREFIX_LEN = 2
+_FREE_THREADED_ABI_SUFFIX = "t"
 
-@cache
-def tags_for_target(
-    *,
-    python_version: str,
-    spec: PlatformSpec,
-    implementation: str = "cpython",
-) -> frozenset[Tag]:
-    """Return the full set of tags ``(python_version, spec, impl)`` accepts.
-
-    Builds the same ordered tags as :func:`_tags_in_order` and returns
-    them as a frozenset.  Cached on the three immutable inputs (str,
-    frozen dataclass, str): the resulting set is identical across every
-    wheel-compatibility check for the same target, so the cache skips
-    rebuilding the same :class:`Tag` set per call.
-    """
-    return frozenset(_tags_in_order(python_version, spec, implementation))
+# The platform tag of an interpreter-agnostic wheel.  It is not a
+# machine, so it never seeds the platform axis of another target.
+_ANY_PLATFORM = "any"
 
 
 @lru_cache(maxsize=4096)
@@ -444,43 +452,6 @@ def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     return _parse_tag_str("-".join(parts[-3:]))
 
 
-def select_wheel(
-    wheels: Iterable[WheelFile],
-    *,
-    python_version: str,
-    spec: PlatformSpec,
-    implementation: str = "cpython",
-) -> WheelFile | None:
-    """Pick the most-specific compatible wheel for the target, or None.
-
-    Implements PEP 425 preference: wheels matching earlier
-    (more-specific) tags in :func:`tags_for_target` win over those
-    matching later (more-generic) tags.  Within the same tag rank, the
-    wheel with the highest PEP 427 build tag wins (an absent tag sorts
-    lowest); exact ties keep input order.
-    """
-    compat_list = list(_tags_in_order(python_version, spec, implementation))
-    rank: dict[Tag, int] = {tag: i for i, tag in enumerate(compat_list)}
-
-    best: tuple[int, tuple[int, str], WheelFile] | None = None
-    for wheel in wheels:
-        wheel_tags = wheel_tag_set(wheel.filename)
-        if not wheel_tags:
-            continue
-        # Lowest rank index wins (most-specific tag).
-        wheel_rank = min((rank[t] for t in wheel_tags if t in rank), default=None)
-        if wheel_rank is None:
-            continue
-        build_key = _build_tag_sort_key(wheel.filename)
-        if (
-            best is None
-            or wheel_rank < best[0]
-            or (wheel_rank == best[0] and build_key > best[1])
-        ):
-            best = (wheel_rank, build_key, wheel)
-    return best[2] if best is not None else None
-
-
 def _build_tag_sort_key(filename: str) -> tuple[int, str]:
     """Return a PEP 427 build-tag sort key; an absent tag sorts lowest.
 
@@ -500,14 +471,187 @@ def _cpython_abi(py_version: tuple[int, int], *, free_threaded: bool) -> str:
     """Name the ABI a CPython target loads."""
     abi = f"cp{py_version[0]}{py_version[1]}"
     if free_threaded:
-        return abi + "t"
+        return abi + _FREE_THREADED_ABI_SUFFIX
     if py_version <= _PYMALLOC_LAST_VERSION:
         return abi + _PYMALLOC_ABI_SUFFIX
     return abi
 
 
+@dataclass(frozen=True)
+class TagSet:
+    """The wheel tags one target accepts, in install-preference order.
+
+    ``ordered`` is PEP 425 preference order, most specific first, so a
+    tag's index in it is the target's preference for the wheels
+    carrying it.
+    """
+
+    ordered: tuple[Tag, ...]
+
+    @cached_property
+    def members(self) -> frozenset[Tag]:
+        """The accepted tags as a set, for compatibility tests."""
+        return frozenset(self.ordered)
+
+    @cached_property
+    def rank(self) -> Mapping[Tag, int]:
+        """Preference index per accepted tag; the lowest index wins."""
+        return {tag: i for i, tag in enumerate(self.ordered)}
+
+    def accepts(self, wheel_filename: str) -> bool:
+        """Return True when the target can install ``wheel_filename``.
+
+        A filename that is not a parseable wheel is never accepted.
+        """
+        wheel_tags = wheel_tag_set(wheel_filename)
+        return wheel_tags is not None and not wheel_tags.isdisjoint(self.members)
+
+    def pick(self, wheels: Iterable[WheelFile]) -> WheelFile | None:
+        """Pick the most-specific compatible wheel for the target, or None.
+
+        Implements PEP 425 preference: wheels matching earlier
+        (more-specific) tags in :attr:`ordered` win over those matching
+        later (more-generic) tags.  Within the same tag rank, the wheel
+        with the highest PEP 427 build tag wins (an absent tag sorts
+        lowest); exact ties keep input order.
+        """
+        rank = self.rank
+        best: tuple[int, tuple[int, str], WheelFile] | None = None
+        for wheel in wheels:
+            wheel_tags = wheel_tag_set(wheel.filename)
+            if not wheel_tags:
+                continue
+            # Lowest rank index wins (most-specific tag).
+            wheel_rank = min((rank[t] for t in wheel_tags if t in rank), default=None)
+            if wheel_rank is None:
+                continue
+            build_key = _build_tag_sort_key(wheel.filename)
+            if (
+                best is None
+                or wheel_rank < best[0]
+                or (wheel_rank == best[0] and build_key > best[1])
+            ):
+                best = (wheel_rank, build_key, wheel)
+        return best[2] if best is not None else None
+
+    @classmethod
+    def for_spec(
+        cls,
+        *,
+        python_version: str,
+        spec: PlatformSpec,
+        implementation: str = "cpython",
+    ) -> TagSet:
+        """Return the tags a declared (python, platform, impl) target accepts."""
+        return cls(_ordered_tags_for_spec(python_version, spec, implementation))
+
+    @classmethod
+    def for_host(cls, *, tags_source: TagsSource = ptags.sys_tags) -> TagSet:
+        """Return the tags the running interpreter accepts.
+
+        ``packaging.tags.sys_tags`` already answers this for the live
+        machine, libc probing and all, so nothing is re-derived here.
+        """
+        return cls(tuple(tags_source()))
+
+    @classmethod
+    def for_host_python(
+        cls, python: str, *, tags_source: TagsSource = ptags.sys_tags
+    ) -> TagSet:
+        """Return the host's tags with the interpreter moved to ``python``.
+
+        The machine is still the host, so its platform tags carry over
+        unchanged (the ``any`` platform is not a machine and is
+        re-derived with the rest of the interpreter-agnostic tags); only
+        the interpreter and abi axes move.  This is what pip's
+        ``--python-version`` targets.  The host's implementation and
+        free-threaded build are read back off its own tags.
+        """
+        host = tuple(tags_source())
+        if not host:
+            msg = "tags_source yielded no tags, so the host platform is unknown"
+            raise ValueError(msg)
+        platforms = [
+            platform
+            for platform in dict.fromkeys(tag.platform for tag in host)
+            if platform != _ANY_PLATFORM
+        ]
+        # sys_tags yields the most specific tag first, so the running
+        # interpreter names itself in the first entry.
+        implementation = _host_implementation(host[0].interpreter)
+        # The host's free-threaded ABI only carries to a Python that has one:
+        # ``cp310t`` has never existed, and a target advertising it matches no
+        # wheel at all.  The declared-target path refuses the same combination.
+        free_threaded = host[0].abi.endswith(
+            _FREE_THREADED_ABI_SUFFIX
+        ) and supports_free_threading(python)
+        return cls(
+            tuple(
+                _tags_in_order(
+                    python,
+                    platforms,
+                    implementation,
+                    free_threaded=free_threaded,
+                )
+            )
+        )
+
+
+@cache
+def _ordered_tags_for_spec(
+    python_version: str, spec: PlatformSpec, implementation: str
+) -> tuple[Tag, ...]:
+    """Build a declared target's ordered tags.
+
+    Cached on the three immutable inputs (str, frozen dataclass, str):
+    the matrix rebuilds a target's tags per resolve pass, and the tag
+    list is identical every time.
+    """
+    return tuple(
+        _tags_in_order(
+            python_version,
+            _platform_tags_for_spec(spec),
+            implementation,
+            free_threaded=spec.free_threaded,
+        )
+    )
+
+
+def _python_pair(python_version: str) -> tuple[int, int]:
+    """Return ``(major, minor)`` for a ``3.12`` or ``3.12.5`` version."""
+    release = Version(python_version).release
+    major, minor = (*release, 0)[:2]
+    return major, minor
+
+
+def _host_implementation(interpreter: str) -> str:
+    """Name the implementation a PEP 425 interpreter tag belongs to.
+
+    An interpreter nab has no tag rules for cannot be resolved for: guessing
+    CPython would hand it a ``cpXY`` tag set it can load none of.
+    """
+    prefix = interpreter[:_INTERPRETER_PREFIX_LEN]
+    implementation = _IMPLEMENTATION_FOR_PREFIX.get(prefix)
+    if implementation is None:
+        msg = (
+            f"unsupported interpreter {interpreter!r}:"
+            f" nab resolves for CPython and PyPy"
+        )
+        raise ValueError(msg)
+    return implementation
+
+
+def supports_free_threading(python_version: str) -> bool:
+    """Whether ``python_version`` has a free-threaded build at all (:pep:`703`)."""
+    return _python_pair(python_version) >= FREE_THREADED_MIN_PYTHON
+
+
 def _tags_in_order(
-    python_version: str, spec: PlatformSpec, implementation: str = "cpython"
+    python_version: str,
+    platforms: Sequence[str],
+    implementation: str,
+    *,
+    free_threaded: bool,
 ) -> Iterable[Tag]:
     """Yield the tags a target accepts in install preference order.
 
@@ -520,9 +664,8 @@ def _tags_in_order(
     directly.  Both then add the interpreter-agnostic tags (pyXY-none-any,
     py3-none-any, ...).
     """
-    major, minor = (int(p) for p in python_version.split("."))
-    py_version = (major, minor)
-    platforms = _platform_tags_for_spec(spec)
+    py_version = _python_pair(python_version)
+    major, minor = py_version
     if implementation == "pypy":
         interpreter = f"pp{major}{minor}"
         abi = f"pypy{major}{minor}_pp{_PYPY_SOABI}"
@@ -532,7 +675,7 @@ def _tags_in_order(
             yield ptags.Tag(interpreter, "none", platform_)
     else:
         interpreter = f"cp{major}{minor}"
-        abi = _cpython_abi(py_version, free_threaded=spec.free_threaded)
+        abi = _cpython_abi(py_version, free_threaded=free_threaded)
         yield from ptags.cpython_tags(
             python_version=py_version, abis=[abi], platforms=platforms
         )

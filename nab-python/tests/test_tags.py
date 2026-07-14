@@ -17,15 +17,15 @@ from unittest.mock import patch
 import pytest
 
 from nab_index.client import WheelFile
+from nab_python._vendor.packaging.tags import Tag
 from nab_python.tags import (
     _PLATFORM_ARCH,
     _PLATFORM_KIND,
     PlatformSpec,
+    TagSet,
+    _ordered_tags_for_spec,
     _parse_tag_str,
     _platform_tags_for_spec,
-    _tags_in_order,
-    select_wheel,
-    tags_for_target,
     wheel_tag_set,
 )
 
@@ -58,12 +58,9 @@ def _compatible(
     implementation: str = "cpython",
 ) -> bool:
     """True iff the target would install ``wheel``, given only that wheel."""
-    chosen = select_wheel(
-        [wheel],
-        python_version=python_version,
-        spec=spec,
-        implementation=implementation,
-    )
+    chosen = TagSet.for_spec(
+        python_version=python_version, spec=spec, implementation=implementation
+    ).pick([wheel])
     return chosen is not None
 
 
@@ -268,7 +265,7 @@ class TestLibcFamilyExclusivity:
         """Given numpy's full wheel list, the glibc target picks the glibc wheel."""
         spec = PlatformSpec("linux_x86_64")
         wheels = [_wheel(NUMPY_MUSLLINUX), _wheel(NUMPY_MANYLINUX)]
-        chosen = select_wheel(wheels, python_version="3.13", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.13", spec=spec).pick(wheels)
         assert chosen is not None
         assert chosen.filename == NUMPY_MANYLINUX
 
@@ -303,7 +300,9 @@ class TestFreeThreadedTarget:
     def test_free_threaded_target_keeps_abi3t_and_pure_python(self) -> None:
         """The stable free-threaded ABI and the pure-Python fallback remain."""
         spec = PlatformSpec("linux_x86_64", free_threaded=True)
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.13", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.13", spec=spec).members
+        }
         assert "cp313-abi3t-manylinux_2_28_x86_64" in tag_strs
         assert "py3-none-any" in tag_strs
 
@@ -326,21 +325,17 @@ class TestPymallocAbi:
     def test_a_37_target_names_the_m_abi(self) -> None:
         """Every 3.7 wheel is tagged cp37m, so a cp37 target matches none."""
         spec = PlatformSpec("linux_x86_64")
-        tags = tags_for_target(python_version="3.7", spec=spec)
-        assert "cp37m" in {t.abi for t in tags}
-        wheel = wheel_tag_set(
+        tags = TagSet.for_spec(python_version="3.7", spec=spec)
+        assert "cp37m" in {t.abi for t in tags.ordered}
+        assert tags.accepts(
             "numpy-1.21.6-cp37-cp37m-manylinux_2_12_x86_64.manylinux2010_x86_64.whl"
         )
-        assert wheel is not None
-        assert wheel & tags
 
     def test_38_dropped_the_flag(self) -> None:
         spec = PlatformSpec("linux_x86_64")
-        tags = tags_for_target(python_version="3.8", spec=spec)
-        assert "cp38m" not in {t.abi for t in tags}
-        wheel = wheel_tag_set("numpy-1.24.4-cp38-cp38-manylinux_2_17_x86_64.whl")
-        assert wheel is not None
-        assert wheel & tags
+        tags = TagSet.for_spec(python_version="3.8", spec=spec)
+        assert "cp38m" not in {t.abi for t in tags.ordered}
+        assert tags.accepts("numpy-1.24.4-cp38-cp38-manylinux_2_17_x86_64.whl")
 
 
 class TestAbiIsHostIndependent:
@@ -356,7 +351,7 @@ class TestAbiIsHostIndependent:
         """A declared GIL target keeps its cp313 and abi3 tags on such a host."""
         spec = PlatformSpec("linux_x86_64")
         with _free_threaded_host():
-            tag_strs = {str(t) for t in _tags_in_order("3.13", spec)}
+            tag_strs = {str(t) for t in _ordered_tags_for_spec("3.13", spec, "cpython")}
         assert "cp313-cp313-manylinux_2_28_x86_64" in tag_strs
         assert "cp313-abi3-manylinux_2_28_x86_64" in tag_strs
         assert not any("cp313t" in t for t in tag_strs)
@@ -375,36 +370,44 @@ class TestAbiIsHostIndependent:
     def test_free_threaded_target_reachable_from_any_host(self) -> None:
         """A declared free-threaded target gets its cp313t tag with no host help."""
         spec = PlatformSpec("linux_x86_64", free_threaded=True)
-        tag_strs = {str(t) for t in _tags_in_order("3.13", spec)}
+        tag_strs = {str(t) for t in _ordered_tags_for_spec("3.13", spec, "cpython")}
         assert "cp313-cp313t-manylinux_2_28_x86_64" in tag_strs
 
 
 class TestTagsForTarget:
-    """``tags_for_target`` produces the full PEP 425 tag set."""
+    """``TagSet.for_spec`` produces the full PEP 425 tag set."""
 
     def test_linux_includes_manylinux_at_or_below_libc_version(self) -> None:
         """A glibc 2.17 target admits manylinux_2_17 and below."""
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-manylinux_2_17_x86_64" in tag_strs
         assert "cp311-cp311-manylinux_2_5_x86_64" in tag_strs
 
     def test_linux_excludes_manylinux_above_libc_version(self) -> None:
         """manylinux_2_28 needs glibc 2.28; a 2.17 target cannot run it."""
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-manylinux_2_28_x86_64" not in tag_strs
 
     def test_default_linux_admits_manylinux_2_28(self) -> None:
         """The default glibc version admits manylinux_2_28."""
         spec = PlatformSpec("linux_x86_64")
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-manylinux_2_28_x86_64" in tag_strs
 
     def test_linux_includes_legacy_aliases(self) -> None:
         """manylinux1, manylinux2010, manylinux2014 aliases are included."""
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-manylinux1_x86_64" in tag_strs
         assert "cp311-cp311-manylinux2010_x86_64" in tag_strs
         assert "cp311-cp311-manylinux2014_x86_64" in tag_strs
@@ -412,14 +415,18 @@ class TestTagsForTarget:
     def test_linux_excludes_aliases_above_libc_version(self) -> None:
         """manylinux2014 means glibc 2.17; a 2.12 target excludes it."""
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 12))
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-manylinux2014_x86_64" not in tag_strs
         assert "cp311-cp311-manylinux2010_x86_64" in tag_strs
 
     def test_aarch64_manylinux_stops_at_2_17(self) -> None:
         """aarch64 does not descend below glibc 2.17 (PEP 599)."""
         spec = PlatformSpec("linux_aarch64", libc_version=(2, 17))
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-manylinux_2_17_aarch64" in tag_strs
         assert "cp311-cp311-manylinux2014_aarch64" in tag_strs
         assert "cp311-cp311-manylinux_2_16_aarch64" not in tag_strs
@@ -437,21 +444,27 @@ class TestTagsForTarget:
     def test_x86_64_keeps_legacy_alias_range(self) -> None:
         """x86_64 still descends to manylinux1 (glibc 2.5)."""
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-manylinux1_x86_64" in tag_strs
         assert "cp311-cp311-manylinux_2_5_x86_64" in tag_strs
 
     def test_musl_includes_musllinux_at_or_below_version(self) -> None:
         """A musl 1.2 target admits musllinux_1_2 and below."""
         spec = PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2))
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-musllinux_1_2_x86_64" in tag_strs
         assert "cp311-cp311-musllinux_1_0_x86_64" in tag_strs
 
     def test_macos_arm64_default_accepts_modern_wheels(self) -> None:
         """The default ``macos_arm64`` admits ``macosx_11_0`` and ``macosx_12_0``."""
         spec = PlatformSpec("macos_arm64")
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         # mac_platforms yields versions <= the declared one
         assert "cp311-cp311-macosx_11_0_arm64" in tag_strs
         assert "cp311-cp311-macosx_12_0_arm64" in tag_strs
@@ -461,25 +474,33 @@ class TestTagsForTarget:
     def test_macos_x86_64_uses_default_min(self) -> None:
         """``macos_x86_64`` defaults to macOS 10.13 (x86_64-era)."""
         spec = PlatformSpec("macos_x86_64")
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-macosx_10_13_x86_64" in tag_strs
 
     def test_macos_explicit_min(self) -> None:
         """An explicit ``macos_min`` overrides the default."""
         spec = PlatformSpec("macos_arm64", macos_min=(14, 0))
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-macosx_14_0_arm64" in tag_strs
 
     def test_windows_amd64(self) -> None:
         """Windows amd64 generates ``win_amd64`` tags."""
         spec = PlatformSpec("windows_amd64")
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "cp311-cp311-win_amd64" in tag_strs
 
     def test_includes_universal_tags(self) -> None:
         """``py3-none-any`` and ``cp311-none-any`` are always in the set."""
         spec = PlatformSpec("linux_x86_64")
-        tag_strs = {str(t) for t in tags_for_target(python_version="3.11", spec=spec)}
+        tag_strs = {
+            str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
+        }
         assert "py3-none-any" in tag_strs
         assert "cp311-none-any" in tag_strs
 
@@ -634,13 +655,13 @@ class TestSelectWheel:
         """No compatible wheel -> None."""
         spec = PlatformSpec("linux_x86_64")
         wheels = [_wheel("pkg-1.0-cp311-cp311-win_amd64.whl")]
-        assert select_wheel(wheels, python_version="3.11", spec=spec) is None
+        assert TagSet.for_spec(python_version="3.11", spec=spec).pick(wheels) is None
 
     def test_default_macos_arm64_selects_modern_only_wheel(self) -> None:
         """A version shipping only a ``macosx_12_0`` arm64 wheel is selectable."""
         spec = PlatformSpec("macos_arm64")
         wheels = [_wheel("pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl")]
-        chosen = select_wheel(wheels, python_version="3.12", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.12", spec=spec).pick(wheels)
         assert chosen is not None
         assert chosen.filename == "pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl"
 
@@ -651,7 +672,7 @@ class TestSelectWheel:
             _wheel("pkg-2.2.0-py3-none-any.whl"),
             _wheel("pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl"),
         ]
-        chosen = select_wheel(wheels, python_version="3.12", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.12", spec=spec).pick(wheels)
         assert chosen is not None
         assert chosen.filename == "pkg-2.2.0-cp312-cp312-macosx_12_0_arm64.whl"
 
@@ -662,7 +683,7 @@ class TestSelectWheel:
             _wheel("pkg-1.0-py3-none-any.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"),
         ]
-        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(wheels)
         assert chosen is not None
         assert "manylinux" in chosen.filename
 
@@ -670,7 +691,7 @@ class TestSelectWheel:
         """When only py3-none-any is compatible, it wins."""
         spec = PlatformSpec("linux_x86_64")
         wheels = [_wheel("pkg-1.0-py3-none-any.whl")]
-        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(wheels)
         assert chosen is not None
         assert chosen.filename == "pkg-1.0-py3-none-any.whl"
 
@@ -689,7 +710,7 @@ class TestSelectWheel:
             ),
             good,
         ]
-        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(wheels)
         assert chosen is good
 
     def test_higher_glibc_wheel_wins_over_lower(self) -> None:
@@ -704,7 +725,7 @@ class TestSelectWheel:
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"),
         ]
-        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(wheels)
         assert chosen is not None
         assert "manylinux_2_17" in chosen.filename
 
@@ -721,7 +742,7 @@ class TestSelectWheel:
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux2014_x86_64.whl"),
         ]
-        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(wheels)
         assert chosen is not None
         assert "manylinux2014" in chosen.filename
 
@@ -737,7 +758,7 @@ class TestSelectWheel:
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
         ]
-        chosen = select_wheel(wheels, python_version="3.11", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(wheels)
         assert chosen is not None
         assert "manylinux_2_17" in chosen.filename
 
@@ -746,7 +767,9 @@ class TestSelectWheel:
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
-        chosen = select_wheel([build1, build5], python_version="3.11", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(
+            [build1, build5]
+        )
         assert chosen is build5
 
     def test_build_tag_selection_is_order_independent(self) -> None:
@@ -754,8 +777,12 @@ class TestSelectWheel:
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
-        forward = select_wheel([build1, build5], python_version="3.11", spec=spec)
-        reverse = select_wheel([build5, build1], python_version="3.11", spec=spec)
+        forward = TagSet.for_spec(python_version="3.11", spec=spec).pick(
+            [build1, build5]
+        )
+        reverse = TagSet.for_spec(python_version="3.11", spec=spec).pick(
+            [build5, build1]
+        )
         assert forward is build5
         assert reverse is build5
 
@@ -764,7 +791,9 @@ class TestSelectWheel:
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         untagged = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         build3 = _wheel("pkg-1.0-3-cp311-cp311-manylinux_2_17_x86_64.whl")
-        chosen = select_wheel([untagged, build3], python_version="3.11", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(
+            [untagged, build3]
+        )
         assert chosen is build3
 
     def test_an_absurd_build_number_is_malformed(self) -> None:
@@ -772,7 +801,9 @@ class TestSelectWheel:
         spec = PlatformSpec("linux_x86_64")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
         absurd = _wheel(f"pkg-1.0-{'9' * 5000}-cp311-cp311-manylinux_2_17_x86_64.whl")
-        chosen = select_wheel([absurd, build5], python_version="3.11", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(
+            [absurd, build5]
+        )
         assert chosen is build5
 
     def test_malformed_build_tag_treated_as_absent(self) -> None:
@@ -780,7 +811,9 @@ class TestSelectWheel:
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
         malformed = _wheel("pkg-1.0-x-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
-        chosen = select_wheel([malformed, build5], python_version="3.11", spec=spec)
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(
+            [malformed, build5]
+        )
         assert chosen is build5
 
 
@@ -855,23 +888,111 @@ class TestPyPyTags:
         """The PyPy-specific wheel outranks the pure-Python fallback."""
         pure = _wheel("numpy-1.0-py3-none-any.whl")
         native = _wheel("numpy-1.0-pp311-pypy311_pp73-manylinux_2_17_x86_64.whl")
-        chosen = select_wheel(
-            [pure, native],
-            python_version="3.11",
-            spec=self.SPEC,
-            implementation="pypy",
-        )
+        chosen = TagSet.for_spec(
+            python_version="3.11", spec=self.SPEC, implementation="pypy"
+        ).pick([pure, native])
         assert chosen is native
 
     def test_compat_tag_sets_differ_by_implementation(self) -> None:
         """The CPython and PyPy tuples accept disjoint native-tag sets."""
-        cp = tags_for_target(python_version="3.11", spec=self.SPEC)
-        pp = tags_for_target(
+        cp = TagSet.for_spec(python_version="3.11", spec=self.SPEC).members
+        pp = TagSet.for_spec(
             python_version="3.11", spec=self.SPEC, implementation="pypy"
-        )
+        ).members
         cp_native = {t for t in cp if t.abi.startswith("cp")}
         pp_native = {t for t in pp if t.abi.startswith("pypy")}
         assert cp_native
         assert pp_native
         assert cp_native.isdisjoint(pp)
         assert pp_native.isdisjoint(cp)
+
+
+class TestTagSetHostConstructors:
+    """The host constructors take their tags from an injected source."""
+
+    _HOST = (
+        Tag("cp313", "cp313", "manylinux_2_39_x86_64"),
+        Tag("cp313", "cp313", "linux_x86_64"),
+        Tag("py3", "none", "any"),
+    )
+
+    def _host_tags(self) -> tuple[Tag, ...]:
+        return self._HOST
+
+    def test_for_host_takes_the_source_verbatim(self) -> None:
+        """packaging already answers this for the live machine."""
+        tags = TagSet.for_host(tags_source=self._host_tags)
+        assert tags.ordered == self._HOST
+        assert tags.members == frozenset(self._HOST)
+
+    def test_for_host_defaults_to_sys_tags(self) -> None:
+        """Without a source, the running interpreter's tags are used."""
+        assert TagSet.for_host().ordered
+
+    def test_for_host_python_keeps_the_host_platform_order(self) -> None:
+        """The platform axis carries over, in the host's own preference order."""
+        tags = TagSet.for_host_python("3.11", tags_source=self._host_tags)
+        platforms = [t.platform for t in tags.ordered if t.interpreter == "cp311"]
+        assert platforms[:2] == ["manylinux_2_39_x86_64", "linux_x86_64"]
+
+    def test_for_host_python_drops_the_any_platform(self) -> None:
+        """``any`` is not a machine, so it never seeds the platform axis."""
+        tags = TagSet.for_host_python("3.11", tags_source=self._host_tags)
+        assert Tag("cp311", "cp311", "any") not in tags.members
+        assert Tag("py3", "none", "any") in tags.members
+
+    def test_for_host_python_needs_a_non_empty_source(self) -> None:
+        with pytest.raises(ValueError, match="no tags"):
+            TagSet.for_host_python("3.11", tags_source=tuple)
+
+    def _free_threaded_host(self) -> tuple[Tag, ...]:
+        return (
+            Tag("cp314", "cp314t", "manylinux_2_39_x86_64"),
+            Tag("py3", "none", "any"),
+        )
+
+    def test_an_unknown_host_interpreter_raises(self) -> None:
+        """Guessing CPython would hand the host a tag set it can load none of."""
+
+        def graalpy_tags() -> tuple[Tag, ...]:
+            return (
+                Tag("graalpy311", "graalpy311_native", "manylinux_2_39_x86_64"),
+                Tag("py3", "none", "any"),
+            )
+
+        with pytest.raises(ValueError, match="unsupported interpreter"):
+            TagSet.for_host_python("3.11", tags_source=graalpy_tags)
+
+    def test_free_threaded_host_does_not_carry_to_an_older_python(self) -> None:
+        """``cp310t`` never existed, so a target naming it matches no wheel."""
+        tags = TagSet.for_host_python("3.10", tags_source=self._free_threaded_host)
+        assert {t.abi for t in tags.ordered if t.interpreter == "cp310"} == {
+            "cp310",
+            "abi3",
+            "none",
+        }
+
+    def test_free_threaded_host_carries_to_a_python_that_has_it(self) -> None:
+        tags = TagSet.for_host_python("3.13", tags_source=self._free_threaded_host)
+        assert "cp313t" in {t.abi for t in tags.ordered}
+
+
+class TestTagSetAccepts:
+    """``accepts`` answers wheel compatibility from the filename alone."""
+
+    _TAGS = TagSet.for_spec(python_version="3.11", spec=PlatformSpec("linux_x86_64"))
+
+    def test_compatible_wheel_accepted(self) -> None:
+        assert self._TAGS.accepts("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+
+    def test_incompatible_wheel_rejected(self) -> None:
+        assert not self._TAGS.accepts("pkg-1.0-cp311-cp311-win_amd64.whl")
+
+    def test_unparseable_filename_rejected(self) -> None:
+        assert not self._TAGS.accepts("pkg-1.0.tar.gz")
+
+    def test_rank_orders_specific_before_generic(self) -> None:
+        """The rank drives the install pick: lowest index wins."""
+        specific = Tag("cp311", "cp311", "manylinux_2_28_x86_64")
+        generic = Tag("py3", "none", "any")
+        assert self._TAGS.rank[specific] < self._TAGS.rank[generic]

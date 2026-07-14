@@ -34,11 +34,10 @@ from ._vcs_admission import (
     VcsConfig,
     VcsPolicy,
 )
-from ._vendor.packaging.markers import default_environment
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
-from ._vendor.packaging.version import InvalidVersion, Version
 from .metadata import WheelMetadata
+from .target import host_environment
 
 if TYPE_CHECKING:
     import threading
@@ -49,8 +48,10 @@ if TYPE_CHECKING:
     from nab_resolver.types import Incompatibility, RangeProtocol
 
     from ._vendor.packaging.requirements import Requirement
+    from ._vendor.packaging.version import Version
     from .config import IndexOverride, NabProjectConfig, PackageOverride
     from .fetch import FetchCoordinator
+    from .target import ResolveTarget
 
 __all__ = [
     "ArchiveSource",
@@ -70,9 +71,7 @@ __all__ = [
     "VcsConfig",
     "VcsPolicy",
     "VcsSource",
-    "apply_python_axis_overlay",
     "join_extra",
-    "python_axis_environment",
     "split_extra",
 ]
 
@@ -80,71 +79,6 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _EXTRA_RE = re.compile(r"^(?P<base>[^\[]+)\[(?P<extra>[^\]]+)\]$")
-
-
-# PEP 508 ``python_version`` is the ``major.minor`` pair;
-# ``python_full_version`` is the full ``major.minor.micro`` release.
-_PYTHON_VERSION_PARTS = 2
-_PYTHON_FULL_VERSION_PARTS = 3
-
-
-def python_axis_environment(python_version: str) -> dict[str, str]:
-    """Map an explicit Python version to its PEP 508 marker keys.
-
-    ``python_version`` is padded to two components and
-    ``python_full_version`` to three so patch-precision markers evaluate
-    the same here as in the universal matrix. Raises ``InvalidVersion``
-    if the input is not a version.
-    """
-    try:
-        parsed = Version(python_version)
-    except InvalidVersion:
-        msg = f"python_version {python_version!r} is not a valid version"
-        raise InvalidVersion(msg) from None
-    release = parsed.release
-    minor = ".".join(str(part) for part in (*release, 0)[:_PYTHON_VERSION_PARTS])
-    if len(release) >= _PYTHON_FULL_VERSION_PARTS:
-        full = python_version
-    else:
-        # Pad the release to three components, keeping the epoch and any
-        # prerelease/post/dev/local tag, which live outside ``release``.
-        epoch = f"{parsed.epoch}!" if parsed.epoch else ""
-        padded = ".".join(
-            str(part) for part in (*release, 0, 0)[:_PYTHON_FULL_VERSION_PARTS]
-        )
-        suffix = str(parsed)[len(parsed.base_version) :]
-        full = f"{epoch}{padded}{suffix}"
-    return {"python_version": minor, "python_full_version": full}
-
-
-def apply_python_axis_overlay(
-    environment: dict[str, str], overlay: Mapping[str, str]
-) -> None:
-    """Merge ``overlay`` into ``environment``, keeping the python axis in sync.
-
-    When the overlay moves only ``python_version`` (or only
-    ``python_full_version``) the untouched key would keep the host patch
-    level and the two would describe different interpreters. Re-derive both
-    from whichever axis key the overlay supplies (``python_full_version``
-    wins when both are present), so an overlay of ``python_version`` ``3.8``
-    yields ``python_full_version`` ``3.8.0`` like the universal matrix. On
-    CPython ``implementation_version`` equals ``python_full_version``, so move
-    it with the axis; other implementations version separately and keep their
-    host value unless the overlay sets it. Non-axis keys the overlay sets are
-    kept verbatim; the ``python_version``/``python_full_version`` pair is always
-    the derived one, so a patch-precision ``python_version`` (e.g. ``3.10.5``)
-    normalizes to major.minor.
-    """
-    source = overlay.get("python_full_version") or overlay.get("python_version")
-    if source is None:
-        environment.update(overlay)
-        return
-
-    axis = python_axis_environment(source)
-    if environment.get("implementation_name") == "cpython":
-        environment["implementation_version"] = axis["python_full_version"]
-    environment.update(overlay)
-    environment.update(axis)
 
 
 def _normalize_extra(extra: str) -> str:
@@ -411,6 +345,12 @@ class Provider:
     A thread pool submits listing fetches in the background so
     transitive deps are fetched concurrently with resolution.
     The HTTP connection pool is shared across threads for reuse.
+
+    ``target`` is the environment the resolve is for: its markers gate
+    every dependency and its Python filters candidates by
+    Requires-Python.  Left unset, markers evaluate against the host and
+    no candidate is filtered by Requires-Python, since nothing has said
+    which Python the resolve targets.
     """
 
     # Drives two prefetch paths: the speculative root-batch prefetch
@@ -469,7 +409,7 @@ class Provider:
     def __init__(  # noqa: PLR0913, PLR0915 - resolver config is wide; bundling all flags into one bag is worse for callers
         self,
         coordinator: FetchCoordinator,
-        python_version: str | None = None,
+        target: ResolveTarget | None = None,
         root_requirements: dict[str, VersionRange] | None = None,
         uploaded_prior_to: datetime | None = None,
         extras_mode: ExtrasMode = ExtrasMode.ERROR_USER,
@@ -479,7 +419,6 @@ class Provider:
         package_overrides: Sequence[PackageOverride] = (),
         index_overrides: Mapping[str, IndexOverride] | None = None,
         vcs_config: VcsConfig | None = None,
-        marker_environment: dict[str, str] | None = None,
         local_sources: list[LocalSource] | None = None,
         vcs_sources: list[VcsSource] | None = None,
         vcs_cache_dir: Path | None = None,
@@ -493,21 +432,7 @@ class Provider:
     ) -> None:
         """Construct the provider; see the class docstring for parameters."""
         self.coordinator = coordinator
-        self.python_version = python_version
-        if marker_environment:
-            # The Requires-Python candidate filter reads self.python_version, so
-            # an impersonated target Python in the overlay must move it too,
-            # keeping the filter aligned with marker evaluation. It parses a
-            # full Version, so pad to the full release like the environment does
-            # (overlay python_version "3.8" gives "3.8.0", not the host patch
-            # level). Mirrors UniversalProvider.
-            overlay_python = marker_environment.get(
-                "python_full_version"
-            ) or marker_environment.get("python_version")
-            if overlay_python is not None:
-                self.python_version = python_axis_environment(overlay_python)[
-                    "python_full_version"
-                ]
+        self.target = target
         self.uploaded_prior_to = uploaded_prior_to
 
         # Passed through to the build env when extract_source_metadata
@@ -534,9 +459,6 @@ class Provider:
             for o in self._index_overrides.values()
         )
 
-        if marker_environment:
-            self._check_marker_overlay_build_policy(build_policy)
-
         self.vcs_config = vcs_config or VcsConfig()
         self.local_sources = _sources.index_local_sources(self, local_sources or [])
         self.vcs_cache_dir = vcs_cache_dir
@@ -547,21 +469,25 @@ class Provider:
             self, archive_sources or []
         )
 
-        # default_environment() returns a TypedDict whose ``.items()`` view
-        # widens values to ``object``; rebuild as a concrete ``dict[str, str]``
-        # so mutations and the env_with_extra copy below stay typed.
-        env_init: dict[str, str] = {
-            key: value
-            for key, value in default_environment().items()
-            if isinstance(value, str)
-        }
-        self.environment: dict[str, str] = env_init
-        if python_version is not None:
-            apply_python_axis_overlay(
-                self.environment, python_axis_environment(python_version)
-            )
-        if marker_environment:
-            apply_python_axis_overlay(self.environment, marker_environment)
+        # ``environment`` backs every marker evaluation; ``env_with_extra``
+        # is the reused per-evaluation copy of it, seeded with the empty
+        # lockfile-only set variables (see EMPTY_MEMBERSHIP_SETS).  Without a
+        # target both come from the host and ``python_version`` stays None,
+        # which turns the Requires-Python filter off: nothing has declared
+        # the Python a candidate could be rejecting (see _provider.listing).
+        if target is None:
+            self.python_version: str | None = None
+            self.python_release: Version | None = None
+            self.environment: dict[str, str] = host_environment()
+            self.env_with_extra: dict[str, str | frozenset[str]] = {
+                **self.environment,
+                **EMPTY_MEMBERSHIP_SETS,
+            }
+        else:
+            self.python_version = target.python_full_version
+            self.python_release = target.python_release
+            self.environment = dict(target.marker_env)
+            self.env_with_extra = target.env_with_membership()
 
         self.root_requirements = root_requirements or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
@@ -605,13 +531,6 @@ class Provider:
         self.marker_extra_cache: dict[int, dict[str, bool]] = {}
         # Memoised str(marker) for the cheap "extra" in marker_text gate.
         self.marker_text_cache: dict[int, str] = {}
-        # Reused per-evaluation environment dict (avoids a copy per requirement),
-        # seeded with the empty lockfile-only set variables (see
-        # EMPTY_MEMBERSHIP_SETS) so a marker testing one evaluates False.
-        self.env_with_extra: dict[str, str | frozenset[str]] = {
-            **self.environment,
-            **EMPTY_MEMBERSHIP_SETS,
-        }
 
         # (base, extra, normalized_name) per input package string.
         self._package_parts: dict[str, tuple[str, str | None, str]] = {}
@@ -701,39 +620,6 @@ class Provider:
                 ):
                     continue
                 self.coordinator.request_listing(normalized)
-
-    def _check_marker_overlay_build_policy(self, build_policy: BuildPolicy) -> None:
-        """Reject a non-``NEVER`` build policy under a marker overlay.
-
-        Backends run on the host, so invoking one under a marker overlay
-        would produce metadata that does not match the impersonated
-        target.  The guard inspects both override surfaces as well as the
-        global so a single build override cannot quietly opt out of the
-        soundness check.
-        """
-        offending: list[tuple[str, BuildPolicy]] = []
-        if build_policy is not BuildPolicy.NEVER:
-            offending.append(("<global>", build_policy))
-        offending.extend(
-            (o.name, o.build_policy)
-            for o in self._package_overrides
-            if o.build_policy not in (None, BuildPolicy.NEVER)
-        )
-        offending.extend(
-            (f"index:{name}", o.build_policy)
-            for name, o in self._index_overrides.items()
-            if o.build_policy not in (None, BuildPolicy.NEVER)
-        )
-        if not offending:
-            return
-        rendered = ", ".join(f"{name}={policy.value}" for name, policy in offending)
-        msg = (
-            "marker_environment overlay requires BuildPolicy.NEVER globally"
-            " and in every override that sets build-policy; got"
-            f" {rendered}.  Backends run on the host and report metadata for"
-            " the host, not the impersonated target."
-        )
-        raise ValueError(msg)
 
     def fetch_versions(self, package: str) -> list[tuple[Version, DistFile]]:
         """See :func:`nab_python._provider.listing.fetch_versions`."""

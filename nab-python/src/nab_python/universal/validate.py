@@ -30,14 +30,13 @@ from .._vendor.packaging.requirements import (
 from .._vendor.packaging.utils import canonicalize_name, canonicalize_version
 from .._vendor.packaging.version import Version
 from ..metadata import load_static_project, metadata_deps_are_static, parse_metadata
-from ..tags import select_wheel
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from ..config import PackageOverride
     from ..fetch import FetchCoordinator
-    from .matrix import MatrixTuple
+    from ..target import ResolveTarget
     from .resolve import UniversalResult
 
 
@@ -200,7 +199,7 @@ def _dependencies_override_for(
 
 def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
     coordinator: FetchCoordinator,
-    tup: MatrixTuple,
+    tup: ResolveTarget,
     package: str,
     version: Version,
     package_overrides: Sequence[PackageOverride] = (),
@@ -227,12 +226,7 @@ def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
             status="sdist_only",
             detail="no wheels at this version; install requires building from sdist",
         )
-    chosen = select_wheel(
-        wheels_at_version,
-        python_version=tup.python_version,
-        spec=tup.platform_spec,
-        implementation=tup.implementation,
-    )
+    chosen = tup.tags.pick(wheels_at_version)
     if chosen is None:
         status = (
             "no_compatible_wheel_with_sdist" if has_sdist else "no_compatible_wheel"
@@ -293,11 +287,11 @@ def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
         )
     try:
         chosen_by_extra = _evaluate_metadata_deps_by_extra(
-            metadata_text, tup.environment
+            metadata_text, tup.marker_env
         )
         listing_text = coordinator.index.get_metadata(normalized, str(version))
         listing_by_extra: dict[str | None, set[str]] = (
-            _evaluate_metadata_deps_by_extra(listing_text, tup.environment)
+            _evaluate_metadata_deps_by_extra(listing_text, tup.marker_env)
             if listing_text is not None
             else {None: set()}
         )
@@ -490,7 +484,7 @@ def _fetch_wheel_metadata(
 
 def _evaluate_metadata_deps_by_extra(
     metadata_text: str,
-    environment: dict[str, str],
+    environment: Mapping[str, str],
 ) -> dict[str | None, set[str]]:
     """Return deps grouped by extra: ``{None: base_deps, "extra": deps_for_extra}``.
 

@@ -1,12 +1,11 @@
-"""Property tests for :func:`nab_python.resolve._build_marker_environment`.
+"""Property tests for :class:`nab_python.target.ResolveTarget`'s marker env.
 
-The marker-environment builder merges a fixed defaults dict (the
-host machine's PEP 508 environment), a ``python_version`` override
-derived from the requested interpreter, and a user-supplied
-overrides mapping.  The PubGrub provider evaluates root markers
-against the resulting dict, so the merge must be deterministic in
-the algebraic sense: empty overrides leave the result untouched,
-and disjoint overrides commute.
+A host-python target merges a fixed defaults dict (the host machine's
+PEP 508 environment), a ``python_version`` override derived from the
+requested interpreter, and a user-supplied overrides mapping.  The
+PubGrub provider evaluates root markers against the resulting dict, so
+the merge must be deterministic in the algebraic sense: empty overrides
+leave the result untouched, and disjoint overrides commute.
 
 Reference: https://peps.python.org/pep-0508/#environment-markers
 """
@@ -16,15 +15,26 @@ Reference: https://peps.python.org/pep-0508/#environment-markers
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from nab_python.resolve import _build_marker_environment
+from nab_python.target import ResolveTarget
 
 from .strategies import PROPERTY_SETTINGS
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
 pytestmark = pytest.mark.property
+
+
+def _marker_env(python_version: str, overrides: dict[str, str]) -> Mapping[str, str]:
+    """The marker env a host target for ``python_version`` resolves against."""
+    target = ResolveTarget.for_host_python(python_version)
+    return target.with_marker_overrides(overrides).marker_env
 
 
 # Marker keys whose values are stable strings on every supported
@@ -93,12 +103,8 @@ class TestEmptyOverrideIsIdentity:
     @PROPERTY_SETTINGS
     def test_empty_overlay_is_identity(self, python_version: str) -> None:
         """Empty overrides reproduce the unmodified default environment."""
-        baseline = _build_marker_environment(
-            python_version=python_version, overrides={}
-        )
-        repeated = _build_marker_environment(
-            python_version=python_version, overrides={}
-        )
+        baseline = _marker_env(python_version, {})
+        repeated = _marker_env(python_version, {})
         assert baseline == repeated
 
 
@@ -126,10 +132,6 @@ class TestDisjointOverlaysCommute:
     ) -> None:
         """``base ∪ A ∪ B == base ∪ B ∪ A`` for disjoint ``A`` and ``B``."""
         assume(set(overlay_a).isdisjoint(set(overlay_b)))
-        a_then_b = _build_marker_environment(
-            python_version=python_version, overrides={**overlay_a, **overlay_b}
-        )
-        b_then_a = _build_marker_environment(
-            python_version=python_version, overrides={**overlay_b, **overlay_a}
-        )
+        a_then_b = _marker_env(python_version, {**overlay_a, **overlay_b})
+        b_then_a = _marker_env(python_version, {**overlay_b, **overlay_a})
         assert a_then_b == b_then_a

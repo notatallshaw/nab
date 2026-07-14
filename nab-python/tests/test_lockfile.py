@@ -76,6 +76,7 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_python.target import ResolveTarget
 
 
 def _wheel(name: str = "foo", version: str = "1.0") -> WheelArtifact:
@@ -2388,7 +2389,7 @@ class TestBuildLockInputFromProvider:
         coordinator = make_coordinator([_sdist_file("pkg", "2.0")], package="pkg")
         provider = Provider(
             coordinator,
-            python_version="3.12.0",
+            target=ResolveTarget.for_host_python("3.12.0"),
             build_policy=BuildPolicy.NEVER,
             package_overrides=(
                 pkg_override("pkg", dependencies=(Requirement("dep-a>=1"),)),

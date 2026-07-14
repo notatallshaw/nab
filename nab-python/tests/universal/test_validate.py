@@ -23,7 +23,7 @@ from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.tags import PlatformSpec
-from nab_python.universal.matrix import MatrixTuple
+from nab_python.target import ResolveTarget
 from nab_python.universal.resolve import TupleResult, UniversalResult
 from nab_python.universal.validate import (
     PinValidation,
@@ -101,43 +101,15 @@ def _wheel(filename: str) -> WheelFile:
     )
 
 
-def _linux_311() -> MatrixTuple:
-    return MatrixTuple(
-        python_version="3.11",
-        environment={
-            "python_version": "3.11",
-            "python_full_version": "3.11.0",
-            "implementation_name": "cpython",
-            "implementation_version": "3.11.0",
-            "os_name": "posix",
-            "platform_machine": "x86_64",
-            "platform_python_implementation": "CPython",
-            "platform_release": "",
-            "platform_system": "Linux",
-            "platform_version": "",
-            "sys_platform": "linux",
-        },
-        platform_spec=PlatformSpec("linux_x86_64"),
+def _linux_311() -> ResolveTarget:
+    return ResolveTarget.for_declared(
+        python_version="3.11", spec=PlatformSpec("linux_x86_64")
     )
 
 
-def _windows_311() -> MatrixTuple:
-    return MatrixTuple(
-        python_version="3.11",
-        environment={
-            "python_version": "3.11",
-            "python_full_version": "3.11.0",
-            "implementation_name": "cpython",
-            "implementation_version": "3.11.0",
-            "os_name": "nt",
-            "platform_machine": "AMD64",
-            "platform_python_implementation": "CPython",
-            "platform_release": "",
-            "platform_system": "Windows",
-            "platform_version": "",
-            "sys_platform": "win32",
-        },
-        platform_spec=PlatformSpec("windows_amd64"),
+def _windows_311() -> ResolveTarget:
+    return ResolveTarget.for_declared(
+        python_version="3.11", spec=PlatformSpec("windows_amd64")
     )
 
 
@@ -1024,7 +996,7 @@ class TestPerExtraDivergence:
 
     def test_evaluate_metadata_deps_by_extra_groups_correctly(self) -> None:
         """``_evaluate_metadata_deps_by_extra`` returns base + per-extra buckets."""
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _evaluate_metadata_deps_by_extra(_BASE_EXTRA_METADATA, env)
         assert out[None] == {"requests>=2"}
         assert out["redis"] == {"redis>=5"}
@@ -1046,7 +1018,7 @@ class TestPerExtraDivergence:
             'Requires-Dist: somedep; "docs" in extras\n'
             'Requires-Dist: devdep; "dev" in dependency_groups\n'
         )
-        env = _linux_311().environment
+        env = _linux_311().marker_env
         out = _evaluate_metadata_deps_by_extra(meta, env)
         assert out[None] == {"realdep>=1"}
         assert out["docs"] == set()

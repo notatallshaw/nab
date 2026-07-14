@@ -6,6 +6,9 @@ import os
 
 from hypothesis import HealthCheck, settings
 
+from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
+
 _DEEP = os.environ.get("HYPOTHESIS_PROFILE") == "deep"
 
 PROPERTY_SETTINGS = settings(
@@ -26,16 +29,7 @@ DEEP_SETTINGS = settings(
 )
 """Heavier settings for properties that benefit from more examples."""
 
-LINUX_ENV: dict[str, str] = {
-    "python_version": "3.11",
-    "python_full_version": "3.11.0",
-    "implementation_name": "cpython",
-    "implementation_version": "3.11.0",
-    "os_name": "posix",
-    "platform_machine": "x86_64",
-    "platform_python_implementation": "CPython",
-    "platform_release": "",
-    "platform_system": "Linux",
-    "platform_version": "",
-    "sys_platform": "linux",
-}
+LINUX_TARGET = ResolveTarget.for_declared(
+    python_version="3.11", spec=PlatformSpec("linux_x86_64")
+)
+"""The CPython 3.11 linux_x86_64 target the property fixtures resolve against."""

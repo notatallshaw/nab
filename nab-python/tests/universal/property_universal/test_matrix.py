@@ -1,12 +1,12 @@
 """Property tests for the matrix-expansion logic in :mod:`nab_python.universal.matrix`.
 
-The matrix expansion produces one ``MatrixTuple`` per
+The matrix expansion produces one ``ResolveTarget`` per
 ``(python_version, platform_id)`` pair admitted by a PEP 440
 specifier.  This file walks the relevant clauses of `PEP 440`_,
 `PEP 425`_, and `PEP 508`_ paragraph by paragraph and adds a
 property test for each one.  PEP 508 specifies the
 environment-marker variables every tool must provide; the matrix's
-per-tuple ``environment`` dict must include every PEP 508 key so
+per-tuple ``marker_env`` dict must include every PEP 508 key so
 that subsequent ``Marker.evaluate`` calls do not raise.
 
 .. _PEP 440: https://peps.python.org/pep-0440/
@@ -24,9 +24,9 @@ from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
 from nab_python.tags import PlatformSpec
+from nab_python.target import PLATFORM_MARKERS
 from nab_python.universal.matrix import (
     _KNOWN_PYTHON_MINORS,
-    _PLATFORM_DEFAULTS,
     Matrix,
     _pythons_in_range,
 )
@@ -35,7 +35,7 @@ from .strategies import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 
-PLATFORM_IDS = tuple(_PLATFORM_DEFAULTS)
+PLATFORM_IDS = tuple(PLATFORM_MARKERS)
 
 
 @st.composite
@@ -125,7 +125,7 @@ class TestExpansionDeterminism:
     def test_expand_environment_dict_stable(
         self, spec: str, platforms: tuple[PlatformSpec, ...]
     ) -> None:
-        """The per-tuple ``environment`` dict is identical across calls.
+        """The per-tuple ``marker_env`` dict is identical across calls.
 
         The label/identity check in :meth:`test_expand_is_idempotent`
         confirms tuple ordering is deterministic.  Downstream marker
@@ -139,7 +139,7 @@ class TestExpansionDeterminism:
         second = matrix.expand()
         assert len(first) == len(second)
         for tup_a, tup_b in zip(first, second, strict=True):
-            assert tup_a.environment == tup_b.environment
+            assert tup_a.marker_env == tup_b.marker_env
 
 
 class TestPythonOrderingFlip:
@@ -255,7 +255,7 @@ class TestQuotePEP508MarkerKeys:
             "sys_platform",
         }
         for tup in Matrix(python=spec, platforms=platforms).expand():
-            missing = required - tup.environment.keys()
+            missing = required - tup.marker_env.keys()
             assert not missing, f"{tup.label} missing {missing}"
 
 
@@ -266,9 +266,9 @@ class TestQuoteSysPlatformConsistency:
     > ``linux``, ``linux2``, ``darwin``, ``java1.8.0_51`` (note
     > that ``linux`` is from Python3 and ``linux2`` from Python2).
 
-    The ``environment`` dict's ``sys_platform`` must be consistent
+    The ``marker_env`` dict's ``sys_platform`` must be consistent
     with the tuple's ``platform_id``.  A regression in
-    ``_PLATFORM_DEFAULTS`` (e.g. setting ``sys_platform`` to
+    ``PLATFORM_MARKERS`` (e.g. setting ``sys_platform`` to
     ``"Darwin"`` for a macOS id) would mis-evaluate platform-gated
     markers.
 
@@ -289,9 +289,9 @@ class TestQuoteSysPlatformConsistency:
             is_linux = tup.platform_id.startswith("linux_")
             is_win = tup.platform_id.startswith("windows_")
             is_mac = tup.platform_id.startswith("macos_")
-            assert linux_marker.evaluate(tup.environment) is is_linux
-            assert win_marker.evaluate(tup.environment) is is_win
-            assert darwin_marker.evaluate(tup.environment) is is_mac
+            assert linux_marker.evaluate(tup.marker_env) is is_linux
+            assert win_marker.evaluate(tup.marker_env) is is_win
+            assert darwin_marker.evaluate(tup.marker_env) is is_mac
 
     @given(spec=python_specs_admitting_some_minor(), platforms=platform_subsets())
     @PROPERTY_SETTINGS
@@ -302,4 +302,4 @@ class TestQuoteSysPlatformConsistency:
         matrix = Matrix(python=spec, platforms=platforms)
         for tup in matrix.expand():
             marker = Marker(f"python_version == '{tup.python_version}'")
-            assert marker.evaluate(tup.environment) is True
+            assert marker.evaluate(tup.marker_env) is True

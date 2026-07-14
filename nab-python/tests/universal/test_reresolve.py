@@ -16,8 +16,8 @@ from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.version import Version
 from nab_python.provider import BuildPolicy, DistPolicy
 from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
 from nab_python.universal import reresolve as reresolve_module
-from nab_python.universal.matrix import MatrixTuple
 from nab_python.universal.reresolve import (
     _diff_pins,
     _resolve_one_tuple_with_overrides,
@@ -52,23 +52,11 @@ def _make_coordinator(
     )
 
 
-def _linux_311(full_version: str = "3.11.0") -> MatrixTuple:
-    return MatrixTuple(
+def _linux_311(full_version: str = "3.11.0") -> ResolveTarget:
+    return ResolveTarget.for_declared(
         python_version="3.11",
-        environment={
-            "python_version": "3.11",
-            "python_full_version": full_version,
-            "implementation_name": "cpython",
-            "implementation_version": full_version,
-            "os_name": "posix",
-            "platform_machine": "x86_64",
-            "platform_python_implementation": "CPython",
-            "platform_release": "",
-            "platform_system": "Linux",
-            "platform_version": "",
-            "sys_platform": "linux",
-        },
-        platform_spec=PlatformSpec("linux_x86_64"),
+        spec=PlatformSpec("linux_x86_64"),
+        python_full_version=full_version,
     )
 
 
@@ -474,7 +462,7 @@ class TestResolveOneTupleWithOverrides:
                 resolution_strategy="highest",
             )
         matrix = inner.call_args.args[1]
-        env = matrix.expand()[0].environment
+        env = matrix.expand()[0].marker_env
         assert env["python_full_version"] == "3.11.9"
         assert env["implementation_version"] == "3.11.9"
 

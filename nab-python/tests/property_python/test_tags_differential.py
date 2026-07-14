@@ -5,14 +5,15 @@ top of the vendored ``packaging.tags``.
 Each test here re-derives one layer with the upstream ``packaging``
 distribution as the oracle and requires agreement:
 
-1. The tag order built by ``_tags_in_order`` must match the same
-   order rebuilt with upstream ``cpython_tags``/``compatible_tags``.
+1. The tag order a :class:`TagSet` builds for a declared target must
+   match the same order rebuilt with upstream
+   ``cpython_tags``/``compatible_tags``.
 2. The vendored ``mac_platforms`` must match upstream for identical
    inputs.
 3. ``parse_tag`` must expand compressed tag sets identically.
 4. ``wheel_tag_set`` must agree with upstream
    ``parse_wheel_filename`` on every spec-valid filename.
-5. ``select_wheel`` must pick a wheel whose best upstream rank is
+5. ``TagSet.pick`` must choose a wheel whose best upstream rank is
    the minimum over all candidate wheels.
 
 .. _PEP 425: https://peps.python.org/pep-0425/
@@ -34,9 +35,8 @@ from nab_python.tags import (
     _MACOS_TAG_FLOOR,
     _PLATFORM_ARCH,
     PlatformSpec,
+    TagSet,
     _platform_tags_for_spec,
-    _tags_in_order,
-    select_wheel,
     wheel_tag_set,
 )
 
@@ -105,7 +105,7 @@ def _oracle_tags_in_order(
     *,
     free_threaded: bool,
 ) -> list[tuple[str, str, str]]:
-    """Rebuild ``tags._tags_in_order`` with upstream ``packaging.tags``."""
+    """Rebuild a declared target's tag order with upstream ``packaging.tags``."""
     major, minor = (int(p) for p in python_version.split("."))
     py = (major, minor)
     out: list[tuple[str, str, str]] = []
@@ -131,7 +131,7 @@ def _oracle_tags_in_order(
 
 
 class TestTagOrderMatchesUpstream:
-    """``_tags_in_order`` defines the install-preference ranking every
+    """``TagSet.for_spec`` defines the install-preference ranking every
     wheel choice hangs off.  Rebuilding the same order with upstream
     ``cpython_tags``/``compatible_tags`` over the same platform list
     must agree exactly: a divergence reorders wheel preference.
@@ -148,7 +148,11 @@ class TestTagOrderMatchesUpstream:
     ) -> None:
         """Vendored tag order equals the upstream-rebuilt order."""
         platforms = _platform_tags_for_spec(spec)
-        got = _triples(_tags_in_order(python_version, spec, implementation))
+        got = _triples(
+            TagSet.for_spec(
+                python_version=python_version, spec=spec, implementation=implementation
+            ).ordered
+        )
         expected = _oracle_tags_in_order(
             python_version,
             platforms,
@@ -344,12 +348,9 @@ class TestSelectWheelMinimizesUpstreamRank:
             return min(ranks) if ranks else None
 
         oracle_ranks = [r for w in wheels if (r := best_rank(w)) is not None]
-        chosen = select_wheel(
-            wheels,
-            python_version=python_version,
-            spec=spec,
-            implementation=implementation,
-        )
+        chosen = TagSet.for_spec(
+            python_version=python_version, spec=spec, implementation=implementation
+        ).pick(wheels)
         if not oracle_ranks:
             assert chosen is None
             return

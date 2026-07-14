@@ -30,6 +30,7 @@ from nab_python.provider import (
     VcsSource,
 )
 from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
 from nab_python.universal.provider import UniversalProvider
 from nab_resolver.resolver import Resolver
 
@@ -69,30 +70,18 @@ def _make_coordinator(
     return make_coordinator(wheels, package=package, auto_metadata=True)
 
 
-_LINUX_ENV: dict[str, str] = {
-    "python_version": "3.11",
-    "python_full_version": "3.11.0",
-    "implementation_name": "cpython",
-    "implementation_version": "3.11.0",
-    "os_name": "posix",
-    "platform_machine": "x86_64",
-    "platform_python_implementation": "CPython",
-    "platform_release": "",
-    "platform_system": "Linux",
-    "platform_version": "",
-    "sys_platform": "linux",
-}
+_LINUX_TARGET = ResolveTarget.for_declared(
+    python_version="3.11", spec=PlatformSpec("linux_x86_64")
+)
+
+
+def _linux_target(spec: PlatformSpec) -> ResolveTarget:
+    """A 3.11 linux target with declared tag knobs."""
+    return ResolveTarget.for_declared(python_version="3.11", spec=spec)
 
 
 class TestPerTupleRequiresPythonOverride:
     """A requires-python override participates in per-tuple python filtering."""
-
-    @staticmethod
-    def _env(py: str) -> dict[str, str]:
-        env = dict(_LINUX_ENV)
-        env["python_version"] = py
-        env["python_full_version"] = f"{py}.0"
-        return env
 
     def _provider(self, py: str) -> UniversalProvider:
         coordinator = make_coordinator(
@@ -102,7 +91,9 @@ class TestPerTupleRequiresPythonOverride:
         )
         return UniversalProvider(
             coordinator,
-            marker_environment=self._env(py),
+            ResolveTarget.for_declared(
+                python_version=py, spec=PlatformSpec("linux_x86_64")
+            ),
             package_overrides=(pkg_override("pkg", requires_python=">=3.11"),),
         )
 
@@ -127,7 +118,7 @@ class TestProvidesExtraDependenciesOverride:
         )
         return UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             package_overrides=(
                 pkg_override(
                     "pkg",
@@ -155,11 +146,13 @@ class TestEnvironmentOverlay:
     """The provider overlays user-supplied marker keys on the host env."""
 
     def test_user_keys_override_host_defaults(self) -> None:
-        """``marker_environment`` keys take precedence over ``default_environment()``."""
+        """The target's marker overrides take precedence over the host env."""
         coordinator = _make_coordinator([])
         provider = UniversalProvider(
             coordinator,
-            marker_environment={"sys_platform": "win32", "python_version": "3.12"},
+            ResolveTarget.for_host().with_marker_overrides(
+                {"sys_platform": "win32", "python_version": "3.12"}
+            ),
         )
         assert provider.environment["sys_platform"] == "win32"
         assert provider.environment["python_version"] == "3.12"
@@ -169,7 +162,7 @@ class TestEnvironmentOverlay:
         coordinator = _make_coordinator([])
         provider = UniversalProvider(
             coordinator,
-            marker_environment={"python_version": "3.11"},
+            ResolveTarget.for_host().with_marker_overrides({"python_version": "3.11"}),
         )
         # implementation_name is not in our supplied dict; the host
         # default fills it in (cpython on standard CPython runs).
@@ -180,7 +173,7 @@ class TestEnvironmentOverlay:
         coordinator = _make_coordinator([])
         provider = UniversalProvider(
             coordinator,
-            marker_environment={"sys_platform": "win32"},
+            ResolveTarget.for_host().with_marker_overrides({"sys_platform": "win32"}),
         )
         assert provider.env_with_extra["sys_platform"] == "win32"
 
@@ -190,14 +183,14 @@ class TestTrustUnverifiedSdistDeps:
 
     def test_defaults_false_without_build_config(self) -> None:
         coordinator = _make_coordinator([])
-        provider = UniversalProvider(coordinator, marker_environment=_LINUX_ENV)
+        provider = UniversalProvider(coordinator, _LINUX_TARGET)
         assert provider.trust_unverified_sdist_deps is False
 
     def test_taken_from_build_config(self) -> None:
         coordinator = _make_coordinator([])
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             build_config=NabProjectConfig(trust_unverified_sdist_deps=True),
         )
         assert provider.trust_unverified_sdist_deps is True
@@ -212,7 +205,7 @@ class TestStrategyValidation:
         with pytest.raises(ValueError, match="resolution_strategy"):
             UniversalProvider(
                 coordinator,
-                marker_environment=_LINUX_ENV,
+                _LINUX_TARGET,
                 resolution_strategy="middle",
             )
 
@@ -225,7 +218,7 @@ class TestPreferences:
         coordinator = _make_coordinator([])
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             preferences={"My-Cool_Pkg": Version("1.0")},
         )
         assert "my-cool-pkg" in provider._preferences
@@ -236,7 +229,7 @@ class TestPreferences:
         coordinator = _make_coordinator(wheels)
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             preferences={"pkg": Version("2.0")},
         )
         chosen = provider.choose_version("pkg", VersionRange.full())
@@ -248,7 +241,7 @@ class TestPreferences:
         coordinator = _make_coordinator(wheels)
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             preferences={"pkg": Version("5.0")},
         )
         result = provider.choose_version("pkg", VersionRange.full())
@@ -279,7 +272,7 @@ class TestExtrasProxyPreference:
         )
         return UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             root_extras={("foo", "bar")},
             preferences={"foo": Version(preferred)},
         )
@@ -344,7 +337,7 @@ class TestExtrasProxyPreferenceAdmission:
         )
         return UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             root_extras={("foo", "bar")},
             preferences={"foo": Version(preferred)},
         )
@@ -396,7 +389,7 @@ class TestCrossTupleProxyAlignment:
         root_reqs = {"a": VersionRange.full(admit_arbitrary=False)}
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             root_requirements=root_reqs,
             preferences=preferences,
         )
@@ -420,7 +413,7 @@ class TestStrategyChoiceVersion:
         coordinator = _make_coordinator(wheels)
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             resolution_strategy="lowest",
         )
         chosen = provider.choose_version("pkg", VersionRange.full())
@@ -431,7 +424,7 @@ class TestStrategyChoiceVersion:
         coordinator = _make_coordinator([])
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             resolution_strategy="lowest",
         )
         assert provider.choose_version("pkg", VersionRange.full()) is None
@@ -442,7 +435,7 @@ class TestStrategyChoiceVersion:
         coordinator = _make_coordinator(wheels)
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             resolution_strategy="lowest-direct",
             direct_packages=frozenset({"pkg"}),
         )
@@ -455,7 +448,7 @@ class TestStrategyChoiceVersion:
         coordinator = _make_coordinator(wheels)
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             resolution_strategy="lowest-direct",
             direct_packages=frozenset(),
         )
@@ -503,12 +496,12 @@ def _index_with_files(
 class TestWheelTagFiltering:
     """Resolve-time wheel-tag filtering (hole 2 plug)."""
 
-    def test_no_platform_spec_keeps_legacy_behavior(self) -> None:
-        """Without ``platform_spec`` the override is a no-op."""
+    def test_no_tag_filter_keeps_every_wheel(self) -> None:
+        """Without ``filter_by_wheel_tags`` the override is a no-op."""
         wheels = [_platform_wheel("1.0", "cp311-cp311-win_amd64")]
         provider = UniversalProvider(
             _index_with_files(wheels),
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
         )
         result = provider.filter_distributions("pkg", wheels)
         assert [v for v, _ in result] == [Version("1.0")]
@@ -521,8 +514,8 @@ class TestWheelTagFiltering:
         ]
         provider = UniversalProvider(
             _index_with_files(wheels),
-            marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64"),
+            _linux_target(PlatformSpec("linux_x86_64")),
+            filter_by_wheel_tags=True,
         )
         result = provider.filter_distributions("pkg", wheels)
         kept_filenames = {dist.filename for _, dist in result}
@@ -537,8 +530,8 @@ class TestWheelTagFiltering:
         ]
         provider = UniversalProvider(
             _index_with_files(wheels),
-            marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64"),
+            _linux_target(PlatformSpec("linux_x86_64")),
+            filter_by_wheel_tags=True,
             build_policy=BuildPolicy.NEVER,
         )
         result = provider.filter_distributions("pkg", wheels)
@@ -554,8 +547,8 @@ class TestWheelTagFiltering:
         ]
         provider = UniversalProvider(
             _index_with_files(files),
-            marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64"),
+            _linux_target(PlatformSpec("linux_x86_64")),
+            filter_by_wheel_tags=True,
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
         result = provider.filter_distributions("pkg", files)
@@ -570,8 +563,8 @@ class TestWheelTagFiltering:
         wheels = [_platform_wheel("1.0", "py3-none-any")]
         provider = UniversalProvider(
             _index_with_files(wheels),
-            marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64"),
+            _linux_target(PlatformSpec("linux_x86_64")),
+            filter_by_wheel_tags=True,
         )
         result = provider.filter_distributions("pkg", wheels)
         assert [v for v, _ in result] == [Version("1.0")]
@@ -584,8 +577,8 @@ class TestWheelTagFiltering:
         ]
         provider = UniversalProvider(
             _index_with_files(wheels),
-            marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64", libc_version=(2, 17)),
+            _linux_target(PlatformSpec("linux_x86_64", libc_version=(2, 17))),
+            filter_by_wheel_tags=True,
             build_policy=BuildPolicy.NEVER,
         )
         result = provider.filter_distributions("pkg", wheels)
@@ -599,8 +592,8 @@ class TestWheelTagFiltering:
         ]
         provider = UniversalProvider(
             _index_with_files(wheels),
-            marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64", libc_version=(2, 34)),
+            _linux_target(PlatformSpec("linux_x86_64", libc_version=(2, 34))),
+            filter_by_wheel_tags=True,
         )
         result = provider.filter_distributions("pkg", wheels)
         assert [v for v, _ in result] == [Version("1.0")]
@@ -614,8 +607,8 @@ class TestWheelTagFiltering:
         ]
         provider = UniversalProvider(
             _index_with_files(files),
-            marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64"),
+            _linux_target(PlatformSpec("linux_x86_64")),
+            filter_by_wheel_tags=True,
             dist_policy=DistPolicy.WHEEL_ONLY,
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
@@ -637,8 +630,8 @@ class TestWheelTagFiltering:
         ]
         provider = UniversalProvider(
             _index_with_files(files),
-            marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64"),
+            _linux_target(PlatformSpec("linux_x86_64")),
+            filter_by_wheel_tags=True,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
         )
@@ -663,8 +656,8 @@ class TestWheelTagFiltering:
         ]
         provider = UniversalProvider(
             _index_with_files(files),
-            marker_environment=_LINUX_ENV,
-            platform_spec=PlatformSpec("linux_x86_64"),
+            _linux_target(PlatformSpec("linux_x86_64")),
+            filter_by_wheel_tags=True,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         result = provider.fetch_versions("pkg")
@@ -677,20 +670,24 @@ class TestRequiresPythonPatch:
 
     def test_dist_kept_when_patch_satisfies_requires_python(self) -> None:
         """python_full_version 3.13.4 keeps a dist that requires >=3.13.1."""
-        env = {**_LINUX_ENV, "python_version": "3.13", "python_full_version": "3.13.4"}
         provider = UniversalProvider(
             _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
-            marker_environment=env,
+            ResolveTarget.for_declared(
+                python_version="3.13",
+                spec=PlatformSpec("linux_x86_64"),
+                python_full_version="3.13.4",
+            ),
         )
         result = provider.fetch_versions("pkg")
         assert [v for v, _ in result] == [Version("1.0")]
 
     def test_dist_excluded_when_patch_below_requires_python(self) -> None:
         """A tuple targeting 3.13.0 excludes a >=3.13.1 dist."""
-        env = {**_LINUX_ENV, "python_version": "3.13", "python_full_version": "3.13.0"}
         provider = UniversalProvider(
             _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
-            marker_environment=env,
+            ResolveTarget.for_declared(
+                python_version="3.13", spec=PlatformSpec("linux_x86_64")
+            ),
         )
         assert provider.fetch_versions("pkg") == []
 
@@ -716,7 +713,7 @@ class TestVcsConfigPlumbing:
         with pytest.raises(ValueError, match="vcs_sources require VcsPolicy.ALLOW"):
             UniversalProvider(
                 coordinator,
-                marker_environment=_LINUX_ENV,
+                _LINUX_TARGET,
                 vcs_config=VcsConfig(policy=VcsPolicy.BLOCK),
                 vcs_sources=[source],
                 build_policy=BuildPolicy.NEVER,
@@ -736,7 +733,7 @@ class TestVcsConfigPlumbing:
         )
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             vcs_config=VcsConfig(
                 policy=VcsPolicy.ALLOW,
                 allowed_schemes=frozenset({"git+https"}),
@@ -760,7 +757,7 @@ class TestVcsConfigPlumbing:
         cache = tmp_path / "vcs"
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             vcs_cache_dir=cache,
             build_policy=BuildPolicy.NEVER,
         )
@@ -771,7 +768,7 @@ class TestVcsConfigPlumbing:
         coordinator = _make_coordinator([])
         provider = UniversalProvider(
             coordinator,
-            marker_environment=_LINUX_ENV,
+            _LINUX_TARGET,
             build_policy=BuildPolicy.NEVER,
         )
         assert provider.vcs_cache_dir is None

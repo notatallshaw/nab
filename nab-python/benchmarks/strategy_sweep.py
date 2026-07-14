@@ -105,13 +105,12 @@ def _resolve_one(  # noqa: PLR0913 - one kwarg per knob; bundling hides the surf
     ) as coordinator:
         provider = Provider(
             coordinator,
-            python_version=python_version,
+            target=_scenarios.resolve_target(python_version, marker_environment),
             root_requirements=requirements,
             uploaded_prior_to=uploaded_prior_to,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             package_overrides=package_overrides,
-            marker_environment=marker_environment,
             resolution_strategy=strategy,
             direct_packages=direct_packages,
             extras_mode=extras_mode,

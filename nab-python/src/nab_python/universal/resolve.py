@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from nab_index.multi_index import IndexConfig
@@ -25,7 +25,6 @@ from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.utils import canonicalize_name
-from .._vendor.packaging.version import Version
 from ..config import ConfigError, IndexOverride, PackageOverride
 from ..fetch import (
     DEFAULT_INDEX_NAME,
@@ -76,15 +75,17 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
+    from .._vendor.packaging.version import Version
     from ..config import ConflictSet, NabProjectConfig
-    from .matrix import Matrix, MatrixTuple
+    from ..target import ResolveTarget
+    from .matrix import Matrix
 
 
 @dataclass
 class TupleResult:
     """Result of one specific resolve."""
 
-    tuple_: MatrixTuple
+    tuple_: ResolveTarget
     success: bool
     pins: dict[str, Version] = field(default_factory=dict)
     error: str | None = None
@@ -205,7 +206,7 @@ def merge_universal_lock_inputs(
         label = tr.tuple_.label
         per_tuple_pins[label] = dict(tr.lock_input.pins)
         tuple_markers[label] = Marker(tr.tuple_.marker_string)
-        tuple_environments[label] = dict(tr.tuple_.environment)
+        tuple_environments[label] = dict(tr.tuple_.marker_env)
 
         env_marker = tr.tuple_.environment_marker_string
         parsed = env_marker_cache.get(env_marker)
@@ -371,7 +372,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
 
     def run_pass(
         reqs: list[str],
-        tuples: list[MatrixTuple],
+        tuples: list[ResolveTarget],
         prefs: dict[str, Version],
     ) -> list[TupleResult]:
         return _run_pass(
@@ -403,7 +404,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
         tuples = (
             base_tuples
             if not fork.selection
-            else [replace(t, selection=fork.selection) for t in base_tuples]
+            else [t.with_selection(fork.selection) for t in base_tuples]
         )
         results = run_pass(list(fork.requirements), tuples, accumulated)
         out.extend(results)
@@ -423,7 +424,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
         )
         for tr in base_results:
             if tr.success:
-                signature = tuple(sorted(tr.tuple_.environment.items()))
+                signature = tuple(sorted(tr.tuple_.marker_env.items()))
                 env_base_names[signature] = frozenset(
                     canonicalize_name(name) for name in tr.pins
                 )
@@ -443,7 +444,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - mirrors resolve_universal's sur
 
 
 def _run_pass(  # noqa: PLR0913
-    tuples: list[MatrixTuple],
+    tuples: list[ResolveTarget],
     requirements: list[str],
     constraints: list[str] | None,
     *,
@@ -472,10 +473,10 @@ def _run_pass(  # noqa: PLR0913
     where the matrix admits it.
     """
 
-    def resolve(t: MatrixTuple, current_prefs: dict[str, Version]) -> TupleResult:
+    def resolve(t: ResolveTarget, current_prefs: dict[str, Version]) -> TupleResult:
         try:
             tuple_requirements, tuple_constraints = _parse_tuple_inputs(
-                requirements, constraints, t.environment, vcs_config or VcsConfig()
+                requirements, constraints, t.marker_env, vcs_config or VcsConfig()
             )
         except ResolutionError as exc:
             return TupleResult(
@@ -563,7 +564,7 @@ def _direct_package_names(requirements: list[str]) -> set[str]:
 
 def _parse_requirements(
     reqs: list[str],
-    environment: dict[str, str],
+    environment: Mapping[str, str],
     *,
     vcs_config: VcsConfig | None = None,
     kind: str = "requirement",
@@ -632,7 +633,7 @@ def _root_extras(requirements: dict[str, VersionRange]) -> set[tuple[str, str]]:
 def _parse_tuple_inputs(
     requirements: list[str],
     constraints: list[str] | None,
-    environment: dict[str, str],
+    environment: Mapping[str, str],
     vcs_config: VcsConfig,
 ) -> tuple[dict[str, VersionRange], dict[str, VersionRange] | None]:
     """Parse a tuple's root requirements and constraints for its env.
@@ -654,7 +655,7 @@ def _parse_tuple_inputs(
 
 def _raise_for_source_python(
     provider: UniversalProvider,
-    t: MatrixTuple,
+    t: ResolveTarget,
     pins: Mapping[str, Version],
 ) -> None:
     """Reject a local, VCS, or archive pin whose Requires-Python excludes the tuple.
@@ -670,7 +671,7 @@ def _raise_for_source_python(
     )
     if not managed:
         return
-    target = Version(t.environment["python_full_version"])
+    target = t.python_release
     for name, version in pins.items():
         normalized = canonicalize_name(name)
         if normalized not in managed:
@@ -700,7 +701,7 @@ def _tuple_stats(
 
 def _resolve_one_tuple(  # noqa: PLR0913
     coordinator: FetchCoordinator,
-    t: MatrixTuple,
+    t: ResolveTarget,
     requirements: dict[str, VersionRange],
     constraints: dict[str, VersionRange] | None,
     *,
@@ -723,7 +724,7 @@ def _resolve_one_tuple(  # noqa: PLR0913
     """Run one single-environment resolve for ``t``."""
     provider = UniversalProvider(
         coordinator,
-        marker_environment=t.environment,
+        t,
         root_requirements=requirements,
         root_extras=_root_extras(requirements),
         uploaded_prior_to=uploaded_prior_to,
@@ -741,7 +742,7 @@ def _resolve_one_tuple(  # noqa: PLR0913
         preferences=preferences,
         resolution_strategy=resolution_strategy,
         direct_packages=direct_packages,
-        platform_spec=t.platform_spec,
+        filter_by_wheel_tags=True,
     )
     resolver: Resolver[str, Version] = Resolver(
         provider,
