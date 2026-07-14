@@ -246,12 +246,12 @@ single-environment mode.
 
 ## `nab download`
 
-`nab download` resolves the project again, then fetches every wheel
-and sdist on the resulting pins into the `--output` directory
-(defaults to `wheels/`), verifying each file's `sha256` against the
-digest the index published. Local and VCS pins are skipped. The
-download is idempotent: a file whose digest already matches a local
-copy is left alone.
+`nab download` resolves the project again, then fetches every wheel,
+sdist, and direct-URL archive on the resulting pins into the
+`--output` directory (defaults to `wheels/`), verifying each file's
+`sha256` against the digest recorded on the pin. Local and VCS pins
+are skipped. The download is idempotent: a file whose digest already
+matches a local copy is left alone.
 
 The result is a per-resolve directory of artefacts that any
 installer can consume offline:

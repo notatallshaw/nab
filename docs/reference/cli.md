@@ -112,10 +112,10 @@ prints a notice naming the cutoff it dropped.
 
 ## `nab download`
 
-Resolve and download every wheel and sdist into a local
-directory. The download is idempotent: files whose recorded
-sha256 matches a local file are left alone. Local and VCS pins
-are skipped.
+Resolve and download every wheel, sdist, and direct-URL
+archive into a local directory. The download is idempotent:
+files whose recorded sha256 matches a local file are left
+alone. Local and VCS pins are skipped.
 
 Universal mode (`[tool.nab].mode = "universal"`) re-resolves
 across the matrix and downloads the union of every tuple's
