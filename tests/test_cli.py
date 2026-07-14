@@ -8,6 +8,7 @@ import contextlib
 import importlib
 import io
 import runpy
+import stat
 import sys
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError
@@ -237,6 +238,42 @@ def _multi_tuple_universal_result() -> ResolveResult:
     return ResolveResult(
         targets=tuples,
         target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
+    )
+
+
+def _late_hashless_universal_result() -> ResolveResult:
+    """Two tuples, where only the second one pins a hashless artefact.
+
+    A marker-gated dependency produces this shape.
+    """
+    first, second = (_target(py_minor) for py_minor in ("3.11", "3.12"))
+    hashless = IndexPin(
+        name="priv",
+        version="1.0",
+        index="pypi",
+        wheels=(
+            WheelArtifact(
+                filename="priv-1.0-py3-none-any.whl",
+                url="https://example.com/priv-1.0-py3-none-any.whl",
+                hashes=(),
+            ),
+        ),
+    )
+    return ResolveResult(
+        targets=(first, second),
+        target_results=[
+            _resolved(first, {"foo": V("1.0")}),
+            TargetResult(
+                target=second,
+                success=True,
+                pins={"foo": V("1.0"), "priv": V("1.0")},
+                lock=TargetLock(
+                    target=second,
+                    pins={"foo": _foo_index_pin(), "priv": hashless},
+                    dependencies={},
+                ),
+            ),
+        ],
     )
 
 
@@ -1641,6 +1678,78 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements", output=out)
         assert "Cannot lock" in capsys.readouterr().err
+
+    def test_template_missing_hash_writes_no_file(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A refusal on the second tuple leaves the first tuple's file alone.
+
+        The hashless pin is reachable only from the 3.12 tuple, so the run
+        must refuse before req-3.11.txt has been rewritten.
+        """
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}.txt"
+        first = tmp_path / "req-3.11.txt"
+        first.write_text("stale==0.1\n")
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_late_hashless_universal_result(),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements", output=out)
+        err = capsys.readouterr().err
+        assert "no acceptable hash" in err
+        assert "Wrote" not in err
+        assert first.read_text() == "stale==0.1\n"
+        assert not (tmp_path / "req-3.12.txt").exists()
+
+    def test_template_unwritable_path_writes_no_file(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An unwritable path on the second tuple leaves the first alone.
+
+        A directory sits where req-3.12.txt would go, so the first tuple's
+        file keeps its contents and no stage is left behind.
+        """
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}.txt"
+        first = tmp_path / "req-3.11.txt"
+        first.write_text("stale==0.1\n")
+        (tmp_path / "req-3.12.txt").mkdir()
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_multi_tuple_universal_result(),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "cannot write output" in err
+        assert "Wrote" not in err
+        assert first.read_text() == "stale==0.1\n"
+        assert not list(tmp_path.glob("*.tmp"))
+
+    def test_template_files_keep_the_permissions_a_write_would_give(
+        self, tmp_path: Path
+    ) -> None:
+        """Staged files carry the mode a direct write would have left."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}.txt"
+        first = tmp_path / "req-3.11.txt"
+        first.write_text("stale==0.1\n")
+        before = stat.S_IMODE(first.stat().st_mode)
+        with patch(
+            "nab.cli.resolve_for_targets",
+            return_value=_multi_tuple_universal_result(),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        assert first.read_text().strip() == "foo==1.0"
+        assert stat.S_IMODE(first.stat().st_mode) == before
+        fresh = stat.S_IMODE((tmp_path / "req-3.12.txt").stat().st_mode)
+        assert fresh == before
 
     def test_failed_tuples_are_skipped_in_template_emit(self, tmp_path: Path) -> None:
         """Only successful tuples produce a file."""
