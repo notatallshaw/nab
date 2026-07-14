@@ -6,6 +6,7 @@ import asyncio
 import io
 import tarfile
 import zipfile
+import zlib
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
@@ -73,6 +74,32 @@ def _write_sdist(
             info.size = len(body)
             tar.addfile(info, io.BytesIO(body))
     path.write_bytes(buf.getvalue())
+
+
+_CLEAN_PREFIX = 1 << 20
+_INVALID_DEFLATE_BLOCK = b"\x07" * 8
+
+
+def _write_corrupt_sdist(path: Path, name: str, version: str) -> None:
+    """Write an sdist whose PKG-INFO body is behind a corrupt deflate block.
+
+    The clean prefix is longer than the reader's decompression buffer, so the
+    archive opens and its tar headers read; only reading PKG-INFO's body hits the
+    reserved block type zlib rejects.
+    """
+    body = (
+        f"Metadata-Version: 2.2\nName: {name}\nVersion: {version}\n\n"
+        + "filler\n" * (2 * _CLEAN_PREFIX // 7)
+    ).encode()
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        info = tarfile.TarInfo(name=f"{name}-{version}/PKG-INFO")
+        info.size = len(body)
+        tar.addfile(info, io.BytesIO(body))
+
+    deflate = zlib.compressobj(9, zlib.DEFLATED, zlib.MAX_WBITS | 16)
+    clean = deflate.compress(buf.getvalue()[:_CLEAN_PREFIX])
+    path.write_bytes(clean + deflate.flush(zlib.Z_SYNC_FLUSH) + _INVALID_DEFLATE_BLOCK)
 
 
 class TestParseFileUrl:
@@ -267,6 +294,17 @@ class TestFlatWheelhouse:
         _write_sdist(path, "foo", "1.0", ">=3.12")
         whole = path.read_bytes()
         path.write_bytes(whole[: len(whole) // 2])
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
+    def test_sdist_requires_python_none_for_corrupt_archive(
+        self, tmp_path: Path
+    ) -> None:
+        # A flat-wheelhouse sdist carries no published hash, so a corrupt one
+        # reaches the reader.
+        _write_corrupt_sdist(tmp_path / "foo-1.0.tar.gz", "foo", "1.0")
         client = LocalIndexClient(tmp_path.as_uri())
         files = run(client.get_files("foo"))
         assert len(files) == 1
