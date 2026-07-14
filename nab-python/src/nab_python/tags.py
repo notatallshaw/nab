@@ -543,16 +543,20 @@ def _parse_tag_str(tag_str: str) -> frozenset[Tag] | None:
     return frozenset(_intern_tag(t) for t in raw)
 
 
+@cache
 def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     """Parse a wheel filename into the set of tags it advertises.
 
     Per PEP 427 the filename's last three dash-separated segments
     are ``python-abi-platform``; per PEP 425 each can be a
     dot-separated compressed set.  Returns ``None`` for a non-wheel
-    filename or one with too few segments.  The expensive work
-    (``parse_tag`` + Tag interning) lives in :func:`_parse_tag_str`,
-    which is cached on the suffix so wheels that share it
-    short-circuit.
+    filename or one with too few segments.
+
+    The tag set is a pure function of the filename, so the whole
+    result is memoized on it, and a repeated filename skips the string
+    splitting.  The parse and Tag interning are shared further across
+    distinct filenames by :func:`_parse_tag_str`, keyed on the tag
+    suffix.
     """
     if not filename.endswith(".whl"):
         return None
