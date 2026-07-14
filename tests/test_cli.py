@@ -946,6 +946,30 @@ class TestLockCommandUniversal:
         assert "[project] must be a table" in err
         assert "Traceback" not in err
 
+    def test_conflicting_groups_exit_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Two directly conflicting groups exit 1 with a message, not a traceback."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "probe"\nversion = "0.1.0"\ndependencies = []\n'
+            "[dependency-groups]\n"
+            'alpha = ["idna<3"]\n'
+            'beta = ["idna>=3"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=Path("-"), groups=("alpha", "beta"), offline=True)
+
+        err = capsys.readouterr().err
+        assert "Resolution failed:" in err
+        assert "'alpha' and 'beta' conflict on 'idna'" in err
+        assert "Traceback" not in err
+
     def test_pylock_writes_universal_lock(self, tmp_path: Path) -> None:
         """Universal + pylock format runs the real merge + write pipeline."""
         pyproject = _universal_pyproject(tmp_path)
