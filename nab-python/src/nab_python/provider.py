@@ -12,7 +12,7 @@ import enum
 import logging
 import re
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, cast
 
 from nab_index.client import (
@@ -62,6 +62,7 @@ __all__ = [
     "DistPolicy",
     "ExtrasMode",
     "InvalidUploadTimeError",
+    "ListingFilterCache",
     "LocalSource",
     "MetadataError",
     "MissingExtraError",
@@ -323,6 +324,65 @@ class ProviderStats:
 DistFile = WheelFile | SdistFile
 
 
+_STAT_FIELDS = tuple(stat.name for stat in fields(ProviderStats))
+
+
+def _counters(stats: ProviderStats) -> tuple[int, ...]:
+    """Return every counter of ``stats``, in ``_STAT_FIELDS`` order."""
+    return tuple(getattr(stats, name) for name in _STAT_FIELDS)
+
+
+class ListingFilterCache:
+    """Base listing-filter results shared across the targets of one resolve.
+
+    The pre-tag half of the listing filter (see
+    :func:`nab_python._provider.listing.base_distributions`) reads the
+    listing's files, the policy config, and the target Python, and has no
+    platform axis, so targets that differ only by platform recompute an
+    identical list.  Memoising it per (package, Python) leaves only the
+    wheel-tag pass to run per target.
+
+    One instance is only valid across providers that share a coordinator
+    and a policy config, as the targets of one resolve do.
+    """
+
+    def __init__(self) -> None:
+        """Create an empty cache."""
+        self._entries: dict[
+            tuple[str, str | None],
+            tuple[list[tuple[Version, DistFile]], tuple[int, ...]],
+        ] = {}
+
+    def filtered(
+        self,
+        package: str,
+        python_version: str | None,
+        stats: ProviderStats,
+        compute: Callable[[], list[tuple[Version, DistFile]]],
+    ) -> list[tuple[Version, DistFile]]:
+        """Return the filter result for ``package``, running ``compute`` once.
+
+        A memo hit replays the counters the filter raised onto ``stats``, so
+        every target still reports the files it would have walked.
+        """
+        entry = self._entries.get((package, python_version))
+        if entry is not None:
+            result, delta = entry
+            for name, count in zip(_STAT_FIELDS, delta, strict=True):
+                if count:
+                    setattr(stats, name, getattr(stats, name) + count)
+            return list(result)
+
+        before = _counters(stats)
+        result = compute()
+
+        delta = tuple(
+            now - was for now, was in zip(_counters(stats), before, strict=True)
+        )
+        self._entries[(package, python_version)] = (list(result), delta)
+        return result
+
+
 # Sentinel for "this override does not set the field".  Distinct from
 # ``None``, which is a real value (a disabled upload-time cutoff).
 _UNSET = object()
@@ -362,6 +422,10 @@ class Provider:
     first when they are usable here.  The universal path passes the pins
     of an already-resolved tuple, which aligns the matrix on one version
     where every tuple can take it.
+
+    ``listing_filter_cache`` shares the platform-independent half of the
+    listing filter with the other targets of the same resolve; see
+    :class:`ListingFilterCache`.
     """
 
     # Drives two prefetch paths: the speculative root-batch prefetch
@@ -439,6 +503,7 @@ class Provider:
         resolution_strategy: ResolutionStrategy | str = ResolutionStrategy.HIGHEST,
         direct_packages: frozenset[str] | None = None,
         preferences: Mapping[str, Version] | None = None,
+        listing_filter_cache: ListingFilterCache | None = None,
         *,
         trust_unverified_sdist_deps: bool = False,
     ) -> None:
@@ -457,6 +522,9 @@ class Provider:
         self.coordinator = coordinator
         self.target = target
         self.uploaded_prior_to = uploaded_prior_to
+        # The pre-tag half of the listing filter, shared with the other
+        # targets of this resolve.  ``None`` computes it here instead.
+        self.listing_filter_cache = listing_filter_cache
 
         # Passed through to the build env when extract_source_metadata
         # falls through to a PEP 517 backend; static-only callers leave None.
