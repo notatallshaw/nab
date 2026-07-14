@@ -2856,21 +2856,26 @@ def _parse_major_minor(key: str, value: object) -> tuple[int, int] | None:
     return (release[0], release[1])
 
 
-def _parse_matrix(value: object) -> MatrixConfig | None:
-    if not isinstance(value, dict):
-        msg = f"[tool.nab.matrix] must be a table, got {type(value).__name__}"
-        raise ConfigError(msg)
-    allowed = {
+_MATRIX_KEYS = frozenset(
+    {
         "python",
         "platforms",
         "python-order",
         "python-patches",
         "implementations",
     }
-    unknown = sorted(set(value) - allowed)
+)
+
+
+def _parse_matrix(value: object) -> MatrixConfig | None:
+    if not isinstance(value, dict):
+        msg = f"[tool.nab.matrix] must be a table, got {type(value).__name__}"
+        raise ConfigError(msg)
+    unknown = sorted(set(value) - _MATRIX_KEYS)
     if unknown:
         msg = (
-            f"unknown [tool.nab.matrix] keys: {unknown!r}; expected {sorted(allowed)!r}"
+            f"unknown [tool.nab.matrix] keys: {unknown!r};"
+            f" expected {sorted(_MATRIX_KEYS)!r}"
         )
         raise ConfigError(msg)
     try:

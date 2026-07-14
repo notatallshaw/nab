@@ -537,9 +537,9 @@ over HTTP.
 ## Universal mode (experimental)
 
 Universal resolution runs the single-environment resolver once per
-declared `(python, platform)` tuple, sharing one fetcher so metadata
-is fetched at most once per package.  Output and API are still subject
-to change.
+declared `(python, platform, implementation)` tuple, sharing one
+fetcher so metadata is fetched at most once per package.  Output and
+API are still subject to change.
 
 ```toml
 [tool.nab]
@@ -548,14 +548,33 @@ mode = "universal"
 [tool.nab.matrix]
 python = ">=3.11,<3.14"
 platforms = ["linux_x86_64", "macos_arm64"]
-python-order = "asc"            # "asc" | "desc"
+implementations = ["cpython", "pypy"]   # default ["cpython"]
+python-order = "asc"                    # "asc" | "desc"
 python-patches = { "3.11" = "3.11.4" }
 ```
 
-`python-order` controls cross-tuple alignment direction (`asc` mirrors
-uv's `fork-strategy=fewest`; `desc` mirrors `fork-strategy=
-requires-python`).  `python-patches` overrides the per-minor
-`python_full_version` marker value for marker evaluation.
+The matrix has three axes, and nab resolves the full cross product:
+the example above declares 3 pythons, 2 platforms and 2
+implementations, so it plans 12 tuples.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `python` | required | A PEP 440 range like `>=3.11,<3.14`, expanded into one tuple per minor |
+| `platforms` | required | The platforms to model; a bare id, or a table of the tag knobs below |
+| `implementations` | `["cpython"]` | The interpreter implementations to model: `"cpython"`, `"pypy"` |
+| `python-order` | `"asc"` | Cross-tuple alignment direction |
+| `python-patches` | per-minor `.0` | Overrides the `python_full_version` marker value for a minor |
+
+`python-order` sets the alignment direction: `asc` mirrors uv's
+`fork-strategy=fewest`, `desc` mirrors `fork-strategy=requires-python`.
+
+### Interpreter implementations
+
+`implementations` names the interpreters to model, and each entry
+multiplies the tuple count.  An unknown implementation, a duplicate,
+and an empty list are each a config error.  See
+[Universal resolution](../explanation/universal.md) for how the axis is
+modelled and what it puts on the lockfile markers.
 
 ### Platform tag knobs
 
@@ -614,8 +633,8 @@ target that does run that kernel has to say so.
 free-threaded wheels and neither the ordinary `cp3XX` ones nor `abi3`
 (a free-threaded interpreter cannot load either).  It needs CPython
 3.13 or newer, the first release with a free-threaded build; a matrix
-that admits an older minor, or a non-CPython implementation, is a
-config error.
+whose `python` admits an older minor, or whose `implementations` names
+anything but `cpython`, is a config error.
 
 An id may appear once.  A lockfile entry is selected by a PEP 508
 marker, and PEP 508 has no variable for the libc family or the
@@ -641,9 +660,9 @@ error.  See [Build policy](build-policy.md).
   overrides it for one run.
 * `[tool.nab.matrix].python`: a range like `>=3.11,<3.14`, expanded into
   one tuple per minor version.  Used only by universal mode.  Pair with
-  `[tool.nab.matrix].platforms` and (optionally)
-  `[tool.nab.matrix].python-patches` to control the resolve and marker
-  shape across all tuples.
+  `[tool.nab.matrix].platforms`, `[tool.nab.matrix].implementations` and
+  (optionally) `[tool.nab.matrix].python-patches` to control the resolve
+  and marker shape across all tuples.
 
 Declaring a `[tool.nab.matrix]` table while `mode` is `specific` is an
 error: the matrix is the universal resolver's input, so leaving mode

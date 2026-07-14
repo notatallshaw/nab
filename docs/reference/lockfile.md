@@ -157,12 +157,13 @@ the target's Python. It bounds what the project supports; the
 ### Universal mode
 
 Under `[tool.nab].mode = "universal"`, `nab lock --format pylock`
-writes a single file covering every `(python, platform)` tuple
-in the matrix. Packages whose pinned version is identical across
-every tuple appear once with no marker; packages that diverge
-appear as multiple `Package` entries with PEP 508 markers built
-from each tuple's `python_version`, `sys_platform`, and
-`platform_machine`.
+writes a single file covering every
+`(python, platform, implementation)` tuple in the matrix. Packages
+whose pinned version is identical across every tuple appear once with
+no marker; packages that diverge appear as multiple `Package` entries
+with PEP 508 markers built from each tuple's `python_version`,
+`sys_platform` and `platform_machine`, plus `implementation_name` on
+the same terms as the `environments` declarations above.
 
 `environments` carries one declaration per tuple, built the same way
 a single-environment lock builds its one: from the markers that

@@ -70,15 +70,18 @@ all three formats:
 
 * `pylock` produces one PEP 751 file with per-tuple `Package`
   entries gated by markers (`python_version`, `sys_platform`,
-  `platform_machine`). Versions agreed across every tuple appear
-  once without a marker; divergent versions appear once per
-  `(version, source)` group with the matching tuples disjoined.
+  `platform_machine`, plus `implementation_name` when the matrix
+  declares a non-CPython implementation or more than one). Versions
+  agreed across every tuple appear once without a marker; divergent
+  versions appear once per `(version, source)` group with the
+  matching tuples disjoined.
 * `requirements` and `requirements-without-hashes` emit a
   sequence of `# label` comment blocks, one per
-  `(python, platform)` tuple, followed by that tuple's pins. Pip's
-  hash-checking mode cannot install a single requirements.txt
-  across multiple tuples, so the per-tuple block format is for
-  inspection or for tools that consume one block at a time.
+  `(python, platform, implementation)` tuple, followed by that
+  tuple's pins. Pip's hash-checking mode cannot install a single
+  requirements.txt across multiple tuples, so the per-tuple block
+  format is for inspection or for tools that consume one block at
+  a time.
 
 Failed tuples render as `# {label}: FAILED` followed by the
 indented error and exit `1`.
