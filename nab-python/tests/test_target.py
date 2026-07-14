@@ -333,6 +333,16 @@ class TestLabels:
         )
         assert forked.with_selection(()).label == "py311-linux_x86_64"
 
+    def test_selection_slug_names_the_fork(self) -> None:
+        """The slug is the label suffix without its leading separator."""
+        base = ResolveTarget.for_declared(
+            python_version="3.11", spec=PlatformSpec("linux_x86_64")
+        )
+        assert base.selection_slug == ""
+        forked = base.with_selection((("group", "isort5"), ("extra", "cpu")))
+        assert forked.selection_slug == "extra-cpu.group-isort5"
+        assert forked.label.endswith(f"-{forked.selection_slug}")
+
 
 class TestMarkerStrings:
     @staticmethod

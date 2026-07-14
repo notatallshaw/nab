@@ -242,6 +242,30 @@ def _multi_tuple_universal_result() -> ResolveResult:
     )
 
 
+def _forked_universal_result() -> ResolveResult:
+    """One matrix tuple that ``[tool.nab].conflicts`` forked into two."""
+    tuples = tuple(_target(selection=(("extra", extra),)) for extra in ("cpu", "gpu"))
+    return ResolveResult(
+        targets=tuples,
+        target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
+    )
+
+
+def _two_libc_universal_result() -> ResolveResult:
+    """Two tuples on one platform_id, differing only in their libc."""
+    tuples = tuple(
+        ResolveTarget.for_declared(
+            python_version="3.11",
+            spec=PlatformSpec("linux_x86_64", libc=libc),
+        )
+        for libc in ("glibc", "musl")
+    )
+    return ResolveResult(
+        targets=tuples,
+        target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
+    )
+
+
 def _late_hashless_universal_result() -> ResolveResult:
     """Two tuples, where only the second one pins a hashless artefact.
 
@@ -1577,7 +1601,11 @@ class TestLockCommandUniversal:
     def test_multi_tuple_without_template_errors(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Multiple tuples + plain --output fails with a clear message."""
+        """Multiple tuples + plain --output fails with a clear message.
+
+        The two tuples differ only in their Python, so the remedy names
+        ``{python_version}`` and not the variables that would add nothing.
+        """
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "requirements.txt"
         with (
@@ -1589,9 +1617,9 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
         err = capsys.readouterr().err
-        assert "produced multiple tuples" in err
+        assert "produced 2 tuples" in err
         assert "{python_version}" in err
-        assert "{platform_id}" in err
+        assert "{platform_id}" not in err
         # No partial output written.
         assert not out.exists()
 
@@ -1697,6 +1725,100 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
         assert (tmp_path / "constraints-3.11.txt").read_text().strip() == "foo==1.0"
+
+    def test_template_with_selection_writes_one_file_per_fork(
+        self, tmp_path: Path
+    ) -> None:
+        """``{selection}`` in --output expands to one file per conflict fork."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{selection}.txt"
+        with patch(
+            "nab.cli.resolve_for_targets",
+            return_value=_forked_universal_result(),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        assert (tmp_path / "req-extra-cpu.txt").read_text().strip() == "foo==1.0"
+        assert (tmp_path / "req-extra-gpu.txt").read_text().strip() == "foo==1.0"
+
+    def test_forked_collision_points_at_selection(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Two forks of one tuple collide; the message names ``{selection}``."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}-{platform_id}.txt"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_forked_universal_result(),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "both map to" in err
+        assert "{selection}" in err
+        assert not (tmp_path / "req-3.11-linux_x86_64.txt").exists()
+
+    def test_forked_plain_output_points_at_selection(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A plain --output over a forked resolve names ``{selection}`` only."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "requirements.txt"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_forked_universal_result(),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "2 tuples" in err
+        assert "{selection}" in err
+        assert "{python_version}" not in err
+        assert not out.exists()
+
+    def test_collision_with_no_variable_to_add_says_so(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Tuples differing only in a knob no variable names cannot be written.
+
+        A musl and a glibc target share one ``platform_id`` and one
+        ``python_version``, so no template can tell them apart.
+        """
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}-{platform_id}-{selection}.txt"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_two_libc_universal_result(),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "both map to" in err
+        assert "tells them apart" in err
+        assert list(tmp_path.glob("req-*.txt")) == []
+
+    def test_plain_output_with_no_variable_to_add_says_so(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A plain --output over indistinguishable tuples says no variable helps."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "requirements.txt"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_two_libc_universal_result(),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "tells them apart" in err
+        assert not out.exists()
 
     def test_template_missing_hash_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

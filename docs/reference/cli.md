@@ -61,6 +61,21 @@ requirements file: no one file can carry every tuple's pins (see
 below), so the requirements formats print to stdout unless `--output`
 names a template.
 
+A requirements `--output` template writes one file per tuple. The
+variables are `{python_version}`, `{platform_id}`, and `{selection}`,
+which names the conflict fork a tuple belongs to (`extra-cpu`,
+`group-black22.group-isort5`, empty when the resolve did not fork):
+
+```console
+$ nab lock --format requirements-without-hashes --extras cpu gpu \
+    --output 'req-{python_version}-{selection}.txt'
+Wrote req-3.12-extra-cpu.txt (12 packages, tuple py312-linux_x86_64-extra-cpu)
+Wrote req-3.12-extra-gpu.txt (14 packages, tuple py312-linux_x86_64-extra-gpu)
+```
+
+A template that maps two tuples onto one path is rejected, naming the
+variable that would separate them.
+
 Exits non-zero on resolution failure; the message starts with
 `Resolution failed:` followed by a derivation tree, and any
 captured diagnostics are appended under a `Diagnostics:` section.
