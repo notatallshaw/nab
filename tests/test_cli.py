@@ -59,6 +59,7 @@ from nab_python.lockfile import (
 )
 from nab_python.provider import (
     InvalidUploadTimeError,
+    MissingExtraError,
     ResolutionStrategy,
     UnsupportedVcsError,
 )
@@ -597,6 +598,25 @@ class TestLockCommandSpecific:
         ):
             lock(pyproject)
         assert "unknown group" in capsys.readouterr().err
+
+    def test_missing_extra_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A root extra the package does not declare exits 1, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                side_effect=MissingExtraError(
+                    "foo==1.0 does not provide extra 'nonexistent'"
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        err = capsys.readouterr().err
+        assert "does not provide extra 'nonexistent'" in err
+        assert "Traceback" not in err
 
     def test_missing_file_exits(self, tmp_path: Path) -> None:
         """Exit 1 when pyproject.toml doesn't exist."""
@@ -1354,6 +1374,25 @@ class TestLockCommandUniversal:
         err = capsys.readouterr().err
         assert "Cannot lock" in err
         assert "503" in err
+
+    def test_missing_extra_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A root extra the package does not declare exits 1, not a traceback."""
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                side_effect=MissingExtraError(
+                    "foo==1.0 does not provide extra 'nonexistent'"
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes")
+        err = capsys.readouterr().err
+        assert "does not provide extra 'nonexistent'" in err
+        assert "Traceback" not in err
 
     def test_malformed_simple_response_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3292,6 +3331,25 @@ class TestDownloadCommand:
         ):
             download(pyproject)
         assert "Resolution failed" in capsys.readouterr().err
+
+    def test_missing_extra_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A root extra the package does not declare exits 1, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                side_effect=MissingExtraError(
+                    "foo==1.0 does not provide extra 'nonexistent'"
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            download(pyproject)
+        err = capsys.readouterr().err
+        assert "does not provide extra 'nonexistent'" in err
+        assert "Traceback" not in err
 
     def test_missing_dependencies_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
