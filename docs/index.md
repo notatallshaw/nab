@@ -73,9 +73,10 @@ contributing
 * Direct-URL `.tar.gz` archive sources, hash-verified and pinned as
   PEP 751 `packages.archive`
 * PEP 751 lockfile emission via the upstream `packaging` library
-* Universal resolution across a user-declared `(python, platform)`
-  matrix.  Opt-in via `[tool.nab].mode = "universal"`; the API and
-  output format are still subject to change.
+* Universal resolution across a user-declared
+  `(python, platform, implementation)` matrix.  Opt-in via
+  `[tool.nab].mode = "universal"`; the API and output format are still
+  subject to change.
 * Mutually-exclusive extras and dependency groups via
   `[tool.nab].conflicts`: fail fast in specific mode, fork the resolve
   in universal mode.  See [conflicts](explanation/conflicts.md).

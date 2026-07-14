@@ -12,6 +12,7 @@ from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
+    _MATRIX_KEYS,
     ConfigError,
     ConflictKind,
     ConflictMember,
@@ -74,6 +75,17 @@ def first_tool_nab_example() -> str:
         if block.lstrip().startswith("[tool.nab]"):
             return block
     raise AssertionError("no [tool.nab] example block in configuration.md")
+
+
+def universal_mode_section() -> str:
+    """Return the universal-mode section of the config reference."""
+    text = DOCS_CONFIGURATION.read_text()
+    match = re.search(
+        r"^## Universal mode.*?(?=^## )", text, flags=re.DOTALL | re.MULTILINE
+    )
+    if match is None:
+        raise AssertionError("no universal-mode section in configuration.md")
+    return match.group(0)
 
 
 class TestCliOverridesFold:
@@ -887,7 +899,7 @@ class TestRequiresPython:
             read_pyproject_config(path)
 
     def test_top_level_doc_example_is_a_valid_specifier(self, tmp_path: Path) -> None:
-        """The config guide's top-level example must parse as a valid specifier."""
+        """The config reference's top-level example must parse as a valid specifier."""
         block = first_tool_nab_example()
         match = re.search(r'^requires-python = "([^"]*)"', block, re.MULTILINE)
         assert match is not None, "top-level example dropped requires-python"
@@ -2951,6 +2963,16 @@ class TestIndexOverrides:
         with pytest.raises(ConfigError, match="are not supported") as excinfo:
             read_pyproject_config(path, discover_workspace=False)
         assert "flat body keys" not in str(excinfo.value)
+
+
+class TestMatrixReferenceDocs:
+    def test_reference_documents_every_matrix_key(self) -> None:
+        """Every key the matrix parser accepts is named in the config reference."""
+        section = universal_mode_section()
+        undocumented = sorted(key for key in _MATRIX_KEYS if f"`{key}`" not in section)
+        assert not undocumented, (
+            f"[tool.nab.matrix] keys the config reference never names: {undocumented}"
+        )
 
 
 class TestMatrix:

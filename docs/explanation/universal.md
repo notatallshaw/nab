@@ -99,12 +99,12 @@ numpy==2.1.3
 ...
 ```
 
-One block per `(python, platform)` cell. Pip cannot install a
-single requirements.txt across multiple tuples in hash-checking
-mode, so the per-tuple block format is for inspection or for
-tools that consume one block at a time. When a tuple fails
-resolution, the line reads `# <label>: FAILED` followed by the
-indented error and the process exits 1.
+One block per tuple. Pip cannot install a single requirements.txt
+across multiple tuples in hash-checking mode, so the per-tuple
+block format is for inspection or for tools that consume one block
+at a time. When a tuple fails resolution, the line reads
+`# <label>: FAILED` followed by the indented error and the process
+exits 1.
 
 ## Patch-release markers
 
@@ -142,15 +142,15 @@ implementations). A PyPy tuple sets `platform_python_implementation =
 accepts `ppXY-pypyXY_pp73` wheel tags instead of `cpXY`. Labels use the
 `pp` interpreter prefix (`pp311-linux_x86_64`).
 
-A matrix modelling one implementation leaves the axis open: its
-lockfile markers carry `python_version`, `sys_platform` and
-`platform_machine` only. Declaring a second one puts
-`implementation_name` on every tuple's marker, and on the
-`environments` entry it declares, so the CPython and PyPy entries for
-one `(python, platform)` point stay mutually exclusive. PyPy's
-`implementation_version` is modelled as the Python level, not PyPy's
-own release, so the rare marker comparing `implementation_version`
-against a PyPy version misevaluates.
+A CPython-only matrix leaves the axis open: its lockfile markers carry
+`python_version`, `sys_platform` and `platform_machine` only. Any other
+matrix, whether it names two implementations or one non-CPython one,
+puts `implementation_name` on every tuple's marker and on the
+`environments` entry it declares. The CPython and PyPy entries for one
+`(python, platform)` point stay mutually exclusive, and a PyPy-only
+lock refuses CPython. PyPy's `implementation_version` is modelled as
+the Python level, not PyPy's own release, so the rare marker comparing
+`implementation_version` against a PyPy version misevaluates.
 
 ## Trade-offs versus marker-fork PubGrub
 
