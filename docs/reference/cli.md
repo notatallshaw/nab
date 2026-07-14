@@ -80,6 +80,11 @@ all three formats:
 Failed tuples render as `# {label}: FAILED` followed by the
 indented error and exit `1`.
 
+`--python X.Y` resolves for that Python on this machine instead of the
+running interpreter, like pip's `--python-version`; it moves only the
+python axis, so a declared `[tool.nab.environment].platform` stays. It is
+rejected in universal mode, where the matrix declares the Python axis.
+
 A project option can be overridden for one run with a `--project-<key>`
 flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
 `--project-uploaded-prior-to`, `--project-dist-policy`,

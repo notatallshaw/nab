@@ -47,6 +47,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     cache_dir: Path | None = None,
     cache: bool = True,
     offline: OfflineFlag = None,
+    python: str | None = None,
     max_concurrency: int | None = None,
     workspace_discovery: bool = True,
     groups: tuple[str, ...] = (),
@@ -72,6 +73,9 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     mirror ``nab lock``: a project declaring an ``exactly-one`` or
     ``at-least-one`` conflict needs at least one member selected for
     the resolve to start, so these flags also gate the download.
+
+    ``--python X.Y`` resolves for that Python on this machine instead of
+    the running interpreter, as on ``nab lock``.
 
     ``--offline``, ``--cache-dir``, ``--http-backend``,
     ``--max-concurrency`` and ``--project-resolution`` flow through the
@@ -111,6 +115,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
         settings.cache_dir, cache=cache
     )
+    _cli._reject_python_override_in_universal(config, python)  # noqa: SLF001
     transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
     if config.mode is ResolveMode.UNIVERSAL:
         universal = _cli._resolve_universal(  # noqa: SLF001
@@ -132,6 +137,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
             offline=settings.offline,
             transport=transport,
             failure_prefix="Cannot download",
+            python=python,
             groups=selected_groups,
             extras=selected_extras,
             resolution_strategy=settings.resolution,

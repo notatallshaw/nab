@@ -133,16 +133,26 @@ resolved, so a version-scoped per-package override (a quoted
 and per-index overrides do not apply to sources (a local source has no
 serving index).  Use a bare-name key to govern a source build.
 
-## Platform impersonation forbids host builds
+## A declared platform forbids host builds
 
 A PEP 517 backend always runs on the host nab runs on, so it reports the
 host's dependencies.  That is correct when you resolve for the host, but
-wrong when you resolve *as if* you were on another platform.  nab refuses
-the combination in both places it can impersonate a platform:
+wrong when you resolve *as if* you were on another machine.  Every target
+that moves the platform axis therefore forbids host builds:
+`build-policy` is forced to `never`, and an explicit non-`never` value
+(global or in any override) is a config error, checked before the resolve
+starts.  That covers both surfaces that declare a machine:
 
-* With `[tool.nab.marker-environment]` set, `build-policy` must be `never`
-  at the global level and in every override that sets it.  A non-`never`
-  value is rejected before the resolve starts.
-* Under `mode = "universal"`, `build-policy` defaults to `never` and
-  cannot be raised.  An explicit non-`never` value, global or in any
-  override, is a config error.
+* `[tool.nab.environment]` with a `platform` or an `implementation`.
+* `mode = "universal"`, where every matrix tuple declares one.
+
+This matches pip, which requires `--only-binary=:all:` under `--platform`,
+`--abi`, or `--implementation`.
+
+A retarget of the **python axis alone** (`[tool.nab.environment].python`,
+or `--python X.Y`) is different: the machine is still the host.  nab warns
+that a build would report the host interpreter's metadata, and permits it.
+This is a deliberate deviation from pip: the workspace `build-local` floor
+exists for members with dynamic metadata, and forbidding a build here would
+break every workspace that also pins a Python.  Set `build-policy = "never"`
+to forbid it.

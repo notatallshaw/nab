@@ -29,6 +29,7 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python.config import (
     ConfigError,
     NabProjectConfig,
+    ResolveMode,
     read_pyproject_config,
 )
 from nab_python.config_sources import (
@@ -450,6 +451,23 @@ def is_stdout(output: Path | None) -> bool:
     return output is not None and str(output) == "-"
 
 
+def _reject_python_override_in_universal(
+    config: NabProjectConfig, python: str | None
+) -> None:
+    """Exit 1 when ``--python`` is passed to a matrix-declaring project.
+
+    The matrix declares the python axis itself, so a single Python for the
+    run has nowhere to land; silently ignoring the flag would lock a set
+    the user did not ask for.
+    """
+    if python is not None and config.mode is ResolveMode.UNIVERSAL:
+        sys.stderr.write(
+            "Error: --python is not supported in universal mode;"
+            " [tool.nab.matrix].python declares the Python axis.\n"
+        )
+        sys.exit(1)
+
+
 def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyproject kwarg / exit-mapped error
     path: Path,
     *,
@@ -458,6 +476,7 @@ def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyprojec
     offline: bool,
     transport: AsyncHttpTransport,
     failure_prefix: str,
+    python: str | None = None,
     groups: tuple[str, ...] = (),
     extras: tuple[str, ...] = (),
     resolution_strategy: ResolutionStrategy | None = None,
@@ -470,6 +489,7 @@ def _resolve_specific(  # noqa: PLR0913, C901 - one wrapper per resolve_pyprojec
             config=config,
             cache_dir=cache_dir,
             offline=offline,
+            python_version=python,
             groups=groups,
             extras=extras,
             resolution_strategy=resolution_strategy,

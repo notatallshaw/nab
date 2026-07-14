@@ -21,10 +21,11 @@ constraints = ["urllib3<2"]
 # default-groups array.
 default-groups = ["dev"]
 
-# Override the host's Python for a single-environment resolve.
-# A PEP 440 specifier, not a bare version; for multi-Python
-# locking use the [tool.nab.matrix] table below.
-requires-python = "==3.12.0"
+# The Python range this project supports.  A declaration: it is
+# recorded in the lockfile and checked against the resolve target,
+# and it does not choose that target.  Falls back to
+# [project].requires-python.  A PEP 440 specifier, not a bare version.
+requires-python = ">=3.10"
 
 # Reproducibility cutoff.  Distributions uploaded after this timestamp
 # are ignored.  Accepts ISO 8601 strings, native TOML datetimes, or a
@@ -52,24 +53,51 @@ PKG-INFO dependencies skips the dynamic-metadata path):
 dist-policy = { policy = "wheel-or-sdist", trust-unverified-deps = false }
 ```
 
-## Marker environment overlay
+## The resolve environment
 
-`[tool.nab.marker-environment]` impersonates a non-host environment
-for a single-environment resolve.  Each key overrides the corresponding
-PEP 508 marker variable; keys not listed keep their host value.
+nab resolves for the interpreter it is running on.  The host is the
+target, like pip: the same lock command on a Python 3.14 machine
+resolves the markers a Python 3.14 install evaluates.
+
+`[tool.nab.environment]` retargets it.  The table is one cell of a
+matrix, and every axis it leaves out keeps the host's value:
 
 ```toml
-[tool.nab.marker-environment]
-platform_system = "Linux"
-sys_platform = "linux"
-platform_machine = "x86_64"
+[tool.nab.environment]
+python = "3.10"             # a version, not a specifier ("3.10" or "3.10.5")
+platform = "linux_x86_64"   # a matrix platform id
+implementation = "cpython"  # "cpython" (default) or "pypy"
 ```
 
-Setting this overlay requires `build-policy = "never"` at the global
-level and in every override that sets `build-policy`: a PEP 517 backend
-runs on the host, so a build cannot reflect the impersonated target.
-See [Build policy](build-policy.md) for the same rule under universal
-mode.
+* `python` alone keeps the host machine and moves only the interpreter,
+  which is what pip's `--python-version` does.  `nab lock --python 3.10`
+  is the same thing for one run.
+* `platform` (with or without `implementation`) declares the machine, so
+  the PEP 508 markers are synthesized from the platform id rather than
+  read off the host.  `implementation` needs a `platform`: an interpreter
+  is modelled on a declared machine, never on the host's.
+* A declared platform forbids host builds, so `build-policy` must be
+  `never`.  A python-only retarget warns and permits.  See
+  [Build policy](build-policy.md).
+
+A declared platform moves the markers only.  Candidate selection does not
+yet reject a version that ships no wheel for it, and the lockfile records
+every wheel the pinned version publishes, so a single-environment lock is
+not a cross-platform wheel lock.  Use `mode = "universal"`, which does
+filter candidates by wheel tag, to lock for machines you are not on.
+
+`[tool.nab.environment]` and `[tool.nab.matrix]` cannot both be set: the
+matrix already declares one environment per tuple.
+
+### `[tool.nab.marker-environment]` (deprecated)
+
+The old overlay set PEP 508 marker variables one at a time, so a partial
+declaration (`sys_platform` alone) left the rest of the machine on the
+host and resolved for a machine that does not exist.  It is translated
+to `[tool.nab.environment]` with a warning, and a key that names no
+environment axis, or a `(sys_platform, platform_machine)` pair that names
+no platform nab models, is a config error.  Declare the environment
+instead.
 
 ## Indexes
 
@@ -593,20 +621,21 @@ the host: `build-policy` defaults to `never` and cannot be raised.  An
 explicit non-`never` value (global or in any override) is a config
 error.  See [Build policy](build-policy.md).
 
-### `requires-python` vs `[tool.nab.matrix].python`
+### The three `python` knobs
 
-The two `python` knobs cover different shapes of resolve:
-
-* `[tool.nab].requires-python`: a PEP 440 specifier like `==3.12.0`
-  or `>=3.12`.  Treated as a host-environment
-  override for a single-environment resolve.  Mostly useful when
-  you need to lock against a different Python than the one running
-  nab and you only need one lock.
-* `[tool.nab.matrix].python`: a range like `>=3.11,<3.14`, expanded
-  into one tuple per minor version.  Used only by universal mode.
-  Pair with `[tool.nab.matrix].platforms` and (optionally)
-  `[tool.nab.matrix].python-patches` to control the resolve and
-  marker shape across all tuples.
+* `[tool.nab].requires-python` (or `[project].requires-python`): the
+  range the project supports.  A declaration.  It is recorded as the
+  lockfile's top-level `requires-python` and checked against the resolve
+  target; it does not choose that target.  A declaration that excludes
+  the target is a config error naming `[tool.nab.environment] python`.
+* `[tool.nab.environment].python`: the Python to resolve for, defaulting
+  to the host's.  A single version, not a specifier.  `--python X.Y`
+  overrides it for one run.
+* `[tool.nab.matrix].python`: a range like `>=3.11,<3.14`, expanded into
+  one tuple per minor version.  Used only by universal mode.  Pair with
+  `[tool.nab.matrix].platforms` and (optionally)
+  `[tool.nab.matrix].python-patches` to control the resolve and marker
+  shape across all tuples.
 
 Declaring a `[tool.nab.matrix]` table while `mode` is `specific` is an
 error: the matrix is the universal resolver's input, so leaving mode
@@ -615,12 +644,11 @@ behind is almost always an oversight rather than an intent.
 The one exception is an explicit `--project-mode specific` on the
 command line.  A CLI override outranks the `[tool.nab]` table, so it
 selects a single-environment resolve for that run and the declared
-matrix does not apply; `requires-python` then chooses the Python to
-resolve against.  This is how a universal project takes one
+matrix does not apply.  This is how a universal project takes one
 single-environment lock without editing its `pyproject.toml`:
 
 ```bash
-nab lock --project-mode specific --project-requires-python "==3.13.*"
+nab lock --project-mode specific --python 3.13
 ```
 
 ## CLI flags
@@ -632,6 +660,7 @@ nab lock [PATH]
   --cache-dir PATH             # override on-disk cache location
   --no-cache                   # disable cache for this run
   --offline True|False         # use cache only, no network (or bare --offline / --no-offline)
+  --python X.Y                 # resolve for this Python on this machine
   --http-backend X             # urllib3 (default) | httpx (layered)
   --locked                     # verify the committed pylock is current; write nothing
   --upgrade                    # re-anchor the P<n>D window to now
@@ -659,7 +688,7 @@ scope that fixes where it may come from:
 * Project-scope options describe the resolve itself, so they live with
   the project. Every `[tool.nab]` key is project-scope (`mode`,
   `indexes`, `constraints`, `vcs`, `workspace`, `dist-policy`,
-  `build-policy`, `marker-environment`, `conflicts`, `matrix`,
+  `build-policy`, `environment`, `conflicts`, `matrix`,
   `packages`, `resolution`, and the rest), and each may be set in
   either `pyproject.toml`'s `[tool.nab]` or a project-directory
   `nab.toml`. They are never read from a user/system file or an

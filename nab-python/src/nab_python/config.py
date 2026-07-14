@@ -59,6 +59,12 @@ from .provider import (
     _normalize_extra,
 )
 from .tags import DEFAULT_LIBC, LIBC_MAJOR, Libc, PlatformSpec, platform_kind
+from .target import (
+    PLATFORM_MARKERS,
+    ResolveTarget,
+    host_environment,
+    python_axis_environment,
+)
 from .universal.matrix import Matrix
 from .workspace import (
     WorkspaceConfig,
@@ -83,6 +89,7 @@ __all__ = [
     "ConflictPolicy",
     "ConflictSelectionError",
     "ConflictSet",
+    "EnvironmentConfig",
     "IndexOverride",
     "MatrixConfig",
     "NabProjectConfig",
@@ -92,10 +99,14 @@ __all__ = [
     "conflict_exclusion_groups",
     "conflict_forks",
     "conflict_member_groups",
+    "enforce_build_policy_for_targets",
     "index_routes_from_config",
+    "matrix_from_config",
+    "plan_targets",
     "read_pyproject_config",
     "validate_conflict_exclusions",
     "validate_conflict_minimums",
+    "with_python_override",
 ]
 
 
@@ -132,6 +143,20 @@ class MatrixConfig:
     python_order: str = "asc"
     python_patches: Mapping[str, str] | None = None
     implementations: tuple[str, ...] = ("cpython",)
+
+
+@dataclass(frozen=True, slots=True)
+class EnvironmentConfig:
+    """The single environment ``[tool.nab.environment]`` declares.
+
+    One cell of a matrix: the axes a target is made of.  An unset axis
+    takes the host's value, so an empty table is the host and a table
+    naming only ``python`` is the host machine running another Python.
+    """
+
+    python: str | None = None
+    platform: str | None = None
+    implementation: str | None = None
 
 
 class ConflictPolicy(enum.Enum):
@@ -386,12 +411,17 @@ class NabProjectConfig:
     mode: ResolveMode = ResolveMode.SPECIFIC
     constraints: tuple[str, ...] = ()
     default_groups: tuple[str, ...] = ()
+    # The project's declared Python support range: recorded as the lock's
+    # top-level ``requires-python`` and checked against the resolve target.
+    # It does not choose the target; ``environment`` does.
     requires_python: str | None = None
     uploaded_prior_to: datetime | None = None
     dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST
     build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL
     trust_unverified_sdist_deps: bool = False
-    marker_environment: Mapping[str, str] = field(default_factory=dict)
+    # The declared resolve environment from ``[tool.nab.environment]``, or
+    # ``None`` for the host.  Mutually exclusive with ``matrix``.
+    environment: EnvironmentConfig | None = None
     indexes: tuple[IndexConfig, ...] = (
         IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
     )
@@ -571,6 +601,7 @@ def read_pyproject_config(
         anchor = datetime.now(timezone.utc)
     pyproject_dir = path.parent.resolve()
     _reject_unknown_pyproject_keys(path)
+    project_requires_python = _read_project_requires_python(path)
     # Point the pyproject root at ``pyproject_dir / path.name`` (not
     # ``path.resolve()``) so the registry's declaring directory is the
     # symlink's own directory, matching the historical local-sources base
@@ -586,7 +617,10 @@ def read_pyproject_config(
         cli_layer = build_cli_layer(cli_overrides or {})
         effective = resolve_config(layers, read_env_layer({}), cli_layer)
     config = _config_from_effective(
-        effective, anchor=anchor, pyproject_dir=pyproject_dir
+        effective,
+        anchor=anchor,
+        pyproject_dir=pyproject_dir,
+        project_requires_python=project_requires_python,
     )
     if discover_workspace:
         config = _apply_workspace_discovery(path, config)
@@ -598,6 +632,7 @@ def _config_from_effective(
     *,
     anchor: datetime,
     pyproject_dir: Path,
+    project_requires_python: str | None = None,
 ) -> NabProjectConfig:
     """Assemble :class:`NabProjectConfig` from the registry merged ladder.
 
@@ -606,11 +641,14 @@ def _config_from_effective(
     cross-file conflict rule, and the category gate.  The cross-field
     transforms the single-key rows deliberately defer (mode/matrix mutual
     requirement, declared-index references for routing and per-index
-    overrides, the cross-surface package-override overlap, universal
-    build-policy enforcement and the marker-environment ban, the
+    overrides, the cross-surface package-override overlap, the resolve-target
+    plan and the build-policy enforcement it drives, the
     default-groups-vs-conflicts check, and source-name uniqueness) then run
     here over the merged whole.  Workspace discovery is applied by the
     caller afterwards.
+
+    ``project_requires_python`` is ``[project].requires-python``, the
+    fallback source for the declaration when ``[tool.nab]`` sets none.
     """
     del anchor  # P<n>D durations are already anchored in the effective map.
     mode_value = effective["mode"]
@@ -649,24 +687,28 @@ def _config_from_effective(
     index_overrides: Mapping[str, IndexOverride] = effective["index"].value
     _validate_index_overrides_declared(index_overrides, declared_index_names)
 
-    marker_environment = effective["marker-environment"].value
-    build_policy: BuildPolicy = effective["build-policy"].value
-    if mode is ResolveMode.UNIVERSAL:
-        build_policy = _enforce_universal_build_policy(
-            build_policy_set=effective["build-policy"].origin.kind
-            is not SourceKind.DEFAULT,
-            build_policy=build_policy,
-            package_overrides=package_overrides,
-            index_overrides=index_overrides,
+    environment = _environment_from_effective(effective)
+    if matrix is not None and environment is not None:
+        msg = (
+            "[tool.nab.matrix] and [tool.nab.environment] cannot both be set:"
+            " the matrix declares one environment per tuple, so a single"
+            " declared environment would contradict it.  Drop one."
         )
-        if marker_environment:
-            msg = (
-                "mode = 'universal' does not support"
-                " [tool.nab.marker-environment]: the matrix defines each"
-                " environment, so a global overlay would conflict with the"
-                " per-tuple values. Drop it or use mode = 'specific'."
-            )
-            raise ConfigError(msg)
+        raise ConfigError(msg)
+
+    targets = _plan_targets(matrix, environment)
+    build_policy = enforce_build_policy_for_targets(
+        targets=targets,
+        build_policy=effective["build-policy"].value,
+        build_policy_set=effective["build-policy"].origin.kind
+        is not SourceKind.DEFAULT,
+        package_overrides=package_overrides,
+        index_overrides=index_overrides,
+    )
+
+    requires_python = effective["requires-python"].value
+    if requires_python is None:
+        requires_python = project_requires_python
 
     default_groups = effective["default-groups"].value
     conflicts = effective["conflicts"].value
@@ -682,12 +724,12 @@ def _config_from_effective(
         mode=mode,
         constraints=effective["constraints"].value,
         default_groups=default_groups,
-        requires_python=effective["requires-python"].value,
+        requires_python=requires_python,
         uploaded_prior_to=effective["uploaded-prior-to"].value,
         dist_policy=dist_policy,
         build_policy=build_policy,
         trust_unverified_sdist_deps=trust_unverified,
-        marker_environment=marker_environment,
+        environment=environment,
         indexes=indexes,
         vcs=effective["vcs"].value,
         local_sources=local_sources,
@@ -758,13 +800,15 @@ def _apply_workspace_discovery(
     merged = merge_workspace_local_sources(config.local_sources, discovered)
     _reject_duplicate_source_names(merged, config.vcs_sources, config.archive_sources)
     explicit_names = {canonicalize_name(src.name) for src in config.local_sources}
-    # A universal matrix or a marker-environment overlay both forbid host
-    # builds, so the workspace BUILD_LOCAL floor does not apply: keep never.
-    forbids_host_builds = config.mode is ResolveMode.UNIVERSAL or bool(
-        config.marker_environment
-    )
+    # A target that impersonates a machine forbids host builds, so the
+    # workspace BUILD_LOCAL floor does not apply there: keep never.  A
+    # python-only retarget stays on the host machine, so the floor still
+    # applies and a workspace member with dynamic metadata still builds.
+    #
+    # The planner without the requires-python check: the config is still
+    # being read, and --python has not moved the target yet.
     promoted_policy = config.build_policy
-    if not forbids_host_builds:
+    if not _forbids_host_builds(_plan_targets(config.matrix, config.environment)):
         promoted_policy = auto_promote_build_policy_for_workspace(config.build_policy)
     if promoted_policy is not config.build_policy:
         _logger.info(
@@ -819,20 +863,153 @@ def _reject_unknown_pyproject_keys(path: Path) -> None:
         raise ConfigError(msg)
 
 
-def _enforce_universal_build_policy(
+def plan_targets(config: NabProjectConfig) -> tuple[ResolveTarget, ...]:
+    """Return every environment ``config`` resolves against, in matrix order.
+
+    The host is the target unless the project says otherwise: a declared
+    matrix expands to one target per tuple, ``[tool.nab.environment]``
+    names a single target (declared when it moves the platform axis, the
+    host machine on another Python when it names only ``python``), and a
+    project that declares neither resolves against the running interpreter,
+    like pip.
+
+    The ``requires-python`` declaration is checked here rather than at parse
+    time because ``--python`` moves the target after the config is read, and
+    it is the flag that rescues a project whose declaration excludes the host.
+    """
+    targets = _plan_targets(config.matrix, config.environment)
+    if config.matrix is None:
+        _check_requires_python_admits_target(config.requires_python, targets[0])
+    return targets
+
+
+def _plan_targets(
+    matrix: MatrixConfig | None, environment: EnvironmentConfig | None
+) -> tuple[ResolveTarget, ...]:
+    """Plan the targets from the two declaring surfaces, pre-assembly.
+
+    Takes the pieces rather than a :class:`NabProjectConfig` so the config
+    parse can plan (and enforce the build policy) while it is still
+    assembling one.
+    """
+    if matrix is not None:
+        return tuple(matrix_from_config(matrix).expand())
+    if environment is None:
+        return (ResolveTarget.for_host(),)
+    if environment.platform is not None:
+        return (_declared_target(environment),)
+    # An implementation without a platform is rejected at parse, so a
+    # remaining environment declares the python axis and nothing else.
+    assert environment.python is not None
+    return (ResolveTarget.for_host_python(environment.python),)
+
+
+def _declared_target(environment: EnvironmentConfig) -> ResolveTarget:
+    """Build the one target ``[tool.nab.environment]`` declares.
+
+    The platform is named, so the target's markers and wheel tags are
+    synthesized from it rather than read off the host.  An unset ``python``
+    takes the host's release, and an unset ``implementation`` is CPython,
+    matching the matrix default.
+    """
+    assert environment.platform is not None  # the caller checked
+    python = environment.python or host_environment()["python_full_version"]
+    axis = python_axis_environment(python)
+    return ResolveTarget.for_declared(
+        python_version=axis["python_version"],
+        spec=PlatformSpec(environment.platform),
+        implementation=environment.implementation or "cpython",
+        python_full_version=axis["python_full_version"],
+    )
+
+
+def matrix_from_config(matrix: MatrixConfig) -> Matrix:
+    """Build the expandable :class:`Matrix` from its parsed config table."""
+    return Matrix(
+        python=matrix.python,
+        platforms=matrix.platforms,
+        python_order=matrix.python_order,
+        python_patches=(
+            dict(matrix.python_patches) if matrix.python_patches is not None else None
+        ),
+        implementations=matrix.implementations,
+    )
+
+
+def _forbids_host_builds(targets: Sequence[ResolveTarget]) -> bool:
+    """Whether any target impersonates a machine other than the host's.
+
+    A declared target (a matrix tuple, or an environment naming a platform
+    or implementation) carries a :class:`PlatformSpec`; the host and a
+    host-python retarget do not.
+    """
+    return any(target.platform_spec is not None for target in targets)
+
+
+def enforce_build_policy_for_targets(
+    *,
+    targets: Sequence[ResolveTarget],
+    build_policy: BuildPolicy,
+    build_policy_set: bool,
+    package_overrides: Sequence[PackageOverride],
+    index_overrides: Mapping[str, IndexOverride],
+) -> BuildPolicy:
+    """Return the build policy the planned targets permit, or raise.
+
+    A PEP 517 backend only ever runs on the host interpreter, so what a
+    build reports is the host's metadata.  Two tiers follow:
+
+    * A target that moves the platform axis (a matrix, or an environment
+      naming a ``platform`` or ``implementation``) forbids host builds:
+      ``build-policy`` is forced to ``never`` and an explicit non-``never``
+      value, global or in any override, is an error.  This matches pip,
+      which requires ``--only-binary=:all:`` under ``--platform``.
+    * A python-axis-only retarget on the host machine warns and permits:
+      the workspace ``build-local`` floor exists for members with dynamic
+      metadata, and forbidding a build here would break every workspace
+      that also pins a Python.  A deliberate deviation from pip.
+
+    The host target permits, so the default case builds freely.
+    """
+    if _forbids_host_builds(targets):
+        offending = _explicit_host_builds(
+            build_policy_set=build_policy_set,
+            build_policy=build_policy,
+            package_overrides=package_overrides,
+            index_overrides=index_overrides,
+        )
+        if offending:
+            msg = (
+                "a declared target cannot build on the host, so build-policy"
+                f" must be 'never'; got {', '.join(offending)}.  A PEP 517"
+                " backend runs on the host and reports the host's metadata,"
+                " not the target's.  Remove the setting (it defaults to"
+                " 'never' for a declared target) or set it to 'never'."
+            )
+            raise ConfigError(msg)
+        return BuildPolicy.NEVER
+    if not all(target.host_faithful for target in targets):
+        _logger.warning(
+            "the resolve targets Python %s but a build would run on the host"
+            " interpreter and report its metadata; set build-policy = 'never'"
+            " to forbid builds",
+            targets[0].python_full_version,
+        )
+    return build_policy
+
+
+def _explicit_host_builds(
     *,
     build_policy_set: bool,
     build_policy: BuildPolicy,
-    package_overrides: tuple[PackageOverride, ...],
+    package_overrides: Sequence[PackageOverride],
     index_overrides: Mapping[str, IndexOverride],
-) -> BuildPolicy:
-    """Force ``never`` under universal mode and reject explicit host builds.
+) -> list[str]:
+    """Name every surface that explicitly asks for a non-``never`` build.
 
-    Universal resolution impersonates one platform per matrix tuple, but a
-    PEP 517 backend only ever runs on the host, so a build cannot reflect a
-    non-host target.  ``build-policy`` therefore defaults to ``never`` under
-    ``mode = "universal"``; an explicit non-``never`` value, global or in any
-    override, is an error.
+    An unset global is not offending: ``build-policy`` defaults to
+    ``never`` for a target that forbids host builds rather than failing a
+    project that never mentioned it.
     """
     offending: list[str] = []
     if build_policy_set and build_policy is not BuildPolicy.NEVER:
@@ -845,14 +1022,69 @@ def _enforce_universal_build_policy(
         bp = index_override.build_policy
         if bp is not None and bp is not BuildPolicy.NEVER:
             offending.append(f"index.{name} build-policy = {bp.value!r}")
-    if offending:
-        msg = (
-            "mode = 'universal' cannot build on the host, so build-policy must"
-            f" be 'never'; got {', '.join(offending)}.  Remove the setting (it"
-            " defaults to 'never' under universal mode) or set it to 'never'."
-        )
-        raise ConfigError(msg)
-    return BuildPolicy.NEVER
+    return offending
+
+
+def with_python_override(
+    config: NabProjectConfig, python: str | None
+) -> NabProjectConfig:
+    """Return ``config`` with its resolve target moved onto ``python``.
+
+    The ``--python`` flag (and the ``python_version`` argument of
+    :func:`~nab_python.resolve.resolve_pyproject`) retargets the python
+    axis for one run, leaving any declared platform in place.  The
+    build-policy guard runs again over the new plan, so a runtime retarget
+    is held to the same rule as a declared one.  ``None`` is a no-op.
+    """
+    if python is None:
+        return config
+    _validate_environment_values({"python": python})
+    environment = (
+        EnvironmentConfig(python=python)
+        if config.environment is None
+        else replace(config.environment, python=python)
+    )
+    build_policy = enforce_build_policy_for_targets(
+        targets=_plan_targets(config.matrix, environment),
+        build_policy=config.build_policy,
+        # The policy here is the effective one, so any non-``never`` value
+        # that survived the parse is an explicit host-build request.
+        build_policy_set=True,
+        package_overrides=config.package_overrides,
+        index_overrides=config.index_overrides,
+    )
+    retargeted = replace(config, environment=environment, build_policy=build_policy)
+    _check_requires_python_admits_target(
+        retargeted.requires_python, plan_targets(retargeted)[0]
+    )
+    return retargeted
+
+
+def _check_requires_python_admits_target(
+    requires_python: str | None, target: ResolveTarget
+) -> None:
+    """Reject a ``requires-python`` declaration that excludes the resolve target.
+
+    ``requires-python`` declares the Python range the project supports; it
+    does not steer the resolve.  Resolving for a Python the project says it
+    does not support would produce a lock the project's own metadata
+    rejects, so it fails loud and names the knob that moves the target.
+    """
+    if requires_python is None:
+        return
+    # The release, not the marker value: a specifier admits no prerelease
+    # unless it names one, so ">=3.14" has to admit a 3.14 candidate host.
+    # This is the comparison every candidate's Requires-Python takes too.
+    if target.python_release in SpecifierSet(requires_python):
+        return
+    msg = (
+        f"requires-python = {requires_python!r} excludes the resolve target"
+        f" Python {target.python_full_version} ({target.label}).  nab resolves"
+        " for the host interpreter unless told otherwise; pass --python with a"
+        " version the declaration admits, set [tool.nab.environment] python to one, or"
+        " widen requires-python."
+    )
+    raise ConfigError(msg)
 
 
 def _parse_mode(value: object) -> ResolveMode:
@@ -914,12 +1146,14 @@ def _parse_string_value(key: str, value: object) -> str:
 def _parse_requires_python(value: object) -> str | None:
     """Parse ``[tool.nab].requires-python`` as a PEP 440 specifier.
 
-    Stored as the raw specifier string so the lockfile writer can pass
-    it straight to :class:`SpecifierSet`.  The resolve path later
-    derives a concrete Python version target from the same specifier.
-    Raises :class:`ConfigError` for invalid specifiers and for
-    well-meaning bare versions like ``"3.13"``; those are not valid
-    specifiers and must be written ``"==3.13"`` or ``">=3.13,<3.14"``.
+    A declaration, not a target: it is recorded as the lock's top-level
+    ``requires-python`` and checked against the resolve target, and the
+    target itself comes from ``[tool.nab.environment]`` (the host by
+    default).  Stored as the raw specifier string so the lockfile writer
+    can pass it straight to :class:`SpecifierSet`.  Raises
+    :class:`ConfigError` for invalid specifiers and for well-meaning bare
+    versions like ``"3.13"``; those are not valid specifiers and must be
+    written ``"==3.13"`` or ``">=3.13,<3.14"``.
     """
     raw = _parse_string_value("requires-python", value)
     try:
@@ -931,6 +1165,23 @@ def _parse_requires_python(value: object) -> str | None:
         )
         raise ConfigError(msg) from exc
     return raw
+
+
+def _read_project_requires_python(path: Path) -> str | None:
+    """Read ``[project].requires-python``, the fallback declaration source.
+
+    ``[tool.nab].requires-python`` (and ``--project-requires-python``) wins
+    when set; otherwise the project's own declaration is what the lock
+    records.  The file has already been parsed as TOML by
+    :func:`_reject_unknown_pyproject_keys`, so a decode error cannot reach
+    here.
+    """
+    with path.open("rb") as f:
+        data = tomli.load(f)
+    project = data.get("project")
+    if not isinstance(project, dict) or "requires-python" not in project:
+        return None
+    return _parse_requires_python(project["requires-python"])
 
 
 def index_routes_from_config(config: NabProjectConfig) -> list[IndexRoute]:
@@ -1097,6 +1348,225 @@ def _parse_marker_environment(value: object) -> dict[str, str]:
                 raise ConfigError(msg) from exc
         out[k] = v
     return out
+
+
+_ENVIRONMENT_KEYS = frozenset({"python", "platform", "implementation"})
+
+
+def _parse_environment(value: object) -> dict[str, str]:
+    """Parse ``[tool.nab.environment]``: the one environment to resolve for.
+
+    Kept as the raw ``key -> str`` table so the registry merges it sub-key
+    by sub-key across the config sources; :func:`_environment_from_effective`
+    turns the merged whole into an :class:`EnvironmentConfig`.
+    """
+    if not isinstance(value, dict):
+        msg = (
+            "[tool.nab.environment] must be a table of string -> string,"
+            f" got {type(value).__name__}"
+        )
+        raise ConfigError(msg)
+    unknown = sorted(set(value) - _ENVIRONMENT_KEYS)
+    if unknown:
+        msg = (
+            f"unknown [tool.nab.environment] keys: {unknown!r};"
+            f" expected {sorted(_ENVIRONMENT_KEYS)!r}"
+        )
+        raise ConfigError(msg)
+    out = {
+        key: _parse_string_value(f"environment.{key}", item)
+        for key, item in value.items()
+    }
+    _validate_environment_values(out)
+    return out
+
+
+def _validate_environment_values(environment: Mapping[str, str]) -> None:
+    """Validate the value of every environment axis the table names.
+
+    Shared by the ``[tool.nab.environment]`` parse, the
+    ``[tool.nab.marker-environment]`` translation, and the ``--python``
+    override, so all three reject the same bad values with one message.
+    """
+    python = environment.get("python")
+    if python is not None:
+        try:
+            Version(python)
+        except InvalidVersion as exc:
+            msg = (
+                "environment.python must be a version like '3.12' or"
+                f" '3.12.4', got {python!r}"
+            )
+            raise ConfigError(msg) from exc
+    platform = environment.get("platform")
+    if platform is not None and platform not in PLATFORM_MARKERS:
+        valid = sorted(PLATFORM_MARKERS)
+        msg = f"unknown environment.platform {platform!r}; expected one of {valid!r}"
+        raise ConfigError(msg)
+    implementation = environment.get("implementation")
+    if implementation is not None and implementation not in _KNOWN_IMPLEMENTATIONS:
+        valid = list(_KNOWN_IMPLEMENTATIONS)
+        msg = (
+            f"unknown environment.implementation {implementation!r};"
+            f" expected one of {valid!r}"
+        )
+        raise ConfigError(msg)
+
+
+# The deprecated marker-environment keys, per environment axis, in the
+# order they are read: the more precise key wins.
+_MARKER_PYTHON_KEYS = ("python_full_version", "python_version")
+_MARKER_IMPLEMENTATION_KEYS = ("implementation_name", "platform_python_implementation")
+_MARKER_PLATFORM_KEYS = ("sys_platform", "platform_machine")
+# The platform id names these too, so an overlay may repeat them as long as it
+# agrees with the machine the pair identifies.
+_MARKER_PLATFORM_IMPLIED_KEYS = ("platform_system", "os_name")
+
+# The platform id each (sys_platform, platform_machine) pair names.
+_PLATFORM_ID_BY_MARKERS: dict[tuple[str, str], str] = {
+    (markers["sys_platform"], markers["platform_machine"]): platform_id
+    for platform_id, markers in PLATFORM_MARKERS.items()
+}
+
+
+def _environment_from_marker_environment(
+    marker_environment: Mapping[str, str],
+) -> dict[str, str]:
+    """Translate the deprecated ``[tool.nab.marker-environment]`` overlay.
+
+    The overlay set PEP 508 marker variables one by one, which let a
+    partial declaration (``sys_platform`` alone) leave the rest of the
+    environment on the host and resolve for a machine that does not exist.
+    The replacement declares whole axes, so every overlay key must name one:
+    an unmappable ``(sys_platform, platform_machine)`` pair, or a key no
+    axis can carry, is an error rather than a silently-wrong resolve.
+    """
+    _logger.warning(
+        "[tool.nab.marker-environment] is deprecated and will be removed;"
+        " declare [tool.nab.environment] with python/platform/implementation"
+        " instead.  Translating the overlay for this run."
+    )
+    translatable = {
+        *_MARKER_PYTHON_KEYS,
+        *_MARKER_IMPLEMENTATION_KEYS,
+        *_MARKER_PLATFORM_KEYS,
+        *_MARKER_PLATFORM_IMPLIED_KEYS,
+    }
+    untranslatable = sorted(set(marker_environment) - translatable)
+    if untranslatable:
+        msg = (
+            f"[tool.nab.marker-environment] variable(s) {untranslatable!r} cannot"
+            " be translated to [tool.nab.environment], whose axes are"
+            f" {sorted(_ENVIRONMENT_KEYS)!r}.  The platform id carries the"
+            " OS and machine markers; declare it as environment.platform."
+        )
+        raise ConfigError(msg)
+
+    environment: dict[str, str] = {}
+    for key in _MARKER_PYTHON_KEYS:
+        if key in marker_environment:
+            environment["python"] = marker_environment[key]
+            break
+    for key in _MARKER_IMPLEMENTATION_KEYS:
+        if key in marker_environment:
+            # platform_python_implementation is title-cased ("CPython").
+            environment["implementation"] = marker_environment[key].lower()
+            break
+    implied = [k for k in _MARKER_PLATFORM_IMPLIED_KEYS if k in marker_environment]
+    if implied and not any(k in marker_environment for k in _MARKER_PLATFORM_KEYS):
+        msg = (
+            f"[tool.nab.marker-environment] sets {implied!r} without"
+            " (sys_platform, platform_machine), which is the pair that names"
+            " the machine.  Declare [tool.nab.environment] platform instead:"
+            " half a machine would keep the other half of the host's."
+        )
+        raise ConfigError(msg)
+    if any(key in marker_environment for key in _MARKER_PLATFORM_KEYS):
+        pair = (
+            marker_environment.get("sys_platform", ""),
+            marker_environment.get("platform_machine", ""),
+        )
+        platform_id = _PLATFORM_ID_BY_MARKERS.get(pair)
+        if platform_id is None:
+            valid = sorted(PLATFORM_MARKERS)
+            msg = (
+                "[tool.nab.marker-environment] sets (sys_platform,"
+                f" platform_machine) = {pair!r}, which names no platform nab"
+                f" models.  Declare [tool.nab.environment] platform = one of"
+                f" {valid!r}; both markers must name one machine, because half"
+                " a machine would keep the other half of the host's."
+            )
+            raise ConfigError(msg)
+        _check_implied_platform_markers(marker_environment, platform_id)
+        environment["platform"] = platform_id
+    _validate_environment_values(environment)
+    return environment
+
+
+def _check_implied_platform_markers(
+    marker_environment: Mapping[str, str], platform_id: str
+) -> None:
+    """Reject an overlay whose implied markers contradict the platform it names.
+
+    The platform id carries ``platform_system`` and ``os_name``, so an overlay
+    that repeats them is translatable; one that disagrees with them names two
+    machines at once.
+    """
+    declared = PLATFORM_MARKERS[platform_id]
+    conflicting = {
+        key: marker_environment[key]
+        for key in _MARKER_PLATFORM_IMPLIED_KEYS
+        if key in marker_environment and marker_environment[key] != declared[key]
+    }
+    if conflicting:
+        expected = {key: declared[key] for key in conflicting}
+        msg = (
+            f"[tool.nab.marker-environment] sets {conflicting!r}, which"
+            f" contradicts platform {platform_id!r}, where they are"
+            f" {expected!r}.  One overlay names one machine."
+        )
+        raise ConfigError(msg)
+
+
+def _environment_from_effective(
+    effective: Mapping[str, EffectiveValue],
+) -> EnvironmentConfig | None:
+    """Fold the environment surfaces into the one declared environment.
+
+    ``[tool.nab.environment]`` is the surface;
+    ``[tool.nab.marker-environment]`` is its deprecated predecessor and is
+    translated into it.  Declaring both is an error: the two would have to
+    agree, and a silent precedence between them is exactly the ambiguity the
+    replacement removes.  Returns ``None`` when neither is declared, which
+    is the host.
+    """
+    declared: Mapping[str, str] = effective["environment"].value
+    marker_environment: Mapping[str, str] = effective["marker-environment"].value
+    if marker_environment:
+        if declared:
+            msg = (
+                "[tool.nab.environment] and the deprecated"
+                " [tool.nab.marker-environment] are both set; drop the"
+                " marker-environment table."
+            )
+            raise ConfigError(msg)
+        declared = _environment_from_marker_environment(marker_environment)
+    if not declared:
+        return None
+    environment = EnvironmentConfig(
+        python=declared.get("python"),
+        platform=declared.get("platform"),
+        implementation=declared.get("implementation"),
+    )
+    if environment.implementation is not None and environment.platform is None:
+        valid = sorted(PLATFORM_MARKERS)
+        msg = (
+            "[tool.nab.environment].implementation needs a platform: an"
+            " interpreter is modelled on a declared machine, not on the host's."
+            f"  Add platform = one of {valid!r}."
+        )
+        raise ConfigError(msg)
+    return environment
 
 
 _INDEX_KEYS = frozenset({"name", "url"})
@@ -2416,15 +2886,7 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
 
 def _validate_matrix_axes(config: MatrixConfig) -> None:
     """Expand the matrix eagerly to catch bad axes at parse time."""
-    matrix = Matrix(
-        python=config.python,
-        platforms=config.platforms,
-        python_order=config.python_order,
-        python_patches=dict(config.python_patches)
-        if config.python_patches is not None
-        else None,
-        implementations=config.implementations,
-    )
+    matrix = matrix_from_config(config)
     try:
         matrix.expand()
     except ValueError as exc:

@@ -245,7 +245,7 @@ class OptionSpec:
     ``env_var`` is the ``NAB_*`` name or ``None`` (not env-settable).
     ``cli_flag`` is the tyro flag spelling the conformance test checks,
     or ``None`` for a file-only row (a structured PROJECT table with no
-    bare CLI flag, e.g. ``vcs``/``workspace``/``marker-environment``);
+    bare CLI flag, e.g. ``vcs``/``workspace``/``environment``);
     ``cli_param`` is the tyro function-parameter name backing the flag,
     also ``None`` for a file-only row.  ``type_label`` is shown by
     ``nab config``.
@@ -475,6 +475,18 @@ def _parse_marker_environment(value: Any, where: str) -> Mapping[str, str]:
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_marker_environment as _impl,
+    )
+
+    return _delegate(lambda: _impl(value))
+
+
+def _parse_environment(value: Any, where: str) -> Mapping[str, str]:
+    # Name-keyed table (python/platform/implementation -> str), one cell of
+    # a matrix.  A mapping row, so the axes merge sub-key by sub-key across
+    # the ladder and a ``--python`` override moves only the python axis.
+    del where
+    from .config import (  # noqa: PLC0415 (config import cycle)
+        _parse_environment as _impl,
     )
 
     return _delegate(lambda: _impl(value))
@@ -770,6 +782,12 @@ def _render_marker_environment(value: Mapping[str, str]) -> str:
     return ", ".join(f"{k}={v}" for k, v in sorted(value.items()))
 
 
+def _render_environment(value: Mapping[str, str]) -> str:
+    if not value:
+        return "<host>"
+    return ", ".join(f"{k}={v}" for k, v in sorted(value.items()))
+
+
 def _render_vcs(value: Any) -> str:
     parts = [f"policy={value.policy.value}"]
     if value.allowed_schemes:
@@ -896,9 +914,21 @@ OPTIONS: tuple[OptionSpec, ...] = (
         render=lambda v: v.value,
     ),
     OptionSpec(
+        key="environment",
+        scope=Scope.PROJECT,
+        type_label="table(python,platform,implementation)",
+        default=_EMPTY_MAPPING,
+        env_var=None,
+        cli_flag=None,
+        cli_param=None,
+        parse=_parse_environment,
+        render=_render_environment,
+        is_mapping=True,
+    ),
+    OptionSpec(
         key="marker-environment",
         scope=Scope.PROJECT,
-        type_label="table(marker-var=str)",
+        type_label="table(marker-var=str) [deprecated]",
         default=_EMPTY_MAPPING,
         env_var=None,
         cli_flag=None,

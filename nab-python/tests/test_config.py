@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from nab_python._vendor.packaging.markers import default_environment
+from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConfigError,
@@ -16,14 +18,18 @@ from nab_python.config import (
     ConflictPolicy,
     ConflictSelectionError,
     ConflictSet,
+    EnvironmentConfig,
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
+    _check_requires_python_admits_target,
     conflict_exclusion_groups,
     conflict_forks,
     index_routes_from_config,
+    plan_targets,
     read_pyproject_config,
     validate_conflict_minimums,
+    with_python_override,
 )
 from nab_python.config_sources import (
     SourceConfigError,
@@ -46,6 +52,7 @@ from nab_python.provider import (
     VcsSource,
 )
 from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
 from nab_python.workspace import WorkspaceConfig
 
 
@@ -710,15 +717,127 @@ class TestDefaultGroups:
 
 
 class TestRequiresPython:
+    """``requires-python`` declares the supported range; it is not a target.
+
+    The resolve target is the host (or ``[tool.nab.environment]``), so a
+    specifier finer than the host's Python is paired with the environment
+    that satisfies it; one that admits no target at all is an error.
+    """
+
     def test_round_trip_specifier(self, tmp_path: Path) -> None:
         """A valid PEP 440 specifier round-trips as the raw string."""
-        path = write(tmp_path, '[tool.nab]\nrequires-python = "==3.12.0"\n')
+        path = write(
+            tmp_path,
+            '[tool.nab]\nrequires-python = "==3.12.0"\n'
+            '[tool.nab.environment]\npython = "3.12.0"\n',
+        )
         assert read_pyproject_config(path).requires_python == "==3.12.0"
 
     def test_range_specifier_round_trips(self, tmp_path: Path) -> None:
         """A range specifier (``>=X,<Y``) round-trips as written."""
-        path = write(tmp_path, '[tool.nab]\nrequires-python = ">=3.13,<3.14"\n')
+        path = write(
+            tmp_path,
+            '[tool.nab]\nrequires-python = ">=3.13,<3.14"\n'
+            '[tool.nab.environment]\npython = "3.13"\n',
+        )
         assert read_pyproject_config(path).requires_python == ">=3.13,<3.14"
+
+    def test_excluding_the_resolve_target_is_an_error(self, tmp_path: Path) -> None:
+        """A declaration the target Python fails names the knobs that move it."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nrequires-python = "==3.9.*"\n'
+            '[tool.nab.environment]\npython = "3.12"\n',
+        )
+        config = read_pyproject_config(path)
+        with pytest.raises(
+            ConfigError,
+            match=r"excludes the resolve target Python 3.12.*--python",
+        ):
+            plan_targets(config)
+
+    def test_a_matrix_declares_its_own_pythons(self, tmp_path: Path) -> None:
+        """The matrix names the targets, so requires-python does not gate them.
+
+        The declaration is about the project, and a matrix that admits a
+        Python the project excludes is caught where the matrix is parsed.
+        """
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\nrequires-python = "==3.9.*"\n'
+            '[tool.nab.matrix]\npython = "==3.12"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        config = read_pyproject_config(path)
+        (target,) = plan_targets(config)
+        assert target.python_version == "3.12"
+
+    def test_a_release_candidate_host_satisfies_its_own_release(
+        self, tmp_path: Path
+    ) -> None:
+        """``>=3.14`` has to admit a 3.14 candidate, as it does under pip.
+
+        A specifier admits no prerelease unless it names one, so comparing the
+        marker value would refuse to lock at all on a release candidate.
+        """
+        path = write(tmp_path, '[tool.nab]\nrequires-python = ">=3.14"\n')
+        config = read_pyproject_config(path)
+        target = ResolveTarget.for_host(
+            env_source=lambda: {
+                **default_environment(),
+                "python_version": "3.14",
+                "python_full_version": "3.14.0rc1",
+            },
+        )
+        assert target.python_release in SpecifierSet(">=3.14")
+        _check_requires_python_admits_target(config.requires_python, target)
+
+    def test_a_python_override_rescues_a_declaration_the_host_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """``--python`` is the knob the error names, so it has to work.
+
+        The check runs against the target the resolve actually uses, and
+        ``--python`` moves that target after the config is read.  Without it a
+        library capped below the interpreter locking it could not be locked at
+        all.  nab itself needs 3.10, so a project declaring only 3.9 is never
+        the host, whatever runs the suite.
+        """
+        path = write(tmp_path, '[tool.nab]\nrequires-python = "==3.9.*"\n')
+        config = read_pyproject_config(path)
+        with pytest.raises(ConfigError, match="excludes the resolve target"):
+            plan_targets(config)
+
+        (target,) = plan_targets(with_python_override(config, "3.9"))
+        assert target.python_version == "3.9"
+
+    def test_project_table_is_the_fallback_source(self, tmp_path: Path) -> None:
+        """``[project].requires-python`` is recorded when [tool.nab] sets none."""
+        path = write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\nrequires-python = ">=3.8"\n',
+        )
+        assert read_pyproject_config(path).requires_python == ">=3.8"
+
+    def test_tool_nab_wins_over_the_project_table(self, tmp_path: Path) -> None:
+        """The nab key overrides the project's own declaration."""
+        path = write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\nrequires-python = ">=3.8"\n'
+            '[tool.nab]\nrequires-python = ">=3.9"\n',
+        )
+        assert read_pyproject_config(path).requires_python == ">=3.9"
+
+    def test_project_table_specifier_is_validated(self, tmp_path: Path) -> None:
+        """A malformed [project].requires-python fails loud, not silently."""
+        path = write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\nrequires-python = "3.9"\n',
+        )
+        with pytest.raises(
+            ConfigError, match="requires-python must be a PEP 440 specifier"
+        ):
+            read_pyproject_config(path)
 
     def test_bare_version_rejected(self, tmp_path: Path) -> None:
         """A bare version is not a valid specifier; reject with guidance."""
@@ -750,7 +869,13 @@ class TestRequiresPython:
         assert match is not None, "top-level example dropped requires-python"
         value = match.group(1)
 
-        path = write(tmp_path, f'[tool.nab]\nrequires-python = "{value}"\n')
+        # The declaration is checked against the resolve target, so pin one
+        # the example admits rather than the Python the tests happen to run.
+        path = write(
+            tmp_path,
+            f'[tool.nab]\nrequires-python = "{value}"\n'
+            '[tool.nab.environment]\npython = "3.13"\n',
+        )
         assert read_pyproject_config(path).requires_python == value
 
 
@@ -993,7 +1118,7 @@ class TestUniversalBuildPolicy:
             '[tool.nab]\nmode = "universal"\nbuild-policy = "build-local"\n'
             + _UNIVERSAL_MATRIX,
         )
-        with pytest.raises(ConfigError, match="universal.*build-policy.*never"):
+        with pytest.raises(ConfigError, match="declared target.*build-policy.*never"):
             read_pyproject_config(path)
 
     def test_explicit_build_remote_rejected(self, tmp_path: Path) -> None:
@@ -1002,7 +1127,7 @@ class TestUniversalBuildPolicy:
             '[tool.nab]\nmode = "universal"\nbuild-policy = "build-remote"\n'
             + _UNIVERSAL_MATRIX,
         )
-        with pytest.raises(ConfigError, match="universal.*build-policy.*never"):
+        with pytest.raises(ConfigError, match="declared target.*build-policy.*never"):
             read_pyproject_config(path)
 
     def test_package_override_build_policy_rejected(self, tmp_path: Path) -> None:
@@ -1075,16 +1200,249 @@ class TestResolution:
             read_pyproject_config(path)
 
 
-class TestMarkerEnvironment:
-    def test_round_trip(self, tmp_path: Path) -> None:
+class TestEnvironment:
+    """``[tool.nab.environment]``: the one environment to resolve for."""
+
+    def test_absent_is_the_host(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nresolution = "highest"\n')
+        config = read_pyproject_config(path)
+        assert config.environment is None
+        assert plan_targets(config) == (ResolveTarget.for_host(),)
+
+    def test_python_only_retargets_the_host_python(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab.environment]\npython = "3.10"\n')
+        config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(python="3.10")
+        (target,) = plan_targets(config)
+        assert target.python_full_version == "3.10.0"
+        assert target.platform_id == "host"
+
+    def test_platform_declares_a_target(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.environment]\n"
+            'python = "3.11"\n'
+            'platform = "macos_arm64"\n'
+            'implementation = "pypy"\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(
+            python="3.11", platform="macos_arm64", implementation="pypy"
+        )
+        (target,) = plan_targets(config)
+        assert target.marker_env["sys_platform"] == "darwin"
+        assert target.implementation == "pypy"
+        assert target.platform_id == "macos_arm64"
+
+    def test_platform_without_python_takes_the_host_python(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\nplatform = "linux_x86_64"\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
+        host = ResolveTarget.for_host()
+        assert target.python_full_version == host.python_full_version
+        assert target.platform_id == "linux_x86_64"
+
+    def test_must_be_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nenvironment = "no"\n')
+        with pytest.raises(
+            ConfigError, match=r"\[tool.nab.environment\] must be a table"
+        ):
+            read_pyproject_config(path)
+
+    def test_unknown_key_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab.environment]\nlibc = "musl"\n')
+        with pytest.raises(
+            ConfigError, match=r"unknown \[tool.nab.environment\] keys: \['libc'\]"
+        ):
+            read_pyproject_config(path)
+
+    def test_value_must_be_string(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab.environment]\npython = 3\n")
+        with pytest.raises(ConfigError, match="environment.python must be a string"):
+            read_pyproject_config(path)
+
+    def test_python_must_be_a_version(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab.environment]\npython = ">=3.12"\n')
+        with pytest.raises(
+            ConfigError, match="environment.python must be a version like"
+        ):
+            read_pyproject_config(path)
+
+    def test_unknown_platform_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab.environment]\nplatform = "linux_i686"\n')
+        with pytest.raises(
+            ConfigError, match="unknown environment.platform 'linux_i686'"
+        ):
+            read_pyproject_config(path)
+
+    def test_unknown_implementation_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\nplatform = "linux_x86_64"\n'
+            'implementation = "jython"\n',
+        )
+        with pytest.raises(
+            ConfigError, match="unknown environment.implementation 'jython'"
+        ):
+            read_pyproject_config(path)
+
+    def test_implementation_without_platform_rejected(self, tmp_path: Path) -> None:
+        """An interpreter is modelled on a declared machine, not the host's."""
+        path = write(tmp_path, '[tool.nab.environment]\nimplementation = "pypy"\n')
+        with pytest.raises(
+            ConfigError,
+            match=r"\[tool.nab.environment\].implementation needs a platform",
+        ):
+            read_pyproject_config(path)
+
+    def test_rejected_alongside_a_matrix(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            + _UNIVERSAL_MATRIX
+            + '[tool.nab.environment]\npython = "3.12"\n',
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"\[tool.nab.matrix\] and \[tool.nab.environment\] cannot both",
+        ):
+            read_pyproject_config(path)
+
+
+class TestMarkerEnvironmentDeprecation:
+    """``[tool.nab.marker-environment]`` translates to the environment table.
+
+    The overlay set marker variables one at a time, so a partial platform
+    left the rest of the machine on the host.  Every key must now name an
+    environment axis; one that cannot is an error, not a wrong resolve.
+    """
+
+    def test_python_version_translates(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         path = write(
             tmp_path,
             "[tool.nab.marker-environment]\n"
-            'platform_system = "Linux"\n'
-            'sys_platform = "linux"\n',
+            'python_version = "3.12"\n'
+            'python_full_version = "3.12.4"\n',
         )
-        env = read_pyproject_config(path).marker_environment
-        assert env == {"platform_system": "Linux", "sys_platform": "linux"}
+        with caplog.at_level("WARNING", logger="nab_python.config"):
+            config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(python="3.12.4")
+        assert any("deprecated" in rec.message for rec in caplog.records)
+
+    def test_platform_pair_translates_to_a_platform_id(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'sys_platform = "win32"\n'
+            'platform_machine = "AMD64"\n'
+            'platform_python_implementation = "CPython"\n',
+        )
+        config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(
+            platform="windows_amd64", implementation="cpython"
+        )
+
+    def test_the_platform_id_carries_the_markers_it_implies(
+        self, tmp_path: Path
+    ) -> None:
+        """The overlay nab shipped named platform_system, so it has to translate."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'platform_system = "Linux"\n'
+            'sys_platform = "linux"\n'
+            'platform_machine = "x86_64"\n',
+        )
+        config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(platform="linux_x86_64")
+
+    def test_an_implied_marker_that_contradicts_the_platform_is_an_error(
+        self, tmp_path: Path
+    ) -> None:
+        """One overlay names one machine."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'platform_system = "Windows"\n'
+            'sys_platform = "linux"\n'
+            'platform_machine = "x86_64"\n',
+        )
+        with pytest.raises(ConfigError, match="contradicts platform"):
+            read_pyproject_config(path)
+
+    def test_half_a_platform_is_an_error(self, tmp_path: Path) -> None:
+        """``sys_platform`` alone used to keep the host's machine."""
+        path = write(
+            tmp_path,
+            '[tool.nab.marker-environment]\nsys_platform = "linux"\n',
+        )
+        with pytest.raises(ConfigError, match="names no platform nab models"):
+            read_pyproject_config(path)
+
+    def test_unmappable_pair_is_an_error(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.marker-environment]\n"
+            'sys_platform = "linux"\n'
+            'platform_machine = "ppc64le"\n',
+        )
+        with pytest.raises(ConfigError, match="names no platform nab models"):
+            read_pyproject_config(path)
+
+    def test_an_implied_marker_alone_is_an_error(self, tmp_path: Path) -> None:
+        """``platform_system`` names no machine without the pair that does."""
+        path = write(
+            tmp_path,
+            '[tool.nab.marker-environment]\nplatform_system = "Linux"\n',
+        )
+        with pytest.raises(ConfigError, match="which is the pair that names"):
+            read_pyproject_config(path)
+
+    def test_untranslatable_variable_is_an_error(self, tmp_path: Path) -> None:
+        """A variable no environment axis carries cannot be translated."""
+        path = write(
+            tmp_path,
+            '[tool.nab.marker-environment]\nplatform_release = "6.8.0"\n',
+        )
+        with pytest.raises(
+            ConfigError, match=r"variable\(s\) \['platform_release'\] cannot be"
+        ):
+            read_pyproject_config(path)
+
+    def test_unknown_implementation_is_an_error(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'sys_platform = "linux"\n'
+            'platform_machine = "x86_64"\n'
+            'implementation_name = "jython"\n',
+        )
+        with pytest.raises(
+            ConfigError, match="unknown environment.implementation 'jython'"
+        ):
+            read_pyproject_config(path)
+
+    def test_both_surfaces_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\npython = "3.12"\n'
+            "[tool.nab.marker-environment]\n"
+            'python_version = "3.11"\n',
+        )
+        with pytest.raises(ConfigError, match="are both set"):
+            read_pyproject_config(path)
 
     def test_must_be_table(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nmarker-environment = "no"\n')
@@ -1105,16 +1463,6 @@ class TestMarkerEnvironment:
         )
         with pytest.raises(ConfigError, match="unknown marker-environment variable"):
             read_pyproject_config(path)
-
-    def test_version_value_round_trip(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[tool.nab.marker-environment]\n"
-            'python_version = "3.12"\n'
-            'python_full_version = "3.12.4"\n',
-        )
-        env = read_pyproject_config(path).marker_environment
-        assert env == {"python_version": "3.12", "python_full_version": "3.12.4"}
 
     def test_python_version_must_be_pep440(self, tmp_path: Path) -> None:
         path = write(
@@ -1147,10 +1495,11 @@ class TestMarkerEnvironment:
             'python = ">=3.11"\n'
             'platforms = ["linux_x86_64"]\n'
             "[tool.nab.marker-environment]\n"
-            'platform_system = "Windows"\n',
+            'python_version = "3.11"\n',
         )
         with pytest.raises(
-            ConfigError, match="does not support .tool.nab.marker-environment."
+            ConfigError,
+            match=r"\[tool.nab.matrix\] and \[tool.nab.environment\] cannot both",
         ):
             read_pyproject_config(path)
 
@@ -3279,22 +3628,40 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(member)
         assert config.build_policy is BuildPolicy.NEVER
 
-    def test_marker_environment_member_not_promoted(self, tmp_path: Path) -> None:
-        """A marker overlay keeps never; discovery does not promote it.
+    def test_declared_platform_member_not_promoted(self, tmp_path: Path) -> None:
+        """A declared platform keeps never; discovery does not promote it.
 
-        A host build cannot reflect the impersonated marker target, so the
-        BUILD_LOCAL floor applied to workspace members is skipped.
+        A host build cannot reflect the declared machine, so the BUILD_LOCAL
+        floor applied to workspace members is skipped.
         """
         member = self._ws(tmp_path)
         member.write_text(
             '[project]\nname = "alpha"\nversion = "0"\n'
             "[tool.nab]\n"
             'build-policy = "never"\n'
-            "[tool.nab.marker-environment]\n"
-            'python_version = "3.9"\n',
+            "[tool.nab.environment]\n"
+            'platform = "linux_x86_64"\n',
         )
         config = read_pyproject_config(member)
         assert config.build_policy is BuildPolicy.NEVER
+
+    def test_declared_python_member_still_promoted(self, tmp_path: Path) -> None:
+        """A python-only retarget keeps the BUILD_LOCAL floor.
+
+        The machine is still the host, and a workspace member with dynamic
+        metadata has to build, so the floor applies and the build is
+        permitted (with a warning).  A deliberate deviation from pip.
+        """
+        member = self._ws(tmp_path)
+        member.write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n'
+            "[tool.nab]\n"
+            'build-policy = "never"\n'
+            "[tool.nab.environment]\n"
+            'python = "3.9"\n',
+        )
+        config = read_pyproject_config(member)
+        assert config.build_policy is BuildPolicy.BUILD_LOCAL
 
     def test_no_discovery_skips_walk(self, tmp_path: Path) -> None:
         member = self._ws(tmp_path)
@@ -3421,15 +3788,15 @@ class TestProjectNabTomlConfiguresResolve:
         assert config.vcs.allowed_schemes == frozenset({"git+https"})
         assert "policy=allow" in _inspect(path, "vcs")
 
-    def test_table_marker_environment(self, tmp_path: Path) -> None:
+    def test_table_environment(self, tmp_path: Path) -> None:
         path = self._write(
             tmp_path,
             '[project]\nname = "x"\nversion = "0"\n',
-            '[marker-environment]\nsys_platform = "linux"\n',
+            '[environment]\npython = "3.12"\n',
         )
         config = read_pyproject_config(path, discover_workspace=False)
-        assert config.marker_environment == {"sys_platform": "linux"}
-        assert "sys_platform=linux" in _inspect(path, "marker-environment")
+        assert config.environment == EnvironmentConfig(python="3.12")
+        assert "python=3.12" in _inspect(path, "environment")
 
     def test_list_constraints(self, tmp_path: Path) -> None:
         path = self._write(
