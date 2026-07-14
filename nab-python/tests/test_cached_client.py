@@ -705,6 +705,60 @@ class TestGetFiles:
         assert new_policy.etag == "old-etag"
         assert new_policy.max_age == 600
 
+    def test_bare_304_retains_stored_max_age(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=60, etag="v1"),
+        )
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=304, headers={"etag": "v1"})]
+        )
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        asyncio.run(go())
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        _, new_policy = cached
+        assert new_policy.max_age == 60
+
+    def test_304_cache_control_overrides_stored_max_age(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=60, etag="v1"),
+        )
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    b"",
+                    status=304,
+                    headers={"etag": "v1", "cache-control": "max-age=120"},
+                )
+            ]
+        )
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        asyncio.run(go())
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        _, new_policy = cached
+        assert new_policy.max_age == 120
+
     def test_stale_revalidates_304_with_new_etag_replaces_etag(
         self, tmp_path: Path
     ) -> None:
