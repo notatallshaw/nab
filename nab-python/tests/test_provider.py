@@ -2907,16 +2907,20 @@ class TestUploadedPriorTo:
         provider = Provider(coordinator, uploaded_prior_to=cutoff)
         assert provider.fetch_versions("foo") == []
 
-    def test_fractional_seconds(self) -> None:
-        """Upload times with fractional seconds are parsed correctly."""
+    @pytest.mark.parametrize(
+        "fraction", ["", ".1", ".12", ".123", ".1234", ".12345", ".123456"]
+    )
+    def test_fractional_seconds(self, fraction: str) -> None:
+        """PEP 700 permits 0 through 6 fractional digits, and all of them parse."""
         wheels = [
-            make_wheel("1.0", upload_time="2024-01-15T12:30:45.123456Z"),
+            make_wheel("1.0", upload_time=f"2024-01-15T12:30:45{fraction}Z"),
         ]
         coordinator = make_coordinator(wheels, package="foo")
         cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
         provider = Provider(coordinator, uploaded_prior_to=cutoff)
         versions = [v for v, _ in provider.fetch_versions("foo")]
         assert versions == [V("1.0")]
+        assert provider.stats.excluded_by_time == 0
 
     def test_invalid_upload_time_excluded(self) -> None:
         """Wheels with unparseable upload-time are excluded."""
@@ -2927,6 +2931,15 @@ class TestUploadedPriorTo:
         cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
         provider = Provider(coordinator, uploaded_prior_to=cutoff)
         assert provider.fetch_versions("foo") == []
+
+    def test_malformed_fraction_excluded_not_fatal(self) -> None:
+        """An empty fraction is malformed, so the wheel is skipped, not fatal."""
+        wheels = [make_wheel("1.0", upload_time="2024-01-15T12:30:45.")]
+        coordinator = make_coordinator(wheels, package="foo")
+        cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        provider = Provider(coordinator, uploaded_prior_to=cutoff)
+        assert provider.fetch_versions("foo") == []
+        assert provider.stats.excluded_by_time == 1
 
     def test_naive_upload_time_raises_when_cutoff_active(self) -> None:
         """A timezone-naive upload-time violates PEP 700, so it is a hard error."""

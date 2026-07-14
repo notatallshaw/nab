@@ -26,6 +26,7 @@ from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.multi_index import IndexConfig
 
 from ._conflict_kind import KIND_EXTRA, KIND_GROUP
+from ._iso8601 import parse_iso_datetime
 from ._toml import tool_nab_section
 from ._vcs_admission import known_vcs_schemes
 from ._vendor.packaging.requirements import InvalidRequirement, Requirement
@@ -1255,10 +1256,8 @@ def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime:
         except OverflowError:
             msg = f"uploaded-prior-to duration is too large: {value!r}"
             raise ConfigError(msg) from None
-    # Python 3.10's fromisoformat rejects a trailing 'Z'; 3.11+ accept it.
-    iso_value = f"{value[:-1]}+00:00" if value.endswith("Z") else value
     try:
-        dt = datetime.fromisoformat(iso_value)
+        dt = parse_iso_datetime(value)
     except ValueError as exc:
         msg = (
             "uploaded-prior-to must be an ISO 8601 datetime with"

@@ -1336,6 +1336,15 @@ class TestReadLockfileAnchor:
         )
         assert read_lockfile_anchor(path) == datetime(2026, 5, 1, tzinfo=timezone.utc)
 
+    def test_reads_iso_string_with_fractional_seconds(self, tmp_path: Path) -> None:
+        path = tmp_path / "pylock.toml"
+        path.write_text(
+            '[tool.nab]\ncreated-at = "2026-05-01T00:00:00.5+00:00"\n',
+        )
+        assert read_lockfile_anchor(path) == datetime(
+            2026, 5, 1, 0, 0, 0, 500000, tzinfo=timezone.utc
+        )
+
     def test_naive_datetime_coerced_to_utc(self, tmp_path: Path) -> None:
         path = tmp_path / "pylock.toml"
         path.write_text(
@@ -2911,6 +2920,40 @@ class TestBuildTargetLock:
         assert pin.sdist is not None
         assert pin.sdist.upload_time == datetime(
             2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc
+        )
+
+    @pytest.mark.parametrize(
+        ("fraction", "microsecond"),
+        [
+            ("", 0),
+            (".1", 100000),
+            (".12", 120000),
+            (".123", 123000),
+            (".1234", 123400),
+            (".12345", 123450),
+            (".123456", 123456),
+        ],
+    )
+    def test_wheel_upload_time_keeps_every_pep700_fraction_width(
+        self, fraction: str, microsecond: int
+    ) -> None:
+        """PEP 700 permits 0 through 6 fractional digits; all reach the lock."""
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://pypi.org/simple/foo/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=">=3.10",
+            has_metadata=False,
+            upload_time=f"2026-05-01T12:00:00{fraction}Z",
+            hashes=(("sha256", "a" * 64),),
+            size=1234,
+        )
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].upload_time == datetime(
+            2026, 5, 1, 12, 0, 0, microsecond, tzinfo=timezone.utc
         )
 
     def test_upload_time_none_when_index_omits_it(self) -> None:

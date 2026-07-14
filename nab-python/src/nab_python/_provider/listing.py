@@ -7,12 +7,12 @@ already-cached metadata where possible.
 
 from __future__ import annotations
 
-from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._iso8601 import parse_iso_datetime
 from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from .._vendor.packaging.version import InvalidVersion, Version
 from ..metadata import intern_version as _intern_version
@@ -20,6 +20,7 @@ from ..metadata import intern_version as _intern_version
 if TYPE_CHECKING:
     import threading
     from collections.abc import Mapping, Sequence
+    from datetime import datetime
 
     from nab_resolver.types import RangeProtocol
 
@@ -558,7 +559,7 @@ def excluded_by_time(
         provider.stats.excluded_by_time += 1
         return True
     try:
-        upload_dt = datetime.fromisoformat(dist.upload_time.replace("Z", "+00:00"))
+        upload_dt = parse_iso_datetime(dist.upload_time)
     except ValueError:
         provider.stats.excluded_by_time += 1
         return True

@@ -19,6 +19,7 @@ import tomli
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._iso8601 import parse_iso_datetime
 from .._toml import tool_nab_section
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
@@ -187,10 +188,8 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
     if isinstance(raw, datetime):
         return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
     if isinstance(raw, str):
-        # Python 3.10's fromisoformat rejects a trailing 'Z'; 3.11+ accept it.
-        iso = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
         try:
-            dt = datetime.fromisoformat(iso)
+            dt = parse_iso_datetime(raw)
         except ValueError:
             return None
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -470,7 +469,7 @@ def _parse_upload_time(raw: str | None) -> datetime | None:
     if raw is None:
         return None
     try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = parse_iso_datetime(raw)
     except ValueError:
         return None
     if parsed.tzinfo is None:
