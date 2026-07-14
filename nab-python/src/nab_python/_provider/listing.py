@@ -302,8 +302,9 @@ def filter_distributions(
 
     The filter runs in two passes.  :func:`base_distributions` applies
     everything that has no platform axis (dist policy, Requires-Python,
-    upload cutoff, sort order), and is memoised per (package, Python)
-    across the targets of one resolve when the provider carries a
+    upload cutoff, sort order, equal-version canonicalization), and is
+    memoised per (package, Python) across the targets of one resolve
+    when the provider carries a
     :class:`~nab_python.provider.ListingFilterCache`.  The wheel-tag
     pass then runs per target on top of that shared list, so a
     linux-only wheel still stays off the Windows target.
@@ -339,9 +340,9 @@ def _filter_base(
 
     Reads only the listing, the resolve-wide policy config, and the
     target Python, so two targets that differ only by platform get the
-    same list back.  Not canonicalized: the tag pass drops artifacts,
-    and the representative version of an equal group is chosen from
-    what survives it.
+    same list back.  Canonicalized here, ahead of the tag pass, so the
+    representative version of an equal group is picked from the whole
+    listing and does not vary with what a target's tags keep.
     """
     # Late import: ``provider`` imports this module at module load.
     from ..provider import DistPolicy
@@ -398,7 +399,7 @@ def _filter_base(
         )
     else:
         result.sort(key=lambda pair: pair[0], reverse=True)
-    return result
+    return _canonicalize_equal_versions(result)
 
 
 def _apply_wheel_tags(
@@ -413,7 +414,7 @@ def _apply_wheel_tags(
     """
     tags = provider.wheel_tags
     if tags is None:
-        return _canonicalize_equal_versions(base)
+        return base
 
     result: list[tuple[Version, DistFile]] = []
     tag_rejected_versions: set[Version] = set()
@@ -431,7 +432,7 @@ def _apply_wheel_tags(
             tag_rejected_versions - kept
         )
 
-    return _canonicalize_equal_versions(result)
+    return result
 
 
 def _excluded_by_python_or_time(
