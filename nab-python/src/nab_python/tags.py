@@ -543,7 +543,7 @@ def _parse_tag_str(tag_str: str) -> frozenset[Tag] | None:
     return frozenset(_intern_tag(t) for t in raw)
 
 
-@cache
+@lru_cache(maxsize=65536)
 def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     """Parse a wheel filename into the set of tags it advertises.
 
