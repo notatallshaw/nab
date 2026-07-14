@@ -60,7 +60,11 @@ from nab_python.lockfile import (
     write_requirements_with_hashes,  # noqa: F401 - re-exported for tests
     write_requirements_without_hashes,  # noqa: F401 - re-exported for tests
 )
-from nab_python.provider import InvalidUploadTimeError, UnsupportedVcsError
+from nab_python.provider import (
+    InvalidUploadTimeError,
+    MissingExtraError,
+    UnsupportedVcsError,
+)
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
@@ -513,7 +517,7 @@ def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg
     except InvalidProjectRequirementError as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
-    except LookupError as e:
+    except (MissingExtraError, LookupError) as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
     except (MissingHashError, MissingSdistError) as e:
