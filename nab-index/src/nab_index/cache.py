@@ -9,7 +9,7 @@ Layout under ``root``:
 
     simple-v0/<index>/<package>.json       <- raw PyPI JSON body
     simple-v0/<index>/<package>.policy     <- {fetched_at, max_age, etag}
-    metadata-v0/<index>/<package>/<version>.metadata
+    metadata-v1/<index>/<package>/<url digest>.metadata
     sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
 
 A versioned bucket name (``simple-v0``) gives zero-cost schema
@@ -39,7 +39,7 @@ __all__ = [
 
 
 CACHE_VERSION_SIMPLE = "v0"
-CACHE_VERSION_METADATA = "v0"
+CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v1"
 
 DEFAULT_PYPI_URLS = frozenset(
@@ -137,10 +137,21 @@ class OnDiskCache:
         policy = self._simple_dir / f"{segment}.policy"
         return (body, policy)
 
-    def _entry_path(self, base: Path, package: str, version: str, suffix: str) -> Path:
+    def _sdist_path(self, package: str, version: str) -> Path:
         package_segment = _require_single_segment(package)
         version_segment = _require_single_segment(version)
-        return base / package_segment / f"{version_segment}{suffix}"
+        return self._sdist_dir / package_segment / f"{version_segment}.json"
+
+    def _metadata_path(self, package: str, metadata_url: str) -> Path:
+        """Return the file holding the sidecar published at ``metadata_url``.
+
+        :pep:`658` attaches a sidecar to one file, so the wheels of a version
+        each have their own. The URL is digested to keep the key a single
+        path segment whatever path shape the index serves.
+        """
+        package_segment = _require_single_segment(package)
+        digest = hashlib.sha256(metadata_url.encode("utf-8")).hexdigest()
+        return self._metadata_dir / package_segment / f"{digest}.metadata"
 
     def get_simple(self, package: str) -> tuple[bytes, CachePolicy] | None:
         """Return ``(body_bytes, policy)`` if cached, else ``None``."""
@@ -176,18 +187,13 @@ class OnDiskCache:
         _, policy_path = self._simple_paths(package)
         _atomic_write(policy_path, _encode_policy(policy))
 
-    def get_metadata(self, package: str, version: str) -> str | None:
-        """Return cached PEP 658 metadata text, or ``None`` on miss."""
-        return _read_text(
-            self._entry_path(self._metadata_dir, package, version, ".metadata")
-        )
+    def get_metadata(self, package: str, metadata_url: str) -> str | None:
+        """Return the cached sidecar text for ``metadata_url``, or ``None``."""
+        return _read_text(self._metadata_path(package, metadata_url))
 
-    def put_metadata(self, package: str, version: str, text: str) -> None:
-        """Write PEP 658 metadata text. Treated as immutable."""
-        _atomic_write(
-            self._entry_path(self._metadata_dir, package, version, ".metadata"),
-            text.encode("utf-8"),
-        )
+    def put_metadata(self, package: str, metadata_url: str, text: str) -> None:
+        """Write the sidecar text served at ``metadata_url``. Immutable."""
+        _atomic_write(self._metadata_path(package, metadata_url), text.encode("utf-8"))
 
     def get_sdist_files(
         self, package: str, version: str
@@ -198,7 +204,7 @@ class OnDiskCache:
         whose ``pyproject_toml`` is ``None`` means the sdist ships no
         pyproject.toml, which is not the same as a miss.
         """
-        text = _read_text(self._entry_path(self._sdist_dir, package, version, ".json"))
+        text = _read_text(self._sdist_path(package, version))
         if text is None:
             return None
         try:
@@ -216,7 +222,7 @@ class OnDiskCache:
     ) -> None:
         """Write the ``(pkg_info, pyproject_toml)`` pair as one record."""
         _atomic_write(
-            self._entry_path(self._sdist_dir, package, version, ".json"),
+            self._sdist_path(package, version),
             json.dumps({"pkg_info": pkg_info, "pyproject": pyproject_toml}).encode(
                 "utf-8"
             ),
@@ -248,12 +254,12 @@ class CacheBackend(Protocol):
         """Update the policy for an existing entry without rewriting the body."""
         ...
 
-    def get_metadata(self, package: str, version: str) -> str | None:
-        """Return cached PEP 658 metadata text, or ``None`` on miss."""
+    def get_metadata(self, package: str, metadata_url: str) -> str | None:
+        """Return the cached sidecar text for ``metadata_url``, or ``None``."""
         ...
 
-    def put_metadata(self, package: str, version: str, text: str) -> None:
-        """Store PEP 658 metadata text. Treated as immutable."""
+    def put_metadata(self, package: str, metadata_url: str, text: str) -> None:
+        """Store the sidecar text served at ``metadata_url``. Immutable."""
         ...
 
     def get_sdist_files(
@@ -292,10 +298,10 @@ class NullCache:
     def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Discard the policy refresh."""
 
-    def get_metadata(self, package: str, version: str) -> str | None:
+    def get_metadata(self, package: str, metadata_url: str) -> str | None:
         """Return ``None`` (always a miss)."""
 
-    def put_metadata(self, package: str, version: str, text: str) -> None:
+    def put_metadata(self, package: str, metadata_url: str, text: str) -> None:
         """Discard the entry."""
 
     def get_sdist_files(

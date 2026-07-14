@@ -103,11 +103,11 @@ class DictCache:
         body, _ = self.simple[package]
         self.simple[package] = (body, policy)
 
-    def get_metadata(self, package: str, version: str) -> str | None:
-        return self.metadata.get((package, version))
+    def get_metadata(self, package: str, metadata_url: str) -> str | None:
+        return self.metadata.get((package, metadata_url))
 
-    def put_metadata(self, package: str, version: str, text: str) -> None:
-        self.metadata[(package, version)] = text
+    def put_metadata(self, package: str, metadata_url: str, text: str) -> None:
+        self.metadata[(package, metadata_url)] = text
 
     def get_sdist_files(
         self, package: str, version: str
@@ -297,7 +297,7 @@ def test_metadata_hash_gate_and_immutability(
         with pytest.raises(MetadataHashMismatchError):
             run(client.get_metadata_text(package, version, murl, ("sha256", bad)))
         # Mismatch must not poison the cache.
-        assert cache.get_metadata(package, version) is None
+        assert cache.get_metadata(package, murl) is None
         out = run(client.get_metadata_text(package, version, murl, ("sha256", good)))
         assert out == text
 

@@ -86,8 +86,10 @@ class TestInMemoryIndex:
 
     def test_store_metadata_error_fires_metadata_pending(self) -> None:
         idx = InMemoryIndex()
-        pending, _ = idx.get_or_create_pending("metadata:foo:1.0")
-        idx.store_metadata_error("foo", "1.0", MetadataHashMismatchError("bad"))
+        pending, _ = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.metadata")
+        idx.store_metadata_error(
+            "foo", "1.0", MetadataHashMismatchError("bad"), "https://f/a.metadata"
+        )
         assert pending.event.is_set()
 
     def test_store_metadata_error_without_pending(self) -> None:
@@ -108,11 +110,26 @@ class TestInMemoryIndex:
 
     def test_pending_event_set_on_metadata(self) -> None:
         idx = InMemoryIndex()
-        pending, existed = idx.get_or_create_pending("metadata:foo:1.0")
+        pending, existed = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.md")
         assert not existed
-        idx.store_metadata("foo", "1.0", "text")
+        idx.store_metadata("foo", "1.0", "text", "https://f/a.md")
         assert pending.event.is_set()
         assert pending.result == "text"
+
+    def test_sidecar_slot_answers_only_for_its_own_artifact(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_metadata("foo", "1.0", "linux", "https://f/linux.whl.metadata")
+        assert idx.has_metadata_for("foo", "1.0", "https://f/linux.whl.metadata")
+        assert not idx.has_metadata_for("foo", "1.0", "https://f/win.whl.metadata")
+
+    def test_version_level_slot_answers_for_any_artifact(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
+        assert idx.has_metadata_for("foo", "1.0", "https://f/win.whl.metadata")
+
+    def test_has_metadata_for_is_false_on_an_empty_slot(self) -> None:
+        idx = InMemoryIndex()
+        assert not idx.has_metadata_for("foo", "1.0", "https://f/a.whl.metadata")
 
     def test_get_or_create_existing(self) -> None:
         idx = InMemoryIndex()
@@ -163,12 +180,14 @@ class TestInMemoryIndex:
     def test_metadata_none_keeps_stored_sdist_pkg_info(self) -> None:
         """A failed sidecar fetch must not erase stored sdist PKG-INFO."""
         idx = InMemoryIndex()
-        pending, _ = idx.get_or_create_pending("metadata:foo:1.0")
+        pending, _ = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.md")
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
-        idx.store_metadata("foo", "1.0", None)
+        idx.store_metadata("foo", "1.0", None, "https://f/a.md")
         assert pending.event.is_set()
         assert idx.get_metadata("foo", "1.0") == "PKG-INFO\n"
         assert idx.metadata_from_sdist("foo", "1.0")
+        # The kept text still stands for the version, not for the sidecar.
+        assert idx.has_metadata_for("foo", "1.0", "https://f/other.md")
 
     def test_metadata_none_after_sdist_none_stays_none(self) -> None:
         idx = InMemoryIndex()
@@ -544,14 +563,15 @@ class TestFetchCoordinator:
             assert sdist_event.wait(timeout=5)
 
             # queue the request directly: request_metadata would short-circuit
-            # on has_metadata, but a prefetch already in flight still lands
-            pending, _ = coord.index.get_or_create_pending("metadata:pkg:1.0")
+            # on the stored PKG-INFO, but a prefetch already in flight lands
+            url = "https://files.example.com/pkg-1.0.whl.metadata"
+            pending, _ = coord.index.get_or_create_pending(f"metadata:pkg:1.0:{url}")
             coord._submit(
                 FetchRequest(
                     kind=FetchKind.METADATA,
                     package="pkg",
                     version="1.0",
-                    url="https://files.example.com/pkg-1.0.whl.metadata",
+                    url=url,
                 )
             )
 
@@ -877,7 +897,7 @@ class TestFetchCoordinator:
         respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="meta"))
         with _coord() as coord:
             # Pre-create a pending so the second request finds it.
-            coord.index.get_or_create_pending("metadata:pkg:1.0")
+            coord.index.get_or_create_pending("metadata:pkg:1.0:https://f.com/m")
             e = coord.request_metadata("pkg", "1.0", "https://f.com/m")
             # Should reuse the existing pending (existed=True path).
             e.wait(timeout=5)
@@ -1216,7 +1236,7 @@ class TestFetchCoordinator:
         respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="meta"))
         with _coord() as coord:
             # Pre-create a pending for one of the batch items.
-            coord.index.get_or_create_pending("metadata:a:1.0")
+            coord.index.get_or_create_pending("metadata:a:1.0:https://f.com/a")
             results = coord.request_metadata_batch(
                 [
                     ("a", "1.0", "https://f.com/a", None),
@@ -1293,6 +1313,44 @@ class TestFetchCoordinatorCache:
             # stored an empty listing so the resolver can proceed.
             assert listing == []
         assert not coord._crashed
+
+    @respx.mock
+    def test_warm_cache_keeps_sibling_wheels_apart(self, tmp_path: Path) -> None:
+        """One wheel's METADATA is never served for a sibling wheel of that version.
+
+        A run whose compatible wheel differs from an earlier run's must fetch
+        its own sidecar.
+        """
+        linux_url = "https://f.example/foo-1.0-cp311-manylinux_2_17_x86_64.whl.metadata"
+        win_url = "https://f.example/foo-1.0-cp311-win_amd64.whl.metadata"
+        linux_body = (
+            b"Metadata-Version: 2.1\nName: foo\nRequires-Dist: linux-only-dep\n"
+        )
+        win_body = (
+            b"Metadata-Version: 2.1\nName: foo\nRequires-Dist: windows-only-dep\n"
+        )
+        linux_route = respx.get(linux_url).mock(
+            return_value=httpx.Response(200, content=linux_body)
+        )
+        win_route = respx.get(win_url).mock(
+            return_value=httpx.Response(200, content=win_body)
+        )
+        linux_hash = ("sha256", hashlib.sha256(linux_body).hexdigest())
+        win_hash = ("sha256", hashlib.sha256(win_body).hexdigest())
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord.request_metadata("foo", "1.0", linux_url, linux_hash).wait(timeout=5)
+            assert coord.index.get_metadata("foo", "1.0") == linux_body.decode()
+
+        # A later run over the same cache dir, in an environment whose
+        # compatible wheel is the win_amd64 one.
+        with _coord(cache_dir=tmp_path) as coord:
+            coord.request_metadata("foo", "1.0", win_url, win_hash).wait(timeout=5)
+            assert coord.index.get_metadata_error("foo", "1.0") is None
+            assert coord.index.get_metadata("foo", "1.0") == win_body.decode()
+
+        assert linux_route.call_count == 1
+        assert win_route.call_count == 1
 
     def test_explicit_cache_backend_takes_precedence(self) -> None:
         """A passed-in cache_backend wins over cache_dir."""
@@ -1629,3 +1687,97 @@ class TestMultiIndexCoordinator:
                 coord._build_client()
         finally:
             coord.shutdown()
+
+
+_SIBLING_LINUX = "foo-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"
+_SIBLING_WIN = "foo-1.0-cp311-cp311-win_amd64.whl"
+_SIBLING_LINUX_BODY = b"Metadata-Version: 2.1\nName: foo\nRequires-Dist: linux-dep\n"
+_SIBLING_WIN_BODY = b"Metadata-Version: 2.1\nName: foo\nRequires-Dist: windows-dep\n"
+
+
+def _sibling_wheel_listing() -> dict:
+    """A listing whose one version has more sidecar wheels than the prefetch takes.
+
+    Ordered so the prefetch window would cut past the first wheel if it counted
+    wheels rather than versions.
+    """
+    fillers = [f"foo-1.0-cp3{n}-cp3{n}-macosx_11_0_arm64.whl" for n in range(3, 3 + 9)]
+    names = [_SIBLING_LINUX, "foo-1.0-py3-none-any.whl", _SIBLING_WIN, *fillers]
+    return {
+        "meta": {"api-version": "1.0"},
+        "name": "foo",
+        "files": [
+            {
+                "filename": name,
+                "url": f"https://f.example/{name}",
+                "core-metadata": True,
+            }
+            for name in names
+        ],
+    }
+
+
+class TestSiblingWheelMetadata:
+    """The metadata a version's slot holds belongs to the wheel that was asked for."""
+
+    def _routes(self) -> tuple[respx.Route, respx.Route]:
+        linux = respx.get(f"https://f.example/{_SIBLING_LINUX}.metadata").mock(
+            return_value=httpx.Response(200, content=_SIBLING_LINUX_BODY)
+        )
+        win = respx.get(f"https://f.example/{_SIBLING_WIN}.metadata").mock(
+            return_value=httpx.Response(200, content=_SIBLING_WIN_BODY)
+        )
+        respx.get("https://pypi.org/simple/foo/").mock(
+            return_value=httpx.Response(200, json=_sibling_wheel_listing())
+        )
+        respx.get(url__regex=r".*\.whl\.metadata$").mock(
+            return_value=httpx.Response(200, content=b"Metadata-Version: 2.1\n")
+        )
+        return linux, win
+
+    def _await_metadata(self, coord: FetchCoordinator) -> None:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not coord.index.has_metadata(
+            "foo", "1.0"
+        ):
+            time.sleep(0.01)
+
+    @respx.mock
+    def test_listing_prefetch_takes_the_wheel_the_provider_will_pick(self) -> None:
+        """The prefetch fetches one wheel per version: the first with a sidecar."""
+        linux, win = self._routes()
+        with _coord() as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            self._await_metadata(coord)
+            assert (
+                coord.index.get_metadata("foo", "1.0") == _SIBLING_LINUX_BODY.decode()
+            )
+        assert linux.call_count == 1
+        assert win.call_count == 0
+
+    @respx.mock
+    def test_sibling_wheel_is_not_served_from_a_prefetched_listing(
+        self, tmp_path: Path
+    ) -> None:
+        """A run whose compatible wheel is not the prefetched one gets its own.
+
+        The listing prefetch has already filled the version's slot, and a
+        second run over the warm cache dir refills it with no network at all,
+        so nothing but the artifact identity keeps the two wheels apart.
+        """
+        linux, win = self._routes()
+        with _coord(cache_dir=tmp_path) as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            self._await_metadata(coord)
+
+        win_hash = ("sha256", hashlib.sha256(_SIBLING_WIN_BODY).hexdigest())
+        win_url = f"https://f.example/{_SIBLING_WIN}.metadata"
+        with _coord(cache_dir=tmp_path) as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            self._await_metadata(coord)
+            coord.request_metadata("foo", "1.0", win_url, win_hash).wait(timeout=5)
+            assert coord.index.get_metadata_error("foo", "1.0") is None
+            assert coord.index.get_metadata("foo", "1.0") == _SIBLING_WIN_BODY.decode()
+
+        assert linux.call_count == 1
+        assert win.call_count == 1

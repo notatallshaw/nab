@@ -116,6 +116,15 @@ class _Pending:
     result: Any = None
 
 
+def _metadata_key(package: str, version: str, metadata_url: str | None) -> str:
+    """Return the pending key for one sidecar fetch.
+
+    The URL is in the key so two wheels of a version do not share a request:
+    a waiter is released by the artifact it asked for.
+    """
+    return f"metadata:{package}:{version}:{metadata_url}"
+
+
 class InMemoryIndex:
     """Thread-safe storage for fetched package data.
 
@@ -130,6 +139,10 @@ class InMemoryIndex:
         self._listing_indexes: dict[str, str] = {}
         self._metadata: dict[tuple[str, str], str | None] = {}
         self._metadata_errors: dict[tuple[str, str], BaseException] = {}
+        # The sidecar URL whose bytes fill each ``_metadata`` slot, or None
+        # when the slot stands for the version rather than for one artifact
+        # (sdist PKG-INFO, an injected override).
+        self._metadata_source: dict[tuple[str, str], str | None] = {}
         # Keys whose ``_metadata`` slot was last written from an sdist
         # PKG-INFO rather than a wheel METADATA; readers need the
         # origin because only sdist deps go through the PEP 643 gate.
@@ -216,13 +229,37 @@ class InMemoryIndex:
         with self._lock:
             return (package, version) in self._metadata
 
-    def store_metadata(self, package: str, version: str, data: str | None) -> None:
+    def has_metadata_for(self, package: str, version: str, metadata_url: str) -> bool:
+        """Return ``True`` when the slot already answers for ``metadata_url``.
+
+        A slot filled from a sidecar answers only for that sidecar; one with
+        no artifact behind it (sdist PKG-INFO, an injected override) stands
+        for the version itself and answers for any.
+        """
+        with self._lock:
+            slot = (package, version)
+            if slot not in self._metadata:
+                return False
+            source = self._metadata_source[slot]
+            return source is None or source == metadata_url
+
+    def store_metadata(
+        self,
+        package: str,
+        version: str,
+        data: str | None,
+        metadata_url: str | None = None,
+    ) -> None:
         """Cache metadata text (or ``None`` for a failed fetch).
 
-        ``None`` means no PEP 658 sidecar arrived and readers fall back to
-        the sdist, so it never overwrites sdist PKG-INFO already in the slot.
+        ``metadata_url`` is the sidecar the text came from; ``None`` marks
+        the slot as standing for the version rather than for one artifact.
+
+        A ``data`` of ``None`` means no PEP 658 sidecar arrived and readers
+        fall back to the sdist, so it never overwrites sdist PKG-INFO
+        already in the slot.
         """
-        key = f"metadata:{package}:{version}"
+        key = _metadata_key(package, version, metadata_url)
         slot = (package, version)
         with self._lock:
             keep_sdist_text = (
@@ -232,6 +269,7 @@ class InMemoryIndex:
             )
             if not keep_sdist_text:
                 self._metadata[slot] = data
+                self._metadata_source[slot] = metadata_url
                 self._metadata_from_sdist.discard(slot)
 
             # the waiter gets whatever the slot holds, which may be kept text
@@ -242,7 +280,11 @@ class InMemoryIndex:
             pending.event.set()
 
     def store_metadata_error(
-        self, package: str, version: str, error: BaseException
+        self,
+        package: str,
+        version: str,
+        error: BaseException,
+        metadata_url: str | None = None,
     ) -> None:
         """Record an integrity failure for a metadata fetch and unblock waiters.
 
@@ -250,7 +292,7 @@ class InMemoryIndex:
         sidecar arrived and the resolver may fall back to the sdist, while an
         error means the sidecar was served but failed its published hash.
         """
-        key = f"metadata:{package}:{version}"
+        key = _metadata_key(package, version, metadata_url)
         with self._lock:
             self._metadata_errors[(package, version)] = error
             pending = self._pending.get(key)
@@ -276,6 +318,7 @@ class InMemoryIndex:
         key = f"sdist:{package}:{version}"
         with self._lock:
             self._metadata[(package, version)] = data
+            self._metadata_source[(package, version)] = None
             self._metadata_from_sdist.add((package, version))
             pending = self._pending.get(key)
         if pending is not None:
@@ -584,7 +627,9 @@ class FetchCoordinator:
                 continue
             assert req.version is not None
             if req.kind is FetchKind.METADATA:
-                self.index.store_metadata_error(req.package, req.version, error)
+                self.index.store_metadata_error(
+                    req.package, req.version, error, req.url
+                )
             elif req.kind is FetchKind.SDIST:
                 self.index.store_sdist_metadata_error(req.package, req.version, error)
             else:
@@ -615,13 +660,13 @@ class FetchCoordinator:
         url: str,
         metadata_hash: tuple[str, str] | None = None,
     ) -> threading.Event:
-        """Request a wheel-metadata fetch for ``(package, version)``."""
+        """Request the sidecar at ``url`` as the metadata for ``(package, version)``."""
         self._check_alive()
-        if self.index.has_metadata(package, version):
+        if self.index.has_metadata_for(package, version, url):
             done = threading.Event()
             done.set()
             return done
-        key = f"metadata:{package}:{version}"
+        key = _metadata_key(package, version, url)
         pending, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
@@ -735,12 +780,12 @@ class FetchCoordinator:
         results: list[tuple[str, str, threading.Event]] = []
         batch: list[FetchRequest] = []
         for package, version, url, metadata_hash in items:
-            if self.index.has_metadata(package, version):
+            if self.index.has_metadata_for(package, version, url):
                 done = threading.Event()
                 done.set()
                 results.append((package, version, done))
                 continue
-            key = f"metadata:{package}:{version}"
+            key = _metadata_key(package, version, url)
             pending, existed = self.index.get_or_create_pending(key)
             if not existed:
                 batch.append(
@@ -919,9 +964,9 @@ class FetchCoordinator:
         assert req.version is not None
         if req.kind is FetchKind.METADATA:
             if isinstance(exc, MetadataHashMismatchError):
-                self.index.store_metadata_error(req.package, req.version, exc)
+                self.index.store_metadata_error(req.package, req.version, exc, req.url)
             else:
-                self.index.store_metadata(req.package, req.version, None)
+                self.index.store_metadata(req.package, req.version, None, req.url)
         elif req.kind is FetchKind.SDIST:
             if isinstance(exc, SdistHashMismatchError):
                 self.index.store_sdist_metadata_error(req.package, req.version, exc)
@@ -945,13 +990,16 @@ class FetchCoordinator:
         self._record_serving_index(client, req.package)
         self.index.store_listing(req.package, files)
 
-        # auto-prefetch metadata for newest candidates (files are oldest-first)
-        wheels_with_meta: list[tuple[WheelFile, str]] = [
-            (f, f.metadata_url)
-            for f in files
-            if isinstance(f, WheelFile) and f.metadata_url is not None
-        ]
-        for w, metadata_url in wheels_with_meta[-self.PREFETCH_METADATA_COUNT :]:
+        # Auto-prefetch metadata for the newest candidates (files are
+        # oldest-first). One wheel per version: the first with a sidecar is the
+        # one the provider picks for that version's metadata.
+        first_wheel: dict[str, tuple[WheelFile, str]] = {}
+        for f in files:
+            if isinstance(f, WheelFile) and f.metadata_url is not None:
+                first_wheel.setdefault(f.version, (f, f.metadata_url))
+
+        newest = list(first_wheel.values())[-self.PREFETCH_METADATA_COUNT :]
+        for w, metadata_url in newest:
             self.request_metadata(req.package, w.version, metadata_url, w.metadata_hash)
 
     def _record_serving_index(
@@ -987,7 +1035,7 @@ class FetchCoordinator:
         text = await client.get_metadata_text(
             req.package, req.version, req.url, req.metadata_hash
         )
-        self.index.store_metadata(req.package, req.version, text)
+        self.index.store_metadata(req.package, req.version, text, req.url)
 
     async def _fetch_sdist(
         self,

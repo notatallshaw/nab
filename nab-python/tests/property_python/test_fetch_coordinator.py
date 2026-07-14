@@ -60,6 +60,11 @@ def _wheel(pkg: str, version: str, *, has_metadata: bool) -> WheelFile:
     )
 
 
+def _metadata_url(pkg: str, version: str) -> str:
+    """The sidecar URL the listing publishes for ``(pkg, version)``."""
+    return _wheel(pkg, version, has_metadata=True).metadata_url or ""
+
+
 def _sdist(pkg: str, version: str) -> SdistFile:
     return SdistFile(
         filename=f"{pkg}-{version}.tar.gz",
@@ -80,10 +85,18 @@ class FakeClient:
         self.calls_lock = threading.Lock()
         self.closed = False
 
-    async def _common(self, key: Key) -> None:
+    async def _common(self, key: Key, plan_key: Key | None = None) -> None:
+        """Count one call against ``key``; take its outcome from ``plan_key``.
+
+        Metadata calls count against the sidecar URL, since two wheels of
+        one version publish two sidecars and so are two logical fetches,
+        while the plan still injects errors per ``(package, version)``.
+        """
         with self.calls_lock:
             self.calls[key] += 1
-        mode, delay = self.plan.get(key, ("ok", 0.0))
+        mode, delay = self.plan.get(
+            plan_key if plan_key is not None else key, ("ok", 0.0)
+        )
         if delay:
             await asyncio.sleep(delay)
         if mode == "err":
@@ -106,7 +119,9 @@ class FakeClient:
         url: str,
         metadata_hash: tuple[str, str] | None = None,
     ) -> str:
-        await self._common(("metadata", package, version))
+        await self._common(
+            ("metadata", package, version, url), ("metadata", package, version)
+        )
         return f"META:{package}:{version}"
 
     async def get_sdist_files(
@@ -185,9 +200,7 @@ def test_every_request_gets_exactly_one_correct_reply(
                 ev = coord.request_listing(pkg)
                 requested.append((("listing", pkg), ev))
             elif kind == "metadata":
-                ev = coord.request_metadata(
-                    pkg, ver, f"https://example.invalid/{pkg}-{ver}.whl.metadata"
-                )
+                ev = coord.request_metadata(pkg, ver, _metadata_url(pkg, ver))
                 requested.append((("metadata", pkg, ver), ev))
             elif kind == "sdist":
                 ev = coord.request_sdist(
@@ -201,8 +214,8 @@ def test_every_request_gets_exactly_one_correct_reply(
                 requested.append((("sdist-archive", pkg, ver), ev))
             else:  # batch: include a duplicate pair on purpose
                 items: list[tuple[str, str, str, tuple[str, str] | None]] = [
-                    (pkg, ver, "https://example.invalid/u.metadata", None),
-                    (pkg, ver, "https://example.invalid/u.metadata", None),
+                    (pkg, ver, _metadata_url(pkg, ver), None),
+                    (pkg, ver, _metadata_url(pkg, ver), None),
                 ]
                 for bpkg, bver, bev in coord.request_metadata_batch(items):
                     requested.append((("metadata", bpkg, bver), bev))
