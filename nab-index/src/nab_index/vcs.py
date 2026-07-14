@@ -52,6 +52,16 @@ _VCS_PREFIX_RE = re.compile(r"^git\+")
 # before the fetch, so the directory alone cannot prove a finished clone.
 _COMPLETE_MARKER = "nab-complete"
 
+# git applies no read timeout, so a remote that goes quiet after the handshake
+# blocks forever.  git's own knobs are per-transport (``http.lowSpeed*`` is
+# libcurl-only, ``GIT_SSH_COMMAND`` ssh-only) and neither reaches the ``git://``
+# daemon protocol, so the bound goes on the subprocess.
+_LS_REMOTE_TIMEOUT_SECONDS = 120
+
+# A fetch gets the wider bound: a server can send nothing for minutes while it
+# builds a large repo's pack.
+_FETCH_TIMEOUT_SECONDS = 1800
+
 
 class VcsCloneError(Exception):
     """Raised when a clone or ref resolution fails."""
@@ -231,8 +241,13 @@ def _resolve_sha(request: VcsRequest, *, require_pin: bool) -> str:
             capture_output=True,
             text=True,
             env=_git_env(),
+            timeout=_LS_REMOTE_TIMEOUT_SECONDS,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+    ) as exc:
         msg = f"git ls-remote {request.repo_url} {target}: {exc}"
         raise VcsCloneError(msg) from exc
 
@@ -284,6 +299,7 @@ def _shallow_clone(repo_url: str, sha: str, dest: Path) -> None:
             check=True,
             cwd=dest,
             env=_git_env(),
+            timeout=_FETCH_TIMEOUT_SECONDS,
         )
         subprocess.run(  # noqa: S603 - git is a runtime dep
             checkout_args,
@@ -292,7 +308,11 @@ def _shallow_clone(repo_url: str, sha: str, dest: Path) -> None:
             env=_git_env(),
         )
         (dest / ".git" / _COMPLETE_MARKER).touch()
-    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+    ) as exc:
         # Roll back the partial clone so the cache stays clean.
         shutil.rmtree(dest, ignore_errors=True)
         msg = f"failed to clone {repo_url} @ {sha}: {exc}"
