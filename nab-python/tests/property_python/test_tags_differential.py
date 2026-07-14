@@ -114,6 +114,10 @@ def _oracle_tags_in_order(
         abi = f"pypy{major}{minor}_pp73"
         out += [(interpreter, abi, p) for p in platforms]
         out += [(interpreter, "none", p) for p in platforms]
+        # Upstream ``sys_tags`` hands ``compatible_tags`` the major-only
+        # ``pp3`` on PyPy, so the interpreter-specific "any" tag a real
+        # PyPy advertises is ``pp3-none-any``.
+        compat_interpreter = f"pp{major}"
     else:
         interpreter = f"cp{major}{minor}"
         cp_abi = interpreter + ("t" if free_threaded else "")
@@ -122,9 +126,10 @@ def _oracle_tags_in_order(
                 python_version=py, abis=[cp_abi], platforms=platforms
             )
         )
+        compat_interpreter = interpreter
     out += _triples(
         upstream_tags.compatible_tags(
-            python_version=py, interpreter=interpreter, platforms=platforms
+            python_version=py, interpreter=compat_interpreter, platforms=platforms
         )
     )
     return out

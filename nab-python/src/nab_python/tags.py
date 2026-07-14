@@ -691,13 +691,19 @@ def _tags_in_order(
             yield ptags.Tag(interpreter, abi, platform_)
         for platform_ in platforms:
             yield ptags.Tag(interpreter, "none", platform_)
+        # ``sys_tags`` hands ``compatible_tags`` the major-only ``pp3``, so a
+        # real PyPy advertises ``pp3-none-any`` and never ``ppXY-none-any``.
+        compat_interpreter = f"pp{major}"
     else:
         interpreter = f"cp{major}{minor}"
         abi = _cpython_abi(py_version, free_threaded=free_threaded)
         yield from ptags.cpython_tags(
             python_version=py_version, abis=[abi], platforms=platforms
         )
+        compat_interpreter = interpreter
 
     yield from ptags.compatible_tags(
-        python_version=py_version, interpreter=interpreter, platforms=platforms
+        python_version=py_version,
+        interpreter=compat_interpreter,
+        platforms=platforms,
     )

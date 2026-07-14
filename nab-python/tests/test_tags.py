@@ -893,6 +893,28 @@ class TestPyPyTags:
         ).pick([pure, native])
         assert chosen is native
 
+    def test_pypy_pure_python_pp3_wheel_matches(self) -> None:
+        """A ``pp3-none-any`` PyPy pure-Python wheel matches its target."""
+        wheel = _wheel("foo-1.0-pp3-none-any.whl")
+        assert _compatible(
+            wheel, python_version="3.10", spec=self.SPEC, implementation="pypy"
+        )
+
+    def test_pypy_ppxy_none_any_wheel_rejected(self) -> None:
+        """``ppXY-none-any`` is not a tag any PyPy install advertises."""
+        wheel = _wheel("bar-2.0-pp310-none-any.whl")
+        assert not _compatible(
+            wheel, python_version="3.10", spec=self.SPEC, implementation="pypy"
+        )
+
+    def test_pypy_compat_set_interpreter_any_tag_is_major_only(self) -> None:
+        """The interpreter-specific ``any`` tag is ``pp3-none-any``, not ``ppXY``."""
+        compat = TagSet.for_spec(
+            python_version="3.10", spec=self.SPEC, implementation="pypy"
+        ).members
+        assert Tag("pp3", "none", "any") in compat
+        assert Tag("pp310", "none", "any") not in compat
+
     def test_compat_tag_sets_differ_by_implementation(self) -> None:
         """The CPython and PyPy tuples accept disjoint native-tag sets."""
         cp = TagSet.for_spec(python_version="3.11", spec=self.SPEC).members
