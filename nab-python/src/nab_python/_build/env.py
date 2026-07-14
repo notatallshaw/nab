@@ -112,6 +112,12 @@ class NabBuildEnv:
     marker overlay) before the inner resolve so the build env is
     computed against PyPI alone.
 
+    The venv is created from the host interpreter and the PEP 517
+    hooks run in it, so the build requirements resolve for the host
+    and not for any ``--python`` retarget: a wheel for another
+    Python's ABI would not import, and a build requirement the host
+    needs would be dropped by its marker.
+
     Construction is cheap; the work happens in ``__enter__``.
     """
 
@@ -120,13 +126,11 @@ class NabBuildEnv:
         requires: list[str],
         *,
         config: NabProjectConfig,
-        python_version: str | None = None,
         transport_factory: Callable[[], AsyncHttpTransport] = Urllib3AsyncTransport,
     ) -> None:
         """Capture inputs; the venv and inner resolve happen in __enter__."""
         self._requires = list(requires)
         self._config = config
-        self._python_version = python_version
         self._transport_factory = transport_factory
 
         self._tmpdir: tempfile.TemporaryDirectory[str] | None = None
@@ -284,7 +288,6 @@ class NabBuildEnv:
                 synthetic,
                 transport,
                 config=inner_config,
-                python_version=self._python_version,
             )
             # The build env resolves for the host alone, so its one
             # target's failure is the whole resolve's.

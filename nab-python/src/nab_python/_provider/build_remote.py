@@ -93,7 +93,6 @@ def build_remote_sdist(
             built = build_backend.extract_metadata(
                 source_dir,
                 config=provider.build_config,
-                python_version=provider.python_version,
             )
         except BuildBackendError as exc:
             msg = f"{package}=={version} build-remote backend failed: {exc}"

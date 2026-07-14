@@ -1900,6 +1900,50 @@ class TestLocalSources:
         with pytest.raises(UnsupportedSdistError, match="backend exploded"):
             provider.fetch_versions("foo")
 
+    def test_local_source_build_is_not_retargeted(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A ``--python`` retarget does not reach the build env.
+
+        The backend runs in a venv made from the host interpreter, so
+        a target Python would pick wheels for the wrong ABI and drop
+        build requirements the host needs.
+        """
+        self._write_local(
+            tmp_path,
+            """
+            [project]
+            name = "foo"
+            version = "1.0"
+            dynamic = ["dependencies"]
+            """,
+        )
+        built = WheelMetadata(
+            name="foo",
+            version=V("1.0"),
+            requires_python=None,
+            requires_dist=[],
+            provides_extra=[],
+        )
+        captured: dict[str, object] = {}
+
+        def fake_build(_path: Path, **kwargs: object) -> WheelMetadata:
+            captured.update(kwargs)
+            return built
+
+        monkeypatch.setattr("nab_python.build_backend.extract_metadata", fake_build)
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            local_sources=[LocalSource("foo", str(tmp_path))],
+            build_policy=BuildPolicy.BUILD_LOCAL,
+        )
+        assert len(provider.fetch_versions("foo")) == 1
+        assert captured == {"config": provider.build_config}
+
     def test_priority_does_not_shadow_local_source_with_pypi_listing(
         self,
         tmp_path: Path,
@@ -6317,11 +6361,8 @@ class TestEffectiveBuildPolicy:
             provides_extra=[],
         )
 
-        def fake_build(
-            _path: object, *, config: object, python_version: object
-        ) -> WheelMetadata:
-            captured["config"] = config
-            captured["python_version"] = python_version
+        def fake_build(_path: object, **kwargs: object) -> WheelMetadata:
+            captured["kwargs"] = kwargs
             return built_meta
 
         monkeypatch.setattr(build_remote, "extract_sdist_archive", fake_extract)
@@ -6340,7 +6381,9 @@ class TestEffectiveBuildPolicy:
         )
         assert out is built_meta
         assert captured["bytes"] == archive_bytes
-        assert captured["python_version"] == "3.12.0"
+        # The backend runs on the host interpreter, so the resolve
+        # target's Python must not reach the build env.
+        assert captured["kwargs"] == {"config": provider.build_config}
 
     def test_resolve_dynamic_sdist_reuses_cross_tuple_cache(self) -> None:
         """A second call for the same sdist returns the cached metadata.
@@ -6839,9 +6882,7 @@ class TestStaticSdistMetadata:
 
         coordinator.request_sdist_archive.side_effect = _request_archive
 
-        def _naive_build(
-            _path: object, *, config: object, python_version: object
-        ) -> WheelMetadata:
+        def _naive_build(_path: object, *, config: object) -> WheelMetadata:
             raise InvalidUploadTimeError(
                 "setuptools 68.0.0 has a timezone-naive upload time"
                 " '2025-06-01T00:00:00'; the Simple API requires"
