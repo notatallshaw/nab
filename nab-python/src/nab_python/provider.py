@@ -1353,7 +1353,7 @@ class Provider:
 
         starts_iter = iter(range(0, len(remaining), self.PREFETCH_BATCH))
         in_flight: deque[
-            tuple[list[Version], list[tuple[Version, str, threading.Event]]]
+            tuple[list[Version], list[tuple[Version, str, str, threading.Event]]]
         ] = deque()
         for _ in range(self.PREFETCH_DEPTH):
             start = next(starts_iter, None)
@@ -1617,14 +1617,14 @@ class Provider:
         package: str,
         versions: list[Version],
         wheel_by_version: dict[Version, DistFile],
-    ) -> list[tuple[Version, str, threading.Event]]:
+    ) -> list[tuple[Version, str, str, threading.Event]]:
         """See :func:`nab_python._provider.listing.prefetch_batch`."""
         return _listing.prefetch_batch(self, package, versions, wheel_by_version)
 
     def _await_metadata_batch(
         self,
         package: str,
-        submitted: list[tuple[Version, str, threading.Event]],
+        submitted: list[tuple[Version, str, str, threading.Event]],
     ) -> None:
         """See :func:`nab_python._provider.listing.await_metadata_batch`."""
         _listing.await_metadata_batch(self, package, submitted)

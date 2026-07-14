@@ -137,15 +137,16 @@ class InMemoryIndex:
         self._listings: dict[str, list[WheelFile | SdistFile]] = {}
         self._listing_errors: dict[str, BaseException] = {}
         self._listing_indexes: dict[str, str] = {}
-        self._metadata: dict[tuple[str, str], str | None] = {}
-        self._metadata_errors: dict[tuple[str, str], BaseException] = {}
-        # The sidecar URL whose bytes fill each ``_metadata`` slot, or None
-        # when the slot stands for the version rather than for one artifact
-        # (sdist PKG-INFO, an injected override).
-        self._metadata_source: dict[tuple[str, str], str | None] = {}
-        # Keys whose ``_metadata`` slot was last written from an sdist
-        # PKG-INFO rather than a wheel METADATA; readers need the
-        # origin because only sdist deps go through the PEP 643 gate.
+        # Metadata text is keyed by the artifact it came from: the sidecar URL
+        # for a wheel's METADATA, or None for text that stands for the version
+        # itself (sdist PKG-INFO, an injected override).  Two wheels of one
+        # version can declare different dependencies, so a reader asks for the
+        # artifact its own target would install.
+        self._metadata: dict[tuple[str, str, str | None], str | None] = {}
+        self._metadata_errors: dict[tuple[str, str, str | None], BaseException] = {}
+        # Versions whose version-level slot was written from an sdist PKG-INFO;
+        # readers need the origin because only sdist deps go through the
+        # PEP 643 gate.
         self._metadata_from_sdist: set[tuple[str, str]] = set()
         self._sdist_pyproject: dict[tuple[str, str], str | None] = {}
         self._sdist_archives: dict[tuple[str, str], bytes | None] = {}
@@ -154,8 +155,9 @@ class InMemoryIndex:
 
         # Parsed metadata is a pure function of the underlying text, so it
         # is shared across the per-target providers of one resolve.  Entries
-        # are ``(source_text, parsed)``: a wheel and an sdist share one
-        # ``_metadata`` slot, so a parse only answers for the text it parsed.
+        # are ``(source_text, parsed)``: one version can have several texts
+        # (sibling wheels, an sdist), so a parse only answers for the text it
+        # parsed.
         self._parsed_metadata: dict[tuple[str, str], tuple[str, Any]] = {}
 
         # Post-reconciliation sdist metadata: the result after
@@ -218,73 +220,81 @@ class InMemoryIndex:
         with self._lock:
             return self._listing_indexes.get(package)
 
-    def get_metadata(self, package: str, version: str) -> str | None:
+    def _read_metadata(
+        self, package: str, version: str, metadata_url: str | None
+    ) -> tuple[str | None, bool]:
+        """Return the text answering for ``metadata_url`` and its origin.
+
+        Caller holds the lock.  The artifact's own slot wins; the
+        version-level slot (sdist PKG-INFO, an injected override) answers when
+        that artifact has nothing, which is how a wheel with no sidecar, or
+        one whose sidecar fetch came back empty, reaches the sdist's text.
+        """
+        if metadata_url is not None:
+            text = self._metadata.get((package, version, metadata_url))
+            if text is not None:
+                return (text, False)
+        version_level = self._metadata.get((package, version, None))
+        return (version_level, (package, version) in self._metadata_from_sdist)
+
+    def get_metadata(
+        self, package: str, version: str, metadata_url: str | None = None
+    ) -> str | None:
         """Return cached metadata text, or ``None`` if not yet stored."""
         with self._lock:
-            key = (package, version)
-            if key in self._metadata:
-                return self._metadata[key]
-            return None
+            return self._read_metadata(package, version, metadata_url)[0]
 
-    def has_metadata(self, package: str, version: str) -> bool:
-        """Return ``True`` once a metadata fetch has resolved (any value)."""
-        with self._lock:
-            return (package, version) in self._metadata
+    def has_metadata(
+        self, package: str, version: str, metadata_url: str | None = None
+    ) -> bool:
+        """Return ``True`` once a fetch answering for ``metadata_url`` resolved.
 
-    def has_metadata_for(self, package: str, version: str, metadata_url: str) -> bool:
-        """Return ``True`` when the slot already answers for ``metadata_url``.
-
-        A slot filled from a sidecar answers only for that sidecar; one with
-        no artifact behind it (sdist PKG-INFO, an injected override) stands
-        for the version itself and answers for any.
+        Any value counts, including the ``None`` of a sidecar that was not
+        served.  A slot filled from a sidecar answers only for that sidecar;
+        the version-level slot answers for any artifact.
         """
         with self._lock:
-            slot = (package, version)
-            if slot not in self._metadata:
-                return False
-            source = self._metadata_source[slot]
-            return source is None or source == metadata_url
+            if (
+                metadata_url is not None
+                and (package, version, metadata_url) in self._metadata
+            ):
+                return True
+            return (package, version, None) in self._metadata
 
     def get_metadata_with_origin(
-        self, package: str, version: str
+        self, package: str, version: str, metadata_url: str | None = None
     ) -> tuple[str | None, bool]:
-        """Return the metadata text and whether it came from an sdist.
+        """Return the metadata text for ``metadata_url`` and its sdist origin.
 
-        Wheel METADATA and sdist PKG-INFO share the slot, so a write landing
-        between two separate lookups can pair one artifact's text with the
-        other's origin.  Only sdist text goes through the :pep:`643`
-        dynamic-deps gate, so the two are read under one lock.
+        A wheel's METADATA and an sdist's PKG-INFO can both stand for one
+        version, and only sdist text goes through the :pep:`643` dynamic-deps
+        gate, so text and origin are read together under one lock.
         """
         with self._lock:
-            slot = (package, version)
-            return self._metadata.get(slot), slot in self._metadata_from_sdist
+            return self._read_metadata(package, version, metadata_url)
 
     def _write_metadata_slot(
         self,
-        slot: tuple[str, str],
+        slot: tuple[str, str, str | None],
         data: str | None,
         *,
-        source: str | None,
         from_sdist: bool,
     ) -> None:
-        """Write the shared metadata slot. Caller holds the lock.
+        """Write one metadata slot. Caller holds the lock.
 
-        ``source`` is the sidecar URL the text came from, or ``None`` when
-        the slot stands for the version rather than for one artifact.
-
-        Reconciled sdist metadata is derived from the text in the slot, so
-        replacing the text drops it.  The parsed cache carries the text it
+        Reconciled sdist metadata is derived from the version-level text, so
+        replacing that text drops it.  The parsed cache carries the text it
         parsed and needs no eviction.
         """
-        if self._metadata.get(slot) != data:
-            self._resolved_sdist_metadata.pop(slot, None)
-
+        package, version, metadata_url = slot
+        if metadata_url is None:
+            if self._metadata.get(slot) != data:
+                self._resolved_sdist_metadata.pop((package, version), None)
+            if from_sdist:
+                self._metadata_from_sdist.add((package, version))
+            else:
+                self._metadata_from_sdist.discard((package, version))
         self._metadata[slot] = data
-        self._metadata_source[slot] = source
-        if from_sdist:
-            self._metadata_from_sdist.add(slot)
-        else:
-            self._metadata_from_sdist.discard(slot)
 
     def store_metadata(
         self,
@@ -295,31 +305,20 @@ class InMemoryIndex:
     ) -> None:
         """Cache metadata text (or ``None`` for a failed fetch).
 
-        ``metadata_url`` is the sidecar the text came from; ``None`` marks
-        the slot as standing for the version rather than for one artifact.
+        ``metadata_url`` is the sidecar the text came from; ``None`` stores the
+        text as standing for the version rather than for one artifact.
 
         A ``data`` of ``None`` means no PEP 658 sidecar arrived and readers
-        fall back to the sdist, so it never overwrites sdist PKG-INFO
-        already in the slot.
+        fall back to the sdist.  It lands in the sidecar's own slot, so it
+        cannot erase sdist PKG-INFO the version-level slot already holds.
         """
         key = _metadata_key(package, version, metadata_url)
-        slot = (package, version)
+        slot = (package, version, metadata_url)
         with self._lock:
-            keep_sdist_text = (
-                data is None
-                and slot in self._metadata_from_sdist
-                and self._metadata[slot] is not None
-            )
-            if not keep_sdist_text:
-                self._write_metadata_slot(
-                    slot, data, source=metadata_url, from_sdist=False
-                )
-
-            # the waiter gets whatever the slot holds, which may be kept text
-            result = self._metadata[slot]
+            self._write_metadata_slot(slot, data, from_sdist=False)
             pending = self._pending.get(key)
         if pending is not None:
-            pending.result = result
+            pending.result = data
             pending.event.set()
 
     def store_metadata_error(
@@ -337,32 +336,43 @@ class InMemoryIndex:
         """
         key = _metadata_key(package, version, metadata_url)
         with self._lock:
-            self._metadata_errors[(package, version)] = error
+            self._metadata_errors[(package, version, metadata_url)] = error
             pending = self._pending.get(key)
         if pending is not None:
             pending.event.set()
 
-    def get_metadata_error(self, package: str, version: str) -> BaseException | None:
-        """Return a recorded metadata integrity error, or ``None``."""
+    def get_metadata_error(
+        self, package: str, version: str, metadata_url: str | None = None
+    ) -> BaseException | None:
+        """Return a recorded metadata integrity error, or ``None``.
+
+        The artifact's own error wins; a version-level error (a tampered
+        sdist archive) stands for the version and answers for any artifact,
+        since no dist of that version can be trusted once one was tampered
+        with.
+        """
         with self._lock:
-            return self._metadata_errors.get((package, version))
+            if metadata_url is not None:
+                error = self._metadata_errors.get((package, version, metadata_url))
+                if error is not None:
+                    return error
+            return self._metadata_errors.get((package, version, None))
 
     def store_sdist_metadata(
         self, package: str, version: str, data: str | None
     ) -> None:
-        """Store sdist-derived PKG-INFO under the same metadata key.
+        """Store sdist-derived PKG-INFO in the version-level metadata slot.
 
-        Wheel and sdist results land in the same ``_metadata`` slot
-        because PKG-INFO is core-metadata-equivalent. The pending
-        keys differ so a sdist request can run in parallel with (or
-        after) a failed wheel metadata request.
-        :meth:`metadata_from_sdist` reports which kind the slot holds.
+        PKG-INFO is core-metadata-equivalent, so it stands for the version
+        rather than for one artifact and answers for a wheel with no sidecar
+        of its own.  The pending key differs from a wheel's so an sdist
+        request can run in parallel with (or after) a failed wheel metadata
+        request.  :meth:`metadata_from_sdist` reports which kind the
+        version-level slot holds.
         """
         key = f"sdist:{package}:{version}"
         with self._lock:
-            self._write_metadata_slot(
-                (package, version), data, source=None, from_sdist=True
-            )
+            self._write_metadata_slot((package, version, None), data, from_sdist=True)
             pending = self._pending.get(key)
         if pending is not None:
             pending.result = data
@@ -379,13 +389,13 @@ class InMemoryIndex:
         """
         key = f"sdist:{package}:{version}"
         with self._lock:
-            self._metadata_errors[(package, version)] = error
+            self._metadata_errors[(package, version, None)] = error
             pending = self._pending.get(key)
         if pending is not None:
             pending.event.set()
 
     def metadata_from_sdist(self, package: str, version: str) -> bool:
-        """Return ``True`` when the metadata slot was last written from an sdist.
+        """Return ``True`` when the version-level slot was written from an sdist.
 
         The slot itself cannot distinguish wheel METADATA from sdist
         PKG-INFO; readers that apply the :pep:`643` dynamic-deps gate
@@ -698,7 +708,7 @@ class FetchCoordinator:
     ) -> threading.Event:
         """Request the sidecar at ``url`` as the metadata for ``(package, version)``."""
         self._check_alive()
-        if self.index.has_metadata_for(package, version, url):
+        if self.index.has_metadata(package, version, url):
             done = threading.Event()
             done.set()
             return done
@@ -816,7 +826,7 @@ class FetchCoordinator:
         results: list[tuple[str, str, threading.Event]] = []
         batch: list[FetchRequest] = []
         for package, version, url, metadata_hash in items:
-            if self.index.has_metadata_for(package, version, url):
+            if self.index.has_metadata(package, version, url):
                 done = threading.Event()
                 done.set()
                 results.append((package, version, done))

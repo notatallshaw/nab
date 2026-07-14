@@ -231,8 +231,11 @@ def test_every_request_gets_exactly_one_correct_reply(
         sdist_keys = {k for k, _ in requested if k[0] == "sdist"}
         for key in meta_keys | sdist_keys:
             _, pkg, ver = key
-            assert index.has_metadata(pkg, ver), f"no metadata slot for {key}"
-            value = index.get_metadata(pkg, ver)
+            # Metadata is keyed by the artifact it came from, so a reader names
+            # the sidecar it asked for; an sdist's PKG-INFO answers for any.
+            sidecar = _metadata_url(pkg, ver)
+            assert index.has_metadata(pkg, ver, sidecar), f"no metadata slot for {key}"
+            value = index.get_metadata(pkg, ver, sidecar)
             allowed: set[str | None] = set()
             base_ver = ver.split("#", 1)[0]
             if ("metadata", pkg, ver) in meta_keys:

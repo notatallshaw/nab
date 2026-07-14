@@ -631,7 +631,7 @@ def prefetch_walk_ahead(
         # ``_first_wheel_per_version`` filters out wheels without metadata_url.
         metadata_url = wheel.metadata_url
         assert metadata_url is not None
-        if coordinator_index.has_metadata_for(normalized, wheel.version, metadata_url):
+        if coordinator_index.has_metadata(normalized, wheel.version, metadata_url):
             continue
         items.append((normalized, wheel.version, metadata_url, wheel.metadata_hash))
     if items:
@@ -643,15 +643,17 @@ def prefetch_batch(
     package: str,
     versions: list[Version],
     wheel_by_version_map: dict[Version, DistFile],
-) -> list[tuple[Version, str, threading.Event]]:
+) -> list[tuple[Version, str, str, threading.Event]]:
     """Submit metadata fetches for a batch of candidates.
 
     Uses request_metadata_batch so all requests reach the fetcher
     as a single queue item and are processed concurrently.
-    Returns list of (version, ver_str, event) for submitted requests.
+    Returns list of (version, ver_str, metadata_url, event) for submitted
+    requests; the sidecar URL is what the await reads the metadata back by,
+    since sibling wheels of one version hold their own texts.
     """
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
-    version_map: list[tuple[Version, str]] = []
+    version_map: list[tuple[Version, str, str]] = []
     for v in versions:
         if (package, v) in provider.deps_cache or v not in wheel_by_version_map:
             continue
@@ -664,36 +666,38 @@ def prefetch_batch(
             items.append(
                 (package, wheel.version, wheel.metadata_url, wheel.metadata_hash)
             )
-            version_map.append((v, wheel.version))
+            version_map.append((v, wheel.version, wheel.metadata_url))
 
     if not items:
         return []
 
     raw = provider.coordinator.request_metadata_batch(items)
     submitted = []
-    for (_pkg, _ver, ev), (version, ver_str) in zip(raw, version_map, strict=True):
-        submitted.append((version, ver_str, ev))
+    for (_pkg, _ver, ev), (version, ver_str, metadata_url) in zip(
+        raw, version_map, strict=True
+    ):
+        submitted.append((version, ver_str, metadata_url, ev))
     return submitted
 
 
 def await_metadata_batch(
     provider: Provider,
     package: str,
-    submitted: list[tuple[Version, str, threading.Event]],
+    submitted: list[tuple[Version, str, str, threading.Event]],
 ) -> None:
     """Wait for all submitted metadata to arrive, then parse into cache."""
-    for version, ver_str, event in submitted:
+    for version, ver_str, metadata_url, event in submitted:
         cache_key = (package, version)
         if cache_key in provider.deps_cache:
             continue
         event.wait()
         integrity_error = provider.coordinator.index.get_metadata_error(
-            package, ver_str
+            package, ver_str, metadata_url
         )
         if integrity_error is not None:
             raise integrity_error
         text, from_sdist = provider.coordinator.index.get_metadata_with_origin(
-            package, ver_str
+            package, ver_str, metadata_url
         )
         if text is None:
             # No PEP 658 text arrived: leave the version un-cached so
@@ -701,9 +705,10 @@ def await_metadata_batch(
             # refuses it) rather than pinning it as dependency-free.
             continue
         if from_sdist:
-            # The shared slot holds sdist PKG-INFO from an earlier
-            # fallback; caching it here would skip the PEP 643 gate
-            # that get_dependencies applies on the from_sdist path.
+            # The wheel has no sidecar of its own and the version-level slot
+            # holds sdist PKG-INFO from an earlier fallback; caching it here
+            # would skip the PEP 643 gate that get_dependencies applies on
+            # the from_sdist path.
             continue
         try:
             provider.parse_and_cache_metadata(cache_key, text)
