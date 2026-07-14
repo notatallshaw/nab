@@ -18,13 +18,14 @@ report metadata for the target or for someone else.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import re
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ._conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
 from ._vendor.packaging import tags as ptags
-from ._vendor.packaging.markers import default_environment
+from ._vendor.packaging.markers import Marker, default_environment
 from ._vendor.packaging.version import InvalidVersion, Version
 from .tags import TagSet
 
@@ -34,12 +35,16 @@ if TYPE_CHECKING:
 
 __all__ = [
     "IMPLEMENTATION_MARKERS",
+    "PEP508_MARKER_VARIABLES",
     "PLATFORM_MARKERS",
+    "UNBOUNDABLE_MARKER_VARIABLES",
     "EnvironmentSource",
     "ResolveTarget",
     "apply_python_axis_overlay",
     "declared_environment",
+    "environment_declaration",
     "host_environment",
+    "marker_variables",
     "python_axis_environment",
 ]
 
@@ -100,6 +105,20 @@ IMPLEMENTATION_MARKERS: dict[str, dict[str, str]] = {
 }
 
 
+# The PEP 508 markers a wheel-tag set encodes: the python version, the
+# interpreter, and the machine.  A marker overlay that moves one of these
+# leaves the tags describing a different target than the markers do.
+_TAG_AXIS_MARKERS: tuple[str, ...] = (
+    "implementation_name",
+    "os_name",
+    "platform_machine",
+    "platform_python_implementation",
+    "platform_system",
+    "python_version",
+    "sys_platform",
+)
+
+
 # PEP 425 interpreter short tag per implementation, used in the label so
 # targets differing only by implementation stay distinct.
 _IMPLEMENTATION_PREFIX: dict[str, str] = {"cpython": "py", "pypy": "pp"}
@@ -112,6 +131,203 @@ _HOST_PLATFORM_LABEL = "host"
 # ``python_full_version`` is the full ``major.minor.micro`` release.
 _PYTHON_VERSION_PARTS = 2
 _PYTHON_FULL_VERSION_PARTS = 3
+
+
+# Every environment variable PEP 508 defines.  A lock declares the target's
+# value for each one the resolve consulted, so the set has to be the spec's.
+PEP508_MARKER_VARIABLES: frozenset[str] = frozenset(
+    {
+        "implementation_name",
+        "implementation_version",
+        "os_name",
+        "platform_machine",
+        "platform_python_implementation",
+        "platform_release",
+        "platform_system",
+        "platform_version",
+        "python_full_version",
+        "python_version",
+        "sys_platform",
+    }
+)
+
+# ``platform_release`` and ``platform_version`` name one machine's kernel
+# build (``6.18.33-microsoft-standard-WSL2``), so a lock cannot bound them:
+# declaring the resolving machine's value would refuse every other machine,
+# and omitting it leaves the axis open.  A marker that consults one is
+# reported to the user rather than declared.
+UNBOUNDABLE_MARKER_VARIABLES: frozenset[str] = frozenset(
+    {"platform_release", "platform_version"}
+)
+
+# Declared whether or not a marker consults them: these are the axes the
+# package set was chosen for, so a lock that leaves them open is one any
+# environment would accept.
+_ALWAYS_DECLARED: tuple[str, ...] = (
+    "python_version",
+    "sys_platform",
+    "platform_machine",
+)
+
+_MARKER_VARIABLE_RE = re.compile(
+    r"\b(" + "|".join(sorted(PEP508_MARKER_VARIABLES)) + r")\b"
+)
+
+# The variables a lock declares by constraint rather than by value: see
+# :func:`_version_clauses`.  Both carry a micro release, and on CPython they
+# carry the same one (``implementation_version`` comes from
+# ``sys.implementation.version``), so pinning either collapses the lock to a
+# single patch release.
+_BY_CONSTRAINT = ("python_full_version", "implementation_version")
+
+# The operator that states the complement of each comparison.  PEP 508 has no
+# ``not``, so a clause the resolve found False is declared by flipping its
+# operator.  ``~=``, ``===`` and the membership operators have no
+# single-clause complement and are deliberately absent; a clause using one is
+# declared by value instead.
+_COMPLEMENT_OPERATOR: dict[str, str] = {
+    "<": ">=",
+    "<=": ">",
+    ">": "<=",
+    ">=": "<",
+    "==": "!=",
+    "!=": "==",
+}
+
+# One ``lhs op rhs`` comparison of a marker, matched against the string form
+# :func:`Marker.__str__` normalises to: an operand is either a quoted literal
+# or a bare variable token, which is what tells the two apart (the same
+# property the membership scan in :mod:`nab_python._lockfile.disjointness`
+# rests on).  Ordered so the two-character operators win over their prefixes.
+_MARKER_OPERAND = r'"[^"]*"|[A-Za-z_][A-Za-z0-9_]*'
+_MARKER_CLAUSE_RE = re.compile(
+    rf"(?P<lhs>{_MARKER_OPERAND})\s*"
+    r"(?P<op>===|==|!=|<=|>=|~=|<|>|not\s+in|in)\s*"
+    rf"(?P<rhs>{_MARKER_OPERAND})"
+)
+
+
+def marker_variables(marker_text: str) -> frozenset[str]:
+    """Return the PEP 508 environment variables ``marker_text`` names.
+
+    Matches the spec's names as whole words against the marker's string
+    form.  A name inside a string literal (``sys_platform ==
+    "python_version"``) counts, so the result over-approximates; a
+    declaration built from too many variables is narrower than one built
+    from too few, which is the safe direction to be wrong in.
+    """
+    return frozenset(_MARKER_VARIABLE_RE.findall(marker_text))
+
+
+def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) -> str:
+    """Render the PEP 751 ``environments`` marker for ``target``.
+
+    Declares every variable the ``consulted`` markers named, plus
+    :data:`_ALWAYS_DECLARED`.  A resolve drops every dependency whose
+    marker is False under the target, so an installer that consults the
+    same variable and gets a different answer would be missing the deps
+    that environment needs: the declaration refuses it instead.
+
+    Most variables are declared by value: a marker on ``platform_system``
+    pins the OS.  The variables in :data:`_BY_CONSTRAINT` are declared by
+    constraint (see :func:`_version_clauses`), because a lock that pinned
+    the micro release would refuse the very interpreters it resolved for.
+    Variables in :data:`UNBOUNDABLE_MARKER_VARIABLES` are dropped (see
+    there).
+    """
+    texts = sorted({str(marker) for marker in consulted})
+    variables: set[str] = set()
+    for text in texts:
+        variables |= marker_variables(text)
+    names = [
+        *_ALWAYS_DECLARED,
+        *sorted(variables - set(_ALWAYS_DECLARED) - UNBOUNDABLE_MARKER_VARIABLES),
+    ]
+    clauses: list[str] = []
+    for name in names:
+        if name in _BY_CONSTRAINT:
+            clauses.extend(_version_clauses(target, texts, name))
+        else:
+            clauses.append(f'{name} == "{target.marker_env[name]}"')
+    return " and ".join(clauses)
+
+
+def _version_clauses(
+    target: ResolveTarget, texts: Sequence[str], variable: str
+) -> list[str]:
+    """Declare how the resolve read ``variable``, not its value.
+
+    Pinning the target's own ``python_full_version`` would refuse every
+    other micro release, including every real one when the target names a
+    minor (``--python 3.13`` synthesizes ``3.13.0``, which no released
+    interpreter reports).  The pins do not depend on the micro; they depend
+    on how each clause reading it answered.  So that is what the lock
+    declares: a clause that held is declared as it stands, one that did not
+    is declared complemented (``python_full_version <= "3.11.0a6"`` read
+    False becomes ``python_full_version > "3.11.0a6"``).  Every environment
+    the result admits answers the resolve's clauses the way the resolve
+    did, and a marker that genuinely splits the micros (``>= "3.13.4"``)
+    still partitions them.
+
+    Each clause is decided by asking packaging: it is rebuilt as a marker of
+    its own and evaluated against the target through the public
+    ``Marker.evaluate``, so no marker semantics are re-derived here.
+
+    A clause whose outcome nab cannot state as a clause falls back to
+    declaring the target's exact value, which is sound if narrow: an unusual
+    operator (``~=``, ``===``, a membership test), a comparison against
+    another variable rather than a literal, or a PEP 440 boundary where the
+    flipped operator is not the complement -- ``< "3.10.2"`` excludes the
+    prereleases of 3.10.2 and so does ``>= "3.10.2"``, so on a ``3.10.2rc1``
+    target neither side holds.  The same fallback covers a marker that only
+    spells the name inside a literal, which leaves nothing to declare.
+    """
+    environment = dict(target.marker_env)
+    exact = f'{variable} == "{environment[variable]}"'
+    declared: set[str] = set()
+    for text in texts:
+        for match in _MARKER_CLAUSE_RE.finditer(text):
+            lhs, op, rhs = match.group("lhs", "op", "rhs")
+            if variable not in (lhs, rhs):
+                continue
+            declaration = _declared_clause(
+                lhs, " ".join(op.split()), rhs, environment, variable
+            )
+            if declaration is None:
+                return [exact]
+            declared.add(declaration)
+    return sorted(declared) or [exact]
+
+
+def _declared_clause(
+    lhs: str, op: str, rhs: str, environment: Mapping[str, str], variable: str
+) -> str | None:
+    """Return the clause declaring how ``lhs op rhs`` read, or None.
+
+    The clause is one comparison of a marker the resolve evaluated, with
+    ``variable`` on one side; packaging decides which way it read.
+    None means nab cannot state that outcome as a clause of its own, and the
+    caller declares the exact value instead.
+
+    A clause that held is declared as it stands, whatever its operator: an
+    environment satisfying it reads it the way the resolve did, and no
+    complement is needed.  Only a clause that read False needs one, so only
+    an operator PEP 508 cannot complement (``~=``, ``===``, a membership
+    test) sends the caller to the exact value.
+    """
+    literal = rhs if lhs == variable else lhs
+    if not literal.startswith('"'):
+        # A comparison against another variable states nothing about this one.
+        return None
+    clause = f"{lhs} {op} {rhs}"
+    if Marker(clause).evaluate(environment):
+        return clause
+    if op not in _COMPLEMENT_OPERATOR:
+        return None
+    complement = f"{lhs} {_COMPLEMENT_OPERATOR[op]} {rhs}"
+    if not Marker(complement).evaluate(environment):
+        return None
+    return complement
 
 
 def host_environment(
@@ -207,6 +423,11 @@ class ResolveTarget:
     implementation, which pins ``implementation_name`` on
     :attr:`environment_marker_string` so the CPython and PyPy entries
     for one python/platform stay mutually exclusive.
+
+    ``tags_faithful`` says :attr:`tags` still describes the machine
+    :attr:`marker_env` does.  Only :meth:`with_marker_overrides` can
+    break that, and a provider given such a target filters no wheel by
+    tag: see there.
     """
 
     label: str
@@ -216,6 +437,7 @@ class ResolveTarget:
     selection: tuple[tuple[str, str], ...] = ()
     platform_spec: PlatformSpec | None = field(default=None, compare=False)
     multi_implementation: bool = field(default=False, compare=False)
+    tags_faithful: bool = field(default=True, compare=False)
 
     def __post_init__(self) -> None:
         """Reject a python the resolve cannot compare Requires-Python against.
@@ -324,12 +546,31 @@ class ResolveTarget:
         cannot rebuild the wheel-tag axis.  The result is no longer
         host-faithful; a build backend run under it reports the host's
         metadata, not the impersonated target's.
+
+        An overlay that moves a marker the tag set encodes (the python
+        version, the implementation, or the machine) leaves the tags
+        describing one machine and the markers another, so the result is
+        not :attr:`tags_faithful` and a provider filters no wheel by tag
+        under it: filtering by a tag set the markers disown would drop
+        wheels the impersonated target installs and admit ones it cannot.
+        Overlaying a value the target already has moves nothing and keeps
+        the tags faithful.  ``[tool.nab.environment]`` and ``--python``
+        do not come through here; they rebuild the tag axis (see
+        :meth:`for_declared` and :meth:`for_host_python`).
         """
         if not overrides:
             return self
         env = dict(self.marker_env)
         apply_python_axis_overlay(env, overrides)
-        return replace(self, marker_env=env, host_faithful=False)
+        moved = any(
+            env.get(name) != self.marker_env.get(name) for name in _TAG_AXIS_MARKERS
+        )
+        return replace(
+            self,
+            marker_env=env,
+            host_faithful=False,
+            tags_faithful=self.tags_faithful and not moved,
+        )
 
     def with_selection(self, selection: tuple[tuple[str, str], ...]) -> ResolveTarget:
         """Return this target under a conflict fork's active members.

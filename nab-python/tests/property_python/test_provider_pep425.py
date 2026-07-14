@@ -1,9 +1,14 @@
-"""Property tests for the ``UniversalProvider`` wheel-tag filter.
+"""Property tests for the provider's wheel-tag filter.
 
-The universal provider implements `PEP 425`_'s wheel-tag
-compatibility algorithm and `PEP 517`_'s wheel-vs-sdist preference.
-This file walks the relevant clauses paragraph by paragraph and
-adds a property test for each invariant the filter must preserve.
+The provider implements `PEP 425`_'s wheel-tag compatibility algorithm
+and `PEP 517`_'s wheel-vs-sdist preference.  This file walks the
+relevant clauses paragraph by paragraph and adds a property test for
+each invariant the filter must preserve.
+
+The oracle is built from the generated listing directly rather than
+from a second provider: the filter is the base provider's, so the only
+provider that does not apply it is one with no target, which is itself
+one of the properties below.
 
 .. _PEP 425: https://peps.python.org/pep-0425/
 .. _PEP 517: https://peps.python.org/pep-0517/
@@ -19,14 +24,17 @@ from hypothesis import strategies as st
 
 from nab_index.client import SdistFile, WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python.provider import BuildPolicy, DistPolicy
+from nab_python._vendor.packaging.version import Version
+from nab_python.provider import BuildPolicy, DistPolicy, Provider
 from nab_python.tags import PlatformSpec, TagSet
 from nab_python.target import ResolveTarget
-from nab_python.universal.provider import UniversalProvider
 
-from .strategies import LINUX_TARGET, PROPERTY_SETTINGS
+from .strategies import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
+
+_SPEC = PlatformSpec("linux_x86_64")
+_LINUX_TARGET = ResolveTarget.for_declared(python_version="3.11", spec=_SPEC)
 
 
 def compatible(wheel: WheelFile, spec: PlatformSpec) -> bool:
@@ -94,59 +102,49 @@ def coordinator(files: list[WheelFile | SdistFile]) -> MagicMock:
     return make_coordinator(files, package="pkg")
 
 
-class TestNoTagFilterIsNoOp:
-    """Without ``filter_by_wheel_tags`` the universal provider must return
-    the parent provider's full listing unchanged.
+class TestNoTargetIsNoFilter:
+    """With no target the provider keeps every wheel.
 
-    The override delegates to ``super().filter_distributions`` and
-    applies no extra filter; a regression here would silently change
-    the candidate set for non-universal flows, where there is no
-    platform pin to apply.
+    Nothing has said which machine the resolve is for, so there is no
+    tag set to filter by.  A regression here would silently narrow the
+    candidate set of a caller that declared no target.
     """
 
     @given(files=listing())
     @PROPERTY_SETTINGS
-    def test_no_tag_filter_is_noop(self, files: list[WheelFile | SdistFile]) -> None:
-        """Without the tag filter the override matches super()'s output."""
-        provider = UniversalProvider(
-            coordinator(files),
-            LINUX_TARGET,
-        )
-        super_out = UniversalProvider.__mro__[1].filter_distributions(
-            provider, "pkg", files
-        )
-        out = provider.filter_distributions("pkg", files)
-        assert out == super_out
-
-
-class TestFilterIsSubsetOfParent:
-    """The universal filter only removes entries; it never adds or
-    rewrites.  Stated formally: ``output ⊆ parent_output``.
-
-    This invariant ensures that any other filter applied to
-    ``parent_output`` (for example PEP 592 yanked-version filters or
-    admission filters) cannot be undone by the universal filter.
-    """
-
-    @given(files=listing())
-    @PROPERTY_SETTINGS
-    def test_output_is_subset_of_parent(
+    def test_no_target_keeps_every_file(
         self, files: list[WheelFile | SdistFile]
     ) -> None:
-        """The override never adds entries; it only removes."""
-        provider = UniversalProvider(
+        """Every generated file survives when the provider has no target."""
+        provider = Provider(coordinator(files))
+        out = provider.filter_distributions("pkg", files)
+        assert {dist.filename for _, dist in out} == {f.filename for f in files}
+        assert provider.stats.excluded_by_wheel_tags == 0
+
+
+class TestFilterOnlyRemoves:
+    """The tag filter only removes entries; it never adds or rewrites.
+
+    Stated formally: the output is a subset of the input listing.  This
+    keeps another filter's verdict (a PEP 592 yanked version, an
+    admission filter) from being undone by the tag filter.
+    """
+
+    @given(files=listing())
+    @PROPERTY_SETTINGS
+    def test_output_is_subset_of_input(
+        self, files: list[WheelFile | SdistFile]
+    ) -> None:
+        """The filter never adds entries; it only removes."""
+        provider = Provider(
             coordinator(files),
-            LINUX_TARGET,
-            filter_by_wheel_tags=True,
+            target=_LINUX_TARGET,
             build_policy=BuildPolicy.NEVER,
         )
-        super_out = UniversalProvider.__mro__[1].filter_distributions(
-            provider, "pkg", files
-        )
         out = provider.filter_distributions("pkg", files)
-        super_pairs = {(v, d.filename) for v, d in super_out}
-        out_pairs = {(v, d.filename) for v, d in out}
-        assert out_pairs.issubset(super_pairs)
+        assert {(v, d.filename) for v, d in out}.issubset(
+            {(Version(f.version), f.filename) for f in files}
+        )
 
 
 class TestOnlyCompatibleWheelsKept:
@@ -167,17 +165,15 @@ class TestOnlyCompatibleWheelsKept:
         self, files: list[WheelFile | SdistFile]
     ) -> None:
         """Every kept wheel is tag-compatible with the platform spec."""
-        spec = PlatformSpec("linux_x86_64")
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator(files),
-            ResolveTarget.for_declared(python_version="3.11", spec=spec),
-            filter_by_wheel_tags=True,
+            target=_LINUX_TARGET,
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
         out = provider.filter_distributions("pkg", files)
         for _v, dist in out:
             if isinstance(dist, WheelFile):
-                assert compatible(dist, spec), (
+                assert compatible(dist, _SPEC), (
                     f"Incompatible wheel survived: {dist.filename}"
                 )
 
@@ -191,35 +187,29 @@ class TestVersionAdmissionPolicy:
     .. _PEP 517: https://peps.python.org/pep-0517/
     """
 
+    @staticmethod
+    def _admitted(files: list[WheelFile | SdistFile]) -> set[Version]:
+        """The versions the listing leaves installable on the target."""
+        return {
+            Version(f.version)
+            for f in files
+            if not isinstance(f, WheelFile) or compatible(f, _SPEC)
+        }
+
     @given(files=listing())
     @PROPERTY_SETTINGS
     def test_version_admitted_iff_wheel_or_allowed_sdist(
         self, files: list[WheelFile | SdistFile]
     ) -> None:
-        """A version survives iff it has a compatible wheel or allowed sdist."""
-        spec = PlatformSpec("linux_x86_64")
-        provider = UniversalProvider(
+        """A version survives iff it has a compatible wheel or an sdist."""
+        provider = Provider(
             coordinator(files),
-            ResolveTarget.for_declared(python_version="3.11", spec=spec),
-            filter_by_wheel_tags=True,
+            target=_LINUX_TARGET,
             build_policy=BuildPolicy.BUILD_REMOTE,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
-        super_out = UniversalProvider.__mro__[1].filter_distributions(
-            provider, "pkg", files
-        )
         out = provider.filter_distributions("pkg", files)
-        out_versions = {v for v, _ in out}
-        versions_with_compat_wheel: set = set()
-        versions_with_sdist: set = set()
-        for v, d in super_out:
-            if isinstance(d, WheelFile):
-                if compatible(d, spec):
-                    versions_with_compat_wheel.add(v)
-            else:
-                versions_with_sdist.add(v)
-        expected_admitted = versions_with_compat_wheel | versions_with_sdist
-        assert out_versions == expected_admitted
+        assert {v for v, _ in out} == self._admitted(files)
 
     @given(files=listing())
     @PROPERTY_SETTINGS
@@ -229,20 +219,11 @@ class TestVersionAdmissionPolicy:
         """Under NEVER, a version is admitted if a compatible wheel OR an sdist
         exists; the look-ahead gate, not filter_distributions, rejects an
         unbuildable sdist, so sdist-only versions stay available here."""
-        spec = PlatformSpec("linux_x86_64")
-        provider = UniversalProvider(
+        provider = Provider(
             coordinator(files),
-            ResolveTarget.for_declared(python_version="3.11", spec=spec),
-            filter_by_wheel_tags=True,
+            target=_LINUX_TARGET,
             build_policy=BuildPolicy.NEVER,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
-        super_out = UniversalProvider.__mro__[1].filter_distributions(
-            provider, "pkg", files
-        )
         out = provider.filter_distributions("pkg", files)
-        out_versions = {v for v, _ in out}
-        expected = {
-            v for v, d in super_out if isinstance(d, WheelFile) and compatible(d, spec)
-        } | {v for v, d in super_out if isinstance(d, SdistFile)}
-        assert out_versions == expected
+        assert {v for v, _ in out} == self._admitted(files)

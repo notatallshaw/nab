@@ -17,6 +17,7 @@ from nab_resolver.resolver import (
 
 from ._conflict_kind import dependency_marker_holds, membership_set_in_marker
 from ._vcs_admission import admit_vcs_url
+from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
@@ -57,6 +58,11 @@ from .requirements_file import (
     resolve_groups_to_requirements,
     select_optional_dependencies,
 )
+from .target import (
+    UNBOUNDABLE_MARKER_VARIABLES,
+    environment_declaration,
+    marker_variables,
+)
 from .universal.resolve import (
     ResolveFork,
     UniversalResult,
@@ -65,6 +71,7 @@ from .universal.resolve import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from collections.abc import Set as AbstractSet
     from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport
@@ -152,6 +159,9 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
     config = with_python_override(config, python_version)
     (target,) = plan_targets(config)
     marker_environment = target.marker_env
+    # A marker on a self-referencing extra decides which extras are active, so
+    # it shapes the package set and the lock has to declare it like any other.
+    extra_markers: set[Marker] = set()
 
     if config.conflicts:
         # Read each table once and reuse it across the existence check
@@ -166,7 +176,11 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
         project_name = read_pyproject_name(path)
         _validate_conflict_members_exist(config.conflicts, optional, groups_table)
         active_extras = expand_self_extras(
-            optional, project_name, extras, marker_environment
+            optional,
+            project_name,
+            extras,
+            marker_environment,
+            consulted=extra_markers,
         )
         active_groups = expand_group_includes(groups_table, effective_groups)
         validate_conflict_exclusions(config.conflicts, active_extras, active_groups)
@@ -178,7 +192,9 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
 
     requirements = read_pyproject_dependencies(path)
     requirements.extend(_load_group_requirements(path, effective_groups))
-    requirements.extend(_load_extra_requirements(path, extras, marker_environment))
+    requirements.extend(
+        _load_extra_requirements(path, extras, marker_environment, extra_markers)
+    )
     if len(effective_groups) > 1:
         _check_group_disjointness(
             _load_group_requirements_by_group(path, effective_groups),
@@ -240,6 +256,9 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             provider,
             pins,
             requires_python=config.requires_python,
+            environments=_declared_environments(
+                target, provider, requirements, config.constraints, extra_markers
+            ),
             extras=tuple(extras),
             dependency_groups=tuple(groups),
             default_groups=config.default_groups,
@@ -247,6 +266,54 @@ def resolve_pyproject(  # noqa: PLR0913 - the surface mirrors the CLI; bundling 
             resolved_keys=raw,
         )
         return ResolutionResult(pins=pins, lock_input=lock_input)
+
+
+def _declared_environments(
+    target: ResolveTarget,
+    provider: Provider,
+    requirements: Sequence[Requirement],
+    constraints: Sequence[str],
+    extra_markers: AbstractSet[Marker],
+) -> list[Marker]:
+    """Build the lock's PEP 751 ``environments`` for this resolve.
+
+    The pins hold for the one environment ``target`` names, so the lock
+    says so: every dependency whose marker was False here was dropped, and
+    an installer that answers one of those markers differently needs a
+    different package set.  The declaration is built from the markers the
+    resolve read (see
+    :func:`~nab_python.target.environment_declaration`).  The provider
+    records the ones it read off the dependency graph; the root
+    requirements and constraints are collected here, since their markers
+    are evaluated before the provider exists.
+
+    A marker on an axis the lock cannot bound (see
+    :data:`~nab_python.target.UNBOUNDABLE_MARKER_VARIABLES`) is reported:
+    the lock stays open on it, so an installer whose kernel differs will
+    still accept the lock, with the dep that marker gated missing.
+    """
+    consulted = set(provider.consulted_markers) | set(extra_markers)
+    for req in requirements:
+        if req.marker is not None:
+            consulted.add(req.marker)
+    for constraint in constraints:
+        marker = Requirement(constraint).marker
+        if marker is not None:
+            consulted.add(marker)
+
+    variables: set[str] = set()
+    for marker in consulted:
+        variables |= marker_variables(str(marker))
+    unboundable = sorted(variables & UNBOUNDABLE_MARKER_VARIABLES)
+    if unboundable:
+        _logger.warning(
+            "A marker in this resolve consults %s, which names the resolving"
+            " machine's kernel build; the lockfile cannot declare it, so an"
+            " installer whose value differs will still accept this lock and"
+            " miss the dependencies that marker gates.",
+            ", ".join(unboundable),
+        )
+    return [Marker(environment_declaration(target, consulted))]
 
 
 def _load_group_requirements(path: Path, selected: Sequence[str]) -> list[Requirement]:
@@ -459,6 +526,7 @@ def _load_extra_requirements(
     path: Path,
     selected: Sequence[str],
     environment: Mapping[str, str] | None = None,
+    consulted: set[Marker] | None = None,
 ) -> list[Requirement]:
     """Read [project.optional-dependencies] from ``path`` and expand ``selected``.
 
@@ -476,6 +544,7 @@ def _load_extra_requirements(
         selected,
         path=path,
         environment=environment,
+        consulted=consulted,
     )
 
 
@@ -486,6 +555,7 @@ def _extra_requirements_from_table(
     *,
     path: Path,
     environment: Mapping[str, str] | None = None,
+    consulted: set[Marker] | None = None,
 ) -> list[Requirement]:
     """Expand ``selected`` extras from an already-read optional-deps table.
 
@@ -498,7 +568,9 @@ def _extra_requirements_from_table(
             f" missing from {path}: {sorted(selected)!r}"
         )
         raise LookupError(msg)
-    expanded = expand_self_extras(optional, project_name, selected, environment)
+    expanded = expand_self_extras(
+        optional, project_name, selected, environment, consulted
+    )
     return select_optional_dependencies(optional, expanded, project_name)
 
 

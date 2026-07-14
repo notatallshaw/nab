@@ -43,13 +43,13 @@ from ..provider import (
     BuildPolicy,
     DistPolicy,
     LocalSource,
+    Provider,
     VcsConfig,
     VcsSource,
     join_extra,
     split_extra,
 )
 from ..requirements_file import raise_for_unsatisfiable
-from .provider import UniversalProvider
 
 __all__ = [
     "ResolveFork",
@@ -654,7 +654,7 @@ def _parse_tuple_inputs(
 
 
 def _raise_for_source_python(
-    provider: UniversalProvider,
+    provider: Provider,
     t: ResolveTarget,
     pins: Mapping[str, Version],
 ) -> None:
@@ -686,7 +686,7 @@ def _raise_for_source_python(
 
 
 def _tuple_stats(
-    resolver: Resolver[str, Version], provider: UniversalProvider
+    resolver: Resolver[str, Version], provider: Provider
 ) -> dict[str, int]:
     """Return the resolver and provider counters for a TupleResult."""
     return {
@@ -722,7 +722,7 @@ def _resolve_one_tuple(  # noqa: PLR0913
     direct_packages: frozenset[str] = frozenset(),
 ) -> TupleResult:
     """Run one single-environment resolve for ``t``."""
-    provider = UniversalProvider(
+    provider = Provider(
         coordinator,
         t,
         root_requirements=requirements,
@@ -742,7 +742,6 @@ def _resolve_one_tuple(  # noqa: PLR0913
         preferences=preferences,
         resolution_strategy=resolution_strategy,
         direct_packages=direct_packages,
-        filter_by_wheel_tags=True,
     )
     resolver: Resolver[str, Version] = Resolver(
         provider,

@@ -25,9 +25,9 @@ Each pinned package carries:
   index), a `LocalPin` (a directory on disk), a `VcsPin` (a
   git URL with a commit pin), or an `ArchivePin` (a `.tar.gz` URL
   content-pinned by a required `sha256`),
-* every artefact the index listed at that pinned version (`sdist`
-  and `wheels`), each with its filename, URL, `sha256`, and optional
-  size.
+* every artefact the resolve considered at that pinned version
+  (`sdist` and the `wheels` the target can install), each with its
+  filename, URL, `sha256`, and optional size.
 
 The digests are the ones the index published, so nothing is hashed
 locally to build a lock. A resolve does fetch, but only to read
@@ -37,6 +37,10 @@ index publishes no sidecar, and the sdist only when no wheel is
 published (built, if its dependencies are dynamic and the
 [build policy](build-policy.md) allows it). VCS and archive sources
 are cloned or downloaded for the same reason.
+
+A wheel the target's PEP 425 tags reject was never a candidate, so it
+is not in the lock: a lock resolved on `linux_x86_64` carries no
+`win_amd64` wheels.
 
 ## PEP 751 `pylock.toml`
 
@@ -53,6 +57,9 @@ A trimmed example, after resolving the
 lock-version = "1.0"
 created-by = "nab"
 requires-python = ">=3.10"
+environments = [
+    'python_version == "3.12" and sys_platform == "linux" and platform_machine == "x86_64"',
+]
 
 [[packages]]
 name = "fastapi"
@@ -92,6 +99,56 @@ own directory, with POSIX separators, as PEP 751 requires. A
 committed lockfile therefore stays usable on another machine as
 long as the surrounding layout is preserved; it never carries an
 absolute, machine-specific path.
+
+### The environment the lock is for
+
+A specific-mode resolve answers for one environment: the
+[resolve target](configuration.md). Every dependency whose
+PEP 508 marker was false there was dropped, so the
+pins are not a package set another environment can install. The lock
+says so in the top-level `environments`, and a PEP 751 consumer
+refuses a lock whose declared environments none of its own satisfies.
+
+The declaration always pins `python_version`, `sys_platform` and
+`platform_machine`. It also pins every other PEP 508 variable that
+a marker in the resolve consulted: a dependency, root requirement,
+or constraint marker on `platform_system` pins `platform_system`.
+This is deliberately narrow. A marker nab evaluated is a question
+whose answer changed the package set, so an installer that answers
+it differently must not use this lock.
+
+`python_full_version` is the exception: it is declared by
+constraint, not by value. The pins do not depend on the micro
+release, they depend on how each marker clause reading it answered,
+so that is what the lock declares. A clause that held is declared as
+it stands; one that did not is declared complemented, since PEP 508
+has no `not`:
+
+```text
+tomli ; python_full_version <= "3.11.0a6"   read false
+    -> python_full_version > "3.11.0a6"
+```
+
+The lock is then installable on every micro release that reads the
+resolve's markers the way the resolve did, and a marker that
+genuinely splits the micros (`python_full_version >= "3.13.4"`)
+still partitions them. Pinning the value instead would refuse every
+other micro, including every real one when the target names a minor:
+`--python 3.13` synthesizes `3.13.0`, which no released interpreter
+reports. A clause whose complement cannot be stated as a clause (an
+unusual operator such as `~=`, or a PEP 440 prerelease boundary)
+falls back to pinning the exact value.
+
+Two variables are never declared: `platform_release` and
+`platform_version` name one machine's kernel build, so a lock
+carrying the resolving machine's value would refuse every other
+machine. A marker that consults one is reported as a warning at
+lock time; the lock stays open on that axis.
+
+`requires-python` is the project's declaration
+(`[tool.nab].requires-python`, or `[project].requires-python`), not
+the target's Python. It bounds what the project supports; the
+`environments` entry names what was resolved.
 
 ### Universal mode
 

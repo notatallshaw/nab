@@ -996,3 +996,52 @@ class TestTagSetAccepts:
         specific = Tag("cp311", "cp311", "manylinux_2_28_x86_64")
         generic = Tag("py3", "none", "any")
         assert self._TAGS.rank[specific] < self._TAGS.rank[generic]
+
+
+class TestLinuxPlatformOrderMatchesSysTags:
+    """A declared linux target ranks platform tags the way ``sys_tags`` does.
+
+    ``packaging.tags`` yields the plain ``linux_<arch>`` tag before any
+    manylinux one, so an installer on a real machine prefers a plain
+    ``linux_x86_64`` wheel.  A declared target that ranked manylinux first
+    would predict a wheel the target does not install.  Only an index that
+    serves plain ``linux_*`` wheels can tell the two apart; PyPI rejects
+    them, so this is about local and private indexes.
+    """
+
+    def test_plain_linux_tag_comes_first(self) -> None:
+        platforms = _platform_tags_for_spec(PlatformSpec("linux_x86_64"))
+        assert platforms[0] == "linux_x86_64"
+        assert platforms[1] == "manylinux_2_28_x86_64"
+
+    def test_musl_target_ranks_the_plain_tag_first_too(self) -> None:
+        platforms = _platform_tags_for_spec(PlatformSpec("linux_x86_64", libc="musl"))
+        assert platforms[0] == "linux_x86_64"
+        assert platforms[1] == "musllinux_1_2_x86_64"
+
+    def test_plain_linux_wheel_wins_over_manylinux(self) -> None:
+        """The install pick follows the ranking, as pip's does."""
+        tags = TagSet.for_spec(python_version="3.11", spec=PlatformSpec("linux_x86_64"))
+        wheels = [
+            _wheel("pkg-1.0-cp311-cp311-manylinux_2_28_x86_64.whl"),
+            _wheel("pkg-1.0-cp311-cp311-linux_x86_64.whl"),
+        ]
+        chosen = tags.pick(wheels)
+        assert chosen is not None
+        assert chosen.filename == "pkg-1.0-cp311-cp311-linux_x86_64.whl"
+
+    def test_the_host_ranks_it_the_same_way(self) -> None:
+        """The host path is ``sys_tags`` verbatim, so the two paths agree."""
+        host = TagSet.for_host(
+            tags_source=lambda: (
+                Tag("cp311", "cp311", "linux_x86_64"),
+                Tag("cp311", "cp311", "manylinux_2_28_x86_64"),
+            )
+        )
+        declared = TagSet.for_spec(
+            python_version="3.11", spec=PlatformSpec("linux_x86_64")
+        )
+        plain = Tag("cp311", "cp311", "linux_x86_64")
+        many = Tag("cp311", "cp311", "manylinux_2_28_x86_64")
+        assert host.rank[plain] < host.rank[many]
+        assert declared.rank[plain] < declared.rank[many]

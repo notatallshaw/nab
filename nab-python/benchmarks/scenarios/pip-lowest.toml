@@ -186,6 +186,8 @@ requirements = ["trustllm"]
 [metagpt]
 # https://github.com/FoundationAgents/MetaGPT/issues/1825
 # ResolutionImpossible (not too-deep), kept as a regression check.
+# Impossible by design: metagpt pins faiss-cpu==1.7.4, whose newest wheel is
+# cp311, and it publishes no sdist, so 3.12 cannot install it.
 resolution = "lowest"
 python_version = "3.12"
 platform_system = "Linux"
@@ -203,8 +205,14 @@ requirements = ["mem0ai[graph,extras]"]
 
 [langchain-ml-course]
 # https://github.com/pypa/pip/issues/13281#issuecomment-3813389543
+# Reported on 3.14, but no solution exists there at this cutoff:
+# langchain-chroma pulls chromadb, which requires onnxruntime, and
+# onnxruntime publishes no sdist and no cp314 wheel until 2026-02-05.
+# pip refuses it too.  Targeted at 3.13, where onnxruntime does ship
+# wheels, so the scenario still exercises the backtracking it was added
+# for instead of measuring an impossible resolve.
 resolution = "lowest"
-python_version = "3.14"
+python_version = "3.13"
 platform_system = "Linux"
 datetime = "2026-01-28 19:21:17"
 requirements = [
@@ -784,10 +792,16 @@ requirements = ["trustllm"]
 
 [langchain-ml-course-macos]
 # https://github.com/pypa/pip/issues/13281#issuecomment-3813389543
+# Reported on 3.14, but no solution exists there at this cutoff:
+# langchain-chroma pulls chromadb, which requires onnxruntime, and
+# onnxruntime publishes no sdist and no cp314 wheel until 2026-02-05.
+# pip refuses it too.  Targeted at 3.13, where onnxruntime does ship
+# wheels, so the scenario still exercises the backtracking it was added
+# for instead of measuring an impossible resolve.
 # Near-duplicate of [langchain-ml-course] but on Darwin with a slightly different
 # datetime, capturing the repeated report from a different user environment.
 resolution = "lowest"
-python_version = "3.14"
+python_version = "3.13"
 platform_system = "Darwin"
 datetime = "2026-01-28 19:21:17"
 requirements = [
@@ -1656,7 +1670,9 @@ requirements = [
 # Re-run of pip-12275-old-pypi-date but in 2023. Useful as a historical
 # point: even in 2023 a 2019 PyPI cutoff sees heavy backtracking.
 resolution = "lowest"
-python_version = "3.9"
+# Python 3.9 did not exist at this cutoff (released 2020-10-05), so no
+# cp39 wheel could: 3.8 is the interpreter of the day.
+python_version = "3.8"
 platform_system = "Linux"
 datetime = "2020-06-01 00:00:00"
 requirements = [

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +11,7 @@ import pytest
 
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python._vendor.packaging.markers import default_environment
+from nab_python._vendor.packaging.markers import Marker, default_environment
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
@@ -3149,3 +3151,172 @@ class TestLocalSourceExtrasMarkers:
                 coordinator,
                 "3.12.0",
             )
+
+
+# A real linux CPython 3.12.3, the kind of interpreter a lock resolved for
+# ``python = "3.12"`` has to install on.
+_PY312_ENV: dict[str, str] = {
+    "implementation_name": "cpython",
+    "os_name": "posix",
+    "platform_machine": "x86_64",
+    "platform_python_implementation": "CPython",
+    "platform_system": "Linux",
+    "python_full_version": "3.12.3",
+    "python_version": "3.12",
+    "sys_platform": "linux",
+}
+
+
+class TestLockDeclaresItsEnvironment:
+    """A single-environment lock declares the environment it was resolved
+    for.  Every dependency whose marker was False here was dropped, so an
+    installer that answers one of those markers differently needs a
+    different package set: PEP 751 ``environments`` refuses it.
+    """
+
+    @staticmethod
+    def _resolve(
+        tmp_path: Path,
+        body: str,
+        coordinator: MagicMock,
+        extras: Sequence[str] = (),
+    ) -> ResolutionResult:
+        (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            return resolve_pyproject(
+                tmp_path / "pyproject.toml", _FAKE_TRANSPORT, extras=extras
+            )
+
+    _PYPROJECT = (
+        '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+        '[tool.nab]\nbuild-policy = "never"\n'
+        "[tool.nab.environment]\n"
+        'python = "3.12"\nplatform = "linux_x86_64"\n'
+    )
+
+    @staticmethod
+    def _coordinator(requires_dist: str = "") -> MagicMock:
+        return make_coordinator(
+            _index_wheels("foo", "1.0"),
+            package="foo",
+            metadata_text=(
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n" + requires_dist
+            ),
+        )
+
+    def test_the_three_axes_are_always_declared(self, tmp_path: Path) -> None:
+        result = self._resolve(tmp_path, self._PYPROJECT, self._coordinator())
+        (environment,) = result.lock_input.environments
+        assert str(environment) == (
+            'python_version == "3.12" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64"'
+        )
+
+    def test_a_dependency_marker_declares_its_variable(self, tmp_path: Path) -> None:
+        """tqdm's ``colorama ; platform_system == "Windows"`` is the real case."""
+        result = self._resolve(
+            tmp_path,
+            self._PYPROJECT,
+            self._coordinator(
+                'Requires-Dist: colorama ; platform_system == "Windows"\n'
+            ),
+        )
+        (environment,) = result.lock_input.environments
+        assert 'platform_system == "Linux"' in str(environment)
+        assert "colorama" not in result.pins
+
+    def test_a_root_requirement_marker_declares_its_variable(
+        self, tmp_path: Path
+    ) -> None:
+        """Root markers are evaluated before the provider exists."""
+        body = self._PYPROJECT.replace(
+            'dependencies = ["foo"]',
+            'dependencies = ["foo", "winonly; os_name == \'nt\'"]',
+        )
+        result = self._resolve(tmp_path, body, self._coordinator())
+        (environment,) = result.lock_input.environments
+        assert 'os_name == "posix"' in str(environment)
+
+    def test_a_constraint_marker_declares_its_variable(self, tmp_path: Path) -> None:
+        body = self._PYPROJECT.replace(
+            '[tool.nab]\nbuild-policy = "never"\n',
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "constraints = [\"foo<9; implementation_name == 'cpython'\"]\n",
+        )
+        result = self._resolve(tmp_path, body, self._coordinator())
+        (environment,) = result.lock_input.environments
+        assert 'implementation_name == "cpython"' in str(environment)
+
+    def test_a_self_extra_marker_declares_its_variable(self, tmp_path: Path) -> None:
+        """A marker on a self-referencing extra decides which extras are active.
+
+        It shapes the package set, so an installer answering it differently
+        needs a different one, and the lock has to say so.
+        """
+        body = (
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            "[project.optional-dependencies]\n"
+            "all = [\"proj[legacy]; os_name == 'nt'\"]\n"
+            'legacy = ["foo"]\n'
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.environment]\n"
+            'python = "3.12"\nplatform = "linux_x86_64"\n'
+        )
+        result = self._resolve(tmp_path, body, self._coordinator(), extras=["all"])
+        (environment,) = result.lock_input.environments
+        assert 'os_name == "posix"' in str(environment)
+
+    def test_an_unboundable_marker_warns_and_stays_undeclared(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A kernel-versioned marker names one machine; the lock cannot bound it."""
+        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+            result = self._resolve(
+                tmp_path,
+                self._PYPROJECT,
+                self._coordinator('Requires-Dist: bar ; platform_release >= "5.10"\n'),
+            )
+        (environment,) = result.lock_input.environments
+        assert "platform_release" not in str(environment)
+        assert "platform_release" in caplog.text
+
+    def test_a_full_version_marker_declares_how_it_read_not_the_micro(
+        self, tmp_path: Path
+    ) -> None:
+        """``--python 3.12`` invents the micro 3.12.0; no interpreter reports it.
+
+        Pinning it would refuse every real 3.12, so the lock declares what
+        the resolve actually depends on: the marker read false, and it
+        reads false on every 3.12.
+        """
+        result = self._resolve(
+            tmp_path,
+            self._PYPROJECT,
+            self._coordinator(
+                'Requires-Dist: tomli ; python_full_version <= "3.11.0a6"\n'
+            ),
+        )
+        (environment,) = result.lock_input.environments
+        assert 'python_full_version > "3.11.0a6"' in str(environment)
+        assert "python_full_version ==" not in str(environment)
+        assert "tomli" not in result.pins
+        assert Marker(str(environment)).evaluate(_PY312_ENV)
+
+    def test_a_marker_that_splits_the_micros_refuses_the_other_side(
+        self, tmp_path: Path
+    ) -> None:
+        """Here the micro really does change the pins, so the lock says so."""
+        result = self._resolve(
+            tmp_path,
+            self._PYPROJECT,
+            self._coordinator('Requires-Dist: bar ; python_full_version >= "3.12.4"\n'),
+        )
+        (environment,) = result.lock_input.environments
+        assert 'python_full_version < "3.12.4"' in str(environment)
+        assert "bar" not in result.pins
+        assert Marker(str(environment)).evaluate(_PY312_ENV)
+        assert not Marker(str(environment)).evaluate(
+            {**_PY312_ENV, "python_full_version": "3.12.5"}
+        )

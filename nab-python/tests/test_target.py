@@ -16,11 +16,14 @@ from nab_python._vendor.packaging.version import InvalidVersion, Version
 from nab_python.tags import PlatformSpec
 from nab_python.target import (
     IMPLEMENTATION_MARKERS,
+    PEP508_MARKER_VARIABLES,
     PLATFORM_MARKERS,
     ResolveTarget,
     apply_python_axis_overlay,
     declared_environment,
+    environment_declaration,
     host_environment,
+    marker_variables,
     python_axis_environment,
 )
 
@@ -423,6 +426,35 @@ class TestWithMarkerOverrides:
         overlaid = base.with_marker_overrides({"sys_platform": "win32"})
         assert overlaid.tags == base.tags
 
+    def test_a_moved_machine_marker_disowns_the_tags(self) -> None:
+        """The tags now describe a machine the markers no longer name."""
+        base = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        assert base.tags_faithful
+        assert not base.with_marker_overrides({"sys_platform": "win32"}).tags_faithful
+
+    def test_a_moved_python_marker_disowns_the_tags(self) -> None:
+        """The tag set encodes the interpreter, which the overlay cannot rebuild."""
+        base = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        assert not base.with_marker_overrides({"python_version": "3.8"}).tags_faithful
+
+    def test_an_overlay_that_moves_nothing_keeps_the_tags(self) -> None:
+        """Restating a value the target already has changes no axis."""
+        base = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        overlaid = base.with_marker_overrides({"platform_system": "Linux"})
+        assert overlaid.tags_faithful
+
+    def test_an_off_axis_overlay_keeps_the_tags(self) -> None:
+        """No wheel tag encodes the kernel version, so moving it is harmless."""
+        base = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        overlaid = base.with_marker_overrides({"platform_release": "9.9.9"})
+        assert overlaid.tags_faithful
+
+    def test_an_unfaithful_target_stays_unfaithful(self) -> None:
+        """A second overlay cannot restore tags the first one disowned."""
+        base = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        overlaid = base.with_marker_overrides({"sys_platform": "win32"})
+        assert not overlaid.with_marker_overrides({"os_name": "nt"}).tags_faithful
+
 
 class TestDeclaredEnvironment:
     def test_kernel_markers_evaluate_against_the_declared_release(self) -> None:
@@ -532,3 +564,230 @@ class TestApplyPythonAxisOverlay:
             env, {"python_version": "3.9", "implementation_version": "3.9.7"}
         )
         assert env["implementation_version"] == "3.9.7"
+
+
+class TestMarkerVariables:
+    """The lock's ``environments`` declaration is built from the PEP 508
+    variables the resolve's markers named, so the scan must find every
+    one the spec defines and nothing else.
+    """
+
+    def test_finds_every_variable_a_marker_names(self) -> None:
+        found = marker_variables(
+            'python_full_version < "3.11.4" and sys_platform == "win32"'
+        )
+        assert found == {"python_full_version", "sys_platform"}
+
+    def test_python_version_does_not_match_inside_python_full_version(self) -> None:
+        assert marker_variables('python_full_version >= "3.9.1"') == {
+            "python_full_version"
+        }
+
+    def test_a_marker_naming_nothing_yields_nothing(self) -> None:
+        assert marker_variables('extra == "docs"') == frozenset()
+
+    def test_a_name_in_a_string_literal_counts(self) -> None:
+        """Over-approximating narrows the declaration, which is the safe way."""
+        assert marker_variables('os_name == "platform_machine"') == {
+            "os_name",
+            "platform_machine",
+        }
+
+    def test_every_declared_variable_is_a_marker_environment_key(self) -> None:
+        target = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        assert target.marker_env.keys() >= PEP508_MARKER_VARIABLES
+
+
+class TestEnvironmentDeclaration:
+    """A single-environment lock declares the environment it was resolved
+    for: an installer that answers a consulted marker differently needs a
+    different package set, so the declaration has to refuse it.
+    """
+
+    def _target(self, full_version: str = "3.13.2") -> ResolveTarget:
+        def env_source() -> dict[str, str]:
+            return {**_HOST_ENV, "python_full_version": full_version}
+
+        return ResolveTarget.for_host(env_source=env_source, tags_source=_host_tags)
+
+    def test_the_three_axes_are_declared_unconsulted(self) -> None:
+        declaration = environment_declaration(self._target(), ())
+        assert declaration == (
+            'python_version == "3.13" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64"'
+        )
+
+    def test_a_consulted_variable_is_declared(self) -> None:
+        declaration = environment_declaration(
+            self._target(), [Marker('platform_system == "Windows"')]
+        )
+        assert declaration.endswith('and platform_system == "Linux"')
+        assert Marker(declaration).evaluate(_HOST_ENV)
+
+    def test_consulted_variables_are_declared_in_sorted_order(self) -> None:
+        declaration = environment_declaration(
+            self._target(),
+            [Marker('platform_system == "Windows"'), Marker('os_name == "nt"')],
+        )
+        assert declaration.endswith(
+            'and os_name == "posix" and platform_system == "Linux"'
+        )
+
+    def test_unboundable_variables_are_never_declared(self) -> None:
+        declaration = environment_declaration(
+            self._target(),
+            [Marker('platform_release >= "5.10" and platform_version == "#1 SMP"')],
+        )
+        assert "platform_release" not in declaration
+        assert "platform_version" not in declaration
+
+    def test_the_declaration_refuses_a_foreign_environment(self) -> None:
+        declaration = environment_declaration(
+            self._target(), [Marker('platform_system == "Windows"')]
+        )
+        windows = {**_HOST_ENV, "sys_platform": "win32", "platform_system": "Windows"}
+        assert not Marker(declaration).evaluate(windows)
+
+
+class TestFullVersionDeclaration:
+    """``python_full_version`` is declared by constraint, not by value: the
+    resolve depends on how its clauses read the micro release, not on the
+    micro release itself, so a lock built on 3.13.2 must install on 3.13.9.
+    """
+
+    def _target(self, full_version: str) -> ResolveTarget:
+        def env_source() -> dict[str, str]:
+            return {**_HOST_ENV, "python_full_version": full_version}
+
+        return ResolveTarget.for_host(env_source=env_source, tags_source=_host_tags)
+
+    def test_a_clause_that_read_false_is_declared_complemented(self) -> None:
+        """coverage's ``tomli ; python_full_version <= "3.11.0a6"`` is the case."""
+        declaration = environment_declaration(
+            self._target("3.13.2"), [Marker('python_full_version <= "3.11.0a6"')]
+        )
+        assert 'python_full_version > "3.11.0a6"' in declaration
+        assert "python_full_version ==" not in declaration
+        assert Marker(declaration).evaluate(
+            {**_HOST_ENV, "python_full_version": "3.13.9"}
+        )
+
+    def test_a_clause_that_read_true_is_declared_as_it_stands(self) -> None:
+        declaration = environment_declaration(
+            self._target("3.13.5"), [Marker('python_full_version >= "3.13.4"')]
+        )
+        assert declaration.endswith('and python_full_version >= "3.13.4"')
+
+    def test_a_clause_that_splits_the_micros_still_splits_them(self) -> None:
+        """The dep this marker gates is in the pins; a 3.13.2 install is not."""
+        declaration = environment_declaration(
+            self._target("3.13.5"), [Marker('python_full_version >= "3.13.4"')]
+        )
+        assert Marker(declaration).evaluate(
+            {**_HOST_ENV, "python_full_version": "3.13.5"}
+        )
+        assert not Marker(declaration).evaluate(
+            {**_HOST_ENV, "python_full_version": "3.13.2"}
+        )
+
+    def test_the_complement_of_a_split_refuses_the_other_side(self) -> None:
+        declaration = environment_declaration(
+            self._target("3.13.2"), [Marker('python_full_version >= "3.13.4"')]
+        )
+        assert 'python_full_version < "3.13.4"' in declaration
+        assert not Marker(declaration).evaluate(
+            {**_HOST_ENV, "python_full_version": "3.13.5"}
+        )
+
+    def test_every_full_version_clause_is_declared(self) -> None:
+        """nab's own docs graph reads the axis twice, and both readings hold."""
+        declaration = environment_declaration(
+            self._target("3.13.2"),
+            [
+                Marker('python_full_version <= "3.11.0a6"'),
+                Marker('python_full_version < "3.10.2" and os_name == "posix"'),
+            ],
+        )
+        assert declaration == (
+            'python_version == "3.13" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64" and os_name == "posix"'
+            ' and python_full_version > "3.11.0a6"'
+            ' and python_full_version >= "3.10.2"'
+        )
+
+    def test_implementation_version_is_declared_by_constraint(self) -> None:
+        """It is the micro release under another name, so pinning it is the same bug.
+
+        On CPython ``implementation_version`` reports
+        ``sys.implementation.version``, which is the same release
+        ``python_full_version`` reports, so declaring its value would refuse
+        every interpreter but the one micro the target names.
+        """
+        declaration = environment_declaration(
+            self._target("3.13.2"),
+            [Marker('implementation_version >= "3.0"')],
+        )
+        assert 'implementation_version >= "3.0"' in declaration
+        assert 'implementation_version == "3.13.2"' not in declaration
+        assert Marker(declaration).evaluate(
+            {
+                **_HOST_ENV,
+                "python_full_version": "3.13.9",
+                "implementation_version": "3.13.9",
+            }
+        )
+
+    def test_a_clause_that_held_is_declared_whatever_its_operator(self) -> None:
+        """A clause that held needs no complement, so ``~=`` declares itself.
+
+        Pinning the exact value instead would refuse every other micro of the
+        line the resolve was valid for.
+        """
+        declaration = environment_declaration(
+            self._target("3.13.2"), [Marker('python_full_version ~= "3.13.0"')]
+        )
+        assert declaration.endswith('and python_full_version ~= "3.13.0"')
+        assert Marker(declaration).evaluate(
+            {**_HOST_ENV, "python_version": "3.13", "python_full_version": "3.13.9"}
+        )
+
+    def test_an_operator_with_no_complement_pins_the_value(self) -> None:
+        """``~=`` read False has no single-clause negation; the value is sound."""
+        declaration = environment_declaration(
+            self._target("3.13.2"), [Marker('python_full_version ~= "3.14.0"')]
+        )
+        assert declaration.endswith('and python_full_version == "3.13.2"')
+
+    def test_a_literal_on_the_left_is_declared_in_place(self) -> None:
+        """PEP 508 allows either operand order; the complement keeps it."""
+        declaration = environment_declaration(
+            self._target("3.13.2"), [Marker('"3.10.2" > python_full_version')]
+        )
+        assert declaration.endswith('and "3.10.2" <= python_full_version')
+        assert Marker(declaration).evaluate(
+            {**_HOST_ENV, "python_full_version": "3.13.9"}
+        )
+
+    def test_a_name_spelled_only_inside_a_literal_pins_the_value(self) -> None:
+        """The variable scan over-approximates; there is no clause to declare."""
+        declaration = environment_declaration(
+            self._target("3.13.2"), [Marker('os_name == "python_full_version"')]
+        )
+        assert declaration.endswith('and python_full_version == "3.13.2"')
+
+    def test_a_comparison_against_another_variable_pins_the_value(self) -> None:
+        declaration = environment_declaration(
+            self._target("3.13.2"), [Marker("python_full_version == python_version")]
+        )
+        assert declaration.endswith('and python_full_version == "3.13.2"')
+
+    def test_a_prerelease_boundary_pins_the_value(self) -> None:
+        """PEP 440 keeps 3.13.0rc1 out of both ``< 3.13.0`` and ``>= 3.13.0``.
+
+        Flipping the operator is not the complement there, so the target
+        would not satisfy its own declaration; pin the value instead.
+        """
+        declaration = environment_declaration(
+            self._target("3.13.0rc1"), [Marker('python_full_version < "3.13.0"')]
+        )
+        assert declaration.endswith('and python_full_version == "3.13.0rc1"')

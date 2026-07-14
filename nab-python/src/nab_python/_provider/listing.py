@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from .._vendor.packaging.ranges import VersionRange
     from ..provider import DistFile, Provider
+    from ..tags import TagSet
 
 
 def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, DistFile]]:
@@ -70,8 +71,8 @@ def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, Dist
     # stores an error, re-raised above, so ``files`` is non-None here.
     assert files is not None
 
-    # Routed through the method (not the module function) so subclass
-    # overrides like UniversalProvider's wheel-tag filter still run.
+    # Routed through the method (not the module function) so a subclass
+    # override still runs.
     result = provider.filter_distributions(normalized, files)
     provider.versions_cache[normalized] = result
     provider.stats.listings_fetched += 1
@@ -253,7 +254,7 @@ def filter_distributions(
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
 ) -> list[tuple[Version, DistFile]]:
-    """Filter by requires-python, upload time, and sort.
+    """Filter by wheel tag, requires-python, upload time, and sort.
 
     Sorting: newest version first. When the effective ``dist-policy``
     is PREFER_WHEEL or SDIST_INSTALL, wheels sort before sdists at
@@ -262,6 +263,20 @@ def filter_distributions(
     up the per-package / per-index ``uploaded-prior-to`` and
     ``dist-policy`` overrides; the serving index is read from the
     coordinator.
+
+    This is the single funnel into ``versions_cache``, so what it drops
+    is gone from candidate selection, metadata sourcing, every prefetch
+    path, look-ahead, the emitted wheel list, and ``nab download``.
+
+    A wheel whose PEP 425 tags the target does not accept is dropped
+    (:func:`excluded_by_wheel_tags`), and a version left with no
+    compatible wheel and no sdist is dropped with it: the target cannot
+    install it, so the resolver must not pin it.  An sdist keeps a
+    version alive at every :class:`~nab_python.provider.BuildPolicy`,
+    which is what stops the filter over-refusing a pure-source package;
+    the tag check is a wheel's check, as it is in pip.  Look-ahead
+    rejects the version later if the sdist's metadata cannot be read
+    under the policy in force.
 
     The dist-policy and upload-time cutoff are version-scoped: a
     per-package override applies only to candidate versions inside its
@@ -283,9 +298,12 @@ def filter_distributions(
     time_filter_active = (
         provider.uploaded_prior_to is not None or provider.overrides_set_time
     )
+    # Bound once outside the loop: this runs for every wheel of every package.
+    tags = provider.wheel_tags
 
     result: list[tuple[Version, DistFile]] = []
     sort_with_wheel_first = False
+    tag_rejected_versions: set[Version] = set()
     for dist in files:
         provider.stats.distributions_seen += 1
         if isinstance(dist, WheelFile):
@@ -310,16 +328,30 @@ def filter_distributions(
         if effective_dist_policy in (DistPolicy.PREFER_WHEEL, DistPolicy.SDIST_INSTALL):
             sort_with_wheel_first = True
 
-        if excluded_by_python(provider, normalized, version, dist):
+        if _excluded_by_python_or_time(
+            provider,
+            normalized,
+            version,
+            dist,
+            index_name=index_name,
+            time_filter_active=time_filter_active,
+        ):
             continue
-        if time_filter_active:
-            cutoff = provider.effective_uploaded_prior_to(
-                normalized, version, index_name
-            )
-            if excluded_by_time(provider, normalized, dist, cutoff):
-                continue
+        if tags is not None and excluded_by_wheel_tags(
+            provider, normalized, dist, tags
+        ):
+            tag_rejected_versions.add(version)
+            continue
 
         result.append((version, dist))
+
+    if tag_rejected_versions:
+        # A version whose every wheel the target refused, and which ships no
+        # sdist, has nothing left to install: it is gone, not merely wheel-less.
+        kept = {version for version, _ in result}
+        provider.stats.excluded_versions_no_compatible_wheel += len(
+            tag_rejected_versions - kept
+        )
 
     if sort_with_wheel_first:
         result.sort(
@@ -329,6 +361,42 @@ def filter_distributions(
     else:
         result.sort(key=lambda pair: pair[0], reverse=True)
     return _canonicalize_equal_versions(result)
+
+
+def _excluded_by_python_or_time(
+    provider: Provider,
+    normalized: str,
+    version: Version,
+    dist: DistFile,
+    *,
+    index_name: str | None,
+    time_filter_active: bool,
+) -> bool:
+    """Return True when Requires-Python or the upload cutoff rejects ``dist``."""
+    if excluded_by_python(provider, normalized, version, dist):
+        return True
+    if not time_filter_active:
+        return False
+    cutoff = provider.effective_uploaded_prior_to(normalized, version, index_name)
+    return excluded_by_time(provider, normalized, dist, cutoff)
+
+
+def excluded_by_wheel_tags(
+    provider: Provider, normalized: str, dist: DistFile, tags: TagSet
+) -> bool:
+    """Return True when ``dist`` is a wheel the target cannot install.
+
+    An sdist is never excluded here: it carries no tags, and building it
+    produces a wheel for whatever machine runs the build.  Tallied per
+    package so a package left with no candidate can say why.
+    """
+    if not isinstance(dist, WheelFile) or tags.accepts(dist.filename):
+        return False
+    provider.stats.excluded_by_wheel_tags += 1
+    provider.tag_excluded_wheels[normalized] = (
+        provider.tag_excluded_wheels.get(normalized, 0) + 1
+    )
+    return True
 
 
 def _canonicalize_equal_versions(

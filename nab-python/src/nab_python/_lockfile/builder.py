@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
     from nab_index.multi_index import IndexConfig
 
+    from .._vendor.packaging.markers import Marker
     from .._vendor.packaging.version import Version
     from ..lockfile import (
         ArchivePin,
@@ -244,6 +245,7 @@ def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a disti
     pins: Mapping[str, Version],
     *,
     requires_python: str | None = None,
+    environments: Sequence[Marker] = (),
     extras: Sequence[str] = (),
     dependency_groups: Sequence[str] = (),
     default_groups: Sequence[str] = (),
@@ -258,6 +260,12 @@ def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a disti
     is the canonical-name -> :class:`Version` mapping returned by the
     resolver after extras keys have been stripped.
 
+    ``environments`` is the PEP 751 ``environments`` declaration: the
+    environments the pins are valid for.  A single-environment resolve
+    passes the one its target declares (see
+    :func:`~nab_python.target.environment_declaration`); the universal
+    path builds its own from the matrix and leaves this unset.
+
     ``dependency_groups`` lists the PEP 735 groups whose requirements
     were folded into this resolve; ``default_groups`` is the subset
     that a default install (no ``--group`` flag) should apply.
@@ -266,8 +274,8 @@ def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a disti
     ``name[extra]`` proxies; it is read to find which extras activated
     so their edges join the forward dependency graph.
 
-    All wheels and the sdist for each pinned version are recorded so
-    the lockfile is portable across architectures of the same Python.
+    Every wheel the target can install, plus the sdist, is recorded for
+    each pinned version.
     """
     from ..lockfile import LocalPin, LockInput
 
@@ -305,6 +313,7 @@ def build_lock_input_from_provider(  # noqa: PLR0913 - each flag maps to a disti
     return LockInput(
         pins=lock_pins,
         requires_python=requires_python,
+        environments=list(environments),
         created_by=created_by,
         extras=tuple(extras),
         dependency_groups=tuple(dependency_groups),

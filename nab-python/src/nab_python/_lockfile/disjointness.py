@@ -327,6 +327,13 @@ def _membership_name_pattern(variable: str) -> re.Pattern[str]:
     ``Marker._markers`` (private packaging API) or vendoring
     ``Marker.as_ast()`` from packaging PR #1145 (still open; loses
     operand-vs-variable distinction in the proposed shape).
+
+    The rejection now carries a second caller: the lock's
+    ``environments`` declaration scans marker strings the same way
+    (:func:`~nab_python.target.environment_declaration`), deciding each
+    clause it finds through the public ``Marker.evaluate``.  Both rest on
+    the same normalisation, so it stays the one place a marker's shape is
+    read, and neither reaches past packaging's public API.
     """
     return re.compile(
         r"""(['"])([^'"]*)\1\s+(?:not\s+)?in\s+""" + re.escape(variable) + r"\b",

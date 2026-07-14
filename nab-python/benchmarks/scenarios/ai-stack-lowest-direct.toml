@@ -463,6 +463,8 @@ requirements = ["llama-index-readers-confluence>=0.3,<0.4"]
 # https://github.com/run-llama/llama_index/issues/19167
 # docling 1.20 pins deepsearch-glm<0.23, not on PyPI, -> backtrack.
 resolution = "lowest-direct"
+# Impossible by design: deepsearch-glm 0.21.1, the only version docling's
+# range admits, ships cp39 to cp312 and no sdist, so 3.13 cannot install it.
 python_version = "3.13"
 platform_system = "Linux"
 datetime = "2025-06-21 10:33:57"

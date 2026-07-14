@@ -349,9 +349,15 @@ def classify_requirement(
 
 
 def marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> bool:
-    """Evaluate ``marker`` against the env without ``extra`` set, cached."""
+    """Evaluate ``marker`` against the env without ``extra`` set, cached.
+
+    Every dependency marker the resolve reads passes through here, so this
+    is where it is recorded for the lock's ``environments`` declaration.
+    Recording on the cache miss keeps each distinct marker once.
+    """
     result = provider.marker_base_cache.get(marker_id)
     if result is None:
+        provider.consulted_markers.add(marker)
         result = marker.evaluate({**provider.environment, **EMPTY_MEMBERSHIP_SETS})
         provider.marker_base_cache[marker_id] = result
     return result
