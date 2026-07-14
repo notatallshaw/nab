@@ -131,6 +131,35 @@ class TestHttpxAsyncTransport:
         with pytest.raises(HttpError, match="GET https://example.com/ failed"):
             asyncio.run(go())
 
+    @pytest.mark.parametrize(
+        "raised",
+        [
+            httpx.InvalidURL("Invalid IDNA hostname"),
+            UnicodeError("idna codepoint not allowed"),
+        ],
+    )
+    def test_get_wraps_non_httperror_from_request(
+        self, raised: Exception, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-HTTPError raised while issuing the request maps to HttpError."""
+
+        async def go() -> None:
+            transport = HttpxAsyncTransport(http2=False)
+
+            async def boom(*args: object, **kwargs: object) -> object:
+                raise raised
+
+            monkeypatch.setattr(transport._client, "get", boom)
+            try:
+                await transport.get("https://bad.example/simple/pkg/")
+            finally:
+                await transport.aclose()
+
+        with pytest.raises(
+            HttpError, match="GET https://bad.example/simple/pkg/ failed"
+        ):
+            asyncio.run(go())
+
     def test_uses_truststore_ssl_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """AsyncClient gets a truststore SSLContext via verify=."""
         cls = MagicMock()

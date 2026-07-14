@@ -78,7 +78,9 @@ class HttpxAsyncTransport:
         """Send a GET request."""
         try:
             response = await self._client.get(url, headers=headers)
-        except httpx.HTTPError as exc:
+        except Exception as exc:
+            # httpx raises InvalidURL and lets idna hostname errors escape its
+            # HTTPError hierarchy, so wrap every failure to issue the request.
             msg = f"GET {url} failed: {exc}"
             raise HttpError(msg) from exc
         return _HttpxResponse(response)
