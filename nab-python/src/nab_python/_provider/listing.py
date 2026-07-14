@@ -183,13 +183,22 @@ def prefetch_root_batch(
     versions: list[tuple[Version, DistFile]],
     root_range: RangeProtocol[Version],
 ) -> None:
-    """Batch metadata fetch for the top candidates inside ``root_range``."""
+    """Batch metadata fetch for the candidates inside ``root_range``.
+
+    Versions go out in the order ``choose_version`` walks them, so the look-ahead
+    finds the ones it tries first already cached.
+    """
     # Imported lazily because provider.py imports this module; pulling
     # Provider in at the top would create an import cycle.
     from ..provider import Provider as _Provider
 
+    # Reverse out of place: ``versions`` is the shared cached listing.
+    ordered = (
+        list(reversed(versions)) if provider.wants_lowest(normalized) else versions
+    )
+
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
-    for version, dist in versions:
+    for version, dist in ordered:
         if len(items) >= _Provider.PREFETCH_BATCH:
             break
         if version not in root_range:
