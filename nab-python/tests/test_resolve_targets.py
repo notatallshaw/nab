@@ -919,8 +919,8 @@ class TestResolveOneTarget:
         assert tr.target.platform_id == "linux_x86_64"
         assert tr.conflicts == 0
         assert tr.backjumps == 0
-        assert tr.metadata_fetched >= 0
-        assert tr.distributions_seen >= 0
+        assert tr.metadata_fetched == 1
+        assert tr.distributions_seen == 1
 
     def test_failure_returns_error(self) -> None:
         """A resolve with no candidate version reports failure."""
