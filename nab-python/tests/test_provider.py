@@ -995,6 +995,39 @@ class TestNoVersionsReasons:
         assert "bar" in reason
         assert "every version in range was rejected" in reason
 
+    def test_blocker_reason_outlives_a_later_empty_range(self) -> None:
+        """A later ask over an empty range keeps the blocker reason.
+
+        ``foo`` 1.0 requires ``bar==2.0`` and the resolver has already
+        decided ``bar==1.0``, so the reason naming bar must survive a
+        second ask that finds no candidate at all.
+        """
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\n"
+                "Name: foo\n"
+                "Version: 1.0\n"
+                "Requires-Dist: bar==2.0\n"
+            ),
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
+        )
+        provider.solution_decisions["bar"] = V("1.0")
+        assert provider.choose_version("foo", VersionRange.full()) is None
+
+        # Nothing falls in this range, so the second ask has no blockers.
+        assert provider.choose_version("foo", SpecifierSet(">=5.0").to_range()) is None
+
+        assert (
+            provider.get_no_versions_reason("foo")
+            == "every version in range was rejected: requires bar != 1.0"
+        )
+
     def test_sdist_only_under_dynamic_local_names_build_policy(self) -> None:
         """When every candidate is rejected because the package is
         sdist-only with dynamic deps and the build policy refuses to

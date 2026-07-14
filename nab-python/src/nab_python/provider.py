@@ -1516,6 +1516,11 @@ class Provider:
         cutoff.  The raw listing tells absence from incompatibility apart,
         and the tag filter's own tally names the wheel-tag case, which is
         what a Windows-only package on a Linux target hits.
+
+        A look-ahead rejection emits a clause that removes the rejected
+        versions from the range, so the resolver asks again over a range
+        nothing falls in.  That second ask has no blockers of its own, so
+        its no-match reason must not overwrite the one naming the blocker.
         """
         if not all_versions:
             _, _, normalized = self.split_and_normalize(package)
@@ -1542,6 +1547,9 @@ class Provider:
             # versions inside ``version_range``.
             joined = "; ".join(blockers)
             reason = f"every version in range was rejected: {joined}"
+        elif package in self._no_versions_reasons:
+            # The weakest reason: keep whatever is already recorded.
+            return
         else:
             reason = "no version matches the requirement"
         self._no_versions_reasons[package] = reason
