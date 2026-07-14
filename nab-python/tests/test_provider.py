@@ -5771,6 +5771,29 @@ class TestAwaitMetadataBatchEdgeCases:
         with pytest.raises(UnsupportedSdistError):
             provider.get_dependencies("pkg", V("1.0"))
 
+    def test_batch_leaves_an_empty_sidecar_on_the_sdists_terms(self) -> None:
+        """A sidecar that served no text reads PKG-INFO, and stays gated.
+
+        The fetcher records a sidecar that served nothing as the ``None`` of
+        its own slot, so the batch read falls back to the sdist's PKG-INFO.
+        Caching that as wheel METADATA would bypass the PEP 643 gate.
+        """
+        wheel = make_wheel("1.0")
+        assert wheel.metadata_url is not None
+        dists = [make_sdist("1.0"), wheel]
+        coordinator = make_coordinator(dists, sdist_pkg_info=PKG_INFO_PRE_PEP643_DEPS)
+        provider = Provider(coordinator, target=_PY312)
+        with pytest.raises(UnsupportedSdistError):
+            provider.get_dependencies("pkg", V("1.0"))
+        coordinator.index.store_metadata("pkg", "1.0", None, wheel.metadata_url)
+
+        version_list = provider.fetch_versions("pkg")
+        wheel_map = provider._wheel_by_version("pkg", version_list)
+        submitted = provider._prefetch_batch("pkg", [V("1.0")], wheel_map)
+        provider._await_metadata_batch("pkg", submitted)
+
+        assert ("pkg", V("1.0")) not in provider.deps_cache
+
 
 class TestIsReady:
     def test_extras_cached_base(self) -> None:

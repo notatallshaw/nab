@@ -987,3 +987,35 @@ class TestSiblingWheelDependencies:
         linux._await_metadata_batch("pkg", submitted)
 
         assert set(linux.deps_cache[("pkg", Version("1.0"))]) == {"linuxdep"}
+
+    def test_an_sdists_pkg_info_does_not_supply_a_wheels_dependencies(self) -> None:
+        """A target with a wheel reads its sidecar even after the sdist landed.
+
+        A target with no wheel of its own resolves the version through the
+        sdist, filling the version-level slot.  That text is a fallback for an
+        artifact with nothing of its own, so it must not stand in for a
+        sidecar the Windows target has yet to fetch.
+        """
+        coordinator = make_coordinator(
+            [_WIN_WHEEL, _sdist("1.0")],
+            package="pkg",
+            metadata_by_url={_sidecar(_WIN_WHEEL): _WIN_WHEEL_METADATA},
+            sdist_pkg_info=(
+                "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n"
+                "Requires-Dist: sdistdep\n\n"
+            ),
+        )
+        macos = Provider(
+            coordinator,
+            ResolveTarget.for_declared(
+                python_version="3.11", spec=PlatformSpec("macos_arm64")
+            ),
+        )
+        windows = Provider(
+            coordinator,
+            ResolveTarget.for_declared(
+                python_version="3.11", spec=PlatformSpec("windows_amd64")
+            ),
+        )
+        assert set(macos.get_dependencies("pkg", Version("1.0"))) == {"sdistdep"}
+        assert set(windows.get_dependencies("pkg", Version("1.0"))) == {"windep"}

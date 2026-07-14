@@ -135,16 +135,28 @@ class TestInMemoryIndex:
         assert idx.get_metadata("foo", "1.0", win_url) == "win"
         assert idx.get_metadata("foo", "1.0") is None
 
-    def test_version_level_slot_answers_for_any_artifact(self) -> None:
+    def test_an_injected_override_answers_for_any_artifact(self) -> None:
         idx = InMemoryIndex()
-        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
+        idx.store_metadata("foo", "1.0", "override\n")
         assert idx.has_metadata("foo", "1.0", "https://f/win.whl.metadata")
         assert idx.get_metadata_with_origin(
             "foo", "1.0", "https://f/win.whl.metadata"
-        ) == (
-            "PKG-INFO\n",
-            True,
-        )
+        ) == ("override\n", False)
+
+    def test_sdist_pkg_info_does_not_answer_for_an_unfetched_sidecar(self) -> None:
+        """A wheel that declares its own dependencies must fetch them.
+
+        The sdist is a fallback for an artifact with no text of its own, so
+        lending its PKG-INFO to a sidecar nobody has fetched yet would give
+        the wheel the sdist's dependencies instead of the wheel's.
+        """
+        idx = InMemoryIndex()
+        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
+        assert not idx.has_metadata("foo", "1.0", "https://f/win.whl.metadata")
+        assert idx.get_metadata_with_origin(
+            "foo", "1.0", "https://f/win.whl.metadata"
+        ) == (None, False)
+        assert idx.get_metadata_with_origin("foo", "1.0") == ("PKG-INFO\n", True)
 
     def test_a_sidecar_that_was_not_served_falls_back_to_the_sdist(self) -> None:
         """An empty sidecar slot does not shadow the version-level text."""
@@ -230,8 +242,11 @@ class TestInMemoryIndex:
         assert pending.event.is_set()
         assert idx.get_metadata("foo", "1.0") == "PKG-INFO\n"
         assert idx.metadata_from_sdist("foo", "1.0")
-        # The kept text stands for the version, so it answers for any sidecar.
-        assert idx.has_metadata("foo", "1.0", "https://f/other.md")
+        # The sidecar that resolved to nothing reads the kept text.
+        assert idx.get_metadata_with_origin("foo", "1.0", "https://f/a.md") == (
+            "PKG-INFO\n",
+            True,
+        )
 
     def test_metadata_none_after_sdist_none_stays_none(self) -> None:
         idx = InMemoryIndex()

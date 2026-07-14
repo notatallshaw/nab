@@ -649,8 +649,8 @@ def prefetch_batch(
     Uses request_metadata_batch so all requests reach the fetcher
     as a single queue item and are processed concurrently.
     Returns list of (version, ver_str, metadata_url, event) for submitted
-    requests; the sidecar URL is what the await reads the metadata back by,
-    since sibling wheels of one version hold their own texts.
+    requests.  Sibling wheels of one version hold their own texts, so the
+    await reads the metadata back by the sidecar URL submitted here.
     """
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
     version_map: list[tuple[Version, str, str]] = []
@@ -705,10 +705,9 @@ def await_metadata_batch(
             # refuses it) rather than pinning it as dependency-free.
             continue
         if from_sdist:
-            # The wheel has no sidecar of its own and the version-level slot
-            # holds sdist PKG-INFO from an earlier fallback; caching it here
-            # would skip the PEP 643 gate that get_dependencies applies on
-            # the from_sdist path.
+            # The sidecar served nothing and the read fell back to sdist
+            # PKG-INFO; caching it here would skip the PEP 643 gate that
+            # get_dependencies applies on the from_sdist path.
             continue
         try:
             provider.parse_and_cache_metadata(cache_key, text)

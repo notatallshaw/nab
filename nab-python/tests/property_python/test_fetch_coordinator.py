@@ -231,18 +231,18 @@ def test_every_request_gets_exactly_one_correct_reply(
         sdist_keys = {k for k, _ in requested if k[0] == "sdist"}
         for key in meta_keys | sdist_keys:
             _, pkg, ver = key
-            # Metadata is keyed by the artifact it came from, so a reader names
-            # the sidecar it asked for; an sdist's PKG-INFO answers for any.
-            sidecar = _metadata_url(pkg, ver)
+            # Metadata is keyed by the artifact it came from, so read back the
+            # slot the request was for: a metadata request asks about one
+            # sidecar, an sdist request about the version.  The listing
+            # prefetch writes that same sidecar slot from the same plan entry,
+            # so it can only produce text the sidecar request already allows.
+            asked_for_sidecar = ("metadata", pkg, ver) in meta_keys
+            sidecar = _metadata_url(pkg, ver) if asked_for_sidecar else None
             assert index.has_metadata(pkg, ver, sidecar), f"no metadata slot for {key}"
             value = index.get_metadata(pkg, ver, sidecar)
             allowed: set[str | None] = set()
             base_ver = ver.split("#", 1)[0]
-            if ("metadata", pkg, ver) in meta_keys:
-                mode, _ = client.plan.get(("metadata", pkg, ver), ("ok", 0.0))
-                allowed.add(f"META:{pkg}:{ver}" if mode == "ok" else None)
-            # The listing prefetch can also have written META for this slot.
-            if has_meta.get(pkg) and "#" not in ver:
+            if asked_for_sidecar:
                 mode, _ = client.plan.get(("metadata", pkg, ver), ("ok", 0.0))
                 allowed.add(f"META:{pkg}:{ver}" if mode == "ok" else None)
             if ("sdist", pkg, ver) in sdist_keys:

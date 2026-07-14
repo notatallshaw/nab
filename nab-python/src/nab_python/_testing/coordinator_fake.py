@@ -89,12 +89,18 @@ def _wire_metadata_side_effects(
     def _request_listing(_pkg: str) -> threading.Event:
         return _done_event()
 
-    def _request_metadata(
-        pkg: str, ver: str, url: str, _hash: tuple[str, str] | None = None
-    ) -> threading.Event:
+    def _fetch_metadata(pkg: str, ver: str, url: str) -> None:
+        # The fetcher skips a sidecar the index already answers for.
+        if index.has_metadata(pkg, ver, url):
+            return
         text = resolve_metadata(pkg, ver, url)
         if text is not None:
             index.store_metadata(pkg, ver, text, url)
+
+    def _request_metadata(
+        pkg: str, ver: str, url: str, _hash: tuple[str, str] | None = None
+    ) -> threading.Event:
+        _fetch_metadata(pkg, ver, url)
         return _done_event()
 
     def _request_metadata_batch(
@@ -102,9 +108,7 @@ def _wire_metadata_side_effects(
     ) -> list[tuple[str, str, threading.Event]]:
         results: list[tuple[str, str, threading.Event]] = []
         for pkg, ver, url, _hash in items:
-            text = resolve_metadata(pkg, ver, url)
-            if text is not None:
-                index.store_metadata(pkg, ver, text, url)
+            _fetch_metadata(pkg, ver, url)
             results.append((pkg, ver, _done_event()))
         return results
 

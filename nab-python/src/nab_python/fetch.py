@@ -225,15 +225,21 @@ class InMemoryIndex:
     ) -> tuple[str | None, bool]:
         """Return the text answering for ``metadata_url`` and its origin.
 
-        Caller holds the lock.  The artifact's own slot wins; the
-        version-level slot (sdist PKG-INFO, an injected override) answers when
-        that artifact has nothing, which is how a wheel with no sidecar, or
-        one whose sidecar fetch came back empty, reaches the sdist's text.
+        Caller holds the lock.  The artifact's own slot wins, then the
+        version-level one.  An sdist's PKG-INFO answers for an artifact with
+        no text of its own, but not for a sidecar nobody has fetched yet:
+        lending it there would give a wheel that declares its own dependencies
+        the sdist's.  An injected override has no artifact behind it and
+        answers for any.  A wheel with no sidecar asks with ``None``.
         """
         if metadata_url is not None:
-            text = self._metadata.get((package, version, metadata_url))
-            if text is not None:
-                return (text, False)
+            slot = (package, version, metadata_url)
+            if slot in self._metadata:
+                text = self._metadata[slot]
+                if text is not None:
+                    return (text, False)
+            elif (package, version) in self._metadata_from_sdist:
+                return (None, False)
         version_level = self._metadata.get((package, version, None))
         return (version_level, (package, version) in self._metadata_from_sdist)
 
@@ -250,8 +256,8 @@ class InMemoryIndex:
         """Return ``True`` once a fetch answering for ``metadata_url`` resolved.
 
         Any value counts, including the ``None`` of a sidecar that was not
-        served.  A slot filled from a sidecar answers only for that sidecar;
-        the version-level slot answers for any artifact.
+        served.  It tracks :meth:`_read_metadata`, so a fetch skipped on the
+        strength of it leaves the reader the same text a fetch would have.
         """
         with self._lock:
             if (
@@ -259,7 +265,10 @@ class InMemoryIndex:
                 and (package, version, metadata_url) in self._metadata
             ):
                 return True
-            return (package, version, None) in self._metadata
+            return (package, version, None) in self._metadata and (
+                metadata_url is None
+                or (package, version) not in self._metadata_from_sdist
+            )
 
     def get_metadata_with_origin(
         self, package: str, version: str, metadata_url: str | None = None
@@ -347,9 +356,8 @@ class InMemoryIndex:
         """Return a recorded metadata integrity error, or ``None``.
 
         The artifact's own error wins; a version-level error (a tampered
-        sdist archive) stands for the version and answers for any artifact,
-        since no dist of that version can be trusted once one was tampered
-        with.
+        sdist archive) answers for any artifact, as the version-level text
+        does.
         """
         with self._lock:
             if metadata_url is not None:

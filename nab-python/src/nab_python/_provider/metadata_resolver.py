@@ -61,9 +61,9 @@ def resolve_metadata(
     ver_str = str(version)
     index = provider.coordinator.index
 
-    # Sibling wheels of one version can declare different dependencies, so
-    # every read is keyed by the artifact this target would install.  ``dist``
-    # is picked from the target's own tag-filtered listing.
+    # Sibling wheels of one version can declare different dependencies, so the
+    # read is keyed by the artifact this target would install.  ``versions`` is
+    # the target's own tag-filtered listing, so the pick is per-target.
     dist = pick_dist_for_metadata(versions, version)
     metadata_url = dist.metadata_url if isinstance(dist, WheelFile) else None
 
