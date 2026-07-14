@@ -33,16 +33,16 @@ def write_requirements_with_hashes(
 ) -> str:
     """Render ``lock_input`` as a pip-compatible requirements.txt.
 
-    Each line is ``name==version`` followed by one ``--hash=sha256:...``
-    per recorded artefact, in the format pip's hash-checking mode
-    accepts.  Local and VCS pins are emitted as ``name @ <url>`` lines
-    without hashes (pip does not hash-check those forms); an editable
-    local pin renders as ``-e <url>`` and a ``subdirectory`` as a
-    ``#subdirectory=`` fragment.  An archive pin is a third form, ``name @
-    <url>#sha256=...``, carrying its hash in the fragment;
-    :func:`require_artifact_hashes` skips it because that hash is guaranteed
-    at config parse.  Returns the text and, when ``output_path`` is provided,
-    atomically writes it.
+    Each line is ``name==version`` followed by one ``--hash=<algo>:<digest>``
+    per recorded digest, in the format pip's hash-checking mode accepts.  The
+    hash lines are sorted, so the output does not depend on artefact order.
+    Local and VCS pins are emitted as ``name @ <url>`` lines without hashes
+    (pip does not hash-check those forms); an editable local pin renders as
+    ``-e <url>`` and a ``subdirectory`` as a ``#subdirectory=`` fragment.  An
+    archive pin is a third form, ``name @ <url>#sha256=...``, carrying its hash
+    in the fragment; :func:`require_artifact_hashes` skips it because that hash
+    is guaranteed at config parse.  Returns the text and, when ``output_path``
+    is provided, atomically writes it.
     """
     require_artifact_hashes(lock_input)
     return _render_requirements(lock_input, with_hashes=True, output_path=output_path)

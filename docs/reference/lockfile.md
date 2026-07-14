@@ -10,7 +10,7 @@ result:
 
 * `--format pylock` (default): a [PEP 751] `pylock.toml`.
 * `--format requirements`: a pip-compatible `requirements.txt`
-  with `--hash=sha256:...` per recorded artefact.
+  with one `--hash=<algo>:<digest>` line per recorded digest.
 * `--format requirements-without-hashes`: a sorted
   `name==version` list with no hashes.
 
@@ -184,10 +184,15 @@ starlette==0.36.0 \
     --hash=sha256:...
 ```
 
-The hash count per package equals the number of artefacts
-recorded in the resolve. An sdist hash, when present, comes
-first; wheel hashes follow. The continuation backslashes match
-what pip-compile emits.
+A package carries one `--hash` line per recorded digest, not one
+per artefact. Only `sha256`, `sha384`, and `sha512` are recorded,
+so a wheel the index publishes with an `md5` and a `sha256`
+contributes one line, and one published with a `sha256` and a
+`sha512` contributes two. The lines are sorted by algorithm then
+digest rather than grouped by artefact, so an sdist hash lands
+wherever its digest sorts and the output does not depend on the
+order the artefacts were found in. The continuation backslashes
+match what pip-compile emits.
 
 Local and VCS pins are rendered without hashes, mirroring pip's
 behaviour. An editable local pin becomes a `-e` line and a

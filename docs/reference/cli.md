@@ -29,8 +29,8 @@ Resolve and emit a lockfile or pin list. Three formats:
 
 * `--format pylock` (default) writes a [PEP 751] `pylock.toml`.
 * `--format requirements` writes a pip-compatible
-  `requirements.txt` with one `--hash=sha256:...` line per
-  recorded artefact.
+  `requirements.txt` with one `--hash=<algo>:<digest>` line per
+  recorded digest.
 * `--format requirements-without-hashes` writes a sorted
   `name==version` list with no hashes.
 
