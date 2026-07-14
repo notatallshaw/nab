@@ -1,7 +1,7 @@
 # Benchmarks
 
-nab ships two benchmark suites that exercise the single-environment
-and the universal resolver against real-world scenarios.
+nab ships two benchmark suites that exercise single-environment and
+universal resolves against real-world scenarios.
 
 ## Single-environment scenarios
 

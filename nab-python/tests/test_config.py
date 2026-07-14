@@ -173,8 +173,12 @@ class TestMode:
             tmp_path,
             '[tool.nab.matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
         )
-        with pytest.raises(ConfigError, match="set mode = 'universal'"):
+        with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(path)
+        message = str(excinfo.value)
+        assert "set mode = 'universal'" in message
+        assert "resolve for every target the matrix declares" in message
+        assert "matrix-based resolver" not in message
 
     def test_matrix_with_specific_mode_in_same_file_rejected(
         self, tmp_path: Path

@@ -536,10 +536,11 @@ over HTTP.
 
 ## Universal mode (experimental)
 
-Universal resolution runs the single-environment resolver once per
-declared `(python, platform, implementation)` tuple, sharing one
-fetcher so metadata is fetched at most once per package.  Output and
-API are still subject to change.
+Universal resolution resolves one target per declared
+`(python, platform, implementation)` tuple, on the same engine a
+single-environment resolve uses, sharing one fetcher so metadata is
+fetched at most once per package.  Output and API are still subject to
+change.
 
 ```toml
 [tool.nab]
@@ -665,7 +666,7 @@ error.  See [Build policy](build-policy.md).
   and marker shape across all tuples.
 
 Declaring a `[tool.nab.matrix]` table while `mode` is `specific` is an
-error: the matrix is the universal resolver's input, so leaving mode
+error: the matrix is the list of targets to resolve, so leaving mode
 behind is almost always an oversight rather than an intent.
 
 The one exception is an explicit `--project-mode specific` on the

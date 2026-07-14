@@ -156,8 +156,8 @@ the Python level, not PyPy's own release, so the rare marker comparing
 
 | Property | Matrix (nab) | Marker-fork (uv) |
 | --- | --- | --- |
-| Resolver core | Untouched. Universal is a per-tuple loop on top of the existing single-env resolver. | Forks pervade the resolver state. |
+| Resolver core | Untouched. A matrix is a longer target list, not extra solver state. | Forks pervade the resolver state. |
 | Universe | Exactly what the user declared. | All of PEP 508, narrowed by `tool.uv.environments`. |
 | Errors | "no wheel for python 3.11 on macos arm64" - actionable. | "no wheel for some marker environment the resolver cared about" - less actionable. |
-| Wasted work | High: 90% of resolver state is identical across tuples; not shared. | Low: shared whenever markers don't fork. |
-| Implementation cost | Small. Promotes a working PoC. | Large. Conflict explanations and lockfile shape are research-grade work. |
+| Wasted work | High: solver state is rebuilt per target. Only the fetcher and its metadata cache are shared. | Low: shared whenever markers don't fork. |
+| Implementation cost | Small. One engine over a target list. | Large. Conflict explanations and lockfile shape are research-grade work. |

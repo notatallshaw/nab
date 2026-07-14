@@ -118,8 +118,8 @@ selection for every conflict check. A project with
 groups `a` and `b`
 satisfies the minimum without passing `--groups`, and a `--groups b`
 on top of that default activates two members of an exclusive set,
-which the exclusion check then catches (specific mode) or the
-universal resolver forks into two.
+which the exclusion check then catches (specific mode) or which
+universal mode forks into two.
 
 A dependency required by every member of a set but not by the base
 keeps its membership marker, so it does not install when no member is
