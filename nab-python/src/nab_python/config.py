@@ -582,11 +582,11 @@ def read_pyproject_config(
     Unknown keys at the top level are rejected so typos fail loud.
 
     When ``discover_workspace`` is true (the default), the merged
-    ``workspace`` table drives discovery: its members resolve against the
-    project directory.  A project declaring no workspace of its own walks
-    up from ``path`` for the first ancestor ``pyproject.toml`` whose
-    ``[tool.nab.workspace]`` table is present.  Either way every member
-    is materialised as an additional :class:`LocalSource` (explicit
+    ``workspace`` table drives discovery and its members resolve against
+    the project directory.  A project that declares no workspace of its
+    own walks up from ``path`` for the first ancestor project file that
+    declares one.  Either way every member is materialised as an
+    additional :class:`LocalSource` (explicit
     ``[[tool.nab.local-sources]]`` entries win on collision) and the
     effective ``build-policy`` is floored at
     :attr:`BuildPolicy.BUILD_LOCAL`, except under ``mode = "universal"``,
@@ -830,10 +830,10 @@ def _apply_workspace_discovery(
     """Materialise the workspace members and floor the build policy.
 
     The project's own ``workspace`` table wins, whichever project file
-    declared it (``declared_in`` names that file), and its members resolve
-    against the project directory.  A project that declares none walks up
-    for an ancestor ``pyproject.toml`` that does, which is what makes
-    ``nab lock <member>`` resolve against the workspace root.
+    declared it (``declared_in`` names that file), and its members
+    resolve against the project directory.  A project that declares none
+    walks up for an ancestor project file that does, so ``nab lock
+    <member>`` still resolves against the workspace root.
     """
     if config.workspace is not None:
         root_label = declared_in
@@ -843,13 +843,15 @@ def _apply_workspace_discovery(
             declared_in=declared_in,
         )
     else:
-        root_pyproject = discover_workspace_root(path)
-        if root_pyproject is None:
+        root_file = discover_workspace_root(path)
+        if root_file is None:
             return config
-        root_label = str(root_pyproject)
-        discovered = read_workspace_members(root_pyproject)
+        root_label = str(root_file)
+        discovered = read_workspace_members(root_file)
+
     if not discovered:
         return config
+
     merged = merge_workspace_local_sources(config.local_sources, discovered)
     _reject_duplicate_source_names(merged, config.vcs_sources, config.archive_sources)
     explicit_names = {canonicalize_name(src.name) for src in config.local_sources}
@@ -2611,7 +2613,7 @@ def _parse_workspace(value: object) -> WorkspaceConfig | None:
 
     Schema today is a single ``members`` field listing literal paths.
     Globs and member-existence checks happen in
-    :func:`nab_python.workspace.read_workspace_members`; this layer only
+    :func:`nab_python.workspace.workspace_local_sources`; this layer only
     validates the table shape so typos like ``member = ...`` (missing
     the ``s``) fail loud at config-parse time.
     """

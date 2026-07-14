@@ -46,15 +46,13 @@ Every listed member must contain a `pyproject.toml` with a
 
 The project being locked declares the workspace, in either of its two
 config files, and its `members` are read relative to that project's
-directory. Running `nab lock` at the root activates discovery that
-way.
+directory. That is the path `nab lock` takes at a workspace root.
 
 When `nab lock <member>/pyproject.toml` is invoked and the member
 declares no workspace of its own, nab walks upwards from the member's
-directory looking for the first ancestor `pyproject.toml` that carries
-a `[tool.nab.workspace]` table. The walk only looks at
-`pyproject.toml`, so a root that declares its workspace in `nab.toml`
-is found when it is the project being locked, not from a member.
+directory for the first ancestor that declares one, in either file:
+`[tool.nab.workspace]` in its `pyproject.toml`, or `[workspace]` in
+its `nab.toml`. The `pyproject.toml` is checked first.
 
 Each member of the matched workspace contributes a local source. The
 provider prefers those local sources over PyPI for any requirement
@@ -81,13 +79,12 @@ alone.
 ## Scope of `[tool.nab]` keys
 
 Workspace discovery flows these from the root into the file being
-locked: the member entries from `[tool.nab.workspace].members`
-(merged into `local-sources`), and the build-policy floor described
-above. Everything else under `[tool.nab]` is scoped to the
-pyproject being locked: `conflicts`, `default-groups`, `constraints`,
-`matrix`, `mode`, `requires-python`, `uploaded-prior-to`,
-`build-policy` itself, `dist-policy`, `vcs`, `indexes`, and
-`environment`. Locking a member with `nab lock
+locked: the workspace `members` (merged into `local-sources`), and
+the build-policy floor described above. Everything else under
+`[tool.nab]` is scoped to the pyproject being locked: `conflicts`,
+`default-groups`, `constraints`, `matrix`, `mode`, `requires-python`,
+`uploaded-prior-to`, `build-policy` itself, `dist-policy`, `vcs`,
+`indexes`, and `environment`. Locking a member with `nab lock
 packages/core/pyproject.toml` reads only that file's keys; the
 root's are ignored.
 
