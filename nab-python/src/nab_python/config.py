@@ -134,6 +134,12 @@ _PEP508_MARKER_VARIABLES = frozenset(
 # Marker variables whose values must parse as PEP 440 versions.
 _VERSION_MARKER_VARIABLES = frozenset({"python_version", "python_full_version"})
 
+# How a ``requires-python`` declaration is named back to the user.  The
+# [tool.nab] key stays bare because the CLI's error prefix already names that
+# table; the [project] fallback has to name its own.
+_TOOL_NAB_REQUIRES_PYTHON = "requires-python"
+_PROJECT_REQUIRES_PYTHON = "[project] requires-python"
+
 
 @dataclass(frozen=True, slots=True)
 class MatrixConfig:
@@ -416,6 +422,9 @@ class NabProjectConfig:
     # top-level ``requires-python`` and checked against the resolve target.
     # It does not choose the target; ``environment`` does.
     requires_python: str | None = None
+    # The surface ``requires_python`` was read from, named by the error when
+    # the declaration excludes a target.
+    requires_python_source: str = _TOOL_NAB_REQUIRES_PYTHON
     uploaded_prior_to: datetime | None = None
     dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST
     build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL
@@ -710,8 +719,10 @@ def _config_from_effective(
     )
 
     requires_python = effective["requires-python"].value
-    if requires_python is None:
+    requires_python_source = _TOOL_NAB_REQUIRES_PYTHON
+    if requires_python is None and project_requires_python is not None:
         requires_python = project_requires_python
+        requires_python_source = _PROJECT_REQUIRES_PYTHON
 
     default_groups = effective["default-groups"].value
     conflicts = effective["conflicts"].value
@@ -728,6 +739,7 @@ def _config_from_effective(
         constraints=effective["constraints"].value,
         default_groups=default_groups,
         requires_python=requires_python,
+        requires_python_source=requires_python_source,
         uploaded_prior_to=effective["uploaded-prior-to"].value,
         dist_policy=dist_policy,
         build_policy=build_policy,
@@ -887,7 +899,12 @@ def plan_targets(config: NabProjectConfig) -> tuple[ResolveTarget, ...]:
     """
     targets = _plan_targets(config.matrix, config.environment)
     for target in targets:
-        _check_requires_python_admits_target(config.requires_python, target)
+        _check_requires_python_admits_target(
+            config.requires_python,
+            target,
+            source=config.requires_python_source,
+            matrix=config.matrix is not None,
+        )
     return targets
 
 
@@ -1076,14 +1093,17 @@ def with_python_override(
     )
 
     retargeted = replace(config, environment=environment, build_policy=build_policy)
-    _check_requires_python_admits_target(
-        retargeted.requires_python, plan_targets(retargeted)[0]
-    )
+    # Called for the check it runs: the declaration must admit the moved target.
+    plan_targets(retargeted)
     return retargeted
 
 
 def _check_requires_python_admits_target(
-    requires_python: str | None, target: ResolveTarget
+    requires_python: str | None,
+    target: ResolveTarget,
+    *,
+    source: str,
+    matrix: bool,
 ) -> None:
     """Reject a ``requires-python`` declaration that excludes the resolve target.
 
@@ -1091,6 +1111,12 @@ def _check_requires_python_admits_target(
     does not steer the resolve.  Resolving for a Python the project says it
     does not support would produce a lock the project's own metadata
     rejects, so it fails loud and names the knob that moves the target.
+
+    Which knob that is depends on the target.  A matrix declares the python
+    axis of every target it expands, and both ``--python`` and
+    ``[tool.nab.environment]`` are themselves errors alongside one, so a
+    matrix target is moved by ``matrix.python`` and
+    ``[tool.nab.matrix.python-patches]`` instead.
     """
     if requires_python is None:
         return
@@ -1099,13 +1125,24 @@ def _check_requires_python_admits_target(
     # This is the comparison every candidate's Requires-Python takes too.
     if target.python_release in SpecifierSet(requires_python):
         return
-    msg = (
-        f"requires-python = {requires_python!r} excludes the resolve target"
-        f" Python {target.python_full_version} ({target.label}).  nab resolves"
-        " for the host interpreter unless told otherwise; pass --python with a"
-        " version the declaration admits, set [tool.nab.environment] python to one, or"
-        " widen requires-python."
+    excludes = (
+        f"{source} = {requires_python!r} excludes the resolve target"
+        f" Python {target.python_full_version} ({target.label})."
     )
+    if matrix:
+        msg = (
+            f"{excludes}  [tool.nab.matrix] declares the python axis of every"
+            " target it expands, and a matrix minor resolves at patch 0 unless"
+            " [tool.nab.matrix.python-patches] names a patch: pin"
+            f" {target.python_version} there if only its patch level is excluded,"
+            " narrow matrix.python to drop the version, or widen requires-python."
+        )
+    else:
+        msg = (
+            f"{excludes}  nab resolves for the host interpreter unless told"
+            " otherwise; pass --python with a version the declaration admits, set"
+            " [tool.nab.environment] python to one, or widen requires-python."
+        )
     raise ConfigError(msg)
 
 

@@ -826,7 +826,12 @@ class TestRequiresPython:
             },
         )
         assert target.python_release in SpecifierSet(">=3.14")
-        _check_requires_python_admits_target(config.requires_python, target)
+        _check_requires_python_admits_target(
+            config.requires_python,
+            target,
+            source=config.requires_python_source,
+            matrix=False,
+        )
 
     def test_a_python_override_rescues_a_declaration_the_host_fails(
         self, tmp_path: Path
@@ -863,6 +868,54 @@ class TestRequiresPython:
             '[tool.nab]\nrequires-python = ">=3.9"\n',
         )
         assert read_pyproject_config(path).requires_python == ">=3.9"
+
+    def test_matrix_target_message_names_the_matrix_knobs(self, tmp_path: Path) -> None:
+        """A matrix target is moved by the matrix, not by --python.
+
+        A minor expands at patch 0 unless ``python-patches`` names a patch,
+        so a micro-level floor excludes the target the matrix plans.  Both
+        knobs the host wording names are hard errors under a matrix, so the
+        message may not name either.
+        """
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\nrequires-python = ">=3.11.4"\n'
+            '[tool.nab.matrix]\npython = ">=3.11,<3.12"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        config = read_pyproject_config(path)
+        with pytest.raises(ConfigError) as exc:
+            plan_targets(config)
+        message = str(exc.value)
+        assert "excludes the resolve target Python 3.11.0" in message
+        assert "[tool.nab.matrix.python-patches]" in message
+        assert "--python" not in message
+        assert "[tool.nab.environment]" not in message
+
+    def test_python_patches_admits_the_matrix_target(self, tmp_path: Path) -> None:
+        """The knob the matrix message names has to clear the error."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\nrequires-python = ">=3.11.4"\n'
+            '[tool.nab.matrix]\npython = ">=3.11,<3.12"\n'
+            'platforms = ["linux_x86_64"]\n'
+            '[tool.nab.matrix.python-patches]\n"3.11" = "3.11.4"\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
+        assert target.python_full_version == "3.11.4"
+
+    def test_project_table_declaration_names_its_table(self, tmp_path: Path) -> None:
+        """A [project] value is not a [tool.nab] one; the error says so."""
+        path = write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\nrequires-python = "<3"\n',
+        )
+        config = read_pyproject_config(path)
+        with pytest.raises(
+            ConfigError,
+            match=r"\[project\] requires-python = '<3' excludes the resolve target",
+        ):
+            plan_targets(config)
 
     def test_project_table_specifier_is_validated(self, tmp_path: Path) -> None:
         """A malformed [project].requires-python fails loud, not silently."""
