@@ -369,6 +369,23 @@ class TestConflictForkResolve:
         with pytest.raises(DisjointnessError, match="black"):
             build_pylock(lock_input)
 
+    def test_default_groups_collision_is_ambiguous(self) -> None:
+        # The same undeclared collision, but the groups come from
+        # default-groups rather than the CLI selection.  A default
+        # install activates both, so the validator must still see it.
+        result = resolve_with_coordinator(
+            self._black_coordinator(),
+            _one_target(),
+            forks=self._black_forks(),
+            config=_no_build(),
+        )
+        lock_input = build_lock_input(
+            result,
+            config=_no_build(default_groups=("black22", "black23")),
+        )
+        with pytest.raises(DisjointnessError, match="black"):
+            build_pylock(lock_input)
+
     def test_top_level_environments_drop_membership_and_dedupe(self) -> None:
         # Two forks of the one (python, platform) target must collapse to
         # a single top-level environment with no membership clause: that

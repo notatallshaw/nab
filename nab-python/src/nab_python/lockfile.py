@@ -411,6 +411,17 @@ class LockInput:
     per mutually-exclusive extra/group) validates."""
 
     @property
+    def active_groups(self) -> tuple[str, ...]:
+        """Every group an install context can activate.
+
+        PEP 751 keeps the ``default-groups`` names out of
+        ``dependency-groups``, and an installer that selects nothing
+        still activates the defaults, so the group axis of an install
+        context is the union of the two arrays.
+        """
+        return tuple(dict.fromkeys((*self.dependency_groups, *self.default_groups)))
+
+    @property
     def marker_envs(self) -> dict[str, Mapping[str, str]]:
         """The PEP 508 marker environment each target resolved under."""
         return {label: lock.target.marker_env for label, lock in self.targets.items()}

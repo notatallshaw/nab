@@ -1456,6 +1456,14 @@ class TestDependencyGroups:
         assert "dependency-groups" not in data
         assert "default-groups" not in data
 
+    def test_active_groups_unions_selection_and_defaults(self) -> None:
+        lock_input = LockInput(
+            targets=_one({"foo": _index_pin()}),
+            dependency_groups=("docs", "dev"),
+            default_groups=("dev", "lint"),
+        )
+        assert lock_input.active_groups == ("docs", "dev", "lint")
+
     def test_group_names_normalized(self) -> None:
         text = write_lock(
             LockInput(

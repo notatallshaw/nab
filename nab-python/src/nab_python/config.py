@@ -2554,9 +2554,11 @@ def _validate_default_groups_against_conflicts(
     """Reject default-groups that co-activate an exclusive conflict set.
 
     A default install activates every default group with no user
-    selection, so the emit-time disjointness validator never sees them.
-    Two default groups in the same at-most-one or exactly-one set would
-    silently violate the declared conflict; catch it at parse time.
+    selection, but the emit-time disjointness validator prunes any
+    context that activates two members of an exclusive set, so it never
+    enumerates that install.  Two default groups in the same at-most-one
+    or exactly-one set would silently violate the declared conflict;
+    catch it at parse time.
     """
     active = {canonicalize_name(g) for g in default_groups}
     for group in conflict_exclusion_groups(conflicts):
