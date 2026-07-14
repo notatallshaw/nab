@@ -85,6 +85,12 @@ class TestExtractStaticMetadata:
         _write_pyproject(tmp_path, "this is not toml [")
         assert extract_static_metadata(tmp_path) is None
 
+    def test_non_utf8_toml_returns_none(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_bytes(
+            b'[project]\nname = "foo"\nversion = "1.0"\ndescription = "\xe9"\n'
+        )
+        assert extract_static_metadata(tmp_path) is None
+
     def test_no_project_table_returns_none(self, tmp_path: Path) -> None:
         _write_pyproject(tmp_path, '[build-system]\nrequires = ["setuptools"]\n')
         assert extract_static_metadata(tmp_path) is None

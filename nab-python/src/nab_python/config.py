@@ -848,7 +848,7 @@ def _reject_unknown_pyproject_keys(path: Path) -> None:
     try:
         with path.open("rb") as f:
             data = tomli.load(f)
-    except tomli.TOMLDecodeError as exc:
+    except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{path} is not valid TOML: {exc}"
         raise ConfigError(msg) from exc
     raw = tool_nab_section(data)

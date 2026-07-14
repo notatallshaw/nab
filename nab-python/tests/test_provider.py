@@ -1817,6 +1817,25 @@ class TestLocalSources:
         with pytest.raises(UnsupportedSdistError, match="BUILD_LOCAL"):
             provider.fetch_versions("foo")
 
+    def test_non_utf8_pyproject_raises_unsupported(self, tmp_path: Path) -> None:
+        """A local source with a non-UTF-8 ``pyproject.toml`` is unbuildable.
+
+        Neither the static read nor the backend can read the file, so it is
+        reported as an unsupported source, not as a decode traceback.
+        """
+        (tmp_path / "pyproject.toml").write_bytes(
+            b'[project]\nname = "foo"\nversion = "1.0"\ndescription = "\xe9"\n'
+        )
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            local_sources=[LocalSource("foo", str(tmp_path))],
+            build_policy=BuildPolicy.BUILD_LOCAL,
+            build_config=NabProjectConfig(),
+        )
+        with pytest.raises(UnsupportedSdistError, match="could not read pyproject"):
+            provider.fetch_versions("foo")
+
     def test_local_source_under_never_reads_statically(self, tmp_path: Path) -> None:
         """NEVER admits ``LocalSource`` declarations and reads them statically.
 

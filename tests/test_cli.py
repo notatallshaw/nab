@@ -621,6 +621,16 @@ class TestLockCommandSpecific:
             lock(pyproject, output=Path("-"))
         assert "is not valid TOML" in capsys.readouterr().err
 
+    def test_non_utf8_toml_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A byte that will not decode reports a clean message, not a traceback."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_bytes(b'[project]\ndescription = "\xe9"\ndependencies = []\n')
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=Path("-"))
+        assert "is not valid TOML" in capsys.readouterr().err
+
     def test_pylock_passed_as_the_project_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -2717,6 +2727,44 @@ class TestGroupAndExtraSelection:
         with pytest.raises(SystemExit, match="1"):
             resolve_group_selection(pyproject, groups=(), all_groups=True)
         assert "[dependency-groups] must be a table" in capsys.readouterr().err
+
+    def test_all_groups_malformed_toml_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text("[project]\nname = 'x'\n[dependency-groups]\ndev = ['a'\n")
+        with pytest.raises(SystemExit, match="1"):
+            resolve_group_selection(pyproject, groups=(), all_groups=True)
+        assert "is not valid TOML" in capsys.readouterr().err
+
+    def test_all_groups_non_utf8_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_bytes(b"[project]\nname = '\xe9'\n[dependency-groups]\n")
+        with pytest.raises(SystemExit, match="1"):
+            resolve_group_selection(pyproject, groups=(), all_groups=True)
+        assert "is not valid TOML" in capsys.readouterr().err
+
+    def test_all_extras_malformed_toml_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[project]\nname = 'x'\n[project.optional-dependencies]\ntest = ['a'\n"
+        )
+        with pytest.raises(SystemExit, match="1"):
+            resolve_extra_selection(pyproject, extras=(), all_extras=True)
+        assert "is not valid TOML" in capsys.readouterr().err
+
+    def test_all_extras_non_utf8_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_bytes(b"[project]\nname = '\xe9'\n")
+        with pytest.raises(SystemExit, match="1"):
+            resolve_extra_selection(pyproject, extras=(), all_extras=True)
+        assert "is not valid TOML" in capsys.readouterr().err
 
     def test_explicit_groups_non_table_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

@@ -78,6 +78,9 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
         # ``is_file`` is racy: the file may vanish or become unreadable
         # between the check and the read.  Treat it the same as missing.
         return None
+    except UnicodeDecodeError:
+        # TOML is UTF-8, so a file that will not decode has no static metadata.
+        return None
     project = load_static_project(text)
     if project is None:
         return None
