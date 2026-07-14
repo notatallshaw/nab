@@ -12,12 +12,17 @@ working after the per-command split.
 
 from __future__ import annotations
 
+import contextlib
+import errno
+import os
+import stat
 import sys
+import tempfile
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Formatter
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 
 import tomli
 import tomli_w
@@ -488,11 +493,15 @@ def _emit_requirements(
 
     A plain path with several targets errors clearly: there is no
     one-file shape that pip can install from across all of them.
+
+    The templated shape is all-or-nothing: every tuple is rendered and
+    staged before any file is moved into place.
     """
     with_hashes = format == "requirements"
     multi_target = len(lock_input.targets) > 1
     if _cli.is_stdout(output) or (output is None and multi_target):
-        sys.stdout.write(_render_requirements_or_exit(lock_input, with_hashes))
+        text, _ = _render_requirements_or_exit(lock_input, with_hashes)
+        sys.stdout.write(text)
         return
 
     target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
@@ -507,17 +516,23 @@ def _emit_requirements(
                 "  --output 'constraints-{python_version}.txt'\n"
             )
             sys.exit(1)
-        _write_target_requirements(lock_input, target, with_hashes=with_hashes)
+        text, count = _render_requirements_or_exit(lock_input, with_hashes)
+        target.write_text(text, encoding="utf-8")
+        sys.stderr.write(f"Wrote {target} ({count} packages)\n")
         return
 
     _check_output_template(target, template)
+
+    rendered: list[_RenderedFile] = []
     for label, path in _substituted_paths(lock_input, target, template).items():
-        _write_target_requirements(
-            _for_target(lock_input, label),
-            path,
-            with_hashes=with_hashes,
-            label=label,
+        text, count = _render_requirements_or_exit(
+            _for_target(lock_input, label), with_hashes
         )
+        rendered.append(
+            _RenderedFile(path=path, label=label, text=text, pin_count=count)
+        )
+
+    _write_requirements_files(rendered)
 
 
 def _substituted_paths(
@@ -550,35 +565,92 @@ def _for_target(lock_input: LockInput, label: str) -> LockInput:
     return replace(lock_input, targets={label: lock_input.targets[label]})
 
 
-def _write_target_requirements(
-    lock_input: LockInput,
-    output: Path,
-    *,
-    with_hashes: bool,
-    label: str | None = None,
-) -> None:
-    """Write one target's pins to ``output``.
+class _RenderedFile(NamedTuple):
+    """One tuple's requirements text and the file it belongs in."""
 
-    ``label`` names the tuple in the report line, for the templated
-    shape that writes one file per tuple.  Without it the file is the
-    whole lock and there is no other tuple to tell it apart from.
+    path: Path
+    label: str
+    text: str
+    pin_count: int
+
+
+def _write_requirements_files(rendered: list[_RenderedFile]) -> None:
+    """Write every rendered tuple to its path, or none of them.
+
+    Each text is staged beside its destination and moved into place only
+    once every stage is on disk, so an unwritable path fails before any
+    file has been replaced.
     """
-    text = _render_requirements_or_exit(lock_input, with_hashes)
-    output.write_text(text, encoding="utf-8")
-    count = sum(len(lock.pins) for lock in lock_input.targets.values())
-    named = f", tuple {label}" if label is not None else ""
-    sys.stderr.write(f"Wrote {output} ({count} packages{named})\n")
+    staged: list[tuple[Path, _RenderedFile]] = []
+    try:
+        for item in rendered:
+            tmp = _stage_path(item.path)
+            staged.append((tmp, item))
+            tmp.write_text(item.text, encoding="utf-8")
+            tmp.chmod(_destination_mode(item.path))
+    except OSError:
+        for tmp, _ in staged:
+            _discard(tmp)
+        raise
+
+    for tmp, item in staged:
+        tmp.replace(item.path)
+        sys.stderr.write(
+            f"Wrote {item.path} ({item.pin_count} packages, tuple {item.label})\n"
+        )
 
 
-def _render_requirements_or_exit(lock_input: LockInput, with_hashes: bool) -> str:  # noqa: FBT001 - internal, one call shape
-    """Render the pins as requirements text, exiting on a missing hash."""
+def _stage_path(output: Path) -> Path:
+    """Create an empty file beside ``output`` to stage its text in.
+
+    Staging in the destination's directory keeps the later rename on one
+    filesystem, so it is atomic.  A directory at ``output`` is refused
+    here because the rename would only refuse it once earlier files had
+    already been replaced.
+    """
+    if output.is_dir():
+        raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), str(output))
+    fd, name = tempfile.mkstemp(
+        dir=output.parent, prefix=f"{output.name}.", suffix=".tmp"
+    )
+    os.close(fd)
+    return Path(name)
+
+
+def _destination_mode(output: Path) -> int:
+    """Permissions to give a staged file before it replaces ``output``.
+
+    ``mkstemp`` creates at 0600, so a staged file needs the mode the
+    destination already has, or the one a fresh write would have given it.
+    """
+    try:
+        return stat.S_IMODE(output.stat().st_mode)
+    except FileNotFoundError:
+        umask = os.umask(0)
+        os.umask(umask)
+        return 0o666 & ~umask
+
+
+def _discard(staged: Path) -> None:
+    """Remove a staged file, ignoring a failure to remove it."""
+    with contextlib.suppress(OSError):
+        staged.unlink()
+
+
+def _render_requirements_or_exit(
+    lock_input: LockInput,
+    with_hashes: bool,  # noqa: FBT001 - internal, one call shape
+) -> tuple[str, int]:
+    """Render the requirements text and pin count, exiting on a missing hash."""
     try:
         if with_hashes:
-            return _cli.write_requirements_with_hashes(lock_input)
-        return _cli.write_requirements_without_hashes(lock_input)
+            text = _cli.write_requirements_with_hashes(lock_input)
+        else:
+            text = _cli.write_requirements_without_hashes(lock_input)
     except _cli.MissingHashError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)
+    return text, sum(len(lock.pins) for lock in lock_input.targets.values())
 
 
 def resolve_group_selection(
