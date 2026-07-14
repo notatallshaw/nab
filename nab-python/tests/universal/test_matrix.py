@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from nab_python._vendor.packaging.markers import Marker
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import (
     _IMPLEMENTATION_DEFAULTS,
     _KNOWN_PYTHON_MINORS,
@@ -17,7 +18,6 @@ from nab_python.universal.matrix import (
     MatrixTuple,
     _pythons_in_range,
 )
-from nab_python.universal.wheel_selection import PlatformSpec
 
 
 class TestPythonsInRange:
@@ -47,7 +47,9 @@ class TestMatrixExpand:
 
     def test_simple_range_expands_to_known_minors(self) -> None:
         """A python range maps to the union of known minors that satisfy it."""
-        matrix = Matrix(python=">=3.11, <3.13", platforms=("linux_x86_64",))
+        matrix = Matrix(
+            python=">=3.11, <3.13", platforms=(PlatformSpec("linux_x86_64"),)
+        )
         tuples = matrix.expand()
         assert [t.python_version for t in tuples] == ["3.11", "3.12"]
         assert all(t.platform_id == "linux_x86_64" for t in tuples)
@@ -56,7 +58,11 @@ class TestMatrixExpand:
         """All (python, platform) pairs are present in the cross-product."""
         matrix = Matrix(
             python=">=3.10, <3.12",
-            platforms=("linux_x86_64", "macos_arm64", "windows_amd64"),
+            platforms=(
+                PlatformSpec("linux_x86_64"),
+                PlatformSpec("macos_arm64"),
+                PlatformSpec("windows_amd64"),
+            ),
         )
         tuples = matrix.expand()
         expected_count = 6
@@ -73,7 +79,7 @@ class TestMatrixExpand:
 
     def test_environment_has_all_required_pep508_keys(self) -> None:
         """Every PEP 508 marker variable must be set per tuple."""
-        matrix = Matrix(python="==3.12", platforms=("macos_arm64",))
+        matrix = Matrix(python="==3.12", platforms=(PlatformSpec("macos_arm64"),))
         tuples = matrix.expand()
         assert len(tuples) == 1
         env = tuples[0].environment
@@ -97,22 +103,32 @@ class TestMatrixExpand:
 
     def test_unknown_platform_id_raises(self) -> None:
         """An unknown platform id is a user error, raised eagerly."""
-        matrix = Matrix(python=">=3.11", platforms=("freebsd_amd64",))
+        matrix = Matrix(python=">=3.11", platforms=(PlatformSpec("freebsd_amd64"),))
+        with pytest.raises(ValueError, match="Unknown platform"):
+            matrix.expand()
+
+    def test_unknown_platform_id_wins_over_the_free_threaded_rule(self) -> None:
+        """A bad id is the error to report; the rest of the target is moot."""
+        matrix = Matrix(
+            python=">=3.13",
+            platforms=(PlatformSpec("freebsd_amd64", free_threaded=True),),
+            implementations=("pypy",),
+        )
         with pytest.raises(ValueError, match="Unknown platform"):
             matrix.expand()
 
     def test_empty_python_range_raises(self) -> None:
         """A python spec satisfied by no known minor is a user error."""
-        matrix = Matrix(python=">=4.0", platforms=("linux_x86_64",))
+        matrix = Matrix(python=">=4.0", platforms=(PlatformSpec("linux_x86_64"),))
         with pytest.raises(ValueError, match="No known Python"):
             matrix.expand()
 
     def test_python_order_desc_reverses_iteration(self) -> None:
         """``python_order='desc'`` yields tuples in reversed Python order."""
-        asc = Matrix(python=">=3.10, <3.13", platforms=("linux_x86_64",))
+        asc = Matrix(python=">=3.10, <3.13", platforms=(PlatformSpec("linux_x86_64"),))
         desc = Matrix(
             python=">=3.10, <3.13",
-            platforms=("linux_x86_64",),
+            platforms=(PlatformSpec("linux_x86_64"),),
             python_order="desc",
         )
         assert [t.python_version for t in asc.expand()] == ["3.10", "3.11", "3.12"]
@@ -123,7 +139,7 @@ class TestMatrixExpand:
         with pytest.raises(ValueError, match="python_order"):
             Matrix(
                 python=">=3.10",
-                platforms=("linux_x86_64",),
+                platforms=(PlatformSpec("linux_x86_64"),),
                 python_order="banana",
             ).expand()
 
@@ -131,7 +147,7 @@ class TestMatrixExpand:
         """``python_patches`` sets ``python_full_version`` per minor."""
         matrix = Matrix(
             python=">=3.11, <3.13",
-            platforms=("linux_x86_64",),
+            platforms=(PlatformSpec("linux_x86_64"),),
             python_patches={"3.11": "3.11.4", "3.12": "3.12.1"},
         )
         tuples = matrix.expand()
@@ -143,7 +159,7 @@ class TestMatrixExpand:
 
     def test_python_patches_default_to_zero(self) -> None:
         """When patches not declared, ``.0`` is used."""
-        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         tuples = matrix.expand()
         assert tuples[0].environment["python_full_version"] == "3.11.0"
 
@@ -151,7 +167,7 @@ class TestMatrixExpand:
         """A partial mapping uses overrides for declared minors only."""
         matrix = Matrix(
             python=">=3.11, <3.13",
-            platforms=("linux_x86_64",),
+            platforms=(PlatformSpec("linux_x86_64"),),
             python_patches={"3.11": "3.11.4"},
         )
         tuples = matrix.expand()
@@ -164,7 +180,7 @@ class TestMatrixExpand:
         """A patches key that is not a known ``major.minor`` is a user error."""
         matrix = Matrix(
             python="==3.11",
-            platforms=("linux_x86_64",),
+            platforms=(PlatformSpec("linux_x86_64"),),
             python_patches={"3.11.0": "3.11.9"},
         )
         with pytest.raises(ValueError, match="python_patches"):
@@ -176,7 +192,7 @@ class TestMatrixExpand:
 
         matrix = Matrix(
             python="==3.11",
-            platforms=("linux_x86_64",),
+            platforms=(PlatformSpec("linux_x86_64"),),
             python_patches={"3.11": "3.11.5"},
         )
         env = matrix.expand()[0].environment
@@ -185,7 +201,7 @@ class TestMatrixExpand:
 
     def test_platform_release_default_is_empty_string(self) -> None:
         """Without a user declaration, ``platform_release`` is ``""``."""
-        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         env = matrix.expand()[0].environment
         assert env["platform_release"] == ""
         assert env["platform_version"] == ""
@@ -212,7 +228,7 @@ class TestMatrixExpand:
         """A real PEP 508 marker should evaluate against the tuple's env."""
         matrix = Matrix(
             python=">=3.11, <3.12",
-            platforms=("windows_amd64", "linux_x86_64"),
+            platforms=(PlatformSpec("windows_amd64"), PlatformSpec("linux_x86_64")),
         )
         tuples = matrix.expand()
         win_env = next(
@@ -236,7 +252,7 @@ class TestImplementationAxis:
 
     def test_default_is_cpython_only(self) -> None:
         """Without declaring implementations, every tuple is CPython."""
-        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         tuples = matrix.expand()
         assert len(tuples) == 1
         env = tuples[0].environment
@@ -248,7 +264,7 @@ class TestImplementationAxis:
         """The implementation axis multiplies the tuple count."""
         matrix = Matrix(
             python=">=3.11, <3.13",
-            platforms=("linux_x86_64", "macos_arm64"),
+            platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("macos_arm64")),
             implementations=("cpython", "pypy"),
         )
         tuples = matrix.expand()
@@ -258,7 +274,7 @@ class TestImplementationAxis:
         """A PyPy tuple sets the PyPy interpreter-identity markers."""
         matrix = Matrix(
             python="==3.11",
-            platforms=("linux_x86_64",),
+            platforms=(PlatformSpec("linux_x86_64"),),
             implementations=("pypy",),
         )
         env = matrix.expand()[0].environment
@@ -271,7 +287,7 @@ class TestImplementationAxis:
         """An unknown implementation is a user error, raised eagerly."""
         matrix = Matrix(
             python="==3.11",
-            platforms=("linux_x86_64",),
+            platforms=(PlatformSpec("linux_x86_64"),),
             implementations=("jython",),
         )
         with pytest.raises(ValueError, match="Unknown implementations"):
@@ -285,7 +301,7 @@ class TestMatrixTuple:
         """``label`` is a short id suitable for filenames and logs."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
         )
         assert t.label == "py311-linux_x86_64"
@@ -294,7 +310,7 @@ class TestMatrixTuple:
         """A PyPy tuple's label uses the ``pp`` interpreter prefix."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             implementation="pypy",
         )
@@ -304,7 +320,7 @@ class TestMatrixTuple:
         """A conflict-fork selection appends sorted ``kind-name`` members."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("group", "isort5"), ("group", "black22")),
         )
@@ -319,7 +335,7 @@ class TestMatrixTuple:
         """
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("group", "isort5"), ("extra", "cpu")),
         )
@@ -335,13 +351,13 @@ class TestMatrixTuple:
         """
         first = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("extra", "a-b"), ("extra", "c")),
         )
         second = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("extra", "a"), ("extra", "b-c")),
         )
@@ -351,13 +367,13 @@ class TestMatrixTuple:
         """An extra and a group of the same name get distinct labels."""
         as_extra = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("extra", "cpu"),),
         )
         as_group = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={},
             selection=(("group", "cpu"),),
         )
@@ -367,7 +383,7 @@ class TestMatrixTuple:
         """An extra member adds a bare ``in extras`` clause to the marker."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -381,7 +397,7 @@ class TestMatrixTuple:
         """A group member adds a bare ``in dependency_groups`` clause."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -395,7 +411,7 @@ class TestMatrixTuple:
         """Selection clauses emit in sorted order for byte-stable output."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -412,7 +428,7 @@ class TestMatrixTuple:
         """The env-only marker drops the conflict membership clause."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -429,7 +445,7 @@ class TestMatrixTuple:
         """The default empty selection is a no-op (back-compat)."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -441,27 +457,31 @@ class TestMatrixTuple:
         assert "in dependency_groups" not in t.marker_string
 
     def test_duplicate_platform_id_specs_get_distinct_labels(self) -> None:
-        """Two specs sharing a platform_id but differing in a floor stay distinct.
+        """Two specs sharing a platform_id but differing in a knob stay distinct.
 
-        The default-floor spec keeps the bare label; a non-default floor
-        gets a discriminator suffix so the tuples do not collapse.
+        The default spec keeps the bare label; a declared libc family or
+        version gets a discriminator suffix so the tuples do not collapse.
         """
         matrix = Matrix(
             python="==3.11",
             platforms=(
-                PlatformSpec("linux_x86_64", manylinux_floor=(2, 17)),
-                PlatformSpec("linux_x86_64", manylinux_floor=(2, 34)),
+                PlatformSpec("linux_x86_64"),
+                PlatformSpec("linux_x86_64", libc_version=(2, 34)),
+                PlatformSpec("linux_x86_64", libc="musl"),
             ),
         )
         labels = [t.label for t in matrix.expand()]
-        assert len(set(labels)) == 2
-        assert "py311-linux_x86_64" in labels
+        assert labels == [
+            "py311-linux_x86_64",
+            "py311-linux_x86_64-glibc2.34",
+            "py311-linux_x86_64-musl",
+        ]
 
     def test_cpython_marker_omits_implementation(self) -> None:
         """The default CPython marker keeps its three-clause form."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -474,7 +494,7 @@ class TestMatrixTuple:
         """A PyPy marker adds an ``implementation_name`` clause."""
         t = MatrixTuple(
             python_version="3.11",
-            platform_id="linux_x86_64",
+            platform_spec=PlatformSpec("linux_x86_64"),
             environment={
                 "sys_platform": "linux",
                 "platform_machine": "x86_64",
@@ -489,7 +509,7 @@ class TestMatrixTuple:
         ``implementation_name`` so it no longer matches a PyPy environment."""
         matrix = Matrix(
             python="==3.11",
-            platforms=("linux_x86_64",),
+            platforms=(PlatformSpec("linux_x86_64"),),
             implementations=("cpython", "pypy"),
         )
         tuples = matrix.expand()

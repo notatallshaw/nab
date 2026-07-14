@@ -1,7 +1,7 @@
 """Differential property tests: nab wheel selection vs upstream ``packaging.tags``.
 
-:mod:`nab_python.universal.wheel_selection` implements `PEP 425`_
-wheel-tag preference on top of the vendored ``packaging.tags``.
+:mod:`nab_python.tags` implements `PEP 425`_ wheel-tag preference on
+top of the vendored ``packaging.tags``.
 Each test here re-derives one layer with the upstream ``packaging``
 distribution as the oracle and requires agreement:
 
@@ -12,8 +12,8 @@ distribution as the oracle and requires agreement:
 3. ``parse_tag`` must expand compressed tag sets identically.
 4. ``wheel_tag_set`` must agree with upstream
    ``parse_wheel_filename`` on every spec-valid filename.
-5. ``select_wheel_for_tuple`` must pick a wheel whose best upstream
-   rank is the minimum over all candidate wheels.
+5. ``select_wheel`` must pick a wheel whose best upstream rank is
+   the minimum over all candidate wheels.
 
 .. _PEP 425: https://peps.python.org/pep-0425/
 """
@@ -21,7 +21,7 @@ distribution as the oracle and requires agreement:
 from __future__ import annotations
 
 import pytest
-from hypothesis import assume, given
+from hypothesis import given
 from hypothesis import strategies as st
 from packaging import tags as upstream_tags
 from packaging import utils as upstream_utils
@@ -30,11 +30,13 @@ from packaging.version import InvalidVersion
 
 from nab_index.client import WheelFile
 from nab_python._vendor.packaging import tags as vendored_tags
-from nab_python.universal.wheel_selection import (
+from nab_python.tags import (
+    _MACOS_TAG_FLOOR,
+    _PLATFORM_ARCH,
     PlatformSpec,
     _platform_tags_for_spec,
     _tags_in_order,
-    select_wheel_for_tuple,
+    select_wheel,
     wheel_tag_set,
 )
 
@@ -51,13 +53,44 @@ PLATFORM_IDS = (
     "windows_amd64",
 )
 
-specs = st.builds(
-    PlatformSpec,
-    platform_id=st.sampled_from(PLATFORM_IDS),
-    manylinux_floor=st.tuples(st.just(2), st.integers(0, 35)),
-    musllinux_floor=st.tuples(st.just(1), st.integers(0, 4)),
-    macos_min=st.none() | st.tuples(st.integers(10, 14), st.integers(0, 15)),
+LINUX_IDS = tuple(p for p in PLATFORM_IDS if p.startswith("linux_"))
+MACOS_IDS = tuple(p for p in PLATFORM_IDS if p.startswith("macos_"))
+
+# A knob only its own platform reads is a construction error, so each
+# platform draws its own.
+linux_specs = st.one_of(
+    st.builds(
+        PlatformSpec,
+        platform_id=st.sampled_from(LINUX_IDS),
+        libc=st.just("glibc"),
+        libc_version=st.tuples(st.just(2), st.integers(0, 35)),
+        free_threaded=st.booleans(),
+    ),
+    st.builds(
+        PlatformSpec,
+        platform_id=st.sampled_from(LINUX_IDS),
+        libc=st.just("musl"),
+        libc_version=st.tuples(st.just(1), st.integers(0, 4)),
+        free_threaded=st.booleans(),
+    ),
 )
+macos_specs = st.sampled_from(MACOS_IDS).flatmap(
+    lambda platform_id: st.builds(
+        PlatformSpec,
+        platform_id=st.just(platform_id),
+        macos_min=st.none()
+        | st.tuples(st.integers(10, 15), st.integers(0, 15)).filter(
+            lambda v: v >= _MACOS_TAG_FLOOR[_PLATFORM_ARCH[platform_id]]
+        ),
+        free_threaded=st.booleans(),
+    )
+)
+windows_specs = st.builds(
+    PlatformSpec,
+    platform_id=st.just("windows_amd64"),
+    free_threaded=st.booleans(),
+)
+specs = st.one_of(linux_specs, macos_specs, windows_specs)
 
 
 def _triples(tag_iter: object) -> list[tuple[str, str, str]]:
@@ -66,9 +99,13 @@ def _triples(tag_iter: object) -> list[tuple[str, str, str]]:
 
 
 def _oracle_tags_in_order(
-    python_version: str, platforms: list[str], implementation: str
+    python_version: str,
+    platforms: list[str],
+    implementation: str,
+    *,
+    free_threaded: bool,
 ) -> list[tuple[str, str, str]]:
-    """Rebuild ``wheel_selection._tags_in_order`` with upstream ``packaging.tags``."""
+    """Rebuild ``tags._tags_in_order`` with upstream ``packaging.tags``."""
     major, minor = (int(p) for p in python_version.split("."))
     py = (major, minor)
     out: list[tuple[str, str, str]] = []
@@ -79,9 +116,10 @@ def _oracle_tags_in_order(
         out += [(interpreter, "none", p) for p in platforms]
     else:
         interpreter = f"cp{major}{minor}"
+        cp_abi = interpreter + ("t" if free_threaded else "")
         out += _triples(
             upstream_tags.cpython_tags(
-                python_version=py, abis=[interpreter], platforms=platforms
+                python_version=py, abis=[cp_abi], platforms=platforms
             )
         )
     out += _triples(
@@ -110,10 +148,13 @@ class TestTagOrderMatchesUpstream:
     ) -> None:
         """Vendored tag order equals the upstream-rebuilt order."""
         platforms = _platform_tags_for_spec(spec)
-        # An empty platform list falls back to host tags, which drifted upstream after 26.2.
-        assume(platforms)
         got = _triples(_tags_in_order(python_version, spec, implementation))
-        expected = _oracle_tags_in_order(python_version, platforms, implementation)
+        expected = _oracle_tags_in_order(
+            python_version,
+            platforms,
+            implementation,
+            free_threaded=spec.free_threaded,
+        )
         assert got == expected
 
 
@@ -284,9 +325,12 @@ class TestSelectWheelMinimizesUpstreamRank:
     ) -> None:
         """The selected wheel's best upstream rank is the minimum over all wheels."""
         platforms = _platform_tags_for_spec(spec)
-        # An empty platform list falls back to host tags, which drifted upstream after 26.2.
-        assume(platforms)
-        order = _oracle_tags_in_order(python_version, platforms, implementation)
+        order = _oracle_tags_in_order(
+            python_version,
+            platforms,
+            implementation,
+            free_threaded=spec.free_threaded,
+        )
         rank = {t: i for i, t in enumerate(order)}
 
         def best_rank(w: WheelFile) -> int | None:
@@ -300,7 +344,7 @@ class TestSelectWheelMinimizesUpstreamRank:
             return min(ranks) if ranks else None
 
         oracle_ranks = [r for w in wheels if (r := best_rank(w)) is not None]
-        chosen = select_wheel_for_tuple(
+        chosen = select_wheel(
             wheels,
             python_version=python_version,
             spec=spec,
@@ -314,3 +358,20 @@ class TestSelectWheelMinimizesUpstreamRank:
             f"chose {chosen.filename} rank {best_rank(chosen)}; "
             f"best available {min(oracle_ranks)}"
         )
+
+
+class TestAcceptedSpecNamesAPlatform:
+    """Every spec :class:`PlatformSpec` accepts names at least one platform tag.
+
+    ``packaging.tags`` reads an empty ``platforms`` argument as "unset" and
+    falls back to the tags of the running host, so a spec that named no
+    platform tag would not resolve for the machine it declares: it would
+    resolve for nab's own.  The knob checks exist to make that unreachable,
+    and this is the invariant they buy.
+    """
+
+    @given(spec=specs)
+    @PROPERTY_SETTINGS
+    def test_platform_tags_are_never_empty(self, spec: PlatformSpec) -> None:
+        """An accepted spec always names a platform tag of its own."""
+        assert _platform_tags_for_spec(spec)

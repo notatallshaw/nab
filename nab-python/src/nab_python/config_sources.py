@@ -720,7 +720,8 @@ def _render_conflicts(value: Sequence[Any]) -> str:
 def _render_matrix(value: Any) -> str:
     if value is None:
         return "<none>"
-    return f"python={value.python}, platforms={list(value.platforms)}"
+    platforms = [p.label for p in value.platforms]
+    return f"python={value.python}, platforms={platforms}"
 
 
 def _render_package_overrides(value: Sequence[Any]) -> str:

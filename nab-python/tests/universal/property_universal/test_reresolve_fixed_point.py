@@ -20,6 +20,7 @@ from hypothesis import strategies as st
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python.provider import BuildPolicy
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import Matrix
 from nab_python.universal.reresolve import (
     _collect_wheel_metadata_overrides,
@@ -75,7 +76,7 @@ def _build_universe(baseline_deps: list[str], wheel_deps: list[str]) -> MagicMoc
 
 def _matrix() -> Matrix:
     """Build the single-tuple linux/3.11 matrix used by every test."""
-    return Matrix(python="==3.11", platforms=("linux_x86_64",))
+    return Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
 
 
 deps_sets = st.lists(st.sampled_from(DEP_POOL), unique=True, max_size=3).map(sorted)

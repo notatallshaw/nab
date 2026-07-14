@@ -788,7 +788,7 @@ def _build_provenance(
     platforms: tuple[str, ...]
     if config.mode is ResolveMode.UNIVERSAL and config.matrix is not None:
         python_specifier = config.matrix.python
-        platforms = tuple(config.matrix.platforms)
+        platforms = tuple(p.label for p in config.matrix.platforms)
     else:
         python_specifier = config.requires_python
         platforms = ()

@@ -20,15 +20,17 @@ from hypothesis import strategies as st
 from nab_index.client import SdistFile, WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python.provider import BuildPolicy, DistPolicy
+from nab_python.tags import PlatformSpec, select_wheel
 from nab_python.universal.provider import UniversalProvider
-from nab_python.universal.wheel_selection import (
-    PlatformSpec,
-    wheel_compatible_with_tuple,
-)
 
 from .strategies import LINUX_ENV, PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
+
+
+def compatible(wheel: WheelFile, spec: PlatformSpec) -> bool:
+    """True iff a CPython 3.11 target on ``spec`` would install ``wheel``."""
+    return select_wheel([wheel], python_version="3.11", spec=spec) is not None
 
 
 _PLATFORM_TAGS = (
@@ -174,9 +176,9 @@ class TestOnlyCompatibleWheelsKept:
         out = provider.filter_distributions("pkg", files)
         for _v, dist in out:
             if isinstance(dist, WheelFile):
-                assert wheel_compatible_with_tuple(
-                    dist, python_version="3.11", spec=spec
-                ), f"Incompatible wheel survived: {dist.filename}"
+                assert compatible(dist, spec), (
+                    f"Incompatible wheel survived: {dist.filename}"
+                )
 
 
 class TestVersionAdmissionPolicy:
@@ -211,7 +213,7 @@ class TestVersionAdmissionPolicy:
         versions_with_sdist: set = set()
         for v, d in super_out:
             if isinstance(d, WheelFile):
-                if wheel_compatible_with_tuple(d, python_version="3.11", spec=spec):
+                if compatible(d, spec):
                     versions_with_compat_wheel.add(v)
             else:
                 versions_with_sdist.add(v)
@@ -240,9 +242,6 @@ class TestVersionAdmissionPolicy:
         out = provider.filter_distributions("pkg", files)
         out_versions = {v for v, _ in out}
         expected = {
-            v
-            for v, d in super_out
-            if isinstance(d, WheelFile)
-            and wheel_compatible_with_tuple(d, python_version="3.11", spec=spec)
+            v for v, d in super_out if isinstance(d, WheelFile) and compatible(d, spec)
         } | {v for v, d in super_out if isinstance(d, SdistFile)}
         assert out_versions == expected

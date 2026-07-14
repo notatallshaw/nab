@@ -521,6 +521,73 @@ uv's `fork-strategy=fewest`; `desc` mirrors `fork-strategy=
 requires-python`).  `python-patches` overrides the per-minor
 `python_full_version` marker value for marker evaluation.
 
+### Platform tag knobs
+
+A `platforms` entry is either a bare platform id, which takes that
+platform's defaults, or a table declaring the wheel-tag knobs:
+
+```toml
+[tool.nab.matrix]
+python = ">=3.11,<3.14"
+platforms = [
+    "windows_amd64",
+    { id = "linux_x86_64", libc = "musl", libc-version = "1.2" },
+    { id = "macos_arm64", macos-min = "14.0" },
+    { id = "linux_aarch64", platform-release = "5.15.0" },
+]
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `id` | required | `linux_x86_64`, `linux_aarch64`, `macos_arm64`, `macos_x86_64`, or `windows_amd64` |
+| `libc` | `"glibc"` | The Linux C library: `"glibc"` or `"musl"` |
+| `libc-version` | glibc `2.28`, musl `1.2` | The libc version the target runs |
+| `macos-min` | arm64 `12.0`, x86_64 `10.13` | The macOS deployment target |
+| `platform-release` | `""` | The `platform_release` marker value |
+| `platform-version` | `""` | The `platform_version` marker value |
+| `free-threaded` | `false` | Target the free-threaded (`cp3XXt`) CPython build |
+
+A machine links one C library, so a target accepts one family's wheels:
+a `glibc` target takes manylinux wheels and never musllinux ones, and a
+`musl` target the reverse.  `libc-version` is the version the target
+guarantees, and a wheel built against an older libc runs on a newer one,
+so the target accepts every version at or below it.  A higher value
+therefore accepts more wheels, not fewer.  The glibc default is 2.28,
+the `manylinux_2_28` build image; a target that runs a newer glibc
+should say so, because a wheel built above 2.28 is otherwise rejected.
+Its major has to match the family (glibc `2.x`, musl `1.x`): those are
+the only majors either has shipped, so no wheel targets another.
+
+`macos-min` reads the same way, as the newest macOS a wheel may target.
+Below the oldest macOS the architecture ever ran (10.4 on x86_64, 11.0
+on Apple Silicon) there is no machine to model and no tag to name, so
+that is a config error.
+
+A knob belongs to its platform.  `libc` and `libc-version` are Linux
+knobs and `macos-min` is a macOS one, so declaring one on a platform
+that cannot read it is a config error.  It would select no wheel, and it
+would still name the machine the lock was resolved for.
+
+`platform-release` and `platform-version` are the exception: they set
+PEP 508 marker values and never enter wheel-tag selection.  Left empty,
+every comparison against them evaluates False, so a dependency gated on
+`platform_release >= "5.10"` (or on any other comparison) is dropped.  A
+target that does run that kernel has to say so.
+
+`free-threaded` picks the `cp3XXt` ABI, so the target takes the
+free-threaded wheels and neither the ordinary `cp3XX` ones nor `abi3`
+(a free-threaded interpreter cannot load either).  It needs CPython
+3.13 or newer, the first release with a free-threaded build; a matrix
+that admits an older minor, or a non-CPython implementation, is a
+config error.
+
+An id may appear once.  A lockfile entry is selected by a PEP 508
+marker, and PEP 508 has no variable for the libc family or the
+free-threaded build, so two targets sharing an id would render the same
+marker and the lock could not tell their pins apart.  Locking a second
+libc family, or a free-threaded build alongside the GIL one, is a
+second lock run with its own config and output file.
+
 Each tuple impersonates a platform, so universal mode cannot build on
 the host: `build-policy` defaults to `never` and cannot be raised.  An
 explicit non-`never` value (global or in any override) is a config

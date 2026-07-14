@@ -16,10 +16,12 @@ from typing import TYPE_CHECKING
 from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.version import Version
-from .wheel_selection import PlatformSpec
+from ..tags import FREE_THREADED_MIN_PYTHON
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from ..tags import PlatformSpec
 
 # Common Python minor releases. An unrecognized minor declared in the
 # user range raises.
@@ -110,16 +112,16 @@ class MatrixTuple:
     """
 
     python_version: str
-    platform_id: str
+    platform_spec: PlatformSpec
     environment: dict[str, str] = field(hash=False, compare=False)
-    platform_spec: PlatformSpec = field(
-        hash=False,
-        compare=False,
-        default_factory=lambda: PlatformSpec("linux_x86_64"),
-    )
     implementation: str = "cpython"
     multi_implementation: bool = field(default=False, hash=False, compare=False)
     selection: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def platform_id(self) -> str:
+        """The platform this tuple models, as the spec declares it."""
+        return self.platform_spec.platform_id
 
     @property
     def label(self) -> str:
@@ -127,8 +129,8 @@ class MatrixTuple:
 
         Uses the interpreter prefix (``py`` for CPython, ``pp`` for
         PyPy) so tuples that differ only by implementation get distinct
-        labels, and appends the platform spec's floor discriminator so
-        two specs sharing a ``platform_id`` do not collapse.  A
+        labels, and appends the platform spec's knob discriminator so a
+        spec off the platform defaults keeps its own label.  A
         conflict-fork ``selection`` then appends each active member as
         ``kind-name``, joined by ``.``, in sorted order so the forks of
         one python/platform stay distinct, e.g.
@@ -143,8 +145,7 @@ class MatrixTuple:
         """
         prefix = _IMPLEMENTATION_PREFIX[self.implementation]
         base = (
-            f"{prefix}{self.python_version.replace('.', '')}-{self.platform_id}"
-            + self.platform_spec.label_suffix()
+            f"{prefix}{self.python_version.replace('.', '')}-{self.platform_spec.label}"
         )
         if not self.selection:
             return base
@@ -220,7 +221,7 @@ class Matrix:
     """
 
     python: str
-    platforms: tuple[str | PlatformSpec, ...]
+    platforms: tuple[PlatformSpec, ...]
     python_order: str = "asc"
     python_patches: dict[str, str] | None = None
     implementations: tuple[str, ...] = ("cpython",)
@@ -230,22 +231,17 @@ class Matrix:
 
         Validates inputs eagerly: unknown platform ids, unknown
         implementations, ``python_patches`` keys that are not known
-        minors, an empty python range, or an invalid ``python_order``
-        each raise a ``ValueError`` before any work happens.
-
-        ``platforms`` accepts either bare platform-id strings (use
-        default tag floors) or :class:`PlatformSpec` instances for
-        per-platform glibc/musl/macOS overrides.
+        minors, an empty python range, an invalid ``python_order``, or a
+        free-threaded platform no interpreter build can satisfy each raise a
+        ``ValueError`` before any work happens.
         """
         if self.python_order not in {"asc", "desc"}:
             msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
             raise ValueError(msg)
-        specs = [
-            p if isinstance(p, PlatformSpec) else PlatformSpec(p)
-            for p in self.platforms
-        ]
         unknown = [
-            s.platform_id for s in specs if s.platform_id not in _PLATFORM_DEFAULTS
+            s.platform_id
+            for s in self.platforms
+            if s.platform_id not in _PLATFORM_DEFAULTS
         ]
         if unknown:
             msg = f"Unknown platform ids: {unknown!r}"
@@ -264,6 +260,7 @@ class Matrix:
                 " keys must be major.minor like '3.11'"
             )
             raise ValueError(msg)
+        self._check_free_threaded()
         py_versions = list(_pythons_in_range(self.python))
         if not py_versions:
             msg = f"No known Python versions match {self.python!r}"
@@ -274,16 +271,44 @@ class Matrix:
         return [
             MatrixTuple(
                 python_version=py,
-                platform_id=spec.platform_id,
-                environment=_build_environment(py, spec, impl, patches.get(py)),
                 platform_spec=spec,
+                environment=_build_environment(py, spec, impl, patches.get(py)),
                 implementation=impl,
                 multi_implementation=multi_impl,
             )
             for py in py_versions
-            for spec in specs
+            for spec in self.platforms
             for impl in self.implementations
         ]
+
+    def _check_free_threaded(self) -> None:
+        """Reject a free-threaded platform no interpreter build can satisfy.
+
+        The ``cpXYt`` ABI ships only from CPython 3.13, and only the matrix
+        sees both axes the rule needs: the platform carries the flag, and the
+        implementation and the python range live here.
+        """
+        if not any(spec.free_threaded for spec in self.platforms):
+            return
+        foreign = [i for i in self.implementations if i != "cpython"]
+        if foreign:
+            msg = (
+                f"a free-threaded platform needs CPython, not {foreign!r};"
+                f" only CPython has a free-threaded build"
+            )
+            raise ValueError(msg)
+        floor = ".".join(str(p) for p in FREE_THREADED_MIN_PYTHON)
+        too_old = [
+            py
+            for py in _pythons_in_range(self.python)
+            if tuple(int(p) for p in py.split(".")) < FREE_THREADED_MIN_PYTHON
+        ]
+        if too_old:
+            msg = (
+                f"a free-threaded platform needs CPython {floor} or newer,"
+                f" but matrix.python admits {too_old!r}"
+            )
+            raise ValueError(msg)
 
 
 def _build_environment(

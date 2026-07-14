@@ -56,6 +56,7 @@ from nab_python.requirements_file import (
     read_pyproject_name,
     read_pyproject_optional_dependencies,
 )
+from nab_python.tags import PlatformSpec
 from nab_python.universal import resolve as resolve_mod
 from nab_python.universal.matrix import Matrix, MatrixTuple
 from nab_python.universal.resolve import (
@@ -71,7 +72,6 @@ from nab_python.universal.resolve import (
     merge_universal_lock_inputs,
     resolve_with_coordinator,
 )
-from nab_python.universal.wheel_selection import PlatformSpec
 from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:
@@ -103,7 +103,7 @@ def _make_coordinator(listings: dict[str, list[WheelFile]]) -> MagicMock:
 def _linux_311() -> MatrixTuple:
     return MatrixTuple(
         python_version="3.11",
-        platform_id="linux_x86_64",
+        platform_spec=PlatformSpec("linux_x86_64"),
         environment={
             "python_version": "3.11",
             "python_full_version": "3.11.0",
@@ -123,7 +123,7 @@ def _linux_311() -> MatrixTuple:
 def _windows_311() -> MatrixTuple:
     return MatrixTuple(
         python_version="3.11",
-        platform_id="windows_amd64",
+        platform_spec=PlatformSpec("windows_amd64"),
         environment={
             "python_version": "3.11",
             "python_full_version": "3.11.0",
@@ -299,7 +299,7 @@ class TestConflictForkResolve:
         )
 
     def _one_tuple_matrix(self) -> Matrix:
-        return Matrix(python="==3.11", platforms=("linux_x86_64",))
+        return Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
 
     def _black_forks(self) -> list:
         return [
@@ -444,7 +444,7 @@ class TestConflictForkBaseNames:
         )
 
     def _matrix(self) -> Matrix:
-        return Matrix(python="==3.11", platforms=("linux_x86_64",))
+        return Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
 
     def _forks(self) -> list[ResolveFork]:
         # cpu and gpu both pull in accel; the base has only ``base``.
@@ -1066,7 +1066,7 @@ class TestVcsConfigPlumbing:
             name="pkg",
             url=f"git+https://example.com/pkg.git@{_FORTY_SHA}",
         )
-        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         with pytest.raises(ValueError, match="vcs_sources require VcsPolicy.ALLOW"):
             resolve_with_coordinator(
                 coordinator,
@@ -1197,11 +1197,11 @@ class TestUniversalResult:
         ok = TupleResult(tuple_=_linux_311(), success=True)
         bad = TupleResult(tuple_=_windows_311(), success=False)
         assert UniversalResult(
-            matrix=Matrix(python="==3.11", platforms=("linux_x86_64",)),
+            matrix=Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)),
             tuple_results=[ok, ok],
         ).success
         assert not UniversalResult(
-            matrix=Matrix(python="==3.11", platforms=("linux_x86_64",)),
+            matrix=Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)),
             tuple_results=[ok, bad],
         ).success
 
@@ -1220,7 +1220,7 @@ class TestUniversalResult:
         result = UniversalResult(
             matrix=Matrix(
                 python="==3.11",
-                platforms=("linux_x86_64", "windows_amd64"),
+                platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
             ),
             tuple_results=[ok, bad],
         )
@@ -1261,7 +1261,7 @@ class TestMergeUniversalLockInputs:
         result = UniversalResult(
             matrix=Matrix(
                 python="==3.11",
-                platforms=("linux_x86_64", "windows_amd64"),
+                platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
             ),
             tuple_results=[ok_with_lock, ok_without_lock],
         )
@@ -1281,8 +1281,8 @@ class TestMergeUniversalLockInputs:
         matrix = Matrix(
             python="==3.11",
             platforms=(
-                PlatformSpec("linux_x86_64", manylinux_floor=(2, 17)),
-                PlatformSpec("linux_x86_64", manylinux_floor=(2, 34)),
+                PlatformSpec("linux_x86_64", libc_version=(2, 17)),
+                PlatformSpec("linux_x86_64", libc_version=(2, 34)),
             ),
         )
         older, newer = matrix.expand()
@@ -1319,7 +1319,7 @@ class TestResolveWithCoordinator:
     def test_first_pass_returns_pins(self) -> None:
         """Single-tuple resolve produces a UniversalResult with pins."""
         coordinator = _make_coordinator({"pkg": [_make_wheel("1.0", package="pkg")]})
-        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         result = resolve_with_coordinator(
             coordinator,
             matrix,
@@ -1336,7 +1336,7 @@ class TestResolveWithCoordinator:
         rather than a silent drop.
         """
         coordinator = _make_coordinator({"pkg": [_make_wheel("1.0", package="pkg")]})
-        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         with pytest.raises(MissingExtraError):
             resolve_with_coordinator(coordinator, matrix, ["pkg[missing]"])
 
@@ -1350,7 +1350,7 @@ class TestResolveWithCoordinator:
                 ]
             }
         )
-        matrix = Matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),))
         result = resolve_with_coordinator(
             coordinator,
             matrix,
@@ -1383,7 +1383,9 @@ class TestResolveUniversalWrapper:
                 ) as inner,
             ):
                 result = resolve_mod.resolve_universal(
-                    matrix=Matrix(python="==3.11", platforms=("linux_x86_64",)),
+                    matrix=Matrix(
+                        python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+                    ),
                     requirements=["pkg"],
                 )
         assert result is sentinel
@@ -1414,7 +1416,9 @@ class TestResolveUniversalWrapper:
             fetch_cls.return_value.__enter__.return_value = "COORD"
             fetch_cls.return_value.__exit__.return_value = False
             resolve_mod.resolve_universal(
-                matrix=Matrix(python="==3.11", platforms=("linux_x86_64",)),
+                matrix=Matrix(
+                    python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+                ),
                 requirements=["pkg"],
                 indexes=custom,
             )
@@ -1442,7 +1446,7 @@ class TestLocalVcsRequiresPython:
         coord = make_coordinator([], package="foo")
         result = resolve_with_coordinator(
             coord,
-            Matrix(python="==3.10", platforms=("linux_x86_64",)),
+            Matrix(python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)),
             ["foo"],
             local_sources=[local],
         )
@@ -1464,7 +1468,7 @@ class TestLocalVcsRequiresPython:
         )
         result = resolve_with_coordinator(
             coord,
-            Matrix(python="==3.10", platforms=("linux_x86_64",)),
+            Matrix(python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)),
             ["foo"],
             local_sources=[local],
         )
@@ -1478,7 +1482,7 @@ class TestLocalVcsRequiresPython:
         coord = make_coordinator([], package="foo")
         result = resolve_with_coordinator(
             coord,
-            Matrix(python="==3.10", platforms=("linux_x86_64",)),
+            Matrix(python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)),
             ["foo"],
             local_sources=[local],
         )
@@ -1495,7 +1499,7 @@ class TestLocalVcsRequiresPython:
             coord,
             Matrix(
                 python="==3.13",
-                platforms=("linux_x86_64",),
+                platforms=(PlatformSpec("linux_x86_64"),),
                 python_patches={"3.13": "3.13.4"},
             ),
             ["foo"],
@@ -1514,7 +1518,7 @@ class TestLocalVcsRequiresPython:
             coord,
             Matrix(
                 python="==3.13",
-                platforms=("linux_x86_64",),
+                platforms=(PlatformSpec("linux_x86_64"),),
                 python_patches={"3.13": "3.13.4"},
             ),
             ["foo"],
@@ -1566,7 +1570,7 @@ class TestArchiveSourceUniversal:
 
         result = resolve_with_coordinator(
             coord,
-            Matrix(python=">=3.11, <3.13", platforms=("linux_x86_64",)),
+            Matrix(python=">=3.11, <3.13", platforms=(PlatformSpec("linux_x86_64"),)),
             ["foo"],
             archive_sources=[source],
             archive_cache_dir=tmp_path / "arch",
@@ -1594,7 +1598,7 @@ class TestArchiveSourceUniversal:
 
         result = resolve_with_coordinator(
             coord,
-            Matrix(python="==3.10", platforms=("linux_x86_64",)),
+            Matrix(python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)),
             ["foo"],
             archive_sources=[source],
             archive_cache_dir=tmp_path / "arch",

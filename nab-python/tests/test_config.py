@@ -45,6 +45,7 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_python.tags import PlatformSpec
 from nab_python.workspace import WorkspaceConfig
 
 
@@ -2598,7 +2599,7 @@ class TestMatrix:
         assert config.mode is ResolveMode.UNIVERSAL
         assert config.matrix == MatrixConfig(
             python=">=3.11,<3.14",
-            platforms=("linux_x86_64", "macos_arm64"),
+            platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("macos_arm64")),
         )
 
     def test_python_order_and_patches(self, tmp_path: Path) -> None:
@@ -2733,6 +2734,254 @@ class TestMatrix:
         with pytest.raises(
             ConfigError, match="matrix.platforms must list at least one"
         ):
+            read_pyproject_config(path)
+
+    def _platforms_body(self, platforms: str) -> str:
+        return (
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.12"\n'
+            f"platforms = {platforms}\n"
+        )
+
+    def test_platform_table_form(self, tmp_path: Path) -> None:
+        """A table entry reaches the tag knobs a bare id cannot."""
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '["macos_arm64", { id = "linux_x86_64", libc = "musl",'
+                ' libc-version = "1.2" }]'
+            ),
+        )
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.platforms == (
+            PlatformSpec("macos_arm64"),
+            PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2)),
+        )
+
+    @pytest.mark.parametrize(
+        ("entry", "message"),
+        [
+            ('{ id = "windows_amd64", libc = "musl" }', "only a linux platform"),
+            ('{ id = "windows_amd64", libc = "glibc" }', "only a linux platform"),
+            ('{ id = "macos_arm64", libc-version = "2.28" }', "only a linux platform"),
+            ('{ id = "linux_x86_64", macos-min = "14.0" }', "only a macos platform"),
+            ('{ id = "macos_arm64", macos-min = "10.15" }', "below 11.0"),
+            ('{ id = "macos_x86_64", macos-min = "10.3" }', "below 10.4"),
+        ],
+    )
+    def test_platform_table_rejects_a_knob_the_platform_cannot_use(
+        self, tmp_path: Path, entry: str, message: str
+    ) -> None:
+        """A knob the platform never reads still names the target, so it raises."""
+        path = write(tmp_path, self._platforms_body(f"[{entry}]"))
+        with pytest.raises(ConfigError, match=message):
+            read_pyproject_config(path)
+
+    def test_platform_table_all_knobs(self, tmp_path: Path) -> None:
+        """Every table key lands on the spec."""
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '[{ id = "macos_arm64", macos-min = "14.0",'
+                ' platform-release = "23.1.0", platform-version = "Darwin 23" }]'
+            ),
+        )
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.platforms == (
+            PlatformSpec(
+                "macos_arm64",
+                macos_min=(14, 0),
+                platform_release="23.1.0",
+                platform_version="Darwin 23",
+            ),
+        )
+
+    def test_platform_table_defaults_match_bare_id(self, tmp_path: Path) -> None:
+        """A table with only ``id`` is the bare-string form."""
+        path = write(tmp_path, self._platforms_body('[{ id = "linux_x86_64" }]'))
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.platforms == (PlatformSpec("linux_x86_64"),)
+
+    def test_platform_table_unknown_key(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body('[{ id = "linux_x86_64", glibc = "2.28" }]'),
+        )
+        with pytest.raises(
+            ConfigError, match=r"unknown matrix.platforms\[0\] keys: \['glibc'\]"
+        ):
+            read_pyproject_config(path)
+
+    def test_platform_table_missing_id(self, tmp_path: Path) -> None:
+        path = write(tmp_path, self._platforms_body('[{ libc = "musl" }]'))
+        with pytest.raises(
+            ConfigError, match=r"matrix.platforms\[0\] missing required key 'id'"
+        ):
+            read_pyproject_config(path)
+
+    def test_platform_table_bad_libc(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body('[{ id = "linux_x86_64", libc = "uclibc" }]'),
+        )
+        with pytest.raises(ConfigError, match="libc must be one of"):
+            read_pyproject_config(path)
+
+    def test_platform_table_id_must_be_a_string(self, tmp_path: Path) -> None:
+        path = write(tmp_path, self._platforms_body("[{ id = 3 }]"))
+        with pytest.raises(
+            ConfigError, match=r"matrix.platforms\[0\].id must be a string"
+        ):
+            read_pyproject_config(path)
+
+    def test_platform_entry_must_be_string_or_table(self, tmp_path: Path) -> None:
+        path = write(tmp_path, self._platforms_body("[3]"))
+        with pytest.raises(
+            ConfigError, match=r"matrix.platforms\[0\] must be a platform id or a table"
+        ):
+            read_pyproject_config(path)
+
+    def test_platforms_must_be_a_list(self, tmp_path: Path) -> None:
+        path = write(tmp_path, self._platforms_body('"linux_x86_64"'))
+        with pytest.raises(ConfigError, match="matrix.platforms must be a list"):
+            read_pyproject_config(path)
+
+    def test_platform_table_unknown_id_still_rejected(self, tmp_path: Path) -> None:
+        """The table form does not bypass the known-platform-id check."""
+        path = write(tmp_path, self._platforms_body('[{ id = "linux_riscv64" }]'))
+        with pytest.raises(ConfigError, match="Unknown platform ids"):
+            read_pyproject_config(path)
+
+    @pytest.mark.parametrize("value", ["2", "2.28.1", "1!2.28", "2.28rc1", "garbage"])
+    def test_platform_table_bad_libc_version(self, tmp_path: Path, value: str) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                f'[{{ id = "linux_x86_64", libc-version = "{value}" }}]'
+            ),
+        )
+        with pytest.raises(ConfigError, match="libc-version must be"):
+            read_pyproject_config(path)
+
+    def test_platform_table_libc_version_must_be_a_string(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body('[{ id = "linux_x86_64", libc-version = 2.28 }]'),
+        )
+        with pytest.raises(ConfigError, match="libc-version must be a string"):
+            read_pyproject_config(path)
+
+    def test_platform_table_glibc_version_major_must_be_2(self, tmp_path: Path) -> None:
+        """A glibc major other than 2 tags a platform no wheel is built for."""
+        path = write(
+            tmp_path,
+            self._platforms_body('[{ id = "linux_x86_64", libc-version = "3.0" }]'),
+        )
+        with pytest.raises(ConfigError, match=r"glibc has only a 2.x series"):
+            read_pyproject_config(path)
+
+    def test_platform_table_musl_version_major_must_be_1(self, tmp_path: Path) -> None:
+        """musl has only ever shipped 1.x, so a 2.x target is a typo."""
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '[{ id = "linux_x86_64", libc = "musl", libc-version = "2.0" }]'
+            ),
+        )
+        with pytest.raises(ConfigError, match=r"musl has only a 1.x series"):
+            read_pyproject_config(path)
+
+    def test_same_id_under_two_libc_families_is_a_duplicate(
+        self, tmp_path: Path
+    ) -> None:
+        """Both libc families of one id cannot share a lock.
+
+        The two targets render the same PEP 508 marker (there is no libc
+        marker variable), so the lockfile could not tell their pins apart.
+        """
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '["linux_x86_64", { id = "linux_x86_64", libc = "musl" }]'
+            ),
+        )
+        with pytest.raises(ConfigError, match="matrix.platforms has duplicate entry"):
+            read_pyproject_config(path)
+
+    def test_same_id_free_threaded_and_gil_is_a_duplicate(self, tmp_path: Path) -> None:
+        """A free-threaded and a GIL target of one id cannot share a lock."""
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '["linux_x86_64", { id = "linux_x86_64", free-threaded = true }]'
+            ),
+        )
+        with pytest.raises(ConfigError, match="matrix.platforms has duplicate entry"):
+            read_pyproject_config(path)
+
+    def test_table_repeating_a_bare_id_is_a_duplicate(self, tmp_path: Path) -> None:
+        """A defaults-only table repeats the bare id."""
+        path = write(
+            tmp_path,
+            self._platforms_body('["linux_x86_64", { id = "linux_x86_64" }]'),
+        )
+        with pytest.raises(ConfigError, match="matrix.platforms has duplicate entry"):
+            read_pyproject_config(path)
+
+    def test_free_threaded_platform(self, tmp_path: Path) -> None:
+        """``free-threaded`` lands on the spec."""
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.13"\n'
+            'platforms = [{ id = "linux_x86_64", free-threaded = true }]\n',
+        )
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.platforms == (PlatformSpec("linux_x86_64", free_threaded=True),)
+
+    def test_free_threaded_must_be_a_boolean(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body(
+                '[{ id = "linux_x86_64", free-threaded = "yes" }]',
+            ),
+        )
+        with pytest.raises(ConfigError, match="free-threaded must be a boolean"):
+            read_pyproject_config(path)
+
+    def test_free_threaded_rejects_python_below_3_13(self, tmp_path: Path) -> None:
+        """3.12 has no free-threaded build, so its cp312t ABI matches nothing."""
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.12,<3.14"\n'
+            'platforms = [{ id = "linux_x86_64", free-threaded = true }]\n',
+        )
+        with pytest.raises(ConfigError, match="needs CPython 3.13 or newer"):
+            read_pyproject_config(path)
+
+    def test_free_threaded_rejects_pypy(self, tmp_path: Path) -> None:
+        """PyPy has no free-threaded build."""
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.13"\n'
+            'platforms = [{ id = "linux_x86_64", free-threaded = true }]\n'
+            'implementations = ["cpython", "pypy"]\n',
+        )
+        with pytest.raises(ConfigError, match="needs CPython, not"):
             read_pyproject_config(path)
 
     def test_invalid_python_order(self, tmp_path: Path) -> None:
@@ -3255,7 +3504,7 @@ class TestProjectNabTomlConfiguresResolve:
         config = read_pyproject_config(path, discover_workspace=False)
         assert config.mode is ResolveMode.UNIVERSAL
         assert config.matrix is not None
-        assert config.matrix.platforms == ("linux_x86_64",)
+        assert config.matrix.platforms == (PlatformSpec("linux_x86_64"),)
         # Universal mode forces the build-policy floor to never even though
         # the project-nab.toml set no build-policy.
         assert config.build_policy is BuildPolicy.NEVER

@@ -58,6 +58,7 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_python.tags import PlatformSpec
 from nab_python.workspace import WorkspaceConfig
 
 
@@ -2250,7 +2251,9 @@ class TestCrossFieldProjectOptions:
         _project(tmp_path, _MATRIX_PYPROJECT)
         eff = _resolve(SourceRoots(project_dir=tmp_path))
         value = eff["matrix"].value
-        assert value == MatrixConfig(python=">=3.11,<3.12", platforms=("linux_x86_64",))
+        assert value == MatrixConfig(
+            python=">=3.11,<3.12", platforms=(PlatformSpec("linux_x86_64"),)
+        )
         assert eff["matrix"].origin.kind is SourceKind.PYPROJECT
 
     def test_matrix_from_project_nab_toml(self, tmp_path: Path) -> None:
@@ -2258,7 +2261,7 @@ class TestCrossFieldProjectOptions:
         _write(tmp_path / "nab.toml", _MATRIX_PROJECT_TOML)
         eff = _resolve(SourceRoots(project_dir=tmp_path))
         assert eff["matrix"].value == MatrixConfig(
-            python=">=3.11,<3.12", platforms=("linux_x86_64",)
+            python=">=3.11,<3.12", platforms=(PlatformSpec("linux_x86_64"),)
         )
         assert eff["matrix"].origin.kind is SourceKind.PROJECT_TOML
 
@@ -2302,7 +2305,7 @@ class TestCrossFieldProjectOptions:
         _write(tmp_path / "nab.toml", _MATRIX_PROJECT_TOML)
         eff = _resolve(SourceRoots(project_dir=tmp_path))
         assert eff["matrix"].value == MatrixConfig(
-            python=">=3.11,<3.12", platforms=("linux_x86_64",)
+            python=">=3.11,<3.12", platforms=(PlatformSpec("linux_x86_64"),)
         )
         assert eff["matrix"].origin.kind is SourceKind.PROJECT_TOML
 
@@ -2315,7 +2318,10 @@ class TestCrossFieldProjectOptions:
     def test_matrix_render_axes(self) -> None:
         spec = next(s for s in OPTIONS if s.key == "matrix")
         rendered = spec.render(
-            MatrixConfig(python=">=3.11", platforms=("linux_x86_64", "macos_arm64"))
+            MatrixConfig(
+                python=">=3.11",
+                platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("macos_arm64")),
+            )
         )
         assert rendered == "python=>=3.11, platforms=['linux_x86_64', 'macos_arm64']"
 

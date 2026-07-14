@@ -22,6 +22,7 @@ from hypothesis import strategies as st
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.version import Version
 from nab_python.lockfile import IndexPin, LockInput
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import Matrix, MatrixTuple
 from nab_python.universal.resolve import (
     TupleResult,
@@ -41,7 +42,7 @@ def _fake_tuple() -> MatrixTuple:
     """Build a minimal linux/3.11 ``MatrixTuple`` for property fixtures."""
     return MatrixTuple(
         python_version="3.11",
-        platform_id="linux_x86_64",
+        platform_spec=PlatformSpec("linux_x86_64"),
         environment=LINUX_ENV,
     )
 
@@ -179,7 +180,7 @@ def tuple_lock_inputs(
     for platform in chosen_platforms:
         tup = MatrixTuple(
             python_version="3.11",
-            platform_id=platform,
+            platform_spec=PlatformSpec(platform),
             environment={**LINUX_ENV, "sys_platform": platform.split("_", 1)[0]},
         )
         pairs.append((tup, draw(pin_maps())))

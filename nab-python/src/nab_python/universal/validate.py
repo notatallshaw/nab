@@ -30,7 +30,7 @@ from .._vendor.packaging.requirements import (
 from .._vendor.packaging.utils import canonicalize_name, canonicalize_version
 from .._vendor.packaging.version import Version
 from ..metadata import load_static_project, metadata_deps_are_static, parse_metadata
-from .wheel_selection import select_wheel_for_tuple
+from ..tags import select_wheel
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -227,7 +227,7 @@ def _validate_pin(  # noqa: PLR0911 - one return per outcome reads cleaner here
             status="sdist_only",
             detail="no wheels at this version; install requires building from sdist",
         )
-    chosen = select_wheel_for_tuple(
+    chosen = select_wheel(
         wheels_at_version,
         python_version=tup.python_version,
         spec=tup.platform_spec,

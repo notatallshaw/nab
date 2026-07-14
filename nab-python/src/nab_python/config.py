@@ -14,7 +14,8 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 import tomli
@@ -57,6 +58,7 @@ from .provider import (
     VcsSource,
     _normalize_extra,
 )
+from .tags import DEFAULT_LIBC, LIBC_MAJOR, Libc, PlatformSpec, platform_kind
 from .universal.matrix import Matrix
 from .workspace import (
     WorkspaceConfig,
@@ -126,7 +128,7 @@ class MatrixConfig:
     """User-declared matrix axes for universal resolution."""
 
     python: str
-    platforms: tuple[str, ...]
+    platforms: tuple[PlatformSpec, ...]
     python_order: str = "asc"
     python_patches: Mapping[str, str] | None = None
     implementations: tuple[str, ...] = ("cpython",)
@@ -2216,6 +2218,150 @@ def _validate_matrix_python(spec: str) -> None:
             raise ConfigError(msg)
 
 
+_PLATFORM_TABLE_KEYS = frozenset(
+    {
+        "id",
+        "libc",
+        "libc-version",
+        "macos-min",
+        "platform-release",
+        "platform-version",
+        "free-threaded",
+    }
+)
+# The platform kind that reads each knob key; any other kind rejects it.
+_PLATFORM_KNOB_OWNER: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "linux": frozenset({"libc", "libc-version"}),
+        "macos": frozenset({"macos-min"}),
+    }
+)
+
+
+def _parse_matrix_platforms(value: object) -> tuple[PlatformSpec, ...]:
+    """Parse ``matrix.platforms``: bare ids, tables, or a mix of both.
+
+    A bare id takes the platform's default tag knobs; the table form declares
+    them (libc family and version, macOS deployment target, kernel marker
+    values, free-threaded build).  Both become a :class:`PlatformSpec`, so
+    everything downstream reads one shape.
+    """
+    if not isinstance(value, list):
+        msg = f"matrix.platforms must be a list, got {type(value).__name__}"
+        raise ConfigError(msg)
+    platforms: list[PlatformSpec] = []
+    for i, item in enumerate(value):
+        where = f"matrix.platforms[{i}]"
+        if isinstance(item, str):
+            platforms.append(_platform_spec(where, platform_id=item))
+        elif isinstance(item, dict):
+            platforms.append(_parse_platform_table(where, item))
+        else:
+            msg = f"{where} must be a platform id or a table, got {type(item).__name__}"
+            raise ConfigError(msg)
+    return tuple(platforms)
+
+
+def _platform_spec(where: str, **knobs: Any) -> PlatformSpec:
+    """Build a :class:`PlatformSpec`, reporting its knob check as a config error."""
+    try:
+        return PlatformSpec(**knobs)
+    except ValueError as exc:
+        msg = f"invalid {where}: {exc}"
+        raise ConfigError(msg) from exc
+
+
+def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
+    """Parse one ``matrix.platforms`` table entry into a :class:`PlatformSpec`."""
+    unknown = sorted(set(value) - _PLATFORM_TABLE_KEYS)
+    if unknown:
+        msg = (
+            f"unknown {where} keys: {unknown!r};"
+            f" expected {sorted(_PLATFORM_TABLE_KEYS)!r}"
+        )
+        raise ConfigError(msg)
+    if "id" not in value:
+        msg = f"{where} missing required key 'id'"
+        raise ConfigError(msg)
+
+    platform_id = _parse_string_value(f"{where}.id", value["id"])
+    _reject_foreign_knobs(where, value, platform_id)
+
+    return _platform_spec(
+        where,
+        platform_id=platform_id,
+        libc=_parse_libc(f"{where}.libc", value.get("libc")),
+        libc_version=_parse_major_minor(
+            f"{where}.libc-version", value.get("libc-version")
+        ),
+        macos_min=_parse_major_minor(f"{where}.macos-min", value.get("macos-min")),
+        platform_release=_parse_string_value(
+            f"{where}.platform-release", value.get("platform-release", "")
+        ),
+        platform_version=_parse_string_value(
+            f"{where}.platform-version", value.get("platform-version", "")
+        ),
+        free_threaded=_parse_bool(
+            f"{where}.free-threaded", value.get("free-threaded"), default=False
+        ),
+    )
+
+
+def _reject_foreign_knobs(where: str, value: dict[str, Any], platform_id: str) -> None:
+    """Reject a knob key the declared platform's kind cannot read.
+
+    :class:`PlatformSpec` refuses a knob whose *value* moves a platform that
+    ignores it, but it cannot see a key written at its own default.  The
+    table can, and a key that selects no wheel is a mistake either way.  An
+    unknown ``platform_id`` is left to the matrix, which names the whole
+    unknown set at once.
+    """
+    kind = platform_kind(platform_id)
+    if kind is None:
+        return
+    for owner, keys in _PLATFORM_KNOB_OWNER.items():
+        if kind == owner:
+            continue
+        foreign = sorted(keys & set(value))
+        if foreign:
+            msg = (
+                f"{where} declares {foreign!r}, which only a {owner} platform"
+                f" reads, but its id is {platform_id!r}"
+            )
+            raise ConfigError(msg)
+
+
+def _parse_libc(key: str, value: object) -> Libc:
+    """Parse a libc family name; an absent key takes the default family."""
+    if value is None:
+        return DEFAULT_LIBC
+    text = _parse_string_value(key, value)
+    if text not in LIBC_MAJOR:
+        msg = f"{key} must be one of {sorted(LIBC_MAJOR)!r}, got {text!r}"
+        raise ConfigError(msg)
+    return cast("Libc", text)
+
+
+def _parse_major_minor(key: str, value: object) -> tuple[int, int] | None:
+    """Parse a ``major.minor`` string into a pair; ``None`` passes through."""
+    if value is None:
+        return None
+    text = _parse_string_value(key, value)
+    try:
+        version = Version(text)
+    except InvalidVersion as exc:
+        msg = f"{key} must be a 'major.minor' version, got {text!r}"
+        raise ConfigError(msg) from exc
+    release = version.release
+    two_part = len(release) == _MINOR_RELEASE_PARTS
+    # str() renders the normalized version, so an epoch or a pre/post/dev/local
+    # qualifier shows up as a mismatch here.
+    if not two_part or str(version) != f"{release[0]}.{release[1]}":
+        msg = f"{key} must be exactly 'major.minor', got {text!r}"
+        raise ConfigError(msg)
+    return (release[0], release[1])
+
+
 def _parse_matrix(value: object) -> MatrixConfig | None:
     if not isinstance(value, dict):
         msg = f"[tool.nab.matrix] must be a table, got {type(value).__name__}"
@@ -2243,11 +2389,14 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
         msg = "matrix.python must be a string PEP 440 specifier"
         raise ConfigError(msg)
     _validate_matrix_python(python)
-    platforms = _parse_string_list("matrix.platforms", platforms_raw)
+    platforms = _parse_matrix_platforms(platforms_raw)
     if not platforms:
         msg = "matrix.platforms must list at least one platform id"
         raise ConfigError(msg)
-    _reject_duplicates("matrix.platforms", platforms)
+    # One target per platform id.  A lockfile entry is selected by a PEP 508
+    # marker, which has no libc or free-threading variable, so two targets
+    # sharing an id would render the same marker.
+    _reject_duplicates("matrix.platforms", tuple(p.platform_id for p in platforms))
     python_order = value.get("python-order", "asc")
     if python_order not in {"asc", "desc"}:
         msg = f"matrix.python-order must be 'asc' or 'desc', got {python_order!r}"

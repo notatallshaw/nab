@@ -22,6 +22,7 @@ from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
+from nab_python.tags import PlatformSpec
 from nab_python.universal.matrix import MatrixTuple
 from nab_python.universal.resolve import TupleResult, UniversalResult
 from nab_python.universal.validate import (
@@ -32,7 +33,6 @@ from nab_python.universal.validate import (
     _requirement_key,
     validate_lock,
 )
-from nab_python.universal.wheel_selection import PlatformSpec
 
 _BASE_METADATA = (
     "Metadata-Version: 2.1\n"
@@ -104,7 +104,6 @@ def _wheel(filename: str) -> WheelFile:
 def _linux_311() -> MatrixTuple:
     return MatrixTuple(
         python_version="3.11",
-        platform_id="linux_x86_64",
         environment={
             "python_version": "3.11",
             "python_full_version": "3.11.0",
@@ -125,7 +124,6 @@ def _linux_311() -> MatrixTuple:
 def _windows_311() -> MatrixTuple:
     return MatrixTuple(
         python_version="3.11",
-        platform_id="windows_amd64",
         environment={
             "python_version": "3.11",
             "python_full_version": "3.11.0",

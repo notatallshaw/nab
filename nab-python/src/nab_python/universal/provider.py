@@ -15,11 +15,11 @@ inherited from :class:`Provider` and threaded through via the
 parent's ``resolution_strategy`` and ``direct_packages`` kwargs.
 
 When ``platform_spec`` is supplied, the provider also filters wheel
-candidates by tag compatibility at resolve time (hole 2 in
-``universal_open_questions.md``).  Versions whose only wheels are
-above the spec's manylinux/musllinux/macOS floor become unavailable
-unless an sdist is present, which keeps the version alive at every
-``build_policy`` level (look-ahead rejects an unreadable sdist).
+candidates by tag compatibility at resolve time.  Versions whose only
+wheels are for another libc family, or above the spec's libc/macOS
+version, become unavailable unless an sdist is present, which keeps the
+version alive at every ``build_policy`` level (look-ahead rejects an
+unreadable sdist).
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from ..provider import (
     VcsConfig,
     VcsSource,
 )
-from .wheel_selection import compatible_tags_for_tuple, wheel_tag_set
+from ..tags import tags_for_target, wheel_tag_set
 
 __all__ = [
     "DistFile",
@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from .._vendor.packaging.version import Version
     from ..config import IndexOverride, NabProjectConfig, PackageOverride
     from ..fetch import FetchCoordinator
-    from .wheel_selection import PlatformSpec
+    from ..tags import PlatformSpec
 
 
 class UniversalProvider(Provider):
@@ -197,9 +197,9 @@ class UniversalProvider(Provider):
     ) -> list[tuple[Version, DistFile]]:
         """Filter parent's result by wheel-tag compatibility.
 
-        Hole 2 plug: a version is unavailable to the resolver if its
-        only wheels are tag-incompatible with this tuple's
-        ``platform_spec``.  Sdists keep the version alive at every
+        A version is unavailable to the resolver if its only wheels are
+        tag-incompatible with this tuple's ``platform_spec``.  Sdists
+        keep the version alive at every
         :class:`BuildPolicy` level because static PKG-INFO and the
         bundled ``pyproject.toml`` fallback are read unconditionally;
         ``BUILD_LOCAL`` adds backend invocation on local checkouts and
@@ -217,11 +217,11 @@ class UniversalProvider(Provider):
 
         spec = self._platform_spec
         py_minor = self._py_minor
-        # Look up the per-tuple compat tag set once outside the per-wheel
+        # Look up the per-tuple accepted tag set once outside the per-wheel
         # loop and inline the membership check; this loop runs for every
         # wheel of every package on every tuple, so the hoist matters on
         # large workloads.
-        compat = compatible_tags_for_tuple(
+        accepted = tags_for_target(
             python_version=py_minor, spec=spec, implementation=self._implementation
         )
         kept: list[tuple[Version, DistFile]] = []
@@ -230,7 +230,7 @@ class UniversalProvider(Provider):
         for version, dist in base:
             if isinstance(dist, WheelFile):
                 wheel_tags = wheel_tag_set(dist.filename)
-                if wheel_tags is not None and not wheel_tags.isdisjoint(compat):
+                if wheel_tags is not None and not wheel_tags.isdisjoint(accepted):
                     kept.append((version, dist))
                     versions_with_wheel.add(version)
                 else:
