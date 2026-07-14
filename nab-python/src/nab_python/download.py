@@ -85,10 +85,12 @@ class DownloadResult:
 
 
 def iter_artifacts(lock_input: LockInput) -> Iterable[DownloadEntry]:
-    """Yield every wheel/sdist artefact referenced by ``lock_input``.
+    """Yield every downloadable artefact referenced by ``lock_input``.
 
-    The union across the targets the resolve ran against, deduplicated
-    by URL so a wheel shared by several of them is downloaded once.
+    A wheel, sdist, or direct-URL archive for each pin, deduplicated
+    by URL across the targets the resolve ran against so an artefact
+    shared by several of them is downloaded once.  Local and VCS pins
+    carry no downloadable URL and are skipped.
     """
     seen: set[str] = set()
     for label in sorted(lock_input.targets):

@@ -1,9 +1,9 @@
 """``nab download`` subcommand.
 
-Resolves a project and fetches every wheel and sdist into a local
-directory: the union of every target's artefacts, deduplicated by URL,
-which for a declared matrix pre-populates a directory for offline
-deployment across platforms.
+Resolves a project and fetches every wheel, sdist, and direct-URL
+archive into a local directory: the union of every target's
+artefacts, deduplicated by URL, which for a declared matrix
+pre-populates a directory for offline deployment across platforms.
 
 External callers (the resolver entry point and the download
 helper) are accessed through :mod:`nab.cli` so the test suite's
@@ -60,7 +60,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
 ) -> None:
-    """Resolve and download every wheel/sdist into a local directory.
+    """Resolve and download every wheel, sdist, and direct-URL archive.
 
     Output files are named after the recorded artefact filename.  The
     download is idempotent: files whose sha256 already matches are
