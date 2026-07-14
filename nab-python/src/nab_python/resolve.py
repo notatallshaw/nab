@@ -477,6 +477,10 @@ class _EngineSettings:
     # Shared by every target of every pass: the coordinator and the policy
     # config the pre-tag half of the listing filter reads are both fixed here.
     listing_filter_cache: ListingFilterCache = field(default_factory=ListingFilterCache)
+    # The root requirements already reported by _warn_dropped_root_marker. The
+    # same roots are read once per target per fork plus once in the base pass,
+    # and one mistaken requirement is worth one warning.
+    warned_root_markers: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True, slots=True)
@@ -540,10 +544,17 @@ def _resolve_one_target(
     environment = target.marker_env
     try:
         resolver_requirements, root_extras = _build_resolver_inputs(
-            requirements, config, environment=environment
+            requirements,
+            config,
+            environment=environment,
+            warned=settings.warned_root_markers,
         )
         resolver_constraints, _ = _build_resolver_inputs(
-            constraints, config, environment=environment, kind="constraint"
+            constraints,
+            config,
+            environment=environment,
+            kind="constraint",
+            warned=settings.warned_root_markers,
         )
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
@@ -1030,21 +1041,28 @@ def _check_group_disjointness(
     raise ResolutionError("; ".join(clauses))
 
 
-def _warn_dropped_root_marker(req: Requirement) -> None:
+def _warn_dropped_root_marker(req: Requirement, warned: set[str]) -> None:
     """Warn when a dropped root requirement tests an extra/group membership.
 
     A root marker testing ``extra``, ``extras``, or ``dependency_groups``
     evaluates False at resolve time (root activates no extra or group), so the
-    dep would otherwise be dropped silently.
+    dep would otherwise be dropped silently.  ``warned`` carries the
+    requirements already reported in this run, so one mistaken requirement is
+    reported once rather than once per target per fork.
     """
     marker_text = str(req.marker)
-    if "extra ==" in marker_text or membership_set_in_marker(marker_text):
-        _logger.warning(
-            "Root requirement %r tests an extra or dependency-group membership "
-            "marker; the dep is dropped because root activates no extra or group "
-            "at resolve time. For an extra, use pkg[extra] (extras-of-package).",
-            str(req),
-        )
+    if "extra ==" not in marker_text and not membership_set_in_marker(marker_text):
+        return
+    text = str(req)
+    if text in warned:
+        return
+    warned.add(text)
+    _logger.warning(
+        "Root requirement %r tests an extra or dependency-group membership "
+        "marker; the dep is dropped because root activates no extra or group "
+        "at resolve time. For an extra, use pkg[extra] (extras-of-package).",
+        text,
+    )
 
 
 def _build_resolver_inputs(
@@ -1053,6 +1071,7 @@ def _build_resolver_inputs(
     *,
     environment: Mapping[str, str],
     kind: str = "requirement",
+    warned: set[str] | None = None,
 ) -> tuple[dict[str, VersionRange], set[tuple[str, str]]]:
     """Convert PEP 508 requirements to the resolver's input shape.
 
@@ -1066,10 +1085,15 @@ def _build_resolver_inputs(
     ``kind`` is ``"requirement"`` or ``"constraint"``.  A constraint may
     not carry extras, and shapes the error wording; the returned extras
     set is empty for one.
+
+    ``warned`` is the run's set of already-reported extra/group root
+    markers (see :func:`_warn_dropped_root_marker`); a caller that does
+    not share one gets a fresh set, so it warns per call.
     """
     resolver_requirements: dict[str, VersionRange] = {}
     sources: defaultdict[str, list[str]] = defaultdict(list)
     root_extras: set[tuple[str, str]] = set()
+    already_warned = set() if warned is None else warned
     for req in requirements:
         if kind == "constraint" and req.extras:
             msg = f"Constraints cannot have extras: {req}"
@@ -1077,7 +1101,7 @@ def _build_resolver_inputs(
         if req.marker is not None and not dependency_marker_holds(
             req.marker, environment
         ):
-            _warn_dropped_root_marker(req)
+            _warn_dropped_root_marker(req, already_warned)
             continue
         if req.url is not None:
             admit_vcs_url(req.url, config.vcs)

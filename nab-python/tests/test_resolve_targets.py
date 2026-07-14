@@ -604,6 +604,63 @@ class TestConflictForkBaseNames:
         assert any("Base attribution skipped" in rec.message for rec in caplog.records)
 
 
+class TestDroppedRootMarkerWarnedOnce:
+    """One mistaken root requirement is reported once per run, however
+    many targets, forks and base passes read it."""
+
+    def _coordinator(self) -> MagicMock:
+        return _make_coordinator({"base": [_make_wheel("1.0", package="base")]})
+
+    def _two_targets(self) -> list[ResolveTarget]:
+        return Matrix(
+            python="==3.11",
+            platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
+        ).expand()
+
+    def _forks(self) -> list[ResolveFork]:
+        reqs = tuple(_reqs("base", 'gated ; extra == "test"'))
+        return [
+            ResolveFork((("extra", "cpu"),), reqs),
+            ResolveFork((("extra", "gpu"),), reqs),
+        ]
+
+    def test_warned_once_across_targets_forks_and_base_pass(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+            result = resolve_with_coordinator(
+                self._coordinator(),
+                self._two_targets(),
+                forks=self._forks(),
+                base_requirements=_reqs("base", 'gated ; extra == "test"'),
+                config=_no_build(),
+            )
+        assert result.success
+        warnings = [rec for rec in caplog.records if "membership marker" in rec.message]
+        assert len(warnings) == 1
+
+    def test_two_offending_requirements_each_warn_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        reqs = _reqs("base", 'gated ; extra == "test"', 'other ; "dev" in extras')
+        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+            result = resolve_with_coordinator(
+                self._coordinator(),
+                self._two_targets(),
+                reqs,
+                config=_no_build(),
+            )
+        assert result.success
+        warned = [
+            rec.getMessage()
+            for rec in caplog.records
+            if "membership marker" in rec.message
+        ]
+        assert len(warned) == 2
+        assert sum('gated; extra == "test"' in msg for msg in warned) == 1
+        assert sum('other; "dev" in extras' in msg for msg in warned) == 1
+
+
 class TestDirectPackages:
     """The direct set handed to the provider: the canonical names of the
     root requirements this target kept."""
