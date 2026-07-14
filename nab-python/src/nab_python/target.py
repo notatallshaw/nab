@@ -19,6 +19,7 @@ report metadata for the target or for someone else.
 
 from __future__ import annotations
 
+import itertools
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -228,6 +229,13 @@ _MARKER_CLAUSE_RE = re.compile(
     rf"(?P<rhs>{_MARKER_OPERAND})"
 )
 
+# How many clauses of one marker the lock can leave open before
+# :func:`_deciding_clauses` stops asking which of its clauses the answer
+# turned on: the question is settled by reading every combination of them, so
+# the cost doubles per clause.  Past this, every clause on the variable is
+# declared.
+_MAX_FREE_CLAUSES = 8
+
 
 def marker_variables(marker_text: str) -> frozenset[str]:
     """Return the PEP 508 environment variables ``marker_text`` names.
@@ -272,18 +280,52 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
         *always,
         *sorted(variables - set(always) - UNBOUNDABLE_MARKER_VARIABLES),
     ]
+    declaring = _Declaring(
+        marker_env=target.marker_env,
+        environment=target.env_with_membership(),
+        pinned=frozenset(name for name in names if name not in _BY_CONSTRAINT),
+    )
 
     clauses: list[str] = []
     for name in names:
         if name in _BY_CONSTRAINT:
-            clauses.extend(_version_clauses(target, texts, name))
+            clauses.extend(_version_clauses(declaring, texts, name))
         else:
             clauses.append(f'{name} == "{target.marker_env[name]}"')
     return " and ".join(clauses)
 
 
+@dataclass(frozen=True, slots=True)
+class _Declaring:
+    """What deciding a clause of a consulted marker needs.
+
+    ``environment`` is the target's marker env seeded with the empty
+    membership sets the resolve evaluated its dependency markers under, so a
+    marker reads here exactly as it read there.  ``pinned`` is the set of
+    variables the declaration states by value: a clause on one of those
+    answers the same in every environment the lock admits, so it can be held
+    at the answer it gave.  Every other clause (``extra``, a kernel axis, the
+    other by-constraint variable) is one the lock leaves open, so it has to
+    be tried both ways.
+    """
+
+    marker_env: Mapping[str, str]
+    environment: Mapping[str, str | frozenset[str]]
+    pinned: frozenset[str]
+
+    def constant(self, *, value: bool) -> str:
+        """Render a clause that reads ``value`` under :attr:`environment`.
+
+        ``python_version`` is always declared by value, so a clause on it
+        reads the same in every environment the lock admits; here it is only
+        a carrier for a truth value substituted into a marker.
+        """
+        operator = "==" if value else "!="
+        return f'python_version {operator} "{self.marker_env["python_version"]}"'
+
+
 def _version_clauses(
-    target: ResolveTarget, texts: Sequence[str], variable: str
+    declaring: _Declaring, texts: Sequence[str], variable: str
 ) -> list[str]:
     """Declare how the resolve read ``variable``, not its value.
 
@@ -291,13 +333,16 @@ def _version_clauses(
     other micro release, including every real one when the target names a
     minor (``--python 3.13`` synthesizes ``3.13.0``, which no released
     interpreter reports).  The pins do not depend on the micro; they depend
-    on how each clause reading it answered.  So that is what the lock
-    declares: a clause that held is declared as it stands, one that did not
-    is declared complemented (``python_full_version <= "3.11.0a6"`` read
-    False becomes ``python_full_version > "3.11.0a6"``).  Every environment
-    the result admits answers the resolve's clauses the way the resolve
-    did, and a marker that genuinely splits the micros (``>= "3.13.4"``)
-    still partitions them.
+    on how the markers reading it answered.  So that is what the lock
+    declares: a clause the marker's answer turned on is declared as it
+    stands when it held, and complemented when it did not
+    (``python_full_version <= "3.11.0a6"`` read False becomes
+    ``python_full_version > "3.11.0a6"``).  A clause the answer did not turn
+    on (see :func:`_deciding_clauses`) is not declared at all, and a
+    variable no marker's answer turned on leaves its axis open.  Every
+    environment the result admits answers the resolve's markers the way the
+    resolve did, and a marker that genuinely splits the micros (``>=
+    "3.13.4"``) still partitions them.
 
     Each clause is decided by asking packaging: it is rebuilt as a marker of
     its own and evaluated against the target through the public
@@ -307,31 +352,140 @@ def _version_clauses(
     declaring the target's exact value, which is sound if narrow: an unusual
     operator (``~=``, ``===``, a membership test), a comparison against
     another variable rather than a literal, or a PEP 440 boundary where the
-    flipped operator is not the complement -- ``< "3.10.2"`` excludes the
+    flipped operator is not the complement: ``< "3.10.2"`` excludes the
     prereleases of 3.10.2 and so does ``>= "3.10.2"``, so on a ``3.10.2rc1``
-    target neither side holds.  The same fallback covers a marker that only
-    spells the name inside a literal, which leaves nothing to declare.
+    target neither side holds.
     """
-    environment = dict(target.marker_env)
-    exact = f'{variable} == "{environment[variable]}"'
+    exact = f'{variable} == "{declaring.marker_env[variable]}"'
     declared: set[str] = set()
     for text in texts:
-        for match in _MARKER_CLAUSE_RE.finditer(text):
-            lhs, op, rhs = match.group("lhs", "op", "rhs")
-            if variable not in (lhs, rhs):
-                continue
-            declaration = _declared_clause(
-                lhs, " ".join(op.split()), rhs, environment, variable
-            )
+        for lhs, op, rhs in _deciding_clauses(declaring, text, variable):
+            declaration = _declared_clause(lhs, op, rhs, declaring, variable)
             if declaration is None:
                 return [exact]
             declared.add(declaration)
 
-    return sorted(declared) or [exact]
+    return sorted(declared)
+
+
+def _deciding_clauses(
+    declaring: _Declaring, text: str, variable: str
+) -> list[tuple[str, str, str]]:
+    """Return the clauses of ``text`` on ``variable`` that decide its answer.
+
+    A marker is an ``and``/``or`` of clauses, so a clause on ``variable``
+    can be dead: the other side of an ``or`` already held
+    (``python_full_version >= "3.13.5" or sys_platform == "linux"`` on
+    Linux), or the other side of an ``and`` already failed.  Declaring a
+    dead clause would refuse a micro release that reads every consulted
+    marker exactly as the resolve did, which is the environment the lock
+    was resolved for.
+
+    A clause is dropped only when the marker answers the same however that
+    clause reads, whatever the clauses the lock leaves open read.  Both are
+    settled by substituting truth values into the marker text and asking
+    packaging for the answer: a marker has no ``not``, so its answer rises
+    with its clauses, and testing the two extremes of a set of clauses
+    settles every reading in between.
+
+    Dropping is decided for the set as a whole, so clauses that only matter
+    together cannot all go: ``>= "3.13.4" and >= "3.14"`` (both read False)
+    drops the first, keeps the second, and the declaration still refuses
+    3.14.
+
+    The analysis is exponential in the number of clauses the lock leaves
+    open, so past :data:`_MAX_FREE_CLAUSES` every clause on ``variable`` is
+    declared, which is the narrow but sound answer.
+    """
+    atoms = list(_MARKER_CLAUSE_RE.finditer(text))
+    candidates = [
+        index for index, atom in enumerate(atoms) if variable in _clause_variables(atom)
+    ]
+    if not candidates:
+        return []
+
+    free = [
+        index
+        for index, atom in enumerate(atoms)
+        if index not in candidates and not _clause_variables(atom) <= declaring.pinned
+    ]
+    if len(free) <= _MAX_FREE_CLAUSES:
+        released: set[int] = set()
+        for index in candidates:
+            trial = released | {index}
+            if _answer_ignores(declaring, text, atoms, free, trial):
+                released = trial
+        candidates = [index for index in candidates if index not in released]
+
+    return [_clause_parts(atoms[index]) for index in candidates]
+
+
+def _answer_ignores(
+    declaring: _Declaring,
+    text: str,
+    atoms: Sequence[re.Match[str]],
+    free: Sequence[int],
+    released: set[int],
+) -> bool:
+    """Whether ``text`` answers the same however the ``released`` clauses read.
+
+    Every combination of the ``free`` clauses is tried, since the lock does
+    not pin them and the installer's environment (or its choice of extras)
+    settles them.  Under each, the released clauses are read all False and
+    all True; a marker's answer rises with its clauses, so agreeing at those
+    two extremes means agreeing at every reading between them, the target's
+    own included.  Clauses that are neither free nor released keep the text
+    they had, and so keep the answer they gave the resolve.
+    """
+    for combination in itertools.product((False, True), repeat=len(free)):
+        fixed = dict(zip(free, combination, strict=True))
+        low = _substituted(
+            declaring, text, atoms, {**fixed, **dict.fromkeys(released, False)}
+        )
+        high = _substituted(
+            declaring, text, atoms, {**fixed, **dict.fromkeys(released, True)}
+        )
+        if Marker(low).evaluate(declaring.environment) != Marker(high).evaluate(
+            declaring.environment
+        ):
+            return False
+    return True
+
+
+def _substituted(
+    declaring: _Declaring,
+    text: str,
+    atoms: Sequence[re.Match[str]],
+    readings: Mapping[int, bool],
+) -> str:
+    """Return ``text`` with each clause in ``readings`` forced to its reading."""
+    pieces: list[str] = []
+    end = 0
+    for index, atom in enumerate(atoms):
+        if index not in readings:
+            continue
+        pieces.append(text[end : atom.start()])
+        pieces.append(declaring.constant(value=readings[index]))
+        end = atom.end()
+    pieces.append(text[end:])
+    return "".join(pieces)
+
+
+def _clause_variables(atom: re.Match[str]) -> frozenset[str]:
+    """Return the environment variables one ``lhs op rhs`` clause reads."""
+    return frozenset(
+        operand for operand in atom.group("lhs", "rhs") if not operand.startswith('"')
+    )
+
+
+def _clause_parts(atom: re.Match[str]) -> tuple[str, str, str]:
+    """Return one clause's operands and its operator, whitespace normalized."""
+    lhs, op, rhs = atom.group("lhs", "op", "rhs")
+    return lhs, " ".join(op.split()), rhs
 
 
 def _declared_clause(
-    lhs: str, op: str, rhs: str, environment: Mapping[str, str], variable: str
+    lhs: str, op: str, rhs: str, declaring: _Declaring, variable: str
 ) -> str | None:
     """Return the clause declaring how ``lhs op rhs`` read, or None.
 
@@ -351,12 +505,12 @@ def _declared_clause(
         # A comparison against another variable states nothing about this one.
         return None
     clause = f"{lhs} {op} {rhs}"
-    if Marker(clause).evaluate(environment):
+    if Marker(clause).evaluate(declaring.environment):
         return clause
     if op not in _COMPLEMENT_OPERATOR:
         return None
     complement = f"{lhs} {_COMPLEMENT_OPERATOR[op]} {rhs}"
-    if not Marker(complement).evaluate(environment):
+    if not Marker(complement).evaluate(declaring.environment):
         return None
     return complement
 
