@@ -127,6 +127,17 @@ def _without_userinfo(url: str) -> str:
     return urlunsplit(parts._replace(netloc=host))
 
 
+def _repo_path(inner_url: str) -> str:
+    """Return the path of ``inner_url`` with any trailing ``@<ref>`` dropped.
+
+    The ref is whatever follows the last ``@`` of the path component, the
+    same split :class:`nab_index.vcs.VcsRequest` makes at clone time.  An
+    empty result means the URL names no repo.
+    """
+    path = urlsplit(inner_url).path
+    return path.rpartition("@")[0] if "@" in path else path
+
+
 _REPO_BOUNDARY_CHARS: frozenset[str] = frozenset({"/", "@", "#"})
 
 
@@ -218,6 +229,32 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
                 f'\n    note: "{scheme}" is unauthenticated;'
                 " consider an https/ssh variant."
             )
+        raise UnsupportedVcsError(msg)
+
+    try:
+        repo_path = _repo_path(inner_url)
+    except ValueError:
+        # urlsplit raises on an authority it cannot parse (an unclosed IPv6
+        # bracket), which ingestion reports as a refusal, not a traceback.
+        msg = (
+            "refusing malformed VCS URL\n"
+            f"    {url}\n"
+            "    reason: the URL does not parse."
+        )
+        raise UnsupportedVcsError(msg) from None
+
+    # Without a repo path there is nothing to clone, and an appended pin's
+    # "@" lands in the netloc instead of the path, where urlsplit reads
+    # "host@<sha>" as userinfo "host" and host "<sha>".  Requiring a path
+    # leaves the checks below a real host and a real repo to look at.
+    if not repo_path.strip("/"):
+        msg = (
+            "refusing VCS URL that names no repository\n"
+            f"    {url}\n"
+            "    reason: the URL has no repository path.\n"
+            "    note: everything after the final @ is the ref, so a repo URL\n"
+            "          looks like git+https://host/org/repo.git@<ref>."
+        )
         raise UnsupportedVcsError(msg)
 
     # An empty allowed-repos denies every repo (deny-all), matching

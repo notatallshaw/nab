@@ -43,6 +43,11 @@ Three layers, each AND-checked:
    commit SHA after `@`.  Branch and tag references are rejected
    because they are mutable.
 
+Everything after the final `@` is the ref, so the URL has to name a
+repository ahead of it: `git+https://github.com` and
+`git+https://github.com@<sha>` are both refused;
+`git+https://github.com/myorg/pkg@<sha>` is not.
+
 ## Pinned VCS sources
 
 The supported entry point is `[[tool.nab.vcs-sources]]`:
