@@ -1033,6 +1033,64 @@ class TestNonJsonListingBody:
         assert body == LISTING_BYTES
 
 
+class TestNonUtf8ListingBody:
+    """A 200 body that is not decodable text must raise a clean error, not crash.
+
+    ``json.loads`` on non-UTF-8 bytes raises :class:`UnicodeDecodeError`,
+    not :class:`json.JSONDecodeError`, so it has to be caught too.
+    """
+
+    _LATIN1_BODY = '{"files": [], "meta": {"author": "François"}}'.encode("latin-1")
+
+    def test_cold_non_utf8_body_raises_http_error_and_skips_cache(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(self._LATIN1_BODY, status=200)])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("foo")
+            finally:
+                await client.aclose()
+
+        with pytest.raises(
+            MalformedSimpleResponseError, match="malformed Simple-API"
+        ) as caught:
+            asyncio.run(go())
+        assert isinstance(caught.value, HttpError)
+        assert cache.get_simple("foo") is None
+
+    def test_revalidate_non_utf8_body_preserves_good_cache(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=1, etag="old"),
+        )
+        transport = _FakeTransport([_FakeResponse(self._LATIN1_BODY, status=200)])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        with pytest.raises(
+            MalformedSimpleResponseError, match="malformed Simple-API"
+        ) as caught:
+            asyncio.run(go())
+        assert isinstance(caught.value, HttpError)
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        body, _ = cached
+        assert body == LISTING_BYTES
+
+
 class TestGetMetadataText:
     def test_cold_cache_fetches_and_stores(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
