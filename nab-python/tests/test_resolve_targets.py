@@ -19,6 +19,7 @@ import pytest
 
 from nab_index.client import WheelFile
 from nab_python import resolve as resolve_mod
+from nab_python._provider import listing as listing_mod
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
@@ -46,9 +47,11 @@ from nab_python.lockfile import (
 from nab_python.provider import (
     ArchiveSource,
     BuildPolicy,
+    DistFile,
     DistPolicy,
     LocalSource,
     MissingExtraError,
+    Provider,
     ResolutionStrategy,
     UnsupportedSdistError,
     UnsupportedVcsError,
@@ -78,6 +81,7 @@ from nab_python.target import Matrix, ResolveTarget
 from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 
@@ -1505,3 +1509,122 @@ class TestArchiveSourceAcrossTargets:
         error = result.target_results[0].error
         assert error is not None
         assert "foo 1.0 requires Python" in str(error)
+
+
+class TestSharedListingFilter:
+    """The base listing filter is computed once per (package, Python)."""
+
+    def _wheel(
+        self,
+        version: str,
+        *,
+        requires_python: str | None = None,
+        tag: str = "py3-none-any",
+    ) -> WheelFile:
+        return WheelFile(
+            filename=f"pkg-{version}-{tag}.whl",
+            url=f"https://example.com/pkg-{version}.whl",
+            version=version,
+            requires_python=requires_python,
+            has_metadata=True,
+            upload_time=None,
+            hashes=(("sha256", "a" * 64),),
+        )
+
+    def _coordinator(self, wheels: list[WheelFile]) -> MagicMock:
+        return _make_coordinator({"pkg": wheels})
+
+    def _targets(self, python: str) -> list[ResolveTarget]:
+        return Matrix(
+            python=python,
+            platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
+        ).expand()
+
+    def _count_base_filters(self) -> tuple[list[str], object]:
+        calls: list[str] = []
+        real = listing_mod._filter_base
+
+        def counting(
+            provider: Provider, normalized: str, files: Sequence[WheelFile]
+        ) -> list[tuple[Version, DistFile]]:
+            calls.append(f"{normalized}@{provider.python_version}")
+            return real(provider, normalized, files)
+
+        return calls, counting
+
+    def test_platform_targets_share_one_base_filter(self) -> None:
+        """Targets differing only by platform reuse the base filter result."""
+        wheels = [self._wheel("1.0"), self._wheel("2.0")]
+        calls, counting = self._count_base_filters()
+
+        with patch.object(listing_mod, "_filter_base", counting):
+            result = resolve_with_coordinator(
+                self._coordinator(wheels),
+                self._targets("==3.11"),
+                _reqs("pkg"),
+                config=_no_build(),
+            )
+
+        assert result.success
+        assert len(result.target_results) == 2
+        assert calls == ["pkg@3.11.0"]
+
+    def test_shared_filter_runs_before_the_wheel_tag_pass(self) -> None:
+        """Only the pre-tag list is shared: a linux-only wheel stays off Windows."""
+        wheels = [
+            self._wheel("1.0"),
+            self._wheel("2.0", tag="cp311-cp311-manylinux_2_17_x86_64"),
+        ]
+        calls, counting = self._count_base_filters()
+
+        with patch.object(listing_mod, "_filter_base", counting):
+            result = resolve_with_coordinator(
+                self._coordinator(wheels),
+                self._targets("==3.11"),
+                _reqs("pkg"),
+                config=_no_build(),
+            )
+
+        assert result.success
+        assert calls == ["pkg@3.11.0"]
+        pinned = {
+            tr.target.platform_id: str(tr.pins["pkg"]) for tr in result.target_results
+        }
+        assert pinned == {"linux_x86_64": "2.0", "windows_amd64": "1.0"}
+
+    def test_each_python_filters_the_listing_once(self) -> None:
+        """The memo is keyed by Python: a Requires-Python bound still applies."""
+        wheels = [self._wheel("1.0"), self._wheel("2.0", requires_python=">=3.12")]
+        calls, counting = self._count_base_filters()
+
+        with patch.object(listing_mod, "_filter_base", counting):
+            result = resolve_with_coordinator(
+                self._coordinator(wheels),
+                self._targets(">=3.11,<3.13"),
+                _reqs("pkg"),
+                config=_no_build(),
+                align_across_targets=False,
+            )
+
+        assert result.success
+        assert len(result.target_results) == 4
+        assert sorted(calls) == ["pkg@3.11.0", "pkg@3.12.0"]
+        pinned = {
+            tr.target.python_version: str(tr.pins["pkg"])
+            for tr in result.target_results
+        }
+        assert pinned == {"3.11": "1.0", "3.12": "2.0"}
+
+    def test_reused_filter_still_counts_distributions_per_target(self) -> None:
+        """Every target reports the files it saw, memo hit or not."""
+        wheels = [self._wheel("1.0"), self._wheel("2.0")]
+
+        result = resolve_with_coordinator(
+            self._coordinator(wheels),
+            self._targets("==3.11"),
+            _reqs("pkg"),
+            config=_no_build(),
+        )
+
+        assert result.success
+        assert [tr.distributions_seen for tr in result.target_results] == [2, 2]

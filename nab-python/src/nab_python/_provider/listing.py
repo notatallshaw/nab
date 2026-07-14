@@ -8,6 +8,7 @@ already-cached metadata where possible.
 from __future__ import annotations
 
 from datetime import datetime
+from functools import partial
 from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
@@ -297,6 +298,49 @@ def filter_distributions(
     so the resolver can read whichever source is cheapest at the
     chosen version.  The wheels are dropped later, at lock
     construction time, so only the sdist ends up pinned.
+
+    The filter runs in two passes.  :func:`base_distributions` applies
+    everything that has no platform axis (dist policy, Requires-Python,
+    upload cutoff, sort order), and is memoised per (package, Python)
+    across the targets of one resolve when the provider carries a
+    :class:`~nab_python.provider.ListingFilterCache`.  The wheel-tag
+    pass then runs per target on top of that shared list, so a
+    linux-only wheel still stays off the Windows target.
+    """
+    base = base_distributions(provider, normalized, files)
+    return _apply_wheel_tags(provider, normalized, base)
+
+
+def base_distributions(
+    provider: Provider,
+    normalized: str,
+    files: Sequence[WheelFile | SdistFile],
+) -> list[tuple[Version, DistFile]]:
+    """Return the pre-tag filter result, through the shared memo when there is one."""
+    cache = provider.listing_filter_cache
+    if cache is None:
+        return _filter_base(provider, normalized, files)
+
+    return cache.filtered(
+        normalized,
+        provider.python_version,
+        provider.stats,
+        partial(_filter_base, provider, normalized, files),
+    )
+
+
+def _filter_base(
+    provider: Provider,
+    normalized: str,
+    files: Sequence[WheelFile | SdistFile],
+) -> list[tuple[Version, DistFile]]:
+    """Filter and sort the listing by everything but the target's wheel tags.
+
+    Reads only the listing, the resolve-wide policy config, and the
+    target Python, so two targets that differ only by platform get the
+    same list back.  Not canonicalized: the tag pass drops artifacts,
+    and the representative version of an equal group is chosen from
+    what survives it.
     """
     # Late import: ``provider`` imports this module at module load.
     from ..provider import DistPolicy
@@ -308,12 +352,8 @@ def filter_distributions(
         provider.uploaded_prior_to is not None or provider.overrides_set_time
     )
 
-    # Bound once outside the loop: this runs for every wheel of every package.
-    tags = provider.wheel_tags
-
     result: list[tuple[Version, DistFile]] = []
     sort_with_wheel_first = False
-    tag_rejected_versions: set[Version] = set()
     for dist in files:
         provider.stats.distributions_seen += 1
         if isinstance(dist, WheelFile):
@@ -347,12 +387,39 @@ def filter_distributions(
             time_filter_active=time_filter_active,
         ):
             continue
-        if tags is not None and excluded_by_wheel_tags(
-            provider, normalized, dist, tags
-        ):
+
+        result.append((version, dist))
+
+    if sort_with_wheel_first:
+        result.sort(
+            key=lambda pair: (pair[0], isinstance(pair[1], WheelFile)),
+            reverse=True,
+        )
+    else:
+        result.sort(key=lambda pair: pair[0], reverse=True)
+    return result
+
+
+def _apply_wheel_tags(
+    provider: Provider,
+    normalized: str,
+    base: list[tuple[Version, DistFile]],
+) -> list[tuple[Version, DistFile]]:
+    """Drop the wheels this target cannot install, and the versions they leave empty.
+
+    Runs per target: the tags are the one axis of the filter the targets
+    of a matrix do not share.
+    """
+    tags = provider.wheel_tags
+    if tags is None:
+        return _canonicalize_equal_versions(base)
+
+    result: list[tuple[Version, DistFile]] = []
+    tag_rejected_versions: set[Version] = set()
+    for version, dist in base:
+        if excluded_by_wheel_tags(provider, normalized, dist, tags):
             tag_rejected_versions.add(version)
             continue
-
         result.append((version, dist))
 
     if tag_rejected_versions:
@@ -363,13 +430,6 @@ def filter_distributions(
             tag_rejected_versions - kept
         )
 
-    if sort_with_wheel_first:
-        result.sort(
-            key=lambda pair: (pair[0], isinstance(pair[1], WheelFile)),
-            reverse=True,
-        )
-    else:
-        result.sort(key=lambda pair: pair[0], reverse=True)
     return _canonicalize_equal_versions(result)
 
 

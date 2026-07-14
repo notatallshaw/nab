@@ -57,6 +57,7 @@ from .config import (
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, TargetLock, build_target_lock
 from .provider import (
+    ListingFilterCache,
     Provider,
     ResolutionStrategy,
     join_extra,
@@ -473,6 +474,9 @@ class _EngineSettings:
     cache_dir: Path | None
     align: bool
     resolution: ResolutionStrategy
+    # Shared by every target of every pass: the coordinator and the policy
+    # config the pre-tag half of the listing filter reads are both fixed here.
+    listing_filter_cache: ListingFilterCache = field(default_factory=ListingFilterCache)
 
 
 @dataclass(frozen=True, slots=True)
@@ -568,6 +572,7 @@ def _resolve_one_target(
             name for name in resolver_requirements if split_extra(name)[1] is None
         ),
         preferences=dict(preferences),
+        listing_filter_cache=settings.listing_filter_cache,
     )
     resolver: Resolver[str, Version] = Resolver(
         provider, range_type=VersionRange, root_version="0"
