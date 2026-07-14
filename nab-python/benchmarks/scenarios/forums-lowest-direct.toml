@@ -370,6 +370,9 @@ requirements = ["jupyter-server", "jupyter-core"]
 # https://stackoverflow.com/q/77664987
 # teachable-machine pulls tensorflow with no upper bound on Python 3.12.
 resolution = "lowest-direct"
+# Impossible by design: tensorflow's first cp312 wheel is 2.16 (March 2024),
+# after this cutoff, so every teachable-machine version is walked and none
+# can be installed.  That walk is the pip report this reproduces.
 python_version = "3.12"
 platform_system = "Linux"
 datetime = "2023-12-15 08:09:01"
@@ -1020,6 +1023,8 @@ requirements = ["django-mailgun"]
 # https://stackoverflow.com/q/77252186
 # Paddle stack (without git dep): paddlepaddle + paddleocr + paddlenlp
 resolution = "lowest-direct"
+# Impossible by design: paddlepaddle ships no cp310 wheel and no sdist
+# before this cutoff, which is the install failure the question reports.
 python_version = "3.10"
 platform_system = "Linux"
 datetime = "2023-10-08 14:00:00"

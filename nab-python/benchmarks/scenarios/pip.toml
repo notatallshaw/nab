@@ -170,6 +170,8 @@ requirements = ["trustllm"]
 [metagpt]
 # https://github.com/FoundationAgents/MetaGPT/issues/1825
 # ResolutionImpossible (not too-deep), kept as a regression check.
+# Impossible by design: metagpt pins faiss-cpu==1.7.4, whose newest wheel is
+# cp311, and it publishes no sdist, so 3.12 cannot install it.
 python_version = "3.12"
 platform_system = "Linux"
 datetime = "2025-05-11 06:38:41"
@@ -1591,7 +1593,9 @@ requirements = [
 # https://github.com/pypa/pip/issues/12275
 # Re-run of pip-12275-old-pypi-date but in 2023. Useful as a historical
 # point: even in 2023 a 2019 PyPI cutoff sees heavy backtracking.
-python_version = "3.9"
+# Python 3.9 did not exist at this cutoff (released 2020-10-05), so no
+# cp39 wheel could: 3.8 is the interpreter of the day.
+python_version = "3.8"
 platform_system = "Linux"
 datetime = "2020-06-01 00:00:00"
 requirements = [
