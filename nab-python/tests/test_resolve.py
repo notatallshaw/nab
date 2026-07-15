@@ -3401,6 +3401,58 @@ class TestLockDeclaresItsEnvironment:
         assert "platform_release" not in str(environment)
         assert "platform_release" in caplog.text
 
+    def test_pypy_implementation_version_marker_warns_and_stays_undeclared(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """PyPy reports 7.3.x there, not its Python level, so the synthetic
+        value cannot be bounded; the lock leaves the axis open and warns.
+        """
+        body = self._PYPROJECT.replace(
+            'platform = "linux_x86_64"\n',
+            'platform = "linux_x86_64"\nimplementation = "pypy"\n',
+        )
+        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+            lock_input = self._resolve(
+                tmp_path,
+                body,
+                self._coordinator(
+                    'Requires-Dist: bar ; implementation_version >= "7.3"\n'
+                ),
+            )
+        (environment,) = lock_input.environments
+        assert "implementation_version" not in str(environment)
+        assert "bar" not in _locked(lock_input)
+        assert "implementation_version" in caplog.text
+        real_pypy = {
+            **_PY312_ENV,
+            "implementation_name": "pypy",
+            "platform_python_implementation": "PyPy",
+            "implementation_version": "7.3.17",
+            "python_full_version": "3.12.9",
+        }
+        assert Marker(str(environment)).evaluate(real_pypy)
+
+    def test_a_pypy_target_without_the_axis_declares_and_does_not_warn(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A non-CPython resolve that never reads implementation_version keeps
+        its ordinary declaration and raises no axis warning.
+        """
+        body = self._PYPROJECT.replace(
+            'platform = "linux_x86_64"\n',
+            'platform = "linux_x86_64"\nimplementation = "pypy"\n',
+        )
+        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+            lock_input = self._resolve(
+                tmp_path,
+                body,
+                self._coordinator('Requires-Dist: bar ; sys_platform == "win32"\n'),
+            )
+        (environment,) = lock_input.environments
+        assert 'sys_platform == "linux"' in str(environment)
+        assert "bar" not in _locked(lock_input)
+        assert "implementation_version" not in caplog.text
+
     def test_a_full_version_marker_declares_how_it_read_not_the_micro(
         self, tmp_path: Path
     ) -> None:

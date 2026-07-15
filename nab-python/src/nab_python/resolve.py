@@ -443,7 +443,10 @@ def _declared_environments(
     A marker on an axis the lock cannot bound (see
     :data:`~nab_python.target.UNBOUNDABLE_MARKER_VARIABLES`) is reported:
     the lock stays open on it, so an installer whose kernel differs will
-    still accept the lock, with the dep that marker gated missing.
+    still accept the lock, with the dep that marker gated missing.  A marker
+    on ``implementation_version`` under a non-CPython target is reported the
+    same way (see :func:`~nab_python.target.unboundable_variables`): the
+    value there is synthetic, so the lock leaves the axis open.
     """
     variables: set[str] = set()
     for markers in consulted.values():
@@ -459,6 +462,22 @@ def _declared_environments(
             " miss the dependencies that marker gates.",
             ", ".join(unboundable),
         )
+    for target in declaring:
+        if target.implementation == "cpython":
+            continue
+        consulted_names: set[str] = set()
+        for marker in consulted[env_signature(target)]:
+            consulted_names |= marker_variables(str(marker))
+        if "implementation_version" in consulted_names:
+            _logger.warning(
+                "A marker in this resolve consults implementation_version on a"
+                " non-CPython target; the value nab uses there is the Python"
+                " level, not the interpreter's release, so the lockfile leaves"
+                " that axis open and an installer whose value differs will"
+                " still accept this lock and miss the dependencies that marker"
+                " gates."
+            )
+            break
     return [
         Marker(environment_declaration(target, consulted[env_signature(target)]))
         for target in declaring
