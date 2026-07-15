@@ -151,7 +151,10 @@ puts `implementation_name` on every tuple's marker and on the
 `(python, platform)` point stay mutually exclusive, and a PyPy-only
 lock refuses CPython. PyPy's `implementation_version` is modelled as
 the Python level, not PyPy's own release, so the rare marker comparing
-`implementation_version` against a PyPy version misevaluates.
+`implementation_version` against a PyPy version misevaluates during the
+resolve. The lockfile does not carry that synthetic value: a non-CPython
+`environments` entry leaves `implementation_version` open, so a real PyPy
+still accepts the lock (a dep gated on the axis may be missed at install).
 
 ## Trade-offs versus marker-fork PubGrub
 
