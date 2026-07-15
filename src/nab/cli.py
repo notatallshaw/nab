@@ -502,7 +502,7 @@ def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg
     except ResolutionError as e:
         sys.stderr.write(f"Resolution failed: {e}\n")
         sys.exit(1)
-    except UnsupportedVcsError as e:
+    except (UnsupportedVcsError, MissingExtraError) as e:
         sys.stderr.write(f"{failure_prefix}: {e}\n")
         sys.exit(1)
     except InvalidUploadTimeError as e:
