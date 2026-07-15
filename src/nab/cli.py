@@ -62,6 +62,7 @@ from nab_python.lockfile import (
 )
 from nab_python.provider import (
     InvalidUploadTimeError,
+    MetadataError,
     MissingExtraError,
     UnsupportedVcsError,
 )
@@ -520,7 +521,7 @@ def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg
     except (MissingExtraError, LookupError) as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
-    except (MissingHashError, MissingSdistError) as e:
+    except (MissingHashError, MissingSdistError, MetadataError) as e:
         sys.stderr.write(f"{failure_prefix}: {e}\n")
         sys.exit(1)
     except NotImplementedError as e:
