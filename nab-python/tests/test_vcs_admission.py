@@ -447,7 +447,7 @@ class TestAdmitVcsUrlRequirePin:
 
     def test_sha_in_authority_refused_when_pin_required(self) -> None:
         """The clone parser sees no ref here, so admission must refuse."""
-        with pytest.raises(UnsupportedVcsError, match="vcs.require-pin"):
+        with pytest.raises(UnsupportedVcsError, match="names no repository"):
             admit_vcs_url(
                 f"git+https://github.com@{_FORTY}",
                 _allow_https(),
@@ -507,3 +507,185 @@ class TestAdmitVcsUrlNonVcsRefusal:
                 "bzr+https://bzr.example.com/r",
                 _allow_https(),
             )
+
+
+class TestAdmitVcsUrlRepoPath:
+    def test_pathless_url_refused(self) -> None:
+        """A URL with no path names no repository, so it is refused."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://",),
+            require_pin=False,
+        )
+        with pytest.raises(UnsupportedVcsError, match="names no repository"):
+            admit_vcs_url("git+https://github.com", config)
+
+    def test_pathless_url_with_login_refused(self) -> None:
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+ssh"}),
+            allowed_repos=("ssh://",),
+            require_pin=False,
+        )
+        with pytest.raises(UnsupportedVcsError, match="names no repository"):
+            admit_vcs_url("git+ssh://git@github.com", config)
+
+    def test_pathless_url_with_sha_appended_refused(self) -> None:
+        """The ``@<sha>`` here is userinfo, not a ref: still no repository."""
+        with pytest.raises(UnsupportedVcsError, match="names no repository"):
+            admit_vcs_url(f"git+https://github.com@{_FORTY}", _allow_https())
+
+    def test_root_path_only_refused(self) -> None:
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://",),
+            require_pin=False,
+        )
+        with pytest.raises(UnsupportedVcsError, match="names no repository"):
+            admit_vcs_url("git+https://github.com/", config)
+
+    def test_ref_only_path_refused(self) -> None:
+        """Everything after the final ``@`` is the ref, leaving no repo path."""
+        with pytest.raises(UnsupportedVcsError, match="names no repository"):
+            admit_vcs_url(f"git+https://github.com/@{_FORTY}", _allow_https())
+
+    def test_repo_path_with_ref_admitted(self) -> None:
+        scheme = admit_vcs_url(
+            f"git+https://github.com/foo/bar.git@{_FORTY}",
+            _allow_https(),
+        )
+        assert scheme == "git+https"
+
+
+class TestPinAppendMonotonicity:
+    """Appending a pin must never turn an admit into a refuse."""
+
+    URLS = (
+        "git+https://github.com",
+        "git+https://github.com/",
+        "git+https://github.com/foo",
+        "git+https://github.com/foo/bar.git",
+        "git+https://github.com/foo/bar.git@main",
+        "git+https://user:pass@github.com/foo/bar.git",
+    )
+
+    def _config(self, *, require_pin: bool) -> VcsConfig:
+        return VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("",),
+            require_pin=require_pin,
+        )
+
+    def _admits(self, url: str, config: VcsConfig) -> bool:
+        try:
+            admit_vcs_url(url, config)
+        except UnsupportedVcsError:
+            return False
+        return True
+
+    @pytest.mark.parametrize("url", URLS)
+    def test_pin_append_never_turns_admit_into_refuse(self, url: str) -> None:
+        if not self._admits(url, self._config(require_pin=False)):
+            return
+        assert self._admits(f"{url}@{_FORTY}", self._config(require_pin=True))
+
+
+class TestAdmitVcsUrlUserinfoPosition:
+    def test_allowed_prefix_in_userinfo_position_refused(self) -> None:
+        """An allowed host sitting in the userinfo is not the host cloned from."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com",),
+            require_pin=False,
+        )
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url("git+https://github.com@elsewhere.example/foo", config)
+
+
+class TestAdmitVcsUrlMalformed:
+    def test_unparseable_authority_refused(self) -> None:
+        """An unclosed IPv6 bracket is refused, not raised through."""
+        with pytest.raises(UnsupportedVcsError, match="does not parse"):
+            admit_vcs_url("git+https://[/org/repo", _allow_https())
+
+    def test_unparseable_authority_refused_with_empty_allowed_repos(self) -> None:
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=(),
+        )
+        with pytest.raises(UnsupportedVcsError, match="does not parse"):
+            admit_vcs_url("git+https://[/org/repo", config)
+
+
+class TestAdmitVcsUrlRealWorldShapes:
+    """Shapes a user actually writes still admit."""
+
+    def test_ssh_login_unpinned(self) -> None:
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+ssh"}),
+            allowed_repos=("ssh://github.com/org",),
+            require_pin=False,
+        )
+        assert admit_vcs_url("git+ssh://git@github.com/org/repo", config) == "git+ssh"
+
+    def test_ssh_login_with_pin(self) -> None:
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+ssh"}),
+            allowed_repos=("ssh://git@github.com/org/repo.git",),
+        )
+        scheme = admit_vcs_url(
+            f"git+ssh://git@github.com/org/repo.git@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+ssh"
+
+    def test_port_and_fragment_with_pin(self) -> None:
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com:8443/org",),
+        )
+        scheme = admit_vcs_url(
+            f"git+https://github.com:8443/org/repo.git@{_FORTY}#subdirectory=pkg",
+            config,
+        )
+        assert scheme == "git+https"
+
+    def test_repo_path_containing_at_sign_with_pin(self) -> None:
+        """Only the final ``@`` is the ref, so an ``@`` in the path survives."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://example.org/org",),
+        )
+        scheme = admit_vcs_url(
+            f"git+https://example.org/org/re@po@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+https"
+
+    def test_branch_ref_admitted_when_pin_not_required(self) -> None:
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/org",),
+            require_pin=False,
+        )
+        scheme = admit_vcs_url("git+https://github.com/org/repo@main", config)
+        assert scheme == "git+https"
+
+    def test_file_url_with_pin(self) -> None:
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+file"}),
+            allowed_repos=("file:///srv/repos",),
+        )
+        scheme = admit_vcs_url(f"git+file:///srv/repos/pkg@{_FORTY}", config)
+        assert scheme == "git+file"

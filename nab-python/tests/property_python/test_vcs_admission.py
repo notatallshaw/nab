@@ -10,6 +10,9 @@ Invariants:
 * fragment irrelevance: appending a ``#fragment`` never changes the
   decision (``has_full_commit_sha`` strips fragments; prefix checks
   are on the head of the URL);
+* repo path required: a URL whose path names no repository (nothing
+  before the final ``@``) is refused, so the ref of an appended pin
+  can never land in the authority;
 * pin monotonicity: a URL admitted under ``require_pin=False`` is
   admitted under ``require_pin=True`` once ``@<40-hex-sha>`` is
   appended;
@@ -167,7 +170,12 @@ def _oracle(url: str, config: VcsConfig) -> str:
         return "refuse"
     if scheme not in config.allowed_schemes:
         return "refuse"
-    inner = _drop_login(url[len("git+") :])
+    inner = url[len("git+") :]
+    path = urlsplit(inner).path
+    repo_path = path.rpartition("@")[0] if "@" in path else path
+    if not repo_path.strip("/"):
+        return "refuse"
+    inner = _drop_login(inner)
     if not any(_prefix_under_repo(inner, _drop_login(p)) for p in config.allowed_repos):
         return "refuse"
     if config.require_pin:
