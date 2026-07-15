@@ -377,6 +377,18 @@ class TestAbiIsHostIndependent:
 class TestTagsForTarget:
     """``TagSet.for_spec`` produces the full PEP 425 tag set."""
 
+    def test_python_315_emits_cp315_tags(self) -> None:
+        """A 3.15 target builds cp315 interpreter tags."""
+        spec = PlatformSpec("linux_x86_64")
+        members = TagSet.for_spec(python_version="3.15", spec=spec).members
+        assert any(t.interpreter == "cp315" for t in members)
+
+    def test_python_315_free_threaded_emits_cp315t_abi(self) -> None:
+        """A free-threaded 3.15 target builds the cp315t ABI tag."""
+        spec = PlatformSpec("linux_x86_64", free_threaded=True)
+        members = TagSet.for_spec(python_version="3.15", spec=spec).members
+        assert any(t.abi == "cp315t" for t in members)
+
     def test_linux_includes_manylinux_at_or_below_libc_version(self) -> None:
         """A glibc 2.17 target admits manylinux_2_17 and below."""
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
