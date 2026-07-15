@@ -128,13 +128,15 @@ class CachedAsyncSimpleClient:
     def _parse_listing(self, body: bytes, package: str) -> list[WheelFile | SdistFile]:
         """Parse a Simple-API listing body.
 
-        A non-JSON body raises the same
+        A body that is not valid JSON raises the same
         :class:`MalformedSimpleResponseError` as a valid-JSON body of the
-        wrong shape, not a raw :class:`json.JSONDecodeError`.
+        wrong shape, not a raw decode error. ``json.loads`` on non-UTF-8
+        bytes raises :class:`UnicodeDecodeError`, not
+        :class:`json.JSONDecodeError`, so both are caught.
         """
         try:
             data = json.loads(body)
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             msg = (
                 f"{self._index_url} served a malformed Simple-API response for "
                 f"{package!r}: body is not valid JSON"
