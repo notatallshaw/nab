@@ -199,7 +199,6 @@ def extract_metadata(
     source_dir: Path,
     *,
     config: NabProjectConfig | None = None,
-    python_version: str | None = None,
 ) -> WheelMetadata:
     """Extract metadata for a source directory.
 
@@ -229,8 +228,4 @@ def extract_metadata(
     # which we should not pay for in static-only callers.
     from ._build.runner import run_build_backend  # noqa: PLC0415
 
-    return run_build_backend(
-        source_dir,
-        config=config,
-        python_version=python_version,
-    )
+    return run_build_backend(source_dir, config=config)

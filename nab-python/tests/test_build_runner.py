@@ -814,6 +814,54 @@ class TestResolveAndDownload:
             with pytest.raises(BuildEnvError, match="sdist-only"):
                 env._resolve_and_download(wheel_dir)
 
+    def test_inner_resolve_runs_for_the_host(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The inner resolve gets no Python override.
+
+        The venv is built from the host interpreter, so a target
+        Python would pick wheels for another ABI and evaluate the
+        build requirements' markers against the wrong interpreter.
+        """
+        from nab_python.lockfile import TargetLock
+        from nab_python.resolve import ResolveResult, TargetResult
+        from nab_python.target import ResolveTarget
+
+        env = NabBuildEnv(requires=["foo"], config=NabProjectConfig())
+        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
+        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
+        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        target = ResolveTarget.for_host()
+        fake_result = ResolveResult(
+            targets=(target,),
+            target_results=[
+                TargetResult(
+                    target=target,
+                    success=True,
+                    pins={},
+                    lock=TargetLock(target=target, pins={}),
+                )
+            ],
+        )
+        captured: dict[str, object] = {}
+
+        def fake_resolve(
+            _path: Path, _transport: object, **kwargs: object
+        ) -> ResolveResult:
+            captured.update(kwargs)
+            return fake_result
+
+        monkeypatch.setattr("nab_python.resolve.resolve_for_targets", fake_resolve)
+        monkeypatch.setattr(
+            "nab_python._build.env.download_lock",
+            lambda *_a, **_k: MagicMock(written=[], skipped=[]),
+        )
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+
+        assert env._resolve_and_download(wheel_dir) == []
+        assert "python_version" not in captured
+
     def test_url_build_requirement_wrapped(self, tmp_path: Path) -> None:
         """A direct-URL build requirement the inner resolve refuses is
         wrapped as BuildEnvError, so the outer resolve skips the

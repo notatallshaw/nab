@@ -62,7 +62,6 @@ def run_build_backend(
     source_dir: Path,
     *,
     config: NabProjectConfig,
-    python_version: str | None = None,
 ) -> WheelMetadata:
     """Extract wheel metadata for ``source_dir`` via the build backend.
 
@@ -97,11 +96,7 @@ def run_build_backend(
     skip_prepare = _should_skip_prepare(backend, data)
 
     try:
-        with NabBuildEnv(
-            requires=list(requires),
-            config=config,
-            python_version=python_version,
-        ) as env:
+        with NabBuildEnv(requires=list(requires), config=config) as env:
             project = build.ProjectBuilder.from_isolated_env(
                 env,
                 source_dir=str(source_dir),
