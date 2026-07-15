@@ -115,10 +115,13 @@ class TestCliOverridesFold:
 
     def test_cli_mode_universal_requires_matrix(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
-        with pytest.raises(ConfigError, match=r"requires a \[tool.nab.matrix\]"):
+        with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(
                 path, discover_workspace=False, cli_overrides={"mode": "universal"}
             )
+        message = str(excinfo.value)
+        assert "[tool.nab.matrix]" in message
+        assert "there is no --project-matrix" in message
 
     def test_cli_mode_specific_shadows_declared_matrix(self, tmp_path: Path) -> None:
         path = write(
@@ -165,8 +168,11 @@ class TestMode:
 
     def test_universal_requires_matrix(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nmode = "universal"\n')
-        with pytest.raises(ConfigError, match="requires a \\[tool.nab.matrix\\]"):
+        with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(path)
+        message = str(excinfo.value)
+        assert "requires a [tool.nab.matrix]" in message
+        assert "--project-matrix" not in message
 
     def test_matrix_without_universal_mode_rejected(self, tmp_path: Path) -> None:
         path = write(
