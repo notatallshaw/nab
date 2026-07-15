@@ -37,12 +37,14 @@ from .client import (
     _parse_sdist_filename,
     _parse_wheel_filename,
 )
+from .transport import HttpError
 
 if TYPE_CHECKING:
     from typing_extensions import Self
 
 __all__ = [
     "LocalIndexClient",
+    "MalformedLocalListingError",
     "UnsupportedWheelError",
     "parse_file_url",
     "read_wheel_metadata",
@@ -55,6 +57,17 @@ class UnsupportedWheelError(Exception):
     Raised when a wheel carries more than one top-level ``.dist-info``
     directory, or a single one whose name does not canonicalise to the
     distribution named by the wheel's filename.
+    """
+
+
+class MalformedLocalListingError(HttpError):
+    """A local ``file://`` index's ``index.html`` is not a usable listing.
+
+    Subclasses :class:`~nab_index.transport.HttpError` so a broken local
+    listing fails through the same path as a remote index error rather
+    than surfacing a raw decode error.  Raising, rather than returning an
+    empty listing, keeps a malformed index from reading as an absent
+    package.
     """
 
 
@@ -147,8 +160,15 @@ def _scan_pep503_directory(
     index_html = package_dir / "index.html"
     if not index_html.exists():
         return []
+
+    try:
+        text = index_html.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        msg = f"{index_html} is not valid UTF-8: {exc}"
+        raise MalformedLocalListingError(msg) from exc
+
     parser = _Pep503Parser()
-    parser.feed(index_html.read_text(encoding="utf-8"))
+    parser.feed(text)
     files: list[WheelFile | SdistFile] = []
     for href, requires_python, has_metadata in parser.links:
         filename, file_url, local_path, hashes = _resolve_local_link(href, package_dir)

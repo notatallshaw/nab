@@ -14,12 +14,14 @@ import pytest
 from nab_index.client import SdistFile, WheelFile
 from nab_index.local_index import (
     LocalIndexClient,
+    MalformedLocalListingError,
     UnsupportedWheelError,
     _make_record,
     _read_sdist_requires_python,
     parse_file_url,
     read_wheel_metadata,
 )
+from nab_index.transport import HttpError
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Iterator
@@ -363,6 +365,20 @@ class TestPep503Directory:
         client = LocalIndexClient(tmp_path.as_uri())
         result = run(client.get_files("foo"))
         assert result == []
+
+    def test_non_utf8_index_html_raises_http_error(self, tmp_path: Path) -> None:
+        # A non-UTF-8 listing must raise, not return an empty list: an empty
+        # result would read as "package absent".
+        package_dir = tmp_path / "foo"
+        package_dir.mkdir()
+        (package_dir / "index.html").write_bytes(
+            b'<a href="foo-1.0-py3-none-any.whl">foo-1.0</a>\xff\xfe'
+        )
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(MalformedLocalListingError) as caught:
+            run(client.get_files("foo"))
+        assert isinstance(caught.value, HttpError)
+        assert "not valid UTF-8" in str(caught.value)
 
     def test_file_scheme_href(self, tmp_path: Path) -> None:
         # Uncommon but legal: a file:// scheme on the anchor
