@@ -10,7 +10,8 @@ single run with a `--project-<key>` flag.
 
 ```toml
 [tool.nab]
-# "specific" (default) or "universal" (experimental, opt-in).
+# "specific" (default) or "universal" (opt-in; its multi-target
+# lockfile format is experimental).
 mode = "specific"
 
 # PEP 508 constraint strings.  Bound versions but never pull packages
@@ -554,13 +555,13 @@ The URL is read by its own scheme, whatever the configured indexes use:
 a `file://` archive is read from disk, and any other archive is fetched
 over HTTP.
 
-## Universal mode (experimental)
+## Universal mode
 
 Universal resolution resolves one target per declared
 `(python, platform, implementation)` tuple, on the same engine a
 single-environment resolve uses, sharing one fetcher so metadata is
-fetched at most once per package.  Output and API are still subject to
-change.
+fetched at most once per package.  The multi-target lockfile format it
+produces is experimental and may change without notice.
 
 ```toml
 [tool.nab]

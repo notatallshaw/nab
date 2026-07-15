@@ -1,8 +1,9 @@
 # Universal resolution
 
 > [!WARNING]
-> Universal mode is experimental. The resolver loop and the PEP
-> 751 lockfile shape it produces are subject to change.
+> Universal mode runs the same resolver as a specific resolve. The
+> multi-target PEP 751 lockfile format it produces is experimental
+> and may change without notice.
 
 A specific resolve pins one version per package for one marker
 environment. A universal resolve produces a single artefact
@@ -85,7 +86,7 @@ nab lock --format requirements-without-hashes --output - pyproject.toml
 ```
 
 ```
-warning: mode = 'universal' is experimental; output format may change without notice
+warning: the multi-target ('universal') lockfile format is experimental and may change without notice
 # py311-linux_x86_64
 fastapi==0.115.2
 numpy==2.0.2
