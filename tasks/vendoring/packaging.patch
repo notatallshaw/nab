@@ -2087,7 +2087,7 @@ index 0000000..74930e7
 +    def __repr__(self) -> str:
 +        return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"
 diff --git a/nab-python/src/nab_python/_vendor/packaging/ranges.py b/nab-python/src/nab_python/_vendor/packaging/ranges.py
-index 8dd5e66..512cc2f 100644
+index 8dd5e66..fe25e19 100644
 --- a/nab-python/src/nab_python/_vendor/packaging/ranges.py
 +++ b/nab-python/src/nab_python/_vendor/packaging/ranges.py
 @@ -280,6 +280,85 @@ def _struct_admits(
@@ -2176,7 +2176,51 @@ index 8dd5e66..512cc2f 100644
  # Repr helpers:
  
  
-@@ -316,7 +395,8 @@ class VersionRange:
+@@ -311,12 +390,52 @@ def _format_intervals(intervals: Sequence[Interval]) -> str:
+     )
+ 
+ 
++def _display_bound_version(value: BoundaryVersion | Version) -> str:
++    """A bound's inner value for display, without the boundary-kind tag."""
++    if isinstance(value, BoundaryVersion):
++        return str(value.version)
++    return str(value)
++
++
++def _display_lower(bound: LowerBound) -> str:
++    """Open bracket plus lower value.
++
++    A boundary marker sits above a whole family of real versions: ``V`` and
++    its locals for AFTER_LOCALS, those plus its post releases for
++    AFTER_POSTS. A lower bound there renders the family with a wildcard
++    (``(2.0.post*`` for ``>2.0``); a bare ``(2.0`` would visually admit
++    ``2.0.post1``, which the range excludes.
++    """
++    if bound.version is None:
++        return "(-inf"
++    if isinstance(bound.version, BoundaryVersion):
++        suffix = ".post*" if bound.version.kind is BoundaryKind.AFTER_POSTS else "+*"
++        return f"({bound.version.version}{suffix}"
++    bracket = "[" if bound.inclusive else "("
++    return f"{bracket}{bound.version}"
++
++
++def _display_upper(bound: UpperBound) -> str:
++    if bound.version is None:
++        return "+inf)"
++    bracket = "]" if bound.inclusive else ")"
++    return f"{_display_bound_version(bound.version)}{bracket}"
++
++
++def _display_intervals(intervals: Sequence[Interval]) -> str:
++    return " | ".join(
++        f"{_display_lower(lower)}, {_display_upper(upper)}"
++        for lower, upper in intervals
++    )
++
++
+ class VersionRange:
+     """A set of :class:`~packaging.version.Version` values accepted by a
      :class:`~packaging.specifiers.SpecifierSet`.
  
      Construct via :meth:`~packaging.specifiers.SpecifierSet.to_range`, or with
@@ -2186,7 +2230,7 @@ index 8dd5e66..512cc2f 100644
      Compose with :meth:`intersection`, :meth:`union`, :meth:`complement`, and
      :meth:`difference` (or the ``&`` / ``|`` / ``~`` / ``-`` operators). Test
      membership with ``in`` or :meth:`contains`, filter an iterable with
-@@ -407,7 +487,8 @@ class VersionRange:
+@@ -407,7 +526,8 @@ class VersionRange:
          raise TypeError(
              "cannot create 'VersionRange' instances directly; use "
              "SpecifierSet.to_range(), VersionRange.full(), "
@@ -2196,7 +2240,7 @@ index 8dd5e66..512cc2f 100644
          )
  
      @classmethod
-@@ -599,6 +680,73 @@ class VersionRange:
+@@ -599,6 +719,73 @@ class VersionRange:
              prereleases_configured=prereleases,
          )
  
@@ -2270,7 +2314,7 @@ index 8dd5e66..512cc2f 100644
      def intersection(self, other: VersionRange) -> VersionRange:
          """Range containing exactly the versions in both self and other.
  
-@@ -1078,6 +1226,123 @@ class VersionRange:
+@@ -1078,6 +1265,123 @@ class VersionRange:
          if not found_final:
              yield from all_nonfinal
  
@@ -2394,3 +2438,36 @@ index 8dd5e66..512cc2f 100644
      @classmethod
      def _from_specifier_set(cls, specifier_set: SpecifierSet) -> VersionRange:
          """Build the range accepted by ``specifier_set``.
+@@ -1287,6 +1591,32 @@ class VersionRange:
+             )
+         )
+ 
++    def human_readable(self) -> str:
++        """The version set as a readable one-line expression.
++
++        Unlike :meth:`__repr__`, which is a debug representation, this drops the
++        ``<VersionRange ...>`` wrapper, the internal boundary-kind sentinels, and
++        the policy tail. A lower bound at a boundary marker renders as the
++        family of versions it excludes, never as a bare version that would
++        visually admit them.
++
++        >>> SpecifierSet("==9.0").to_range().human_readable()
++        '[9.0, 9.0]'
++        >>> SpecifierSet(">9.0").to_range().human_readable()
++        '(9.0.post*, +inf)'
++        >>> SpecifierSet(">=2.0,<1.0").to_range().human_readable()
++        '(empty)'
++        """
++        parts: list[str] = []
++        if self._bounds:
++            parts.append(_display_intervals(self._bounds))
++        if self._admit:
++            parts.append("{" + ", ".join(sorted(self._admit)) + "}")
++        body = " | ".join(parts) if parts else "(empty)"
++        if self._reject:
++            body = f"{body} \\ {{{', '.join(sorted(self._reject))}}}"
++        return body
++
+     def __repr__(self) -> str:
+         """Human-readable representation for debugging.
+ 

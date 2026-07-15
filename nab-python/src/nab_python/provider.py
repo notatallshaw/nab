@@ -2050,6 +2050,16 @@ class Provider:
             return VersionRange.full(admit_arbitrary=False)
         return constraint.snap_bounds(universe)
 
+    def format_range(self, constraint: RangeProtocol[Version]) -> str:
+        """Render ``constraint`` for a failure report.
+
+        The resolver drives this provider with ``VersionRange``, whose ``str``
+        is a debug repr; use its readable interval rendering instead.
+        """
+        if isinstance(constraint, VersionRange):
+            return constraint.human_readable()
+        return str(constraint)
+
     def get_dependencies(
         self, package: str, version: Version
     ) -> dict[str, VersionRange]:

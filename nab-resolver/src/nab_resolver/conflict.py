@@ -89,6 +89,7 @@ def conflict_resolution(
                 format_error(
                     current_incompatibility,
                     narrow=resolver.provider.narrow_for_display,
+                    format_range=getattr(resolver.provider, "format_range", str),
                 ),
                 incompatibility=current_incompatibility,
             )
@@ -150,6 +151,7 @@ def conflict_resolution(
                     format_error(
                         current_incompatibility,
                         narrow=resolver.provider.narrow_for_display,
+                        format_range=getattr(resolver.provider, "format_range", str),
                     ),
                     incompatibility=current_incompatibility,
                 )

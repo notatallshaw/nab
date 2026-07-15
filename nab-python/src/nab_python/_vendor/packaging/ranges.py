@@ -390,6 +390,45 @@ def _format_intervals(intervals: Sequence[Interval]) -> str:
     )
 
 
+def _display_bound_version(value: BoundaryVersion | Version) -> str:
+    """A bound's inner value for display, without the boundary-kind tag."""
+    if isinstance(value, BoundaryVersion):
+        return str(value.version)
+    return str(value)
+
+
+def _display_lower(bound: LowerBound) -> str:
+    """Open bracket plus lower value.
+
+    A boundary marker sits above a whole family of real versions: ``V`` and
+    its locals for AFTER_LOCALS, those plus its post releases for
+    AFTER_POSTS. A lower bound there renders the family with a wildcard
+    (``(2.0.post*`` for ``>2.0``); a bare ``(2.0`` would visually admit
+    ``2.0.post1``, which the range excludes.
+    """
+    if bound.version is None:
+        return "(-inf"
+    if isinstance(bound.version, BoundaryVersion):
+        suffix = ".post*" if bound.version.kind is BoundaryKind.AFTER_POSTS else "+*"
+        return f"({bound.version.version}{suffix}"
+    bracket = "[" if bound.inclusive else "("
+    return f"{bracket}{bound.version}"
+
+
+def _display_upper(bound: UpperBound) -> str:
+    if bound.version is None:
+        return "+inf)"
+    bracket = "]" if bound.inclusive else ")"
+    return f"{_display_bound_version(bound.version)}{bracket}"
+
+
+def _display_intervals(intervals: Sequence[Interval]) -> str:
+    return " | ".join(
+        f"{_display_lower(lower)}, {_display_upper(upper)}"
+        for lower, upper in intervals
+    )
+
+
 class VersionRange:
     """A set of :class:`~packaging.version.Version` values accepted by a
     :class:`~packaging.specifiers.SpecifierSet`.
@@ -1551,6 +1590,32 @@ class VersionRange:
                 self._pre_region,
             )
         )
+
+    def human_readable(self) -> str:
+        """The version set as a readable one-line expression.
+
+        Unlike :meth:`__repr__`, which is a debug representation, this drops the
+        ``<VersionRange ...>`` wrapper, the internal boundary-kind sentinels, and
+        the policy tail. A lower bound at a boundary marker renders as the
+        family of versions it excludes, never as a bare version that would
+        visually admit them.
+
+        >>> SpecifierSet("==9.0").to_range().human_readable()
+        '[9.0, 9.0]'
+        >>> SpecifierSet(">9.0").to_range().human_readable()
+        '(9.0.post*, +inf)'
+        >>> SpecifierSet(">=2.0,<1.0").to_range().human_readable()
+        '(empty)'
+        """
+        parts: list[str] = []
+        if self._bounds:
+            parts.append(_display_intervals(self._bounds))
+        if self._admit:
+            parts.append("{" + ", ".join(sorted(self._admit)) + "}")
+        body = " | ".join(parts) if parts else "(empty)"
+        if self._reject:
+            body = f"{body} \\ {{{', '.join(sorted(self._reject))}}}"
+        return body
 
     def __repr__(self) -> str:
         """Human-readable representation for debugging.

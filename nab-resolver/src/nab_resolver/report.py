@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .types import Incompatibility
 
     _NarrowFn: TypeAlias = Callable[[Any, Any], Any]  # (package, constraint) -> shown
+    _FormatFn: TypeAlias = Callable[[Any], str]  # constraint -> display string
 
 __all__ = [
     "explain_incompatibility",
@@ -32,6 +33,7 @@ __all__ = [
 def format_error(
     root_incompatibility: Incompatibility[Any, Any],
     narrow: _NarrowFn | None = None,
+    format_range: _FormatFn = str,
 ) -> str:
     """Format a human-readable error from an incompatibility derivation tree.
 
@@ -45,9 +47,13 @@ def format_error(
     ``NO_VERSIONS`` line a narrowing to the full range is ignored, since the
     range is what keeps the sentence true.  Narrowing happens at render time
     only, never mutating the derivation tree.
+
+    ``format_range`` renders a constraint as its display string.  It defaults
+    to ``str``, which is human-readable for the resolver's own ``Range`` but a
+    debug repr for some range types; the caller passes its own for those.
     """
     lines: list[str] = []
-    explain_incompatibility(root_incompatibility, lines, set(), narrow)
+    explain_incompatibility(root_incompatibility, lines, set(), narrow, format_range)
     return "\n".join(lines) if lines else "Resolution impossible"
 
 
@@ -67,6 +73,7 @@ def explain_incompatibility(
     lines: list[str],
     visited_ids: set[int],
     narrow: _NarrowFn | None = None,
+    format_range: _FormatFn = str,
 ) -> None:
     """Walk the cause tree appending one explanatory line per node.
 
@@ -87,9 +94,10 @@ def explain_incompatibility(
                 gap = unstated.pop(package, None)
                 if gap is not None:
                     lines.append(
-                        f"because no versions of {package} {gap} are available"
+                        f"because no versions of {package} "
+                        f"{format_range(gap)} are available"
                     )
-            lines.append(_render_line(node, narrow))
+            lines.append(_render_line(node, narrow, format_range))
             continue
 
         if id(node) in visited_ids:
@@ -236,6 +244,7 @@ def _narrowed_away(
 def _render_line(
     incompatibility: Incompatibility[Any, Any],
     narrow: _NarrowFn | None,
+    format_range: _FormatFn = str,
 ) -> str:
     """Render a single incompatibility as one explanation line."""
     cause = incompatibility.cause
@@ -257,23 +266,24 @@ def _render_line(
         if dep.is_positive():
             verb = "are" if plural else "is"
             return (
-                f"because {format_term(parent)} {verb} incompatible with "
-                f"{format_term(dep)}"
+                f"because {format_term(parent, format_range)} {verb} "
+                f"incompatible with {format_term(dep, format_range)}"
             )
         verb = "depend on" if plural else "depends on"
-        requirement = _format_requirement(dep.negate())
-        return f"because {format_term(parent)} {verb} {requirement}"
+        requirement = _format_requirement(dep.negate(), format_range)
+        return f"because {format_term(parent, format_range)} {verb} {requirement}"
 
     if cause is IncompatibilityCause.ROOT and len(terms) == _ATTRIBUTION_CLAUSE_TERMS:
         _, dep = terms
         positive_dep = dep if dep.is_positive() else dep.negate()
-        return f"because your project depends on {_format_requirement(positive_dep)}"
+        requirement = _format_requirement(positive_dep, format_range)
+        return f"because your project depends on {requirement}"
 
     if cause is IncompatibilityCause.CONSTRAINT:
         (term,) = terms
         return (
             f"because the user constrained "
-            f"{term.package} {incompatibility.constraint_range}"
+            f"{term.package} {format_range(incompatibility.constraint_range)}"
         )
 
     prefix = {
@@ -283,7 +293,7 @@ def _render_line(
         IncompatibilityCause.DERIVED: "so",
     }.get(cause, "")
     render = _format_requirement if cause in _REQUIREMENT_PREFIX_CAUSES else format_term
-    body = " and ".join(render(term) for term in terms)
+    body = " and ".join(render(term, format_range) for term in terms)
 
     if cause is IncompatibilityCause.NO_VERSIONS:
         return f"{prefix} {body} are available"
@@ -295,17 +305,17 @@ def _is_full(term: Term[Any, Any]) -> bool:
     return term.is_positive() and (~term.constraint).is_empty
 
 
-def _format_requirement(term: Term[Any, Any]) -> str:
+def _format_requirement(term: Term[Any, Any], format_range: _FormatFn = str) -> str:
     """Render a term in object position ("depends on b").
 
     A full term there is the package name alone.
     """
     if _is_full(term):
         return str(term.package)
-    return format_term(term)
+    return format_term(term, format_range)
 
 
-def format_term(term: Term[Any, Any]) -> str:
+def format_term(term: Term[Any, Any], format_range: _FormatFn = str) -> str:
     """Render a single term as ``[not ]package range``.
 
     A full term reads as "all versions of package"; :func:`_format_requirement`
@@ -314,7 +324,7 @@ def format_term(term: Term[Any, Any]) -> str:
     if _is_full(term):
         return f"all versions of {term.package}"
     sign = "" if term.is_positive() else "not "
-    return f"{sign}{term.package} {term.constraint}"
+    return f"{sign}{term.package} {format_range(term.constraint)}"
 
 
 def prior_cause(

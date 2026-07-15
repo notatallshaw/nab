@@ -33,6 +33,7 @@ from nab_python.provider import (
     VcsSource,
 )
 from nab_python.target import ResolveTarget
+from nab_resolver.ranges import Range
 from nab_resolver.resolver import ResolutionError, Resolver
 from nab_resolver.root import ROOT
 
@@ -584,7 +585,8 @@ class TestNarrowForDisplay:
         with pytest.raises(ResolutionError) as exc_info:
             resolver.resolve(dict(root_reqs))
 
-        expected = f"because no versions of a {root_reqs['a']} are available"
+        shown = provider.format_range(root_reqs["a"])
+        expected = f"because no versions of a {shown} are available"
         assert expected in str(exc_info.value).splitlines()
 
     def test_promoted_parent_reads_as_all_versions(self) -> None:
@@ -621,6 +623,46 @@ class TestNarrowForDisplay:
         assert provider.narrow_for_display("ghost", constraint) is constraint
         provider.narrow_for_display("p", VersionRange.full(admit_arbitrary=False))
         coordinator.request_listing.assert_not_called()
+
+
+class TestFormatRange:
+    def test_full_range_reads_as_interval(self) -> None:
+        provider = _listing_provider("p", ["1.0"])
+        assert provider.format_range(VersionRange.full(admit_arbitrary=False)) == (
+            "(-inf, +inf)"
+        )
+
+    def test_equality_dep_drops_boundary_sentinel(self) -> None:
+        provider = _listing_provider("p", ["1.0"])
+        rendered = provider.format_range(SpecifierSet("==9.0").to_range())
+        assert "<VersionRange" not in rendered
+        assert "AFTER_LOCALS" not in rendered
+        assert rendered == "[9.0, 9.0]"
+
+    def test_boundary_lower_bound_renders_excluded_family(self) -> None:
+        """``>2.0`` excludes 2.0's post releases, so its lower bound must
+        not render as a bare ``(2.0``, which reads as admitting them.
+        """
+        provider = _listing_provider("p", ["1.0"])
+        assert provider.format_range(SpecifierSet(">2.0").to_range()) == (
+            "(2.0.post*, +inf)"
+        )
+        assert provider.format_range(SpecifierSet("!=2.0").to_range()) == (
+            "(-inf, 2.0) | (2.0+*, +inf)"
+        )
+        assert provider.format_range(SpecifierSet(">2.0.post1").to_range()) == (
+            "(2.0.post1+*, +inf)"
+        )
+
+    def test_rejected_literal_renders_single_backslash(self) -> None:
+        provider = _listing_provider("p", ["1.0"])
+        rendered = provider.format_range(SpecifierSet("===1.0").to_range().complement())
+        assert rendered == "(-inf, +inf) \\ {1.0}"
+
+    def test_non_versionrange_falls_back_to_str(self) -> None:
+        provider = _listing_provider("p", ["1.0"])
+        constraint = Range.at_least(V("2"))
+        assert provider.format_range(constraint) == str(constraint)
 
 
 class TestPackagingProviderHooks:

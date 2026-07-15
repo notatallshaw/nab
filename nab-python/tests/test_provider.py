@@ -4154,6 +4154,53 @@ class TestDecisionLookAhead:
 
         assert "exceeded" not in str(exc_info.value)
 
+    def test_full_resolve_report_does_not_leak_versionrange_repr(self) -> None:
+        """The failure report renders readable ranges, not the debug repr.
+
+        The report drives the real solver with ``range_type=VersionRange``,
+        whose ``str`` is the ``<VersionRange '...'>`` debug repr and exposes the
+        internal ``AFTER_LOCALS`` boundary sentinel for a ``==V`` dependency.
+        """
+
+        def named_wheel(pkg: str, version: str) -> WheelFile:
+            return WheelFile(
+                filename=f"{pkg}-{version}-py3-none-any.whl",
+                url=f"https://example.com/{pkg}-{version}.whl",
+                version=version,
+                requires_python=None,
+                has_metadata=True,
+                upload_time=None,
+                local_path=None,
+            )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": [named_wheel("foo", "1.0")],
+                "app": [named_wheel("app", "3.0")],
+                "lib": [named_wheel("lib", "5.0"), named_wheel("lib", "9.0")],
+            },
+            metadata_by_version={
+                "1.0": make_metadata("foo", "1.0", "lib==9.0"),
+                "3.0": make_metadata("app", "3.0", "lib==5.0"),
+                "5.0": make_metadata("lib", "5.0"),
+                "9.0": make_metadata("lib", "9.0"),
+            },
+        )
+        root_reqs = {
+            "foo": VersionRange.full(admit_arbitrary=False),
+            "app": VersionRange.full(admit_arbitrary=False),
+        }
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(dict(root_reqs))
+
+        text = str(exc_info.value)
+        assert "<VersionRange" not in text
+        assert "AFTER_LOCALS" not in text
+        lines = text.splitlines()
+        assert "because all versions of foo depend on lib [9.0, 9.0]" in lines
+
 
 class TestLookAheadAbort:
     """Look-ahead abort path: when the scan rejects ``_LOOKAHEAD_ABORT_THRESHOLD``

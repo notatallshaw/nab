@@ -2005,6 +2005,34 @@ class TestErrorMessages:
         assert positive == "a [1, +inf)"
         assert negative == "not a [1, +inf)"
 
+    def test_format_range_hook_renders_every_constraint(self) -> None:
+        """``format_range`` renders each constraint, on terms and the CONSTRAINT line.
+
+        A range type whose ``str`` is a debug repr relies on this hook to render
+        cleanly; the default is ``str``.
+        """
+        term = Term("a", Range.at_least(1), positive=True)
+        assert format_term(term, lambda _range: "SHOWN") == "a SHOWN"
+
+        dependency = Incompatibility(
+            [term, Term("b", Range.at_least(3), positive=False)],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert (
+            format_error(dependency, format_range=lambda _range: "SHOWN")
+            == "because a SHOWN depends on b SHOWN"
+        )
+
+        constrained = Incompatibility(
+            [term],
+            cause=IncompatibilityCause.CONSTRAINT,
+            constraint_range=Range.less_than(2),
+        )
+        assert (
+            format_error(constrained, format_range=lambda _range: "SHOWN")
+            == "because the user constrained a SHOWN"
+        )
+
 
 class TestFullRangeWording:
     """A term admitting every version reads as prose, not as an interval.
