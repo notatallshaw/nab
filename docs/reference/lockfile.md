@@ -32,11 +32,11 @@ Each pinned package carries:
 The digests are the ones the index published, so nothing is hashed
 locally to build a lock. A resolve does fetch, but only to read
 metadata, and it takes the cheapest source available: a wheel's
-[PEP 658] metadata sidecar first, then the wheel itself when the
-index publishes no sidecar, and the sdist only when no wheel is
-published (built, if its dependencies are dynamic and the
-[build policy](build-policy.md) allows it). VCS and archive sources
-are cloned or downloaded for the same reason.
+[PEP 658] metadata sidecar when the index publishes one, otherwise
+the sdist's PKG-INFO (built, if its dependencies are dynamic and the
+[build policy](build-policy.md) allows it). A wheel served from a
+local directory is read straight off disk, with no fetch. VCS and
+archive sources are cloned or downloaded for the same reason.
 
 A wheel the target's PEP 425 tags reject was never a candidate, so it
 is not in the lock: a lock resolved on `linux_x86_64` carries no
