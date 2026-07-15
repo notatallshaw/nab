@@ -40,6 +40,7 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from .._vcs_admission import UnsupportedVcsError
 from ..config import NabProjectConfig
 from ..download import download_lock
+from ..requirements_file import InvalidProjectRequirementError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -292,10 +293,14 @@ class NabBuildEnv:
             # The build env resolves for the host alone, so its one
             # target's failure is the whole resolve's.
             result.raise_for_failure()
-        except (UnsupportedVcsError, NotImplementedError) as exc:
-            # A direct-URL/VCS build requirement means nab cannot build this
-            # sdist. Report it as a build-env failure so the outer resolve
-            # skips the version instead of aborting on the raw error.
+        except (
+            UnsupportedVcsError,
+            NotImplementedError,
+            InvalidProjectRequirementError,
+        ) as exc:
+            # A build requirement nab cannot resolve: a direct-URL/VCS pin, or
+            # a string that is not valid PEP 508. Wrap it so the outer resolve
+            # skips this sdist rather than aborting on the raw error.
             msg = f"build env resolve failed: {exc}"
             raise BuildEnvError(msg) from exc
 
@@ -400,6 +405,20 @@ def _render_synthetic_pyproject(requires: list[str]) -> str:
 
 
 def _toml_str(value: str) -> str:
-    """Single-line TOML string literal escape."""
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    """Escape a string as a single-line TOML basic-string literal.
+
+    Backslash, double-quote, and the control characters TOML forbids bare in a
+    basic string (below U+0020, plus U+007F) are escaped, so a requirement
+    carrying a newline stays valid TOML instead of splitting across a line.
+    """
+    out: list[str] = []
+    for ch in value:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch < "\x20" or ch == "\x7f":
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
