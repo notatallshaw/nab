@@ -133,6 +133,14 @@ tomli ; python_full_version <= "3.11.0a6"   read false
     -> python_full_version > "3.11.0a6"
 ```
 
+Only the clauses a marker's answer turned on are declared. A marker
+is an `and`/`or` of clauses, so a clause on the micro release can be
+dead: the other side of an `or` already held, or the other side of an
+`and` already failed. `pytest ; python_full_version >= "3.13.5" or
+sys_platform == "linux"` reads true on Linux whatever the micro is,
+so it declares nothing, and a variable no marker's answer turned on
+leaves its axis open.
+
 The lock is then installable on every micro release that reads the
 resolve's markers the way the resolve did, and a marker that
 genuinely splits the micros (`python_full_version >= "3.13.4"`)

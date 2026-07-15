@@ -801,13 +801,6 @@ class TestFullVersionDeclaration:
             {**_HOST_ENV, "python_full_version": "3.13.9"}
         )
 
-    def test_a_name_spelled_only_inside_a_literal_pins_the_value(self) -> None:
-        """The variable scan over-approximates; there is no clause to declare."""
-        declaration = environment_declaration(
-            self._target("3.13.2"), [Marker('os_name == "python_full_version"')]
-        )
-        assert declaration.endswith('and python_full_version == "3.13.2"')
-
     def test_a_comparison_against_another_variable_pins_the_value(self) -> None:
         declaration = environment_declaration(
             self._target("3.13.2"), [Marker("python_full_version == python_version")]
@@ -824,3 +817,102 @@ class TestFullVersionDeclaration:
             self._target("3.13.0rc1"), [Marker('python_full_version < "3.13.0"')]
         )
         assert declaration.endswith('and python_full_version == "3.13.0rc1"')
+
+
+class TestDecidingClauses:
+    """A clause is declared only when the marker's answer turned on it.
+
+    A marker is an ``and``/``or`` of clauses, so a clause on the micro
+    release can be dead: the other side of an ``or`` already held, or the
+    other side of an ``and`` already failed.  Declaring it anyway would
+    refuse a micro release that reads every marker exactly as the resolve
+    did, which is the environment the lock was built for.
+    """
+
+    def _target(self, full_version: str = "3.13.2") -> ResolveTarget:
+        def env_source() -> dict[str, str]:
+            return {**_HOST_ENV, "python_full_version": full_version}
+
+        return ResolveTarget.for_host(env_source=env_source, tags_source=_host_tags)
+
+    def _probe(self, full_version: str) -> dict[str, str]:
+        return {**_HOST_ENV, "python_full_version": full_version}
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'python_full_version >= "3.13.5" or sys_platform == "linux"',
+            'python_full_version < "3.13.5" or sys_platform == "linux"',
+            'python_full_version < "3.13.5" and sys_platform == "win32"',
+            'os_name == "python_full_version"',
+        ],
+    )
+    def test_a_dead_clause_leaves_the_micro_open(self, text: str) -> None:
+        """Every one of these reads the same on 3.13.2 and on 3.13.9."""
+        marker = Marker(text)
+        target = self._target()
+        probe = self._probe("3.13.9")
+        assert marker.evaluate(probe) == marker.evaluate(target.marker_env)
+
+        declaration = environment_declaration(target, [marker])
+        assert "python_full_version" not in declaration
+        assert Marker(declaration).evaluate(probe)
+
+    def test_a_live_clause_still_splits_the_micros(self) -> None:
+        """The ``and`` holds here, so the dep this gates is in the pins."""
+        target = self._target()
+        declaration = environment_declaration(
+            target, [Marker('python_full_version < "3.13.5" and sys_platform=="linux"')]
+        )
+        assert 'python_full_version < "3.13.5"' in declaration
+        assert not Marker(declaration).evaluate(self._probe("3.13.9"))
+
+    def test_a_clause_under_an_extra_is_live(self) -> None:
+        """The resolve read this marker under the extra too, where it splits.
+
+        ``extra`` is not an environment axis a lock declares, so the
+        installer picks it: the clause has to hold for every choice.
+        """
+        target = self._target()
+        declaration = environment_declaration(
+            target, [Marker('python_full_version < "3.13.5" and extra == "test"')]
+        )
+        assert 'python_full_version < "3.13.5"' in declaration
+        assert not Marker(declaration).evaluate(self._probe("3.13.9"))
+
+    def test_clauses_that_only_matter_together_still_split_the_micros(self) -> None:
+        """Neither clause alone moves the marker; both flipping does.
+
+        Dropping is decided for the set as a whole, so one of the pair
+        survives and the declaration still refuses 3.14.
+        """
+        target = self._target()
+        declaration = environment_declaration(
+            target,
+            [
+                Marker(
+                    'python_full_version >= "3.13.4" and python_full_version >= "3.14"'
+                )
+            ],
+        )
+        assert not Marker(declaration).evaluate(self._probe("3.14.1"))
+        assert Marker(declaration).evaluate(self._probe("3.13.9"))
+
+    def test_a_marker_of_many_free_clauses_declares_every_clause(self) -> None:
+        """The analysis is exponential in the clauses a lock cannot pin.
+
+        Past the cap every clause on the variable is declared, which is
+        narrow but sound.
+        """
+        extras = " or ".join(f'extra == "e{index}"' for index in range(9))
+        target = self._target()
+        declaration = environment_declaration(
+            target,
+            [
+                Marker(
+                    f'(python_full_version < "3.13.5" and sys_platform == "win32")'
+                    f" or {extras}"
+                )
+            ],
+        )
+        assert 'python_full_version < "3.13.5"' in declaration
