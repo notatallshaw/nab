@@ -260,6 +260,8 @@ _PLATFORM_ARCH: dict[str, str] = {
     "macos_arm64": "arm64",
     "macos_x86_64": "x86_64",
     "windows_amd64": "amd64",
+    "windows_arm64": "arm64",
+    "linux_i686": "i686",
 }
 
 # The kind behind :func:`platform_kind`, which both tag generation and the
@@ -270,6 +272,8 @@ _PLATFORM_KIND: dict[str, str] = {
     "macos_arm64": "macos",
     "macos_x86_64": "macos",
     "windows_amd64": "windows",
+    "windows_arm64": "windows",
+    "linux_i686": "linux",
 }
 
 

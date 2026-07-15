@@ -281,6 +281,26 @@ class TestLabels:
         )
         assert target.label == "py311-linux_x86_64-musl"
 
+    def test_windows_arm64_label(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("windows_arm64")
+        )
+        assert target.label == "py312-windows_arm64"
+
+    def test_linux_i686_label(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_i686")
+        )
+        assert target.label == "py312-linux_i686"
+
+    def test_free_threaded_windows_arm64_label(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.13",
+            spec=PlatformSpec("windows_arm64", free_threaded=True),
+        )
+        assert target.label == "py313-windows_arm64-ft"
+        assert "cp313t" in {t.abi for t in target.tags.ordered}
+
     def test_selection_appends_sorted_member_suffix(self) -> None:
         """A conflict-fork selection appends sorted ``kind-name`` members."""
         target = ResolveTarget.for_declared(
@@ -488,6 +508,21 @@ class TestMarkerTables:
         for platform_id, env in PLATFORM_MARKERS.items():
             missing = required - env.keys()
             assert not missing, f"{platform_id} missing {missing}"
+
+
+class TestNewPlatformIdsExpand:
+    """The added ids expand from a matrix like any other platform."""
+
+    def test_windows_arm64_and_linux_i686_expand_to_targets(self) -> None:
+        matrix = Matrix(
+            python="==3.12",
+            platforms=(
+                PlatformSpec("windows_arm64"),
+                PlatformSpec("linux_i686"),
+            ),
+        )
+        labels = {t.label for t in matrix.expand()}
+        assert labels == {"py312-windows_arm64", "py312-linux_i686"}
 
 
 class TestPythonAxisEnvironment:
