@@ -59,16 +59,18 @@ def resolve_metadata(
 
     _, _, normalized = provider.split_and_normalize(package)
     ver_str = str(version)
+    index = provider.coordinator.index
 
-    # Wheel METADATA and sdist PKG-INFO share the slot; the origin of the
-    # last write comes back with the text it wrote.
-    text, from_sdist = provider.coordinator.index.get_metadata_with_origin(
-        normalized, ver_str
-    )
+    # Sibling wheels of one version can declare different dependencies, so the
+    # read is keyed by the artifact this target would install.  ``versions`` is
+    # the target's own tag-filtered listing, so the pick is per-target.
+    dist = pick_dist_for_metadata(versions, version)
+    metadata_url = dist.metadata_url if isinstance(dist, WheelFile) else None
+
+    text, from_sdist = index.get_metadata_with_origin(normalized, ver_str, metadata_url)
     if text is not None:
         return (text, from_sdist)
 
-    dist = pick_dist_for_metadata(versions, version)
     if dist is None:
         msg = f"Version {version} of {package} not found in listing"
         raise MetadataError(msg)
@@ -79,13 +81,13 @@ def resolve_metadata(
             normalized, ver_str, dist.metadata_url, dist.metadata_hash
         )
         event.wait()
-        integrity_error = provider.coordinator.index.get_metadata_error(
-            normalized, ver_str
+        integrity_error = index.get_metadata_error(
+            normalized, ver_str, dist.metadata_url
         )
         if integrity_error is not None:
             raise integrity_error
-        metadata_text, from_sdist = provider.coordinator.index.get_metadata_with_origin(
-            normalized, ver_str
+        metadata_text, from_sdist = index.get_metadata_with_origin(
+            normalized, ver_str, dist.metadata_url
         )
     elif isinstance(dist, WheelFile) and dist.local_path is not None:
         try:
@@ -315,9 +317,10 @@ def fetch_sdist_metadata(
 ) -> tuple[str | None, bool]:
     """Block until the coordinator returns sdist PKG-INFO text.
 
-    Returns ``(metadata_text, from_sdist)``: a wheel's PEP 658 sidecar can
-    land on the shared slot while the sdist fetch is in flight, so the text
-    read back is not necessarily the sdist's.
+    Returns ``(metadata_text, from_sdist)``: the origin comes back with the
+    text, so text that landed in the version-level slot from somewhere other
+    than the sdist is not put through the :pep:`643` gate as if it were the
+    sdist's own PKG-INFO.
 
     The archive is verified against ``sdist.hashes`` before its PKG-INFO is
     read. A hash mismatch is recorded as an integrity error and re-raised here.
@@ -426,8 +429,8 @@ def parse_and_cache_metadata(
     :class:`~nab_python.fetch.InMemoryIndex` so that universal-mode
     resolves only run :func:`parse_metadata` once per
     ``(package, version)`` regardless of how many tuples ask for it.  The
-    cache is keyed on ``metadata_text`` as well, so a tuple holding the
-    other artifact's text out of the shared slot parses it itself.
+    cache is keyed on ``metadata_text`` as well, so a tuple holding another
+    artifact's text for that version parses it itself.
     Per-tuple classification (marker evaluation, extras admission)
     still runs locally in :func:`cache_deps_from_metadata`.  The
     sdist-dynamic-deps reconciliation in

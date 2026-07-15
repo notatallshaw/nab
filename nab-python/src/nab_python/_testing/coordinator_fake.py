@@ -60,11 +60,14 @@ def _make_metadata_resolver(
     *,
     metadata_text: str | None,
     metadata_by_version: Mapping[str, str | None] | None,
+    metadata_by_url: Mapping[str, str | None] | None,
     auto_metadata: bool,
-) -> Callable[[str, str], str | None]:
-    """Return a callable that picks metadata text for ``(pkg, version)``."""
+) -> Callable[[str, str, str], str | None]:
+    """Return a callable that picks metadata text for one sidecar."""
 
-    def _resolve(pkg: str, ver: str) -> str | None:
+    def _resolve(pkg: str, ver: str, url: str) -> str | None:
+        if metadata_by_url is not None:
+            return metadata_by_url.get(url)
         if metadata_by_version is not None:
             return metadata_by_version.get(ver)
         if metadata_text is not None:
@@ -79,29 +82,33 @@ def _make_metadata_resolver(
 def _wire_metadata_side_effects(
     coordinator: MagicMock,
     index: InMemoryIndex,
-    resolve_metadata: Callable[[str, str], str | None],
+    resolve_metadata: Callable[[str, str, str], str | None],
 ) -> None:
     """Attach ``request_listing``/``request_metadata``/batch side effects."""
 
     def _request_listing(_pkg: str) -> threading.Event:
         return _done_event()
 
-    def _request_metadata(
-        pkg: str, ver: str, _url: str, _hash: tuple[str, str] | None = None
-    ) -> threading.Event:
-        text = resolve_metadata(pkg, ver)
+    def _fetch_metadata(pkg: str, ver: str, url: str) -> None:
+        # The fetcher skips a sidecar the index already answers for.
+        if index.has_metadata(pkg, ver, url):
+            return
+        text = resolve_metadata(pkg, ver, url)
         if text is not None:
-            index.store_metadata(pkg, ver, text)
+            index.store_metadata(pkg, ver, text, url)
+
+    def _request_metadata(
+        pkg: str, ver: str, url: str, _hash: tuple[str, str] | None = None
+    ) -> threading.Event:
+        _fetch_metadata(pkg, ver, url)
         return _done_event()
 
     def _request_metadata_batch(
         items: list[tuple[str, str, str, tuple[str, str] | None]],
     ) -> list[tuple[str, str, threading.Event]]:
         results: list[tuple[str, str, threading.Event]] = []
-        for pkg, ver, _url, _hash in items:
-            text = resolve_metadata(pkg, ver)
-            if text is not None:
-                index.store_metadata(pkg, ver, text)
+        for pkg, ver, url, _hash in items:
+            _fetch_metadata(pkg, ver, url)
             results.append((pkg, ver, _done_event()))
         return results
 
@@ -136,13 +143,14 @@ def _wire_sdist_side_effects(
     coordinator.request_sdist.side_effect = _request_sdist
 
 
-def make_coordinator(
+def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-loads
     wheels: Sequence[WheelFile | SdistFile] | None = None,
     *,
     package: str = "pkg",
     listings: Mapping[str, Sequence[WheelFile | SdistFile]] | None = None,
     metadata_text: str | None = None,
     metadata_by_version: Mapping[str, str | None] | None = None,
+    metadata_by_url: Mapping[str, str | None] | None = None,
     auto_metadata: bool = False,
     sdist_pkg_info: str | None = None,
     sdist_pyproject_toml: str | None = None,
@@ -161,8 +169,11 @@ def make_coordinator(
 
     * ``request_listing`` always returns a set event.
     * ``request_metadata`` and ``request_metadata_batch`` write
-      ``metadata_text`` (or the entry from ``metadata_by_version``, or
-      auto-generated minimal METADATA when ``auto_metadata`` is true).
+      ``metadata_text`` (or the entry from ``metadata_by_url``, or from
+      ``metadata_by_version``, or auto-generated minimal METADATA when
+      ``auto_metadata`` is true) under the requested sidecar URL, as the
+      fetcher does.  ``metadata_by_url`` is how sibling wheels of one
+      version are given different dependencies.
     * ``request_sdist`` writes ``sdist_pkg_info`` and, if not ``None``,
       ``sdist_pyproject_toml``.
 
@@ -183,6 +194,7 @@ def make_coordinator(
     resolve_metadata = _make_metadata_resolver(
         metadata_text=metadata_text,
         metadata_by_version=metadata_by_version,
+        metadata_by_url=metadata_by_url,
         auto_metadata=auto_metadata,
     )
     _wire_metadata_side_effects(coordinator, index, resolve_metadata)

@@ -5647,6 +5647,11 @@ class TestPickBestCandidateNone:
         coordinator.request_metadata.assert_not_called()
 
 
+# The sidecar of ``make_wheel("1.0")``: the batch path reads the metadata
+# back by the artifact it submitted.
+_SIDECAR_URL = "https://example.com/pkg-1.0-py3-none-any.whl.metadata"
+
+
 class TestAwaitMetadataBatchEdgeCases:
     def test_skips_versions_already_in_deps_cache(self) -> None:
         """Submitted entries already in ``deps_cache`` short-circuit the wait.
@@ -5662,7 +5667,7 @@ class TestAwaitMetadataBatchEdgeCases:
         provider.deps_cache[("foo", V("1.0"))] = {"bar": VersionRange.full()}
         provider._await_metadata_batch(
             "foo",
-            [(V("1.0"), "1.0", _done_event())],
+            [(V("1.0"), "1.0", _SIDECAR_URL, _done_event())],
         )
         assert provider.deps_cache[("foo", V("1.0"))] == {"bar": VersionRange.full()}
 
@@ -5728,13 +5733,16 @@ class TestAwaitMetadataBatchEdgeCases:
         wheels = [make_wheel("1.0")]
         coordinator = make_coordinator(wheels, package="foo")
         coordinator.index.store_metadata_error(
-            "foo", "1.0", MetadataHashMismatchError("metadata sha256 mismatch")
+            "foo",
+            "1.0",
+            MetadataHashMismatchError("metadata sha256 mismatch"),
+            _SIDECAR_URL,
         )
         provider = Provider(coordinator, target=_PY312)
         with pytest.raises(MetadataHashMismatchError):
             provider._await_metadata_batch(
                 "foo",
-                [(V("1.0"), "1.0", _done_event())],
+                [(V("1.0"), "1.0", _SIDECAR_URL, _done_event())],
             )
         assert ("foo", V("1.0")) not in provider.deps_cache
 
@@ -5762,6 +5770,29 @@ class TestAwaitMetadataBatchEdgeCases:
         assert ("pkg", V("1.0")) not in provider.deps_cache
         with pytest.raises(UnsupportedSdistError):
             provider.get_dependencies("pkg", V("1.0"))
+
+    def test_batch_leaves_an_empty_sidecar_on_the_sdists_terms(self) -> None:
+        """A sidecar that served no text reads PKG-INFO, and stays gated.
+
+        The fetcher records a sidecar that served nothing as the ``None`` of
+        its own slot, so the batch read falls back to the sdist's PKG-INFO.
+        Caching that as wheel METADATA would bypass the PEP 643 gate.
+        """
+        wheel = make_wheel("1.0")
+        assert wheel.metadata_url is not None
+        dists = [make_sdist("1.0"), wheel]
+        coordinator = make_coordinator(dists, sdist_pkg_info=PKG_INFO_PRE_PEP643_DEPS)
+        provider = Provider(coordinator, target=_PY312)
+        with pytest.raises(UnsupportedSdistError):
+            provider.get_dependencies("pkg", V("1.0"))
+        coordinator.index.store_metadata("pkg", "1.0", None, wheel.metadata_url)
+
+        version_list = provider.fetch_versions("pkg")
+        wheel_map = provider._wheel_by_version("pkg", version_list)
+        submitted = provider._prefetch_batch("pkg", [V("1.0")], wheel_map)
+        provider._await_metadata_batch("pkg", submitted)
+
+        assert ("pkg", V("1.0")) not in provider.deps_cache
 
 
 class TestIsReady:
@@ -6043,26 +6074,31 @@ class TestSharedSlotProvenance:
         with pytest.raises(UnsupportedSdistError):
             second.get_dependencies("pkg", V("1.0"))
 
-    def test_wheel_metadata_stays_trusted_for_sdist_only_view(self) -> None:
-        """Wheel METADATA in the slot is trusted whatever the reader's view.
+    def test_an_sdist_only_view_reads_the_sdists_own_pkg_info(self) -> None:
+        """A wheel's METADATA does not answer for a tuple that installs the sdist.
 
-        The reverse ordering: a provider with the wheel in view stores
-        METADATA text, then a provider whose view is sdist-only reads
-        it. Inferring the origin from the reader's listing would
-        mislabel the text as PKG-INFO and spuriously reject the
-        version under the PEP 643 gate.
+        The reverse ordering: a provider with the wheel in view stores its
+        METADATA, then a provider whose view is sdist-only reads.  The two
+        artifacts can declare different dependencies, and the origin travels
+        with the text, so the sdist's PEP 643 static PKG-INFO is trusted on
+        its own terms rather than replaced by the wheel's deps.
         """
         metadata = (
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: dep-a\n"
         )
-        coordinator = make_coordinator(None, metadata_text=metadata)
+        pkg_info = (
+            "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\nRequires-Dist: dep-b\n"
+        )
+        coordinator = make_coordinator(
+            None, metadata_text=metadata, sdist_pkg_info=pkg_info
+        )
         first = Provider(coordinator, target=_PY312)
         first.versions_cache["pkg"] = [(V("1.0"), make_wheel("1.0"))]
         assert "dep-a" in first.get_dependencies("pkg", V("1.0"))
 
         second = Provider(coordinator, target=_PY312)
         second.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
-        assert "dep-a" in second.get_dependencies("pkg", V("1.0"))
+        assert "dep-b" in second.get_dependencies("pkg", V("1.0"))
 
 
 class TestPickDistForMetadata:

@@ -117,19 +117,75 @@ class TestInMemoryIndex:
         assert pending.result == "text"
 
     def test_sidecar_slot_answers_only_for_its_own_artifact(self) -> None:
+        linux_url = "https://f/linux.whl.metadata"
+        win_url = "https://f/win.whl.metadata"
         idx = InMemoryIndex()
-        idx.store_metadata("foo", "1.0", "linux", "https://f/linux.whl.metadata")
-        assert idx.has_metadata_for("foo", "1.0", "https://f/linux.whl.metadata")
-        assert not idx.has_metadata_for("foo", "1.0", "https://f/win.whl.metadata")
+        idx.store_metadata("foo", "1.0", "linux", linux_url)
+        assert idx.has_metadata("foo", "1.0", linux_url)
+        assert not idx.has_metadata("foo", "1.0", win_url)
 
-    def test_version_level_slot_answers_for_any_artifact(self) -> None:
+    def test_sibling_sidecars_keep_their_own_text(self) -> None:
+        """Two wheels of one version can declare different dependencies."""
+        linux_url = "https://f/linux.whl.metadata"
+        win_url = "https://f/win.whl.metadata"
+        idx = InMemoryIndex()
+        idx.store_metadata("foo", "1.0", "linux", linux_url)
+        idx.store_metadata("foo", "1.0", "win", win_url)
+        assert idx.get_metadata("foo", "1.0", linux_url) == "linux"
+        assert idx.get_metadata("foo", "1.0", win_url) == "win"
+        assert idx.get_metadata("foo", "1.0") is None
+
+    def test_an_injected_override_answers_for_any_artifact(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_metadata("foo", "1.0", "override\n")
+        assert idx.has_metadata("foo", "1.0", "https://f/win.whl.metadata")
+        assert idx.get_metadata_with_origin(
+            "foo", "1.0", "https://f/win.whl.metadata"
+        ) == ("override\n", False)
+
+    def test_sdist_pkg_info_does_not_answer_for_an_unfetched_sidecar(self) -> None:
+        """A wheel that declares its own dependencies must fetch them.
+
+        The sdist is a fallback for an artifact with no text of its own, so
+        lending its PKG-INFO to a sidecar nobody has fetched yet would give
+        the wheel the sdist's dependencies instead of the wheel's.
+        """
         idx = InMemoryIndex()
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
-        assert idx.has_metadata_for("foo", "1.0", "https://f/win.whl.metadata")
+        assert not idx.has_metadata("foo", "1.0", "https://f/win.whl.metadata")
+        assert idx.get_metadata_with_origin(
+            "foo", "1.0", "https://f/win.whl.metadata"
+        ) == (None, False)
+        assert idx.get_metadata_with_origin("foo", "1.0") == ("PKG-INFO\n", True)
 
-    def test_has_metadata_for_is_false_on_an_empty_slot(self) -> None:
+    def test_a_sidecar_that_was_not_served_falls_back_to_the_sdist(self) -> None:
+        """An empty sidecar slot does not shadow the version-level text."""
+        url = "https://f/a.whl.metadata"
         idx = InMemoryIndex()
-        assert not idx.has_metadata_for("foo", "1.0", "https://f/a.whl.metadata")
+        idx.store_metadata("foo", "1.0", None, url)
+        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
+        assert idx.has_metadata("foo", "1.0", url)
+        assert idx.get_metadata_with_origin("foo", "1.0", url) == ("PKG-INFO\n", True)
+
+    def test_has_metadata_is_false_on_an_empty_slot(self) -> None:
+        idx = InMemoryIndex()
+        assert not idx.has_metadata("foo", "1.0", "https://f/a.whl.metadata")
+
+    def test_a_sidecars_integrity_error_answers_only_for_that_sidecar(self) -> None:
+        linux_url = "https://f/linux.whl.metadata"
+        win_url = "https://f/win.whl.metadata"
+        idx = InMemoryIndex()
+        error = MetadataHashMismatchError("metadata sha256 mismatch")
+        idx.store_metadata_error("foo", "1.0", error, linux_url)
+        assert idx.get_metadata_error("foo", "1.0", linux_url) is error
+        assert idx.get_metadata_error("foo", "1.0", win_url) is None
+        assert idx.get_metadata_error("foo", "1.0") is None
+
+    def test_a_version_level_integrity_error_answers_for_any_artifact(self) -> None:
+        idx = InMemoryIndex()
+        error = SdistHashMismatchError("boom")
+        idx.store_sdist_metadata_error("foo", "1.0", error)
+        assert idx.get_metadata_error("foo", "1.0", "https://f/a.whl.metadata") is error
 
     def test_get_or_create_existing(self) -> None:
         idx = InMemoryIndex()
@@ -186,8 +242,11 @@ class TestInMemoryIndex:
         assert pending.event.is_set()
         assert idx.get_metadata("foo", "1.0") == "PKG-INFO\n"
         assert idx.metadata_from_sdist("foo", "1.0")
-        # The kept text still stands for the version, not for the sidecar.
-        assert idx.has_metadata_for("foo", "1.0", "https://f/other.md")
+        # The sidecar that resolved to nothing reads the kept text.
+        assert idx.get_metadata_with_origin("foo", "1.0", "https://f/a.md") == (
+            "PKG-INFO\n",
+            True,
+        )
 
     def test_metadata_none_after_sdist_none_stays_none(self) -> None:
         idx = InMemoryIndex()
@@ -356,7 +415,7 @@ class TestFetchCoordinator:
         with coord:
             event = coord.request_metadata("second", "1.0", "https://f.com/second")
             assert event.wait(timeout=5)
-        assert coord.index.get_metadata("second", "1.0") == "ok"
+        assert coord.index.get_metadata("second", "1.0", "https://f.com/second") == "ok"
 
     @respx.mock
     def test_request_listing(self) -> None:
@@ -405,7 +464,9 @@ class TestFetchCoordinator:
                 "testpkg", "1.0", "https://files.example.com/testpkg-1.0.whl.metadata"
             )
             event.wait(timeout=5)
-            text = coord.index.get_metadata("testpkg", "1.0")
+            text = coord.index.get_metadata(
+                "testpkg", "1.0", "https://files.example.com/testpkg-1.0.whl.metadata"
+            )
             assert text == METADATA_TEXT
 
     @respx.mock
@@ -450,8 +511,14 @@ class TestFetchCoordinator:
             assert len(results) == 2
             for _pkg, _ver, event in results:
                 event.wait(timeout=5)
-            assert coord.index.get_metadata("pkg-a", "1.0") == "meta-a"
-            assert coord.index.get_metadata("pkg-b", "2.0") == "meta-b"
+            a_meta = coord.index.get_metadata(
+                "pkg-a", "1.0", "https://f.com/a.metadata"
+            )
+            b_meta = coord.index.get_metadata(
+                "pkg-b", "2.0", "https://f.com/b.metadata"
+            )
+            assert a_meta == "meta-a"
+            assert b_meta == "meta-b"
 
     @respx.mock
     def test_batch_skips_cached(self) -> None:
@@ -504,12 +571,13 @@ class TestFetchCoordinator:
             # Give them a moment to complete
             import time
 
+            sidecar = "https://f.com/pkg-3.0-py3-none-any.whl.metadata"
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
-                if coord.index.has_metadata("pkg", "3.0"):
+                if coord.index.has_metadata("pkg", "3.0", sidecar):
                     break
                 time.sleep(0.01)
-            assert coord.index.has_metadata("pkg", "3.0")
+            assert coord.index.has_metadata("pkg", "3.0", sidecar)
 
     @respx.mock
     def test_fetch_error_logged_not_raised(self) -> None:
@@ -625,8 +693,9 @@ class TestFetchCoordinator:
             )
             event.wait(timeout=5)
             assert not coord._crashed
-            assert coord.index.get_metadata("tampered", "1.0") is None
-            error = coord.index.get_metadata_error("tampered", "1.0")
+            sidecar = "https://files.example.com/tampered-1.0.whl.metadata"
+            assert coord.index.get_metadata("tampered", "1.0", sidecar) is None
+            error = coord.index.get_metadata_error("tampered", "1.0", sidecar)
             assert isinstance(error, MetadataHashMismatchError)
 
     def test_crashed_raises(self) -> None:
@@ -650,9 +719,9 @@ class TestFetchCoordinator:
             e1.wait(timeout=5)
             for _, _, ev in results:
                 ev.wait(timeout=5)
-            assert coord.index.get_metadata("a", "1") == "ok"
-            assert coord.index.get_metadata("b", "1") == "ok"
-            assert coord.index.get_metadata("c", "1") == "ok"
+            assert coord.index.get_metadata("a", "1", "https://f.com/a") == "ok"
+            assert coord.index.get_metadata("b", "1", "https://f.com/b") == "ok"
+            assert coord.index.get_metadata("c", "1", "https://f.com/c") == "ok"
 
     def test_shutdown_when_never_started(self) -> None:
         """shutdown() is a no-op when the coordinator was never started."""
@@ -751,10 +820,12 @@ class TestFetchCoordinator:
         assert archive.is_set()
         assert batch[0][2].is_set()
 
-        assert isinstance(coord.index.get_metadata_error("a", "1.0"), RuntimeError)
+        meta_error = coord.index.get_metadata_error("a", "1.0", "https://f.com/a")
+        batch_error = coord.index.get_metadata_error("d", "1.0", "https://f.com/d")
+        assert isinstance(meta_error, RuntimeError)
         assert isinstance(coord.index.get_metadata_error("b", "1.0"), RuntimeError)
         assert isinstance(coord.index.get_sdist_archive_error("c", "1.0"), RuntimeError)
-        assert isinstance(coord.index.get_metadata_error("d", "1.0"), RuntimeError)
+        assert isinstance(batch_error, RuntimeError)
 
     @respx.mock
     def test_drain_queue_empty_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -893,8 +964,8 @@ class TestFetchCoordinator:
         coord._thread = None
         coord._started = False
         assert not coord._crashed
-        assert coord.index.get_metadata("first", "1.0") == "slow"
-        assert coord.index.get_metadata("drain", "1.0") == "slow"
+        assert coord.index.get_metadata("first", "1.0", "https://f.com/first") == "slow"
+        assert coord.index.get_metadata("drain", "1.0", "https://f.com/drain") == "slow"
 
     @respx.mock
     def test_drain_shutdown_replies_to_inflight_requests(self) -> None:
@@ -915,7 +986,7 @@ class TestFetchCoordinator:
         event = coord.request_metadata("pkg", "1.0", "https://f.com/pkg")
         coord.shutdown()
         assert event.wait(timeout=2)
-        assert coord.index.get_metadata("pkg", "1.0") == "slow"
+        assert coord.index.get_metadata("pkg", "1.0", "https://f.com/pkg") == "slow"
 
     @respx.mock
     def test_request_metadata_deduplicates(self) -> None:
@@ -1366,14 +1437,15 @@ class TestFetchCoordinatorCache:
 
         with _coord(cache_dir=tmp_path) as coord:
             coord.request_metadata("foo", "1.0", linux_url, linux_hash).wait(timeout=5)
-            assert coord.index.get_metadata("foo", "1.0") == linux_body.decode()
+            linux_text = coord.index.get_metadata("foo", "1.0", linux_url)
+            assert linux_text == linux_body.decode()
 
         # A later run over the same cache dir, in an environment whose
         # compatible wheel is the win_amd64 one.
         with _coord(cache_dir=tmp_path) as coord:
             coord.request_metadata("foo", "1.0", win_url, win_hash).wait(timeout=5)
-            assert coord.index.get_metadata_error("foo", "1.0") is None
-            assert coord.index.get_metadata("foo", "1.0") == win_body.decode()
+            assert coord.index.get_metadata_error("foo", "1.0", win_url) is None
+            assert coord.index.get_metadata("foo", "1.0", win_url) == win_body.decode()
 
         assert linux_route.call_count == 1
         assert win_route.call_count == 1
@@ -1762,9 +1834,10 @@ class TestSiblingWheelMetadata:
         return linux, win
 
     def _await_metadata(self, coord: FetchCoordinator) -> None:
+        """Wait for the prefetch of the wheel the listing publishes first."""
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and not coord.index.has_metadata(
-            "foo", "1.0"
+            "foo", "1.0", f"https://f.example/{_SIBLING_LINUX}.metadata"
         ):
             time.sleep(0.01)
 
@@ -1775,9 +1848,10 @@ class TestSiblingWheelMetadata:
         with _coord() as coord:
             coord.request_listing("foo").wait(timeout=5)
             self._await_metadata(coord)
-            assert (
-                coord.index.get_metadata("foo", "1.0") == _SIBLING_LINUX_BODY.decode()
+            text = coord.index.get_metadata(
+                "foo", "1.0", f"https://f.example/{_SIBLING_LINUX}.metadata"
             )
+            assert text == _SIBLING_LINUX_BODY.decode()
         assert linux.call_count == 1
         assert win.call_count == 0
 
@@ -1802,8 +1876,9 @@ class TestSiblingWheelMetadata:
             coord.request_listing("foo").wait(timeout=5)
             self._await_metadata(coord)
             coord.request_metadata("foo", "1.0", win_url, win_hash).wait(timeout=5)
-            assert coord.index.get_metadata_error("foo", "1.0") is None
-            assert coord.index.get_metadata("foo", "1.0") == _SIBLING_WIN_BODY.decode()
+            assert coord.index.get_metadata_error("foo", "1.0", win_url) is None
+            win_text = coord.index.get_metadata("foo", "1.0", win_url)
+            assert win_text == _SIBLING_WIN_BODY.decode()
 
         assert linux.call_count == 1
         assert win.call_count == 1

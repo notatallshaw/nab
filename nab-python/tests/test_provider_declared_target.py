@@ -907,3 +907,115 @@ class TestSharedMetadataSlot:
         monkeypatch.setattr(index, "get_metadata_error", _land_sidecar_then_report)
 
         assert set(macos.get_dependencies("pkg", Version("1.0"))) == {"dep-from-wheel"}
+
+
+_LINUX_WHEEL = _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64")
+_WIN_WHEEL = _platform_wheel("1.0", "cp311-cp311-win_amd64")
+
+_LINUX_WHEEL_METADATA = (
+    "Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\nRequires-Dist: linuxdep\n\n"
+)
+_WIN_WHEEL_METADATA = (
+    "Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\nRequires-Dist: windep\n\n"
+)
+
+
+def _sidecar(wheel: WheelFile) -> str:
+    """The sidecar URL of a wheel that advertises PEP 658 metadata."""
+    url = wheel.metadata_url
+    assert url is not None
+    return url
+
+
+def _sibling_wheel_targets() -> tuple[MagicMock, Provider, Provider]:
+    """Two targets over one version published as a Linux wheel and a Windows one.
+
+    The two wheels declare different dependencies, so each target must read
+    the METADATA of the wheel it would install.
+    """
+    coordinator = make_coordinator(
+        [_LINUX_WHEEL, _WIN_WHEEL],
+        package="pkg",
+        metadata_by_url={
+            _sidecar(_LINUX_WHEEL): _LINUX_WHEEL_METADATA,
+            _sidecar(_WIN_WHEEL): _WIN_WHEEL_METADATA,
+        },
+    )
+    linux = Provider(coordinator, _LINUX_TARGET)
+    windows = Provider(
+        coordinator,
+        ResolveTarget.for_declared(
+            python_version="3.11", spec=PlatformSpec("windows_amd64")
+        ),
+    )
+    return coordinator, linux, windows
+
+
+class TestSiblingWheelDependencies:
+    """Sibling wheels of one version keep their own Requires-Dist per target."""
+
+    def test_a_siblings_metadata_is_not_served_to_another_target(self) -> None:
+        """Each target reads the METADATA of the wheel it would install.
+
+        Both targets prefetch their own wheel's sidecar, so the version's
+        metadata is fetched twice; the later fetch must not answer for the
+        target whose wheel was fetched first.
+        """
+        _coordinator, linux, windows = _sibling_wheel_targets()
+        linux.fetch_versions("pkg")
+        assert set(windows.get_dependencies("pkg", Version("1.0"))) == {"windep"}
+        assert set(linux.get_dependencies("pkg", Version("1.0"))) == {"linuxdep"}
+
+    def test_the_reverse_fetch_order_gives_the_same_deps(self) -> None:
+        _coordinator, linux, windows = _sibling_wheel_targets()
+        windows.fetch_versions("pkg")
+        assert set(linux.get_dependencies("pkg", Version("1.0"))) == {"linuxdep"}
+        assert set(windows.get_dependencies("pkg", Version("1.0"))) == {"windep"}
+
+    def test_the_batch_await_reads_back_the_wheel_it_submitted(self) -> None:
+        """The batch prefetch path keys its read by artifact too.
+
+        Another target's batch can land its own wheel's METADATA between this
+        target's submit and its await.
+        """
+        _coordinator, linux, windows = _sibling_wheel_targets()
+        linux_wheels = linux._wheel_by_version("pkg", linux.fetch_versions("pkg"))
+        win_wheels = windows._wheel_by_version("pkg", windows.fetch_versions("pkg"))
+
+        submitted = linux._prefetch_batch("pkg", [Version("1.0")], linux_wheels)
+        windows._prefetch_batch("pkg", [Version("1.0")], win_wheels)
+        linux._await_metadata_batch("pkg", submitted)
+
+        assert set(linux.deps_cache[("pkg", Version("1.0"))]) == {"linuxdep"}
+
+    def test_an_sdists_pkg_info_does_not_supply_a_wheels_dependencies(self) -> None:
+        """A target with a wheel reads its sidecar even after the sdist landed.
+
+        A target with no wheel of its own resolves the version through the
+        sdist, filling the version-level slot.  That text is a fallback for an
+        artifact with nothing of its own, so it must not stand in for a
+        sidecar the Windows target has yet to fetch.
+        """
+        coordinator = make_coordinator(
+            [_WIN_WHEEL, _sdist("1.0")],
+            package="pkg",
+            metadata_by_url={_sidecar(_WIN_WHEEL): _WIN_WHEEL_METADATA},
+            sdist_pkg_info=(
+                "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n"
+                "Requires-Dist: sdistdep\n\n"
+            ),
+        )
+        macos = Provider(
+            coordinator,
+            ResolveTarget.for_declared(
+                python_version="3.11", spec=PlatformSpec("macos_arm64")
+            ),
+        )
+        windows = Provider(
+            coordinator,
+            ResolveTarget.for_declared(
+                python_version="3.11", spec=PlatformSpec("windows_amd64")
+            ),
+        )
+        assert set(macos.get_dependencies("pkg", Version("1.0"))) == {"sdistdep"}
+        assert set(windows.get_dependencies("pkg", Version("1.0"))) == {"windep"}
