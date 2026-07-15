@@ -615,9 +615,9 @@ platforms = [
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `id` | required | `linux_x86_64`, `linux_aarch64`, `linux_i686`, `macos_arm64`, `macos_x86_64`, `windows_amd64`, or `windows_arm64` |
+| `id` | required | `linux_x86_64`, `linux_aarch64`, `linux_i686`, `linux_armv7l`, `macos_arm64`, `macos_x86_64`, `windows_amd64`, or `windows_arm64` |
 | `libc` | `"glibc"` | The Linux C library: `"glibc"` or `"musl"` |
-| `libc-version` | glibc `2.28`, musl `1.2` | The libc version the target runs |
+| `libc-version` | glibc `2.28` (armv7l `2.31`), musl `1.2` | The libc version the target runs |
 | `macos-min` | arm64 `12.0`, x86_64 `10.13` | The macOS deployment target |
 | `platform-release` | `""` | The `platform_release` marker value |
 | `platform-version` | `""` | The `platform_version` marker value |

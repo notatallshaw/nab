@@ -1373,6 +1373,23 @@ class TestEnvironment:
         assert target.marker_env["platform_machine"] == "i686"
         assert target.tags.accepts("somepkg-1.0-cp312-cp312-manylinux2014_i686.whl")
 
+    def test_linux_armv7l_table_with_libc_version_override(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\npython = "3.12"\n'
+            'platform = { id = "linux_armv7l", libc-version = "2.34" }\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(
+            python="3.12", platform=PlatformSpec("linux_armv7l", libc_version=(2, 34))
+        )
+        (target,) = plan_targets(config)
+        assert target.marker_env["platform_machine"] == "armv7l"
+        assert target.tags.accepts("somepkg-1.0-cp312-cp312-manylinux_2_34_armv7l.whl")
+
     def test_platform_without_python_takes_the_host_python(
         self, tmp_path: Path
     ) -> None:
@@ -3433,6 +3450,15 @@ class TestMatrix:
             PlatformSpec("windows_arm64"),
             PlatformSpec("linux_i686"),
         )
+
+    def test_linux_armv7l_is_a_known_matrix_id(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body('["linux_armv7l"]'),
+        )
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.platforms == (PlatformSpec("linux_armv7l"),)
 
     @pytest.mark.parametrize(
         ("entry", "message"),

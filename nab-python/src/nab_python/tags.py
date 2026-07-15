@@ -87,6 +87,14 @@ DEFAULT_LIBC: Libc = "glibc"
 _DEFAULT_LIBC_VERSION: Mapping[Libc, tuple[int, int]] = MappingProxyType(
     {"glibc": (2, 28), "musl": (1, 2)}
 )
+# A glibc default the arch raises above the family's.  armv7l's current PyPI
+# wheels are built at manylinux_2_31 (Debian bullseye / Raspberry Pi OS is glibc
+# 2.31), and a 2.28 floor would reject every one of them.  The floor stays a
+# ceiling on the tag, so this only holds where armv7l machines run 2.31 or newer;
+# an older one has to declare its libc-version.  musl armv7l keeps the 1.2 default.
+_ARCH_DEFAULT_GLIBC: Mapping[str, tuple[int, int]] = MappingProxyType(
+    {"armv7l": (2, 31)}
+)
 # The only major each family has shipped.  Tags expand within the declared
 # major, so a foreign major names platform tags no wheel is built for.
 LIBC_MAJOR: Mapping[Libc, int] = MappingProxyType({"glibc": 2, "musl": 1})
@@ -221,10 +229,14 @@ class PlatformSpec:
 
     @property
     def effective_libc_version(self) -> tuple[int, int]:
-        """The declared libc version, or this family's default."""
-        if self.libc_version is None:
-            return _DEFAULT_LIBC_VERSION[self.libc]
-        return self.libc_version
+        """The declared libc version, or the arch/family default."""
+        if self.libc_version is not None:
+            return self.libc_version
+        if self.libc == "glibc":
+            arch_default = _ARCH_DEFAULT_GLIBC.get(self.arch)
+            if arch_default is not None:
+                return arch_default
+        return _DEFAULT_LIBC_VERSION[self.libc]
 
     @property
     def label(self) -> str:
@@ -261,6 +273,7 @@ _PLATFORM_ARCH: dict[str, str] = {
     "windows_amd64": "amd64",
     "windows_arm64": "arm64",
     "linux_i686": "i686",
+    "linux_armv7l": "armv7l",
 }
 
 # The kind behind :func:`platform_kind`, which both tag generation and the
@@ -273,6 +286,7 @@ _PLATFORM_KIND: dict[str, str] = {
     "windows_amd64": "windows",
     "windows_arm64": "windows",
     "linux_i686": "linux",
+    "linux_armv7l": "linux",
 }
 
 
