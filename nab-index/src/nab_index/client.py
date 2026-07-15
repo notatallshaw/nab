@@ -12,6 +12,7 @@ import io
 import re
 import sys
 import tarfile
+import zlib
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING
@@ -533,7 +534,7 @@ def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
     """Extract PKG-INFO and pyproject.toml from a .tar.gz sdist archive.
 
     Returns ``(pkg_info, pyproject_toml)``. Either may be ``None`` if
-    the archive cannot be opened or the file is absent. PEP 643 static
+    the archive cannot be read or the file is absent. PEP 643 static
     metadata detection requires both: PKG-INFO carries the ``Dynamic``
     field that says which values are not authoritative, and
     pyproject.toml's ``[project].dynamic`` is the static-metadata
@@ -543,7 +544,14 @@ def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
     """
     try:
         return _read_tar_sdist_files(data)
-    except (tarfile.TarError, OSError, UnicodeDecodeError, KeyError, EOFError):
+    except (
+        tarfile.TarError,
+        OSError,
+        UnicodeDecodeError,
+        KeyError,
+        EOFError,
+        zlib.error,
+    ):
         return (None, None)
 
 
@@ -637,9 +645,10 @@ def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
     except KeyError as exc:
         msg = f"broken link in sdist member: {exc}"
         raise ValueError(msg) from exc
-    except (tarfile.TarError, OSError, EOFError) as exc:
-        # gzip raises BadGzipFile (an OSError) on a bad header, and a bare
-        # EOFError on a truncated stream; neither is a TarError.
+    except (tarfile.TarError, OSError, EOFError, zlib.error) as exc:
+        # gzip raises BadGzipFile (an OSError) on a bad header, a bare EOFError on
+        # a truncated stream, and zlib.error on a corrupt deflate block; none of
+        # them is a TarError.
         msg = f"unreadable sdist archive: {exc}"
         raise ValueError(msg) from exc
 

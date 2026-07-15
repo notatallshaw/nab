@@ -39,7 +39,9 @@ Dependency-group selection (PEP 735):
 * `--groups foo bar` folds the named groups from the project's
   `[dependency-groups]` table into the resolve. The selected
   group names land in the lockfile's top-level
-  `dependency-groups` and `default-groups` arrays.
+  `dependency-groups` array. The separate `default-groups` array
+  records the `[tool.nab].default-groups` project setting, not
+  this run's selection.
 * `--all-groups` selects every group defined in the project.
 
 Extras selection:

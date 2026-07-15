@@ -344,7 +344,10 @@ class TargetLock:
     ``pins`` is keyed by canonical package name; each value is the pin
     that target resolved to.  ``dependencies`` is the forward edge set
     among those pins, keyed the same way, which the writer emits as
-    PEP 751 ``packages.dependencies``.
+    PEP 751 ``packages.dependencies``.  ``base_dependencies`` is its
+    unconditional subset: the edges from each package's own metadata,
+    before any activated extra folds its deps in.  The writer closes a
+    conflict environment's no-member base-name set over these edges only.
 
     ``target`` is the environment the pins hold for.  The writer reads
     its markers (see :attr:`~nab_python.target.ResolveTarget.marker_string`)
@@ -355,6 +358,7 @@ class TargetLock:
     target: ResolveTarget
     pins: Mapping[str, PinShape]
     dependencies: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    base_dependencies: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass
