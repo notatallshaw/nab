@@ -12,7 +12,8 @@ Pins:
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from contextlib import AbstractContextManager
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -42,7 +43,7 @@ NUMPY_FREETHREADED = (
 CRYPTOGRAPHY_ABI3 = "cryptography-44.0.0-cp37-abi3-manylinux_2_28_x86_64.whl"
 
 
-def _free_threaded_host() -> object:
+def _free_threaded_host() -> AbstractContextManager[MagicMock]:
     """Patch the config vars packaging reads to fake a free-threaded host."""
     return patch(
         "nab_python.tags.ptags._get_config_var",

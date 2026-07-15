@@ -921,6 +921,201 @@ class TestConflictForkBaseDepDivergence:
         assert '"cpu" in extras' in str(shared.marker)
 
 
+class TestConflictForkBaseDepDivergentClosure:
+    """A base dep is agreed across the conflict forks, but the forks pin
+    it lower than the independent base pass, so its emitted transitive
+    dep is absent from ``env_base_names``.  That dep installs whenever the
+    unconditional base dep does, so it must drop its membership clause
+    too, or the no-member context installs the base dep without a
+    dependency it declares."""
+
+    _LINUX: ClassVar[ResolveTarget] = _target()
+    _CPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "cpu"),)
+    _GPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "gpu"),)
+
+    def _lock_input(self) -> LockInput:
+        # Both forks pin foo==2.0 (foo -> baz) and baz==1.0.  The base
+        # pass independently resolved foo==3.0 (foo -> bar), so
+        # ``env_base_names`` names foo and bar but never baz.
+        fork_pins: dict[str, PinShape] = {
+            "foo": _index_pin(name="foo", version="2.0"),
+            "baz": _index_pin(name="baz", version="1.0"),
+        }
+        fork_deps = {"foo": ("baz",)}
+        return self._lock_input_with(
+            cpu_pins=fork_pins,
+            cpu_deps=fork_deps,
+            cpu_base_deps=fork_deps,
+            gpu_pins=fork_pins,
+            gpu_deps=fork_deps,
+            gpu_base_deps=fork_deps,
+            base_names=frozenset({"foo", "bar"}),
+        )
+
+    def test_transitive_dep_of_base_dep_installs_with_no_member(self) -> None:
+        pylock = build_pylock(self._lock_input())
+        by_name = {str(p.name): p for p in pylock.packages}
+        no_member = self._LINUX.env_with_membership()
+
+        foo = by_name["foo"]
+        assert foo.marker is None or foo.marker.evaluate(no_member)
+
+        baz = by_name["baz"]
+        assert "in extras" not in str(baz.marker)
+        assert baz.marker is None or baz.marker.evaluate(no_member)
+
+    def _lock_input_with(
+        self,
+        cpu_pins: Mapping[str, PinShape],
+        cpu_deps: Mapping[str, tuple[str, ...]],
+        cpu_base_deps: Mapping[str, tuple[str, ...]],
+        gpu_pins: Mapping[str, PinShape],
+        gpu_deps: Mapping[str, tuple[str, ...]],
+        gpu_base_deps: Mapping[str, tuple[str, ...]],
+        base_names: frozenset[str],
+    ) -> LockInput:
+        cpu = self._LINUX.with_selection(self._CPU)
+        gpu = self._LINUX.with_selection(self._GPU)
+        return LockInput(
+            targets={
+                cpu.label: TargetLock(
+                    target=cpu,
+                    pins=dict(cpu_pins),
+                    dependencies=dict(cpu_deps),
+                    base_dependencies=dict(cpu_base_deps),
+                ),
+                gpu.label: TargetLock(
+                    target=gpu,
+                    pins=dict(gpu_pins),
+                    dependencies=dict(gpu_deps),
+                    base_dependencies=dict(gpu_base_deps),
+                ),
+            },
+            env_base_names={_env_signature(self._LINUX): base_names},
+            extras=("cpu", "gpu"),
+            conflicts=(
+                ConflictSet(
+                    members=(
+                        ConflictMember(ConflictKind.EXTRA, "cpu"),
+                        ConflictMember(ConflictKind.EXTRA, "gpu"),
+                    ),
+                    policy=ConflictPolicy.AT_MOST_ONE,
+                ),
+            ),
+        )
+
+    def test_shared_extra_activated_dep_stays_member_gated(self) -> None:
+        # foo is the only base dep; every fork installs it as plain foo.
+        # Both members activate foo[telemetry], so ``telemetrylib`` is a
+        # foo -> telemetrylib edge in every fork's full graph, but it is
+        # extra-activated (absent from ``base_dependencies``).  It must
+        # not be promoted to base: plain foo does not pull it in the
+        # no-member context.
+        cpu_pins: dict[str, PinShape] = {
+            "foo": _index_pin(name="foo", version="1.0"),
+            "telemetrylib": _index_pin(name="telemetrylib", version="1.0"),
+            "torch-cpu": _index_pin(name="torch-cpu", version="1.0"),
+        }
+        gpu_pins: dict[str, PinShape] = {
+            "foo": _index_pin(name="foo", version="1.0"),
+            "telemetrylib": _index_pin(name="telemetrylib", version="1.0"),
+            "torch-gpu": _index_pin(name="torch-gpu", version="1.0"),
+        }
+        lock_input = self._lock_input_with(
+            cpu_pins=cpu_pins,
+            cpu_deps={"foo": ("telemetrylib",)},
+            cpu_base_deps={},
+            gpu_pins=gpu_pins,
+            gpu_deps={"foo": ("telemetrylib",)},
+            gpu_base_deps={},
+            base_names=frozenset({"foo"}),
+        )
+        pylock = build_pylock(lock_input)
+        by_name = {str(p.name): p for p in pylock.packages}
+
+        assert '"cpu" in extras' in str(by_name["telemetrylib"].marker)
+
+    def test_divergent_extra_activated_dep_emits_cleanly(self) -> None:
+        # Same shape, but the extra-activated telemetrylib pins diverge
+        # across the forks.  It is member-gated, not base, so the two
+        # entries stay disjoint and no DivergentBaseDependencyError fires.
+        cpu_pins: dict[str, PinShape] = {
+            "foo": _index_pin(name="foo", version="1.0"),
+            "telemetrylib": _index_pin(name="telemetrylib", version="1.0"),
+        }
+        gpu_pins: dict[str, PinShape] = {
+            "foo": _index_pin(name="foo", version="1.0"),
+            "telemetrylib": _index_pin(name="telemetrylib", version="2.0"),
+        }
+        lock_input = self._lock_input_with(
+            cpu_pins=cpu_pins,
+            cpu_deps={"foo": ("telemetrylib",)},
+            cpu_base_deps={},
+            gpu_pins=gpu_pins,
+            gpu_deps={"foo": ("telemetrylib",)},
+            gpu_base_deps={},
+            base_names=frozenset({"foo"}),
+        )
+        pylock = build_pylock(lock_input)
+        markers = [
+            str(p.marker) for p in pylock.packages if str(p.name) == "telemetrylib"
+        ]
+        assert len(markers) == 2
+        assert all("in extras" in marker for marker in markers)
+
+    def test_base_edge_only_some_forks_carry_stays_member_gated(self) -> None:
+        # cudalib is a base dep of foo, but only the cpu fork pins it, so
+        # foo -> cudalib is a base edge one fork carries and the other
+        # drops.  An edge not shared by every fork must not promote
+        # cudalib to base.
+        lock_input = self._lock_input_with(
+            cpu_pins={
+                "foo": _index_pin(name="foo", version="2.0"),
+                "baz": _index_pin(name="baz", version="1.0"),
+                "cudalib": _index_pin(name="cudalib", version="1.0"),
+            },
+            cpu_deps={"foo": ("baz", "cudalib")},
+            cpu_base_deps={"foo": ("baz", "cudalib")},
+            gpu_pins={
+                "foo": _index_pin(name="foo", version="2.0"),
+                "baz": _index_pin(name="baz", version="1.0"),
+            },
+            gpu_deps={"foo": ("baz",)},
+            gpu_base_deps={"foo": ("baz",)},
+            base_names=frozenset({"foo"}),
+        )
+        pylock = build_pylock(lock_input)
+        by_name = {str(p.name): p for p in pylock.packages}
+
+        assert "in extras" not in str(by_name["baz"].marker)
+        assert '"cpu" in extras' in str(by_name["cudalib"].marker)
+
+    def test_diamond_closure_promotes_shared_dep_once(self) -> None:
+        pins: dict[str, PinShape] = {
+            "foo": _index_pin(name="foo", version="2.0"),
+            "baz": _index_pin(name="baz", version="1.0"),
+            "qux": _index_pin(name="qux", version="1.0"),
+        }
+        deps = {"foo": ("baz", "qux"), "baz": ("qux",)}
+        lock_input = self._lock_input_with(
+            cpu_pins=pins,
+            cpu_deps=deps,
+            cpu_base_deps=deps,
+            gpu_pins=pins,
+            gpu_deps=deps,
+            gpu_base_deps=deps,
+            base_names=frozenset({"foo"}),
+        )
+        pylock = build_pylock(lock_input)
+        by_name = {str(p.name): p for p in pylock.packages}
+        no_member = self._LINUX.env_with_membership()
+
+        for name in ("baz", "qux"):
+            marker = by_name[name].marker
+            assert "in extras" not in str(marker)
+            assert marker is None or marker.evaluate(no_member)
+
+
 class TestConflictForksWithoutBaseAttribution:
     """When conflict forks ran but the caller did not supply base
     requirements, ``env_base_names`` is empty.  Base status is unknowable,
@@ -3783,8 +3978,10 @@ class TestDependencyGraph:
             resolved_keys=("foo", "bar", "baz"),
         )
         # ``missing`` is not locked, so it is dropped; bar and baz have no
-        # locked dependencies, so they are absent from the graph.
+        # locked dependencies, so they are absent from the graph.  These
+        # are all base (unconditional) edges, so both graphs agree.
         assert lock.dependencies == {"foo": ("bar",)}
+        assert lock.base_dependencies == {"foo": ("bar",)}
 
     def test_activated_extra_edges_join_graph(self) -> None:
         provider = _FakeProvider(
@@ -3804,6 +4001,8 @@ class TestDependencyGraph:
             resolved_keys=("foo", "foo[cli]", "foo[doc]", "plugin"),
         )
         assert lock.dependencies == {"foo": ("plugin",)}
+        # plugin is pulled only by the cli extra, so it is not a base edge.
+        assert lock.base_dependencies == {}
 
     def test_umbrella_extra_drops_self_edge(self) -> None:
         # ``all`` pulls ``mypkg[graphviz]`` and ``mypkg[otel]``, so its recorded
@@ -3840,6 +4039,9 @@ class TestDependencyGraph:
             ),
         )
         assert lock.dependencies == {"mypkg": ("graphviz-lib", "otel-lib")}
+        # Both transitive deps arrive through extras, so neither is a base
+        # edge and mypkg has no base dependencies.
+        assert lock.base_dependencies == {}
 
     def test_emitted_as_pep751_dependencies(self) -> None:
         text = write_lock(

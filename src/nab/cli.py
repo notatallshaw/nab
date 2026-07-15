@@ -518,7 +518,7 @@ def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg
     except InvalidProjectRequirementError as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
-    except (MissingExtraError, LookupError) as e:
+    except LookupError as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
     except (MissingHashError, MissingSdistError, MetadataError) as e:
