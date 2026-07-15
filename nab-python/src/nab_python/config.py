@@ -683,8 +683,9 @@ def _config_from_effective(
         if not mode_value.origin.outranks(matrix_value.origin):
             msg = (
                 "[tool.nab.matrix] is set but mode is 'specific'; set"
-                " mode = 'universal' to opt in to the experimental"
-                " matrix-based resolver"
+                " mode = 'universal' to resolve for every target the matrix"
+                " declares, or remove the table. Universal mode is"
+                " experimental."
             )
             raise ConfigError(msg)
         # A higher-precedence source (--project-mode) selected a

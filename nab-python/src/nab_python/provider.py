@@ -128,11 +128,12 @@ class ExtrasMode(enum.Enum):
 class ResolveMode(enum.Enum):
     """How the resolver interprets the project.
 
-    ``SPECIFIC`` runs the single-environment resolver against one
-    marker environment (host or impersonated).  ``UNIVERSAL`` runs the
-    matrix-based per-tuple resolver and is *experimental*: users
-    must opt in by setting ``[tool.nab].mode = "universal"`` and
-    declaring ``[tool.nab.matrix]``.
+    ``SPECIFIC`` resolves one target, the host or an impersonated
+    marker environment.  ``UNIVERSAL`` resolves one target per tuple
+    declared in ``[tool.nab.matrix]``.  Both run the same engine over a
+    list of targets.  ``UNIVERSAL`` is *experimental*: users must opt in
+    by setting ``[tool.nab].mode = "universal"`` and declaring
+    ``[tool.nab.matrix]``.
     """
 
     SPECIFIC = "specific"
