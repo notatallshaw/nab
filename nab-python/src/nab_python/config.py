@@ -674,10 +674,19 @@ def _config_from_effective(
     mode: ResolveMode = mode_value.value
     matrix: MatrixConfig | None = matrix_value.value
     if mode is ResolveMode.UNIVERSAL and matrix is None:
-        msg = (
-            "mode = 'universal' requires a [tool.nab.matrix] table"
-            " declaring python and platforms"
-        )
+        if mode_value.origin.kind is SourceKind.CLI:
+            msg = (
+                "--project-mode universal needs a [tool.nab.matrix] table, but"
+                " a matrix can only be declared in the project file (there is"
+                " no --project-matrix flag). Add [tool.nab.matrix] to the"
+                " project's pyproject.toml or nab.toml, or drop --project-mode"
+                " universal."
+            )
+        else:
+            msg = (
+                "mode = 'universal' requires a [tool.nab.matrix] table"
+                " declaring python and platforms"
+            )
         raise ConfigError(msg)
     if mode is ResolveMode.SPECIFIC and matrix is not None:
         if not mode_value.origin.outranks(matrix_value.origin):
