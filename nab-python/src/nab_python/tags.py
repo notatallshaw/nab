@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache, cached_property, lru_cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
@@ -47,6 +47,7 @@ __all__ = [
     "PlatformSpec",
     "TagSet",
     "TagsSource",
+    "default_ceiling_admitting",
     "platform_kind",
     "supports_free_threading",
     "wheel_tag_set",
@@ -303,6 +304,87 @@ def _check_version_cap(key: str, version: tuple[int, int]) -> None:
 def platform_kind(platform_id: str) -> str | None:
     """Return a platform id's kind, or ``None`` if nab does not know the id."""
     return _PLATFORM_KIND.get(platform_id)
+
+
+# The libc/OS version a versioned platform tag carries, which the target reads
+# as a ceiling.  Used to pull the ``(major, minor)`` back out of a wheel's tag
+# when deciding whether raising an unset default ceiling would admit it.
+_MACOS_PLATFORM_RE = re.compile(r"^macosx_(\d+)_(\d+)_")
+_MANYLINUX_PLATFORM_RE = re.compile(r"^manylinux_(\d+)_(\d+)_")
+_MUSLLINUX_PLATFORM_RE = re.compile(r"^musllinux_(\d+)_(\d+)_")
+
+
+def _platform_versions(
+    wheel_filename: str, pattern: re.Pattern[str]
+) -> list[tuple[int, int]]:
+    """Return the ``(major, minor)`` pairs ``pattern`` matches in a wheel's tags."""
+    wheel_tags = wheel_tag_set(wheel_filename)
+    if wheel_tags is None:
+        return []
+    out: list[tuple[int, int]] = []
+    for tag in wheel_tags:
+        match = pattern.match(tag.platform)
+        if match is not None:
+            out.append((int(match.group(1)), int(match.group(2))))
+    return out
+
+
+def default_ceiling_admitting(
+    spec: PlatformSpec,
+    *,
+    python_version: str,
+    implementation: str,
+    wheel_filename: str,
+) -> tuple[str, tuple[int, int]] | None:
+    """Return the unset default ceiling that alone keeps a wheel out, or ``None``.
+
+    A macOS or Linux target reads its OS/libc version as a ceiling on the
+    wheels it accepts.  When that version is a default the caller never set,
+    an incompatible wheel might be one the target would install if the
+    ceiling were raised.  This returns ``(knob, raise_to)`` naming the knob
+    (``macos-min`` or ``libc-version``) and the lowest version it would need
+    to be raised to, but only when raising it is enough: the result is
+    confirmed by rebuilding the target's tags at ``raise_to`` and rechecking
+    acceptance, so an arch, Python, ABI, or libc-family mismatch (which no
+    ceiling change fixes) yields ``None``.  A ceiling the caller set, and any
+    non-macOS/Linux target, also yield ``None``.
+    """
+    kind = platform_kind(spec.platform_id)
+    if kind == "macos" and spec.macos_min is None:
+        knob = "macos-min"
+        current = _DEFAULT_MACOS_MIN[spec.arch]
+        candidates = _platform_versions(wheel_filename, _MACOS_PLATFORM_RE)
+        field = "macos_min"
+    elif kind == "linux" and spec.libc_version is None:
+        knob = "libc-version"
+        current = _DEFAULT_LIBC_VERSION[spec.libc]
+        pattern = (
+            _MUSLLINUX_PLATFORM_RE if spec.libc == "musl" else _MANYLINUX_PLATFORM_RE
+        )
+        candidates = _platform_versions(wheel_filename, pattern)
+        field = "libc_version"
+    else:
+        return None
+
+    higher = [version for version in candidates if version > current]
+    if not higher:
+        return None
+    raise_to = min(higher)
+
+    try:
+        raised = TagSet.for_spec(
+            python_version=python_version,
+            spec=replace(spec, **{field: raise_to}),
+            implementation=implementation,
+        )
+    except ValueError:
+        # A tag naming a version past the knob's cap (or below its floor) is
+        # not a ceiling nab can raise to, so it is not the sole cause.
+        return None
+
+    if raised.accepts(wheel_filename):
+        return knob, raise_to
+    return None
 
 
 def _version_tag(version: tuple[int, int] | None) -> str:

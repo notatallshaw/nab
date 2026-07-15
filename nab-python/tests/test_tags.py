@@ -12,7 +12,8 @@ Pins:
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from contextlib import AbstractContextManager
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -26,6 +27,7 @@ from nab_python.tags import (
     _ordered_tags_for_spec,
     _parse_tag_str,
     _platform_tags_for_spec,
+    default_ceiling_admitting,
     wheel_tag_set,
 )
 from nab_python.target import PLATFORM_MARKERS
@@ -43,7 +45,7 @@ NUMPY_FREETHREADED = (
 CRYPTOGRAPHY_ABI3 = "cryptography-44.0.0-cp37-abi3-manylinux_2_28_x86_64.whl"
 
 
-def _free_threaded_host() -> object:
+def _free_threaded_host() -> AbstractContextManager[MagicMock]:
     """Patch the config vars packaging reads to fake a free-threaded host."""
     return patch(
         "nab_python.tags.ptags._get_config_var",
@@ -1177,3 +1179,67 @@ class TestLinuxPlatformOrderMatchesSysTags:
         many = Tag("cp311", "cp311", "manylinux_2_28_x86_64")
         assert host.rank[plain] < host.rank[many]
         assert declared.rank[plain] < declared.rank[many]
+
+
+class TestDefaultCeilingAdmitting:
+    """``default_ceiling_admitting`` names an unset default ceiling, or nothing."""
+
+    def test_musl_default_ceiling_named(self) -> None:
+        """A musllinux wheel above the 1.2 default names the raise-to version."""
+        got = default_ceiling_admitting(
+            PlatformSpec("linux_x86_64", libc="musl"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0-cp311-cp311-musllinux_1_3_x86_64.whl",
+        )
+        assert got == ("libc-version", (1, 3))
+
+    def test_python_mismatch_is_not_a_ceiling(self) -> None:
+        """A cp312 wheel on a 3.11 target is not admitted by any ceiling change."""
+        got = default_ceiling_admitting(
+            PlatformSpec("macos_arm64"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0-cp312-cp312-macosx_14_0_arm64.whl",
+        )
+        assert got is None
+
+    def test_windows_target_has_no_ceiling(self) -> None:
+        """Windows names no versioned platform tag, so there is no ceiling."""
+        got = default_ceiling_admitting(
+            PlatformSpec("windows_amd64"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0-cp311-cp311-manylinux_2_34_x86_64.whl",
+        )
+        assert got is None
+
+    def test_non_wheel_filename_has_no_ceiling(self) -> None:
+        """A filename that is not a parseable wheel yields no candidate versions."""
+        got = default_ceiling_admitting(
+            PlatformSpec("macos_arm64"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0.tar.gz",
+        )
+        assert got is None
+
+    def test_below_ceiling_tag_is_not_a_ceiling(self) -> None:
+        """A manylinux 2.17 wheel is at or below the default, so nothing is raised."""
+        got = default_ceiling_admitting(
+            PlatformSpec("linux_x86_64"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0-cp311-cp311-manylinux_2_17_x86_64.whl",
+        )
+        assert got is None
+
+    def test_version_past_the_cap_is_not_raisable(self) -> None:
+        """A tag naming a version past the knob cap is not a ceiling nab can raise to."""
+        got = default_ceiling_admitting(
+            PlatformSpec("macos_arm64"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0-cp311-cp311-macosx_100_0_arm64.whl",
+        )
+        assert got is None

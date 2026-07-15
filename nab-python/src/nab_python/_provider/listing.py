@@ -310,7 +310,13 @@ def filter_distributions(
     linux-only wheel still stays off the Windows target.
     """
     base = base_distributions(provider, normalized, files)
-    return _apply_wheel_tags(provider, normalized, base)
+    result = _apply_wheel_tags(provider, normalized, base)
+
+    if not result and len(base) < len(files):
+        # The base pass (dist-policy, requires-python, upload cutoff) dropped a
+        # file, so an empty result is not the tag pass alone.
+        provider.base_filtered_packages.add(normalized)
+    return result
 
 
 def base_distributions(
@@ -418,10 +424,18 @@ def _apply_wheel_tags(
 
     result: list[tuple[Version, DistFile]] = []
     tag_rejected_versions: set[Version] = set()
+    kept_wheel_versions: set[Version] = set()
+    ceiling_drops: dict[Version, tuple[WheelFile, tuple[str, tuple[int, int]]]] = {}
     for version, dist in base:
         if excluded_by_wheel_tags(provider, normalized, dist, tags):
             tag_rejected_versions.add(version)
+            if version not in ceiling_drops and isinstance(dist, WheelFile):
+                admitting = provider.ceiling_would_admit(dist.filename)
+                if admitting is not None:
+                    ceiling_drops[version] = (dist, admitting)
             continue
+        if isinstance(dist, WheelFile):
+            kept_wheel_versions.add(version)
         result.append((version, dist))
 
     if tag_rejected_versions:
@@ -431,6 +445,12 @@ def _apply_wheel_tags(
         provider.stats.excluded_versions_no_compatible_wheel += len(
             tag_rejected_versions - kept
         )
+
+    # Warn only where an unset default ceiling took a version's last wheel: a
+    # release that also ships an in-ceiling wheel keeps it and stays silent.
+    for version, (wheel, (knob, raise_to)) in ceiling_drops.items():
+        if version not in kept_wheel_versions:
+            provider.warn_ceiling_drop(normalized, version, wheel, knob, raise_to)
 
     return result
 

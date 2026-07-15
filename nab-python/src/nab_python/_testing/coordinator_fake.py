@@ -93,9 +93,10 @@ def _wire_metadata_side_effects(
         # The fetcher skips a sidecar the index already answers for.
         if index.has_metadata(pkg, ver, url):
             return
+        # Store even when the sidecar returns nothing: an empty fetch still
+        # marks the slot fetched, as real _fetch_metadata does.
         text = resolve_metadata(pkg, ver, url)
-        if text is not None:
-            index.store_metadata(pkg, ver, text, url)
+        index.store_metadata(pkg, ver, text, url)
 
     def _request_metadata(
         pkg: str, ver: str, url: str, _hash: tuple[str, str] | None = None
@@ -172,7 +173,9 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
       ``metadata_text`` (or the entry from ``metadata_by_url``, or from
       ``metadata_by_version``, or auto-generated minimal METADATA when
       ``auto_metadata`` is true) under the requested sidecar URL, as the
-      fetcher does.  ``metadata_by_url`` is how sibling wheels of one
+      fetcher does.  When nothing resolves, ``None`` lands in the sidecar
+      slot, so the fetched-but-empty slot reads back the way it would in
+      production.  ``metadata_by_url`` is how sibling wheels of one
       version are given different dependencies.
     * ``request_sdist`` writes ``sdist_pkg_info`` and, if not ``None``,
       ``sdist_pyproject_toml``.
