@@ -297,10 +297,14 @@ def build_target_lock(
             provider, canonical, version, indexes
         )
 
+    dependencies, base_dependencies = _forward_dependency_graph(
+        provider, pins, resolved_keys
+    )
     return TargetLock(
         target=target,
         pins=lock_pins,
-        dependencies=_forward_dependency_graph(provider, pins, resolved_keys),
+        dependencies=dependencies,
+        base_dependencies=base_dependencies,
     )
 
 
@@ -308,15 +312,18 @@ def _forward_dependency_graph(
     provider: LockInputProvider,
     pins: Mapping[str, Version],
     resolved_keys: Iterable[str],
-) -> dict[str, tuple[str, ...]]:
+) -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
     """Build the forward dependency graph among the locked packages.
 
-    Each pinned package maps to the canonical names of its direct
-    dependencies that are themselves pinned.  Base dependencies come
-    from ``deps_cache``; an activated extra (a ``name[extra]`` key in
-    ``resolved_keys``) folds that extra's dependencies in too.  Names
-    not in ``pins`` are dropped so every edge points at a real
-    ``[[packages]]`` entry.
+    Returns ``(full, base)``.  ``full`` maps each pinned package to the
+    canonical names of its direct dependencies that are themselves
+    pinned; an activated extra (a ``name[extra]`` key in
+    ``resolved_keys``) folds that extra's dependencies in.  ``base`` is
+    the subset from each package's own metadata (``deps_cache``), before
+    any extra is folded in, so it holds only the edges that fire
+    regardless of which extra was activated.  Names not in ``pins`` are
+    dropped from both so every edge points at a real ``[[packages]]``
+    entry.
     """
     from ..provider import split_extra
 
@@ -328,26 +335,32 @@ def _forward_dependency_graph(
 
     pinned = {canonicalize_name(name) for name in pins}
     graph: dict[str, tuple[str, ...]] = {}
+    base_graph: dict[str, tuple[str, ...]] = {}
     for raw_name, version in pins.items():
         canonical = canonicalize_name(raw_name)
         cache_key = (canonical, version)
-        dep_names = {
+        base_deps = {
             canonicalize_name(split_extra(dep)[0])
             for dep in provider.deps_cache.get(cache_key, {})
         }
+        all_deps = set(base_deps)
         extra_map = provider.extra_deps_map.get(cache_key, {})
         for extra in activated_extras.get(canonical, ()):
-            dep_names.update(
+            all_deps.update(
                 canonicalize_name(split_extra(dep)[0])
                 for dep in extra_map.get(extra, {})
             )
-        dep_names &= pinned
+        base_deps &= pinned
+        all_deps &= pinned
         # An umbrella extra (pkg[all] pulling pkg[graphviz]) can name its own
         # package; drop it so pkg is never an edge to itself.
-        dep_names.discard(canonical)
-        if dep_names:
-            graph[canonical] = tuple(sorted(dep_names))
-    return graph
+        base_deps.discard(canonical)
+        all_deps.discard(canonical)
+        if all_deps:
+            graph[canonical] = tuple(sorted(all_deps))
+        if base_deps:
+            base_graph[canonical] = tuple(sorted(base_deps))
+    return graph, base_graph
 
 
 def _index_pin_from_listing(
