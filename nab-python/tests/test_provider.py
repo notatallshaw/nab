@@ -5604,7 +5604,9 @@ class TestPrefetchWalkAhead:
         coordinator.reset_mock()
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
-        assert len(items) == provider.DEEP_PREFETCH_COUNT
+        # fetch_versions already prefetched the newest version; it fills a
+        # window slot but is skipped as already-held.
+        assert len(items) == provider.DEEP_PREFETCH_COUNT - 1
 
     def test_skips_versions_with_cached_deps(self) -> None:
         """Versions already in ``deps_cache`` are excluded from the batch."""
@@ -5618,15 +5620,19 @@ class TestPrefetchWalkAhead:
         items = coordinator.request_metadata_batch.call_args[0][0]
         versions = [ver for _, ver, _, _ in items]
         assert "2.0" not in versions
-        assert "3.0" in versions
+        # fetch_versions already prefetched the newest version.
+        assert "3.0" not in versions
         assert "1.0" in versions
 
     def test_dedupes_repeated_versions(self) -> None:
         """A wheel and a sdist for the same version count as one slot."""
+        # 3.0 is the newest, so fetch_versions prefetches and skips it; the
+        # wheel and sdist for 2.0 collapse to the single 2.0 slot.
         wheels: list[WheelFile | SdistFile] = [
             make_wheel("3.0"),
-            make_sdist("3.0"),
             make_wheel("2.0"),
+            make_sdist("2.0"),
+            make_wheel("1.0"),
         ]
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
@@ -5635,7 +5641,24 @@ class TestPrefetchWalkAhead:
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
         versions = [ver for _, ver, _, _ in items]
-        assert versions == ["3.0", "2.0"]
+        assert versions == ["2.0", "1.0"]
+
+    def test_skips_version_whose_empty_fetch_the_coordinator_holds(self) -> None:
+        """An already-fetched sidecar, even an empty one, is not re-requested."""
+        wheels = [make_wheel("3.0"), make_wheel("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        provider.fetch_versions("foo")
+        # An empty fetch (no sidecar served) still marks the slot fetched.
+        two = make_wheel("2.0")
+        assert two.metadata_url is not None
+        coordinator.request_metadata("foo", "2.0", two.metadata_url)
+        coordinator.reset_mock()
+        provider.prefetch_walk_ahead("foo")
+        items = coordinator.request_metadata_batch.call_args[0][0]
+        versions = [ver for _, ver, _, _ in items]
+        assert "2.0" not in versions
+        assert "1.0" in versions
 
     def test_picks_wheel_when_both_present(self) -> None:
         """A version with both a wheel and a sdist still prefetches the wheel."""
