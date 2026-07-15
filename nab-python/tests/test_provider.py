@@ -983,7 +983,7 @@ class TestNoVersionsReasons:
         ``foo`` 2.0 ships only a Windows wheel the Linux target refuses,
         and ``foo`` 1.0 ships an sdist dropped by its ``requires-python``.
         The reason must not claim "no sdist is available" when one is on
-        the index.
+        the index: it names the rejected tags and the filtered sdist.
         """
         listing = [
             WheelFile(
@@ -1004,10 +1004,10 @@ class TestNoVersionsReasons:
             ),
         )
         provider.choose_version("foo", SpecifierSet("").to_range())
-        assert (
-            provider.get_no_versions_reason("foo")
-            == "found on index but no distribution is compatible "
-            "(all filtered by requires-python, dist-policy, or upload-time)"
+        assert provider.get_no_versions_reason("foo") == (
+            "found on index but none of the wheel's tags are compatible with"
+            " the resolve target (1 wheels rejected), and the sdist was"
+            " filtered by requires-python, dist-policy, or upload-time"
         )
 
     def test_present_but_dist_policy_filtered_reports_incompatible(self) -> None:
@@ -1019,6 +1019,45 @@ class TestNoVersionsReasons:
             provider.get_no_versions_reason("foo")
             == "found on index but no distribution is compatible "
             "(all filtered by requires-python, dist-policy, or upload-time)"
+        )
+
+    def test_tag_excluded_wheel_with_filtered_sdist_keeps_the_sdist(self) -> None:
+        """A tag-excluded wheel beside a filtered sdist must not deny the sdist.
+
+        The sdist is on the index, dropped only by requires-python, so the
+        reason may not claim ``no sdist is available to build from``: it has
+        to read present-but-filtered like the no-tag-excluded branch does.
+        """
+        wheel = WheelFile(
+            filename="foo-1.0-cp311-cp311-win_amd64.whl",
+            url="https://example.com/foo-1.0-cp311-cp311-win_amd64.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+        )
+        sdist = SdistFile(
+            filename="foo-1.0.tar.gz",
+            url="https://example.com/foo-1.0.tar.gz",
+            version="1.0",
+            requires_python=">=3.13",
+            upload_time=None,
+        )
+        coordinator = make_coordinator([wheel, sdist], package="foo")
+        provider = Provider(
+            coordinator,
+            target=ResolveTarget.for_declared(
+                python_version="3.11", spec=PlatformSpec("linux_x86_64")
+            ),
+        )
+        provider.choose_version("foo", SpecifierSet("").to_range())
+        reason = provider.get_no_versions_reason("foo")
+        assert reason is not None
+        assert "no sdist is available" not in reason
+        assert reason == (
+            "found on index but none of the wheel's tags are compatible with"
+            " the resolve target (1 wheels rejected), and the sdist was"
+            " filtered by requires-python, dist-policy, or upload-time"
         )
 
     def test_get_reason_returns_none_for_unknown_package(self) -> None:
