@@ -100,6 +100,18 @@ PLATFORM_MARKERS: dict[str, dict[str, str]] = {
         "platform_machine": "AMD64",
         "os_name": "nt",
     },
+    "windows_arm64": {
+        "sys_platform": "win32",
+        "platform_system": "Windows",
+        "platform_machine": "ARM64",
+        "os_name": "nt",
+    },
+    "linux_i686": {
+        "sys_platform": "linux",
+        "platform_system": "Linux",
+        "platform_machine": "i686",
+        "os_name": "posix",
+    },
 }
 
 
