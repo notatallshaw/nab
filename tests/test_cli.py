@@ -655,6 +655,36 @@ class TestLockCommandSpecific:
         assert "does not provide extra 'nonexistent'" in err
         assert "Traceback" not in err
 
+    def test_dynamic_local_source_forbidden_build_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A local source needing a forbidden build exits 1, not a traceback.
+
+        Dynamic metadata under build-policy never raises
+        ``UnsupportedSdistError``, a ``MetadataError`` subclass.
+        """
+        member = tmp_path / "mylocal"
+        member.mkdir()
+        (member / "pyproject.toml").write_text(
+            '[project]\nname = "mylocal"\nversion = "1.0"\ndynamic = ["dependencies"]\n'
+        )
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "root"\nversion = "0"\n'
+            'dependencies = ["mylocal"]\n'
+            "[tool.nab]\n"
+            'build-policy = "never"\n'
+            "[[tool.nab.local-sources]]\n"
+            'name = "mylocal"\n'
+            'path = "mylocal"\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, offline=True, output=Path("-"), cache=False)
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "has dynamic metadata" in err
+        assert "Traceback" not in err
+
     def test_missing_file_exits(self, tmp_path: Path) -> None:
         """Exit 1 when pyproject.toml doesn't exist."""
         with pytest.raises(SystemExit, match="1"):
