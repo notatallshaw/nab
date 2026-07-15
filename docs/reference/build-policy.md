@@ -37,6 +37,10 @@ Static metadata only, from any source:
 * VCS clones declared via `[[tool.nab.vcs-sources]]`: the clone
   is fetched and its `pyproject.toml` is read statically.  Same
   skip behaviour for dynamic deps.
+* Archive sources declared via `[[tool.nab.archive-sources]]`:
+  the `.tar.gz` is downloaded, hash-verified, and extracted, then
+  its `pyproject.toml` is read statically.  Same skip behaviour
+  for dynamic deps.
 
 Picks the most reproducible posture: every input to the SAT
 problem is a file read, not a sandboxed subprocess.  Use `never`
@@ -50,8 +54,8 @@ Adds PEP 517 backend invocation on local checkouts.  When a
 `dynamic = ["dependencies"]`, the project's
 `[build-system].build-backend` runs inside an isolated venv via
 `nab_python._build.runner` and the
-resulting wheel `METADATA` is used.  Remote PyPI sdists and VCS
-clones remain static-only.
+resulting wheel `METADATA` is used.  Remote PyPI sdists, VCS
+clones, and archive sources remain static-only.
 
 ## `build-remote`
 
