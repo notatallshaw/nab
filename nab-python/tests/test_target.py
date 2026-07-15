@@ -295,6 +295,12 @@ class TestLabels:
         )
         assert target.label == "py312-linux_i686"
 
+    def test_linux_armv7l_label(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_armv7l")
+        )
+        assert target.label == "py312-linux_armv7l"
+
     def test_free_threaded_windows_arm64_label(self) -> None:
         target = ResolveTarget.for_declared(
             python_version="3.13",
@@ -511,6 +517,11 @@ class TestMarkerTables:
             missing = required - env.keys()
             assert not missing, f"{platform_id} missing {missing}"
 
+    def test_linux_armv7l_marker_machine(self) -> None:
+        env = declared_environment("3.12", PlatformSpec("linux_armv7l"), "cpython")
+        assert env["platform_machine"] == "armv7l"
+        assert env["sys_platform"] == "linux"
+
 
 class TestNewPlatformIdsExpand:
     """The added ids expand from a matrix like any other platform."""
@@ -525,6 +536,14 @@ class TestNewPlatformIdsExpand:
         )
         labels = {t.label for t in matrix.expand()}
         assert labels == {"py312-windows_arm64", "py312-linux_i686"}
+
+    def test_linux_armv7l_expands_to_a_target(self) -> None:
+        matrix = Matrix(
+            python="==3.12",
+            platforms=(PlatformSpec("linux_armv7l"),),
+        )
+        labels = {t.label for t in matrix.expand()}
+        assert labels == {"py312-linux_armv7l"}
 
 
 class TestPythonAxisEnvironment:

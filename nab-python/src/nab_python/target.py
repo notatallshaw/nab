@@ -113,6 +113,12 @@ PLATFORM_MARKERS: dict[str, dict[str, str]] = {
         "platform_machine": "i686",
         "os_name": "posix",
     },
+    "linux_armv7l": {
+        "sys_platform": "linux",
+        "platform_system": "Linux",
+        "platform_machine": "armv7l",
+        "os_name": "posix",
+    },
 }
 
 

@@ -210,6 +210,35 @@ class TestPlatformSpec:
         """``linux_i686`` carries the ``i686`` arch."""
         assert PlatformSpec("linux_i686").arch == "i686"
 
+    def test_linux_armv7l_arch(self) -> None:
+        """``linux_armv7l`` carries the ``armv7l`` arch."""
+        assert PlatformSpec("linux_armv7l").arch == "armv7l"
+
+    def test_armv7l_default_glibc_is_2_31(self) -> None:
+        """An undeclared armv7l target floors at glibc 2.31, not 2.28.
+
+        Current armv7l wheels on PyPI (cryptography 46+) are built at
+        manylinux_2_31; a 2.28 floor would reject every one of them.
+        """
+        spec = PlatformSpec("linux_armv7l")
+        assert spec.libc == "glibc"
+        assert spec.effective_libc_version == (2, 31)
+
+    def test_armv7l_musl_keeps_the_family_default(self) -> None:
+        """The armv7l glibc floor does not move its musl default."""
+        spec = PlatformSpec("linux_armv7l", libc="musl")
+        assert spec.effective_libc_version == (1, 2)
+
+    def test_armv7l_declared_libc_version_wins(self) -> None:
+        """An explicit ``libc_version`` still overrides the armv7l default."""
+        spec = PlatformSpec("linux_armv7l", libc_version=(2, 17))
+        assert spec.effective_libc_version == (2, 17)
+
+    def test_other_arches_keep_glibc_2_28_default(self) -> None:
+        """The armv7l floor is a pure addition; every other arch stays 2.28."""
+        for platform_id in ("linux_x86_64", "linux_aarch64", "linux_i686"):
+            assert PlatformSpec(platform_id).effective_libc_version == (2, 28)
+
     def test_label_distinguishes_space_from_underscore(self) -> None:
         """Whitespace and ``_`` in ``platform_release`` encode differently.
 
@@ -431,6 +460,30 @@ class TestLinuxI686:
         spec = PlatformSpec("linux_i686")
         wheel = _wheel("foo-1.0-cp312-cp312-manylinux2014_i686.whl")
         assert _compatible(wheel, python_version="3.12", spec=spec)
+
+
+class TestLinuxArmv7l:
+    """``linux_armv7l`` emits the armv7l manylinux family from glibc 2.31 down."""
+
+    def test_default_target_emits_manylinux_armv7l(self) -> None:
+        platforms = _platform_tags_for_spec(PlatformSpec("linux_armv7l"))
+        assert platforms[0] == "linux_armv7l"
+        assert "manylinux_2_31_armv7l" in platforms
+        assert "manylinux_2_17_armv7l" in platforms
+        assert "manylinux2014_armv7l" in platforms
+        assert "manylinux_2_5_armv7l" not in platforms
+        assert not any(p.startswith("musllinux") for p in platforms)
+
+    def test_accepts_a_manylinux_2_31_armv7l_wheel(self) -> None:
+        spec = PlatformSpec("linux_armv7l")
+        wheel = _wheel("foo-1.0-cp312-cp312-manylinux_2_31_armv7l.whl")
+        assert _compatible(wheel, python_version="3.12", spec=spec)
+
+    def test_rejects_a_manylinux_2_34_armv7l_wheel(self) -> None:
+        """A wheel above the default floor needs an explicit libc-version."""
+        spec = PlatformSpec("linux_armv7l")
+        wheel = _wheel("foo-1.0-cp312-cp312-manylinux_2_34_armv7l.whl")
+        assert not _compatible(wheel, python_version="3.12", spec=spec)
 
 
 class TestTagsForTarget:
