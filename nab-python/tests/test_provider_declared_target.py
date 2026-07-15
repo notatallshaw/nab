@@ -29,6 +29,7 @@ from nab_python.fetch import InMemoryIndex
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
+    ListingFilterCache,
     Provider,
     VcsConfig,
     VcsPolicy,
@@ -679,6 +680,62 @@ class TestWheelTagFiltering:
         result = provider.fetch_versions("pkg")
         assert result == []
         assert provider.stats.excluded_versions_no_compatible_wheel == 1
+
+
+class TestEqualVersionCanonicalization:
+    """One release pins under one version string, whatever the target's tags drop."""
+
+    @staticmethod
+    def _files() -> list[WheelFile | SdistFile]:
+        """A release whose wheel says ``1.0`` and whose sdist says ``1.0.0``."""
+        return [
+            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
+            _sdist("1.0.0"),
+        ]
+
+    def _provider(self, spec: PlatformSpec, cache: ListingFilterCache) -> Provider:
+        return Provider(
+            _index_with_files(self._files()),
+            _linux_target(spec),
+            listing_filter_cache=cache,
+        )
+
+    def test_pin_string_does_not_vary_with_the_tag_pass(self) -> None:
+        """The linux target keeps the wheel, the windows target drops it.
+
+        The representative of the equal group is picked over the whole
+        listing, so both targets pin the release as ``1.0``.  Picking it
+        from the tag survivors would pin it as ``1.0.0`` on windows,
+        where only the sdist is left.
+        """
+        cache = ListingFilterCache()
+        linux = self._provider(PlatformSpec("linux_x86_64"), cache)
+        windows = self._provider(PlatformSpec("windows_amd64"), cache)
+
+        linux_pins = {str(v) for v, _ in linux.fetch_versions("pkg")}
+        windows_pins = {str(v) for v, _ in windows.fetch_versions("pkg")}
+
+        assert linux_pins == {"1.0"}
+        assert windows_pins == {"1.0"}
+
+    def test_equal_group_left_wheel_less_is_counted_once(self) -> None:
+        """An equal group whose every wheel the target refuses is one lost version.
+
+        Both wheels spell the one release, so the two tag rejections leave
+        a single uninstallable version behind, not two.
+        """
+        wheels = [
+            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
+            _platform_wheel("1.0.0", "cp311-cp311-manylinux_2_17_aarch64"),
+        ]
+        windows = Provider(
+            _index_with_files(wheels),
+            _linux_target(PlatformSpec("windows_amd64")),
+            listing_filter_cache=ListingFilterCache(),
+        )
+        assert windows.fetch_versions("pkg") == []
+        assert windows.stats.excluded_by_wheel_tags == 2
+        assert windows.stats.excluded_versions_no_compatible_wheel == 1
 
 
 class TestRequiresPythonPatch:
