@@ -47,6 +47,14 @@ class TestMatrixExpand:
         assert [t.python_version for t in tuples] == ["3.11", "3.12"]
         assert all(t.platform_id == "linux_x86_64" for t in tuples)
 
+    def test_range_expands_to_python_315(self) -> None:
+        """A range spanning 3.15 includes it, matching the ``--python`` path."""
+        matrix = Matrix(
+            python=">=3.14, <3.16", platforms=(PlatformSpec("linux_x86_64"),)
+        )
+        tuples = matrix.expand()
+        assert [t.python_version for t in tuples] == ["3.14", "3.15"]
+
     def test_cross_product_pythons_and_platforms(self) -> None:
         """All (python, platform) pairs are present in the cross-product."""
         matrix = Matrix(
