@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import io
+import struct
 import tarfile
 import zipfile
+import zlib
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
@@ -75,6 +77,59 @@ def _write_sdist(
             info.size = len(body)
             tar.addfile(info, io.BytesIO(body))
     path.write_bytes(buf.getvalue())
+
+
+_CLEAN_PREFIX = 1 << 20
+_RESERVED_BLOCK_TYPE = b"\x07"
+_INVALID_DEFLATE_BLOCK = _RESERVED_BLOCK_TYPE * 8
+
+
+def _write_corrupt_wheel(path: Path, name: str, version: str) -> None:
+    """Write a wheel whose METADATA holds a corrupt deflate stream.
+
+    The zip's central directory is left intact, so the archive opens and lists its
+    members; only reading METADATA hits the reserved block type zlib rejects.
+    """
+    member = f"{name}-{version}.dist-info/METADATA"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            member,
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            "Requires-Python: >=3.12\n",
+        )
+    with zipfile.ZipFile(path) as zf:
+        info = zf.getinfo(member)
+
+    # A local file header is 30 fixed bytes, then the name and extra fields, then
+    # the member's compressed data.
+    raw = bytearray(path.read_bytes())
+    name_len, extra_len = struct.unpack_from("<HH", raw, info.header_offset + 26)
+    start = info.header_offset + 30 + name_len + extra_len
+
+    raw[start : start + info.compress_size] = _RESERVED_BLOCK_TYPE * info.compress_size
+    path.write_bytes(bytes(raw))
+
+
+def _write_corrupt_sdist(path: Path, name: str, version: str) -> None:
+    """Write an sdist whose PKG-INFO body is behind a corrupt deflate block.
+
+    The clean prefix is longer than the reader's decompression buffer, so the
+    archive opens and its tar headers read; only reading PKG-INFO's body hits the
+    reserved block type zlib rejects.
+    """
+    body = (
+        f"Metadata-Version: 2.2\nName: {name}\nVersion: {version}\n\n"
+        + "filler\n" * (2 * _CLEAN_PREFIX // 7)
+    ).encode()
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        info = tarfile.TarInfo(name=f"{name}-{version}/PKG-INFO")
+        info.size = len(body)
+        tar.addfile(info, io.BytesIO(body))
+
+    deflate = zlib.compressobj(9, zlib.DEFLATED, zlib.MAX_WBITS | 16)
+    clean = deflate.compress(buf.getvalue()[:_CLEAN_PREFIX])
+    path.write_bytes(clean + deflate.flush(zlib.Z_SYNC_FLUSH) + _INVALID_DEFLATE_BLOCK)
 
 
 class TestParseFileUrl:
@@ -210,6 +265,15 @@ class TestFlatWheelhouse:
         assert len(files) == 1
         assert files[0].requires_python is None
 
+    def test_requires_python_none_for_corrupt_zip(self, tmp_path: Path) -> None:
+        # A flat-wheelhouse wheel carries no published hash, so a corrupt one
+        # reaches the reader.
+        _write_corrupt_wheel(tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
     def test_foreign_wheel_metadata_not_read(self, tmp_path: Path) -> None:
         # A sibling package's Requires-Python must not leak onto foo.
         _write_wheel(tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0", ">=3.8")
@@ -269,6 +333,17 @@ class TestFlatWheelhouse:
         _write_sdist(path, "foo", "1.0", ">=3.12")
         whole = path.read_bytes()
         path.write_bytes(whole[: len(whole) // 2])
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
+    def test_sdist_requires_python_none_for_corrupt_archive(
+        self, tmp_path: Path
+    ) -> None:
+        # A flat-wheelhouse sdist carries no published hash, so a corrupt one
+        # reaches the reader.
+        _write_corrupt_sdist(tmp_path / "foo-1.0.tar.gz", "foo", "1.0")
         client = LocalIndexClient(tmp_path.as_uri())
         files = run(client.get_files("foo"))
         assert len(files) == 1
@@ -635,6 +710,11 @@ class TestReadWheelMetadata:
         not_a_wheel = tmp_path / "foo-1.0-py3-none-any.whl"
         not_a_wheel.write_bytes(b"not a zip archive")
         assert read_wheel_metadata(not_a_wheel) is None
+
+    def test_returns_none_for_corrupt_zip(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_corrupt_wheel(wheel, "foo", "1.0")
+        assert read_wheel_metadata(wheel) is None
 
     def test_returns_none_for_non_wheel_filename(self, tmp_path: Path) -> None:
         assert read_wheel_metadata(tmp_path / "notes.txt") is None
