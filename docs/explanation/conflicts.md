@@ -1,14 +1,13 @@
 # Conflicting extras and groups
 
 > [!WARNING]
-> Conflict declarations are tied to universal mode, which is
-> experimental. The lockfile shape may change.
+> The lockfile shape for conflicts may still change.
 
 Some optional dependency sets are mutually exclusive: a CPU build and a
 GPU build of the same stack, or testing variants pinned to different
 tool versions. nab cannot put two such sets in one resolution, and a
-universal lock that tried to would fail the emit-time disjointness
-check. Declaring the conflict tells nab to keep them apart.
+lock that tried to would fail the emit-time disjointness check.
+Declaring the conflict tells nab to keep them apart.
 
 ## Declaring a conflict
 
@@ -60,27 +59,15 @@ Declaring conflicts in the workspace root does not propagate to a
 its own. See [Lock a workspace](../how-to/workspaces.md) for the full
 list of keys that flow vs stay local.
 
-## Specific mode: fail fast
+## Forking co-selected members
 
-A single-environment resolve cannot serve two exclusive members at
-once. Selecting both is rejected before any network work:
-
-```console
-$ nab lock --extras cpu gpu
-Error in [tool.nab]: extra 'cpu', extra 'gpu' cannot be selected
-together: declared mutually exclusive (at-most-one) in
-[tool.nab].conflicts
-```
-
-`exactly-one` and `at-least-one` additionally reject selecting none.
-
-## Universal mode: fork the resolve
-
-In universal mode nab does not reject co-selected members: it forks the
-resolve. When the selection activates two or more members of a set (for
-example `nab lock --all-groups` over the `black*` groups above), nab
-resolves each member separately and writes every result into one
-lockfile. Each fork's pins carry a marker selecting that member:
+When the selection activates two or more members of a set, nab does not
+reject it: it forks the resolve. For example `nab lock --extras cpu gpu`,
+or `nab lock --all-groups` over the `black*` groups above, resolves each
+member separately and writes every result into one lockfile. This is the
+same in specific and universal mode; the resolve mode does not change how
+a conflict is handled. Each fork's pins carry a marker selecting that
+member:
 
 ```toml
 [[packages]]
@@ -106,16 +93,23 @@ stay active in every fork.
 
 Forking needs one member per fork. If a single selection forces two
 members of one set together, no fork can separate them, so the resolve
-is refused. This happens when an umbrella extra self-references both
-members (`all = ["proj[cpu]", "proj[gpu]"]`) or an umbrella group
-includes both member groups. Co-selecting the members directly still
-forks; only the all-in-one umbrella, which cannot resolve disjointly,
-is rejected.
+is refused before any network work:
 
-The require-one check is not skipped in universal mode. Declaring
-`exactly-one` or `at-least-one` and selecting none of its members still
-raises before the resolve, the same as in specific mode. Only the
-co-selection case differs: universal mode forks instead of rejecting.
+```console
+$ nab lock --extras all
+Error in [tool.nab]: extra 'cpu', extra 'gpu' cannot be selected
+together: declared mutually exclusive (at-most-one) in
+[tool.nab].conflicts
+```
+
+This happens when an umbrella extra self-references both members
+(`all = ["proj[cpu]", "proj[gpu]"]`) or an umbrella group includes both
+member groups. Co-selecting the members directly still forks; only the
+all-in-one umbrella, which cannot resolve disjointly, is rejected.
+
+The require-one policies still raise. Declaring `exactly-one` or
+`at-least-one` and selecting none of its members is rejected before the
+resolve, regardless of mode; only the co-selection case forks.
 
 Groups named in `[tool.nab].default-groups` count as part of the
 selection for every conflict check. A project with
@@ -123,8 +117,7 @@ selection for every conflict check. A project with
 groups `a` and `b`
 satisfies the minimum without passing `--groups`, and a `--groups b`
 on top of that default activates two members of an exclusive set,
-which the exclusion check then catches (specific mode) or which
-universal mode forks into two.
+which then forks into two.
 
 A dependency required by every member of a set but not by the base
 keeps its membership marker, so it does not install when no member is
