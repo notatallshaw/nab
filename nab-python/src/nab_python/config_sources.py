@@ -480,10 +480,11 @@ def _parse_marker_environment(value: Any, where: str) -> Mapping[str, str]:
     return _delegate(lambda: _impl(value))
 
 
-def _parse_environment(value: Any, where: str) -> Mapping[str, str]:
-    # Name-keyed table (python/platform/implementation -> str), one cell of
-    # a matrix.  A mapping row, so the axes merge sub-key by sub-key across
-    # the ladder and a ``--python`` override moves only the python axis.
+def _parse_environment(value: Any, where: str) -> Mapping[str, Any]:
+    # Name-keyed table (python/platform/implementation), one cell of a
+    # matrix; platform is an id or a table of tag knobs.  A mapping row, so
+    # the axes merge sub-key by sub-key across the ladder and a ``--python``
+    # override moves only the python axis.
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_environment as _impl,
@@ -782,10 +783,21 @@ def _render_marker_environment(value: Mapping[str, str]) -> str:
     return ", ".join(f"{k}={v}" for k, v in sorted(value.items()))
 
 
-def _render_environment(value: Mapping[str, str]) -> str:
+def _render_environment(value: Mapping[str, Any]) -> str:
     if not value:
         return "<host>"
-    return ", ".join(f"{k}={v}" for k, v in sorted(value.items()))
+    return ", ".join(
+        f"{k}={_render_environment_axis(v)}" for k, v in sorted(value.items())
+    )
+
+
+def _render_environment_axis(value: Any) -> str:
+    """Render one axis, the platform table as ``id[knob=value, ...]``."""
+    if not isinstance(value, dict):
+        return str(value)
+    knobs = ", ".join(f"{k}={v}" for k, v in sorted(value.items()) if k != "id")
+    platform_id = value["id"]
+    return f"{platform_id}[{knobs}]" if knobs else str(platform_id)
 
 
 def _render_vcs(value: Any) -> str:
@@ -916,7 +928,7 @@ OPTIONS: tuple[OptionSpec, ...] = (
     OptionSpec(
         key="environment",
         scope=Scope.PROJECT,
-        type_label="table(python,platform,implementation)",
+        type_label="table(python,platform[,knobs],implementation)",
         default=_EMPTY_MAPPING,
         env_var=None,
         cli_flag=None,

@@ -80,6 +80,21 @@ implementation = "cpython"  # "cpython" (default) or "pypy"
   `never`.  A python-only retarget warns and permits.  See
   [Build policy](build-policy.md).
 
+`platform` takes the two shapes a `[tool.nab.matrix]` platform takes: a
+bare id at that platform's default tag knobs, or a table declaring them.
+
+```toml
+[tool.nab.environment]
+python = "3.13"
+platform = { id = "macos_arm64", macos-min = "14.0" }
+```
+
+The knobs, their defaults and their rules are the ones the matrix's
+"Platform tag knobs" section below lists.  A bare id keeps the default
+macOS deployment target (12.0 on arm64), so a wheel tagged
+`macosx_14_0_arm64` is not accepted until the target says it runs macOS
+14.
+
 The target declares both halves of the environment: its PEP 508 markers
 gate every dependency, and its PEP 425 wheel tags gate every candidate.
 A version whose only wheels the target cannot install, and which ships no
@@ -106,6 +121,11 @@ to `[tool.nab.environment]` with a warning, and a key that names no
 environment axis, or a `(sys_platform, platform_machine)` pair that names
 no platform nab models, is a config error.  Declare the environment
 instead.
+
+`platform_release` and `platform_version` are knobs of the machine the
+pair names, so they translate into the platform table
+(`platform-release`, `platform-version`) and need the pair alongside
+them.
 
 ## Indexes
 
@@ -634,7 +654,9 @@ free-threaded wheels and neither the ordinary `cp3XX` ones nor `abi3`
 (a free-threaded interpreter cannot load either).  It needs CPython
 3.13 or newer, the first release with a free-threaded build; a matrix
 whose `python` admits an older minor, or whose `implementations` names
-anything but `cpython`, is a config error.
+anything but `cpython`, is a config error, and so is a
+`[tool.nab.environment]` whose `python` or `implementation` says the
+same.
 
 An id may appear once.  A lockfile entry is selected by a PEP 508
 marker, and PEP 508 has no variable for the libc family or the

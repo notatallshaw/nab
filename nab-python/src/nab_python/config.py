@@ -64,6 +64,7 @@ from .target import (
     PLATFORM_MARKERS,
     Matrix,
     ResolveTarget,
+    check_free_threaded,
     host_environment,
     python_axis_environment,
 )
@@ -153,10 +154,15 @@ class EnvironmentConfig:
     One cell of a matrix: the axes a target is made of.  An unset axis
     takes the host's value, so an empty table is the host and a table
     naming only ``python`` is the host machine running another Python.
+
+    ``platform`` is the same :class:`~nab_python.tags.PlatformSpec` a
+    ``matrix.platforms`` entry parses to, so the wheel-tag knobs (the libc
+    family and version, the macOS deployment target, the kernel marker
+    values, the free-threaded build) are declarable here too.
     """
 
     python: str | None = None
-    platform: str | None = None
+    platform: PlatformSpec | None = None
     implementation: str | None = None
 
 
@@ -923,10 +929,20 @@ def _declared_target(environment: EnvironmentConfig) -> ResolveTarget:
     assert environment.platform is not None  # the caller checked
     python = environment.python or host_environment()["python_full_version"]
     axis = python_axis_environment(python)
+    implementation = environment.implementation or "cpython"
+    try:
+        check_free_threaded(
+            platforms=(environment.platform,),
+            implementations=(implementation,),
+            python_versions=(axis["python_version"],),
+        )
+    except ValueError as exc:
+        msg = f"invalid [tool.nab.environment]: {exc}"
+        raise ConfigError(msg) from exc
     return ResolveTarget.for_declared(
         python_version=axis["python_version"],
-        spec=PlatformSpec(environment.platform),
-        implementation=environment.implementation or "cpython",
+        spec=environment.platform,
+        implementation=implementation,
         python_full_version=axis["python_full_version"],
     )
 
@@ -1373,18 +1389,17 @@ def _parse_marker_environment(value: object) -> dict[str, str]:
 _ENVIRONMENT_KEYS = frozenset({"python", "platform", "implementation"})
 
 
-def _parse_environment(value: object) -> dict[str, str]:
+def _parse_environment(value: object) -> dict[str, Any]:
     """Parse ``[tool.nab.environment]``: the one environment to resolve for.
 
-    Kept as the raw ``key -> str`` table so the registry merges it sub-key
-    by sub-key across the config sources; :func:`_environment_from_effective`
-    turns the merged whole into an :class:`EnvironmentConfig`.
+    Kept as the raw table so the registry merges it sub-key by sub-key
+    across the config sources; :func:`_environment_from_effective` turns the
+    merged whole into an :class:`EnvironmentConfig`.  ``platform`` takes the
+    two shapes a ``matrix.platforms`` entry takes, a bare id or a table of
+    the wheel-tag knobs, so a dict value passes through here.
     """
     if not isinstance(value, dict):
-        msg = (
-            "[tool.nab.environment] must be a table of string -> string,"
-            f" got {type(value).__name__}"
-        )
+        msg = f"[tool.nab.environment] must be a table, got {type(value).__name__}"
         raise ConfigError(msg)
     unknown = sorted(set(value) - _ENVIRONMENT_KEYS)
     if unknown:
@@ -1393,15 +1408,33 @@ def _parse_environment(value: object) -> dict[str, str]:
             f" expected {sorted(_ENVIRONMENT_KEYS)!r}"
         )
         raise ConfigError(msg)
-    out = {
-        key: _parse_string_value(f"environment.{key}", item)
+    out: dict[str, Any] = {
+        key: item
+        if key == "platform"
+        else _parse_string_value(f"environment.{key}", item)
         for key, item in value.items()
     }
     _validate_environment_values(out)
     return out
 
 
-def _validate_environment_values(environment: Mapping[str, str]) -> None:
+def _environment_platform_spec(value: object) -> PlatformSpec:
+    """Build the :class:`PlatformSpec` ``[tool.nab.environment].platform`` names.
+
+    The same two shapes ``matrix.platforms`` entries take, parsed by the same
+    code: a bare id at the platform's default tag knobs, or a table declaring
+    them.
+    """
+    where = "environment.platform"
+    if isinstance(value, str):
+        return _platform_spec(where, platform_id=value)
+    if isinstance(value, dict):
+        return _parse_platform_table(where, cast("dict[str, Any]", value))
+    msg = f"{where} must be a platform id or a table, got {type(value).__name__}"
+    raise ConfigError(msg)
+
+
+def _validate_environment_values(environment: Mapping[str, Any]) -> None:
     """Validate the value of every environment axis the table names.
 
     Shared by the ``[tool.nab.environment]`` parse, the
@@ -1419,10 +1452,15 @@ def _validate_environment_values(environment: Mapping[str, str]) -> None:
             )
             raise ConfigError(msg) from exc
     platform = environment.get("platform")
-    if platform is not None and platform not in PLATFORM_MARKERS:
-        valid = sorted(PLATFORM_MARKERS)
-        msg = f"unknown environment.platform {platform!r}; expected one of {valid!r}"
-        raise ConfigError(msg)
+    if platform is not None:
+        platform_id = _environment_platform_spec(platform).platform_id
+        if platform_id not in PLATFORM_MARKERS:
+            valid = sorted(PLATFORM_MARKERS)
+            msg = (
+                f"unknown environment.platform {platform_id!r};"
+                f" expected one of {valid!r}"
+            )
+            raise ConfigError(msg)
     implementation = environment.get("implementation")
     if implementation is not None and implementation not in _KNOWN_IMPLEMENTATIONS:
         valid = list(_KNOWN_IMPLEMENTATIONS)
@@ -1441,6 +1479,11 @@ _MARKER_PLATFORM_KEYS = ("sys_platform", "platform_machine")
 # The platform id names these too, so an overlay may repeat them as long as it
 # agrees with the machine the pair identifies.
 _MARKER_PLATFORM_IMPLIED_KEYS = ("platform_system", "os_name")
+# The kernel markers, which are knobs of the platform the pair names.
+_MARKER_PLATFORM_KNOBS = {
+    "platform_release": "platform-release",
+    "platform_version": "platform-version",
+}
 
 # The platform id each (sys_platform, platform_machine) pair names.
 _PLATFORM_ID_BY_MARKERS: dict[tuple[str, str], str] = {
@@ -1451,7 +1494,7 @@ _PLATFORM_ID_BY_MARKERS: dict[tuple[str, str], str] = {
 
 def _environment_from_marker_environment(
     marker_environment: Mapping[str, str],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Translate the deprecated ``[tool.nab.marker-environment]`` overlay.
 
     The overlay set PEP 508 marker variables one by one, which let a
@@ -1459,7 +1502,9 @@ def _environment_from_marker_environment(
     environment on the host and resolve for a machine that does not exist.
     The replacement declares whole axes, so every overlay key must name one:
     an unmappable ``(sys_platform, platform_machine)`` pair, or a key no
-    axis can carry, is an error rather than a silently-wrong resolve.
+    axis can carry, is an error rather than a silently-wrong resolve.  The
+    kernel markers name no axis of their own; they are knobs of the platform
+    the pair names, and translate into its table.
     """
     _logger.warning(
         "[tool.nab.marker-environment] is deprecated and will be removed;"
@@ -1472,6 +1517,7 @@ def _environment_from_marker_environment(
         *_MARKER_IMPLEMENTATION_KEYS,
         *_MARKER_PLATFORM_KEYS,
         *_MARKER_PLATFORM_IMPLIED_KEYS,
+        *_MARKER_PLATFORM_KNOBS,
     }
     untranslatable = sorted(set(marker_environment) - translatable)
     if untranslatable:
@@ -1483,7 +1529,7 @@ def _environment_from_marker_environment(
         )
         raise ConfigError(msg)
 
-    environment: dict[str, str] = {}
+    environment: dict[str, Any] = {}
     for key in _MARKER_PYTHON_KEYS:
         if key in marker_environment:
             environment["python"] = marker_environment[key]
@@ -1494,10 +1540,16 @@ def _environment_from_marker_environment(
             environment["implementation"] = marker_environment[key].lower()
             break
 
-    implied = [k for k in _MARKER_PLATFORM_IMPLIED_KEYS if k in marker_environment]
-    if implied and not any(k in marker_environment for k in _MARKER_PLATFORM_KEYS):
+    needs_platform = [
+        k
+        for k in (*_MARKER_PLATFORM_IMPLIED_KEYS, *_MARKER_PLATFORM_KNOBS)
+        if k in marker_environment
+    ]
+    if needs_platform and not any(
+        k in marker_environment for k in _MARKER_PLATFORM_KEYS
+    ):
         msg = (
-            f"[tool.nab.marker-environment] sets {implied!r} without"
+            f"[tool.nab.marker-environment] sets {needs_platform!r} without"
             " (sys_platform, platform_machine), which is the pair that names"
             " the machine.  Declare [tool.nab.environment] platform instead:"
             " half a machine would keep the other half of the host's."
@@ -1521,7 +1573,14 @@ def _environment_from_marker_environment(
             )
             raise ConfigError(msg)
         _check_implied_platform_markers(marker_environment, platform_id)
-        environment["platform"] = platform_id
+        environment["platform"] = {
+            "id": platform_id,
+            **{
+                knob: marker_environment[key]
+                for key, knob in _MARKER_PLATFORM_KNOBS.items()
+                if key in marker_environment
+            },
+        }
     _validate_environment_values(environment)
     return environment
 
@@ -1563,7 +1622,7 @@ def _environment_from_effective(
     replacement removes.  Returns ``None`` when neither is declared, which
     is the host.
     """
-    declared: Mapping[str, str] = effective["environment"].value
+    declared: Mapping[str, Any] = effective["environment"].value
     marker_environment: Mapping[str, str] = effective["marker-environment"].value
     if marker_environment:
         if declared:
@@ -1576,9 +1635,10 @@ def _environment_from_effective(
         declared = _environment_from_marker_environment(marker_environment)
     if not declared:
         return None
+    platform = declared.get("platform")
     environment = EnvironmentConfig(
         python=declared.get("python"),
-        platform=declared.get("platform"),
+        platform=None if platform is None else _environment_platform_spec(platform),
         implementation=declared.get("implementation"),
     )
     if environment.implementation is not None and environment.platform is None:
