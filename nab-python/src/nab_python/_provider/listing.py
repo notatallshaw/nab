@@ -309,7 +309,13 @@ def filter_distributions(
     linux-only wheel still stays off the Windows target.
     """
     base = base_distributions(provider, normalized, files)
-    return _apply_wheel_tags(provider, normalized, base)
+    result = _apply_wheel_tags(provider, normalized, base)
+
+    if not result and len(base) < len(files):
+        # The base pass (dist-policy, requires-python, upload cutoff) dropped a
+        # file, so an empty result is not the tag pass alone.
+        provider.base_filtered_packages.add(normalized)
+    return result
 
 
 def base_distributions(
