@@ -676,7 +676,11 @@ error.  See [Build policy](build-policy.md).
   range the project supports.  A declaration.  It is recorded as the
   lockfile's top-level `requires-python` and checked against the resolve
   target; it does not choose that target.  A declaration that excludes
-  the target is a config error naming `[tool.nab.environment] python`.
+  the target is a config error naming the knob that moves it:
+  `[tool.nab.environment] python` for a single-environment resolve,
+  `[tool.nab.matrix].python` and `[tool.nab.matrix.python-patches]` for a
+  matrix target, since neither `--python` nor `[tool.nab.environment]` is
+  allowed alongside a matrix.
 * `[tool.nab.environment].python`: the Python to resolve for, defaulting
   to the host's.  A single version, not a specifier.  `--python X.Y`
   overrides it for one run.
