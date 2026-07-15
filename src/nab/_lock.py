@@ -208,8 +208,8 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
 
     if config.mode is ResolveMode.UNIVERSAL:
         sys.stderr.write(
-            "warning: mode = 'universal' is experimental; output format may"
-            " change without notice\n"
+            "warning: the multi-target ('universal') lockfile format is"
+            " experimental and may change without notice\n"
         )
 
     transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001

@@ -132,9 +132,10 @@ class ResolveMode(enum.Enum):
     ``SPECIFIC`` resolves one target, the host or an impersonated
     marker environment.  ``UNIVERSAL`` resolves one target per tuple
     declared in ``[tool.nab.matrix]``.  Both run the same engine over a
-    list of targets.  ``UNIVERSAL`` is *experimental*: users must opt in
-    by setting ``[tool.nab].mode = "universal"`` and declaring
-    ``[tool.nab.matrix]``.
+    list of targets.  ``UNIVERSAL``'s multi-target lockfile format is
+    *experimental* and may change; the resolver itself is the same one
+    ``SPECIFIC`` runs.  Users opt in by setting
+    ``[tool.nab].mode = "universal"`` and declaring ``[tool.nab.matrix]``.
     """
 
     SPECIFIC = "specific"

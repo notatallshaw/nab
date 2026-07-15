@@ -693,8 +693,8 @@ def _config_from_effective(
             msg = (
                 "[tool.nab.matrix] is set but mode is 'specific'; set"
                 " mode = 'universal' to resolve for every target the matrix"
-                " declares, or remove the table. Universal mode is"
-                " experimental."
+                " declares, or remove the table. The multi-target lockfile"
+                " format universal mode produces is experimental."
             )
             raise ConfigError(msg)
         # A higher-precedence source (--project-mode) selected a

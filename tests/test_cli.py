@@ -1329,6 +1329,8 @@ class TestLockCommandUniversal:
             lock(pyproject, format="requirements-without-hashes")
         captured = capsys.readouterr()
         assert "experimental" in captured.err
+        assert "lockfile format" in captured.err
+        assert "resolver loop" not in captured.err
         assert "# py311-linux_x86_64" in captured.out
         assert "# py312-linux_x86_64" in captured.out
         assert "foo==1.0" in captured.out
