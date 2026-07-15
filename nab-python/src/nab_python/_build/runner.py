@@ -79,7 +79,7 @@ def run_build_backend(
     if pyproject.is_file():
         try:
             data = tomli.loads(pyproject.read_text(encoding="utf-8"))
-        except (OSError, tomli.TOMLDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
             msg = f"could not read pyproject.toml at {source_dir}: {exc}"
             raise BuildBackendError(msg) from exc
     elif (source_dir / "setup.py").is_file():

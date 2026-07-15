@@ -736,6 +736,29 @@ def _render_requirements_or_exit(
     return text, sum(len(lock.pins) for lock in lock_input.targets.values())
 
 
+def _read_selection_table_or_exit(
+    path: Path,
+    reader: Callable[[Path], Mapping[str, object]],
+) -> Mapping[str, object]:
+    """Read the table a selection flag expands over, exiting 1 on a bad file.
+
+    ``nab download`` selects groups and extras before it loads the config, so
+    this read is the first to touch the pyproject and reports a bad file itself.
+    """
+    try:
+        return reader(path)
+    except OSError:
+        reason = "is a directory" if path.is_dir() else "not found"
+        sys.stderr.write(f"Error: {path} {reason}\n")
+        sys.exit(1)
+    except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
+        sys.stderr.write(f"Error: {path} is not valid TOML: {e}\n")
+        sys.exit(1)
+    except TypeError as e:
+        sys.stderr.write(f"Error in {path}: {e}\n")
+        sys.exit(1)
+
+
 def resolve_group_selection(
     path: Path,
     *,
@@ -757,15 +780,7 @@ def resolve_group_selection(
     if not (all_groups or groups):
         return ()
 
-    try:
-        defined = read_pyproject_groups(path)
-    except OSError:
-        reason = "is a directory" if path.is_dir() else "not found"
-        sys.stderr.write(f"Error: {path} {reason}\n")
-        sys.exit(1)
-    except TypeError as e:
-        sys.stderr.write(f"Error in {path}: {e}\n")
-        sys.exit(1)
+    defined = _read_selection_table_or_exit(path, read_pyproject_groups)
     return tuple(defined.keys()) if all_groups else tuple(dict.fromkeys(groups))
 
 
@@ -782,15 +797,7 @@ def resolve_extra_selection(
     if not (all_extras or extras):
         return ()
 
-    try:
-        defined = read_pyproject_optional_dependencies(path)
-    except OSError:
-        reason = "is a directory" if path.is_dir() else "not found"
-        sys.stderr.write(f"Error: {path} {reason}\n")
-        sys.exit(1)
-    except TypeError as e:
-        sys.stderr.write(f"Error in {path}: {e}\n")
-        sys.exit(1)
+    defined = _read_selection_table_or_exit(path, read_pyproject_optional_dependencies)
     return tuple(defined.keys()) if all_extras else tuple(dict.fromkeys(extras))
 
 

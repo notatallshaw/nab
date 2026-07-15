@@ -549,6 +549,19 @@ class TestLoadTomlLayerDirect:
         with pytest.raises(SourceConfigError, match="not valid TOML"):
             _load_toml_layer(path, SourceKind.USER_TOML)
 
+    def test_non_utf8_nab_toml_errors(self, tmp_path: Path) -> None:
+        # TOML is UTF-8, so a latin-1 byte makes the file invalid TOML.
+        path = tmp_path / "nab.toml"
+        path.write_bytes(b'cache-dir = "\xe9"\n')
+        with pytest.raises(SourceConfigError, match="not valid TOML"):
+            _load_toml_layer(path, SourceKind.USER_TOML)
+
+    def test_non_utf8_pyproject_errors(self, tmp_path: Path) -> None:
+        path = tmp_path / "pyproject.toml"
+        path.write_bytes(b'[project]\ndescription = "\xe9"\n')
+        with pytest.raises(SourceConfigError, match="not valid TOML"):
+            _load_toml_layer(path, SourceKind.PYPROJECT)
+
     def test_pyproject_without_tool_nab_is_empty(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "pyproject.toml", '[project]\nname = "x"\n')
         layer = _load_toml_layer(path, SourceKind.PYPROJECT)

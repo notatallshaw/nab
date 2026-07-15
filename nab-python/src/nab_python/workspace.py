@@ -64,7 +64,7 @@ def _load_member_toml(pyproject: Path) -> dict[str, Any]:
     try:
         with pyproject.open("rb") as f:
             return tomli.load(f)
-    except tomli.TOMLDecodeError as exc:
+    except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{pyproject} is not valid TOML: {exc}"
         raise WorkspaceDiscoveryError(msg) from exc
 
@@ -103,7 +103,7 @@ def discover_workspace_root(member_pyproject: Path) -> Path | None:
         try:
             with candidate.open("rb") as f:
                 data = tomli.load(f)
-        except (OSError, tomli.TOMLDecodeError):
+        except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError):
             continue
         nab = tool_nab_section(data)
         if isinstance(nab, dict) and "workspace" in nab:

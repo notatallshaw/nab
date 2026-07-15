@@ -225,6 +225,13 @@ class TestTopLevelKeys:
         with pytest.raises(ConfigError, match="not valid TOML"):
             read_pyproject_config(path)
 
+    def test_non_utf8_rejected(self, tmp_path: Path) -> None:
+        # TOML is UTF-8, so a latin-1 byte makes the file invalid TOML.
+        path = tmp_path / "pyproject.toml"
+        path.write_bytes(b'[project]\nname = "demo"\ndescription = "\xe9"\n')
+        with pytest.raises(ConfigError, match="not valid TOML"):
+            read_pyproject_config(path)
+
     @pytest.mark.parametrize("user_key", ["offline = true", 'cache-dir = "x"'])
     def test_user_scope_key_in_pyproject_rejected(
         self, tmp_path: Path, user_key: str

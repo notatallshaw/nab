@@ -283,6 +283,13 @@ class TestRunBuildBackend:
         with pytest.raises(BuildBackendError, match="could not read"):
             run_build_backend(tmp_path, config=config)
 
+    def test_non_utf8_pyproject(self, tmp_path: Path, config: NabProjectConfig) -> None:
+        (tmp_path / "pyproject.toml").write_bytes(
+            b"[build-system]\nrequires = []\n# \xe9\n"
+        )
+        with pytest.raises(BuildBackendError, match="could not read"):
+            run_build_backend(tmp_path, config=config)
+
     def test_backend_metadata_missing_version_raises(
         self, tmp_path: Path, config: NabProjectConfig
     ) -> None:
