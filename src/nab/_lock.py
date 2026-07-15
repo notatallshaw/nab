@@ -22,7 +22,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Formatter
-from typing import TYPE_CHECKING, Annotated, NamedTuple
+from typing import TYPE_CHECKING, Annotated, NamedTuple, NoReturn
 
 import tomli
 import tomli_w
@@ -65,7 +65,9 @@ from .cli import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
+
+    from nab_python.target import ResolveTarget
 
 
 def _emit_or_exit(emit: Callable[[], None]) -> None:
@@ -119,7 +121,8 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
 
     Universal mode (``[tool.nab].mode = "universal"``) supports all
     three formats.  For requirements formats, an ``--output`` template
-    containing ``{python_version}`` or ``{platform_id}`` writes one
+    containing ``{python_version}``, ``{platform_id}`` or
+    ``{selection}`` (the conflict fork a tuple belongs to) writes one
     file per matrix tuple; a plain path is rejected when multiple
     tuples would collide.
 
@@ -424,10 +427,44 @@ def _diff_summary(
     return f": {', '.join(parts)}" if parts else ""
 
 
+def _template_values(target: ResolveTarget) -> dict[str, str]:
+    """Return the value each ``--output`` template variable takes on ``target``.
+
+    ``selection`` is empty on an unforked target, so a template naming it
+    on a resolve with no conflict fork renders the empty string.
+    """
+    return {
+        "python_version": target.python_version,
+        "platform_id": target.platform_id,
+        "selection": target.selection_slug,
+    }
+
+
+def _varying_vars(targets: Sequence[ResolveTarget]) -> list[str]:
+    """Return the template variables whose value differs across ``targets``.
+
+    These are the variables an ``--output`` template has to name to give
+    each tuple its own file.  The list can be empty: two tuples can
+    differ in a tag knob no variable names (a musl and a glibc target
+    share one ``platform_id``), and then no template separates them.
+    """
+    values = [_template_values(target) for target in targets]
+    first = values[0]
+    return [
+        name for name in first if any(other[name] != first[name] for other in values)
+    ]
+
+
+def _and_list(names: Sequence[str]) -> str:
+    """Render ``names`` as ``a``, ``a and b``, or ``a, b and c``."""
+    *rest, last = names
+    return f"{', '.join(rest)} and {last}" if rest else last
+
+
 def _check_output_template(output: Path, template: str) -> None:
     """Reject an --output template that ``str.format`` cannot render.
 
-    Only bare ``{python_version}`` and ``{platform_id}`` fields are
+    Only the bare :data:`~nab.cli.TUPLE_TEMPLATE_VARS` fields are
     accepted. An unbalanced brace, an unknown field name, or a field
     carrying a format spec (``{platform_id:d}``) or conversion
     (``{python_version!r}``) is rejected here.
@@ -448,7 +485,7 @@ def _check_output_template(output: Path, template: str) -> None:
     except ValueError as e:
         sys.stderr.write(f"Error: --output {output} is not a valid template: {e}\n")
         sys.exit(1)
-    supported = " and ".join(allowed_vars)
+    supported = _and_list(allowed_vars)
     unknown = sorted(f"{{{name}}}" for name, _, _ in fields if name not in allowed)
     if unknown:
         sys.stderr.write(
@@ -485,10 +522,12 @@ def _emit_requirements(
       file to fall back to: there is no one file to write.
     * ``output`` is unset and the lock covers one target: write
       ``requirements.txt``.
-    * ``output`` contains ``{python_version}`` or ``{platform_id}``:
+    * ``output`` names a :data:`~nab.cli.TUPLE_TEMPLATE_VARS` variable:
       write one file per target, substituting the target's values into
       the template.  This is the constraints-per-Python-version shape
-      (e.g. ``constraints-{python_version}.txt``).
+      (e.g. ``constraints-{python_version}.txt``), and
+      ``{selection}`` names the conflict fork a target belongs to
+      (``req-{selection}.txt`` -> ``req-extra-cpu.txt``).
     * ``output`` is a plain path: write the lock's one target there.
 
     A plain path with several targets errors clearly: there is no
@@ -508,14 +547,7 @@ def _emit_requirements(
     template = str(target)
     if not any(var in template for var in _cli.TUPLE_TEMPLATE_VARS):
         if multi_target:
-            sys.stderr.write(
-                "Error: universal mode produced multiple tuples but"
-                f" --output {target} has no template variable to"
-                " disambiguate.  Use {python_version} and/or"
-                " {platform_id} in the path, e.g.:\n"
-                "  --output 'constraints-{python_version}.txt'\n"
-            )
-            sys.exit(1)
+            _refuse_untemplated(lock_input, target)
         text, count = _render_requirements_or_exit(lock_input, with_hashes)
         target.write_text(text, encoding="utf-8")
         sys.stderr.write(f"Wrote {target} ({count} packages)\n")
@@ -535,27 +567,78 @@ def _emit_requirements(
     _write_requirements_files(rendered)
 
 
+def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
+    """Exit 1: several tuples, and one plain ``--output`` path for them all.
+
+    Names the variables that actually vary across the tuples, which for a
+    resolve forked by ``[tool.nab].conflicts`` is ``{selection}`` alone:
+    the fork is a dimension of its own, and the tuples it produces can
+    share every other axis.
+    """
+    targets = [lock.target for lock in lock_input.targets.values()]
+    count = len(targets)
+    varying = _varying_vars(targets)
+    if not varying:
+        sys.stderr.write(
+            f"Error: the resolve produced {count} tuples and no --output template"
+            f" variable tells them apart, so {output} cannot hold them."
+            "  Emit pylock output instead.\n"
+        )
+        sys.exit(1)
+    placeholders = _and_list([f"{{{name}}}" for name in varying])
+    example = "constraints" + "".join(f"-{{{name}}}" for name in varying) + ".txt"
+    sys.stderr.write(
+        f"Error: the resolve produced {count} tuples but --output {output} has no"
+        f" template variable to disambiguate.  Use {placeholders} in the path,"
+        f" e.g.:\n  --output '{example}'\n"
+    )
+    sys.exit(1)
+
+
+def _refuse_collision(
+    first: TargetLock, second: TargetLock, *, output: Path, template: str, path: str
+) -> NoReturn:
+    """Exit 1: two tuples render one path under this template."""
+    missing = [
+        name
+        for name in _varying_vars([first.target, second.target])
+        if f"{{{name}}}" not in template
+    ]
+    head = (
+        f"Error: tuples {first.target.label!r} and {second.target.label!r}"
+        f" both map to {path!r};"
+    )
+    if not missing:
+        sys.stderr.write(
+            f"{head} no --output template variable tells them apart."
+            "  Emit pylock output instead.\n"
+        )
+        sys.exit(1)
+    placeholders = _and_list([f"{{{name}}}" for name in missing])
+    sys.stderr.write(
+        f"{head} --output {output} is missing a template variable to"
+        f" disambiguate.  Add {placeholders} to the path.\n"
+    )
+    sys.exit(1)
+
+
 def _substituted_paths(
     lock_input: LockInput, output: Path, template: str
 ) -> dict[str, Path]:
     """Render the per-target output paths, refusing a template that collides."""
-    by_path: dict[str, str] = {}
+    by_path: dict[str, TargetLock] = {}
     paths: dict[str, Path] = {}
     for label, lock in lock_input.targets.items():
-        substituted = template.format(
-            python_version=lock.target.python_version,
-            platform_id=lock.target.platform_id,
-        )
+        substituted = template.format(**_template_values(lock.target))
         if substituted in by_path:
-            sys.stderr.write(
-                "Error: tuples"
-                f" {by_path[substituted]!r} and {label!r}"
-                f" both map to {substituted!r}; --output {output} is missing"
-                " a template variable to disambiguate.  Use both"
-                " {python_version} and {platform_id} in the path.\n"
+            _refuse_collision(
+                by_path[substituted],
+                lock,
+                output=output,
+                template=template,
+                path=substituted,
             )
-            sys.exit(1)
-        by_path[substituted] = label
+        by_path[substituted] = lock
         paths[label] = Path(substituted)
     return paths
 

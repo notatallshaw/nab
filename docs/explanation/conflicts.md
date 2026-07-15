@@ -94,6 +94,11 @@ version = "23.12.0"
 marker = "... and \"black23\" in dependency_groups"
 ```
 
+The requirements formats name a fork with the `{selection}` variable in
+an `--output` template (`--output 'req-{selection}.txt'` writes
+`req-extra-cpu.txt` and `req-extra-gpu.txt`), since two forks of one
+tuple share every other axis and would otherwise collide onto one file.
+
 When several sets are engaged at once, the forks are the cartesian
 product across them (one member chosen per set), so `black{22,23,24}`
 crossed with `isort{5,6,7}` is nine forks. Non-conflicting selections

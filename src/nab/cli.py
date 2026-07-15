@@ -120,7 +120,7 @@ _DEFAULT_OUTPUT: dict[str, str] = {
     "requirements-without-hashes": "requirements.txt",
 }
 
-TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}")
+TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}", "{selection}")
 
 # Conventional KeyboardInterrupt exit code: 128 + SIGINT(2).
 _SIGINT_EXIT_CODE = 130

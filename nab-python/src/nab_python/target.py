@@ -669,6 +669,16 @@ class ResolveTarget:
         return self.marker_env["implementation_name"]
 
     @property
+    def selection_slug(self) -> str:
+        """The conflict fork this target belongs to, as a label slug.
+
+        ``extra-cpu``, ``group-black22.group-isort5``, empty when
+        unforked.  It is the tail of :attr:`label` without the leading
+        separator.
+        """
+        return _selection_slug(self.selection)
+
+    @property
     def platform_id(self) -> str:
         """The matrix platform this target names, or ``host`` for the host."""
         if self.platform_spec is None:
@@ -1052,9 +1062,12 @@ def _python_label(python_version: str, implementation: str) -> str:
     return prefix + python_version.replace(".", "")
 
 
+def _selection_slug(selection: tuple[tuple[str, str], ...]) -> str:
+    """Render a conflict-fork selection as a slug, empty when unforked."""
+    return ".".join(f"{kind}-{name}" for kind, name in sorted(selection))
+
+
 def _selection_suffix(selection: tuple[tuple[str, str], ...]) -> str:
     """Render a conflict-fork selection as a label suffix, empty when unforked."""
-    if not selection:
-        return ""
-    members = ".".join(f"{kind}-{name}" for kind, name in sorted(selection))
-    return f"-{members}"
+    slug = _selection_slug(selection)
+    return f"-{slug}" if slug else ""
