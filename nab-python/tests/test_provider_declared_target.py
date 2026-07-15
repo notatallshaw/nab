@@ -11,6 +11,7 @@ through a matrix.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -736,6 +737,135 @@ class TestEqualVersionCanonicalization:
         assert windows.fetch_versions("pkg") == []
         assert windows.stats.excluded_by_wheel_tags == 2
         assert windows.stats.excluded_versions_no_compatible_wheel == 1
+
+
+class TestDefaultCeilingWarning:
+    """A version losing its last wheel to an unset default ceiling is announced."""
+
+    @staticmethod
+    def _macos_provider(
+        files: Sequence[WheelFile | SdistFile], spec: PlatformSpec
+    ) -> Provider:
+        return Provider(
+            _index_with_files(files),
+            ResolveTarget.for_declared(python_version="3.11", spec=spec),
+            build_policy=BuildPolicy.NEVER,
+        )
+
+    def test_default_macos_ceiling_drop_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A version whose only wheel needs a newer macOS is named in a warning."""
+        files = [_platform_wheel("2.0", "cp311-cp311-macosx_14_0_arm64")]
+        provider = self._macos_provider(files, PlatformSpec("macos_arm64"))
+        with caplog.at_level(logging.WARNING, logger="nab_python.provider"):
+            provider.filter_distributions("pkg", files)
+        assert len(caplog.records) == 1
+        message = caplog.records[0].getMessage()
+        assert "pkg" in message
+        assert "2.0" in message
+        assert "pkg-2.0-cp311-cp311-macosx_14_0_arm64.whl" in message
+        assert "macos-min" in message
+        assert "14.0" in message
+
+    def test_explicit_macos_min_does_not_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A user-set ceiling is the user's own choice, so no warning fires."""
+        files = [_platform_wheel("2.0", "cp311-cp311-macosx_14_0_arm64")]
+        provider = self._macos_provider(
+            files, PlatformSpec("macos_arm64", macos_min=(12, 0))
+        )
+        with caplog.at_level(logging.WARNING, logger="nab_python.provider"):
+            provider.filter_distributions("pkg", files)
+        assert caplog.records == []
+
+    def test_in_ceiling_wheel_kept_does_not_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A release that also ships an installable wheel stays silent."""
+        files = [
+            _platform_wheel("2.0", "cp311-cp311-macosx_14_0_arm64"),
+            _platform_wheel("2.0", "cp311-cp311-macosx_12_0_arm64"),
+        ]
+        provider = self._macos_provider(files, PlatformSpec("macos_arm64"))
+        with caplog.at_level(logging.WARNING, logger="nab_python.provider"):
+            result = provider.filter_distributions("pkg", files)
+        assert Version("2.0") in {v for v, _ in result}
+        assert caplog.records == []
+
+    def test_default_linux_ceiling_drop_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A manylinux wheel above the default glibc names the libc knob."""
+        files = [_platform_wheel("2.0", "cp311-cp311-manylinux_2_34_x86_64")]
+        provider = Provider(
+            _index_with_files(files),
+            _linux_target(PlatformSpec("linux_x86_64")),
+            build_policy=BuildPolicy.NEVER,
+        )
+        with caplog.at_level(logging.WARNING, logger="nab_python.provider"):
+            provider.filter_distributions("pkg", files)
+        assert len(caplog.records) == 1
+        message = caplog.records[0].getMessage()
+        assert "libc-version" in message
+        assert "2.34" in message
+
+    def test_ordinary_platform_mismatch_does_not_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A win wheel on a linux target is a mismatch no ceiling change fixes."""
+        files = [_platform_wheel("2.0", "cp311-cp311-win_amd64")]
+        provider = Provider(
+            _index_with_files(files),
+            _linux_target(PlatformSpec("linux_x86_64")),
+            build_policy=BuildPolicy.NEVER,
+        )
+        with caplog.at_level(logging.WARNING, logger="nab_python.provider"):
+            provider.filter_distributions("pkg", files)
+        assert caplog.records == []
+
+    def test_arch_mismatch_does_not_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A macOS x86_64 wheel on an arm64 target is an arch mismatch, not a ceiling."""
+        files = [_platform_wheel("2.0", "cp311-cp311-macosx_14_0_x86_64")]
+        provider = self._macos_provider(files, PlatformSpec("macos_arm64"))
+        with caplog.at_level(logging.WARNING, logger="nab_python.provider"):
+            provider.filter_distributions("pkg", files)
+        assert caplog.records == []
+
+    def test_warns_once_per_version(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A second filter pass over the same drop does not warn again."""
+        files = [_platform_wheel("2.0", "cp311-cp311-macosx_14_0_arm64")]
+        provider = self._macos_provider(files, PlatformSpec("macos_arm64"))
+        with caplog.at_level(logging.WARNING, logger="nab_python.provider"):
+            provider.filter_distributions("pkg", files)
+            provider.filter_distributions("pkg", files)
+        assert len(caplog.records) == 1
+
+    def test_two_dropped_wheels_warn_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A version with two above-ceiling wheels is recorded once, warned once."""
+        files = [
+            _platform_wheel("2.0", "cp311-cp311-macosx_14_0_arm64"),
+            _platform_wheel("2.0", "cp311-cp311-macosx_15_0_arm64"),
+        ]
+        provider = self._macos_provider(files, PlatformSpec("macos_arm64"))
+        with caplog.at_level(logging.WARNING, logger="nab_python.provider"):
+            provider.filter_distributions("pkg", files)
+        assert len(caplog.records) == 1
+
+    def test_host_target_never_warns(self) -> None:
+        """A host provider has no platform_spec, so the ceiling check is skipped."""
+        provider = Provider(_index_with_files([]), ResolveTarget.for_host())
+        assert provider.ceiling_would_admit("pkg-2.0-py3-none-any.whl") is None
+
+    def test_no_target_has_no_ceiling(self) -> None:
+        """With no target there is nothing to raise, so the check is skipped."""
+        provider = Provider(_index_with_files([]))
+        assert provider.ceiling_would_admit("pkg-2.0-py3-none-any.whl") is None
 
 
 class TestRequiresPythonPatch:
