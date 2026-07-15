@@ -525,11 +525,9 @@ def _close_base_names(
     a package the forks pull in through the base dep is missing from
     ``env_base_names`` and would keep its membership clause, so it drops
     out of the no-member install context even though the base dep that
-    requires it installs there.  Following the edges present in every
-    fork of the environment restores the closure, keeping the no-member
-    context closed under the lock's own dependency graph.  An edge only
-    some forks carry (a member activating an extra on a base dep) is left
-    out, so a member-only dep is not promoted to base.
+    requires it installs there.  Following the base (unconditional) edges
+    present in every fork of the environment restores the closure, keeping
+    the no-member context closed under the lock's own dependency graph.
 
     Preserves the missing-signature contract: only signatures present in
     ``env_base_names`` appear in the result, so an env with no base pass
@@ -558,18 +556,21 @@ def _shared_fork_edges(
     env_signatures: Mapping[str, tuple[tuple[str, str], ...]],
     env_fork_counts: Mapping[tuple[tuple[str, str], ...], int],
 ) -> dict[tuple[tuple[str, str], ...], dict[str, list[str]]]:
-    """Per-env adjacency of the edges present in every fork of the env.
+    """Per-env adjacency of the base edges present in every fork of the env.
 
-    An edge a member adds in only some forks (an extra it activates on a
-    base dep) is dropped, so following these edges never promotes a
-    member-only dep to base.
+    Walks ``base_dependencies`` (a package's unconditional edges), never
+    the extra-folded ``dependencies``, so a dep a conflict member pulls in
+    through an extra is not an edge here even when every fork activates
+    that extra.  A base edge only some forks carry (a base dep pinned to a
+    version whose deps differ) is dropped too.  Following these edges thus
+    never promotes a member-only dep to base.
     """
     edge_counts: defaultdict[tuple[tuple[str, str], ...], Counter[tuple[str, str]]] = (
         defaultdict(Counter)
     )
     for label, lock in targets.items():
         counter = edge_counts[env_signatures[label]]
-        for source, deps in lock.dependencies.items():
+        for source, deps in lock.base_dependencies.items():
             for dep in dict.fromkeys(deps):
                 counter[source, dep] += 1
 
