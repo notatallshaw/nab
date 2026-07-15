@@ -443,7 +443,10 @@ def _declared_environments(
     A marker on an axis the lock cannot bound (see
     :data:`~nab_python.target.UNBOUNDABLE_MARKER_VARIABLES`) is reported:
     the lock stays open on it, so an installer whose kernel differs will
-    still accept the lock, with the dep that marker gated missing.
+    still accept the lock, with the dep that marker gated missing.  A marker
+    on ``implementation_version`` under a non-CPython target is reported the
+    same way (see :func:`~nab_python.target.unboundable_variables`): the
+    value there is synthetic, so the lock leaves the axis open.
     """
     variables: set[str] = set()
     for markers in consulted.values():
@@ -459,6 +462,22 @@ def _declared_environments(
             " miss the dependencies that marker gates.",
             ", ".join(unboundable),
         )
+    for target in declaring:
+        if target.implementation == "cpython":
+            continue
+        consulted_names: set[str] = set()
+        for marker in consulted[env_signature(target)]:
+            consulted_names |= marker_variables(str(marker))
+        if "implementation_version" in consulted_names:
+            _logger.warning(
+                "A marker in this resolve consults implementation_version on a"
+                " non-CPython target; the value nab uses there is the Python"
+                " level, not the interpreter's release, so the lockfile leaves"
+                " that axis open and an installer whose value differs will"
+                " still accept this lock and miss the dependencies that marker"
+                " gates."
+            )
+            break
     return [
         Marker(environment_declaration(target, consulted[env_signature(target)]))
         for target in declaring
@@ -664,16 +683,17 @@ def _plan_forks(
 ) -> tuple[list[ResolveFork], list[Requirement] | None]:
     """Plan the resolves a selection needs, and the base pass they need.
 
-    A declared matrix forks an engaged conflict: one resolve per choice
-    of member, each carrying its own requirements.  Without one there is
-    a single unforked resolve, and the exclusion check below is what
-    refuses a selection that engages a conflict at all: with nowhere to
-    fork to, two co-selected members cannot both be locked.
+    An engaged conflict forks whether or not a matrix is declared: one
+    resolve per choice of member, each carrying its own requirements,
+    with the member stamped onto the selection so its pins land under a
+    membership-gated marker.  The exclusion check below still refuses a
+    selection that reaches two members of a set without directly
+    selecting either (an umbrella extra or group), since a fork can only
+    carry a directly-selected member.
 
     The second element is the no-member requirement list, needed only
     when the plan actually forked; see :func:`resolve_with_coordinator`.
     """
-    fork_conflicts = config.matrix is not None
     if config.conflicts:
         _validate_conflict_members_exist(
             config.conflicts, tables.optional, tables.groups
@@ -686,7 +706,7 @@ def _plan_forks(
             targets,
         )
 
-    plan = conflict_forks(extras, groups, config.conflicts if fork_conflicts else ())
+    plan = conflict_forks(extras, groups, config.conflicts)
     forks: list[ResolveFork] = []
     # Forks of an extra-based conflict share a group selection, so the
     # (group, group) -> target scan runs once per distinct one.
@@ -885,11 +905,12 @@ def _check_conflict_exclusions(
     never share a target and pass; two that co-activate on one target
     fail.
 
-    A matrix runs this once per fork, where each fork holds at most one
-    member of an engaged set, so it only catches the members an umbrella
-    selection reaches transitively.  Without a matrix there is one fork
-    carrying the whole selection, so this is also what refuses two
-    co-selected members outright.
+    This runs once per fork, where each fork holds at most one member of
+    an engaged set, so it only catches co-selection an umbrella extra or
+    group reaches transitively: a member not directly selected cannot be
+    assigned to a fork, so ``conflict_forks`` leaves it in the shared
+    base where two of them meet.  Directly co-selecting two members forks
+    instead of raising here.
     """
     expanded_groups = expand_group_includes(tables.groups, active_groups)
     for target in targets:

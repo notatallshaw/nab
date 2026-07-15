@@ -57,6 +57,7 @@ __all__ = [
     "host_environment",
     "marker_variables",
     "python_axis_environment",
+    "unboundable_variables",
 ]
 
 
@@ -99,6 +100,18 @@ PLATFORM_MARKERS: dict[str, dict[str, str]] = {
         "platform_system": "Windows",
         "platform_machine": "AMD64",
         "os_name": "nt",
+    },
+    "windows_arm64": {
+        "sys_platform": "win32",
+        "platform_system": "Windows",
+        "platform_machine": "ARM64",
+        "os_name": "nt",
+    },
+    "linux_i686": {
+        "sys_platform": "linux",
+        "platform_system": "Linux",
+        "platform_machine": "i686",
+        "os_name": "posix",
     },
 }
 
@@ -185,6 +198,22 @@ UNBOUNDABLE_MARKER_VARIABLES: frozenset[str] = frozenset(
     {"platform_release", "platform_version"}
 )
 
+
+def unboundable_variables(target: ResolveTarget) -> frozenset[str]:
+    """Return the variables the lock cannot bound for ``target``.
+
+    Always the kernel axes.  On a non-CPython target ``implementation_version``
+    joins them: :func:`declared_environment` sets it to the target's Python
+    level, but a released PyPy reports its own release (7.3.x) there, so a
+    clause bounded on the synthetic value would refuse the very interpreter
+    the lock was resolved for.  CPython's ``implementation_version`` is its
+    Python micro, so it stays declarable by constraint.
+    """
+    if target.implementation == "cpython":
+        return UNBOUNDABLE_MARKER_VARIABLES
+    return UNBOUNDABLE_MARKER_VARIABLES | {"implementation_version"}
+
+
 # Declared whether or not a marker consults them: these are the axes the
 # package set was chosen for, so a lock that leaves them open is one any
 # environment would accept.
@@ -267,8 +296,13 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     pins the OS.  The variables in :data:`_BY_CONSTRAINT` are declared by
     constraint (see :func:`_version_clauses`), because a lock that pinned
     the micro release would refuse the very interpreters it resolved for.
-    Variables in :data:`UNBOUNDABLE_MARKER_VARIABLES` are dropped (see
-    there).
+    The variables :func:`unboundable_variables` names for the target are
+    dropped: the kernel axes always, and ``implementation_version`` on a
+    non-CPython target, whose value is the target's Python level rather than
+    the interpreter's own release.  Dropping it leaves the lock open on that
+    axis, so a dependency the resolve gated on ``implementation_version``
+    under PyPy may still be missed at install; the resolve's own use of the
+    synthetic value stays a known limitation (a real axis is needed).
     """
     texts = sorted({str(marker) for marker in consulted})
     variables: set[str] = set()
@@ -280,7 +314,7 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
         always.append("implementation_name")
     names = [
         *always,
-        *sorted(variables - set(always) - UNBOUNDABLE_MARKER_VARIABLES),
+        *sorted(variables - set(always) - unboundable_variables(target)),
     ]
     declaring = _Declaring(
         marker_env=target.marker_env,
@@ -895,7 +929,9 @@ def declared_environment(
     ``implementation_version`` is set to the Python version for every
     implementation; for non-CPython this is the interpreter's Python
     level, not its own release (PyPy 7.3.x), so the rare
-    ``implementation_version`` marker on PyPy may misevaluate.
+    ``implementation_version`` marker on PyPy may misevaluate during the
+    resolve.  The lock does not carry the synthetic value: see
+    :func:`unboundable_variables`.
     """
     full = python_full_version or f"{python_version}.0"
     return {

@@ -37,6 +37,7 @@ from ._vcs_admission import (
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
 from .metadata import WheelMetadata
+from .tags import default_ceiling_admitting
 from .target import host_environment
 
 if TYPE_CHECKING:
@@ -420,9 +421,10 @@ class Provider:
     resolve targets.
 
     ``preferences`` are versions another resolve already decided, tried
-    first when they are usable here.  The universal path passes the pins
-    of an already-resolved tuple, which aligns the matrix on one version
-    where every tuple can take it.
+    first when they are usable here.  A multi-target resolve passes the
+    pins of an already-resolved target, which aligns the matrix on one
+    version where every target can take it.  A package the strategy wants
+    lowest for ignores the preference and takes its own floor.
 
     ``listing_filter_cache`` shares the platform-independent half of the
     listing filter with the other targets of the same resolve; see
@@ -606,6 +608,16 @@ class Provider:
         # with no candidate can say the target has no compatible wheel rather
         # than blame requires-python or the cutoff.
         self.tag_excluded_wheels: dict[str, int] = {}
+
+        # Canonical names whose listing lost a file to requires-python,
+        # dist-policy, or the upload cutoff before the tag pass ran.  A
+        # tag-rejected wheel on some other version must not then claim the
+        # whole package failed on wheel tags alone.
+        self.base_filtered_packages: set[str] = set()
+
+        # (package, version) pairs already warned about losing their last wheel
+        # to an unset default tag ceiling, so the warning fires once per drop.
+        self._warned_ceiling_versions: set[tuple[str, Version]] = set()
 
         self.root_requirements = root_requirements or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
@@ -1138,6 +1150,50 @@ class Provider:
         """See :func:`nab_python._provider.listing.filter_distributions`."""
         return _listing.filter_distributions(self, normalized, files)
 
+    def ceiling_would_admit(
+        self, wheel_filename: str
+    ) -> tuple[str, tuple[int, int]] | None:
+        """Return the unset default ceiling that alone drops ``wheel_filename``.
+
+        Delegates to :func:`nab_python.tags.default_ceiling_admitting` for a
+        declared target; a host target names no platform_spec and never has a
+        raisable ceiling, so it returns ``None``.
+        """
+        if self.target is None or self.target.platform_spec is None:
+            return None
+        return default_ceiling_admitting(
+            self.target.platform_spec,
+            python_version=self.target.python_version,
+            implementation=self.target.implementation,
+            wheel_filename=wheel_filename,
+        )
+
+    def warn_ceiling_drop(
+        self,
+        normalized: str,
+        version: Version,
+        wheel: WheelFile,
+        knob: str,
+        raise_to: tuple[int, int],
+    ) -> None:
+        """Warn once that an unset default ceiling dropped a version's last wheel."""
+        key = (normalized, version)
+        if key in self._warned_ceiling_versions:
+            return
+        self._warned_ceiling_versions.add(key)
+        logger.warning(
+            "%s %s: wheel %s is above the default %s ceiling and was"
+            " dropped, leaving the version with no installable wheel;"
+            " set %s to %s.%s to keep it",
+            normalized,
+            version,
+            wheel.filename,
+            knob,
+            knob,
+            raise_to[0],
+            raise_to[1],
+        )
+
     def pick_best_candidate(
         self,
         normalized: str,
@@ -1205,10 +1261,12 @@ class Provider:
 
         A preference is honored only when it is in range and usable here: a
         base version needs extractable metadata, an extras proxy
-        additionally needs to declare the extra.
+        additionally needs to declare the extra.  A package the strategy
+        wants lowest for keeps its own floor, so alignment cannot make the
+        result depend on the order the targets resolve in.
         """
         preferred = self._preferences.get(normalized)
-        if preferred is None:
+        if preferred is None or self.wants_lowest(normalized):
             return None
 
         all_versions = self.versions_only(normalized, self.fetch_versions(package))
@@ -1514,9 +1572,11 @@ class Provider:
         ``all_versions`` is post-filter, so an empty one means either the
         index served no files or every file it served was dropped by the
         wheel-tag filter, requires-python, dist-policy, or the upload-time
-        cutoff.  The raw listing tells absence from incompatibility apart,
-        and the tag filter's own tally names the wheel-tag case, which is
-        what a Windows-only package on a Linux target hits.
+        cutoff.  The raw listing tells absence from incompatibility apart.
+        The wheel-tag case (a Windows-only package on a Linux target) is
+        named only when nothing else dropped a file: a version the base
+        pass filtered out, even alongside a tag-rejected wheel on another
+        version, reports the base-filter reason instead.
 
         A look-ahead rejection emits a clause that removes the rejected
         versions from the range, so the resolver asks again over a range
@@ -1527,19 +1587,19 @@ class Provider:
             _, _, normalized = self.split_and_normalize(package)
             raw_listing = self.coordinator.index.get_listing(normalized)
             tag_excluded = self.tag_excluded_wheels.get(normalized, 0)
-            if tag_excluded:
+            if not raw_listing:
+                reason = "package not found on any configured index"
+            elif tag_excluded and normalized not in self.base_filtered_packages:
                 reason = (
                     f"found on index but none of the wheel's tags are compatible"
                     f" with the resolve target ({tag_excluded} wheels rejected),"
                     f" and no sdist is available to build from"
                 )
-            elif raw_listing:
+            else:
                 reason = (
                     "found on index but no distribution is compatible "
                     "(all filtered by requires-python, dist-policy, or upload-time)"
                 )
-            else:
-                reason = "package not found on any configured index"
         elif blockers:
             # Look-ahead rejection: candidates DID match the range but
             # were rejected.  Naming the blocker is more useful than

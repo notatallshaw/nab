@@ -942,6 +942,74 @@ class TestNoVersionsReasons:
             " available to build from"
         )
 
+    def test_tag_rejected_wheel_does_not_hijack_requires_python_reason(self) -> None:
+        """A tag-rejected wheel must not mask a requires-python exclusion.
+
+        ``foo`` 2.0 ships only a Windows wheel the Linux target refuses,
+        and ``foo`` 1.0 ships a ``py3-none-any`` wheel the target could
+        install but for its ``requires-python``.  The wheel-tag tally is
+        package-global, so the 2.0 rejection must not make the reason
+        blame wheel tags and claim no sdist when 1.0 was really dropped
+        by requires-python.
+        """
+        listing = [
+            WheelFile(
+                filename="foo-2.0-cp311-cp311-win_amd64.whl",
+                url="https://example.com/foo-2.0-cp311-cp311-win_amd64.whl",
+                version="2.0",
+                requires_python=None,
+                has_metadata=True,
+                upload_time=None,
+            ),
+            make_wheel("1.0", requires_python=">=3.13"),
+        ]
+        coordinator = make_coordinator(listing, package="foo")
+        provider = Provider(
+            coordinator,
+            target=ResolveTarget.for_declared(
+                python_version="3.11", spec=PlatformSpec("linux_x86_64")
+            ),
+        )
+        provider.choose_version("foo", SpecifierSet("").to_range())
+        assert (
+            provider.get_no_versions_reason("foo")
+            == "found on index but no distribution is compatible "
+            "(all filtered by requires-python, dist-policy, or upload-time)"
+        )
+
+    def test_tag_rejected_wheel_does_not_deny_a_filtered_sdist(self) -> None:
+        """A tag-rejected wheel must not deny an sdist that was filtered.
+
+        ``foo`` 2.0 ships only a Windows wheel the Linux target refuses,
+        and ``foo`` 1.0 ships an sdist dropped by its ``requires-python``.
+        The reason must not claim "no sdist is available" when one is on
+        the index.
+        """
+        listing = [
+            WheelFile(
+                filename="foo-2.0-cp311-cp311-win_amd64.whl",
+                url="https://example.com/foo-2.0-cp311-cp311-win_amd64.whl",
+                version="2.0",
+                requires_python=None,
+                has_metadata=True,
+                upload_time=None,
+            ),
+            make_sdist("1.0", requires_python=">=3.13"),
+        ]
+        coordinator = make_coordinator(listing, package="foo")
+        provider = Provider(
+            coordinator,
+            target=ResolveTarget.for_declared(
+                python_version="3.11", spec=PlatformSpec("linux_x86_64")
+            ),
+        )
+        provider.choose_version("foo", SpecifierSet("").to_range())
+        assert (
+            provider.get_no_versions_reason("foo")
+            == "found on index but no distribution is compatible "
+            "(all filtered by requires-python, dist-policy, or upload-time)"
+        )
+
     def test_present_but_dist_policy_filtered_reports_incompatible(self) -> None:
         """A dist-policy-filtered package reports incompatible, not absent."""
         coordinator = make_coordinator([make_sdist("1.0")], package="foo")
@@ -5536,7 +5604,9 @@ class TestPrefetchWalkAhead:
         coordinator.reset_mock()
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
-        assert len(items) == provider.DEEP_PREFETCH_COUNT
+        # fetch_versions already prefetched the newest version; it fills a
+        # window slot but is skipped as already-held.
+        assert len(items) == provider.DEEP_PREFETCH_COUNT - 1
 
     def test_skips_versions_with_cached_deps(self) -> None:
         """Versions already in ``deps_cache`` are excluded from the batch."""
@@ -5550,15 +5620,19 @@ class TestPrefetchWalkAhead:
         items = coordinator.request_metadata_batch.call_args[0][0]
         versions = [ver for _, ver, _, _ in items]
         assert "2.0" not in versions
-        assert "3.0" in versions
+        # fetch_versions already prefetched the newest version.
+        assert "3.0" not in versions
         assert "1.0" in versions
 
     def test_dedupes_repeated_versions(self) -> None:
         """A wheel and a sdist for the same version count as one slot."""
+        # 3.0 is the newest, so fetch_versions prefetches and skips it; the
+        # wheel and sdist for 2.0 collapse to the single 2.0 slot.
         wheels: list[WheelFile | SdistFile] = [
             make_wheel("3.0"),
-            make_sdist("3.0"),
             make_wheel("2.0"),
+            make_sdist("2.0"),
+            make_wheel("1.0"),
         ]
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
@@ -5567,7 +5641,24 @@ class TestPrefetchWalkAhead:
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
         versions = [ver for _, ver, _, _ in items]
-        assert versions == ["3.0", "2.0"]
+        assert versions == ["2.0", "1.0"]
+
+    def test_skips_version_whose_empty_fetch_the_coordinator_holds(self) -> None:
+        """An already-fetched sidecar, even an empty one, is not re-requested."""
+        wheels = [make_wheel("3.0"), make_wheel("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        provider.fetch_versions("foo")
+        # An empty fetch (no sidecar served) still marks the slot fetched.
+        two = make_wheel("2.0")
+        assert two.metadata_url is not None
+        coordinator.request_metadata("foo", "2.0", two.metadata_url)
+        coordinator.reset_mock()
+        provider.prefetch_walk_ahead("foo")
+        items = coordinator.request_metadata_batch.call_args[0][0]
+        versions = [ver for _, ver, _, _ in items]
+        assert "2.0" not in versions
+        assert "1.0" in versions
 
     def test_picks_wheel_when_both_present(self) -> None:
         """A version with both a wheel and a sdist still prefetches the wheel."""

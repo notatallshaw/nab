@@ -18,6 +18,7 @@ from nab_python.target import (
     IMPLEMENTATION_MARKERS,
     PEP508_MARKER_VARIABLES,
     PLATFORM_MARKERS,
+    UNBOUNDABLE_MARKER_VARIABLES,
     Matrix,
     ResolveTarget,
     apply_python_axis_overlay,
@@ -26,6 +27,7 @@ from nab_python.target import (
     host_environment,
     marker_variables,
     python_axis_environment,
+    unboundable_variables,
 )
 
 _HOST_ENV: dict[str, str] = {
@@ -281,6 +283,26 @@ class TestLabels:
         )
         assert target.label == "py311-linux_x86_64-musl"
 
+    def test_windows_arm64_label(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("windows_arm64")
+        )
+        assert target.label == "py312-windows_arm64"
+
+    def test_linux_i686_label(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_i686")
+        )
+        assert target.label == "py312-linux_i686"
+
+    def test_free_threaded_windows_arm64_label(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.13",
+            spec=PlatformSpec("windows_arm64", free_threaded=True),
+        )
+        assert target.label == "py313-windows_arm64-ft"
+        assert "cp313t" in {t.abi for t in target.tags.ordered}
+
     def test_selection_appends_sorted_member_suffix(self) -> None:
         """A conflict-fork selection appends sorted ``kind-name`` members."""
         target = ResolveTarget.for_declared(
@@ -490,6 +512,21 @@ class TestMarkerTables:
             assert not missing, f"{platform_id} missing {missing}"
 
 
+class TestNewPlatformIdsExpand:
+    """The added ids expand from a matrix like any other platform."""
+
+    def test_windows_arm64_and_linux_i686_expand_to_targets(self) -> None:
+        matrix = Matrix(
+            python="==3.12",
+            platforms=(
+                PlatformSpec("windows_arm64"),
+                PlatformSpec("linux_i686"),
+            ),
+        )
+        labels = {t.label for t in matrix.expand()}
+        assert labels == {"py312-windows_arm64", "py312-linux_i686"}
+
+
 class TestPythonAxisEnvironment:
     def test_single_component_version_pads_python_version(self) -> None:
         """``python_version`` is padded to major.minor like full to three."""
@@ -691,6 +728,27 @@ class TestEnvironmentDeclaration:
         assert Marker(pypy).evaluate(on_pypy)
         assert not Marker(cpython).evaluate(on_pypy)
 
+    def test_a_pypy_target_drops_the_implementation_version_clause(self) -> None:
+        """PyPy 3.11 reports 7.3.x, not 3.11.0, so a bound on the synthetic
+        3.11.0 would refuse the very interpreter the lock targets.
+        """
+        target = ResolveTarget.for_declared(
+            python_version="3.11",
+            spec=PlatformSpec("linux_x86_64"),
+            implementation="pypy",
+        )
+        declaration = environment_declaration(
+            target, [Marker('implementation_version < "7.3"')]
+        )
+        assert "implementation_version" not in declaration
+
+        real_pypy = {
+            **declared_environment("3.11", PlatformSpec("linux_x86_64"), "pypy"),
+            "implementation_version": "7.3.17",
+            "python_full_version": "3.11.9",
+        }
+        assert Marker(declaration).evaluate(real_pypy)
+
 
 class TestFullVersionDeclaration:
     """``python_full_version`` is declared by constraint, not by value: the
@@ -827,6 +885,31 @@ class TestFullVersionDeclaration:
             self._target("3.13.0rc1"), [Marker('python_full_version < "3.13.0"')]
         )
         assert declaration.endswith('and python_full_version == "3.13.0rc1"')
+
+
+class TestUnboundableVariables:
+    """CPython carries ``implementation_version`` as its own micro release;
+    a non-CPython target's value there is synthetic, so the lock cannot
+    bound it.
+    """
+
+    def test_cpython_names_only_the_kernel_axes(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.11",
+            spec=PlatformSpec("linux_x86_64"),
+            implementation="cpython",
+        )
+        assert unboundable_variables(target) == UNBOUNDABLE_MARKER_VARIABLES
+
+    def test_pypy_adds_implementation_version(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.11",
+            spec=PlatformSpec("linux_x86_64"),
+            implementation="pypy",
+        )
+        assert unboundable_variables(target) == (
+            UNBOUNDABLE_MARKER_VARIABLES | {"implementation_version"}
+        )
 
 
 class TestDecidingClauses:

@@ -11,7 +11,7 @@ disjointness validation lives in
 from __future__ import annotations
 
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -355,15 +355,21 @@ def _build_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
     but not by the base is absent from that set, so it keeps the
     membership clause and does not install when no member is selected.
     See :class:`LockInput.env_base_names` for the missing-signature
-    contract.  Forks of one environment that disagree on a base
-    dependency's pin raise :class:`DivergentBaseDependencyError`
-    instead of emitting a lock whose no-member context misses it.
+    contract.  The base-name set is first closed under the emitted
+    dependency edges (:func:`_close_base_names`) so a transitive dep the
+    forks pull in through a base dep counts as base too.  Forks of one
+    environment that disagree on a base dependency's pin raise
+    :class:`DivergentBaseDependencyError` instead of emitting a lock
+    whose no-member context misses it.
     """
     out: list[Package] = []
     targets = lock_input.targets
     by_name = _group_by_name(targets)
     env_signatures = _env_signatures(targets)
     env_fork_counts = _count(env_signatures.values())
+    base_names = _close_base_names(
+        targets, env_signatures, env_fork_counts, lock_input.env_base_names
+    )
 
     for canonical_name, per_target in by_name.items():
         groups = _group_pins_by_pin(per_target)
@@ -373,7 +379,7 @@ def _build_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
             groups,
             env_signatures,
             env_fork_counts,
-            lock_input.env_base_names,
+            base_names,
         )
 
         for pins, labels in groups:
@@ -383,7 +389,7 @@ def _build_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
                 targets,
                 env_signatures,
                 env_fork_counts,
-                lock_input.env_base_names,
+                base_names,
             )
             out.append(
                 _pin_to_package(
@@ -502,6 +508,81 @@ def _merge_pins_in_group(pins: list[PinShape]) -> PinShape:
         wheels=tuple(sorted(seen_wheels.values(), key=_wheel_sort_key)),
         requires_python=requires_python,
     )
+
+
+def _close_base_names(
+    targets: Mapping[str, TargetLock],
+    env_signatures: Mapping[str, tuple[tuple[str, str], ...]],
+    env_fork_counts: Mapping[tuple[tuple[str, str], ...], int],
+    env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]],
+) -> dict[tuple[tuple[str, str], ...], frozenset[str]]:
+    """Close each env's base-name set under the emitted dependency edges.
+
+    ``env_base_names`` records the names an independent base pass
+    resolved, at that pass's versions, which emission discards in favour
+    of the conflict-fork versions.  When the forks pin a base dependency
+    lower than the base pass did, its emitted transitive closure differs:
+    a package the forks pull in through the base dep is missing from
+    ``env_base_names`` and would keep its membership clause, so it drops
+    out of the no-member install context even though the base dep that
+    requires it installs there.  Following the base (unconditional) edges
+    present in every fork of the environment restores the closure, keeping
+    the no-member context closed under the lock's own dependency graph.
+
+    Preserves the missing-signature contract: only signatures present in
+    ``env_base_names`` appear in the result, so an env with no base pass
+    stays absent and its base status stays unknowable.
+    """
+    if not env_base_names:
+        return dict(env_base_names)
+
+    shared = _shared_fork_edges(targets, env_signatures, env_fork_counts)
+    closed: dict[tuple[tuple[str, str], ...], frozenset[str]] = {}
+    for signature, base in env_base_names.items():
+        adjacency = shared.get(signature, {})
+        reachable = set(base)
+        stack = list(base)
+        while stack:
+            for dep in adjacency.get(stack.pop(), ()):
+                if dep not in reachable:
+                    reachable.add(dep)
+                    stack.append(dep)
+        closed[signature] = frozenset(reachable)
+    return closed
+
+
+def _shared_fork_edges(
+    targets: Mapping[str, TargetLock],
+    env_signatures: Mapping[str, tuple[tuple[str, str], ...]],
+    env_fork_counts: Mapping[tuple[tuple[str, str], ...], int],
+) -> dict[tuple[tuple[str, str], ...], dict[str, list[str]]]:
+    """Per-env adjacency of the base edges present in every fork of the env.
+
+    Walks ``base_dependencies`` (a package's unconditional edges), never
+    the extra-folded ``dependencies``, so a dep a conflict member pulls in
+    through an extra is not an edge here even when every fork activates
+    that extra.  A base edge only some forks carry (a base dep pinned to a
+    version whose deps differ) is dropped too.  Following these edges thus
+    never promotes a member-only dep to base.
+    """
+    edge_counts: defaultdict[tuple[tuple[str, str], ...], Counter[tuple[str, str]]] = (
+        defaultdict(Counter)
+    )
+    for label, lock in targets.items():
+        counter = edge_counts[env_signatures[label]]
+        for source, deps in lock.base_dependencies.items():
+            for dep in dict.fromkeys(deps):
+                counter[source, dep] += 1
+
+    shared: dict[tuple[tuple[str, str], ...], dict[str, list[str]]] = {}
+    for signature, counter in edge_counts.items():
+        count = env_fork_counts[signature]
+        adjacency: defaultdict[str, list[str]] = defaultdict(list)
+        for (source, dep), seen in counter.items():
+            if seen == count:
+                adjacency[source].append(dep)
+        shared[signature] = adjacency
+    return shared
 
 
 def _check_base_fork_agreement(

@@ -129,9 +129,14 @@ def _build_constraints(
 
 
 class TestSpecificModeConflictValidation:
-    """A declared conflict fails fast in specific mode, before any network."""
+    """Conflict handling in specific mode: direct co-selection forks, an
+    umbrella that reaches two members without selecting either fails fast."""
 
-    def test_co_selecting_conflicting_extras_raises(self, tmp_path: Path) -> None:
+    @patch("nab_python.resolve.resolve_with_coordinator")
+    def test_co_selecting_conflicting_extras_forks(
+        self, mock_engine: MagicMock, tmp_path: Path
+    ) -> None:
+        """Two directly co-selected conflicting extras fork, matrix or not."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\nname = "x"\nversion = "0"\n'
@@ -142,15 +147,20 @@ class TestSpecificModeConflictValidation:
             "[tool.nab]\n"
             'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
         )
-        # No FetchCoordinator patch: the validation must raise before any
-        # network work is attempted.
-        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            _resolved(
-                pyproject,
-                _FAKE_TRANSPORT,
-                extras=("cpu", "gpu"),
-                python_version="3.12.0",
-            )
+        _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            extras=("cpu", "gpu"),
+            python_version="3.12.0",
+        )
+        forks = mock_engine.call_args.kwargs["forks"]
+        assert {f.selection for f in forks} == {
+            (("extra", "cpu"),),
+            (("extra", "gpu"),),
+        }
+        by_selection = {f.selection: f.requirements for f in forks}
+        assert [str(r) for r in by_selection[(("extra", "cpu"),)]] == ["numpy==2.1.2"]
+        assert [str(r) for r in by_selection[(("extra", "gpu"),)]] == ["numpy==2.0.0"]
 
     def test_single_extra_under_conflict_resolves(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
@@ -184,6 +194,39 @@ class TestSpecificModeConflictValidation:
         assert V("1.0") in root_reqs["foo"]
         assert V("2.0") not in root_reqs["foo"]
         assert _pins(result) == {"foo": V("1.0")}
+
+    def test_direct_co_selection_forks_and_locks(self, tmp_path: Path) -> None:
+        """A real specific-mode co-selection resolves to two forks, each
+        pinning its own member's version under a distinct selection."""
+        coordinator = make_coordinator(
+            listings={"numpy": _index_wheels("numpy", "2.0.0", "2.1.2")},
+            auto_metadata=True,
+        )
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["numpy==2.1.2"]\n'
+            'gpu = ["numpy==2.0.0"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n',
+            encoding="utf-8",
+        )
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            result = _resolved(
+                path, _FAKE_TRANSPORT, extras=("cpu", "gpu"), python_version="3.12.0"
+            )
+        label_for = {v: label for v, label in result.merged_pins()["numpy"]}
+        assert set(label_for) == {"2.0.0", "2.1.2"}
+        assert label_for["2.1.2"].endswith("-extra-cpu")
+        assert label_for["2.0.0"].endswith("-extra-gpu")
+        # Both forks land in the lock under their own selection.
+        lock_input = build_lock_input(
+            result, config=read_pyproject_config(path), extras=("cpu", "gpu")
+        )
+        assert len(lock_input.targets) == 2
 
     def test_unknown_conflict_member_raises(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
@@ -528,9 +571,12 @@ class TestSpecificModeConflictValidation:
         root_reqs = mock_provider_cls.call_args.kwargs["root_requirements"]
         assert "bar" in root_reqs
 
-    def test_default_groups_plus_cli_violate_exclusion(self, tmp_path: Path) -> None:
-        # ``default-groups = ["a"]`` plus ``--groups b`` activates both
-        # members of an at-most-one set, so the exclusion check trips.
+    @patch("nab_python.resolve.resolve_with_coordinator")
+    def test_default_groups_plus_cli_fork_exclusion(
+        self, mock_engine: MagicMock, tmp_path: Path
+    ) -> None:
+        # ``default-groups = ["a"]`` plus ``--groups b`` directly selects
+        # both members of an at-most-one set, so the resolve forks.
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\nname = "x"\nversion = "0"\n'
@@ -542,13 +588,17 @@ class TestSpecificModeConflictValidation:
             'default-groups = ["a"]\n'
             'conflicts = [[{ group = "a" }, { group = "b" }]]\n'
         )
-        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            _resolved(
-                pyproject,
-                _FAKE_TRANSPORT,
-                groups=("b",),
-                python_version="3.12.0",
-            )
+        _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            groups=("b",),
+            python_version="3.12.0",
+        )
+        forks = mock_engine.call_args.kwargs["forks"]
+        assert {f.selection for f in forks} == {
+            (("group", "a"),),
+            (("group", "b"),),
+        }
 
 
 class TestResolvePyproject:
@@ -3400,6 +3450,58 @@ class TestLockDeclaresItsEnvironment:
         (environment,) = lock_input.environments
         assert "platform_release" not in str(environment)
         assert "platform_release" in caplog.text
+
+    def test_pypy_implementation_version_marker_warns_and_stays_undeclared(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """PyPy reports 7.3.x there, not its Python level, so the synthetic
+        value cannot be bounded; the lock leaves the axis open and warns.
+        """
+        body = self._PYPROJECT.replace(
+            'platform = "linux_x86_64"\n',
+            'platform = "linux_x86_64"\nimplementation = "pypy"\n',
+        )
+        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+            lock_input = self._resolve(
+                tmp_path,
+                body,
+                self._coordinator(
+                    'Requires-Dist: bar ; implementation_version >= "7.3"\n'
+                ),
+            )
+        (environment,) = lock_input.environments
+        assert "implementation_version" not in str(environment)
+        assert "bar" not in _locked(lock_input)
+        assert "implementation_version" in caplog.text
+        real_pypy = {
+            **_PY312_ENV,
+            "implementation_name": "pypy",
+            "platform_python_implementation": "PyPy",
+            "implementation_version": "7.3.17",
+            "python_full_version": "3.12.9",
+        }
+        assert Marker(str(environment)).evaluate(real_pypy)
+
+    def test_a_pypy_target_without_the_axis_declares_and_does_not_warn(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A non-CPython resolve that never reads implementation_version keeps
+        its ordinary declaration and raises no axis warning.
+        """
+        body = self._PYPROJECT.replace(
+            'platform = "linux_x86_64"\n',
+            'platform = "linux_x86_64"\nimplementation = "pypy"\n',
+        )
+        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+            lock_input = self._resolve(
+                tmp_path,
+                body,
+                self._coordinator('Requires-Dist: bar ; sys_platform == "win32"\n'),
+            )
+        (environment,) = lock_input.environments
+        assert 'sys_platform == "linux"' in str(environment)
+        assert "bar" not in _locked(lock_input)
+        assert "implementation_version" not in caplog.text
 
     def test_a_full_version_marker_declares_how_it_read_not_the_micro(
         self, tmp_path: Path

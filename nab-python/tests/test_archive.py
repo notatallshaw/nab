@@ -12,6 +12,7 @@ import gzip
 import hashlib
 import io
 import tarfile
+import zlib
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -76,6 +77,29 @@ _PYPROJECT = '[project]\nname = "foo"\nversion = "1.0.0"\ndependencies = ["bar>=
 def _half(data: bytes) -> bytes:
     """Return the leading half of ``data``, as a cut-short download leaves it."""
     return data[: len(data) // 2]
+
+
+_CLEAN_PREFIX = 1 << 20
+_INVALID_DEFLATE_BLOCK = b"\x07" * 8
+
+
+def _corrupt_deflate_sdist() -> bytes:
+    """Return ``.tar.gz`` bytes whose member data is behind a corrupt deflate block.
+
+    The clean prefix is longer than the reader's decompression buffer, so the
+    archive opens and its tar headers read; only reading a member's data hits the
+    reserved block type zlib rejects.
+    """
+    body = (_PYPROJECT + "# filler\n" * (2 * _CLEAN_PREFIX // 9)).encode("utf-8")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        info = tarfile.TarInfo("foo-1.0.0/pyproject.toml")
+        info.size = len(body)
+        tar.addfile(info, io.BytesIO(body))
+
+    deflate = zlib.compressobj(9, zlib.DEFLATED, zlib.MAX_WBITS | 16)
+    clean = deflate.compress(buf.getvalue()[:_CLEAN_PREFIX])
+    return clean + deflate.flush(zlib.Z_SYNC_FLUSH) + _INVALID_DEFLATE_BLOCK
 
 
 def _provider(archive_sources: list[ArchiveSource], cache_dir: Path | None) -> Provider:
@@ -687,8 +711,9 @@ class TestExtractArchive:
             b"not a gzip stream",
             gzip.compress(b"not a tar"),
             _half(_make_sdist("foo", "1.0.0", _PYPROJECT)),
+            _corrupt_deflate_sdist(),
         ],
-        ids=["empty", "not-gzip", "gzip-not-tar", "truncated"],
+        ids=["empty", "not-gzip", "gzip-not-tar", "truncated", "corrupt-deflate"],
     )
     def test_unreadable_archive_raises_value_error(
         self, data: bytes, tmp_path: Path

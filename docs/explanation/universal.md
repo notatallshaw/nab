@@ -51,8 +51,9 @@ python-order = "asc"
 
 `python` is a PEP 440 specifier expanded into one tuple per
 minor version. `platforms` is a list of platform ids
-(`linux_x86_64`, `linux_aarch64`, `macos_x86_64`, `macos_arm64`,
-`windows_amd64`), each optionally written as a table to declare its
+(`linux_x86_64`, `linux_aarch64`, `linux_i686`, `macos_x86_64`,
+`macos_arm64`, `windows_amd64`, `windows_arm64`), each optionally
+written as a table to declare its
 wheel-tag knobs (libc family and version, macOS deployment target,
 free-threaded build).  See
 [Configuration](../reference/configuration.md).
@@ -150,7 +151,10 @@ puts `implementation_name` on every tuple's marker and on the
 `(python, platform)` point stay mutually exclusive, and a PyPy-only
 lock refuses CPython. PyPy's `implementation_version` is modelled as
 the Python level, not PyPy's own release, so the rare marker comparing
-`implementation_version` against a PyPy version misevaluates.
+`implementation_version` against a PyPy version misevaluates during the
+resolve. The lockfile does not carry that synthetic value: a non-CPython
+`environments` entry leaves `implementation_version` open, so a real PyPy
+still accepts the lock (a dep gated on the axis may be missed at install).
 
 ## Trade-offs versus marker-fork PubGrub
 

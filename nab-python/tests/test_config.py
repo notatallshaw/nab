@@ -115,10 +115,13 @@ class TestCliOverridesFold:
 
     def test_cli_mode_universal_requires_matrix(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
-        with pytest.raises(ConfigError, match=r"requires a \[tool.nab.matrix\]"):
+        with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(
                 path, discover_workspace=False, cli_overrides={"mode": "universal"}
             )
+        message = str(excinfo.value)
+        assert "[tool.nab.matrix]" in message
+        assert "there is no --project-matrix" in message
 
     def test_cli_mode_specific_shadows_declared_matrix(self, tmp_path: Path) -> None:
         path = write(
@@ -165,8 +168,11 @@ class TestMode:
 
     def test_universal_requires_matrix(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nmode = "universal"\n')
-        with pytest.raises(ConfigError, match="requires a \\[tool.nab.matrix\\]"):
+        with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(path)
+        message = str(excinfo.value)
+        assert "requires a [tool.nab.matrix]" in message
+        assert "--project-matrix" not in message
 
     def test_matrix_without_universal_mode_rejected(self, tmp_path: Path) -> None:
         path = write(
@@ -1344,6 +1350,35 @@ class TestEnvironment:
         assert target.implementation == "pypy"
         assert target.platform_id == "macos_arm64"
 
+    def test_windows_arm64_bare_id_declares_a_target(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\npython = "3.12"\nplatform = "windows_arm64"\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(
+            python="3.12", platform=PlatformSpec("windows_arm64")
+        )
+        (target,) = plan_targets(config)
+        assert target.marker_env["platform_machine"] == "ARM64"
+        assert target.tags.accepts("somepkg-1.0-cp312-cp312-win_arm64.whl")
+
+    def test_linux_i686_table_declares_a_target(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\npython = "3.12"\n'
+            'platform = { id = "linux_i686" }\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        config = read_pyproject_config(path)
+        assert config.environment == EnvironmentConfig(
+            python="3.12", platform=PlatformSpec("linux_i686")
+        )
+        (target,) = plan_targets(config)
+        assert target.marker_env["platform_machine"] == "i686"
+        assert target.tags.accepts("somepkg-1.0-cp312-cp312-manylinux2014_i686.whl")
+
     def test_platform_without_python_takes_the_host_python(
         self, tmp_path: Path
     ) -> None:
@@ -1445,10 +1480,10 @@ class TestEnvironment:
 
     def test_unknown_platform_id_in_a_table_rejected(self, tmp_path: Path) -> None:
         path = write(
-            tmp_path, '[tool.nab.environment]\nplatform = { id = "linux_i686" }\n'
+            tmp_path, '[tool.nab.environment]\nplatform = { id = "freebsd_amd64" }\n'
         )
         with pytest.raises(
-            ConfigError, match="unknown environment.platform 'linux_i686'"
+            ConfigError, match="unknown environment.platform 'freebsd_amd64'"
         ):
             read_pyproject_config(path)
 
@@ -1517,9 +1552,9 @@ class TestEnvironment:
             read_pyproject_config(path)
 
     def test_unknown_platform_rejected(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab.environment]\nplatform = "linux_i686"\n')
+        path = write(tmp_path, '[tool.nab.environment]\nplatform = "freebsd_amd64"\n')
         with pytest.raises(
-            ConfigError, match="unknown environment.platform 'linux_i686'"
+            ConfigError, match="unknown environment.platform 'freebsd_amd64'"
         ):
             read_pyproject_config(path)
 
@@ -3391,6 +3426,18 @@ class TestMatrix:
         assert matrix.platforms == (
             PlatformSpec("macos_arm64"),
             PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2)),
+        )
+
+    def test_windows_arm64_and_linux_i686_are_known_ids(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._platforms_body('["windows_arm64", "linux_i686"]'),
+        )
+        matrix = read_pyproject_config(path).matrix
+        assert matrix is not None
+        assert matrix.platforms == (
+            PlatformSpec("windows_arm64"),
+            PlatformSpec("linux_i686"),
         )
 
     @pytest.mark.parametrize(

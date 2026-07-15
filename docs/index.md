@@ -78,5 +78,5 @@ contributing
   `[tool.nab].mode = "universal"`; the API and output format are still
   subject to change.
 * Mutually-exclusive extras and dependency groups via
-  `[tool.nab].conflicts`: fail fast in specific mode, fork the resolve
-  in universal mode.  See [conflicts](explanation/conflicts.md).
+  `[tool.nab].conflicts`: co-selected members fork the resolve, in
+  specific and universal mode.  See [conflicts](explanation/conflicts.md).

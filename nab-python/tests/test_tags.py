@@ -12,7 +12,8 @@ Pins:
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from contextlib import AbstractContextManager
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -26,8 +27,10 @@ from nab_python.tags import (
     _ordered_tags_for_spec,
     _parse_tag_str,
     _platform_tags_for_spec,
+    default_ceiling_admitting,
     wheel_tag_set,
 )
+from nab_python.target import PLATFORM_MARKERS
 
 # numpy 2.5.1 ships one manylinux wheel (tagged 2.27 and 2.28, no older),
 # one musllinux wheel, and one free-threaded wheel per platform.
@@ -42,7 +45,7 @@ NUMPY_FREETHREADED = (
 CRYPTOGRAPHY_ABI3 = "cryptography-44.0.0-cp37-abi3-manylinux_2_28_x86_64.whl"
 
 
-def _free_threaded_host() -> object:
+def _free_threaded_host() -> AbstractContextManager[MagicMock]:
     """Patch the config vars packaging reads to fake a free-threaded host."""
     return patch(
         "nab_python.tags.ptags._get_config_var",
@@ -86,7 +89,9 @@ class TestPlatformSpecKnobsBelongToTheirPlatform:
     a machine that was never modelled.
     """
 
-    @pytest.mark.parametrize("platform_id", ["macos_arm64", "windows_amd64"])
+    @pytest.mark.parametrize(
+        "platform_id", ["macos_arm64", "windows_amd64", "windows_arm64"]
+    )
     def test_libc_outside_linux_raises(self, platform_id: str) -> None:
         """Only a Linux target links a C library."""
         with pytest.raises(ValueError, match="libc is a Linux knob"):
@@ -196,6 +201,14 @@ class TestPlatformSpec:
         """``macos_arm64`` arch is ``arm64``."""
         spec = PlatformSpec("macos_arm64")
         assert spec.arch == "arm64"
+
+    def test_windows_arm64_arch(self) -> None:
+        """``windows_arm64`` wheel-tag arch is the lowercase ``arm64``."""
+        assert PlatformSpec("windows_arm64").arch == "arm64"
+
+    def test_linux_i686_arch(self) -> None:
+        """``linux_i686`` carries the ``i686`` arch."""
+        assert PlatformSpec("linux_i686").arch == "i686"
 
     def test_label_distinguishes_space_from_underscore(self) -> None:
         """Whitespace and ``_`` in ``platform_release`` encode differently.
@@ -372,6 +385,52 @@ class TestAbiIsHostIndependent:
         spec = PlatformSpec("linux_x86_64", free_threaded=True)
         tag_strs = {str(t) for t in _ordered_tags_for_spec("3.13", spec, "cpython")}
         assert "cp313-cp313t-manylinux_2_28_x86_64" in tag_strs
+
+
+class TestPlatformIdTableParity:
+    """The three id-keyed platform tables must name the same ids.
+
+    ``Matrix.expand`` validates a declared id against ``PLATFORM_MARKERS``
+    only, while ``PlatformSpec.arch`` and ``platform_kind`` read the other
+    two.  An id in one table but not the others would pass validation and
+    then ``KeyError`` deep in tag building.
+    """
+
+    def test_the_three_tables_agree(self) -> None:
+        assert set(PLATFORM_MARKERS) == set(_PLATFORM_ARCH) == set(_PLATFORM_KIND)
+
+
+class TestWindowsArm64:
+    """``windows_arm64`` names the ``win_arm64`` wheel tag."""
+
+    def test_platform_tag_is_win_arm64(self) -> None:
+        assert _platform_tags_for_spec(PlatformSpec("windows_arm64")) == ["win_arm64"]
+
+    def test_accepts_a_win_arm64_wheel(self) -> None:
+        spec = PlatformSpec("windows_arm64")
+        wheel = _wheel("foo-1.0-cp312-cp312-win_arm64.whl")
+        assert _compatible(wheel, python_version="3.12", spec=spec)
+
+    def test_free_threaded_target_takes_the_cp313t_wheel(self) -> None:
+        spec = PlatformSpec("windows_arm64", free_threaded=True)
+        wheel = _wheel("foo-1.0-cp313-cp313t-win_arm64.whl")
+        assert _compatible(wheel, python_version="3.13", spec=spec)
+
+
+class TestLinuxI686:
+    """``linux_i686`` emits the i686 manylinux family down to glibc 2.5."""
+
+    def test_default_target_emits_manylinux_i686(self) -> None:
+        platforms = _platform_tags_for_spec(PlatformSpec("linux_i686"))
+        assert platforms[0] == "linux_i686"
+        assert "manylinux_2_28_i686" in platforms
+        assert "manylinux_2_5_i686" in platforms
+        assert not any(p.startswith("musllinux") for p in platforms)
+
+    def test_accepts_a_manylinux2014_i686_wheel(self) -> None:
+        spec = PlatformSpec("linux_i686")
+        wheel = _wheel("foo-1.0-cp312-cp312-manylinux2014_i686.whl")
+        assert _compatible(wheel, python_version="3.12", spec=spec)
 
 
 class TestTagsForTarget:
@@ -1079,3 +1138,67 @@ class TestLinuxPlatformOrderMatchesSysTags:
         many = Tag("cp311", "cp311", "manylinux_2_28_x86_64")
         assert host.rank[plain] < host.rank[many]
         assert declared.rank[plain] < declared.rank[many]
+
+
+class TestDefaultCeilingAdmitting:
+    """``default_ceiling_admitting`` names an unset default ceiling, or nothing."""
+
+    def test_musl_default_ceiling_named(self) -> None:
+        """A musllinux wheel above the 1.2 default names the raise-to version."""
+        got = default_ceiling_admitting(
+            PlatformSpec("linux_x86_64", libc="musl"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0-cp311-cp311-musllinux_1_3_x86_64.whl",
+        )
+        assert got == ("libc-version", (1, 3))
+
+    def test_python_mismatch_is_not_a_ceiling(self) -> None:
+        """A cp312 wheel on a 3.11 target is not admitted by any ceiling change."""
+        got = default_ceiling_admitting(
+            PlatformSpec("macos_arm64"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0-cp312-cp312-macosx_14_0_arm64.whl",
+        )
+        assert got is None
+
+    def test_windows_target_has_no_ceiling(self) -> None:
+        """Windows names no versioned platform tag, so there is no ceiling."""
+        got = default_ceiling_admitting(
+            PlatformSpec("windows_amd64"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0-cp311-cp311-manylinux_2_34_x86_64.whl",
+        )
+        assert got is None
+
+    def test_non_wheel_filename_has_no_ceiling(self) -> None:
+        """A filename that is not a parseable wheel yields no candidate versions."""
+        got = default_ceiling_admitting(
+            PlatformSpec("macos_arm64"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0.tar.gz",
+        )
+        assert got is None
+
+    def test_below_ceiling_tag_is_not_a_ceiling(self) -> None:
+        """A manylinux 2.17 wheel is at or below the default, so nothing is raised."""
+        got = default_ceiling_admitting(
+            PlatformSpec("linux_x86_64"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0-cp311-cp311-manylinux_2_17_x86_64.whl",
+        )
+        assert got is None
+
+    def test_version_past_the_cap_is_not_raisable(self) -> None:
+        """A tag naming a version past the knob cap is not a ceiling nab can raise to."""
+        got = default_ceiling_admitting(
+            PlatformSpec("macos_arm64"),
+            python_version="3.11",
+            implementation="cpython",
+            wheel_filename="pkg-2.0-cp311-cp311-macosx_100_0_arm64.whl",
+        )
+        assert got is None
