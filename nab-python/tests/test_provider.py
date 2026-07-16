@@ -3739,9 +3739,9 @@ class TestSkipFetch:
         assert "dep-a" in provider.deps_cache[("pkg", V("2.0"))]
 
     def test_corrupt_wheel_resolves_via_scan(self) -> None:
-        # A corrupt-metadata wheel would make await_metadata_batch raise in
-        # the prefetch path.  A complete override short-circuits submission,
-        # so the scan reaches get_dependencies (skip-fetch) and resolves.
+        # A complete override short-circuits batch submission for the corrupt
+        # wheel, so the scan reaches get_dependencies (skip-fetch) and resolves
+        # from the override's deps rather than the corrupt metadata.
         coordinator = make_coordinator(
             [make_wheel("3.0"), make_wheel("2.0")],
             metadata_by_version={
@@ -5881,9 +5881,10 @@ class TestAwaitMetadataBatchEdgeCases:
         assert result == V("1.0")
         assert ("foo", V("2.0")) not in provider.deps_cache
 
-    def test_batch_metadata_hash_mismatch_aborts(self) -> None:
-        """A recorded integrity failure in the batch path aborts the wait
-        rather than leaving the version un-cached for an sdist fallback."""
+    def test_batch_metadata_hash_mismatch_defers_to_get_dependencies(self) -> None:
+        """A recorded integrity failure in the batch path leaves the version
+        un-cached without aborting; get_dependencies re-raises it when the
+        resolver actually selects this version."""
         wheels = [make_wheel("1.0")]
         coordinator = make_coordinator(wheels, package="foo")
         coordinator.index.store_metadata_error(
@@ -5893,12 +5894,44 @@ class TestAwaitMetadataBatchEdgeCases:
             _SIDECAR_URL,
         )
         provider = Provider(coordinator, target=_PY312)
-        with pytest.raises(MetadataHashMismatchError):
-            provider._await_metadata_batch(
-                "foo",
-                [(V("1.0"), "1.0", _SIDECAR_URL, _done_event())],
-            )
+        provider._await_metadata_batch(
+            "foo",
+            [(V("1.0"), "1.0", _SIDECAR_URL, _done_event())],
+        )
         assert ("foo", V("1.0")) not in provider.deps_cache
+        with pytest.raises(MetadataHashMismatchError):
+            provider.get_dependencies("foo", V("1.0"))
+
+    def test_batch_hash_mismatch_on_non_selected_candidate_resolves(self) -> None:
+        """A corrupt sidecar on a candidate the scan never selects must not abort.
+
+        v3.0's deps conflict with a decision, so the scan prefetches the
+        [v2.0, v1.0] batch.  v2.0 is clean and selected first; v1.0's sidecar
+        is corrupt but never examined.  Integrity-checking it in the batch
+        would crash the resolve over a version not in the solution.
+        """
+        wheels = [make_wheel("3.0"), make_wheel("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(
+            wheels,
+            metadata_by_version={
+                "3.0": "Metadata-Version: 2.1\nName: pkg\nVersion: 3.0\nRequires-Dist: bar==2.0\n",
+                "2.0": "Metadata-Version: 2.1\nName: pkg\nVersion: 2.0\n",
+            },
+            package="pkg",
+        )
+        corrupt = make_wheel("1.0")
+        assert corrupt.metadata_url is not None
+        coordinator.index.store_metadata_error(
+            "pkg",
+            "1.0",
+            MetadataHashMismatchError("metadata sha256 mismatch"),
+            corrupt.metadata_url,
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.solution_decisions["bar"] = V("1.0")
+        assert provider.choose_version("pkg", VersionRange.full()) == V("2.0")
+        assert provider.deps_cache[("pkg", V("2.0"))] == {}
+        assert ("pkg", V("1.0")) not in provider.deps_cache
 
     def test_batch_does_not_parse_sdist_pkg_info_as_wheel_metadata(self) -> None:
         """Sdist PKG-INFO in the shared slot is not cached by the batch path.

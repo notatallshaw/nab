@@ -678,8 +678,8 @@ def prefetch_batch(
     for v in versions:
         if (package, v) in provider.deps_cache or v not in wheel_by_version_map:
             continue
-        # On a corrupt-metadata wheel ``await_metadata_batch`` would otherwise
-        # raise on the very metadata this override replaces.
+        # A complete override supplies the deps, so fetching this version's
+        # metadata is wasted work.
         if _has_complete_override(provider, package, v):
             continue
         wheel = wheel_by_version_map[v]
@@ -716,7 +716,10 @@ def await_metadata_batch(
             package, ver_str, metadata_url
         )
         if integrity_error is not None:
-            raise integrity_error
+            # Leave the version un-cached instead of aborting the batch.
+            # The error stays recorded, so get_dependencies re-raises it
+            # only if the scan actually selects this version.
+            continue
         text, from_sdist = provider.coordinator.index.get_metadata_with_origin(
             package, ver_str, metadata_url
         )
