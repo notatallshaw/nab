@@ -4,10 +4,11 @@ from __future__ import annotations
 
 
 class ComplexityLimitExceeded(Exception):  # noqa: N818
-    """A decision procedure exceeded the ``max_cells`` guard.
+    """A decision procedure hit a resource guard on pathological input.
 
-    Raised loudly instead of hanging: the caller sees a bounded failure rather
-    than an unbounded cell enumeration.
+    Raised loudly instead of hanging or overflowing the stack: the caller sees a
+    bounded failure rather than an unbounded cell enumeration under the
+    ``max_cells`` guard, or a marker nested too deeply for the tree walk.
     """
 
 

@@ -7,6 +7,9 @@ decision, restriction, serialisation, witness, and guard surfaces.
 
 from __future__ import annotations
 
+import sys
+import traceback
+
 import pytest
 
 from nab_python._marker_algebra import (
@@ -605,6 +608,47 @@ def test_guard_version_axis_literal_count() -> None:
 def test_guard_does_not_fire_under_default() -> None:
     marker = ms(" and ".join(f'extra == "pkg{i}"' for i in range(10)))
     assert not marker.is_empty()
+
+
+def _nested_alternating(depth: int) -> MarkerSet:
+    # Algebra assembles the op-tree without recursing, so a tree far deeper than
+    # the stack is built at any recursion limit; only the walk that decides it
+    # recurses.
+    left = ms('sys_platform == "linux"')
+    right = ms('os_name == "posix"')
+    deep = ms('python_version == "3.9"')
+    for i in range(depth):
+        deep = (left & deep) if i % 2 == 0 else (right | deep)
+    return deep
+
+
+def test_deep_nesting_decision_reports_complexity() -> None:
+    deep = _nested_alternating(1200)
+    original = sys.getrecursionlimit()
+    try:
+        # Bound the walk to a fixed headroom over the current stack, so the guard
+        # fires below the interpreter limit whatever the ambient limit is.
+        sys.setrecursionlimit(len(traceback.extract_stack()) + 300)
+        for decide in (deep.is_empty, deep.to_marker_string, deep.witness):
+            with pytest.raises(ComplexityLimitExceeded):
+                decide()
+    finally:
+        sys.setrecursionlimit(original)
+
+
+def test_deep_nesting_construction_reports_complexity() -> None:
+    marker = 'python_version == "3.9"'
+    for i in range(1200):
+        atom = 'sys_platform == "linux"' if i % 2 == 0 else 'os_name == "posix"'
+        op = "and" if i % 2 == 0 else "or"
+        marker = f"{atom} {op} ({marker})"
+    original = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(len(traceback.extract_stack()) + 300)
+        with pytest.raises(ComplexityLimitExceeded):
+            MarkerSet.from_marker(marker)
+    finally:
+        sys.setrecursionlimit(original)
 
 
 # -------------------------------------------------- branch-completeness edges

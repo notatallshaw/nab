@@ -2,19 +2,43 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from functools import wraps
+from typing import TYPE_CHECKING, ParamSpec, TypeVar
 
 from . import _atoms, _engine
-from ._errors import UnserializableSet
+from ._errors import ComplexityLimitExceeded, UnserializableSet
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from collections.abc import Set as AbstractSet
 
     from .._vendor.packaging.markers import Marker
     from ._atoms import Formula
 
 DEFAULT_MAX_CELLS = 100_000
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Report stack exhaustion on a deeply nested tree as the resource guard.
+
+    A tree walk recurses as deep as the marker nests, so a marker nested past the
+    interpreter's stack raises :class:`RecursionError`. Every public boundary that
+    walks the tree reports it as :class:`ComplexityLimitExceeded`, the one bounded
+    failure the algebra promises on pathological input.
+    """
+
+    @wraps(method)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return method(*args, **kwargs)
+        except RecursionError as exc:
+            msg = "marker nests too deeply to decide"
+            raise ComplexityLimitExceeded(msg) from exc
+
+    return wrapper
 
 
 class MarkerSet:
@@ -36,6 +60,7 @@ class MarkerSet:
     # ---- construction
 
     @classmethod
+    @_bounded
     def from_marker(
         cls, marker: str | Marker, *, max_cells: int = DEFAULT_MAX_CELLS
     ) -> MarkerSet:
@@ -69,20 +94,24 @@ class MarkerSet:
 
     # ---- decision procedures
 
+    @_bounded
     def is_empty(self) -> bool:
         """Whether the set is unsatisfiable."""
         return _engine.is_empty(self._tree, self._max_cells)
 
+    @_bounded
     def is_tautology(self) -> bool:
         """Whether the set is every environment."""
         return _engine.is_empty(_atoms.make_not(self._tree), self._max_cells)
 
+    @_bounded
     def is_disjoint(self, other: MarkerSet) -> bool:
         """Whether the two sets share no environment."""
         return _engine.is_empty(
             _atoms.make_and((self._tree, other._tree)), self._max_cells
         )
 
+    @_bounded
     def implies(self, other: MarkerSet) -> bool:
         """Whether every environment in this set is in ``other``."""
         return _engine.is_empty(
@@ -90,12 +119,14 @@ class MarkerSet:
             self._max_cells,
         )
 
+    @_bounded
     def equivalent(self, other: MarkerSet) -> bool:
         """Whether the two sets denote the same environments."""
         return self.implies(other) and other.implies(self)
 
     # ---- restriction and projection
 
+    @_bounded
     def restrict(
         self,
         env: Mapping[str, str | AbstractSet[str]],
@@ -121,26 +152,31 @@ class MarkerSet:
                 raise ValueError(msg)
         return MarkerSet(_engine.restrict_tree(self._tree, env), self._max_cells)
 
+    @_bounded
     def variables(self) -> frozenset[str]:
         """Return the variables the set references, as written."""
         return _engine.variables_of(self._tree)
 
+    @_bounded
     def membership_literals(self) -> frozenset[tuple[str, str]]:
         """Return the ``(variable, canonical name)`` set-memberships the set tests."""
         return _engine.membership_literals_of(self._tree)
 
     # ---- evaluation and witness
 
+    @_bounded
     def evaluate(self, env: Mapping[str, str | AbstractSet[str]]) -> bool:
         """Whether a full environment is in the set (extras are sets)."""
         return _engine.evaluate_tree(self._tree, env)
 
+    @_bounded
     def witness(self) -> dict[str, str | frozenset[str]] | None:
         """Return a satisfying environment, or ``None`` when none is found."""
         return _engine.witness(self._tree, self._max_cells)
 
     # ---- serialisation
 
+    @_bounded
     def to_marker_string(self) -> str | None:
         """Return a marker string that re-parses to an equivalent set, or ``None``.
 
