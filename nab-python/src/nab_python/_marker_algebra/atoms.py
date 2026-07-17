@@ -45,14 +45,11 @@ DOMAIN_STRING = "string"
 DOMAIN_TWIN = "version_or_string"
 DOMAIN_SET = "set"
 
-# The single registry the layer types variables through. Fourteen variables,
-# matching packaging's marker grammar. ``implementation_version`` and
-# ``platform_release`` are the twins: packaging dispatches each as a version, yet
-# either may hold an arbitrary string, so both carry a string fall-through.
-# ``python_full_version`` and ``python_version`` also dispatch as versions but the
-# interpreter always supplies a PEP 440 value, so they stay version-only.
-# ``platform_version`` is a plain string in packaging (it is not in packaging's
-# version-requiring set).
+# Every variable in packaging's marker grammar, typed to a domain. The twins
+# ``implementation_version`` and ``platform_release`` dispatch as versions yet may
+# hold an arbitrary string, so both carry a string fall-through. ``python_version``
+# and ``python_full_version`` always receive a PEP 440 value, so they stay
+# version-only; ``platform_version`` is a plain string.
 DOMAIN_REGISTRY: dict[str, str] = {
     "implementation_name": DOMAIN_STRING,
     "implementation_version": DOMAIN_TWIN,
@@ -131,10 +128,9 @@ _DIGIT_RUN = re.compile(r"\d+")
 def _oversized_numeric(text: str) -> bool:
     """Whether a numeric run in ``text`` overflows int-from-string parsing.
 
-    A release, epoch, or suffix component wider than the interpreter's
-    int-from-string limit makes packaging's ``Version`` raise a bare
-    ``ValueError`` on parse, outside the algebra's bounded-failure contract. A
-    zero limit means the interpreter has disabled the check, so nothing overflows.
+    A component wider than the interpreter's int-from-string limit makes
+    packaging's ``Version`` raise a bare ``ValueError`` on parse. A zero limit
+    disables the check, so nothing overflows.
     """
     limit = sys.get_int_max_str_digits()
     if not limit:
@@ -296,8 +292,8 @@ def parse(source: str | Marker) -> Formula:
     try:
         parsed = parse_marker(source)
     except ParserSyntaxError as exc:
-        # Match packaging's public contract: a malformed marker raises the
-        # public InvalidMarker, not the tokenizer's internal syntax error.
+        # A malformed marker raises the public InvalidMarker, as packaging does,
+        # not the tokenizer's internal syntax error.
         raise InvalidMarker(str(exc)) from exc
     return _convert(parsed)
 
@@ -320,13 +316,14 @@ def _convert_atom(item: tuple) -> Formula:
     lhs, op_node, rhs = item
     op = op_node.serialize()
     if isinstance(lhs, Variable):
-        # Covers variable-vs-variable too: packaging keys off the left variable
-        # and treats the right variable's name as the literal (faithful).
+        # Variable-vs-variable keys off the left variable and treats the right
+        # variable's name as the literal, matching packaging.
         return _make_atom(lhs.value, op, rhs.value, swapped=False)
     if isinstance(rhs, Variable):
         return _make_atom(rhs.value, op, lhs.value, swapped=True)
-    # Const-vs-const: packaging raises here; evaluating by the operator is the
-    # useful reading. The string table applies, so ~= and === raise.
+
+    # packaging rejects const-vs-const; fold it by evaluating the operator. The
+    # string table applies, so ~= and === raise.
     return BoolConst(value=_apply(lhs.value, op, rhs.value, key=""))
 
 
@@ -444,32 +441,36 @@ def _version_neighbours(text: str) -> list[str]:
         version = Version(base)
     except InvalidVersion:
         return []
+
     release = version.release
-    out = [base]
     epoch = version.epoch
-    # Bumps must land in the literal's own epoch: the release bump of 1!3.9 is
-    # 1!3.10, not 3.10, which sorts below the literal and would leave the whole
-    # band above it (1!4.0, 1!5, 2!0) without a representative cell.
-    prefix = f"{epoch}!" if epoch else ""
     major = release[0]
+    out = [base]
+
+    # Bumps stay in the literal's own epoch: the release bump of 1!3.9 is 1!3.10,
+    # which outranks it, not 3.10, which sorts below and leaves the band above the
+    # literal (1!4.0, 2!0) with no representative.
+    prefix = f"{epoch}!" if epoch else ""
     bumps = [prefix + ".".join(str(x) for x in (*release[:-1], release[-1] + 1))]
     if len(release) > 1:
         bumps.append(f"{prefix}{major}.{release[1] + 1}")
     bumps.append(f"{prefix}{major + 1}")
     if epoch:
-        # The region above a non-zero-epoch literal continues into the next epoch
-        # (2!0 outranks every 1!* release), which no same-epoch bump reaches.
+        # The band above a non-zero-epoch literal continues into the next epoch
+        # (2!0 outranks every 1!* release), beyond any same-epoch bump.
         bumps.append(f"{epoch + 1}!0")
     for bump in bumps:
         out.append(bump)
         out.append(f"{bump}.dev0")
+
     if version.pre is not None:
-        # An exclusive > V / < V against a prerelease literal excludes V's own
-        # post/local/dev variants, so the point just above the literal is the next
-        # prerelease of the same release, which no release or suffix bump mints.
+        # An exclusive > / < against a prerelease literal excludes V's own
+        # post/local/dev variants, so the point just above is the next prerelease
+        # of the same release, which no release or suffix bump mints.
         letter, number = version.pre
         release_str = ".".join(str(part) for part in release)
         out.append(str(Version(f"{version.epoch}!{release_str}{letter}{number + 1}")))
+
     for suffix in (".dev0", "a0", ".post0", ".1", "+l"):
         candidate = f"{base}{suffix}"
         if _strict_version(candidate):
@@ -499,6 +500,7 @@ def _version_pool(
     pool = ["0", "0.dev0", "99999"]
     for literal in literals:
         pool.extend(_version_neighbours(literal))
+
     parsed: list[tuple[Version, str]] = []
     seen: set[str] = set()
     for text in pool:
@@ -507,6 +509,7 @@ def _version_pool(
         seen.add(text)
         parsed.append((Version(text), text))
     parsed.sort()
+
     extra: list[str] = []
     for (vlow, slow), (vhigh, shigh) in pairwise(parsed):
         if vlow == vhigh:
@@ -514,6 +517,7 @@ def _version_pool(
         mid = _between(slow, shigh)
         if mid is not None:
             extra.append(mid)
+
     base = [text for _, text in parsed] + extra
     if not elevate_epoch:
         return base
@@ -523,17 +527,13 @@ def _version_pool(
 def _elevate_epochs(
     base: list[str], parsed: Sequence[tuple[Version, str]], max_cells: int
 ) -> list[str]:
-    # A1 lowers python_version onto this axis, so a point's major.minor and its
-    # full ordering diverge across an epoch boundary (Version("1!3.9") truncates
-    # to "3.9" yet outranks "3.14"). Mint epoch-bearing twins of every point so
-    # every band up to one epoch above the top literal keeps a representative,
-    # including gap epochs no literal names (an epoch-2 literal with no epoch-1
-    # literal). A same-major.minor point has one truth vector per epoch, so the
-    # contiguous 1..max+1 range covers every band; the product is
-    # O(len(base) * len(targets)), capped while generating so a content-keyed
-    # epoch spread fails loudly instead of materialising in full.
+    # A1 lowers python_version onto this axis, so major.minor and full ordering
+    # diverge across an epoch boundary: Version("1!3.9") truncates to "3.9" yet
+    # outranks "3.14". Each point needs an epoch-bearing twin for every band up to
+    # one epoch above the top literal, covering gap epochs no literal names.
     epochs = {version.epoch for version, _ in parsed}
     targets = range(1, max(epochs) + 2)
+
     elevated = list(base)
     for epoch in targets:
         for text in base:
@@ -569,9 +569,8 @@ def _dedupe_candidates(
         if candidate in seen:
             continue
         # A pure Version axis holds only PEP 440 versions, so a non-version
-        # candidate is unrealisable there and would otherwise mint a phantom
-        # cell. The twins keep every non-version candidate, including the
-        # OTHER-cell representative.
+        # candidate is unrealisable there. The twins keep every non-version
+        # candidate, including the OTHER-cell representative.
         if pure_version and not _strict_version(candidate):
             continue
         seen.add(candidate)
@@ -598,12 +597,10 @@ def _reduce_work_exceeds(
 ) -> bool:
     """Whether the axis's guaranteed reduce work already exceeds ``max_cells``.
 
-    Every distinct literal that survives into the candidate pool is one point,
-    so its count times the atom count is a lower bound on the ``_reduce_cells``
-    work. A pure-version axis keeps only version-parseable literals; the twins
-    and string fields keep every distinct literal. Counting stops the moment the
-    bound is passed, so an oversized axis is rejected before the neighbour pool
-    is built rather than after.
+    Every distinct literal is one point, so its count times the atom count is a
+    lower bound on the ``_reduce_cells`` work. A pure-version axis keeps only
+    version-parseable literals; the twins and string fields keep every distinct
+    literal.
     """
     pure = is_pure_version(variable)
     seen: set[str] = set()
@@ -621,11 +618,12 @@ def _value_candidates(
     variable: str, atoms: Sequence[Atom], max_cells: int
 ) -> list[str]:
     literals = [atom.literal for atom in atoms]
+
     if is_version_dispatch(variable) and any(
         _oversized_numeric(literal) for literal in literals
     ):
-        # A numeric component past the interpreter's parse limit crashes packaging's
-        # Version with a bare ValueError; raise the algebra's bounded failure instead.
+        # A numeric component past the parse limit crashes packaging's Version
+        # with a bare ValueError; raise the bounded failure instead.
         msg = (
             "version literal numeric component exceeds the "
             f"{sys.get_int_max_str_digits()}-digit parse limit"
@@ -634,16 +632,18 @@ def _value_candidates(
     if _reduce_work_exceeds(variable, literals, len(atoms), max_cells):
         msg = f"axis work over {len(atoms)} atoms exceeds max_cells={max_cells}"
         raise ComplexityLimitExceeded(msg)
+
     candidates: list[str] = []
     raw_kind = DOMAIN_REGISTRY[variable]
-    # The OTHER cell (a string equal to no literal and not a version) exists only
-    # where the domain admits arbitrary strings: String fields and the twins.
+
+    # The OTHER cell (equal to no literal and not a version) exists only where the
+    # domain admits arbitrary strings: string fields and the twins.
     if raw_kind in (DOMAIN_STRING, DOMAIN_TWIN):
         candidates.append(_other_representative(literals))
     candidates.extend(literals)
-    # Each membership literal costs a quadratic substring enumeration; cap the
-    # running total across the axis, not each literal alone, so a set of long
-    # distinct literals fails loudly before the summed loop runs.
+
+    # Cap the substring enumeration across the whole axis, not each literal alone,
+    # so a set of long distinct literals fails loudly first.
     spent = 0
     for atom in atoms:
         if atom.op in _MEMBERSHIP:
@@ -652,6 +652,7 @@ def _value_candidates(
                 msg = f"substring enumeration exceeds max_cells={max_cells}"
                 raise ComplexityLimitExceeded(msg)
             candidates.extend(_membership_candidates(atom))
+
     if is_version_dispatch(variable):
         candidates.extend(
             _version_pool(
@@ -669,14 +670,15 @@ def _reduce_cells(
     points: Iterable[object], atoms: Sequence[Atom], max_cells: int
 ) -> list[Cell]:
     points = list(points)
-    # The truth vector costs one holds() per atom per point; guard that product
-    # so a single axis carrying many atoms fails loudly rather than doing O(N^2)
-    # work under the cell-count cap.
+
+    # The truth vector costs one holds() per atom per point; guard that product so
+    # an axis carrying many atoms fails loudly.
     if len(points) * len(atoms) > max_cells:
         msg = (
             f"axis work {len(points)}x{len(atoms)} atoms exceeds max_cells={max_cells}"
         )
         raise ComplexityLimitExceeded(msg)
+
     representatives: dict[tuple, object] = {}
     for point in points:
         vector = tuple(atom.holds(point) for atom in atoms)

@@ -614,9 +614,8 @@ def test_guard_substring_enumeration() -> None:
 
 
 def test_guard_substring_low_entropy() -> None:
-    # A repeated-character literal has only len+1 distinct substrings but a
-    # quadratic index loop; the guard bounds the loop work, not the distinct
-    # count, so it fires here where a distinct-count guard would not.
+    # A repeated-character literal has few distinct substrings but a quadratic
+    # index loop; the guard bounds the loop work, so it fires here.
     marker = ms('sys_platform in "' + "a" * 50 + '"', max_cells=100)
     with pytest.raises(ComplexityLimitExceeded):
         marker.is_empty()
@@ -632,10 +631,9 @@ def test_guard_version_pool_epoch_elevation() -> None:
 
 
 def test_guard_repeated_clause_tree_walk() -> None:
-    # Repeating one clause inflates the op-tree the decision walks per cell
-    # without adding distinct atoms or cells; the distinct-atom product stays
-    # under the default cap while the leaf-occurrence product blows past it, so
-    # the guard fires on the tree the distinct count alone would let hang.
+    # Repeating one clause inflates the op-tree walked per cell without adding
+    # distinct atoms or cells, so the leaf-occurrence guard fires where a
+    # distinct-atom count would not.
     axes = " and ".join(
         ['"a0" in python_version', '"a0" not in python_version']
         + [f'"a{i}" in python_version' for i in range(1, 12)]

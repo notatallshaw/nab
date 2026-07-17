@@ -131,22 +131,22 @@ def _satisfying_cells(
         if _eval_cell(node, {}):
             yield {}
         return
+
     axes = list(grouped)
     atomlists = [grouped[axis] for axis in axes]
     partitions = [
         partition_axis(axis, atoms, max_cells)
         for axis, atoms in zip(axes, atomlists, strict=True)
     ]
+
     # The enumeration walks the whole op-tree once per cell, so guard the cell
-    # product times the tree's leaf-occurrence count: the cell cap alone leaves
-    # the per-cell walk unbounded, and make_and/make_or keep repeated clauses, so
-    # a marker that repeats atoms inflates the walk without inflating the
-    # distinct-atom count or the cell product. The leaf count dominates the
-    # distinct-atom count, so it also bounds the per-cell truth build.
+    # product times the leaf-occurrence count: a marker that repeats atoms inflates
+    # the walk without inflating the distinct-atom count or the cell product.
     leaf_occurrences = len(collect_atoms(node))
     guarded_product_size(
         (*(len(part) for part in partitions), leaf_occurrences), max_cells
     )
+
     for combo in product(*partitions):
         truth: dict[Atom, bool] = {
             atom: value
