@@ -1,7 +1,7 @@
 """On-demand cell decomposition for the marker algebra.
 
-A set is kept as a boolean op-tree over the typed atoms of :mod:`._atoms`,
-including a :class:`~._atoms.NotNode` so complement is structural (a terminal
+A set is kept as a boolean op-tree over the typed atoms of :mod:`.atoms`,
+including a :class:`~.atoms.NotNode` so complement is structural (a terminal
 swap per cell, never an operator flip on an atom). No canonical form is stored:
 every decision procedure re-decomposes the referenced variables' domains into
 cells on which each atom is constant, enumerates the cell product under the
@@ -15,7 +15,7 @@ from itertools import product
 from typing import TYPE_CHECKING
 
 from .._vendor.packaging.specifiers import InvalidSpecifier, Specifier
-from ._atoms import (
+from .atoms import (
     AXIS_CONTAINS,
     AXIS_SET,
     AXIS_VALUE,
@@ -39,7 +39,7 @@ from ._atoms import (
     make_or,
     partition_axis,
 )
-from ._errors import UnserializableSet
+from .errors import UnserializableSet
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping

@@ -26,7 +26,7 @@ from .._vendor.packaging.markers import (
 )
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import InvalidVersion, Version
-from ._errors import ComplexityLimitExceeded
+from .errors import ComplexityLimitExceeded
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence

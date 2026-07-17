@@ -12,8 +12,8 @@ External consumers import only this package root.
 
 from __future__ import annotations
 
-from ._errors import ComplexityLimitExceeded, UnserializableSet
-from ._markerset import MarkerSet
+from .errors import ComplexityLimitExceeded, UnserializableSet
+from .markerset import MarkerSet
 
 __all__ = [
     "ComplexityLimitExceeded",
