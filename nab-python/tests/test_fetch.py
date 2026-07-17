@@ -588,6 +588,53 @@ class TestFetchCoordinator:
             assert coord.index.has_metadata("pkg", "3.0", sidecar)
 
     @respx.mock
+    def test_listing_prefetch_derives_urls_only_for_submitted_wheels(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sidecar URL is derived only for the wheels the prefetch submits."""
+        listing = {
+            "meta": {"api-version": "1.0"},
+            "name": "pkg",
+            "files": [
+                {
+                    "filename": f"pkg-{n}.0-py3-none-any.whl",
+                    "url": f"https://f.com/pkg-{n}.0-py3-none-any.whl",
+                    "core-metadata": True,
+                }
+                for n in range(1, 16)
+            ],
+        }
+        respx.get("https://pypi.org/simple/pkg/").mock(
+            return_value=httpx.Response(200, json=listing)
+        )
+        respx.get(url__regex=r".*\.whl\.metadata$").mock(
+            return_value=httpx.Response(200, text="Metadata-Version: 2.1\n")
+        )
+
+        derived: list[str] = []
+        original = WheelFile.metadata_url.fget
+        assert original is not None
+
+        def counting(wheel: WheelFile) -> str | None:
+            derived.append(wheel.filename)
+            return original(wheel)
+
+        monkeypatch.setattr(WheelFile, "metadata_url", property(counting))
+
+        sidecar = "https://f.com/pkg-15.0-py3-none-any.whl.metadata"
+        with _coord() as coord:
+            coord.request_listing("pkg").wait(timeout=5)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not coord.index.has_metadata(
+                "pkg", "15.0", sidecar
+            ):
+                time.sleep(0.01)
+            assert coord.index.has_metadata("pkg", "15.0", sidecar)
+
+        # The newest PREFETCH_METADATA_COUNT wheels, not all 15.
+        assert derived == [f"pkg-{n}.0-py3-none-any.whl" for n in range(6, 16)]
+
+    @respx.mock
     def test_fetch_error_logged_not_raised(self) -> None:
         respx.get("https://pypi.org/simple/bad/").mock(return_value=httpx.Response(500))
         with _coord() as coord:
