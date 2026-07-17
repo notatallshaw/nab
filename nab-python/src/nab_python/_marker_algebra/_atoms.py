@@ -16,9 +16,12 @@ from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from .._vendor.packaging._parser import Op, Variable, parse_marker
+from .._vendor.packaging._tokenizer import ParserSyntaxError
 from .._vendor.packaging.markers import (
+    InvalidMarker,
     Marker,
     UndefinedComparison,
+    UndefinedEnvironmentName,
     _eval_op,
 )
 from .._vendor.packaging.utils import canonicalize_name
@@ -41,10 +44,10 @@ DOMAIN_TWIN = "version_or_string"
 DOMAIN_SET = "set"
 
 # The single registry the layer types variables through. Fourteen variables,
-# matching packaging's marker grammar. The twins (``platform_release`` and
-# ``platform_version``) are version-typed with a string fall-through in
-# packaging: ``platform_release`` dispatches as a version, ``platform_version``
-# as a string, but both may hold arbitrary strings.
+# matching packaging's marker grammar. ``platform_release`` is the one twin:
+# packaging dispatches it as a version, yet it may hold an arbitrary string, so
+# it carries a string fall-through. ``platform_version`` is a plain string in
+# packaging (it is not in packaging's version-requiring set).
 DOMAIN_REGISTRY: dict[str, str] = {
     "implementation_name": DOMAIN_STRING,
     "implementation_version": DOMAIN_VERSION,
@@ -53,7 +56,7 @@ DOMAIN_REGISTRY: dict[str, str] = {
     "platform_python_implementation": DOMAIN_STRING,
     "platform_release": DOMAIN_TWIN,
     "platform_system": DOMAIN_STRING,
-    "platform_version": DOMAIN_TWIN,
+    "platform_version": DOMAIN_STRING,
     "python_full_version": DOMAIN_VERSION,
     "python_version": DOMAIN_VERSION,
     "sys_platform": DOMAIN_STRING,
@@ -70,9 +73,7 @@ _ORDERED_UNDEFINED = frozenset({"~=", "==="})
 def _domain(variable: str) -> str:
     """Return the effective domain of a variable under packaging typing."""
     kind = DOMAIN_REGISTRY[variable]
-    if kind == DOMAIN_TWIN:
-        return DOMAIN_VERSION if variable == "platform_release" else DOMAIN_STRING
-    return kind
+    return DOMAIN_VERSION if kind == DOMAIN_TWIN else kind
 
 
 def is_version_dispatch(variable: str) -> bool:
@@ -271,7 +272,13 @@ def parse(source: str | Marker) -> Formula:
         raise TypeError(msg)
     if not source.strip():
         return TRUE
-    return _convert(parse_marker(source))
+    try:
+        parsed = parse_marker(source)
+    except ParserSyntaxError as exc:
+        # Match packaging's public contract: a malformed marker raises the
+        # public InvalidMarker, not the tokenizer's internal syntax error.
+        raise InvalidMarker(str(exc)) from exc
+    return _convert(parsed)
 
 
 def _convert(node: list) -> Formula:
@@ -396,13 +403,17 @@ class Cell:
 
 
 def _substrings(text: str, max_cells: int) -> list[str]:
+    # The (i, j) index loop is O(len**2); guard the iteration count itself, not
+    # the distinct-substring total, so a low-entropy literal (few distinct
+    # substrings, many pairs) fails loudly rather than running the full loop.
+    n = len(text)
+    if n * (n + 1) // 2 > max_cells:
+        msg = f"substring enumeration exceeds max_cells={max_cells}"
+        raise ComplexityLimitExceeded(msg)
     out = {""}
-    for i in range(len(text)):
-        for j in range(i + 1, len(text) + 1):
+    for i in range(n):
+        for j in range(i + 1, n + 1):
             out.add(text[i:j])
-            if len(out) > max_cells:
-                msg = f"substring enumeration exceeds max_cells={max_cells}"
-                raise ComplexityLimitExceeded(msg)
     return sorted(out)
 
 
@@ -444,7 +455,9 @@ def _between(low: str, high: str) -> str | None:
     return None
 
 
-def _version_pool(literals: Sequence[str], *, elevate_epoch: bool) -> list[str]:
+def _version_pool(
+    literals: Sequence[str], *, elevate_epoch: bool, max_cells: int
+) -> list[str]:
     pool = ["0", "0.dev0", "99999"]
     for literal in literals:
         pool.extend(_version_neighbours(literal))
@@ -466,15 +479,30 @@ def _version_pool(literals: Sequence[str], *, elevate_epoch: bool) -> list[str]:
     base = [text for _, text in parsed] + extra
     if not elevate_epoch:
         return base
+    return _elevate_epochs(base, parsed, max_cells)
+
+
+def _elevate_epochs(
+    base: list[str], parsed: Sequence[tuple[Version, str]], max_cells: int
+) -> list[str]:
     # A1 lowers python_version onto this axis, so a point's major.minor and its
     # full ordering diverge across an epoch boundary (Version("1!3.9") truncates
     # to "3.9" yet outranks "3.14"). Mint epoch-bearing twins of every point so
     # that region has a representative: one epoch above the top literal saturates
-    # the full comparisons, and each literal epoch covers the bands below it.
+    # the full comparisons, and each literal epoch covers the bands below it. The
+    # product is O(len(base) * len(targets)); cap it while generating so a
+    # content-keyed epoch spread fails loudly instead of materialising in full.
     epochs = {version.epoch for version, _ in parsed}
     targets = epochs | {max(epochs) + 1}
     targets.discard(0)
-    return base + [f"{epoch}!{text}" for epoch in sorted(targets) for text in base]
+    elevated = list(base)
+    for epoch in sorted(targets):
+        for text in base:
+            elevated.append(f"{epoch}!{text}")
+            if len(elevated) > max_cells:
+                msg = f"version pool exceeds max_cells={max_cells}"
+                raise ComplexityLimitExceeded(msg)
+    return elevated
 
 
 def _membership_candidates(atom: Atom, max_cells: int) -> list[str]:
@@ -536,7 +564,11 @@ def _value_candidates(
             candidates.extend(_membership_candidates(atom, max_cells))
     if _wants_versions(variable, literals):
         candidates.extend(
-            _version_pool(literals, elevate_epoch=_mixes_mm_and_full(atoms))
+            _version_pool(
+                literals,
+                elevate_epoch=_mixes_mm_and_full(atoms),
+                max_cells=max_cells,
+            )
         )
     return _dedupe_candidates(
         candidates, pure_version=raw_kind == DOMAIN_VERSION, max_cells=max_cells
@@ -631,14 +663,27 @@ def as_name_set(value: object) -> frozenset[str]:
     return frozenset(canonicalize_name(name) for name in value)  # type: ignore[union-attr]
 
 
+def _require(env: Mapping[str, object], key: str) -> object:
+    """Look a referenced variable up, matching packaging's missing-key contract."""
+    try:
+        return env[key]
+    except KeyError:
+        raise UndefinedEnvironmentName(key) from None
+
+
 def evaluate_atom(atom: Atom, env: Mapping[str, object]) -> bool:
-    """Evaluate one atom against a full environment (extras are sets)."""
+    """Evaluate one atom against a full environment (extras are sets).
+
+    A referenced variable absent from ``env`` raises
+    :class:`UndefinedEnvironmentName` on every axis, matching packaging and
+    keeping the missing-key behaviour uniform across scalars and sets.
+    """
     if atom.kind == AXIS_VALUE:
         if atom.derive_mm and "python_full_version" not in env:
             # A1 lowers python_version onto python_full_version; honour an env
             # that supplies only the python_version key (the written variable).
-            return atom.holds(env["python_version"])
-        return atom.holds(env[atom.variable])
+            return atom.holds(_require(env, "python_version"))
+        return atom.holds(_require(env, atom.variable))
     if atom.kind == AXIS_SET:
-        return atom.holds(as_name_set(env.get(atom.origin, frozenset())))
-    return atom.holds(atom.literal in env[atom.variable])  # type: ignore[operator]
+        return atom.holds(as_name_set(_require(env, atom.origin)))
+    return atom.holds(atom.literal in _require(env, atom.variable))  # type: ignore[operator]

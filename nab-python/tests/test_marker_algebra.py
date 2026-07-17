@@ -14,7 +14,11 @@ from nab_python._marker_algebra import (
     MarkerSet,
     UnserializableSet,
 )
-from nab_python._vendor.packaging.markers import Marker
+from nab_python._vendor.packaging.markers import (
+    InvalidMarker,
+    Marker,
+    UndefinedEnvironmentName,
+)
 
 
 def ms(text: str, **kw: int) -> MarkerSet:
@@ -116,6 +120,15 @@ def test_from_marker_accepts_marker_object() -> None:
 def test_from_marker_rejects_other_types() -> None:
     with pytest.raises(TypeError):
         MarkerSet.from_marker(42)  # type: ignore[arg-type]
+
+
+def test_from_marker_rejects_malformed_string() -> None:
+    # A malformed marker raises the public InvalidMarker, exactly as
+    # packaging.markers.Marker does, not the tokenizer's internal error.
+    with pytest.raises(InvalidMarker):
+        MarkerSet.from_marker("sys_platform ==")
+    with pytest.raises(InvalidMarker):
+        Marker("sys_platform ==")
 
 
 def test_max_cells_must_be_positive() -> None:
@@ -255,6 +268,35 @@ def test_evaluate_set_variable_as_string() -> None:
     marker = ms('extra == "cpu"')
     assert marker.evaluate({"extra": "cpu"})
     assert not marker.evaluate({"extra": "gpu"})
+
+
+@pytest.mark.parametrize(
+    ("text", "key"),
+    [
+        ('sys_platform == "linux"', "sys_platform"),
+        ('"cpu" in extras', "extras"),
+        ('"x86" in platform_machine', "platform_machine"),
+        ('python_version == "3.9"', "python_version"),
+    ],
+)
+def test_evaluate_missing_variable_raises(text: str, key: str) -> None:
+    # A missing referenced variable raises on every axis, matching packaging;
+    # UndefinedEnvironmentName subclasses KeyError, so the error is clear and
+    # sets are not silently defaulted to empty.
+    marker = ms(text)
+    with pytest.raises(UndefinedEnvironmentName, match=key):
+        marker.evaluate({})
+    assert isinstance(UndefinedEnvironmentName(key), KeyError)
+
+
+def test_platform_version_dispatches_as_string() -> None:
+    # platform_version is a plain string in packaging, not a version twin.
+    text = 'platform_version == "#1 SMP"'
+    marker = ms(text)
+    for value in ("#1 SMP", "other"):
+        env = {"platform_version": value}
+        assert marker.evaluate(env) == Marker(text).evaluate(env)
+    assert not marker.is_empty()
 
 
 def test_epoch_version_decisions_are_sound() -> None:
@@ -483,6 +525,24 @@ def test_guard_set_powerset() -> None:
 
 def test_guard_substring_enumeration() -> None:
     marker = ms('sys_platform in "abcdefghij"', max_cells=3)
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
+def test_guard_substring_low_entropy() -> None:
+    # A repeated-character literal has only len+1 distinct substrings but a
+    # quadratic index loop; the guard bounds the loop work, not the distinct
+    # count, so it fires here where a distinct-count guard would not.
+    marker = ms('sys_platform in "' + "a" * 50 + '"', max_cells=100)
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
+def test_guard_version_pool_epoch_elevation() -> None:
+    # Mixing python_version with many distinct-epoch python_full_version atoms
+    # triggers epoch elevation, whose product is bounded as it is generated.
+    epochs = " and ".join(f'python_full_version == "{e}!2.0"' for e in range(1, 16))
+    marker = ms(f'python_version == "3.9" and {epochs}', max_cells=1000)
     with pytest.raises(ComplexityLimitExceeded):
         marker.is_empty()
 
