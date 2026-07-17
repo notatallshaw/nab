@@ -423,19 +423,21 @@ def _parse_hashes(value: object) -> tuple[tuple[str, str], ...]:
     # Both halves are lowercased: PEP 503/691 don't mandate a case, pip
     # treats them case-insensitively, and the acceptable-algorithm filter
     # and hashlib.hexdigest() both expect the lowercase form.
+    # An empty digest carries no integrity claim and can never match a real
+    # file, so it is dropped rather than recorded and later failed against.
     if not isinstance(value, dict):
         return ()
 
     # The common case is a single hash; skip the list build.
     if len(value) == 1:
         ((algo, digest),) = value.items()
-        if isinstance(algo, str) and isinstance(digest, str):
+        if isinstance(algo, str) and isinstance(digest, str) and digest:
             return ((sys.intern(algo.lower()), digest.lower()),)
         return ()
 
     out: list[tuple[str, str]] = []
     for algo, digest in value.items():
-        if isinstance(algo, str) and isinstance(digest, str):
+        if isinstance(algo, str) and isinstance(digest, str) and digest:
             out.append((sys.intern(algo.lower()), digest.lower()))
 
     return tuple(out)
