@@ -402,15 +402,15 @@ class Cell:
     vector: tuple[bool, ...]
 
 
-def _substrings(text: str, max_cells: int) -> list[str]:
-    # The (i, j) index loop is O(len**2); guard the iteration count itself, not
-    # the distinct-substring total, so a low-entropy literal (few distinct
-    # substrings, many pairs) fails loudly rather than running the full loop.
+def _substring_cost(text: str) -> int:
+    """Return the iteration count of the quadratic substring loop over ``text``."""
     n = len(text)
-    if n * (n + 1) // 2 > max_cells:
-        msg = f"substring enumeration exceeds max_cells={max_cells}"
-        raise ComplexityLimitExceeded(msg)
+    return n * (n + 1) // 2
+
+
+def _substrings(text: str) -> list[str]:
     out = {""}
+    n = len(text)
     for i in range(n):
         for j in range(i + 1, n + 1):
             out.add(text[i:j])
@@ -420,9 +420,10 @@ def _substrings(text: str, max_cells: int) -> list[str]:
 def _version_neighbours(text: str) -> list[str]:
     base = text.removesuffix(".*")
     try:
-        release = Version(base).release
+        version = Version(base)
     except InvalidVersion:
         return []
+    release = version.release
     out = [base]
     major = release[0]
     bumps = [".".join(str(x) for x in (*release[:-1], release[-1] + 1))]
@@ -432,6 +433,13 @@ def _version_neighbours(text: str) -> list[str]:
     for bump in bumps:
         out.append(bump)
         out.append(f"{bump}.dev0")
+    if version.pre is not None:
+        # An exclusive > V / < V against a prerelease literal excludes V's own
+        # post/local/dev variants, so the point just above the literal is the next
+        # prerelease of the same release, which no release or suffix bump mints.
+        letter, number = version.pre
+        release_str = ".".join(str(part) for part in release)
+        out.append(str(Version(f"{version.epoch}!{release_str}{letter}{number + 1}")))
     for suffix in (".dev0", "a0", ".post0", ".1", "+l"):
         candidate = f"{base}{suffix}"
         if _strict_version(candidate):
@@ -505,19 +513,13 @@ def _elevate_epochs(
     return elevated
 
 
-def _membership_candidates(atom: Atom, max_cells: int) -> list[str]:
-    subs = _substrings(atom.literal, max_cells)
+def _membership_candidates(atom: Atom) -> list[str]:
+    subs = _substrings(atom.literal)
     if atom.derive_mm:
         # A1 membership tests the major.minor of a full version, so realisable
         # points are the substrings of the literal that are themselves versions.
         return [s for s in subs if _parses_version(s)]
     return subs
-
-
-def _wants_versions(variable: str, literals: Sequence[str]) -> bool:
-    if is_version_dispatch(variable):
-        return True
-    return any(_parses_version(literal) for literal in literals)
 
 
 def _mixes_mm_and_full(atoms: Sequence[Atom]) -> bool:
@@ -559,10 +561,18 @@ def _value_candidates(
     if raw_kind in (DOMAIN_STRING, DOMAIN_TWIN):
         candidates.append(_SENTINEL)
     candidates.extend(literals)
+    # Each membership literal costs a quadratic substring enumeration; cap the
+    # running total across the axis, not each literal alone, so a set of long
+    # distinct literals fails loudly before the summed loop runs.
+    spent = 0
     for atom in atoms:
         if atom.op in _MEMBERSHIP:
-            candidates.extend(_membership_candidates(atom, max_cells))
-    if _wants_versions(variable, literals):
+            spent += _substring_cost(atom.literal)
+            if spent > max_cells:
+                msg = f"substring enumeration exceeds max_cells={max_cells}"
+                raise ComplexityLimitExceeded(msg)
+            candidates.extend(_membership_candidates(atom))
+    if is_version_dispatch(variable):
         candidates.extend(
             _version_pool(
                 literals,

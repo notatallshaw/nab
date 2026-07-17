@@ -69,6 +69,16 @@ def test_prerelease_carve_out_314rc1() -> None:
     )
 
 
+def test_exclusive_above_prerelease_literal() -> None:
+    above = ms('python_full_version > "3.14.0rc1"')
+    from_final = ms('python_full_version >= "3.14"')
+    assert not above.implies(from_final)
+    assert not above.equivalent(from_final)
+    gap = above & from_final.complement()
+    assert not gap.is_empty()
+    assert gap.witness() is not None
+
+
 def test_m1_string_ordering_non_negation() -> None:
     less = ms('sys_platform < "linux"')
     greater_equal = ms('sys_platform >= "linux"')
