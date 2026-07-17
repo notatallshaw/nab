@@ -137,11 +137,16 @@ def _satisfying_cells(
         partition_axis(axis, atoms, max_cells)
         for axis, atoms in zip(axes, atomlists, strict=True)
     ]
-    # The enumeration builds a per-cell truth over every atom, so guard the cell
-    # product times the atom count: the cell cap alone leaves the atom dimension
-    # unbounded, and a formula with many atoms would otherwise hang, not raise.
-    total_atoms = sum(len(atoms) for atoms in atomlists)
-    guarded_product_size((*(len(part) for part in partitions), total_atoms), max_cells)
+    # The enumeration walks the whole op-tree once per cell, so guard the cell
+    # product times the tree's leaf-occurrence count: the cell cap alone leaves
+    # the per-cell walk unbounded, and make_and/make_or keep repeated clauses, so
+    # a marker that repeats atoms inflates the walk without inflating the
+    # distinct-atom count or the cell product. The leaf count dominates the
+    # distinct-atom count, so it also bounds the per-cell truth build.
+    leaf_occurrences = len(collect_atoms(node))
+    guarded_product_size(
+        (*(len(part) for part in partitions), leaf_occurrences), max_cells
+    )
     for combo in product(*partitions):
         truth: dict[Atom, bool] = {
             atom: value

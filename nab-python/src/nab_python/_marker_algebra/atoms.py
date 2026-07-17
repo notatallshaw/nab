@@ -504,15 +504,16 @@ def _elevate_epochs(
     # A1 lowers python_version onto this axis, so a point's major.minor and its
     # full ordering diverge across an epoch boundary (Version("1!3.9") truncates
     # to "3.9" yet outranks "3.14"). Mint epoch-bearing twins of every point so
-    # that region has a representative: one epoch above the top literal saturates
-    # the full comparisons, and each literal epoch covers the bands below it. The
-    # product is O(len(base) * len(targets)); cap it while generating so a
-    # content-keyed epoch spread fails loudly instead of materialising in full.
+    # every band up to one epoch above the top literal keeps a representative,
+    # including gap epochs no literal names (an epoch-2 literal with no epoch-1
+    # literal). A same-major.minor point has one truth vector per epoch, so the
+    # contiguous 1..max+1 range covers every band; the product is
+    # O(len(base) * len(targets)), capped while generating so a content-keyed
+    # epoch spread fails loudly instead of materialising in full.
     epochs = {version.epoch for version, _ in parsed}
-    targets = epochs | {max(epochs) + 1}
-    targets.discard(0)
+    targets = range(1, max(epochs) + 2)
     elevated = list(base)
-    for epoch in sorted(targets):
+    for epoch in targets:
         for text in base:
             elevated.append(f"{epoch}!{text}")
             if len(elevated) > max_cells:

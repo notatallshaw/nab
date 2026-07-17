@@ -338,6 +338,26 @@ def test_epoch_literal_pure_axis_decisions_are_sound() -> None:
     assert residue.evaluate({"python_full_version": "2!0"})
 
 
+def test_epoch_gap_between_literals_is_sound() -> None:
+    # Mixing python_version (major.minor) with a python_full_version epoch-2
+    # literal leaves epoch 1 with no literal of its own; the pool must still mint
+    # a representative there or the satisfying epoch-1 band goes invisible.
+    text = (
+        'python_full_version >= "3.14" and python_full_version < "2!0" '
+        'and python_version < "3.10"'
+    )
+    marker = ms(text)
+    env = {"python_full_version": "1!3.9", "python_version": "3.9"}
+    assert not marker.is_empty()
+    assert marker.evaluate(env)
+    assert Marker(text).evaluate(env)
+    taut_text = (
+        'python_full_version >= "2!0" or python_version != "3.10" '
+        'or python_full_version <= "3.14.dev0"'
+    )
+    assert not ms(taut_text).is_tautology()
+
+
 # --------------------------------------------------------------- restrict
 
 
@@ -587,6 +607,20 @@ def test_guard_version_pool_epoch_elevation() -> None:
     # triggers epoch elevation, whose product is bounded as it is generated.
     epochs = " and ".join(f'python_full_version == "{e}!2.0"' for e in range(1, 16))
     marker = ms(f'python_version == "3.9" and {epochs}', max_cells=1000)
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
+def test_guard_repeated_clause_tree_walk() -> None:
+    # Repeating one clause inflates the op-tree the decision walks per cell
+    # without adding distinct atoms or cells; the distinct-atom product stays
+    # under the default cap while the leaf-occurrence product blows past it, so
+    # the guard fires on the tree the distinct count alone would let hang.
+    axes = " and ".join(
+        ['"a0" in python_version', '"a0" not in python_version']
+        + [f'"a{i}" in python_version' for i in range(1, 12)]
+    )
+    marker = ms(" or ".join(f"({axes})" for _ in range(8)))
     with pytest.raises(ComplexityLimitExceeded):
         marker.is_empty()
 
