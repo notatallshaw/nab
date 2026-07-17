@@ -1,0 +1,588 @@
+"""Unit suite for the marker algebra: acceptance cases, algebra, and edges.
+
+Correctness against packaging is pinned by ``test_marker_algebra_differential``;
+this suite pins the ported acceptance cases and exercises the construction,
+decision, restriction, serialisation, witness, and guard surfaces.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from nab_python._marker_algebra import (
+    ComplexityLimitExceeded,
+    MarkerSet,
+    UnserializableSet,
+)
+from nab_python._vendor.packaging.markers import Marker
+
+
+def ms(text: str, **kw: int) -> MarkerSet:
+    return MarkerSet.from_marker(text, **kw)
+
+
+# --------------------------------------------------------------- acceptance
+
+
+def test_onnxruntime_extras_disjoint() -> None:
+    a = ms('"cpu" in extras and "gpu" not in extras')
+    b = ms('"gpu" in extras and "cpu" not in extras')
+    assert a.is_disjoint(b)
+    assert not a.is_disjoint(a)
+
+
+def test_pep751_same_variable_partitions() -> None:
+    parts = [
+        ms('python_full_version < "3.9"'),
+        ms('python_full_version >= "3.9" and python_full_version < "3.12"'),
+        ms('python_full_version >= "3.12"'),
+    ]
+    for i in range(len(parts)):
+        for j in range(i + 1, len(parts)):
+            assert parts[i].is_disjoint(parts[j])
+    cpu = ms('"cpu" in extras')
+    not_cpu = ms('"cpu" not in extras')
+    assert cpu.is_disjoint(not_cpu)
+    assert (cpu | not_cpu).is_tautology()
+
+
+def test_a1_python_version_contradiction() -> None:
+    assert ms('python_version == "3.9" and python_full_version == "3.10.1"').is_empty()
+    assert not ms(
+        'python_version == "3.10" and python_full_version == "3.10.1"'
+    ).is_empty()
+
+
+def test_prerelease_carve_out_314rc1() -> None:
+    naive = ms('python_full_version < "3.14"') | ms('python_full_version >= "3.14"')
+    assert not naive.is_tautology()
+    corrected = ms('python_full_version < "3.14"') | ms(
+        'python_full_version >= "3.14.dev0"'
+    )
+    assert corrected.is_tautology()
+    assert ms('python_full_version < "3.14"').is_disjoint(
+        ms('python_full_version >= "3.14"')
+    )
+
+
+def test_m1_string_ordering_non_negation() -> None:
+    less = ms('sys_platform < "linux"')
+    greater_equal = ms('sys_platform >= "linux"')
+    assert not less.complement().equivalent(greater_equal)
+    assert not (less | greater_equal).is_tautology()
+    assert less.is_empty()  # < is constant-false on a string variable.
+
+
+def test_uv_comma_list_non_collapse() -> None:
+    assert not ms('python_version in "3.10"').equivalent(ms('python_version == "3.10"'))
+
+
+def test_deplogic_tautology() -> None:
+    assert ms('os_name == "a" or os_name == "b" or os_name != "a"').is_tautology()
+
+
+def test_poetry_allows_all_not_in() -> None:
+    notin = ms('"x86" not in platform_machine')
+    neq = ms('platform_machine != "arm"')
+    assert not notin.implies(neq)
+
+
+def test_parenthesisation_round_trip() -> None:
+    grouped = ms(
+        'sys_platform == "linux" and '
+        '(python_version == "3.8" or python_version == "3.9")'
+    )
+    text = grouped.to_marker_string()
+    assert text is not None
+    assert "(" in text
+    assert grouped.equivalent(ms(text))
+
+
+# ------------------------------------------------------------- construction
+
+
+def test_true_false_and_absent_marker() -> None:
+    assert MarkerSet.true().is_tautology()
+    assert MarkerSet.false().is_empty()
+    assert ms("").is_tautology()
+    assert ms("   ").is_tautology()
+
+
+def test_from_marker_accepts_marker_object() -> None:
+    marker = Marker('sys_platform == "linux"')
+    assert MarkerSet.from_marker(marker).equivalent(ms('sys_platform == "linux"'))
+
+
+def test_from_marker_rejects_other_types() -> None:
+    with pytest.raises(TypeError):
+        MarkerSet.from_marker(42)  # type: ignore[arg-type]
+
+
+def test_max_cells_must_be_positive() -> None:
+    for factory in (
+        lambda: MarkerSet.true(max_cells=0),
+        lambda: MarkerSet.false(max_cells=-1),
+        lambda: ms('sys_platform == "linux"', max_cells=0),
+    ):
+        with pytest.raises(ValueError, match="max_cells"):
+            factory()
+
+
+# ----------------------------------------------------------------- algebra
+
+
+def test_and_or_complement() -> None:
+    a = ms('sys_platform == "linux"')
+    b = ms('os_name == "posix"')
+    assert (a & b).implies(a)
+    assert a.implies(a | b)
+    assert a.complement().is_disjoint(a)
+    assert (a | a.complement()).is_tautology()
+
+
+def test_double_complement_and_identity_folding() -> None:
+    a = ms('sys_platform == "linux"')
+    assert a.complement().complement().equivalent(a)
+    assert (a & MarkerSet.true()).equivalent(a)
+    assert (a | MarkerSet.false()).equivalent(a)
+    assert (a | MarkerSet.true()).is_tautology()
+    assert (a & MarkerSet.false()).is_empty()
+
+
+def test_and_of_identical_atoms_dedupes() -> None:
+    a = ms('sys_platform == "linux"')
+    assert (a & a).equivalent(a)
+
+
+# ------------------------------------------------- leaf-shape edge cases
+
+
+def test_variable_vs_variable_is_faithful() -> None:
+    # packaging turns the RHS variable name into the literal; the two differ.
+    assert not ms("os_name == sys_platform").is_tautology()
+    assert ms("os_name == sys_platform").evaluate(
+        {"os_name": "sys_platform", "sys_platform": "sys_platform"}
+    )
+    assert not ms("os_name != sys_platform").evaluate(
+        {"os_name": "sys_platform", "sys_platform": "sys_platform"}
+    )
+
+
+def test_const_vs_const_folds() -> None:
+    assert ms('"linux" == "linux"').is_tautology()
+    assert ms('"linux" == "win32"').is_empty()
+
+
+def test_swapped_atoms() -> None:
+    assert ms('"linux" == sys_platform').equivalent(ms('sys_platform == "linux"'))
+    assert ms('"3.9" == python_version').evaluate({"python_full_version": "3.9.4"})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'sys_platform ~= "1"',
+        'sys_platform === "1"',
+        '"1" ~= sys_platform',
+    ],
+)
+def test_undefined_operator_rejected_at_construction(text: str) -> None:
+    with pytest.raises(ValueError, match="undefined"):
+        ms(text)
+
+
+def test_version_tilde_operator_builds() -> None:
+    # ~= parses as a specifier on a version field, so it does not raise.
+    assert ms('python_full_version ~= "3.9"').evaluate({"python_full_version": "3.9.4"})
+
+
+def test_membership_var_in_literal_is_exact() -> None:
+    inside = ms('sys_platform in "linuxx"')
+    assert inside.evaluate({"sys_platform": "linux"})
+    assert inside.evaluate({"sys_platform": "linuxx"})
+    assert not inside.evaluate({"sys_platform": "windows"})
+
+
+def test_python_version_membership_is_opaque_contains() -> None:
+    marker = ms('"3" in python_version')
+    assert marker.evaluate({"python_version": "3.9"})
+    assert not marker.evaluate({"python_version": "2.7"})
+
+
+def test_set_variable_non_membership_is_false() -> None:
+    assert ms('extras == "cpu"').is_empty()
+    assert ms('extra < "cpu"').is_empty()
+
+
+def test_dependency_groups_membership() -> None:
+    marker = ms('"dev" in dependency_groups')
+    assert marker.evaluate({"dependency_groups": {"dev"}})
+    assert not marker.evaluate({"dependency_groups": {"docs"}})
+
+
+def test_pep685_extra_normalisation() -> None:
+    assert ms('extra == "Foo.Bar"').equivalent(ms('extra == "foo-bar"'))
+
+
+# --------------------------------------------------------------- evaluate
+
+
+def test_evaluate_extras_as_set_and_string() -> None:
+    marker = ms('extra == "cpu"')
+    assert marker.evaluate({"extra": {"cpu"}})
+    assert not marker.evaluate({"extra": {"gpu"}})
+    assert not marker.evaluate({"extra": set()})
+
+
+def test_evaluate_derive_mm_boundaries() -> None:
+    marker = ms('python_version == "3.9"')
+    assert marker.evaluate({"python_full_version": "3.9.7"})
+    assert not marker.evaluate({"python_full_version": "3.10.0"})
+    # single-segment and non-version full versions still evaluate.
+    assert not marker.evaluate({"python_full_version": "3"})
+    assert not marker.evaluate({"python_full_version": "not-a-version"})
+
+
+# --------------------------------------------------------------- restrict
+
+
+def test_restrict_residual_and_full() -> None:
+    marker = ms('python_version >= "3.9" and sys_platform == "linux"')
+    residual = marker.restrict({"sys_platform": "linux"})
+    assert residual.equivalent(ms('python_version >= "3.9"'))
+    dropped = marker.restrict({"sys_platform": "win32"})
+    assert dropped.is_empty()
+    full = marker.restrict({"python_full_version": "3.10.0", "sys_platform": "linux"})
+    assert full.is_tautology()
+
+
+def test_restrict_python_version_key_variants() -> None:
+    marker = ms('python_version >= "3.10"')
+    assert marker.restrict({"python_full_version": "3.10.1"}).is_tautology()
+    assert marker.restrict({"python_version": "3.9"}).is_empty()
+    assert marker.restrict({"sys_platform": "linux"}).equivalent(marker)
+
+
+def test_restrict_extras_and_contains() -> None:
+    extras = ms('"cpu" in extras')
+    assert extras.restrict({"extras": {"cpu"}}).is_tautology()
+    assert extras.restrict({"extras": set()}).is_empty()
+    assert extras.restrict({"sys_platform": "linux"}).equivalent(extras)
+    contains = ms('"x86" in platform_machine')
+    assert contains.restrict({"platform_machine": "x86_64"}).is_tautology()
+    assert contains.restrict({"platform_machine": "arm64"}).is_empty()
+    assert contains.restrict({"sys_platform": "linux"}).equivalent(contains)
+
+
+def test_restrict_extra_as_string_value() -> None:
+    marker = ms('extra == "cpu"')
+    assert marker.restrict({"extra": "cpu"}).is_tautology()
+    assert marker.restrict({"extra": ""}).is_empty()
+
+
+def test_restrict_error_policy() -> None:
+    marker = ms('python_version >= "3.9" and sys_platform == "linux"')
+    with pytest.raises(ValueError, match="no value for"):
+        marker.restrict({"python_version": "3.10"}, on_unknown_variable="error")
+    # every referenced variable provided: no error.
+    restricted = marker.restrict(
+        {"python_full_version": "3.10.0", "sys_platform": "linux"},
+        on_unknown_variable="error",
+    )
+    assert restricted.is_tautology()
+
+
+def test_restrict_rejects_bad_policy() -> None:
+    with pytest.raises(ValueError, match="on_unknown_variable"):
+        ms('sys_platform == "linux"').restrict({}, on_unknown_variable="nonsense")
+
+
+def test_restrict_constant_set() -> None:
+    assert MarkerSet.true().restrict({"sys_platform": "linux"}).is_tautology()
+
+
+def test_restrict_through_complement() -> None:
+    marker = ms('sys_platform == "linux"').complement()
+    assert marker.restrict({"sys_platform": "win32"}).is_tautology()
+    assert marker.restrict({"sys_platform": "linux"}).is_empty()
+
+
+# ------------------------------------------------------ variables / literals
+
+
+def test_variables_reports_origins() -> None:
+    marker = ms('python_version >= "3.9" and sys_platform == "linux"')
+    assert marker.variables() == frozenset({"python_version", "sys_platform"})
+    assert MarkerSet.true().variables() == frozenset()
+
+
+def test_membership_literals() -> None:
+    marker = ms('"cpu" in extras and "gpu" not in extras and sys_platform == "linux"')
+    assert marker.membership_literals() == frozenset(
+        {("extras", "cpu"), ("extras", "gpu")}
+    )
+    assert ms('sys_platform == "linux"').membership_literals() == frozenset()
+
+
+# ---------------------------------------------------------------- witness
+
+
+def test_witness_of_empty_is_none() -> None:
+    assert MarkerSet.false().witness() is None
+    assert ms('python_full_version < "0"').witness() is None
+
+
+def test_witness_of_value_set_satisfies() -> None:
+    marker = ms('python_full_version >= "3.9" and sys_platform == "linux"')
+    env = marker.witness()
+    assert env is not None
+    assert marker.evaluate(env)
+
+
+def test_witness_of_tautology() -> None:
+    env = MarkerSet.true().witness()
+    assert env == {}
+
+
+def test_witness_of_extras() -> None:
+    marker = ms('"cpu" in extras and "gpu" not in extras')
+    env = marker.witness()
+    assert env is not None
+    assert marker.evaluate(env)
+
+
+def test_witness_of_contains() -> None:
+    marker = ms('"x86" in platform_machine')
+    env = marker.witness()
+    assert env is not None
+    assert marker.evaluate(env)
+
+
+def test_witness_none_for_opaque_over_approximation() -> None:
+    # Opaque contains over-approximates: the set is not is_empty, yet no real
+    # environment satisfies "x86_64 and contains x86-but-not-x86".
+    marker = ms('platform_machine == "arm64" and "x86" in platform_machine')
+    assert not marker.is_empty()
+    assert marker.witness() is None
+
+
+# ------------------------------------------------------------ serialisation
+
+
+def test_to_marker_string_none_for_tautology() -> None:
+    assert MarkerSet.true().to_marker_string() is None
+    assert ms('os_name == "a" or os_name != "a"').to_marker_string() is None
+
+
+def test_to_marker_string_raises_for_empty() -> None:
+    with pytest.raises(UnserializableSet):
+        MarkerSet.false().to_marker_string()
+    with pytest.raises(UnserializableSet):
+        ms('python_full_version < "0"').to_marker_string()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'sys_platform == "linux"',
+        'sys_platform != "linux"',
+        'python_full_version == "3.9"',
+        'python_full_version != "3.9"',
+        '"cpu" in extras',
+        '"cpu" not in extras',
+        'extra == "cpu"',
+        'extra != "cpu"',
+        '"x86" in platform_machine',
+        '"x86" not in platform_machine',
+        'sys_platform in "linuxx"',
+        '"3.9" == python_full_version',
+        'sys_platform == "linux" and python_full_version >= "3.9"',
+        'sys_platform == "linux" or os_name == "posix"',
+    ],
+)
+def test_round_trip_is_equivalent(text: str) -> None:
+    marker = ms(text)
+    result = marker.to_marker_string()
+    assert result is not None
+    assert marker.equivalent(ms(result))
+
+
+def test_complement_round_trips_where_spellable() -> None:
+    marker = ms('sys_platform == "linux"').complement()
+    text = marker.to_marker_string()
+    assert text is not None
+    assert marker.equivalent(ms(text))
+
+
+def test_complement_of_and_or_serialises() -> None:
+    conj = (ms('sys_platform == "linux"') & ms('os_name == "posix"')).complement()
+    disj = (ms('sys_platform == "linux"') | ms('os_name == "posix"')).complement()
+    for marker in (conj, disj):
+        text = marker.to_marker_string()
+        assert text is not None
+        assert marker.equivalent(ms(text))
+
+
+def test_double_negation_serialises() -> None:
+    inner = ms('os_name == "posix"').complement()
+    marker = (ms('sys_platform == "linux"') & inner).complement()
+    text = marker.to_marker_string()
+    assert text is not None
+    assert marker.equivalent(ms(text))
+
+
+def test_unserializable_ordered_version_complement() -> None:
+    with pytest.raises(UnserializableSet):
+        ms('python_full_version >= "3.9"').complement().to_marker_string()
+
+
+def test_unserializable_twin_equality_complement() -> None:
+    with pytest.raises(UnserializableSet):
+        ms('platform_release == "6.6"').complement().to_marker_string()
+
+
+def test_repr_is_stable() -> None:
+    assert "MarkerSet" in repr(ms('sys_platform == "linux"'))
+    assert "MarkerSet" in repr(MarkerSet.true())
+
+
+# ------------------------------------------------------------------ guards
+
+
+def test_guard_set_powerset() -> None:
+    marker = ms(" and ".join(f'extra == "pkg{i}"' for i in range(20)), max_cells=1000)
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
+def test_guard_substring_enumeration() -> None:
+    marker = ms('sys_platform in "abcdefghij"', max_cells=3)
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
+def test_guard_value_candidates() -> None:
+    marker = ms('python_full_version == "3.9"', max_cells=1)
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
+def test_guard_cell_product() -> None:
+    marker = ms(
+        'sys_platform == "linux" and os_name == "posix" '
+        'and platform_machine == "x86_64"',
+        max_cells=2,
+    )
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
+def test_guard_does_not_fire_under_default() -> None:
+    marker = ms(" and ".join(f'extra == "pkg{i}"' for i in range(10)))
+    assert not marker.is_empty()
+
+
+# -------------------------------------------------- branch-completeness edges
+
+
+def test_non_version_literal_on_version_axis() -> None:
+    # A non-version literal produces no version neighbours and is filtered from
+    # the pure-version candidate pool.
+    assert ms('python_full_version == "abc"').is_empty()
+
+
+def test_version_membership_substrings_filtered() -> None:
+    # Substrings of the haystack that are not versions are dropped on a pure
+    # version axis.
+    marker = ms('python_full_version in "3.10"')
+    assert marker.evaluate({"python_full_version": "3"})
+    assert not marker.evaluate({"python_full_version": "4"})
+
+
+def test_version_axis_with_two_literals() -> None:
+    marker = ms('python_full_version >= "3.9" and python_full_version < "3.10"')
+    assert marker.evaluate({"python_full_version": "3.9.5"})
+    assert not marker.evaluate({"python_full_version": "3.10.0"})
+    assert not marker.is_empty()
+
+
+def test_restrict_error_missing_set_variable() -> None:
+    marker = ms('"cpu" in extras')
+    with pytest.raises(ValueError, match="no value for"):
+        marker.restrict({}, on_unknown_variable="error")
+
+
+def test_restrict_plain_value_absent_is_residual() -> None:
+    marker = ms('sys_platform == "linux"')
+    assert marker.restrict({"os_name": "posix"}).equivalent(marker)
+
+
+def test_restrict_or_tree() -> None:
+    marker = ms('sys_platform == "linux" or os_name == "posix"')
+    assert marker.restrict({"sys_platform": "win32"}).equivalent(
+        ms('os_name == "posix"')
+    )
+
+
+def test_evaluate_through_complement() -> None:
+    marker = ms('sys_platform == "linux"').complement()
+    assert not marker.evaluate({"sys_platform": "linux"})
+    assert marker.evaluate({"sys_platform": "win32"})
+
+
+def test_complement_serialises_set_and_contains() -> None:
+    for text in ('extra == "cpu"', '"x86" in platform_machine'):
+        marker = ms(text).complement()
+        result = marker.to_marker_string()
+        assert result is not None
+        assert marker.equivalent(ms(result))
+
+
+def test_complement_serialises_pure_version_equality() -> None:
+    marker = ms('python_full_version == "3.9"').complement()
+    text = marker.to_marker_string()
+    assert text is not None
+    assert marker.equivalent(ms(text))
+    assert marker.equivalent(ms('python_full_version != "3.9"'))
+
+
+def test_complement_serialises_string_inequality() -> None:
+    marker = ms('sys_platform != "linux"').complement()
+    text = marker.to_marker_string()
+    assert text is not None
+    assert marker.equivalent(ms('sys_platform == "linux"'))
+
+
+def test_complement_serialises_non_version_twin_literal() -> None:
+    # platform_release is version-typed, but a non-version literal falls to the
+    # string complement path.
+    marker = ms('platform_release == "NT"').complement()
+    text = marker.to_marker_string()
+    assert text is not None
+    assert marker.equivalent(ms(text))
+
+
+def test_complement_serialises_substring_membership() -> None:
+    for text in ('sys_platform in "linuxx"', 'sys_platform not in "linuxx"'):
+        marker = ms(text).complement()
+        result = marker.to_marker_string()
+        assert result is not None
+        assert marker.equivalent(ms(result))
+
+
+def test_version_axis_equal_distinct_literals() -> None:
+    # "3.9" and "3.9.0" are distinct strings that parse to the same version;
+    # the pool must not double-count them.
+    marker = ms('python_full_version == "3.9" or python_full_version == "3.9.0"')
+    assert marker.evaluate({"python_full_version": "3.9.0"})
+    assert not marker.is_empty()
+
+
+def test_serialise_absorbs_constant_false_atom() -> None:
+    # Complementing a disjunction with a constant-false string-ordering atom
+    # exercises the "< / > complements to all" path.
+    marker = (ms('sys_platform < "linux"') | ms('os_name == "posix"')).complement()
+    text = marker.to_marker_string()
+    assert text is not None
+    assert marker.equivalent(ms(text))
+    assert marker.equivalent(ms('os_name != "posix"'))
