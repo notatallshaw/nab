@@ -188,6 +188,13 @@ def has_full_commit_sha(url: str) -> bool:
     return bool(FULL_GIT_SHA_RE.match(ref))
 
 
+def _malformed_vcs_error(url: str) -> UnsupportedVcsError:
+    """Refusal for a URL whose authority ``urlsplit`` cannot parse."""
+    return UnsupportedVcsError(
+        f"refusing malformed VCS URL\n    {url}\n    reason: the URL does not parse."
+    )
+
+
 def admit_vcs_url(url: str, config: VcsConfig) -> str:
     """Admit a direct-URL requirement, or raise :class:`UnsupportedVcsError`.
 
@@ -234,14 +241,7 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
     try:
         repo_path = _repo_path(inner_url)
     except ValueError:
-        # urlsplit raises on an authority it cannot parse (an unclosed IPv6
-        # bracket), which ingestion reports as a refusal, not a traceback.
-        msg = (
-            "refusing malformed VCS URL\n"
-            f"    {url}\n"
-            "    reason: the URL does not parse."
-        )
-        raise UnsupportedVcsError(msg) from None
+        raise _malformed_vcs_error(url) from None
 
     # Without a repo path there is nothing to clone, and an appended pin's
     # "@" lands in the netloc instead of the path, where urlsplit reads
@@ -257,13 +257,22 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         )
         raise UnsupportedVcsError(msg)
 
+    # Stripping userinfo can unbalance an IPv6 bracket, so the match may raise
+    # on a netloc that parsed whole above.
+    try:
+        repo_admitted = any(
+            _repo_prefix_matches(
+                _without_userinfo(inner_url), _without_userinfo(prefix)
+            )
+            for prefix in config.allowed_repos
+        )
+    except ValueError:
+        raise _malformed_vcs_error(url) from None
+
     # An empty allowed-repos denies every repo (deny-all), matching
     # allowed-schemes: under policy = "allow" the user must list at least
     # one repo prefix.
-    if not any(
-        _repo_prefix_matches(_without_userinfo(inner_url), _without_userinfo(prefix))
-        for prefix in config.allowed_repos
-    ):
+    if not repo_admitted:
         allowed_str = ", ".join(sorted(config.allowed_repos)) or "<empty>"
         msg = (
             "refusing VCS repo\n"

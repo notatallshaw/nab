@@ -621,6 +621,22 @@ class TestAdmitVcsUrlMalformed:
         with pytest.raises(UnsupportedVcsError, match="does not parse"):
             admit_vcs_url("git+https://[/org/repo", config)
 
+    def test_authority_malformed_only_after_userinfo_strip_refused(self) -> None:
+        """A netloc that parses whole but not once its userinfo is stripped.
+
+        ``[::1]@[::2`` balances its brackets across the whole netloc, so the
+        first urlsplit accepts it. Dropping ``[::1]@`` leaves ``[::2``, an
+        unclosed bracket that the allowed-repos match rejects.
+        """
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/ok/repo",),
+            require_pin=False,
+        )
+        with pytest.raises(UnsupportedVcsError, match="does not parse"):
+            admit_vcs_url("git+https://[::1]@[::2/ok/repo", config)
+
 
 class TestAdmitVcsUrlRealWorldShapes:
     """Shapes a user actually writes still admit."""
