@@ -1575,9 +1575,11 @@ class Provider:
         wheel-tag filter, requires-python, dist-policy, or the upload-time
         cutoff.  The raw listing tells absence from incompatibility apart.
         The wheel-tag case (a Windows-only package on a Linux target) is
-        named only when nothing else dropped a file: a version the base
-        pass filtered out, even alongside a tag-rejected wheel on another
-        version, reports the base-filter reason instead.
+        named only when the base pass dropped nothing, or when the file
+        it dropped was an sdist: there the reason names both the rejected
+        tags and the filtered sdist, because the sdist is what the user
+        can bring back.  A base-filtered wheel alongside a tag-rejected
+        wheel on another version reports the base-filter reason alone.
 
         A look-ahead rejection emits a clause that removes the rejected
         versions from the range, so the resolver asks again over a range
@@ -1595,6 +1597,16 @@ class Provider:
                     f"found on index but none of the wheel's tags are compatible"
                     f" with the resolve target ({tag_excluded} wheels rejected),"
                     f" and no sdist is available to build from"
+                )
+            elif tag_excluded and any(isinstance(f, SdistFile) for f in raw_listing):
+                # A present sdist beside tag-rejected wheels was dropped by
+                # the base pass (it would otherwise keep its version alive),
+                # so name both causes rather than the base filter alone.
+                reason = (
+                    f"found on index but none of the wheel's tags are compatible"
+                    f" with the resolve target ({tag_excluded} wheels rejected),"
+                    f" and the sdist was filtered by requires-python,"
+                    f" dist-policy, or upload-time"
                 )
             else:
                 reason = (
