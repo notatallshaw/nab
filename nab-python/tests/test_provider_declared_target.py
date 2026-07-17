@@ -857,6 +857,40 @@ class TestDefaultCeilingWarning:
             provider.filter_distributions("pkg", files)
         assert len(caplog.records) == 1
 
+    def test_kept_wheel_version_skips_ceiling_check(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A version that keeps an installable wheel never probes the ceiling."""
+        files = [
+            _platform_wheel("2.0", "cp311-cp311-macosx_14_0_arm64"),
+            _platform_wheel("2.0", "cp311-cp311-macosx_12_0_arm64"),
+        ]
+        provider = self._macos_provider(files, PlatformSpec("macos_arm64"))
+        calls: list[str] = []
+        original = provider.ceiling_would_admit
+
+        def recording(wheel_filename: str) -> tuple[str, tuple[int, int]] | None:
+            calls.append(wheel_filename)
+            return original(wheel_filename)
+
+        monkeypatch.setattr(provider, "ceiling_would_admit", recording)
+        provider.filter_distributions("pkg", files)
+        assert calls == []
+
+    def test_warning_names_first_admissible_wheel(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An earlier inadmissible wheel does not mask the admissible one."""
+        files = [
+            _platform_wheel("2.0", "cp311-cp311-macosx_14_0_x86_64"),
+            _platform_wheel("2.0", "cp311-cp311-macosx_14_0_arm64"),
+        ]
+        provider = self._macos_provider(files, PlatformSpec("macos_arm64"))
+        with caplog.at_level(logging.WARNING, logger="nab_python.provider"):
+            provider.filter_distributions("pkg", files)
+        assert len(caplog.records) == 1
+        assert "macosx_14_0_arm64" in caplog.records[0].getMessage()
+
     def test_host_target_never_warns(self) -> None:
         """A host provider has no platform_spec, so the ceiling check is skipped."""
         provider = Provider(_index_with_files([]), ResolveTarget.for_host())

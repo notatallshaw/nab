@@ -433,34 +433,37 @@ def _apply_wheel_tags(
         return base
 
     result: list[tuple[Version, DistFile]] = []
-    tag_rejected_versions: set[Version] = set()
     kept_wheel_versions: set[Version] = set()
-    ceiling_drops: dict[Version, tuple[WheelFile, tuple[str, tuple[int, int]]]] = {}
+    rejected_wheels: dict[Version, list[WheelFile]] = {}
     for version, dist in base:
         if excluded_by_wheel_tags(provider, normalized, dist, tags):
-            tag_rejected_versions.add(version)
-            if version not in ceiling_drops and isinstance(dist, WheelFile):
-                admitting = provider.ceiling_would_admit(dist.filename)
-                if admitting is not None:
-                    ceiling_drops[version] = (dist, admitting)
+            assert isinstance(dist, WheelFile)
+            rejected_wheels.setdefault(version, []).append(dist)
             continue
         if isinstance(dist, WheelFile):
             kept_wheel_versions.add(version)
         result.append((version, dist))
 
-    if tag_rejected_versions:
+    if rejected_wheels:
         # A version whose every wheel the target refused, and which ships no
         # sdist, has nothing left to install: it is gone, not merely wheel-less.
         kept = {version for version, _ in result}
         provider.stats.excluded_versions_no_compatible_wheel += len(
-            tag_rejected_versions - kept
+            rejected_wheels.keys() - kept
         )
 
     # Warn only where an unset default ceiling took a version's last wheel: a
     # release that also ships an in-ceiling wheel keeps it and stays silent.
-    for version, (wheel, (knob, raise_to)) in ceiling_drops.items():
-        if version not in kept_wheel_versions:
-            provider.warn_ceiling_drop(normalized, version, wheel, knob, raise_to)
+    # The probe rebuilds the target's tags, so only wheel-less versions run it.
+    for version, wheels in rejected_wheels.items():
+        if version in kept_wheel_versions:
+            continue
+        for wheel in wheels:
+            admitting = provider.ceiling_would_admit(wheel.filename)
+            if admitting is not None:
+                knob, raise_to = admitting
+                provider.warn_ceiling_drop(normalized, version, wheel, knob, raise_to)
+                break
 
     return result
 
