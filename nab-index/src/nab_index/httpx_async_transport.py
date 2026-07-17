@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import truststore
 
-from .retry import MAX_RETRIES, RETRY_STATUSES, next_delay
+from .retry import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES, next_delay
 from .transport import HttpError
 
 if TYPE_CHECKING:
@@ -71,6 +71,7 @@ class HttpxAsyncTransport:
             # httpx defaults this off, unlike urllib3 and pip; the Simple
             # API relies on redirects (canonicalising URLs, mirrors, CDNs).
             follow_redirects=True,
+            max_redirects=MAX_REDIRECTS,
             verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
         )
 

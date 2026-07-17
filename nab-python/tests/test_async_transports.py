@@ -22,7 +22,13 @@ import urllib3
 
 from nab_index.client import AsyncSimpleClient, _extract_sdist_files
 from nab_index.httpx_async_transport import HttpxAsyncTransport, _HttpxResponse
-from nab_index.retry import GET_RETRY, MAX_RETRIES, RETRY_STATUSES, next_delay
+from nab_index.retry import (
+    GET_RETRY,
+    MAX_REDIRECTS,
+    MAX_RETRIES,
+    RETRY_STATUSES,
+    next_delay,
+)
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import (
     Urllib3AsyncTransport,
@@ -45,7 +51,11 @@ LISTING_JSON = {
 
 
 class _StubIndex(ThreadingHTTPServer):
-    """Loopback index that serves each queued status once, then 200."""
+    """Loopback index that serves each queued status once, then 200.
+
+    A queued 3xx redirects to ``/redirected/``, whose response pops the
+    next queued status like any other request.
+    """
 
     statuses: list[int]
     seen: list[str]
@@ -59,6 +69,8 @@ class _StubIndexHandler(BaseHTTPRequestHandler):
 
         body = b"ok"
         self.send_response(status)
+        if 300 <= status < 400:
+            self.send_header("Location", "/redirected/")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -113,7 +125,16 @@ class TestRetryPolicy:
         assert not GET_RETRY.is_retry("GET", 403, has_retry_after=False)
 
     def test_budget_is_bounded(self) -> None:
-        assert GET_RETRY.total == MAX_RETRIES
+        """Every failure class is capped, so nothing retries forever."""
+        assert GET_RETRY.total is None
+        assert GET_RETRY.connect == MAX_RETRIES
+        assert GET_RETRY.read == MAX_RETRIES
+        assert GET_RETRY.status == MAX_RETRIES
+        assert GET_RETRY.other == MAX_RETRIES
+
+    def test_redirects_have_their_own_budget(self) -> None:
+        """A redirect is not a failure, so it never spends a transient retry."""
+        assert GET_RETRY.redirect == MAX_REDIRECTS
 
     def test_exhausted_status_retries_keep_the_response(self) -> None:
         """A persistent 503 surfaces as HTTP 503, not as a retry error."""
@@ -227,6 +248,39 @@ class TestHttpxAsyncTransport:
         resp = asyncio.run(go())
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
+
+    @respx.mock
+    def test_get_follows_redirects_past_the_transient_retry_budget(self) -> None:
+        """A redirect chain longer than MAX_RETRIES is still followed."""
+        chain = MAX_RETRIES + 2
+        for n in range(chain):
+            respx.get(f"https://example.com/r/{n}").mock(
+                return_value=httpx.Response(302, headers={"Location": f"/r/{n + 1}"})
+            )
+        respx.get(f"https://example.com/r/{chain}").mock(
+            return_value=httpx.Response(200)
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/r/0")
+            finally:
+                await transport.aclose()
+
+        resp = asyncio.run(go())
+        resp.raise_for_status()
+        assert resp.status_code == 200
+
+    def test_client_takes_the_shared_redirect_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AsyncClient follows redirects with the policy's budget."""
+        cls = MagicMock()
+        monkeypatch.setattr("nab_index.httpx_async_transport.httpx.AsyncClient", cls)
+        HttpxAsyncTransport()
+        assert cls.call_args.kwargs["follow_redirects"] is True
+        assert cls.call_args.kwargs["max_redirects"] == MAX_REDIRECTS
 
     @respx.mock
     def test_get_wraps_connection_error(self) -> None:
@@ -579,6 +633,71 @@ class TestUrllib3AsyncTransport:
             resp.raise_for_status()
             assert resp.status_code == 200
             assert len(index.seen) == 2
+
+    def test_get_follows_redirects_past_the_transient_retry_budget(self) -> None:
+        """A redirect chain longer than MAX_RETRIES is still followed."""
+        with _stub_index([302] * (MAX_RETRIES + 2)) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            resp.raise_for_status()
+            assert resp.status_code == 200
+            assert len(index.seen) == MAX_RETRIES + 3
+
+    def test_redirect_leaves_the_transient_retry_budget_intact(self) -> None:
+        """The redirect target still gets the full transient retry budget."""
+        with _stub_index([302, *[503] * MAX_RETRIES]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            resp.raise_for_status()
+            assert resp.status_code == 200
+            assert index.seen == ["/pkg/", *["/redirected/"] * (MAX_RETRIES + 1)]
+
+    def test_get_follows_the_full_redirect_budget(self) -> None:
+        with _stub_index([302] * MAX_REDIRECTS) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            assert resp.status_code == 200
+            assert len(index.seen) == MAX_REDIRECTS + 1
+
+    def test_get_gives_up_on_a_redirect_loop(self) -> None:
+        """The redirect budget is finite, so a loop ends in an error."""
+        with _stub_index([302] * (MAX_REDIRECTS + 1)) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> None:
+                transport = Urllib3AsyncTransport()
+                try:
+                    await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            with pytest.raises(HttpError, match="too many redirects"):
+                asyncio.run(go())
+            assert len(index.seen) == MAX_REDIRECTS + 1
 
     def test_get_gives_up_on_a_persistent_transient_status(self) -> None:
         """The budget is bounded, and the caller still sees the 503."""
