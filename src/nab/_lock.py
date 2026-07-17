@@ -551,8 +551,9 @@ def _emit_requirements(
     if not any(var in template for var in _cli.TUPLE_TEMPLATE_VARS):
         if multi_target:
             _refuse_untemplated(lock_input, target)
-        text, count = _render_requirements_or_exit(lock_input, with_hashes)
-        target.write_text(text, encoding="utf-8")
+        _, count = _render_requirements_or_exit(
+            lock_input, with_hashes, output_path=target
+        )
         sys.stderr.write(f"Wrote {target} ({count} packages)\n")
         return
 
@@ -726,13 +727,24 @@ def _discard(staged: Path) -> None:
 def _render_requirements_or_exit(
     lock_input: LockInput,
     with_hashes: bool,  # noqa: FBT001 - internal, one call shape
+    *,
+    output_path: Path | None = None,
 ) -> tuple[str, int]:
-    """Render the requirements text and pin count, exiting on a missing hash."""
+    """Render the requirements text and pin count, exiting on a missing hash.
+
+    The emitter does the writing when ``output_path`` is given, so the
+    text lands through a temp file and a rename rather than truncating
+    the destination first.
+    """
     try:
         if with_hashes:
-            text = _cli.write_requirements_with_hashes(lock_input)
+            text = _cli.write_requirements_with_hashes(
+                lock_input, output_path=output_path
+            )
         else:
-            text = _cli.write_requirements_without_hashes(lock_input)
+            text = _cli.write_requirements_without_hashes(
+                lock_input, output_path=output_path
+            )
     except _cli.MissingHashError as e:
         sys.stderr.write(f"Cannot lock: {e}\n")
         sys.exit(1)

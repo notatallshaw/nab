@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 import tomli_w
 
+from nab_index.atomic import atomic_write_text
+
 from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.pylock import (
@@ -77,7 +79,8 @@ def write_lock(
 
     Returns the TOML text.  When ``output_path`` is provided, also
     writes it there; the caller chooses the path (PEP 751 does not
-    mandate one).
+    mandate one).  The write is staged and renamed into place, so a
+    failed write leaves any existing file intact.
 
     Directory, wheel and sdist paths are written relative to
     ``output_path``'s parent so the lockfile stays portable between
@@ -87,7 +90,7 @@ def write_lock(
     lock_dir = Path(output_path).parent if output_path is not None else None
     text = render_lock(lock_input, lock_dir=lock_dir)
     if output_path is not None:
-        Path(output_path).write_text(text, encoding="utf-8")
+        atomic_write_text(Path(output_path), text)
     return text
 
 

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
+from nab_index.atomic import atomic_write_text
+
 from .builder import require_artifact_hashes
 
 if TYPE_CHECKING:
@@ -93,7 +95,7 @@ def _render_requirements(
         }
         text = "\n".join(_render_pins(pins, with_hashes=with_hashes)) + "\n"
     if output_path is not None:
-        Path(output_path).write_text(text, encoding="utf-8")
+        atomic_write_text(Path(output_path), text)
     return text
 
 
