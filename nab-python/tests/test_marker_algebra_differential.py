@@ -40,6 +40,8 @@ PFV_GRID = [
     "3.14.2",
     "3.15.0",
     "1!3.9",
+    "1!4.0",
+    "2!0",
     "3.9.7+local",
 ]
 SYS_GRID = ["linux", "win32", "darwin"]
@@ -93,6 +95,8 @@ VERSION_ATOMS = [
     'python_full_version < "3.14.0rc2"',
     'python_full_version > "3.9.0b2"',
     'python_version > "3.14.0rc1"',
+    'python_full_version > "1!3.9"',
+    'python_full_version ~= "1!3.9"',
 ]
 STRING_ATOMS = [
     'sys_platform == "linux"',

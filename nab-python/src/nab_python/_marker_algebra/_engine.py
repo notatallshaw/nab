@@ -317,19 +317,36 @@ def _negate(node: Formula) -> Formula:
     raise RuntimeError(msg)  # pragma: no cover
 
 
+def _quote(literal: str) -> str:
+    """Spell a literal as a marker string, picking the quote the grammar allows.
+
+    A PEP 508 literal is delimited by one quote style and cannot contain that
+    style, so a literal carrying a double-quote is spelled with single quotes.
+    """
+    if '"' not in literal:
+        return f'"{literal}"'
+    if "'" not in literal:
+        return f"'{literal}'"
+    # A literal carrying both quote styles has no marker spelling. Marker
+    # literals only ever arrive through the exclusive-quote grammar, so a value
+    # holding both is unreachable from any parsed input.
+    msg = f"literal {literal!r} has no marker-string quoting"  # pragma: no cover
+    raise UnserializableSet(msg)  # pragma: no cover
+
+
 def _render_atom(atom: Atom) -> str:
     if atom.kind == AXIS_SET:
         if atom.origin == "extra":
             op = "==" if atom.positive else "!="
-            return f'extra {op} "{atom.literal}"'
+            return f"extra {op} {_quote(atom.literal)}"
         op = "in" if atom.positive else "not in"
-        return f'"{atom.literal}" {op} {atom.origin}'
+        return f"{_quote(atom.literal)} {op} {atom.origin}"
     if atom.kind == AXIS_CONTAINS:
         op = "in" if atom.positive else "not in"
-        return f'"{atom.literal}" {op} {atom.variable}'
+        return f"{_quote(atom.literal)} {op} {atom.variable}"
     if atom.swapped:
-        return f'"{atom.literal}" {atom.op} {atom.origin}'
-    return f'{atom.origin} {atom.op} "{atom.literal}"'
+        return f"{_quote(atom.literal)} {atom.op} {atom.origin}"
+    return f"{atom.origin} {atom.op} {_quote(atom.literal)}"
 
 
 def _paren(node: Formula) -> str:

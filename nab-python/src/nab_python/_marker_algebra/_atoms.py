@@ -424,11 +424,20 @@ def _version_neighbours(text: str) -> list[str]:
         return []
     release = version.release
     out = [base]
+    epoch = version.epoch
+    # Bumps must land in the literal's own epoch: the release bump of 1!3.9 is
+    # 1!3.10, not 3.10, which sorts below the literal and would leave the whole
+    # band above it (1!4.0, 1!5, 2!0) without a representative cell.
+    prefix = f"{epoch}!" if epoch else ""
     major = release[0]
-    bumps = [".".join(str(x) for x in (*release[:-1], release[-1] + 1))]
+    bumps = [prefix + ".".join(str(x) for x in (*release[:-1], release[-1] + 1))]
     if len(release) > 1:
-        bumps.append(f"{major}.{release[1] + 1}")
-    bumps.append(f"{major + 1}")
+        bumps.append(f"{prefix}{major}.{release[1] + 1}")
+    bumps.append(f"{prefix}{major + 1}")
+    if epoch:
+        # The region above a non-zero-epoch literal continues into the next epoch
+        # (2!0 outranks every 1!* release), which no same-epoch bump reaches.
+        bumps.append(f"{epoch + 1}!0")
     for bump in bumps:
         out.append(bump)
         out.append(f"{bump}.dev0")

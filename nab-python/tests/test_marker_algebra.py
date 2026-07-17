@@ -324,6 +324,20 @@ def test_epoch_version_decisions_are_sound() -> None:
     ).is_empty()
 
 
+def test_epoch_literal_pure_axis_decisions_are_sound() -> None:
+    # A pure python_full_version axis carrying an epoch literal: the neighbour
+    # bumps must sit in the literal's own epoch, or the band above it (1!4.0,
+    # 2!0) loses its representative and the decisions turn silently unsound.
+    above = ms('python_full_version > "1!3.9"')
+    band = ms('python_full_version ~= "1!3.9"')
+    at_or_above = ms('python_full_version >= "1!3.9"')
+    assert not above.implies(band)
+    assert not at_or_above.equivalent(band)
+    residue = above & band.complement()
+    assert not residue.is_empty()
+    assert residue.evaluate({"python_full_version": "2!0"})
+
+
 # --------------------------------------------------------------- restrict
 
 
@@ -482,6 +496,23 @@ def test_to_marker_string_raises_for_empty() -> None:
     ],
 )
 def test_round_trip_is_equivalent(text: str) -> None:
+    marker = ms(text)
+    result = marker.to_marker_string()
+    assert result is not None
+    assert marker.equivalent(ms(result))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "'a\"b' == sys_platform",
+        "'a\"b' in sys_platform",
+        '"a\'b" == sys_platform',
+    ],
+)
+def test_embedded_quote_literal_round_trips(text: str) -> None:
+    # A literal carrying a quote must be spelled with the other quote style, not
+    # emit a malformed string that leaks InvalidMarker from the re-parse guard.
     marker = ms(text)
     result = marker.to_marker_string()
     assert result is not None
