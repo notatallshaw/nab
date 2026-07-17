@@ -16,7 +16,7 @@ import zlib
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from packaging.utils import (
     InvalidSdistFilename,
@@ -204,8 +204,15 @@ class WheelFile:
 
     @property
     def metadata_url(self) -> str | None:
-        """Return the PEP 658/714 metadata URL, or None when unsupported."""
-        return self.url + ".metadata" if self.has_metadata else None
+        """Return the PEP 658/714 metadata URL, or None when unsupported.
+
+        The suffix goes on the path, so a PEP 503 hash fragment is dropped.
+        """
+        if not self.has_metadata:
+            return None
+
+        parts = urlsplit(self.url)
+        return urlunsplit(parts._replace(path=parts.path + ".metadata", fragment=""))
 
 
 @dataclass(frozen=True, slots=True)
