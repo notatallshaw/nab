@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import ssl
 from typing import TYPE_CHECKING, Any
 
@@ -10,7 +11,7 @@ import httpx
 import truststore
 
 from .retry import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES, next_delay
-from .transport import HttpError
+from .transport import ContentDecodingError, HttpError, decode_body
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -21,16 +22,19 @@ __all__ = [
 
 
 class _HttpxResponse:
-    """Adapter that converts httpx's status error to the transport's HttpError.
+    """Adapter that gives an httpx response the HttpResponse shape.
 
-    httpx.Response already matches the HttpResponse protocol; only
-    raise_for_status needs translating so callers see one error type.
+    The body is fetched undecoded and decoded by the transport (see
+    :func:`~nab_index.transport.decode_body`), so it is carried here
+    rather than read from the httpx response. raise_for_status is
+    translated so callers see one error type.
     """
 
-    __slots__ = ("_response",)
+    __slots__ = ("_content", "_response")
 
-    def __init__(self, response: httpx.Response) -> None:
+    def __init__(self, response: httpx.Response, content: bytes) -> None:
         self._response = response
+        self._content = content
 
     @property
     def status_code(self) -> int:
@@ -42,14 +46,14 @@ class _HttpxResponse:
 
     @property
     def content(self) -> bytes:
-        return self._response.content
+        return self._content
 
     @property
     def text(self) -> str:
-        return self._response.text
+        return self._content.decode("utf-8")
 
     def json(self) -> Any:
-        return self._response.json()
+        return _json.loads(self._content)
 
     def raise_for_status(self) -> None:
         try:
@@ -81,19 +85,30 @@ class HttpxAsyncTransport:
         """Send a GET request, retrying a blip.
 
         httpx has no retry machinery beyond reconnecting, so the shared policy
-        runs in this loop rather than in the client.
+        runs in this loop rather than in the client. The body is read raw and
+        decoded with ``decode_body``, so a truncated gzip stream is retried
+        instead of returned as if complete. Only gzip is advertised, the one
+        coding ``decode_body`` checks.
         """
+        request_headers = {"Accept-Encoding": "gzip"}
+        if headers is not None:
+            request_headers.update(headers)
+
         failures = 0
 
         while True:
             try:
-                response = await self._client.get(url, headers=headers)
+                async with self._client.stream(
+                    "GET", url, headers=request_headers
+                ) as response:
+                    raw = b"".join([part async for part in response.aiter_raw()])
+                content = decode_body(raw, response.headers.get("Content-Encoding"))
             except (httpx.TooManyRedirects, httpx.UnsupportedProtocol) as exc:
                 # A redirect loop and an unsupported scheme are persistent, so
                 # they are raised rather than retried.
                 msg = f"GET {url} failed: {exc}"
                 raise HttpError(msg) from exc
-            except httpx.HTTPError as exc:
+            except (httpx.HTTPError, ContentDecodingError) as exc:
                 failures += 1
                 if failures > MAX_RETRIES:
                     msg = f"GET {url} failed: {exc}"
@@ -107,12 +122,12 @@ class HttpxAsyncTransport:
                 raise HttpError(msg) from exc
             else:
                 if response.status_code not in RETRY_STATUSES:
-                    return _HttpxResponse(response)
+                    return _HttpxResponse(response, content)
                 failures += 1
                 # Out of budget: hand back the status the index served, which is
                 # what the urllib3 backend does with raise_on_status=False.
                 if failures > MAX_RETRIES:
-                    return _HttpxResponse(response)
+                    return _HttpxResponse(response, content)
                 delay = next_delay(failures, response.headers.get("Retry-After"))
 
             await asyncio.sleep(delay)

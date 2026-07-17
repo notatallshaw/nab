@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import io
 import json
 import ssl
@@ -29,7 +30,7 @@ from nab_index.retry import (
     RETRY_STATUSES,
     next_delay,
 )
-from nab_index.transport import HttpError
+from nab_index.transport import ContentDecodingError, HttpError, decode_body
 from nab_index.urllib3_async_transport import (
     Urllib3AsyncTransport,
     _SSLContext,
@@ -48,6 +49,12 @@ LISTING_JSON = {
         },
     ],
 }
+
+LISTING_BODY = b'{"files": []}'
+GZIP_BODY = gzip.compress(LISTING_BODY)
+# Cut after the 10-byte gzip header but before the trailer: a mid-transfer
+# connection drop whose Content-Length matches the bytes that did arrive.
+TRUNCATED_GZIP_BODY = GZIP_BODY[: len(GZIP_BODY) // 2]
 
 
 class _StubIndex(ThreadingHTTPServer):
@@ -94,6 +101,44 @@ def _stub_index(statuses: list[int]) -> Iterator[_StubIndex]:
         thread.join(timeout=5)
 
 
+class _GzipStubIndex(ThreadingHTTPServer):
+    """Loopback index that serves each queued gzip body once, then GZIP_BODY."""
+
+    bodies: list[bytes]
+    seen: list[str]
+
+
+class _GzipStubIndexHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        assert isinstance(self.server, _GzipStubIndex)
+        self.server.seen.append(self.path)
+        body = self.server.bodies.pop(0) if self.server.bodies else GZIP_BODY
+
+        self.send_response(200)
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        """Drop the handler's stderr access log."""
+
+
+@contextmanager
+def _gzip_stub_index(bodies: list[bytes]) -> Iterator[_GzipStubIndex]:
+    server = _GzipStubIndex(("127.0.0.1", 0), _GzipStubIndexHandler)
+    server.bodies = list(bodies)
+    server.seen = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 @pytest.fixture
 def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     """Record the httpx transport's backoff sleeps instead of taking them."""
@@ -105,6 +150,17 @@ def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     monkeypatch.setattr(
         "nab_index.httpx_async_transport.asyncio.sleep",
         fake_sleep,
+    )
+    return delays
+
+
+@pytest.fixture
+def thread_slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record the urllib3 transport's truncation-retry sleeps instead of taking them."""
+    delays: list[float] = []
+    monkeypatch.setattr(
+        "nab_index.urllib3_async_transport.time.sleep",
+        delays.append,
     )
     return delays
 
@@ -176,6 +232,42 @@ def _urllib3_response(status: int, retry_after: str | None) -> urllib3.BaseHTTPR
     response.status = status
     response.headers = {} if retry_after is None else {"Retry-After": retry_after}
     return response
+
+
+class TestDecodeBody:
+    """The body decoding both transports share."""
+
+    def test_no_encoding_passes_through(self) -> None:
+        assert decode_body(LISTING_BODY, None) == LISTING_BODY
+
+    def test_identity_passes_through(self) -> None:
+        assert decode_body(LISTING_BODY, "identity") == LISTING_BODY
+
+    def test_unadvertised_coding_passes_through(self) -> None:
+        """Only gzip is decoded; the transports never advertise anything else."""
+        assert decode_body(LISTING_BODY, "br") == LISTING_BODY
+
+    def test_gzip_decodes(self) -> None:
+        assert decode_body(GZIP_BODY, "gzip") == LISTING_BODY
+
+    def test_gzip_value_is_case_insensitive(self) -> None:
+        assert decode_body(GZIP_BODY, " GZip ") == LISTING_BODY
+
+    def test_multi_member_gzip_decodes(self) -> None:
+        body = GZIP_BODY + gzip.compress(b" and more")
+        assert decode_body(body, "gzip") == LISTING_BODY + b" and more"
+
+    def test_empty_gzip_body_passes_through(self) -> None:
+        """A bodiless response (a 304) may still carry Content-Encoding."""
+        assert decode_body(b"", "gzip") == b""
+
+    def test_truncated_gzip_raises(self) -> None:
+        with pytest.raises(ContentDecodingError, match="truncated or corrupt"):
+            decode_body(TRUNCATED_GZIP_BODY, "gzip")
+
+    def test_corrupt_gzip_raises(self) -> None:
+        with pytest.raises(ContentDecodingError, match="truncated or corrupt"):
+            decode_body(b"not gzip at all", "gzip")
 
 
 class TestFetchCoordinatorTransport:
@@ -341,12 +433,12 @@ class TestHttpxAsyncTransport:
         async def go() -> None:
             transport = HttpxAsyncTransport(http2=False)
 
-            async def boom(*args: object, **kwargs: object) -> object:
+            def boom(*args: object, **kwargs: object) -> object:
                 nonlocal attempts
                 attempts += 1
                 raise raised
 
-            monkeypatch.setattr(transport._client, "get", boom)
+            monkeypatch.setattr(transport._client, "stream", boom)
             try:
                 await transport.get("https://bad.example/simple/pkg/")
             finally:
@@ -507,14 +599,14 @@ class TestHttpxAsyncTransport:
 
         async def go() -> None:
             transport = HttpxAsyncTransport(http2=False)
-            real_get = transport._client.get
+            real_stream = transport._client.stream
 
-            async def counting_get(*args: object, **kwargs: object) -> object:
+            def counting_stream(*args: object, **kwargs: object) -> object:
                 nonlocal attempts
                 attempts += 1
-                return await real_get(*args, **kwargs)
+                return real_stream(*args, **kwargs)
 
-            monkeypatch.setattr(transport._client, "get", counting_get)
+            monkeypatch.setattr(transport._client, "stream", counting_stream)
             try:
                 await transport.get(url)
             finally:
@@ -543,12 +635,120 @@ class TestHttpxAsyncTransport:
         assert route.call_count == 1
         assert slept == []
 
+    @respx.mock
+    def test_get_decodes_a_complete_gzip_body(self) -> None:
+        respx.get("https://example.com/pkg").mock(
+            return_value=httpx.Response(
+                200, headers={"Content-Encoding": "gzip"}, content=GZIP_BODY
+            )
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        resp = asyncio.run(go())
+        assert resp.content == LISTING_BODY
+        assert resp.text == LISTING_BODY.decode()
+        assert resp.json() == {"files": []}
+
+    @respx.mock
+    def test_get_retries_a_truncated_gzip_body(self, slept: list[float]) -> None:
+        """A gzip body cut before its trailer is retried like a dropped connection."""
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    headers={"Content-Encoding": "gzip"},
+                    content=TRUNCATED_GZIP_BODY,
+                ),
+                httpx.Response(
+                    200, headers={"Content-Encoding": "gzip"}, content=GZIP_BODY
+                ),
+            ]
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        resp = asyncio.run(go())
+        assert resp.status_code == 200
+        assert resp.content == LISTING_BODY
+        assert route.call_count == 2
+        assert slept == [0.0]
+
+    @respx.mock
+    def test_get_gives_up_on_a_persistent_truncated_gzip_body(
+        self, slept: list[float]
+    ) -> None:
+        """Truncation retries stop after MAX_RETRIES and raise HttpError."""
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    headers={"Content-Encoding": "gzip"},
+                    content=TRUNCATED_GZIP_BODY,
+                )
+            ]
+            * (MAX_RETRIES + 1)
+        )
+
+        async def go() -> None:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        with pytest.raises(HttpError, match="GET https://example.com/pkg failed"):
+            asyncio.run(go())
+        assert route.call_count == MAX_RETRIES + 1
+        assert slept == [0.0, 0.5, 1.0]
+
+    @respx.mock
+    def test_get_requests_gzip_without_caller_headers(self) -> None:
+        route = respx.get("https://example.com/").mock(return_value=httpx.Response(200))
+
+        async def go() -> None:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                await transport.get("https://example.com/")
+            finally:
+                await transport.aclose()
+
+        asyncio.run(go())
+        assert route.calls[0].request.headers["Accept-Encoding"] == "gzip"
+
+    @respx.mock
+    def test_get_lets_caller_override_accept_encoding(self) -> None:
+        route = respx.get("https://example.com/").mock(return_value=httpx.Response(200))
+
+        async def go() -> None:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                await transport.get(
+                    "https://example.com/", headers={"Accept-Encoding": "identity"}
+                )
+            finally:
+                await transport.aclose()
+
+        asyncio.run(go())
+        assert route.calls[0].request.headers["Accept-Encoding"] == "identity"
+
 
 class TestUrllib3AsyncTransport:
     def _fake_pool(self, body: bytes, status: int = 200) -> MagicMock:
         fake_response = MagicMock(spec=urllib3.BaseHTTPResponse)
         fake_response.data = body
         fake_response.status = status
+        fake_response.headers = urllib3.HTTPHeaderDict()
         fake_response.geturl.return_value = "https://example.com/"
         pool = MagicMock(spec=urllib3.PoolManager)
         pool.request.return_value = fake_response
@@ -581,6 +781,7 @@ class TestUrllib3AsyncTransport:
             headers={"Accept-Encoding": "gzip", "k": "v"},
             timeout=5.0,
             retries=GET_RETRY,
+            decode_content=False,
         )
         pool.clear.assert_called_once()
 
@@ -632,6 +833,7 @@ class TestUrllib3AsyncTransport:
             headers={"Accept-Encoding": "gzip"},
             timeout=5.0,
             retries=GET_RETRY,
+            decode_content=False,
         )
 
     def test_get_lets_caller_override_accept_encoding(
@@ -660,6 +862,7 @@ class TestUrllib3AsyncTransport:
             headers={"Accept-Encoding": "identity"},
             timeout=5.0,
             retries=GET_RETRY,
+            decode_content=False,
         )
 
     def test_get_applies_bounded_default_timeout(
@@ -832,41 +1035,91 @@ class TestUrllib3AsyncTransport:
             assert asyncio.run(go()).status_code == 404
             assert len(index.seen) == 1
 
+    def test_get_decodes_a_complete_gzip_body(self) -> None:
+        with _gzip_stub_index([]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            resp.raise_for_status()
+            assert resp.content == LISTING_BODY
+            assert len(index.seen) == 1
+
+    def test_get_retries_a_truncated_gzip_body(self, thread_slept: list[float]) -> None:
+        """A gzip body cut before its trailer is retried like a dropped connection."""
+        with _gzip_stub_index([TRUNCATED_GZIP_BODY]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            resp.raise_for_status()
+            assert resp.status_code == 200
+            assert resp.content == LISTING_BODY
+            assert len(index.seen) == 2
+            assert thread_slept == [0.0]
+
+    def test_get_gives_up_on_a_persistent_truncated_gzip_body(
+        self, thread_slept: list[float]
+    ) -> None:
+        """Truncation retries stop after MAX_RETRIES and raise HttpError."""
+        with _gzip_stub_index([TRUNCATED_GZIP_BODY] * (MAX_RETRIES + 1)) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> None:
+                transport = Urllib3AsyncTransport()
+                try:
+                    await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            with pytest.raises(HttpError, match=f"GET {url} failed"):
+                asyncio.run(go())
+            assert len(index.seen) == MAX_RETRIES + 1
+            assert thread_slept == [0.0, 0.5, 1.0]
+
     def test_response_json(self) -> None:
         fake = MagicMock(spec=urllib3.BaseHTTPResponse)
-        fake.data = json.dumps({"a": 1}).encode()
         fake.status = 200
-        assert _Urllib3Response(fake).json() == {"a": 1}
+        body = json.dumps({"a": 1}).encode()
+        assert _Urllib3Response(fake, body).json() == {"a": 1}
 
     def test_response_raise_for_status(self) -> None:
         fake = MagicMock(spec=urllib3.BaseHTTPResponse)
-        fake.data = b""
         fake.status = 404
         fake.geturl.return_value = "https://example.com/missing"
         with pytest.raises(HttpError, match="404"):
-            _Urllib3Response(fake).raise_for_status()
+            _Urllib3Response(fake, b"").raise_for_status()
 
     def test_response_raise_for_status_no_url(self) -> None:
         """raise_for_status falls back when geturl returns None."""
         fake = MagicMock(spec=urllib3.BaseHTTPResponse)
-        fake.data = b""
         fake.status = 500
         fake.geturl.return_value = None
         with pytest.raises(HttpError, match="<unknown>"):
-            _Urllib3Response(fake).raise_for_status()
+            _Urllib3Response(fake, b"").raise_for_status()
 
     def test_response_raise_for_status_ok(self) -> None:
         fake = MagicMock(spec=urllib3.BaseHTTPResponse)
-        fake.data = b""
         fake.status = 200
-        _Urllib3Response(fake).raise_for_status()  # no exception
+        _Urllib3Response(fake, b"").raise_for_status()  # no exception
 
     def test_response_status_code_and_headers(self) -> None:
         fake = MagicMock(spec=urllib3.BaseHTTPResponse)
-        fake.data = b""
         fake.status = 304
         fake.headers = {"etag": "abc"}
-        adapter = _Urllib3Response(fake)
+        adapter = _Urllib3Response(fake, b"")
         assert adapter.status_code == 304
         assert adapter.headers["etag"] == "abc"
 
