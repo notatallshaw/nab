@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar, cast
@@ -4102,3 +4102,250 @@ class TestDependencyGraph:
         data = tomllib.loads(text)
         by_name = {p["name"]: p for p in data["packages"]}
         assert by_name["foo"]["dependencies"] == [{"name": "bar"}, {"name": "baz"}]
+
+
+class TestMembershipGates:
+    """Only-an-extra / only-a-group packages carry a membership marker.
+
+    The lock declares its ``extras`` and ``dependency-groups``, and PEP
+    751 has an installer default to no extras and to ``default-groups``,
+    so every package the selection alone reaches has to say so in its
+    own ``packages.marker``.
+    """
+
+    @staticmethod
+    def _provider(
+        names: Sequence[str],
+        deps_cache: dict[tuple[str, Version], dict[str, object]] | None = None,
+        extra_deps_map: dict[tuple[str, Version], dict[str, dict[str, object]]]
+        | None = None,
+    ) -> _FakeProvider:
+        return _FakeProvider(
+            listings={name: [(Version("1.0"), _wheel_file(name))] for name in names},
+            deps_cache=deps_cache,
+            extra_deps_map=extra_deps_map,
+        )
+
+    def test_extra_only_package_and_its_transitive_dep_are_gated(self) -> None:
+        provider = self._provider(
+            ("core", "mytool", "subtool"),
+            deps_cache={
+                ("core", Version("1.0")): {},
+                ("mytool", Version("1.0")): dict.fromkeys(["subtool"]),
+                ("subtool", Version("1.0")): {},
+            },
+        )
+        lock = build_target_lock(
+            provider,
+            _HOST,
+            dict.fromkeys(("core", "mytool", "subtool"), Version("1.0")),
+            base_roots=frozenset({"core"}),
+            selector_roots={("extra", "cli"): frozenset({"mytool"})},
+        )
+        assert lock.package_gates == {
+            "mytool": (("extra", "cli"),),
+            "subtool": (("extra", "cli"),),
+        }
+
+    def test_group_only_package_gates_on_dependency_groups(self) -> None:
+        provider = self._provider(
+            ("core", "mydev"),
+            deps_cache={
+                ("core", Version("1.0")): {},
+                ("mydev", Version("1.0")): {},
+            },
+        )
+        lock = build_target_lock(
+            provider,
+            _HOST,
+            dict.fromkeys(("core", "mydev"), Version("1.0")),
+            base_roots=frozenset({"core"}),
+            selector_roots={("group", "dev"): frozenset({"mydev"})},
+        )
+        pylock = build_pylock(_lock_from(lock))
+        assert {
+            str(pkg.name): str(pkg.marker) if pkg.marker else None
+            for pkg in pylock.packages
+        } == {"core": None, "mydev": '"dev" in dependency_groups'}
+
+    def test_package_two_selectors_reach_disjoins_both(self) -> None:
+        """Reached by an extra and a group: either selection installs it."""
+        provider = self._provider(
+            ("shared",), deps_cache={("shared", Version("1.0")): {}}
+        )
+        lock = build_target_lock(
+            provider,
+            _HOST,
+            {"shared": Version("1.0")},
+            base_roots=frozenset(),
+            selector_roots={
+                ("extra", "cli"): frozenset({"shared"}),
+                ("group", "dev"): frozenset({"shared"}),
+            },
+        )
+        pylock = build_pylock(_lock_from(lock))
+        (package,) = pylock.packages
+        assert str(package.marker) == ('"cli" in extras or "dev" in dependency_groups')
+
+    def test_extras_proxy_gates_only_what_the_extra_adds(self) -> None:
+        """The project requires ``foo``; the extra requires ``foo[fancy]``.
+
+        ``foo`` itself installs unconditionally; only what ``fancy``
+        adds on top of it is gated.
+        """
+        provider = self._provider(
+            ("foo", "fancy-lib"),
+            deps_cache={
+                ("foo", Version("1.0")): {},
+                ("fancy-lib", Version("1.0")): {},
+            },
+            extra_deps_map={
+                ("foo", Version("1.0")): {"fancy": dict.fromkeys(["fancy-lib"])}
+            },
+        )
+        lock = build_target_lock(
+            provider,
+            _HOST,
+            dict.fromkeys(("foo", "fancy-lib"), Version("1.0")),
+            base_roots=frozenset({"foo"}),
+            selector_roots={("extra", "cli"): frozenset({"foo", "foo[fancy]"})},
+        )
+        assert lock.package_gates == {"fancy-lib": (("extra", "cli"),)}
+
+    def test_base_dependency_reached_through_a_cycle_is_not_gated(self) -> None:
+        """A dependency cycle in the base closure terminates the walk."""
+        provider = self._provider(
+            ("core", "loop", "mytool"),
+            deps_cache={
+                ("core", Version("1.0")): dict.fromkeys(["loop"]),
+                ("loop", Version("1.0")): dict.fromkeys(["core"]),
+                ("mytool", Version("1.0")): dict.fromkeys(["loop"]),
+            },
+        )
+        lock = build_target_lock(
+            provider,
+            _HOST,
+            dict.fromkeys(("core", "loop", "mytool"), Version("1.0")),
+            base_roots=frozenset({"core"}),
+            selector_roots={("extra", "cli"): frozenset({"mytool"})},
+        )
+        assert lock.package_gates == {"mytool": (("extra", "cli"),)}
+
+    def test_unpinned_dependency_is_skipped(self) -> None:
+        """A dep name the resolve did not pin cannot be gated."""
+        provider = self._provider(
+            ("mytool",),
+            deps_cache={("mytool", Version("1.0")): dict.fromkeys(["ghost"])},
+        )
+        lock = build_target_lock(
+            provider,
+            _HOST,
+            {"mytool": Version("1.0")},
+            base_roots=frozenset(),
+            selector_roots={("extra", "cli"): frozenset({"mytool"})},
+        )
+        assert set(lock.package_gates) == {"mytool"}
+
+    def test_no_selection_leaves_the_map_empty(self) -> None:
+        provider = self._provider(("core",), deps_cache={("core", Version("1.0")): {}})
+        lock = build_target_lock(
+            provider, _HOST, {"core": Version("1.0")}, base_roots=frozenset({"core"})
+        )
+        assert lock.package_gates == {}
+
+    def test_selector_roots_without_base_roots_are_refused(self) -> None:
+        """Omitting ``base_roots`` would gate the base packages too.
+
+        An empty ``base_roots`` is a project with no dependencies of its
+        own, so it cannot double as "the caller did not say".
+        """
+        provider = self._provider(("core",), deps_cache={("core", Version("1.0")): {}})
+        with pytest.raises(ValueError, match="need base_roots"):
+            build_target_lock(
+                provider,
+                _HOST,
+                {"core": Version("1.0")},
+                selector_roots={("extra", "cli"): frozenset({"core"})},
+            )
+
+    def test_gate_stands_alone_when_every_target_agrees(self) -> None:
+        """The selection, not the platform, is what selects the package."""
+        provider = self._provider(
+            ("core", "mytool"),
+            deps_cache={
+                ("core", Version("1.0")): {},
+                ("mytool", Version("1.0")): {},
+            },
+        )
+        pins = dict.fromkeys(("core", "mytool"), Version("1.0"))
+        roots: dict[tuple[str, str], frozenset[str]] = {
+            ("extra", "cli"): frozenset({"mytool"})
+        }
+        py310 = _target("3.10")
+        py311 = _target("3.11")
+        lock_input = LockInput(
+            targets={
+                t.label: build_target_lock(
+                    provider,
+                    t,
+                    pins,
+                    base_roots=frozenset({"core"}),
+                    selector_roots=roots,
+                )
+                for t in (py310, py311)
+            },
+            extras=("cli",),
+        )
+        pylock = build_pylock(lock_input)
+        assert {
+            str(pkg.name): str(pkg.marker) if pkg.marker else None
+            for pkg in pylock.packages
+        } == {"core": None, "mytool": '"cli" in extras'}
+
+    def test_target_specific_gate_keeps_its_environment_clause(self) -> None:
+        """Only one target's extra reaches the package, so the env stays.
+
+        The gate is joined by and onto that target's own marker, so an installer
+        on the other target leaves the package out however it selects.
+        """
+        provider = self._provider(
+            ("core", "mytool"),
+            deps_cache={
+                ("core", Version("1.0")): {},
+                ("mytool", Version("1.0")): {},
+            },
+        )
+        pins = dict.fromkeys(("core", "mytool"), Version("1.0"))
+        py310 = _target("3.10")
+        py311 = _target("3.11")
+        lock_input = LockInput(
+            targets={
+                py310.label: build_target_lock(
+                    provider,
+                    py310,
+                    pins,
+                    base_roots=frozenset({"core"}),
+                    selector_roots={("extra", "cli"): frozenset({"mytool"})},
+                ),
+                py311.label: build_target_lock(
+                    provider,
+                    py311,
+                    pins,
+                    base_roots=frozenset({"core", "mytool"}),
+                    selector_roots={("extra", "cli"): frozenset()},
+                ),
+            },
+            extras=("cli",),
+        )
+        pylock = build_pylock(lock_input)
+        markers = {
+            str(pkg.name): str(pkg.marker) if pkg.marker else None
+            for pkg in pylock.packages
+        }
+        assert markers["core"] is None
+        assert markers["mytool"] == (
+            '(python_version == "3.10" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64" and "cli" in extras)'
+            ' or (python_version == "3.11" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64")'
+        )

@@ -353,12 +353,23 @@ class TargetLock:
     its markers (see :attr:`~nab_python.target.ResolveTarget.marker_string`)
     rather than being handed a projection of them, so a lock entry and
     the environment it was resolved for cannot drift apart.
+
+    ``package_gates`` maps a package this target locked to the selected
+    extras and groups that reach it while the project's own dependencies
+    do not, as ``(kind, name)`` members.  The writer emits each one as a
+    ``'name' in extras`` / ``'name' in dependency_groups`` clause on that
+    package's marker, so a default install (no extras, the default
+    groups) leaves it out.  A package the project's dependencies reach is
+    absent from the map and stays unconditional.
     """
 
     target: ResolveTarget
     pins: Mapping[str, PinShape]
     dependencies: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     base_dependencies: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    package_gates: Mapping[str, tuple[tuple[str, str], ...]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass

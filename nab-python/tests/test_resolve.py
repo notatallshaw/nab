@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ import pytest
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.markers import Marker, default_environment
+from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
@@ -22,7 +24,7 @@ from nab_python.config import (
     ResolveMode,
     read_pyproject_config,
 )
-from nab_python.lockfile import LockInput, PinShape
+from nab_python.lockfile import LockInput, PinShape, build_pylock
 from nab_python.provider import (
     BuildPolicy,
     LocalSource,
@@ -3541,3 +3543,194 @@ class TestLockDeclaresItsEnvironment:
         assert not Marker(str(environment)).evaluate(
             {**_PY312_ENV, "python_full_version": "3.12.5"}
         )
+
+
+class TestExtraAndGroupMembershipMarkers:
+    """A selected extra or group gates the packages only it reaches.
+
+    End to end from ``pyproject.toml`` to the emitted lock.  PEP 751
+    defaults an install to no extras and to ``default-groups``, so a
+    package a selection alone pulls in has to carry ``'name' in extras``
+    / ``'name' in dependency_groups``.
+    """
+
+    _MEMBERS: ClassVar[dict[str, str]] = {
+        "core": '[project]\nname = "core"\nversion = "1.0"\n',
+        "mytool": '[project]\nname = "mytool"\nversion = "2.0"\n'
+        'dependencies = ["subtool"]\n',
+        "mydev": '[project]\nname = "mydev"\nversion = "3.0"\n',
+        "subtool": '[project]\nname = "subtool"\nversion = "4.0"\n',
+    }
+
+    _ROOT = (
+        '[project]\nname = "app"\nversion = "1.0"\ndependencies = ["core"]\n'
+        '[project.optional-dependencies]\ncli = ["mytool"]\n'
+        '[dependency-groups]\ndev = ["mydev"]\n'
+        + "".join(
+            f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
+            for name in ("core", "mytool", "mydev", "subtool")
+        )
+    )
+
+    @staticmethod
+    def _lock(
+        tmp_path: Path,
+        *,
+        extras: tuple[str, ...] = (),
+        groups: tuple[str, ...] = (),
+        root: str | None = None,
+        members: dict[str, str] | None = None,
+    ) -> Pylock:
+        (tmp_path / "pyproject.toml").write_text(
+            root if root is not None else TestExtraAndGroupMembershipMarkers._ROOT,
+            encoding="utf-8",
+        )
+        bodies = (
+            members
+            if members is not None
+            else TestExtraAndGroupMembershipMarkers._MEMBERS
+        )
+        for name, body in bodies.items():
+            member = tmp_path / name
+            member.mkdir()
+            (member / "pyproject.toml").write_text(body, encoding="utf-8")
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: make_coordinator([])
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            path = tmp_path / "pyproject.toml"
+            config = read_pyproject_config(path)
+            result = _resolved(
+                path,
+                _FAKE_TRANSPORT,
+                config=config,
+                extras=extras,
+                groups=groups,
+            )
+        pylock = build_pylock(
+            build_lock_input(
+                result,
+                config=config,
+                extras=extras,
+                dependency_groups=groups,
+            ),
+            lock_dir=tmp_path,
+        )
+        pylock.validate()
+        return pylock
+
+    @staticmethod
+    def _markers(pylock: Pylock) -> dict[str, str | None]:
+        return {
+            str(pkg.name): str(pkg.marker) if pkg.marker else None
+            for pkg in pylock.packages
+        }
+
+    @staticmethod
+    def _selected(pylock: Pylock, **kwargs: list[str]) -> set[str]:
+        return {str(pkg.name) for pkg, _ in pylock.select(**kwargs)}
+
+    def test_extra_only_package_carries_extras_membership(self, tmp_path: Path) -> None:
+        pylock = self._lock(tmp_path, extras=("cli",), groups=("dev",))
+
+        assert self._markers(pylock) == {
+            "core": None,
+            "mydev": '"dev" in dependency_groups',
+            "mytool": '"cli" in extras',
+            "subtool": '"cli" in extras',
+        }
+
+    def test_default_install_skips_extra_and_group_packages(
+        self, tmp_path: Path
+    ) -> None:
+        """The spec's default install context: no extras, no groups."""
+        pylock = self._lock(tmp_path, extras=("cli",), groups=("dev",))
+
+        assert self._selected(pylock) == {"core"}
+        assert self._selected(pylock, extras=["cli"]) == {"core", "mytool", "subtool"}
+        assert self._selected(pylock, dependency_groups=["dev"]) == {"core", "mydev"}
+        assert self._selected(pylock, extras=["cli"], dependency_groups=["dev"]) == {
+            "core",
+            "mydev",
+            "mytool",
+            "subtool",
+        }
+
+    def test_package_reached_by_base_and_extra_is_unconditional(
+        self, tmp_path: Path
+    ) -> None:
+        """An extra re-requiring a project dependency does not gate it."""
+        root = self._ROOT.replace('cli = ["mytool"]', 'cli = ["mytool", "core"]')
+        pylock = self._lock(tmp_path, extras=("cli",), root=root)
+
+        assert self._selected(pylock) == {"core"}
+
+    def test_default_group_still_installs_by_default(self, tmp_path: Path) -> None:
+        """A ``default-groups`` member gates on the group but installs by default.
+
+        PEP 751 seeds ``dependency_groups`` from ``default-groups`` when
+        the installer is given no group selection, so the membership
+        marker holds; an installer that explicitly selects no group
+        (``dependency_groups=[]``) drops it.
+        """
+        root = self._ROOT + '[tool.nab]\ndefault-groups = ["dev"]\n'
+        pylock = self._lock(tmp_path, root=root)
+
+        assert pylock.default_groups == ("dev",)
+        assert self._selected(pylock) == {"core", "mydev"}
+        assert self._selected(pylock, dependency_groups=[]) == {"core"}
+
+    def test_no_selection_leaves_every_package_unmarked(self, tmp_path: Path) -> None:
+        pylock = self._lock(tmp_path)
+
+        assert [pkg.marker for pkg in pylock.packages] == [None]
+        assert self._selected(pylock) == {"core"}
+
+    def test_marker_excluded_extra_requirement_is_not_locked(
+        self, tmp_path: Path
+    ) -> None:
+        """A requirement the target Python excludes is in no install context."""
+        root = self._ROOT.replace(
+            'cli = ["mytool"]',
+            'cli = ["mytool", "mydev ; python_version < \'3.9\'"]',
+        )
+        pylock = self._lock(tmp_path, extras=("cli",), root=root)
+
+        assert set(self._markers(pylock)) == {"core", "mytool", "subtool"}
+
+    def test_extra_requiring_an_extra_of_a_base_package(self, tmp_path: Path) -> None:
+        """``cli = ["core[fancy]"]``: core stays unconditional, fancy's dep is gated."""
+        root = self._ROOT.replace('cli = ["mytool"]', 'cli = ["core[fancy]"]')
+        pylock = self._lock(
+            tmp_path,
+            extras=("cli",),
+            root=root,
+            members={
+                "core": '[project]\nname = "core"\nversion = "1.0"\n'
+                '[project.optional-dependencies]\nfancy = ["subtool"]\n',
+                "subtool": TestExtraAndGroupMembershipMarkers._MEMBERS["subtool"],
+                "mytool": TestExtraAndGroupMembershipMarkers._MEMBERS["mytool"],
+                "mydev": TestExtraAndGroupMembershipMarkers._MEMBERS["mydev"],
+            },
+        )
+
+        assert self._markers(pylock) == {"core": None, "subtool": '"cli" in extras'}
+
+    def test_matrix_gates_the_extra_on_every_target(self, tmp_path: Path) -> None:
+        """A matrix folds the extra into every target, and gates it there too.
+
+        The gate is a property of the install context, not of the
+        platform, so an extra every target reaches the same way carries
+        the bare membership clause.
+        """
+        root = self._ROOT + (
+            '[tool.nab]\nmode = "universal"\n'
+            '[tool.nab.matrix]\npython = ">=3.11,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        pylock = self._lock(tmp_path, extras=("cli",), root=root)
+
+        assert self._markers(pylock) == {
+            "core": None,
+            "mytool": '"cli" in extras',
+            "subtool": '"cli" in extras',
+        }

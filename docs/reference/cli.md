@@ -52,9 +52,11 @@ Extras selection:
   array.
 * `--all-extras` selects every declared extra.
 
-Both `--groups` and `--extras` produce a single union resolve;
-the lockfile records the selection but does not emit per-package
-`'X' in extras` or `'X' in dependency_groups` markers.
+Both `--groups` and `--extras` produce a single union resolve. A
+package that only a selected extra or group reaches is emitted with
+a `'X' in extras` or `'X' in dependency_groups` marker, so an
+installer given neither leaves it out; see
+[Lockfiles](lockfile.md).
 
 `--output` defaults to `pylock.toml` for `pylock` and
 `requirements.txt` for the two requirements formats. Pass

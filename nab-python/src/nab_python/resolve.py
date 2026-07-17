@@ -91,6 +91,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "InstallContexts",
     "ResolveFork",
     "ResolveResult",
     "TargetResult",
@@ -108,6 +109,27 @@ EnvSignature = tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
+class InstallContexts:
+    """A fork's requirements, split back into the contexts PEP 751 installs.
+
+    ``project`` is the project's own dependencies, and ``selectors``
+    holds one requirement list per active extra and group, keyed by its
+    ``(kind, name)`` member.  The lock writer walks the resolved graph
+    from each of them, so a package only a selection reaches is gated on
+    it (see :attr:`~nab_python.lockfile.TargetLock.package_gates`) and a
+    default install leaves it out.
+
+    A member of the fork's own ``selection`` is not a selector here: its
+    clause is already on every pin of the fork.
+    """
+
+    project: tuple[Requirement, ...] = ()
+    selectors: Mapping[tuple[str, str], tuple[Requirement, ...]] = field(
+        default_factory=dict
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ResolveFork:
     """A conflict fork's resolver input: a selection and its requirements.
 
@@ -117,10 +139,16 @@ class ResolveFork:
     selection activates).  Each fork runs against every target, with its
     ``selection`` stamped onto each so the pins land under a distinct
     label and a membership-gated marker.
+
+    ``contexts`` is that same requirement list split into the install
+    contexts the lock has to distinguish; ``None`` for a caller that
+    resolves a bare requirement list and has no project to split it
+    into, which leaves every package unconditional.
     """
 
     selection: tuple[tuple[str, str], ...]
     requirements: tuple[Requirement, ...]
+    contexts: InstallContexts | None = None
 
 
 @dataclass
@@ -333,7 +361,12 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bar
             t.with_selection(fork.selection) if fork.selection else t for t in targets
         ]
         pass_results = _run_pass(
-            fork_targets, fork.requirements, constraints, settings, accumulated
+            fork_targets,
+            fork.requirements,
+            constraints,
+            settings,
+            accumulated,
+            fork.contexts,
         )
         results.extend(pass_results)
         accumulated = _threaded_preferences(
@@ -533,18 +566,22 @@ def _run_pass(
     constraints: Sequence[Requirement],
     settings: _EngineSettings,
     preferences: Mapping[str, Version],
+    contexts: InstallContexts | None = None,
 ) -> list[TargetResult]:
     """Resolve every target in ``targets`` once, in order.
 
     With alignment on, each target's pins are threaded forward as
     preferences for the next, so the pins stay aligned across targets
     wherever the environments admit it.
+
+    ``contexts`` splits ``requirements`` into the install contexts the
+    lock gates its packages on; see :class:`InstallContexts`.
     """
     results: list[TargetResult] = []
     accumulated = dict(preferences)
     for target in targets:
         tr = _resolve_one_target(
-            target, requirements, constraints, settings, accumulated
+            target, requirements, constraints, settings, accumulated, contexts
         )
         results.append(tr)
         accumulated = _threaded_preferences(accumulated, [tr], align=settings.align)
@@ -557,6 +594,7 @@ def _resolve_one_target(
     constraints: Sequence[Requirement],
     settings: _EngineSettings,
     preferences: Mapping[str, Version],
+    contexts: InstallContexts | None = None,
 ) -> TargetResult:
     """Run one single-environment resolve for ``target``."""
     config = settings.config
@@ -623,6 +661,7 @@ def _resolve_one_target(
             **_target_stats(resolver, provider),
         )
     elapsed = time.monotonic() - start
+    base_roots, selector_roots = _install_context_roots(contexts, environment)
     return TargetResult(
         target=target,
         success=True,
@@ -634,10 +673,54 @@ def _resolve_one_target(
             pins,
             indexes=settings.coordinator.indexes,
             resolved_keys=raw,
+            base_roots=base_roots,
+            selector_roots=selector_roots,
         ),
         wall_time=elapsed,
         **_target_stats(resolver, provider),
     )
+
+
+def _install_context_roots(
+    contexts: InstallContexts | None, environment: Mapping[str, str]
+) -> tuple[frozenset[str] | None, dict[tuple[str, str], frozenset[str]] | None]:
+    """Return the lock writer's install-context roots for one target.
+
+    ``(None, None)`` when there is no selection to attribute packages to,
+    which leaves every package unconditional.  A requirement whose marker
+    this target's environment fails is dropped, exactly as the resolve
+    dropped it, so it gates nothing.
+    """
+    if contexts is None or not contexts.selectors:
+        return None, None
+    return (
+        _root_keys(contexts.project, environment),
+        {
+            member: _root_keys(requirements, environment)
+            for member, requirements in contexts.selectors.items()
+        },
+    )
+
+
+def _root_keys(
+    requirements: Sequence[Requirement], environment: Mapping[str, str]
+) -> frozenset[str]:
+    """Return the resolver keys ``requirements`` names directly.
+
+    The same shape :func:`_build_resolver_inputs` feeds the resolver: a
+    canonical name per requirement, plus a ``name[extra]`` proxy key per
+    requested extra, with marker-excluded requirements dropped.
+    """
+    keys: set[str] = set()
+    for req in requirements:
+        if req.marker is not None and not dependency_marker_holds(
+            req.marker, environment
+        ):
+            continue
+        name = str(canonicalize_name(req.name))
+        keys.add(name)
+        keys.update(join_extra(name, extra) for extra in req.extras)
+    return frozenset(keys)
 
 
 def _consulted_markers(
@@ -735,6 +818,10 @@ def _plan_forks(
             ResolveFork(
                 selection=fork.selection,
                 requirements=tuple(_fork_requirements(path, tables, fork)),
+                contexts=InstallContexts(
+                    project=tuple(tables.dependencies),
+                    selectors=_selector_requirements(path, tables, fork),
+                ),
             )
         )
 
@@ -745,6 +832,34 @@ def _plan_forks(
     if len(plan) > 1:
         base_requirements = _fork_requirements(path, tables, _base_fork(plan[0]))
     return forks, base_requirements
+
+
+def _selector_requirements(
+    path: Path, tables: _ProjectTables, fork: ConflictFork
+) -> dict[tuple[str, str], tuple[Requirement, ...]]:
+    """Split a fork's selection into one requirement list per member.
+
+    The lock writer walks the resolved graph from each of them to gate
+    the packages only that extra or group reaches.  A member of the
+    fork's own ``selection`` is left out: every pin of the fork already
+    carries its clause, so gating it again would only repeat it.
+
+    A group named in ``default-groups`` is here like any other: PEP 751
+    seeds ``dependency_groups`` from ``default-groups`` when the
+    installer selects none, so the gate still holds for a default
+    install.
+    """
+    chosen = set(fork.selection)
+    selectors: dict[tuple[str, str], tuple[Requirement, ...]] = {}
+    for extra in fork.active_extras:
+        member = (ConflictKind.EXTRA.value, str(canonicalize_name(extra)))
+        if member not in chosen:
+            selectors[member] = tuple(_extra_requirements(tables, [extra], path))
+    for group in fork.active_groups:
+        member = (ConflictKind.GROUP.value, str(canonicalize_name(group)))
+        if member not in chosen:
+            selectors[member] = tuple(_group_requirements(tables.groups, [group], path))
+    return selectors
 
 
 def _fork_requirements(
