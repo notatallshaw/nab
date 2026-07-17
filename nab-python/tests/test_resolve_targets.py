@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nab_index.client import WheelFile
+from nab_index.client import SdistFile, WheelFile
 from nab_python import resolve as resolve_mod
 from nab_python._provider import listing as listing_mod
 from nab_python._testing.coordinator_fake import make_coordinator
@@ -38,7 +38,6 @@ from nab_python.lockfile import (
     IndexPin,
     LockInput,
     MissingHashError,
-    MissingSdistError,
     TargetLock,
     build_pylock,
     write_requirements_with_hashes,
@@ -94,6 +93,17 @@ def _make_wheel(version: str, *, package: str) -> WheelFile:
         has_metadata=True,
         upload_time=None,
         hashes=(("sha256", "a" * 64),),
+    )
+
+
+def _make_sdist(version: str, *, package: str) -> SdistFile:
+    return SdistFile(
+        filename=f"{package}-{version}.tar.gz",
+        url=f"https://example.com/{package}-{version}.tar.gz",
+        version=version,
+        requires_python=None,
+        upload_time=None,
+        hashes=(("sha256", "b" * 64),),
     )
 
 
@@ -1105,19 +1115,52 @@ class TestResolveOneTarget:
         with pytest.raises(MissingHashError, match="no acceptable hash"):
             write_requirements_with_hashes(lock_input)
 
-    def test_sdist_install_without_sdist_raises(self) -> None:
-        """A wheel-only version under sdist-install fails the resolve.
+    def test_sdist_install_wheel_only_version_not_a_candidate(self) -> None:
+        """A wheel-only version under sdist-install is never a candidate.
 
-        The pin is the one the lock cannot record, so the refusal comes
-        from the lock builder and propagates out rather than landing on
-        the target as a resolution failure.
+        pkg 1.0 publishes only a wheel, so under sdist-install it has no
+        installable source and drops out of the listing.  With nothing
+        left to try the target fails with a no-versions ResolutionError,
+        not a post-resolution MissingSdistError.
         """
         coordinator = _make_coordinator({"pkg": [_make_wheel("1.0", package="pkg")]})
         settings = _settings(
             coordinator, _no_build(dist_policy=DistPolicy.SDIST_INSTALL)
         )
-        with pytest.raises(MissingSdistError, match="pkg==1.0 has no sdist"):
-            _resolve_one_target(_linux_311(), _reqs("pkg"), (), settings, {})
+        tr = _resolve_one_target(_linux_311(), _reqs("pkg"), (), settings, {})
+        assert not tr.success
+        assert isinstance(tr.error, ResolutionError)
+        assert tr.pins == {}
+
+    def test_sdist_install_yields_to_older_sdist_version(self) -> None:
+        """A wheel-only newest version yields to an older sdist release.
+
+        foo 2.0 publishes only a wheel, so under sdist-install it has no
+        source to install; foo 1.0 ships a wheel and an sdist.  The
+        resolve pins 1.0 and locks its sdist rather than failing on the
+        wheel-only 2.0.
+        """
+        coordinator = make_coordinator(
+            listings={
+                "foo": [
+                    _make_wheel("2.0", package="foo"),
+                    _make_wheel("1.0", package="foo"),
+                    _make_sdist("1.0", package="foo"),
+                ]
+            },
+            auto_metadata=True,
+        )
+        settings = _settings(
+            coordinator, _no_build(dist_policy=DistPolicy.SDIST_INSTALL)
+        )
+        tr = _resolve_one_target(_linux_311(), _reqs("foo"), (), settings, {})
+        assert tr.success
+        assert tr.pins == {"foo": Version("1.0")}
+        assert tr.lock is not None
+        pin = tr.lock.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels == ()
+        assert pin.sdist is not None
 
 
 class TestVcsConfigPlumbing:
