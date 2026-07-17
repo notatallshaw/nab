@@ -1789,8 +1789,8 @@ class Provider:
                 (cand, blocker_pkg, pos_range)
             ].union
             out.append(
-                f"requires {blocker_pkg} in {dep_range}"
-                f" but solution has it in {pos_range}"
+                f"requires {blocker_pkg} in {self.format_range(dep_range)}"
+                f" but solution has it in {self.format_range(pos_range)}"
             )
 
         for (
@@ -1802,7 +1802,8 @@ class Provider:
             if cand != normalized:
                 continue
             out.append(
-                f"requires {blocker_pkg} in {dep_range} but root has it in {root_range}"
+                f"requires {blocker_pkg} in {self.format_range(dep_range)}"
+                f" but root has it in {self.format_range(root_range)}"
             )
 
         # Collapse repeated metadata-error blockers (one per version) into

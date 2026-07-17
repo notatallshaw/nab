@@ -1762,8 +1762,8 @@ class TestNoVersionsReasons:
         assert result is None
         reason = provider.get_no_versions_reason("foo")
         assert reason is not None
-        assert "bar" in reason
-        assert "root has it in" in reason
+        assert "<VersionRange" not in reason
+        assert "requires bar in [2.0, 2.0] but root has it in [1.0, 1.0]" in reason
 
     def test_range_block_rejection_names_the_blocker(self) -> None:
         """Same as above but the blocker is a positive-range constraint
@@ -1788,17 +1788,49 @@ class TestNoVersionsReasons:
             root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
         )
         pos_range = SpecifierSet("<2.0").to_range()
-        dep_range = SpecifierSet("==2.0").to_range()
         provider.solution_ranges["bar"] = pos_range
         result = provider.choose_version("foo", VersionRange.full())
         assert result is None
         reason = provider.get_no_versions_reason("foo")
         assert reason is not None
         # foo requires bar==2.0; the message must name that, not the solution range.
+        assert "<VersionRange" not in reason
+        assert "AFTER_LOCALS" not in reason
         assert (
-            f"requires bar in {dep_range} but solution has it in {pos_range}" in reason
+            "requires bar in [2.0, 2.0]"
+            " but solution has it in (-inf, 2.0.dev0)" in reason
         )
         assert "disjoint with current solution range" not in reason
+
+    def test_post_release_pin_blocker_renders_post_excluding_bound(self) -> None:
+        """``bar>2.0`` excludes 2.0's post releases, so it is disjoint with
+        ``==2.0.post1``. The lower bound must render as ``(2.0.post*``; a bare
+        ``(2.0`` would make the two reported intervals look overlapping.
+        """
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\n"
+                "Name: foo\n"
+                "Version: 1.0\n"
+                "Requires-Dist: bar>2.0\n"
+            ),
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
+        )
+        provider.solution_ranges["bar"] = SpecifierSet("==2.0.post1").to_range()
+        result = provider.choose_version("foo", VersionRange.full())
+        assert result is None
+        reason = provider.get_no_versions_reason("foo")
+        assert reason is not None
+        assert (
+            "requires bar in (2.0.post*, +inf)"
+            " but solution has it in [2.0.post1, 2.0.post1]" in reason
+        )
 
 
 def _sdist_entry(version: str) -> dict[str, object]:
