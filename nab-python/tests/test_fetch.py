@@ -28,6 +28,7 @@ from nab_index.client import (
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
+from nab_index.transport import HttpError
 from nab_python.fetch import (
     FetchCoordinator,
     FetchKind,
@@ -36,6 +37,12 @@ from nab_python.fetch import (
     InMemoryIndex,
     _resolve_routes,
 )
+
+
+@pytest.fixture
+def no_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exhaust the transport's retry budget on the first attempt, so no backoff."""
+    monkeypatch.setattr("nab_index.httpx_async_transport.MAX_RETRIES", 0)
 
 
 def _coord(**kwargs: object) -> FetchCoordinator:
@@ -603,9 +610,8 @@ class TestFetchCoordinator:
             assert coord.index.get_listing_error("bad") is not None
 
     @respx.mock
-    def test_sdist_fetch_failure_records_empty(self) -> None:
-        """When sdist extraction errors, store_sdist_metadata(None) unblocks
-        any waiter and the coordinator does not crash."""
+    def test_sdist_fetch_failure_records_error(self, no_retries: None) -> None:
+        """A 5xx on an sdist records an error, not an archive without PKG-INFO."""
         respx.get("https://files.example.com/broken.tar.gz").mock(
             return_value=httpx.Response(500)
         )
@@ -615,23 +621,22 @@ class TestFetchCoordinator:
             )
             event.wait(timeout=5)
             assert not coord._crashed
-            # store_sdist_metadata(None) was called via the failure handler.
             assert coord.index.get_metadata("broken", "1.0") is None
+            error = coord.index.get_metadata_error("broken", "1.0")
+            assert isinstance(error, HttpError)
 
     @respx.mock
-    def test_metadata_fetch_failure_records_empty(self) -> None:
-        """When metadata fetch errors, store_metadata(None) unblocks the
-        waiter and the coordinator does not crash."""
-        respx.get("https://files.example.com/broken-1.0.whl.metadata").mock(
-            return_value=httpx.Response(500)
-        )
+    def test_metadata_fetch_failure_records_error(self, no_retries: None) -> None:
+        """A 5xx on a sidecar records an error, not an absent sidecar."""
+        sidecar = "https://files.example.com/broken-1.0.whl.metadata"
+        respx.get(sidecar).mock(return_value=httpx.Response(500))
         with _coord() as coord:
-            event = coord.request_metadata(
-                "broken", "1.0", "https://files.example.com/broken-1.0.whl.metadata"
-            )
+            event = coord.request_metadata("broken", "1.0", sidecar)
             event.wait(timeout=5)
             assert not coord._crashed
             assert coord.index.get_metadata("broken", "1.0") is None
+            error = coord.index.get_metadata_error("broken", "1.0", sidecar)
+            assert isinstance(error, HttpError)
 
     @respx.mock
     def test_late_sidecar_failure_keeps_stored_sdist_pkg_info(self) -> None:
@@ -1258,8 +1263,8 @@ class TestFetchCoordinator:
             event.wait(timeout=5)
 
     @respx.mock
-    def test_request_sdist_archive_404_stores_none(self) -> None:
-        """A 404 leaves the archive slot at ``None`` so the waiter unblocks."""
+    def test_request_sdist_archive_404_records_error(self) -> None:
+        """A 404 on an archive records an error and unblocks the waiter."""
         respx.get(url__regex=r".*").mock(return_value=httpx.Response(404))
         with _coord() as coord:
             event = coord.request_sdist_archive(
@@ -1267,6 +1272,8 @@ class TestFetchCoordinator:
             )
             event.wait(timeout=5)
             assert coord.index.get_sdist_archive("pkg", "1.0") is None
+            error = coord.index.get_sdist_archive_error("pkg", "1.0")
+            assert isinstance(error, HttpError)
 
     def test_request_direct_archive_deduplicates(self, tmp_path: Path) -> None:
         """A direct archive already in flight hands back its pending event."""
@@ -1449,6 +1456,41 @@ class TestFetchCoordinatorCache:
 
         assert linux_route.call_count == 1
         assert win_route.call_count == 1
+
+    @respx.mock
+    def test_offline_with_cold_cache_records_absent_artifacts(
+        self, tmp_path: Path
+    ) -> None:
+        """Offline with a cache miss records the artifact absent, not as an error.
+
+        Offline is the one failure the resolver works around: it resolves from
+        what the cache holds, so an uncached artifact is skipped.
+        """
+        with FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path,
+            offline=True,
+        ) as coord:
+            meta = coord.request_metadata(
+                "pkg", "1.0", "https://files.example.com/pkg-1.0.whl.metadata"
+            )
+            sdist = coord.request_sdist(
+                "pkg", "2.0", "https://files.example.com/pkg-2.0.tar.gz"
+            )
+            archive = coord.request_sdist_archive(
+                "pkg", "3.0", "https://files.example.com/pkg-3.0.tar.gz"
+            )
+            assert meta.wait(timeout=5)
+            assert sdist.wait(timeout=5)
+            assert archive.wait(timeout=5)
+
+            assert coord.index.get_metadata("pkg", "1.0") is None
+            assert coord.index.get_metadata_error("pkg", "1.0") is None
+            assert coord.index.get_metadata("pkg", "2.0") is None
+            assert coord.index.get_metadata_error("pkg", "2.0") is None
+            assert coord.index.get_sdist_archive("pkg", "3.0") is None
+            assert coord.index.get_sdist_archive_error("pkg", "3.0") is None
+        assert not coord._crashed
 
     def test_explicit_cache_backend_takes_precedence(self) -> None:
         """A passed-in cache_backend wins over cache_dir."""

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import truststore
 import urllib3
 
+from .retry import GET_RETRY
 from .transport import HttpError
 
 if TYPE_CHECKING:
@@ -130,7 +131,13 @@ class Urllib3AsyncTransport:
         return pool
 
     def _request(self, url: str, headers: dict[str, str]) -> urllib3.BaseHTTPResponse:
-        return self._pool().request("GET", url, headers=headers, timeout=self._timeout)
+        return self._pool().request(
+            "GET",
+            url,
+            headers=headers,
+            timeout=self._timeout,
+            retries=GET_RETRY,
+        )
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None

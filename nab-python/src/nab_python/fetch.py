@@ -21,12 +21,7 @@ from urllib.parse import urlsplit
 
 from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
-from nab_index.client import (
-    MetadataHashMismatchError,
-    SdistFile,
-    SdistHashMismatchError,
-    WheelFile,
-)
+from nab_index.client import SdistFile, WheelFile
 from nab_index.local_index import LocalIndexClient, parse_file_url
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 
@@ -337,11 +332,12 @@ class InMemoryIndex:
         error: BaseException,
         metadata_url: str | None = None,
     ) -> None:
-        """Record an integrity failure for a metadata fetch and unblock waiters.
+        """Record a failed metadata fetch and unblock waiters.
 
         Distinct from ``store_metadata(None)``: ``None`` means no PEP 658
-        sidecar arrived and the resolver may fall back to the sdist, while an
-        error means the sidecar was served but failed its published hash.
+        sidecar arrived and the resolver may fall back to the sdist; an error
+        means an advertised sidecar could not be fetched or failed its published
+        hash, so the resolve must not fall through.
         """
         key = _metadata_key(package, version, metadata_url)
         with self._lock:
@@ -353,7 +349,7 @@ class InMemoryIndex:
     def get_metadata_error(
         self, package: str, version: str, metadata_url: str | None = None
     ) -> BaseException | None:
-        """Return a recorded metadata integrity error, or ``None``.
+        """Return a recorded metadata fetch error, or ``None``.
 
         The artifact's own error wins; a version-level error (a tampered
         sdist archive) answers for any artifact, as the version-level text
@@ -389,11 +385,12 @@ class InMemoryIndex:
     def store_sdist_metadata_error(
         self, package: str, version: str, error: BaseException
     ) -> None:
-        """Record an sdist integrity failure and unblock the sdist waiter.
+        """Record a failed sdist fetch and unblock the sdist waiter.
 
-        A recorded error is distinct from ``store_sdist_metadata(None)``: None
-        means the archive yielded no PKG-INFO, an error means the archive
-        failed its published hash and the resolve must abort, not fall through.
+        Distinct from ``store_sdist_metadata(None)``: ``None`` means the archive
+        yielded no PKG-INFO; an error means the archive could not be fetched or
+        failed its published hash, so the resolve must abort rather than fall
+        through.
         """
         key = f"sdist:{package}:{version}"
         with self._lock:
@@ -449,11 +446,12 @@ class InMemoryIndex:
     def store_sdist_archive_error(
         self, package: str, version: str, error: BaseException
     ) -> None:
-        """Record an sdist-archive integrity failure and unblock the waiter.
+        """Record a failed sdist-archive fetch and unblock the waiter.
 
-        Kept in its own slot rather than ``store_sdist_archive(None)`` so
-        the ``BUILD_REMOTE`` path can tell a failed fetch (skip the
-        version) from a tampered archive (abort the resolve).
+        Kept in its own slot rather than ``store_sdist_archive(None)`` so the
+        ``BUILD_REMOTE`` path can tell an archive the index never offered (skip
+        the version) from one it advertised and then failed to serve (abort the
+        resolve).
         """
         key = f"sdist-archive:{package}:{version}"
         with self._lock:
@@ -465,7 +463,7 @@ class InMemoryIndex:
     def get_sdist_archive_error(
         self, package: str, version: str
     ) -> BaseException | None:
-        """Return a recorded sdist-archive integrity error, or ``None``."""
+        """Return a recorded sdist-archive fetch error, or ``None``."""
         with self._lock:
             return self._sdist_archive_errors.get((package, version))
 
@@ -1001,13 +999,18 @@ class FetchCoordinator:
         req: FetchRequest,
         exc: Exception,
     ) -> None:
-        """Record a failed fetch so any waiter unblocks (else a deadlock)."""
+        """Record a failed fetch so any waiter unblocks (else a deadlock).
+
+        Offline with a cold cache is the one deliberate degradation: the
+        artifact is recorded absent and the resolver works with what the cache
+        holds. Any other failure is recorded as an error, because a file the
+        listing advertised and the index then failed to serve is not the same as
+        a file that does not exist.
+        """
+        offline = isinstance(exc, OfflineError)
+
         if req.kind is FetchKind.LISTING:
-            # Offline + cold cache is a deliberate empty listing (the
-            # resolver proceeds with no candidates); any other failure is
-            # stored as an error so fetch_versions can surface it instead of
-            # reporting no candidates.
-            if isinstance(exc, OfflineError):
+            if offline:
                 # Record the serving index before the empty listing fires the
                 # pending event (see _fetch_listing).
                 self._record_serving_index(client, req.package)
@@ -1015,21 +1018,23 @@ class FetchCoordinator:
             else:
                 self.index.store_listing_error(req.package, exc)
             return
+
         assert req.version is not None
+
         if req.kind is FetchKind.METADATA:
-            if isinstance(exc, MetadataHashMismatchError):
-                self.index.store_metadata_error(req.package, req.version, exc, req.url)
-            else:
+            if offline:
                 self.index.store_metadata(req.package, req.version, None, req.url)
-        elif req.kind is FetchKind.SDIST:
-            if isinstance(exc, SdistHashMismatchError):
-                self.index.store_sdist_metadata_error(req.package, req.version, exc)
             else:
+                self.index.store_metadata_error(req.package, req.version, exc, req.url)
+        elif req.kind is FetchKind.SDIST:
+            if offline:
                 self.index.store_sdist_metadata(req.package, req.version, None)
-        elif isinstance(exc, SdistHashMismatchError):
-            self.index.store_sdist_archive_error(req.package, req.version, exc)
-        else:
+            else:
+                self.index.store_sdist_metadata_error(req.package, req.version, exc)
+        elif offline:
             self.index.store_sdist_archive(req.package, req.version, None)
+        else:
+            self.index.store_sdist_archive_error(req.package, req.version, exc)
 
     async def _fetch_listing(
         self,
