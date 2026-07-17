@@ -11,6 +11,8 @@ partition and per-atom evaluation defined here.
 
 from __future__ import annotations
 
+import re
+import sys
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING
@@ -44,13 +46,16 @@ DOMAIN_TWIN = "version_or_string"
 DOMAIN_SET = "set"
 
 # The single registry the layer types variables through. Fourteen variables,
-# matching packaging's marker grammar. ``platform_release`` is the one twin:
-# packaging dispatches it as a version, yet it may hold an arbitrary string, so
-# it carries a string fall-through. ``platform_version`` is a plain string in
-# packaging (it is not in packaging's version-requiring set).
+# matching packaging's marker grammar. ``implementation_version`` and
+# ``platform_release`` are the twins: packaging dispatches each as a version, yet
+# either may hold an arbitrary string, so both carry a string fall-through.
+# ``python_full_version`` and ``python_version`` also dispatch as versions but the
+# interpreter always supplies a PEP 440 value, so they stay version-only.
+# ``platform_version`` is a plain string in packaging (it is not in packaging's
+# version-requiring set).
 DOMAIN_REGISTRY: dict[str, str] = {
     "implementation_name": DOMAIN_STRING,
-    "implementation_version": DOMAIN_VERSION,
+    "implementation_version": DOMAIN_TWIN,
     "os_name": DOMAIN_STRING,
     "platform_machine": DOMAIN_STRING,
     "platform_python_implementation": DOMAIN_STRING,
@@ -118,6 +123,23 @@ def _derive_major_minor(full: str) -> str:
     major = release[0]
     minor = release[1] if len(release) > 1 else 0
     return f"{major}.{minor}"
+
+
+_DIGIT_RUN = re.compile(r"\d+")
+
+
+def _oversized_numeric(text: str) -> bool:
+    """Whether a numeric run in ``text`` overflows int-from-string parsing.
+
+    A release, epoch, or suffix component wider than the interpreter's
+    int-from-string limit makes packaging's ``Version`` raise a bare
+    ``ValueError`` on parse, outside the algebra's bounded-failure contract. A
+    zero limit means the interpreter has disabled the check, so nothing overflows.
+    """
+    limit = sys.get_int_max_str_digits()
+    if not limit:
+        return False
+    return any(len(run.group()) > limit for run in _DIGIT_RUN.finditer(text))
 
 
 # ---------------------------------------------------------------------------- atoms
@@ -599,6 +621,16 @@ def _value_candidates(
     variable: str, atoms: Sequence[Atom], max_cells: int
 ) -> list[str]:
     literals = [atom.literal for atom in atoms]
+    if is_version_dispatch(variable) and any(
+        _oversized_numeric(literal) for literal in literals
+    ):
+        # A numeric component past the interpreter's parse limit crashes packaging's
+        # Version with a bare ValueError; raise the algebra's bounded failure instead.
+        msg = (
+            "version literal numeric component exceeds the "
+            f"{sys.get_int_max_str_digits()}-digit parse limit"
+        )
+        raise ComplexityLimitExceeded(msg)
     if _reduce_work_exceeds(variable, literals, len(atoms), max_cells):
         msg = f"axis work over {len(atoms)} atoms exceeds max_cells={max_cells}"
         raise ComplexityLimitExceeded(msg)

@@ -80,6 +80,15 @@ def _grid() -> list[dict[str, str]]:
 
 GRID = _grid()
 
+# A twin such as implementation_version dispatches as a version yet may carry a
+# non-version string; pin environments that hold one so the differential covers
+# the twin's string branch, not only its version-shaped default.
+GRID = [
+    *GRID,
+    {**GRID[0], "implementation_version": "pypy"},
+    {**GRID[0], "implementation_version": "foo"},
+]
+
 VERSION_ATOMS = [
     'python_full_version < "3.14"',
     'python_full_version >= "3.14"',
@@ -105,7 +114,12 @@ STRING_ATOMS = [
     'platform_machine != "arm64"',
     'os_name == "posix"',
 ]
-ALPHABET = VERSION_ATOMS + STRING_ATOMS
+TWIN_ATOMS = [
+    'implementation_version == "pypy"',
+    'implementation_version != "foo"',
+    'implementation_version >= "3.9"',
+]
+ALPHABET = VERSION_ATOMS + STRING_ATOMS + TWIN_ATOMS
 
 
 def _random_marker(rng: random.Random, depth: int) -> str:

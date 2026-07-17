@@ -312,6 +312,26 @@ def test_platform_version_dispatches_as_string() -> None:
     assert not marker.is_empty()
 
 
+def test_implementation_version_is_version_or_string_twin() -> None:
+    # implementation_version dispatches as a version yet may hold an arbitrary
+    # string (like platform_release), so a non-version literal stays realisable
+    # and the decisions must not treat it as empty or the negation as tautology.
+    ver = ms('implementation_version == "foo"')
+    assert not ver.is_empty()
+    assert ver.witness() is not None
+    assert not ms('implementation_version != "foo"').is_tautology()
+    assert not ms('"foo" in implementation_version').is_empty()
+    for text in (
+        'implementation_version == "foo"',
+        'implementation_version >= "3.9"',
+        'implementation_version != "foo"',
+    ):
+        marker = ms(text)
+        for value in ("foo", "3.9.0", "pypy"):
+            env = {"implementation_version": value}
+            assert marker.evaluate(env) == Marker(text).evaluate(env), (text, value)
+
+
 def test_epoch_version_decisions_are_sound() -> None:
     # An epoch full version truncates below its full ordering, so the pool must
     # keep an epoch-bearing representative or the decisions turn unsound.
@@ -673,6 +693,42 @@ def test_guard_version_axis_literal_count() -> None:
 def test_guard_does_not_fire_under_default() -> None:
     marker = ms(" and ".join(f'extra == "pkg{i}"' for i in range(10)))
     assert not marker.is_empty()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'python_full_version >= "1.' + "9" * 5000 + '"',
+        'implementation_version >= "1.' + "9" * 5000 + '"',
+        'python_full_version == "' + "9" * 5000 + '!1.0"',
+        'python_full_version in "' + "9" * 5000 + '"',
+    ],
+)
+def test_guard_oversized_numeric_literal(text: str) -> None:
+    # A version literal whose numeric component overruns the interpreter's
+    # int-from-string limit crashes packaging's Version with a bare ValueError;
+    # the decision procedures report the algebra's bounded failure instead.
+    marker = ms(text)
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
+def test_string_axis_ignores_oversized_numeric_literal() -> None:
+    # A string variable never parses its literal as a version, so a long numeric
+    # literal is an ordinary string and the guard must not fire.
+    assert not ms('sys_platform == "' + "9" * 5000 + '"').is_empty()
+
+
+def test_oversized_literal_allowed_when_int_limit_disabled() -> None:
+    # A zero int-string limit disables the interpreter's overflow check, so the
+    # literal parses and the guard stands down.
+    lit = "1." + "9" * 5000
+    original = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(0)
+    try:
+        assert isinstance(ms(f'python_full_version >= "{lit}"').is_empty(), bool)
+    finally:
+        sys.set_int_max_str_digits(original)
 
 
 def _nested_alternating(depth: int) -> MarkerSet:
