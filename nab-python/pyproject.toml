@@ -1,6 +1,6 @@
 [project]
 name = "nab-python"
-version = "0.0.9.dev0"
+version = "0.0.9"
 description = "Index-backed provider, lockfile emitter, and downloader for nab"
 readme = "README.md"
 license = "MIT"
@@ -19,8 +19,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "nab-resolver==0.0.9.dev0",
-    "nab-index==0.0.9.dev0",
+    "nab-resolver==0.0.9",
+    "nab-index==0.0.9",
     "tomli>=2.0",
     "tomli_w>=1.2",
     "build>=1.2",
