@@ -31,6 +31,7 @@ from nab_python.config import (
     NabProjectConfig,
     ResolveMode,
     read_pyproject_config,
+    with_python_override,
 )
 from nab_python.config_sources import (
     OPTIONS,
@@ -469,6 +470,21 @@ def _reject_python_override_in_universal(
         sys.exit(1)
 
 
+def _python_override_or_exit(
+    config: NabProjectConfig, python: str | None
+) -> NabProjectConfig:
+    """Retarget ``config`` onto the ``--python`` value, exiting 1 on a bad one.
+
+    Applied here rather than forwarded to the resolve, so the error reads
+    as a flag error, not a ``[tool.nab]`` one.
+    """
+    try:
+        return with_python_override(config, python)
+    except ConfigError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
+
+
 def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg / exit-mapped error
     path: Path,
     *,
@@ -488,6 +504,7 @@ def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg
     resolve is reported (one line for a single environment, a per-tuple
     block for a matrix) and the process exits 1.
     """
+    config = _python_override_or_exit(config, python)
     try:
         result = resolve_for_targets(
             path,
@@ -495,7 +512,6 @@ def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg
             config=config,
             cache_dir=cache_dir,
             offline=offline,
-            python_version=python,
             groups=groups,
             extras=extras,
             resolution_strategy=resolution_strategy,

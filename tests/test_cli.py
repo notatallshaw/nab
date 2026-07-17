@@ -951,7 +951,8 @@ class TestPythonFlag:
             "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(pyproject, output=out, python="3.11")
-        assert mock_resolve.call_args.kwargs["python_version"] == "3.11"
+        config = mock_resolve.call_args.kwargs["config"]
+        assert config.environment.python == "3.11"
 
     def test_absent_flag_leaves_the_host_target(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
@@ -960,7 +961,35 @@ class TestPythonFlag:
             "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(pyproject, output=out)
-        assert mock_resolve.call_args.kwargs["python_version"] is None
+        assert mock_resolve.call_args.kwargs["config"].environment is None
+
+    def test_invalid_value_is_a_flag_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A bad value names the flag; there is no [tool.nab] table to fix."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(pyproject, output=out, python="3.12.x")
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert (
+            "Error: --python must be a version like '3.12' or '3.12.4',"
+            " got '3.12.x'" in err
+        )
+        assert "[tool.nab]" not in err
+        assert not out.exists()
+
+    def test_download_invalid_value_is_a_flag_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            download(pyproject, output=tmp_path / "wheels", python="3.12.x")
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "Error: --python must be a version like" in err
+        assert "[tool.nab]" not in err
 
     def test_rejected_in_universal_mode(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -987,7 +1016,8 @@ class TestPythonFlag:
             ),
         ):
             download(pyproject, output=out, python="3.11")
-        assert mock_resolve.call_args.kwargs["python_version"] == "3.11"
+        config = mock_resolve.call_args.kwargs["config"]
+        assert config.environment.python == "3.11"
 
     def test_download_rejects_it_in_universal_mode(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

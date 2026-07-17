@@ -803,6 +803,17 @@ class TestRequiresPython:
         ):
             plan_targets(config)
 
+    def test_python_override_error_names_the_flag(self, tmp_path: Path) -> None:
+        """The override is the flag's value, so the error names --python."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        config = read_pyproject_config(path)
+        with pytest.raises(
+            ConfigError,
+            match=r"--python must be a version like '3\.12' or '3\.12\.4',"
+            r" got '3\.12\.x'",
+        ):
+            with_python_override(config, "3.12.x")
+
     def test_python_cannot_retarget_a_matrix(self, tmp_path: Path) -> None:
         """The matrix names the python axis of every target it declares."""
         path = write(

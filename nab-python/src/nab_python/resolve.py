@@ -244,10 +244,11 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
 
     ``config`` defaults to :func:`read_pyproject_config(path)`.  The
     caller supplies ``transport`` so the HTTP library choice stays
-    outside nab-python.  ``cache_dir``, ``offline`` and ``python_version``
-    are runtime overrides from the CLI; ``python_version`` backs
-    ``--python`` and moves the resolve target onto that Python, leaving
-    the rest of the environment alone.
+    outside nab-python.  ``cache_dir`` and ``offline`` are runtime
+    overrides from the CLI; ``python_version`` applies
+    :func:`~nab_python.config.with_python_override`, moving the resolve
+    target onto that Python and leaving the rest of the environment
+    alone.
 
     ``groups`` and ``extras`` name PEP 735 groups and
     ``[project.optional-dependencies]`` keys to fold in;
