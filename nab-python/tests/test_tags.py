@@ -648,6 +648,20 @@ class TestWheelCompatibility:
         finally:
             _parse_tag_str.cache_clear()
 
+    def test_repeated_filename_is_decomposed_once(self) -> None:
+        """A repeated wheel filename is parsed once, not once per lookup."""
+        filename = "starlette-1.3.1-py3-none-any.whl"
+        if hasattr(wheel_tag_set, "cache_clear"):
+            wheel_tag_set.cache_clear()
+
+        with patch("nab_python.tags._parse_tag_str", wraps=_parse_tag_str) as parse:
+            first = wheel_tag_set(filename)
+            repeats = [wheel_tag_set(filename) for _ in range(8)]
+
+        assert first == _parse_tag_str("py3-none-any")
+        assert all(result is first for result in repeats)
+        assert parse.call_count == 1
+
     def test_accepts_manylinux_at_libc_version(self) -> None:
         """A manylinux_2_17 wheel matches a glibc 2.17 target."""
         spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
