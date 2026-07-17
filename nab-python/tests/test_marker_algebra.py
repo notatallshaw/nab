@@ -583,12 +583,41 @@ def test_guard_axis_work() -> None:
         marker.is_empty()
 
 
+def test_guard_set_axis_work() -> None:
+    # A set axis clears the powerset cap (two subsets) yet its subsets x atoms
+    # product does not, so the per-axis reduce guard fires.
+    marker = ms('extra == "a" and extra != "a"', max_cells=3)
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
+def test_guard_version_axis_literal_count() -> None:
+    # Many distinct version literals already exceed the cap; the axis is
+    # rejected up front, before the neighbour pool is materialised.
+    marker = ms(
+        " or ".join(f'python_full_version == "{i}.0"' for i in range(200)),
+        max_cells=100,
+    )
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
 def test_guard_does_not_fire_under_default() -> None:
     marker = ms(" and ".join(f'extra == "pkg{i}"' for i in range(10)))
     assert not marker.is_empty()
 
 
 # -------------------------------------------------- branch-completeness edges
+
+
+def test_other_cell_survives_literal_collision() -> None:
+    # The OTHER-cell representative is distinct from every literal on the axis,
+    # so a string field keeps its two cells whatever the literal spells.
+    for literal in ("zzz-no-literal-equals-this", "z" * 40, ""):
+        marker = ms(f'sys_platform == "{literal}"')
+        assert not marker.is_tautology()
+        assert not marker.evaluate({"sys_platform": "linux"})
+        assert marker.evaluate({"sys_platform": literal})
 
 
 def test_non_version_literal_on_version_axis() -> None:

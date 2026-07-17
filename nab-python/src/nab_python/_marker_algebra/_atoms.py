@@ -66,7 +66,6 @@ DOMAIN_REGISTRY: dict[str, str] = {
 }
 
 _MEMBERSHIP = frozenset({"in", "not in"})
-_SENTINEL = "zzz-no-literal-equals-this"
 _ORDERED_UNDEFINED = frozenset({"~=", "==="})
 
 
@@ -539,7 +538,8 @@ def _dedupe_candidates(
             continue
         # A pure Version axis holds only PEP 440 versions, so a non-version
         # candidate is unrealisable there and would otherwise mint a phantom
-        # cell. The twins keep their non-version candidates via the sentinel.
+        # cell. The twins keep every non-version candidate, including the
+        # OTHER-cell representative.
         if pure_version and not _strict_version(candidate):
             continue
         seen.add(candidate)
@@ -550,16 +550,54 @@ def _dedupe_candidates(
     return ordered
 
 
+def _other_representative(literals: Sequence[str]) -> str:
+    """Return a string equal to no literal on the axis and parsing as no version.
+
+    One character longer than the longest literal, so no literal can equal it,
+    and built from a filler that never forms a PEP 440 version so the point
+    lands in the arbitrary-string region rather than a version cell.
+    """
+    width = max((len(literal) for literal in literals), default=0) + 1
+    return "z" * width
+
+
+def _reduce_work_exceeds(
+    variable: str, literals: Sequence[str], atom_count: int, max_cells: int
+) -> bool:
+    """Whether the axis's guaranteed reduce work already exceeds ``max_cells``.
+
+    Every distinct literal that survives into the candidate pool is one point,
+    so its count times the atom count is a lower bound on the ``_reduce_cells``
+    work. A pure-version axis keeps only version-parseable literals; the twins
+    and string fields keep every distinct literal. Counting stops the moment the
+    bound is passed, so an oversized axis is rejected before the neighbour pool
+    is built rather than after.
+    """
+    pure = is_pure_version(variable)
+    seen: set[str] = set()
+    for literal in literals:
+        key = literal.removesuffix(".*") if pure else literal
+        if key in seen or (pure and not _strict_version(key)):
+            continue
+        seen.add(key)
+        if len(seen) * atom_count > max_cells:
+            return True
+    return False
+
+
 def _value_candidates(
     variable: str, atoms: Sequence[Atom], max_cells: int
 ) -> list[str]:
     literals = [atom.literal for atom in atoms]
+    if _reduce_work_exceeds(variable, literals, len(atoms), max_cells):
+        msg = f"axis work over {len(atoms)} atoms exceeds max_cells={max_cells}"
+        raise ComplexityLimitExceeded(msg)
     candidates: list[str] = []
     raw_kind = DOMAIN_REGISTRY[variable]
     # The OTHER cell (a string equal to no literal and not a version) exists only
     # where the domain admits arbitrary strings: String fields and the twins.
     if raw_kind in (DOMAIN_STRING, DOMAIN_TWIN):
-        candidates.append(_SENTINEL)
+        candidates.append(_other_representative(literals))
     candidates.extend(literals)
     # Each membership literal costs a quadratic substring enumeration; cap the
     # running total across the axis, not each literal alone, so a set of long
