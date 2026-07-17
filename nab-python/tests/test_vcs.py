@@ -28,6 +28,7 @@ from nab_python.provider import (
     BuildPolicy,
     LocalSource,
     Provider,
+    SourceNameMismatchError,
     UnsupportedSdistError,
     VcsConfig,
     VcsPolicy,
@@ -649,6 +650,40 @@ class TestProviderVcsIntegration:
         assert isinstance(pin, VcsPin)
         assert pin.commit_id == sha
         assert pin.requested_revision == "main"
+
+    def test_name_mismatch_refused(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cloned repo whose [project].name differs from the source name aborts."""
+        sha = "a" * 40
+        clone_dir = tmp_path / "cache" / "vcs" / "k" / sha
+        _mark_complete(clone_dir)
+        (clone_dir / "pyproject.toml").write_text(
+            '[project]\nname = "bar"\nversion = "9.9.9"\n'
+            'dependencies = ["unrelated-dep==6.6.6"]\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "k")
+
+        provider = Provider(
+            self.coordinator(),
+            vcs_config=VcsConfig(
+                policy=VcsPolicy.ALLOW,
+                allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
+                require_pin=True,
+            ),
+            vcs_sources=[
+                VcsSource(name="foo", url=f"git+https://example.com/foo.git@{sha}"),
+            ],
+            vcs_cache_dir=tmp_path / "cache",
+            build_policy=BuildPolicy.NEVER,
+        )
+        with pytest.raises(SourceNameMismatchError, match="bar") as excinfo:
+            provider.fetch_versions("foo")
+        assert "foo" in str(excinfo.value)
 
     def test_vcs_under_block_policy_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="VcsPolicy.ALLOW"):

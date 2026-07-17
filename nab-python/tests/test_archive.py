@@ -38,6 +38,7 @@ from nab_python.provider import (
     ArchiveSource,
     BuildPolicy,
     Provider,
+    SourceNameMismatchError,
     UnsupportedSdistError,
 )
 from nab_python.target import ResolveTarget
@@ -290,6 +291,26 @@ class TestArchiveMaterialize:
 
         assert len(versions) == 1
         assert str(versions[0][0]) == "1.0.0"
+
+    @requires_data_filter
+    def test_project_name_mismatch_is_hard_error(self, tmp_path: Path) -> None:
+        # The archive unpacks to a project whose [project].name (bar) is not the
+        # declared source name (foo), so pinning it would carry a different
+        # distribution's version and dependencies under the requested name.
+        pyproject = (
+            '[project]\nname = "bar"\nversion = "9.9.9"\n'
+            'dependencies = ["unrelated-dep==6.6.6"]\n'
+        )
+        data = _make_sdist("bar", "9.9.9", pyproject)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/bar-9.9.9.tar.gz#sha256={digest}"
+        )
+        provider = _provider([source], tmp_path / "arch")
+        provider.coordinator.index.store_sdist_archive("foo", digest, data)
+        with pytest.raises(SourceNameMismatchError, match="bar") as excinfo:
+            provider.fetch_versions("foo")
+        assert "foo" in str(excinfo.value)
 
     def test_missing_cache_dir_raises(self) -> None:
         digest = "a" * 64

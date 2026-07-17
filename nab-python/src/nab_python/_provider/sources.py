@@ -66,14 +66,15 @@ def materialize_local_source(
     path = Path(source.path)
     if source.subdirectory:
         path = path / source.subdirectory
+    descriptor = f"local source {source.name!r}"
     metadata = extract_source_metadata(
         provider,
         path,
-        descriptor=f"local source {source.name!r}",
+        descriptor=descriptor,
         package=canonicalize_name(source.name),
         kind="local",
     )
-    return seed_synthetic_listing(provider, normalized, path, metadata)
+    return seed_synthetic_listing(provider, normalized, path, metadata, descriptor)
 
 
 def extract_source_metadata(
@@ -127,8 +128,23 @@ def seed_synthetic_listing(
     normalized: str,
     path: Path,
     metadata: WheelMetadata,
+    descriptor: str,
 ) -> list[tuple[Version, SdistFile]]:
     """Produce a one-version listing for a materialised source."""
+    # The source's own [project].name must canonicalise to the requested name;
+    # otherwise it declares a different project, and pinning it here would carry
+    # the wrong version and dependencies.
+    actual = canonicalize_name(metadata.name)
+    if actual != normalized:
+        from ..provider import SourceNameMismatchError
+
+        msg = (
+            f"{descriptor} declares package {normalized!r} but its"
+            f" [project].name is {actual!r} (at {path}); a source declared for"
+            f" one name must not provide a different project"
+        )
+        raise SourceNameMismatchError(msg)
+
     synthetic_file = SdistFile(
         filename=f"{normalized}-{metadata.version}.tar.gz",
         url=path.as_uri(),
@@ -217,14 +233,15 @@ def materialize_vcs_source(
         raise UnsupportedSdistError(msg) from exc
     provider.vcs_pins[canonicalize_name(source.name)] = clone.commit_sha
     path = clone.path / clone.subdirectory if clone.subdirectory else clone.path
+    descriptor = f"vcs source {source.name!r}"
     metadata = extract_source_metadata(
         provider,
         path,
-        descriptor=f"vcs source {source.name!r}",
+        descriptor=descriptor,
         package=canonicalize_name(source.name),
         kind="vcs",
     )
-    return seed_synthetic_listing(provider, normalized, path, metadata)
+    return seed_synthetic_listing(provider, normalized, path, metadata, descriptor)
 
 
 def index_archive_sources(
@@ -329,14 +346,15 @@ def materialize_archive_source(
 
     # Read the extracted tree's metadata as a local source and seed one candidate.
     path = root / request.subdirectory if request.subdirectory else root
+    descriptor = f"archive source {source.name!r}"
     metadata = extract_source_metadata(
         provider,
         path,
-        descriptor=f"archive source {source.name!r}",
+        descriptor=descriptor,
         package=canonicalize_name(source.name),
         kind="archive",
     )
-    return seed_synthetic_listing(provider, normalized, path, metadata)
+    return seed_synthetic_listing(provider, normalized, path, metadata, descriptor)
 
 
 def _extract_archive(

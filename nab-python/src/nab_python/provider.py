@@ -70,6 +70,7 @@ __all__ = [
     "Provider",
     "ProviderStats",
     "ResolutionStrategy",
+    "SourceNameMismatchError",
     "UnsupportedSdistError",
     "UnsupportedVcsError",
     "VcsConfig",
@@ -294,6 +295,19 @@ class UnsupportedSdistError(MetadataError):
 # and would silently reject the version; a naive upload-time is a hard error.
 class InvalidUploadTimeError(Exception):
     """Raised when an index upload-time is not the timezone-aware UTC PEP 700 needs."""
+
+
+# Deliberately not a MetadataError: _look_ahead_ok catches those and skips the
+# version, but a name mismatch is a misconfiguration that must abort.
+class SourceNameMismatchError(Exception):
+    """Raised when a materialised source's project name differs from its declaration.
+
+    A local, VCS, or archive source maps a declared ``name`` to a directory,
+    repo, or archive and becomes the only candidate for that package.  When the
+    source's own ``[project].name`` does not canonicalise to the declared name,
+    it provides a different distribution, so pinning it would carry the wrong
+    version and dependencies.
+    """
 
 
 @dataclass
