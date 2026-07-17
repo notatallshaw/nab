@@ -243,6 +243,32 @@ def test_evaluate_derive_mm_boundaries() -> None:
     assert not marker.evaluate({"python_full_version": "not-a-version"})
 
 
+def test_evaluate_python_version_only_env() -> None:
+    # An env supplying only python_version (the written variable) evaluates.
+    marker = ms('python_version == "3.9"')
+    assert marker.evaluate({"python_version": "3.9"})
+    assert not marker.evaluate({"python_version": "3.10"})
+
+
+def test_evaluate_set_variable_as_string() -> None:
+    # A set variable passed as a str is one name, matching restrict().
+    marker = ms('extra == "cpu"')
+    assert marker.evaluate({"extra": "cpu"})
+    assert not marker.evaluate({"extra": "gpu"})
+
+
+def test_epoch_version_decisions_are_sound() -> None:
+    # An epoch full version truncates below its full ordering, so the pool must
+    # keep an epoch-bearing representative or the decisions turn unsound.
+    high = ms('python_full_version >= "3.14"')
+    low_mm = ms('python_version < "3.14"')
+    assert not high.is_disjoint(low_mm)
+    assert not high.implies(ms('python_version >= "3.10"'))
+    assert not ms(
+        'python_full_version >= "3.14" and python_version == "3.9"'
+    ).is_empty()
+
+
 # --------------------------------------------------------------- restrict
 
 
@@ -472,6 +498,16 @@ def test_guard_cell_product() -> None:
         'sys_platform == "linux" and os_name == "posix" '
         'and platform_machine == "x86_64"',
         max_cells=2,
+    )
+    with pytest.raises(ComplexityLimitExceeded):
+        marker.is_empty()
+
+
+def test_guard_axis_work() -> None:
+    # Many distinct atoms on one axis: the point count stays under the cap but
+    # points x atoms does not, so the guard fires instead of doing O(N^2) work.
+    marker = ms(
+        " or ".join(f'sys_platform == "p{i}"' for i in range(60)), max_cells=100
     )
     with pytest.raises(ComplexityLimitExceeded):
         marker.is_empty()

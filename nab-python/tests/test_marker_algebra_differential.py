@@ -23,7 +23,8 @@ from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.version import Version
 
 # Boundary-rich grids: version values straddle every literal the alphabets use
-# (3.9, 3.10, 3.14), including the 3.14 prerelease-carve-out witnesses.
+# (3.9, 3.10, 3.14), including the 3.14 prerelease-carve-out witnesses, an epoch
+# version (full ordering and major.minor truncation diverge), and a local one.
 PFV_GRID = [
     "2.7.18",
     "3.8.0",
@@ -36,6 +37,8 @@ PFV_GRID = [
     "3.14.0",
     "3.14.2",
     "3.15.0",
+    "1!3.9",
+    "3.9.7+local",
 ]
 SYS_GRID = ["linux", "win32", "darwin"]
 MACHINE_GRID = ["x86_64", "aarch64", "arm64"]

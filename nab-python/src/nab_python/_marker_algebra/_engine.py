@@ -15,7 +15,6 @@ from itertools import product
 from typing import TYPE_CHECKING
 
 from .._vendor.packaging.specifiers import InvalidSpecifier, Specifier
-from .._vendor.packaging.utils import canonicalize_name
 from ._atoms import (
     AXIS_CONTAINS,
     AXIS_SET,
@@ -30,8 +29,11 @@ from ._atoms import (
     Formula,
     NotNode,
     OrNode,
+    as_name_set,
     evaluate_atom,
     guarded_product_size,
+    is_pure_version,
+    is_version_dispatch,
     make_and,
     make_not,
     make_or,
@@ -43,20 +45,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
 _MISSING = object()
-
-# Version typing for the serialiser's domain-complement, mirroring the atom
-# layer's dispatch under packaging typing.
-_VERSION_TYPED = frozenset(
-    {
-        "implementation_version",
-        "platform_release",
-        "python_full_version",
-        "python_version",
-    }
-)
-_PURE_VERSION = frozenset(
-    {"implementation_version", "python_full_version", "python_version"}
-)
 
 
 # --------------------------------------------------------------------- walking
@@ -149,7 +137,11 @@ def _satisfying_cells(
         partition_axis(axis, atoms, max_cells)
         for axis, atoms in zip(axes, atomlists, strict=True)
     ]
-    guarded_product_size((len(part) for part in partitions), max_cells)
+    # The enumeration builds a per-cell truth over every atom, so guard the cell
+    # product times the atom count: the cell cap alone leaves the atom dimension
+    # unbounded, and a formula with many atoms would otherwise hang, not raise.
+    total_atoms = sum(len(atoms) for atoms in atomlists)
+    guarded_product_size((*(len(part) for part in partitions), total_atoms), max_cells)
     for combo in product(*partitions):
         truth: dict[Atom, bool] = {
             atom: value
@@ -202,17 +194,11 @@ def _materialise(
 # --------------------------------------------------------------------- restrict
 
 
-def _as_name_set(value: object) -> frozenset[str]:
-    if isinstance(value, str):
-        return frozenset({canonicalize_name(value)}) if value else frozenset()
-    return frozenset(canonicalize_name(name) for name in value)  # type: ignore[union-attr]
-
-
 def _restrict_value(atom: Atom, env: Mapping[str, object]) -> bool | None:
     """Return the atom's truth under ``env``, or ``None`` when unprovided."""
     if atom.kind == AXIS_SET:
         if atom.origin in env:
-            return atom.holds(_as_name_set(env[atom.origin]))
+            return atom.holds(as_name_set(env[atom.origin]))
     elif atom.kind == AXIS_CONTAINS:
         if atom.variable in env:
             return atom.holds(atom.literal in env[atom.variable])  # type: ignore[operator]
@@ -276,7 +262,7 @@ def _complement_version(atom: Atom, op: str, var: str) -> Formula:
     # Excluded middle holds only for ==/!= on a pure-version axis; ordered
     # comparisons have the prerelease hole, and the twins can hold a non-version,
     # so neither complements to a single atom.
-    if op in ("==", "!=") and var in _PURE_VERSION and not atom.swapped:
+    if op in ("==", "!=") and is_pure_version(var) and not atom.swapped:
         return AtomLeaf(replace(atom, op="!=" if op == "==" else "=="))
     msg = f"cannot complement version atom on {var!r}"
     raise UnserializableSet(msg)
@@ -299,7 +285,7 @@ def _complement_leaf(atom: Atom) -> Formula:
     if atom.kind in (AXIS_SET, AXIS_CONTAINS):
         return AtomLeaf(replace(atom, positive=not atom.positive))
     op, var = atom.op, atom.variable
-    if var in _VERSION_TYPED and _builds_specifier(op, atom.literal):
+    if is_version_dispatch(var) and _builds_specifier(op, atom.literal):
         return _complement_version(atom, op, var)
     return _complement_string(atom, op)
 

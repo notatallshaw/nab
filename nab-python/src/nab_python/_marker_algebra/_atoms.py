@@ -75,8 +75,14 @@ def _domain(variable: str) -> str:
     return kind
 
 
-def _version_dispatch(variable: str) -> bool:
+def is_version_dispatch(variable: str) -> bool:
+    """Whether a variable dispatches as a version under packaging typing."""
     return _domain(variable) == DOMAIN_VERSION
+
+
+def is_pure_version(variable: str) -> bool:
+    """Whether a variable's domain is version-only, no string fall-through."""
+    return DOMAIN_REGISTRY[variable] == DOMAIN_VERSION
 
 
 def _apply(lhs: str, op: str, rhs: str, key: str) -> bool:
@@ -309,7 +315,7 @@ def _make_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Formul
 
 def _make_python_version_atom(op: str, literal: str, *, swapped: bool) -> Formula:
     if op in _MEMBERSHIP and swapped:
-        # "literal" in python_version is the opaque contains direction (Tier 2).
+        # "literal" in python_version is the opaque contains direction.
         return AtomLeaf(
             Atom(
                 AXIS_CONTAINS,
@@ -338,7 +344,7 @@ def _make_membership_atom(
     variable: str, op: str, literal: str, *, swapped: bool
 ) -> Formula:
     if swapped:
-        # "literal" in variable: the opaque contains direction (Tier 2).
+        # "literal" in variable: the opaque contains direction.
         return AtomLeaf(
             Atom(AXIS_CONTAINS, variable, variable, op, literal, positive=op == "in")
         )
@@ -438,7 +444,7 @@ def _between(low: str, high: str) -> str | None:
     return None
 
 
-def _version_pool(literals: Sequence[str]) -> list[str]:
+def _version_pool(literals: Sequence[str], *, elevate_epoch: bool) -> list[str]:
     pool = ["0", "0.dev0", "99999"]
     for literal in literals:
         pool.extend(_version_neighbours(literal))
@@ -457,7 +463,18 @@ def _version_pool(literals: Sequence[str]) -> list[str]:
         mid = _between(slow, shigh)
         if mid is not None:
             extra.append(mid)
-    return [text for _, text in parsed] + extra
+    base = [text for _, text in parsed] + extra
+    if not elevate_epoch:
+        return base
+    # A1 lowers python_version onto this axis, so a point's major.minor and its
+    # full ordering diverge across an epoch boundary (Version("1!3.9") truncates
+    # to "3.9" yet outranks "3.14"). Mint epoch-bearing twins of every point so
+    # that region has a representative: one epoch above the top literal saturates
+    # the full comparisons, and each literal epoch covers the bands below it.
+    epochs = {version.epoch for version, _ in parsed}
+    targets = epochs | {max(epochs) + 1}
+    targets.discard(0)
+    return base + [f"{epoch}!{text}" for epoch in sorted(targets) for text in base]
 
 
 def _membership_candidates(atom: Atom, max_cells: int) -> list[str]:
@@ -470,9 +487,16 @@ def _membership_candidates(atom: Atom, max_cells: int) -> list[str]:
 
 
 def _wants_versions(variable: str, literals: Sequence[str]) -> bool:
-    if _version_dispatch(variable):
+    if is_version_dispatch(variable):
         return True
     return any(_parses_version(literal) for literal in literals)
+
+
+def _mixes_mm_and_full(atoms: Sequence[Atom]) -> bool:
+    """Whether the axis carries both A1-lowered and direct version atoms."""
+    return any(atom.derive_mm for atom in atoms) and any(
+        not atom.derive_mm for atom in atoms
+    )
 
 
 def _dedupe_candidates(
@@ -511,13 +535,26 @@ def _value_candidates(
         if atom.op in _MEMBERSHIP:
             candidates.extend(_membership_candidates(atom, max_cells))
     if _wants_versions(variable, literals):
-        candidates.extend(_version_pool(literals))
+        candidates.extend(
+            _version_pool(literals, elevate_epoch=_mixes_mm_and_full(atoms))
+        )
     return _dedupe_candidates(
         candidates, pure_version=raw_kind == DOMAIN_VERSION, max_cells=max_cells
     )
 
 
-def _reduce_cells(points: Iterable[object], atoms: Sequence[Atom]) -> list[Cell]:
+def _reduce_cells(
+    points: Iterable[object], atoms: Sequence[Atom], max_cells: int
+) -> list[Cell]:
+    points = list(points)
+    # The truth vector costs one holds() per atom per point; guard that product
+    # so a single axis carrying many atoms fails loudly rather than doing O(N^2)
+    # work under the cell-count cap.
+    if len(points) * len(atoms) > max_cells:
+        msg = (
+            f"axis work {len(points)}x{len(atoms)} atoms exceeds max_cells={max_cells}"
+        )
+        raise ComplexityLimitExceeded(msg)
     representatives: dict[tuple, object] = {}
     for point in points:
         vector = tuple(atom.holds(point) for atom in atoms)
@@ -539,7 +576,9 @@ def partition_value_axis(
     variable: str, atoms: Sequence[Atom], max_cells: int
 ) -> list[Cell]:
     """Cells of a version/string value axis."""
-    return _reduce_cells(_value_candidates(variable, atoms, max_cells), atoms)
+    return _reduce_cells(
+        _value_candidates(variable, atoms, max_cells), atoms, max_cells
+    )
 
 
 def partition_set_axis(atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
@@ -553,12 +592,12 @@ def partition_set_axis(atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
         frozenset(names[i] for i in range(count) if mask & (1 << i))
         for mask in range(1 << count)
     ]
-    return _reduce_cells(subsets, atoms)
+    return _reduce_cells(subsets, atoms, max_cells)
 
 
-def partition_boolean_axis(atoms: Sequence[Atom]) -> list[Cell]:
+def partition_boolean_axis(atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
     """Cells of an opaque boolean (contains) axis: the two truth values."""
-    return _reduce_cells((False, True), atoms)
+    return _reduce_cells((False, True), atoms, max_cells)
 
 
 def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
@@ -568,7 +607,7 @@ def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[C
         return partition_value_axis(axis[1], atoms, max_cells)
     if kind == AXIS_SET:
         return partition_set_axis(atoms, max_cells)
-    return partition_boolean_axis(atoms)
+    return partition_boolean_axis(atoms, max_cells)
 
 
 def guarded_product_size(sizes: Iterable[int], max_cells: int) -> int:
@@ -585,12 +624,21 @@ def guarded_product_size(sizes: Iterable[int], max_cells: int) -> int:
 # ------------------------------------------------------------------- evaluation
 
 
+def as_name_set(value: object) -> frozenset[str]:
+    """Normalise a set-variable value: a str is one name, PEP 685 canonical."""
+    if isinstance(value, str):
+        return frozenset({canonicalize_name(value)}) if value else frozenset()
+    return frozenset(canonicalize_name(name) for name in value)  # type: ignore[union-attr]
+
+
 def evaluate_atom(atom: Atom, env: Mapping[str, object]) -> bool:
     """Evaluate one atom against a full environment (extras are sets)."""
     if atom.kind == AXIS_VALUE:
+        if atom.derive_mm and "python_full_version" not in env:
+            # A1 lowers python_version onto python_full_version; honour an env
+            # that supplies only the python_version key (the written variable).
+            return atom.holds(env["python_version"])
         return atom.holds(env[atom.variable])
     if atom.kind == AXIS_SET:
-        raw = env.get(atom.origin, frozenset())
-        selected = frozenset(canonicalize_name(name) for name in raw)  # type: ignore[union-attr]
-        return atom.holds(selected)
+        return atom.holds(as_name_set(env.get(atom.origin, frozenset())))
     return atom.holds(atom.literal in env[atom.variable])  # type: ignore[operator]
