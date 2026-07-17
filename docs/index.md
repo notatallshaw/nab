@@ -37,6 +37,7 @@ how-to/local-sources
 how-to/vcs
 how-to/multi-index
 how-to/workspaces
+how-to/migrating-split-resolvers
 ```
 
 ```{toctree}
