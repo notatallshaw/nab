@@ -3414,6 +3414,45 @@ class TestAugmentResolutionError:
             " dist-policy, or upload-time" in diagnostics
         )
 
+    def test_blocker_diagnostics_render_readable_ranges(self, tmp_path: Path) -> None:
+        """Blocker diagnostics render declared ranges, not the debug repr.
+
+        ``c`` declares ``b==1.0`` while the project requires ``b>=2``, so
+        look-ahead rejects every ``c`` candidate against the root requirement.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["b>=2", "c"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "b": _index_wheels("b", "1.0", "2.0"),
+                "c": _index_wheels("c", "5.0", "6.0"),
+            },
+            metadata_by_version={
+                "1.0": _metadata("b", "1.0"),
+                "2.0": _metadata("b", "2.0"),
+                "5.0": _metadata("c", "5.0", "b==1.0"),
+                "6.0": _metadata("c", "6.0", "b==1.0"),
+            },
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        diagnostics = str(info.value).split("Diagnostics:")[1]
+        assert "<VersionRange" not in diagnostics
+        assert "AFTER_LOCALS" not in diagnostics
+        assert (
+            "c: every version in range was rejected:"
+            " requires b in [1.0, 1.0] but root has it in [2, +inf)"
+        ) in diagnostics
+
 
 class TestConflictingRootRequirements:
     def test_both_requirements_are_named(self, tmp_path: Path) -> None:
