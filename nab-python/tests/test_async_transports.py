@@ -272,6 +272,25 @@ class TestHttpxAsyncTransport:
         resp.raise_for_status()
         assert resp.status_code == 200
 
+    @respx.mock
+    def test_get_gives_up_on_a_redirect_loop(self, slept: list[float]) -> None:
+        """A redirect loop raises rather than being retried."""
+        route = respx.get("https://example.com/loop").mock(
+            return_value=httpx.Response(302, headers={"Location": "/loop"})
+        )
+
+        async def go() -> None:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                await transport.get("https://example.com/loop")
+            finally:
+                await transport.aclose()
+
+        with pytest.raises(HttpError, match="redirects"):
+            asyncio.run(go())
+        assert route.call_count == MAX_REDIRECTS + 1
+        assert slept == []
+
     def test_client_takes_the_shared_redirect_budget(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
