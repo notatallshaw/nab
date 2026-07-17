@@ -15,6 +15,7 @@ from urllib3.exceptions import InvalidHeader
 
 __all__ = [
     "GET_RETRY",
+    "MAX_REDIRECTS",
     "MAX_RETRIES",
     "RETRY_STATUSES",
     "next_delay",
@@ -22,6 +23,9 @@ __all__ = [
 
 MAX_RETRIES = 3
 """Retries after the first attempt, so at most four requests per URL."""
+
+MAX_REDIRECTS = 20
+"""Redirects followed per GET, matching httpx's default."""
 
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 """Statuses that are retried; any other status is served to the caller."""
@@ -52,7 +56,13 @@ class _BoundedRetry(urllib3.Retry):
 
 
 GET_RETRY = _BoundedRetry(
-    total=MAX_RETRIES,
+    # A shared total would count redirects against the transient budget.
+    total=None,
+    connect=MAX_RETRIES,
+    read=MAX_RETRIES,
+    status=MAX_RETRIES,
+    other=MAX_RETRIES,
+    redirect=MAX_REDIRECTS,
     status_forcelist=RETRY_STATUSES,
     backoff_factor=_BACKOFF_FACTOR,
     # Once the budget is spent, hand the response back so the caller sees the
