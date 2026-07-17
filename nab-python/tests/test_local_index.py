@@ -133,6 +133,83 @@ def _write_corrupt_sdist(path: Path, name: str, version: str) -> None:
     path.write_bytes(clean + deflate.flush(zlib.Z_SYNC_FLUSH) + _INVALID_DEFLATE_BLOCK)
 
 
+def _patch_wheel_member(
+    path: Path, member: str, *, method: int | None = None, encrypt: bool = False
+) -> None:
+    """Patch a member's compression method or encrypted flag in both zip headers.
+
+    zipfile reads these from the central directory; both headers are patched so the
+    archive stays internally consistent.
+    """
+    with zipfile.ZipFile(path) as zf:
+        info = zf.getinfo(member)
+    raw = bytearray(path.read_bytes())
+
+    # Local file header: compression method at +8, general-purpose flag at +6.
+    local = info.header_offset
+    if method is not None:
+        struct.pack_into("<H", raw, local + 8, method)
+    if encrypt:
+        struct.pack_into(
+            "<H", raw, local + 6, struct.unpack_from("<H", raw, local + 6)[0] | 0x1
+        )
+
+    # Central directory entry: compression method at +10, general-purpose flag at +8.
+    eocd = raw.rfind(b"PK\x05\x06")
+    central = struct.unpack_from("<I", raw, eocd + 16)[0]
+    name_bytes = member.encode()
+    while central + 4 <= len(raw) and raw[central : central + 4] == b"PK\x01\x02":
+        name_len, extra_len, comment_len = struct.unpack_from("<HHH", raw, central + 28)
+        if raw[central + 46 : central + 46 + name_len] == name_bytes:
+            if method is not None:
+                struct.pack_into("<H", raw, central + 10, method)
+            if encrypt:
+                struct.pack_into(
+                    "<H",
+                    raw,
+                    central + 8,
+                    struct.unpack_from("<H", raw, central + 8)[0] | 0x1,
+                )
+            break
+        central += 46 + name_len + extra_len + comment_len
+    path.write_bytes(bytes(raw))
+
+
+def _write_unsupported_compression_wheel(
+    path: Path, name: str, version: str, method: int = 9
+) -> None:
+    """Write a wheel whose METADATA member declares an unsupported compression method.
+
+    The member is stored, then patched to ``method`` (Deflate64 is 9). The archive
+    opens and lists its members; only reading METADATA hits zipfile's compression
+    check.
+    """
+    member = f"{name}-{version}.dist-info/METADATA"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr(
+            member,
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            "Requires-Python: >=3.12\n",
+        )
+    _patch_wheel_member(path, member, method=method)
+
+
+def _write_encrypted_metadata_wheel(path: Path, name: str, version: str) -> None:
+    """Write a wheel whose METADATA member has the encrypted flag set.
+
+    The archive opens and lists its members; only reading METADATA hits the encrypted
+    flag, which zipfile refuses without a password.
+    """
+    member = f"{name}-{version}.dist-info/METADATA"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr(
+            member,
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            "Requires-Python: >=3.12\n",
+        )
+    _patch_wheel_member(path, member, encrypt=True)
+
+
 class TestParseFileUrl:
     def test_absolute_path(self, tmp_path: Path) -> None:
         url = tmp_path.as_uri()
@@ -291,6 +368,26 @@ class TestFlatWheelhouse:
         # A flat-wheelhouse wheel carries no published hash, so a corrupt one
         # reaches the reader.
         _write_corrupt_wheel(tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
+    def test_requires_python_none_for_unsupported_compression(
+        self, tmp_path: Path
+    ) -> None:
+        _write_unsupported_compression_wheel(
+            tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0"
+        )
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
+    def test_requires_python_none_for_encrypted_member(self, tmp_path: Path) -> None:
+        _write_encrypted_metadata_wheel(
+            tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0"
+        )
         client = LocalIndexClient(tmp_path.as_uri())
         files = run(client.get_files("foo"))
         assert len(files) == 1
@@ -736,6 +833,16 @@ class TestReadWheelMetadata:
     def test_returns_none_for_corrupt_zip(self, tmp_path: Path) -> None:
         wheel = tmp_path / "foo-1.0-py3-none-any.whl"
         _write_corrupt_wheel(wheel, "foo", "1.0")
+        assert read_wheel_metadata(wheel) is None
+
+    def test_returns_none_for_unsupported_compression(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_unsupported_compression_wheel(wheel, "foo", "1.0")
+        assert read_wheel_metadata(wheel) is None
+
+    def test_returns_none_for_encrypted_member(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_encrypted_metadata_wheel(wheel, "foo", "1.0")
         assert read_wheel_metadata(wheel) is None
 
     def test_returns_none_for_non_wheel_filename(self, tmp_path: Path) -> None:

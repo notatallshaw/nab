@@ -310,7 +310,13 @@ def _read_wheel_requires_python(wheel_path: Path, expected: str) -> str | None:
             if member is None:
                 return None
             raw = archive.read(member)
-    except (zipfile.BadZipFile, OSError, UnsupportedWheelError, zlib.error):
+    except (
+        zipfile.BadZipFile,
+        OSError,
+        UnsupportedWheelError,
+        zlib.error,
+        RuntimeError,
+    ):
         return None
 
     value = BytesParser().parsebytes(raw, headersonly=True).get("Requires-Python")
@@ -384,7 +390,7 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
             if member is None:
                 return None
             return zf.read(member).decode("utf-8")
-    except (zipfile.BadZipFile, OSError, UnicodeDecodeError, zlib.error):
+    except (zipfile.BadZipFile, OSError, UnicodeDecodeError, zlib.error, RuntimeError):
         return None
 
 
