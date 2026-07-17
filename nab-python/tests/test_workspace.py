@@ -125,6 +125,37 @@ class TestDiscoverWorkspaceRoot:
             tmp_path / "outer" / "pyproject.toml"
         )
 
+    def test_walks_up_to_root_declaring_workspace_in_nab_toml(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "ws"
+        _write(
+            root / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n',
+        )
+        _write(root / "nab.toml", '[workspace]\nmembers = ["pkg"]\n')
+        member = _write(
+            root / "pkg" / "pyproject.toml",
+            '[project]\nname = "pkg"\nversion = "0"\n',
+        )
+        assert discover_workspace_root(member) == (root / "nab.toml")
+
+    def test_root_pyproject_workspace_wins_over_sibling_nab_toml(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "ws"
+        _write(
+            root / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\nmembers = []\n",
+        )
+        _write(root / "nab.toml", '[workspace]\nmembers = ["pkg"]\n')
+        member = _write(
+            root / "pkg" / "pyproject.toml",
+            '[project]\nname = "pkg"\nversion = "0"\n',
+        )
+        assert discover_workspace_root(member) == (root / "pyproject.toml")
+
     def test_walks_past_non_table_tool_nab(self, tmp_path: Path) -> None:
         _write(
             tmp_path / "outer" / "pyproject.toml",
@@ -165,6 +196,23 @@ class TestReadWorkspaceMembers:
             LocalSource(name="alpha", path=str(tmp_path / "a"), editable=True),
             LocalSource(name="beta", path=str(tmp_path / "sub" / "b"), editable=True),
         )
+
+    def test_nab_toml_root_members_become_local_sources(self, tmp_path: Path) -> None:
+        root = _write(tmp_path / "nab.toml", '[workspace]\nmembers = ["a"]\n')
+        _write(
+            tmp_path / "a" / "pyproject.toml",
+            '[project]\nname = "alpha"\nversion = "0"\n',
+        )
+        assert read_workspace_members(root) == (
+            LocalSource(name="alpha", path=str(tmp_path / "a"), editable=True),
+        )
+
+    def test_nab_toml_root_non_list_members_raises(self, tmp_path: Path) -> None:
+        root = _write(tmp_path / "nab.toml", '[workspace]\nmembers = "not-a-list"\n')
+        with pytest.raises(
+            WorkspaceDiscoveryError, match=re.escape("[workspace].members must be")
+        ):
+            read_workspace_members(root)
 
     def test_members_default_to_editable(self, tmp_path: Path) -> None:
         # Workspace members install editably by default, matching uv.

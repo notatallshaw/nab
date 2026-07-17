@@ -4074,6 +4074,55 @@ class TestWorkspaceDiscoveryIntegration:
         assert config.constraints == ()
         assert config.conflicts == ()
 
+    def test_workspace_in_non_pyproject_project_file(self, tmp_path: Path) -> None:
+        # ``nab lock alt.toml`` reads [tool.nab] from that file, so its
+        # workspace drives discovery even though the walk-up would never
+        # consider a file by that name.
+        alt = tmp_path / "alt.toml"
+        alt.write_text(
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n',
+        )
+
+        member_dir = tmp_path / "pkg"
+        member_dir.mkdir()
+        (member_dir / "pyproject.toml").write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n',
+        )
+
+        config = read_pyproject_config(alt)
+
+        assert config.local_sources == (
+            LocalSource(name="alpha", path=str(member_dir), editable=True),
+        )
+        assert config.workspace_member_names == frozenset({"alpha"})
+
+    def test_member_lock_finds_root_workspace_in_nab_toml(self, tmp_path: Path) -> None:
+        # The root declares its workspace in nab.toml, so locking a member
+        # has to walk up to it: members and build-policy floor included.
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "ws"\nversion = "0"\n',
+        )
+        (tmp_path / "nab.toml").write_text('[workspace]\nmembers = ["pkg"]\n')
+
+        member_dir = tmp_path / "pkg"
+        member_dir.mkdir()
+        member = member_dir / "pyproject.toml"
+        member.write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n'
+            "[tool.nab]\n"
+            'build-policy = "never"\n',
+        )
+
+        config = read_pyproject_config(member)
+
+        assert config.local_sources == (
+            LocalSource(name="alpha", path=str(member_dir), editable=True),
+        )
+        assert config.workspace_member_names == frozenset({"alpha"})
+        assert config.build_policy is BuildPolicy.BUILD_LOCAL
+
 
 def _inspect(path: Path, key: str) -> str:
     """Render ``nab config get <key>`` the way the inspector would.
@@ -4244,6 +4293,27 @@ class TestProjectNabTomlConfiguresResolve:
         anchor = datetime(2024, 1, 5, tzinfo=timezone.utc)
         config = read_pyproject_config(path, discover_workspace=False, anchor=anchor)
         assert config.uploaded_prior_to == datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    def test_table_workspace(self, tmp_path: Path) -> None:
+        member_dir = tmp_path / "libs" / "foo"
+        member_dir.mkdir(parents=True)
+        (member_dir / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "1.0"\n',
+        )
+        path = self._write(
+            tmp_path,
+            '[project]\nname = "root"\nversion = "0"\n'
+            "[tool.nab]\n"
+            'build-policy = "never"\n',
+            '[workspace]\nmembers = ["libs/foo"]\n',
+        )
+        config = read_pyproject_config(path)
+        assert config.local_sources == (
+            LocalSource(name="foo", path=str(member_dir), editable=True),
+        )
+        assert config.workspace_member_names == frozenset({"foo"})
+        assert config.build_policy is BuildPolicy.BUILD_LOCAL
+        assert "members=['libs/foo']" in _inspect(path, "workspace")
 
 
 class TestProjectNabTomlGateAndConflict:
