@@ -1125,7 +1125,12 @@ def with_python_override(
         )
         raise ConfigError(msg)
 
-    _validate_environment_values({"python": python})
+    try:
+        Version(python)
+    except InvalidVersion as exc:
+        msg = f"--python must be a version like '3.12' or '3.12.4', got {python!r}"
+        raise ConfigError(msg) from exc
+
     environment = (
         EnvironmentConfig(python=python)
         if config.environment is None
@@ -1508,9 +1513,9 @@ def _environment_platform_spec(value: object) -> PlatformSpec:
 def _validate_environment_values(environment: Mapping[str, Any]) -> None:
     """Validate the value of every environment axis the table names.
 
-    Shared by the ``[tool.nab.environment]`` parse, the
-    ``[tool.nab.marker-environment]`` translation, and the ``--python``
-    override, so all three reject the same bad values with one message.
+    Shared by the ``[tool.nab.environment]`` parse and the
+    ``[tool.nab.marker-environment]`` translation, so both reject the
+    same bad values with one message.
     """
     python = environment.get("python")
     if python is not None:
