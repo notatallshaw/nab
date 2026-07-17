@@ -595,11 +595,11 @@ def add_classified_dep(
 
     if not req_extras:
         base_deps[name] = base_deps.get(name, VersionRange.full()) & vi
-        for re in dep_extras:
+        for re in sorted(dep_extras):
             base_deps[join_extra(name, re)] = VersionRange.full(admit_arbitrary=False)
     else:
         for extra_name in req_extras:
             edeps = extra_deps_map[extra_name]
             edeps[name] = edeps.get(name, VersionRange.full()) & vi
-            for re in dep_extras:
+            for re in sorted(dep_extras):
                 edeps[join_extra(name, re)] = VersionRange.full(admit_arbitrary=False)

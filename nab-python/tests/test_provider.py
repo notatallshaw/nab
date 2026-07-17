@@ -1793,6 +1793,26 @@ class TestAddClassifiedDep:
         assert "bar[a-x]" in base
         assert "bar[b-y]" in base
 
+    def test_base_multi_extra_proxy_keys_sorted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Base-dep proxy keys come out sorted regardless of extras set order."""
+        req = Requirement("bar[x,y,z]")
+        monkeypatch.setattr(req, "extras", ["z", "y", "x"])
+        base: dict[str, VersionRange] = {}
+        add_classified_dep(req, set(), base, {})
+        assert list(base) == ["bar", "bar[x]", "bar[y]", "bar[z]"]
+
+    def test_extra_gated_multi_extra_proxy_keys_sorted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Extra-gated proxy keys come out sorted regardless of extras set order."""
+        req = Requirement("bar[x,y,z]")
+        monkeypatch.setattr(req, "extras", ["z", "y", "x"])
+        extra_map: dict[str, dict[str, VersionRange]] = {"g": {}}
+        add_classified_dep(req, {"g"}, {}, extra_map)
+        assert list(extra_map["g"]) == ["bar", "bar[x]", "bar[y]", "bar[z]"]
+
 
 class TestLocalSources:
     def _write_local(
