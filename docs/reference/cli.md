@@ -58,6 +58,21 @@ a `'X' in extras` or `'X' in dependency_groups` marker, so an
 installer given neither leaves it out; see
 [Lockfiles](lockfile.md).
 
+Workspace flags (see [Lock a workspace](../how-to/workspaces.md)):
+
+* `--workspace-discovery` (default) walks upward from the locked
+  project for a `[tool.nab.workspace]` root and prefers its in-tree
+  members over PyPI. `--no-workspace-discovery` skips that search, so
+  the run resolves the named project alone.
+* `--no-emit-workspace` drops the workspace members' own `[[packages]]`
+  entries from the emitted lockfile, along with the dependency edges
+  and membership gates that reference them; the resolver still uses the
+  members during the resolve. Default off (`--no-no-emit-workspace`). Use it
+  when the lockfile is consumed by pip's PEP 751 install or
+  `--require-hashes`, which reject the directory entry a member pin
+  emits because it cannot be hashed; pair it with `pip install
+  --no-deps -e <member>`.
+
 `--output` defaults to `pylock.toml` for `pylock` and
 `requirements.txt` for the two requirements formats. Pass
 `--output -` to write to stdout instead. A matrix has no default
@@ -145,6 +160,10 @@ wheel shared across tuples is fetched once.
 * `--max-concurrency` controls parallel HTTP fetches (default `8`,
   minimum `1`). Layered, so it can also be set in an `nab.toml` or
   `NAB_MAX_CONCURRENCY`.
+* `--workspace-discovery` (default) mirrors `nab lock`: it finds a
+  `[tool.nab.workspace]` root and resolves against the in-tree
+  members. `--no-workspace-discovery` turns that off. See
+  [Lock a workspace](../how-to/workspaces.md).
 
 `--offline`, `--cache-dir`, `--http-backend`, `--max-concurrency` and the
 `--project-*` overrides flow through the same layered config sources `nab
