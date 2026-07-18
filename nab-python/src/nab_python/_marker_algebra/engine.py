@@ -84,16 +84,10 @@ def membership_literals_of(node: Formula) -> frozenset[tuple[str, str]]:
 def unprovided_variables(node: Formula, env: Mapping[str, object]) -> set[str]:
     """Return the referenced variables an environment supplies no value for."""
     return {
-        atom.origin for atom in collect_atoms(node) if not _atom_provided(atom, env)
+        atom.origin
+        for atom in collect_atoms(node)
+        if _atom_env_value(atom, env) is _MISSING
     }
-
-
-def _atom_provided(atom: Atom, env: Mapping[str, object]) -> bool:
-    if atom.kind == AXIS_SET:
-        return atom.origin in env
-    if atom.derive_mm:
-        return "python_full_version" in env or "python_version" in env
-    return atom.variable in env
 
 
 def _atoms_by_axis(atoms: list[Atom]) -> dict[tuple[str, ...], list[Atom]]:
@@ -202,21 +196,27 @@ def _materialise(
 # --------------------------------------------------------------------- restrict
 
 
-def _restrict_value(atom: Atom, env: Mapping[str, object]) -> bool | None:
-    """Return the atom's truth under ``env``, or ``None`` when unprovided."""
-    if atom.kind == AXIS_SET:
-        if atom.origin in env:
-            return atom.holds(as_name_set(env[atom.origin]))
-    elif atom.kind == AXIS_CONTAINS:
-        if atom.variable in env:
-            return atom.holds(atom.literal in env[atom.variable])  # type: ignore[operator]
-    elif atom.derive_mm:
+def _atom_env_value(atom: Atom, env: Mapping[str, object]) -> object:
+    """Return the env value the atom reads, or ``_MISSING`` when unprovided."""
+    if atom.derive_mm:
         for key in ("python_full_version", "python_version"):
             if key in env:
-                return atom.holds(env[key])
-    elif atom.variable in env:
-        return atom.holds(env[atom.variable])
-    return None
+                return env[key]
+        return _MISSING
+    key = atom.origin if atom.kind == AXIS_SET else atom.variable
+    return env.get(key, _MISSING)
+
+
+def _restrict_value(atom: Atom, env: Mapping[str, object]) -> bool | None:
+    """Return the atom's truth under ``env``, or ``None`` when unprovided."""
+    value = _atom_env_value(atom, env)
+    if value is _MISSING:
+        return None
+    if atom.kind == AXIS_SET:
+        return atom.holds(as_name_set(value))
+    if atom.kind == AXIS_CONTAINS:
+        return atom.holds(atom.literal in value)  # type: ignore[operator]
+    return atom.holds(value)
 
 
 def _restrict_atom(leaf: AtomLeaf, env: Mapping[str, object]) -> Formula:
