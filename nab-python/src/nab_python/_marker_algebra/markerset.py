@@ -122,7 +122,13 @@ class MarkerSet:
     @_bounded
     def equivalent(self, other: MarkerSet) -> bool:
         """Whether the two sets denote the same environments."""
-        return self.implies(other) and other.implies(self)
+        return engine.is_empty(
+            atoms.make_and((self._tree, atoms.make_not(other._tree))),
+            self._max_cells,
+        ) and engine.is_empty(
+            atoms.make_and((other._tree, atoms.make_not(self._tree))),
+            self._max_cells,
+        )
 
     # ---- restriction and projection
 
