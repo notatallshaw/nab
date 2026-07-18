@@ -1,0 +1,92 @@
+"""Nox sessions for nab's per-workspace tests and its type-check matrix.
+
+``tests`` runs one workspace's suite and gates each package it owns at 100
+percent. ``fail_under`` and the ``[tool.coverage.paths]`` remaps live in
+``pyproject.toml``; the per-package ``--include`` globs are built here.
+``types`` runs one type-checker over ``nab-resolver/src``. Both take their
+pinned dependencies from ``.github/requirements``.
+
+The Python version comes from whoever launches nox, so CI drives the matrix
+through ``actions/setup-python`` and stays off the per-OS versioned-binary
+lookup. Run a single cell locally, for example::
+
+    nox -s "tests(workspace='python')"
+    nox -s "types(checker='mypy')"
+"""
+
+from __future__ import annotations
+
+import nox
+
+# Stdlib venv keeps the backend explicit; nab never resolves through uv.
+nox.options.default_venv_backend = "venv"
+
+TESTS_LOCK = ".github/requirements/pylock.tests.toml"
+TYPES_LOCK = ".github/requirements/pylock.types.toml"
+
+# workspace -> (editable packages, pytest paths, coverage-gated packages).
+# nab-index rides with the python workspace: nab-python is its only consumer
+# and its tests supply most of nab-index's coverage, so the two are gated here
+# without running nab-python's suite twice.
+WORKSPACES = {
+    "resolver": (
+        ["nab-resolver"],
+        ["nab-resolver/tests"],
+        ["nab_resolver"],
+    ),
+    "python": (
+        ["nab-resolver", "nab-index", "nab-python"],
+        ["nab-python/tests", "nab-index/tests"],
+        ["nab_python", "nab_index"],
+    ),
+    "umbrella": (
+        ["nab-resolver", "nab-index", "nab-python", "."],
+        ["tests"],
+        ["nab"],
+    ),
+}
+
+# checker -> command; pyright reads its targets from [tool.pyright] in
+# pyproject.toml, the rest take nab-resolver/src on the command line.
+TYPE_CHECKERS = {
+    "mypy": ["mypy", "nab-resolver/src"],
+    "pyright": ["pyright"],
+    "ty": ["ty", "check", "nab-resolver/src"],
+    "pyrefly": ["pyrefly", "check", "nab-resolver/src"],
+    "zuban": ["zuban", "check", "nab-resolver/src"],
+}
+
+
+def _install(session: nox.Session, lock: str, editables: list[str]) -> None:
+    """Install a pinned lock, then the given workspace packages editable."""
+    # Installing a PEP 751 lock needs a recent pip.
+    session.install("--upgrade", "pip>=26.1")
+    session.install("-r", lock)
+
+    # --no-deps keeps the run pinned to the locked closure above.
+    editable_args = [arg for package in editables for arg in ("-e", package)]
+    session.install("--no-deps", *editable_args)
+
+
+@nox.session
+@nox.parametrize("workspace", list(WORKSPACES))
+def tests(session: nox.Session, workspace: str) -> None:
+    """Run one workspace's tests and gate each package it owns at 100 percent."""
+    editables, paths, packages = WORKSPACES[workspace]
+    _install(session, TESTS_LOCK, editables)
+
+    session.run("coverage", "erase")
+    session.run("coverage", "run", "-m", "pytest", *paths)
+    session.run("coverage", "combine")
+    for package in packages:
+        session.run("coverage", "report", f"--include=*/{package}/*")
+
+
+@nox.session
+@nox.parametrize("checker", list(TYPE_CHECKERS))
+def types(session: nox.Session, checker: str) -> None:
+    """Type-check nab-resolver/src with one checker."""
+    # Only nab-resolver is checked; the checkers reach sibling packages through
+    # their source-path config, not installs.
+    _install(session, TYPES_LOCK, ["nab-resolver"])
+    session.run(*TYPE_CHECKERS[checker])

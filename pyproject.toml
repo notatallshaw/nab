@@ -42,6 +42,17 @@ nab = "nab.cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# The umbrella sdist ships only the CLI package and its own tests. Without this
+# it would pull in the whole monorepo: the sibling workspaces, docs/, .github/,
+# and the release tooling under tasks/.
+[tool.hatch.build.targets.sdist]
+only-include = ["src/nab", "tests", "conftest.py"]
+
+# test_build_dists.py and test_release.py cover the repo-level release tooling
+# in tasks/, not the shipped CLI, so they stay out of the package sdist.
+# (hatchling always ships pyproject.toml, hatch.toml, and .gitignore itself.)
+exclude = ["tests/test_build_dists.py", "tests/test_release.py"]
+
 # Dependency groups feed `nab lock` for CI lockfiles; regenerate via
 # tasks/refresh-locks.sh. Local dev uses hatch envs from hatch.toml.
 [dependency-groups]
@@ -69,6 +80,12 @@ types = [
 ]
 pre-commit = [
     "pre-commit>=4",
+]
+# Nox drives the per-workspace test matrix and the type-check matrix; see
+# noxfile.py. Each session installs its own lock (pylock.tests.toml or
+# pylock.types.toml), so this only bootstraps the runner.
+nox = [
+    "nox>=2025.5.1",
 ]
 # Locked as a single resolution for one interpreter, not against the project's
 # universal matrix; see tasks/refresh-locks.sh.  myst-parser 5.1 is the floor
@@ -131,6 +148,7 @@ addopts = [
 testpaths = [
     "nab-resolver/tests",
     "nab-python/tests",
+    "nab-index/tests",
     "tests",
 ]
 xfail_strict = true
@@ -149,9 +167,14 @@ relative_files = true
 parallel = true
 concurrency = ["thread", "multiprocessing"]
 sigterm = true
+# Per-workspace runs import only one workspace, so coverage would warn about
+# the source packages the run doesn't touch. This applies everywhere, but the
+# full local suite imports all four, where the warning has nothing to flag.
+disable_warnings = ["module-not-imported"]
 source_pkgs = [
     "nab_resolver",
     "nab_python",
+    "nab_index",
     "nab",
 ]
 source = []
@@ -189,6 +212,10 @@ nab_resolver = [
 nab_python = [
     "nab-python/src/nab_python",
     "*/nab_python",
+]
+nab_index = [
+    "nab-index/src/nab_index",
+    "*/nab_index",
 ]
 nab = [
     "src/nab",

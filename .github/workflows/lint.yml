@@ -103,27 +103,19 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: .github/requirements/pylock.types.toml
+          cache-dependency-path: |
+            .github/requirements/pylock.nox.toml
+            .github/requirements/pylock.types.toml
 
       - name: Upgrade pip to PEP 751 install support
         run: python -m pip install --upgrade "pip>=26.1"
 
-      - name: Install type-checking deps
-        run: pip install -r .github/requirements/pylock.types.toml
+      - name: Install nox
+        run: pip install -r .github/requirements/pylock.nox.toml
 
-      - name: Install workspace packages
-        run: pip install --no-deps -e nab-resolver -e nab-python -e nab-index -e .
-
+      # Type-check logic lives in noxfile.py. The checker goes through env,
+      # not inline ${{ }}, for zizmor.
       - name: Run ${{ matrix.checker }}
-        # Pyright needs --pythonpath to discover the venv; the other
-        # checkers find it via sys.executable or PATH.
-        run: |
-          case "${CHECKER}" in
-            mypy)    python -m mypy nab-resolver/src ;;
-            pyright) python -m pyright --pythonpath "$(which python)" ;;
-            ty)      ty check nab-resolver/src ;;
-            pyrefly) pyrefly check nab-resolver/src ;;
-            zuban)   zuban check nab-resolver/src ;;
-          esac
+        run: nox -s "types(checker='${CHECKER}')"
         env:
           CHECKER: ${{ matrix.checker }}

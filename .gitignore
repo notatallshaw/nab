@@ -8,6 +8,7 @@ build/
 .coverage*
 .ruff_cache/
 .hatch/
+.nox/
 docs/_build/
 
 *token*.txt

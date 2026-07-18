@@ -375,15 +375,16 @@ class TestConfigErrors:
         self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         _project(hermetic_roots)
+        cache_dir = Path("/c/cli")
         config_command(
             "get",
             "cache-dir",
             path=hermetic_roots / "pyproject.toml",
             project_resolution="lowest",
-            cache_dir=Path("/c/cli"),
+            cache_dir=cache_dir,
         )
         captured = capsys.readouterr()
-        assert captured.out == "/c/cli\n"
+        assert captured.out == f"{cache_dir}\n"
         # The PROJECT resolution override emits the reproducibility notice.
         # The inspector produces no lock, so it makes no lock claim.
         assert "the lock they produce" not in captured.err
