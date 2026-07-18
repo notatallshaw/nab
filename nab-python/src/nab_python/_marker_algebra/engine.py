@@ -96,10 +96,10 @@ def _atom_provided(atom: Atom, env: Mapping[str, object]) -> bool:
     return atom.variable in env
 
 
-def _atoms_by_axis(node: Formula) -> dict[tuple[str, ...], list[Atom]]:
+def _atoms_by_axis(atoms: list[Atom]) -> dict[tuple[str, ...], list[Atom]]:
     grouped: dict[tuple[str, ...], list[Atom]] = {}
     seen: dict[tuple[str, ...], set[Atom]] = {}
-    for atom in collect_atoms(node):
+    for atom in atoms:
         axis = atom.axis()
         known = seen.setdefault(axis, set())
         if atom not in known:
@@ -126,7 +126,8 @@ def _eval_cell(node: Formula, truth: Mapping[Atom, bool]) -> bool:
 def _satisfying_cells(
     node: Formula, max_cells: int
 ) -> Iterator[dict[tuple[str, ...], Cell]]:
-    grouped = _atoms_by_axis(node)
+    atoms = collect_atoms(node)
+    grouped = _atoms_by_axis(atoms)
     if not grouped:
         if _eval_cell(node, {}):
             yield {}
@@ -142,7 +143,7 @@ def _satisfying_cells(
     # The enumeration walks the whole op-tree once per cell, so guard the cell
     # product times the leaf-occurrence count: a marker that repeats atoms inflates
     # the walk without inflating the distinct-atom count or the cell product.
-    leaf_occurrences = len(collect_atoms(node))
+    leaf_occurrences = len(atoms)
     guarded_product_size(
         (*(len(part) for part in partitions), leaf_occurrences), max_cells
     )
