@@ -59,7 +59,7 @@ def _libc_knobs(platform_id: str) -> st.SearchStrategy[dict[str, object]]:
         lambda libc: st.fixed_dictionaries(
             {
                 "libc": st.just(libc),
-                "libc_version": st.none()
+                "runs_on_libc": st.none()
                 | st.tuples(st.just(LIBC_MAJOR[libc]), st.integers(0, 20)),
             }
         )
@@ -73,7 +73,7 @@ def _macos_knobs(platform_id: str) -> st.SearchStrategy[dict[str, object]]:
     floor = _MACOS_TAG_FLOOR[_PLATFORM_ARCH[platform_id]]
     return st.fixed_dictionaries(
         {
-            "macos_min": st.none()
+            "runs_on_macos": st.none()
             | st.tuples(st.integers(10, 15), st.integers(0, 3)).filter(
                 lambda version: version >= floor
             )

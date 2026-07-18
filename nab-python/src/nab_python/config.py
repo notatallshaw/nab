@@ -164,8 +164,8 @@ class EnvironmentConfig:
 
     ``platform`` is the same :class:`~nab_python.tags.PlatformSpec` a
     ``matrix.platforms`` entry parses to, so the wheel-tag knobs (the libc
-    family and version, the macOS deployment target, the kernel marker
-    values, the free-threaded build) are declarable here too.
+    family, the libc and macOS the lock must run on, the kernel
+    marker values, the free-threaded build) are declarable here too.
     """
 
     python: str | None = None
@@ -2853,8 +2853,8 @@ _PLATFORM_TABLE_KEYS = frozenset(
     {
         "id",
         "libc",
-        "libc-version",
-        "macos-min",
+        "runs-on-libc",
+        "runs-on-macos",
         "platform-release",
         "platform-version",
         "free-threaded",
@@ -2863,8 +2863,8 @@ _PLATFORM_TABLE_KEYS = frozenset(
 # The platform kind that reads each knob key; any other kind rejects it.
 _PLATFORM_KNOB_OWNER: Mapping[str, frozenset[str]] = MappingProxyType(
     {
-        "linux": frozenset({"libc", "libc-version"}),
-        "macos": frozenset({"macos-min"}),
+        "linux": frozenset({"libc", "runs-on-libc"}),
+        "macos": frozenset({"runs-on-macos"}),
     }
 )
 
@@ -2873,9 +2873,9 @@ def _parse_matrix_platforms(value: object) -> tuple[PlatformSpec, ...]:
     """Parse ``matrix.platforms``: bare ids, tables, or a mix of both.
 
     A bare id takes the platform's default tag knobs; the table form declares
-    them (libc family and version, macOS deployment target, kernel marker
-    values, free-threaded build).  Both become a :class:`PlatformSpec`, so
-    everything downstream reads one shape.
+    them (libc family, the libc and macOS the lock must run on, kernel
+    marker values, free-threaded build).  Both become a :class:`PlatformSpec`,
+    so everything downstream reads one shape.
     """
     if not isinstance(value, list):
         msg = f"matrix.platforms must be a list, got {type(value).__name__}"
@@ -2922,10 +2922,12 @@ def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
         where,
         platform_id=platform_id,
         libc=_parse_libc(f"{where}.libc", value.get("libc")),
-        libc_version=_parse_major_minor(
-            f"{where}.libc-version", value.get("libc-version")
+        runs_on_libc=_parse_major_minor(
+            f"{where}.runs-on-libc", value.get("runs-on-libc")
         ),
-        macos_min=_parse_major_minor(f"{where}.macos-min", value.get("macos-min")),
+        runs_on_macos=_parse_major_minor(
+            f"{where}.runs-on-macos", value.get("runs-on-macos")
+        ),
         platform_release=_parse_string_value(
             f"{where}.platform-release", value.get("platform-release", "")
         ),

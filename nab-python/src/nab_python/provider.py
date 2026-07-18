@@ -37,7 +37,6 @@ from ._vcs_admission import (
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
 from .metadata import WheelMetadata
-from .tags import default_ceiling_admitting
 from .target import host_environment
 
 if TYPE_CHECKING:
@@ -632,10 +631,6 @@ class Provider:
         # whole package failed on wheel tags alone.
         self.base_filtered_packages: set[str] = set()
 
-        # (package, version) pairs already warned about losing their last wheel
-        # to an unset default tag ceiling, so the warning fires once per drop.
-        self._warned_ceiling_versions: set[tuple[str, Version]] = set()
-
         self.root_requirements = root_requirements or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
         self.deps_cache: dict[tuple[str, Version], dict[str, VersionRange]] = {}
@@ -1173,50 +1168,6 @@ class Provider:
     ) -> list[tuple[Version, DistFile]]:
         """See :func:`nab_python._provider.listing.filter_distributions`."""
         return _listing.filter_distributions(self, normalized, files)
-
-    def ceiling_would_admit(
-        self, wheel_filename: str
-    ) -> tuple[str, tuple[int, int]] | None:
-        """Return the unset default ceiling that alone drops ``wheel_filename``.
-
-        Delegates to :func:`nab_python.tags.default_ceiling_admitting` for a
-        declared target; a host target names no platform_spec and never has a
-        raisable ceiling, so it returns ``None``.
-        """
-        if self.target is None or self.target.platform_spec is None:
-            return None
-        return default_ceiling_admitting(
-            self.target.platform_spec,
-            python_version=self.target.python_version,
-            implementation=self.target.implementation,
-            wheel_filename=wheel_filename,
-        )
-
-    def warn_ceiling_drop(
-        self,
-        normalized: str,
-        version: Version,
-        wheel: WheelFile,
-        knob: str,
-        raise_to: tuple[int, int],
-    ) -> None:
-        """Warn once that an unset default ceiling dropped a version's last wheel."""
-        key = (normalized, version)
-        if key in self._warned_ceiling_versions:
-            return
-        self._warned_ceiling_versions.add(key)
-        logger.warning(
-            "%s %s: wheel %s is above the default %s ceiling and was"
-            " dropped, leaving the version with no installable wheel;"
-            " set %s to %s.%s to keep it",
-            normalized,
-            version,
-            wheel.filename,
-            knob,
-            knob,
-            raise_to[0],
-            raise_to[1],
-        )
 
     def pick_best_candidate(
         self,

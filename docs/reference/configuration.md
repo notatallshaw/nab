@@ -87,14 +87,14 @@ bare id at that platform's default tag knobs, or a table declaring them.
 ```toml
 [tool.nab.environment]
 python = "3.13"
-platform = { id = "macos_arm64", macos-min = "14.0" }
+platform = { id = "macos_arm64", runs-on-macos = "14.0" }
 ```
 
 The knobs, their defaults and their rules are the ones the matrix's
-"Platform tag knobs" section below lists.  A bare id keeps the default
-macOS deployment target (12.0 on arm64), so a wheel tagged
-`macosx_14_0_arm64` is not accepted until the target says it runs macOS
-14.
+"Platform tag knobs" section below lists.  A bare id names no system, so
+a wheel of any level is accepted; declare `runs-on-macos` to name a macOS
+the lock must run on: the target then accepts that macOS and every older
+tag and drops a wheel that needs a newer one.
 
 The target declares both halves of the environment: its PEP 508 markers
 gate every dependency, and its PEP 425 wheel tags gate every candidate.
@@ -611,8 +611,8 @@ platform's defaults, or a table declaring the wheel-tag knobs:
 python = ">=3.11,<3.14"
 platforms = [
     "windows_amd64",
-    { id = "linux_x86_64", libc = "musl", libc-version = "1.2" },
-    { id = "macos_arm64", macos-min = "14.0" },
+    { id = "linux_x86_64", libc = "musl", runs-on-libc = "1.2" },
+    { id = "macos_arm64", runs-on-macos = "14.0" },
     { id = "linux_aarch64", platform-release = "5.15.0" },
 ]
 ```
@@ -621,30 +621,42 @@ platforms = [
 | --- | --- | --- |
 | `id` | required | `linux_x86_64`, `linux_aarch64`, `linux_i686`, `linux_armv7l`, `macos_arm64`, `macos_x86_64`, `windows_amd64`, or `windows_arm64` |
 | `libc` | `"glibc"` | The Linux C library: `"glibc"` or `"musl"` |
-| `libc-version` | glibc `2.28` (armv7l `2.31`), musl `1.2` | The libc version the target runs |
-| `macos-min` | arm64 `12.0`, x86_64 `10.13` | The macOS deployment target |
+| `runs-on-libc` | unset (accept any level) | The glibc/musl the lock must run on; wheels needing newer are dropped |
+| `runs-on-macos` | unset (accept any level) | The macOS the lock must run on; wheels needing newer are dropped |
 | `platform-release` | `""` | The `platform_release` marker value |
 | `platform-version` | `""` | The `platform_version` marker value |
 | `free-threaded` | `false` | Target the free-threaded (`cp3XXt`) CPython build |
 
 A machine links one C library, so a target accepts one family's wheels:
 a `glibc` target takes manylinux wheels and never musllinux ones, and a
-`musl` target the reverse.  `libc-version` is the version the target
-guarantees, and a wheel built against an older libc runs on a newer one,
-so the target accepts every version at or below it.  A higher value
-therefore accepts more wheels, not fewer.  The glibc default is 2.28,
-the `manylinux_2_28` build image; a target that runs a newer glibc
-should say so, because a wheel built above 2.28 is otherwise rejected.
-Its major has to match the family (glibc `2.x`, musl `1.x`): those are
-the only majors either has shipped, so no wheel targets another.
+`musl` target the reverse.  Left unset, `runs-on-libc` names no system:
+the target accepts a wheel of any manylinux/musllinux level and whether
+it runs is left to install time, the way uv resolves.  Set it to name the
+glibc or musl the lock must run on.  Its major has to match the family
+(glibc `2.x`, musl `1.x`): those are the only majors either has shipped,
+so no wheel targets another.
 
-`macos-min` reads the same way, as the newest macOS a wheel may target.
-Below the oldest macOS the architecture ever ran (10.4 on x86_64, 11.0
-on Apple Silicon) there is no machine to model and no tag to name, so
-that is a config error.
+`runs-on-libc = "2.28"` means the lock must run on glibc 2.28.  A wheel is
+lockable only if it runs on every target machine, so:
 
-A knob belongs to its platform.  `libc` and `libc-version` are Linux
-knobs and `macos-min` is a macOS one, so declaring one on a platform
+- `manylinux_2_17` and `manylinux_2_28` wheels run there and are accepted.
+- a `manylinux_2_34` wheel cannot run there and is dropped: it needs a
+  newer glibc.
+
+Older wheels are never excluded; the knob only rules out wheels that need
+something newer than the declared system, so a higher `runs-on-libc`
+accepts more wheels, not fewer.  Newer systems are always fine: a lock
+that runs on glibc 2.28 runs on anything newer (the same holds for macOS).
+
+`runs-on-macos` reads the same way: `runs-on-macos = "14.0"` means the
+lock must run on macOS 14.0, so a `macosx_10_9` or `macosx_14_0` wheel is
+accepted and a `macosx_15_0` wheel is dropped.  It borrows Apple's
+`MACOSX_DEPLOYMENT_TARGET`, a machine minimum.  Below the oldest macOS the
+architecture ever ran (10.4 on x86_64, 11.0 on Apple Silicon) there is
+no machine to model and no tag to name, so that is a config error.
+
+A knob belongs to its platform.  `libc` and `runs-on-libc` are Linux
+knobs and `runs-on-macos` is a macOS one, so declaring one on a platform
 that cannot read it is a config error.  It would select no wheel, and it
 would still name the machine the lock was resolved for.
 

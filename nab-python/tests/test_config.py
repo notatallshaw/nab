@@ -1390,18 +1390,18 @@ class TestEnvironment:
         assert target.marker_env["platform_machine"] == "i686"
         assert target.tags.accepts("somepkg-1.0-cp312-cp312-manylinux2014_i686.whl")
 
-    def test_linux_armv7l_table_with_libc_version_override(
+    def test_linux_armv7l_table_with_runs_on_libc_override(
         self, tmp_path: Path
     ) -> None:
         path = write(
             tmp_path,
             '[tool.nab.environment]\npython = "3.12"\n'
-            'platform = { id = "linux_armv7l", libc-version = "2.34" }\n'
+            'platform = { id = "linux_armv7l", runs-on-libc = "2.34" }\n'
             '[tool.nab]\nbuild-policy = "never"\n',
         )
         config = read_pyproject_config(path)
         assert config.environment == EnvironmentConfig(
-            python="3.12", platform=PlatformSpec("linux_armv7l", libc_version=(2, 34))
+            python="3.12", platform=PlatformSpec("linux_armv7l", runs_on_libc=(2, 34))
         )
         (target,) = plan_targets(config)
         assert target.marker_env["platform_machine"] == "armv7l"
@@ -1426,17 +1426,19 @@ class TestEnvironment:
             tmp_path,
             "[tool.nab.environment]\n"
             'python = "3.12"\n'
-            'platform = { id = "macos_arm64", macos-min = "14.0" }\n'
+            'platform = { id = "macos_arm64", runs-on-macos = "14.0" }\n'
             '[tool.nab]\nbuild-policy = "never"\n',
         )
         config = read_pyproject_config(path)
         assert config.environment == EnvironmentConfig(
-            python="3.12", platform=PlatformSpec("macos_arm64", macos_min=(14, 0))
+            python="3.12", platform=PlatformSpec("macos_arm64", runs_on_macos=(14, 0))
         )
         (target,) = plan_targets(config)
         wheel = "somepkg-1.0-cp312-cp312-macosx_14_0_arm64.whl"
         assert target.tags.accepts(wheel)
-        assert "platform=macos_arm64[macos-min=14.0]" in _inspect(path, "environment")
+        assert "platform=macos_arm64[runs-on-macos=14.0]" in _inspect(
+            path, "environment"
+        )
 
     def test_the_inspector_renders_a_knobless_table(self, tmp_path: Path) -> None:
         path = write(
@@ -1446,8 +1448,8 @@ class TestEnvironment:
         )
         assert "platform=linux_x86_64" in _inspect(path, "environment")
 
-    def test_bare_platform_id_keeps_the_default_knobs(self, tmp_path: Path) -> None:
-        """Without macos-min the deployment target is the arch default (12.0)."""
+    def test_bare_platform_id_accepts_any_level(self, tmp_path: Path) -> None:
+        """Without runs-on-macos any level is accepted, so a newer wheel passes."""
         path = write(
             tmp_path,
             "[tool.nab.environment]\n"
@@ -1457,23 +1459,23 @@ class TestEnvironment:
         )
         (target,) = plan_targets(read_pyproject_config(path))
         wheel = "somepkg-1.0-cp312-cp312-macosx_14_0_arm64.whl"
-        assert not target.tags.accepts(wheel)
+        assert target.tags.accepts(wheel)
 
     def test_platform_table_rejects_a_foreign_knob(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
             "[tool.nab.environment]\n"
-            'platform = { id = "linux_x86_64", macos-min = "14.0" }\n',
+            'platform = { id = "linux_x86_64", runs-on-macos = "14.0" }\n',
         )
         with pytest.raises(
             ConfigError,
-            match=r"environment.platform declares \['macos-min'\]",
+            match=r"environment.platform declares \['runs-on-macos'\]",
         ):
             read_pyproject_config(path)
 
     def test_platform_table_needs_an_id(self, tmp_path: Path) -> None:
         path = write(
-            tmp_path, '[tool.nab.environment]\nplatform = { macos-min = "14.0" }\n'
+            tmp_path, '[tool.nab.environment]\nplatform = { runs-on-macos = "14.0" }\n'
         )
         with pytest.raises(
             ConfigError, match="environment.platform missing required key 'id'"
@@ -3446,14 +3448,14 @@ class TestMatrix:
             tmp_path,
             self._platforms_body(
                 '["macos_arm64", { id = "linux_x86_64", libc = "musl",'
-                ' libc-version = "1.2" }]'
+                ' runs-on-libc = "1.2" }]'
             ),
         )
         matrix = read_pyproject_config(path).matrix
         assert matrix is not None
         assert matrix.platforms == (
             PlatformSpec("macos_arm64"),
-            PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2)),
+            PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2)),
         )
 
     def test_windows_arm64_and_linux_i686_are_known_ids(self, tmp_path: Path) -> None:
@@ -3482,10 +3484,13 @@ class TestMatrix:
         [
             ('{ id = "windows_amd64", libc = "musl" }', "only a linux platform"),
             ('{ id = "windows_amd64", libc = "glibc" }', "only a linux platform"),
-            ('{ id = "macos_arm64", libc-version = "2.28" }', "only a linux platform"),
-            ('{ id = "linux_x86_64", macos-min = "14.0" }', "only a macos platform"),
-            ('{ id = "macos_arm64", macos-min = "10.15" }', "below 11.0"),
-            ('{ id = "macos_x86_64", macos-min = "10.3" }', "below 10.4"),
+            ('{ id = "macos_arm64", runs-on-libc = "2.28" }', "only a linux platform"),
+            (
+                '{ id = "linux_x86_64", runs-on-macos = "14.0" }',
+                "only a macos platform",
+            ),
+            ('{ id = "macos_arm64", runs-on-macos = "10.15" }', "below 11.0"),
+            ('{ id = "macos_x86_64", runs-on-macos = "10.3" }', "below 10.4"),
         ],
     )
     def test_platform_table_rejects_a_knob_the_platform_cannot_use(
@@ -3501,7 +3506,7 @@ class TestMatrix:
         path = write(
             tmp_path,
             self._platforms_body(
-                '[{ id = "macos_arm64", macos-min = "14.0",'
+                '[{ id = "macos_arm64", runs-on-macos = "14.0",'
                 ' platform-release = "23.1.0", platform-version = "Darwin 23" }]'
             ),
         )
@@ -3510,7 +3515,7 @@ class TestMatrix:
         assert matrix.platforms == (
             PlatformSpec(
                 "macos_arm64",
-                macos_min=(14, 0),
+                runs_on_macos=(14, 0),
                 platform_release="23.1.0",
                 platform_version="Darwin 23",
             ),
@@ -3574,29 +3579,29 @@ class TestMatrix:
             read_pyproject_config(path)
 
     @pytest.mark.parametrize("value", ["2", "2.28.1", "1!2.28", "2.28rc1", "garbage"])
-    def test_platform_table_bad_libc_version(self, tmp_path: Path, value: str) -> None:
+    def test_platform_table_bad_runs_on_libc(self, tmp_path: Path, value: str) -> None:
         path = write(
             tmp_path,
             self._platforms_body(
-                f'[{{ id = "linux_x86_64", libc-version = "{value}" }}]'
+                f'[{{ id = "linux_x86_64", runs-on-libc = "{value}" }}]'
             ),
         )
-        with pytest.raises(ConfigError, match="libc-version must be"):
+        with pytest.raises(ConfigError, match="runs-on-libc must be"):
             read_pyproject_config(path)
 
-    def test_platform_table_libc_version_must_be_a_string(self, tmp_path: Path) -> None:
+    def test_platform_table_runs_on_libc_must_be_a_string(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
-            self._platforms_body('[{ id = "linux_x86_64", libc-version = 2.28 }]'),
+            self._platforms_body('[{ id = "linux_x86_64", runs-on-libc = 2.28 }]'),
         )
-        with pytest.raises(ConfigError, match="libc-version must be a string"):
+        with pytest.raises(ConfigError, match="runs-on-libc must be a string"):
             read_pyproject_config(path)
 
     def test_platform_table_glibc_version_major_must_be_2(self, tmp_path: Path) -> None:
         """A glibc major other than 2 tags a platform no wheel is built for."""
         path = write(
             tmp_path,
-            self._platforms_body('[{ id = "linux_x86_64", libc-version = "3.0" }]'),
+            self._platforms_body('[{ id = "linux_x86_64", runs-on-libc = "3.0" }]'),
         )
         with pytest.raises(ConfigError, match=r"glibc has only a 2.x series"):
             read_pyproject_config(path)
@@ -3606,7 +3611,7 @@ class TestMatrix:
         path = write(
             tmp_path,
             self._platforms_body(
-                '[{ id = "linux_x86_64", libc = "musl", libc-version = "2.0" }]'
+                '[{ id = "linux_x86_64", libc = "musl", runs-on-libc = "2.0" }]'
             ),
         )
         with pytest.raises(ConfigError, match=r"musl has only a 1.x series"):

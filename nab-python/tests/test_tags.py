@@ -3,8 +3,9 @@
 Pins:
 
 - the knobs a platform can carry, and the ones it refuses
-- one libc family per target, at or below its version (PEP 600 / PEP 656)
-- the macOS deployment target as a ceiling, and its floor per arch
+- one libc family per target, at or below a set version (PEP 600 / PEP 656)
+- an unset runs-on-libc/runs-on-macos accepts any level; a set one drops wheels
+  needing newer, per floor
 - the free-threaded ``cpXYt`` ABI, and ``abi3t`` in place of ``abi3``
 - ``py3-none-any`` fallback ordering
 - compressed-tag-set wheels (``cp310.cp311``)
@@ -27,7 +28,6 @@ from nab_python.tags import (
     _ordered_tags_for_spec,
     _parse_tag_str,
     _platform_tags_for_spec,
-    default_ceiling_admitting,
     wheel_tag_set,
 )
 from nab_python.target import PLATFORM_MARKERS
@@ -94,30 +94,30 @@ class TestPlatformSpecKnobsBelongToTheirPlatform:
     )
     def test_libc_outside_linux_raises(self, platform_id: str) -> None:
         """Only a Linux target links a C library."""
-        with pytest.raises(ValueError, match="libc is a Linux knob"):
+        with pytest.raises(ValueError, match="libc and runs-on-libc are Linux knobs"):
             PlatformSpec(platform_id, libc="musl")
 
     @pytest.mark.parametrize("platform_id", ["macos_arm64", "windows_amd64"])
-    def test_libc_version_outside_linux_raises(self, platform_id: str) -> None:
+    def test_runs_on_libc_outside_linux_raises(self, platform_id: str) -> None:
         """A libc version is as Linux-only as the family it versions."""
-        with pytest.raises(ValueError, match="libc is a Linux knob"):
-            PlatformSpec(platform_id, libc_version=(2, 28))
+        with pytest.raises(ValueError, match="libc and runs-on-libc are Linux knobs"):
+            PlatformSpec(platform_id, runs_on_libc=(2, 28))
 
     @pytest.mark.parametrize("platform_id", ["linux_x86_64", "windows_amd64"])
-    def test_macos_min_outside_macos_raises(self, platform_id: str) -> None:
-        """A deployment target means nothing off macOS."""
-        with pytest.raises(ValueError, match="macos-min is a macOS knob"):
-            PlatformSpec(platform_id, macos_min=(14, 0))
+    def test_runs_on_macos_outside_macos_raises(self, platform_id: str) -> None:
+        """The macOS a lock runs on means nothing off macOS."""
+        with pytest.raises(ValueError, match="runs-on-macos is a macOS knob"):
+            PlatformSpec(platform_id, runs_on_macos=(14, 0))
 
     @pytest.mark.parametrize(
-        ("platform_id", "macos_min", "floor"),
+        ("platform_id", "runs_on_macos", "floor"),
         [
             ("macos_x86_64", (10, 3), "10.4"),
             ("macos_arm64", (10, 15), "11.0"),
         ],
     )
-    def test_macos_min_below_the_arch_floor_raises(
-        self, platform_id: str, macos_min: tuple[int, int], floor: str
+    def test_runs_on_macos_below_the_arch_floor_raises(
+        self, platform_id: str, runs_on_macos: tuple[int, int], floor: str
     ) -> None:
         """No wheel tag names a macOS older than the arch itself.
 
@@ -127,13 +127,16 @@ class TestPlatformSpecKnobsBelongToTheirPlatform:
         host nab happens to be running on.
         """
         with pytest.raises(ValueError, match=f"below {floor}"):
-            PlatformSpec(platform_id, macos_min=macos_min)
+            PlatformSpec(platform_id, runs_on_macos=runs_on_macos)
 
     @pytest.mark.parametrize(
         ("kwargs", "message"),
         [
-            ({"platform_id": "linux_x86_64", "libc_version": (2, 500)}, "libc-version"),
-            ({"platform_id": "macos_arm64", "macos_min": (500, 0)}, "macos-min"),
+            ({"platform_id": "linux_x86_64", "runs_on_libc": (2, 500)}, "runs-on-libc"),
+            (
+                {"platform_id": "macos_arm64", "runs_on_macos": (500, 0)},
+                "runs-on-macos",
+            ),
         ],
     )
     def test_a_version_above_every_release_raises(
@@ -155,21 +158,17 @@ class TestPlatformSpecKnobsBelongToTheirPlatform:
 class TestPlatformSpec:
     """``PlatformSpec`` exposes per-platform tag knobs."""
 
-    def test_default_libc_is_glibc_2_28(self) -> None:
-        """An undeclared Linux target is glibc 2.28."""
+    def test_undeclared_linux_target_is_glibc_accepting_any_level(self) -> None:
+        """An undeclared Linux target is glibc with no runs-on-libc, so any level."""
         spec = PlatformSpec("linux_x86_64")
         assert spec.libc == "glibc"
-        assert spec.effective_libc_version == (2, 28)
+        assert spec.runs_on_libc is None
 
-    def test_musl_libc_version_defaults_per_family(self) -> None:
-        """A musl target with no version takes musl's default, not glibc's."""
+    def test_musl_target_carries_no_default_version(self) -> None:
+        """A musl target with no runs-on-libc accepts any level too."""
         spec = PlatformSpec("linux_x86_64", libc="musl")
-        assert spec.effective_libc_version == (1, 2)
-
-    def test_declared_libc_version_wins(self) -> None:
-        """An explicit ``libc_version`` overrides the family default."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
-        assert spec.effective_libc_version == (2, 17)
+        assert spec.libc == "musl"
+        assert spec.runs_on_libc is None
 
     def test_label_of_default_spec_is_the_id(self) -> None:
         """A spec left at the platform defaults renders as its id."""
@@ -187,8 +186,8 @@ class TestPlatformSpec:
         that dropped the family could collapse two targets with disjoint
         wheel sets onto one key.
         """
-        glibc = PlatformSpec("linux_x86_64", libc_version=(2, 17))
-        musl = PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 1))
+        glibc = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
+        musl = PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 1))
         assert glibc.label == "linux_x86_64-glibc2.17"
         assert musl.label == "linux_x86_64-musl1.1"
 
@@ -214,30 +213,14 @@ class TestPlatformSpec:
         """``linux_armv7l`` carries the ``armv7l`` arch."""
         assert PlatformSpec("linux_armv7l").arch == "armv7l"
 
-    def test_armv7l_default_glibc_is_2_31(self) -> None:
-        """An undeclared armv7l target floors at glibc 2.31, not 2.28.
+    def test_armv7l_target_carries_no_default_version(self) -> None:
+        """An undeclared armv7l target sets no runs-on-libc, so it accepts any level.
 
-        Current armv7l wheels on PyPI (cryptography 46+) are built at
-        manylinux_2_31; a 2.28 floor would reject every one of them.
+        Its manylinux_2_31 wheels, and any newer, are all admitted.
         """
         spec = PlatformSpec("linux_armv7l")
         assert spec.libc == "glibc"
-        assert spec.effective_libc_version == (2, 31)
-
-    def test_armv7l_musl_keeps_the_family_default(self) -> None:
-        """The armv7l glibc floor does not move its musl default."""
-        spec = PlatformSpec("linux_armv7l", libc="musl")
-        assert spec.effective_libc_version == (1, 2)
-
-    def test_armv7l_declared_libc_version_wins(self) -> None:
-        """An explicit ``libc_version`` still overrides the armv7l default."""
-        spec = PlatformSpec("linux_armv7l", libc_version=(2, 17))
-        assert spec.effective_libc_version == (2, 17)
-
-    def test_other_arches_keep_glibc_2_28_default(self) -> None:
-        """The armv7l floor is a pure addition; every other arch stays 2.28."""
-        for platform_id in ("linux_x86_64", "linux_aarch64", "linux_i686"):
-            assert PlatformSpec(platform_id).effective_libc_version == (2, 28)
+        assert spec.runs_on_libc is None
 
     def test_label_distinguishes_space_from_underscore(self) -> None:
         """Whitespace and ``_`` in ``platform_release`` encode differently.
@@ -479,11 +462,11 @@ class TestLinuxArmv7l:
         wheel = _wheel("foo-1.0-cp312-cp312-manylinux_2_31_armv7l.whl")
         assert _compatible(wheel, python_version="3.12", spec=spec)
 
-    def test_rejects_a_manylinux_2_34_armv7l_wheel(self) -> None:
-        """A wheel above the default floor needs an explicit libc-version."""
+    def test_accepts_a_manylinux_2_34_armv7l_wheel(self) -> None:
+        """With no runs-on-libc, an above-2.31 armv7l wheel is installable."""
         spec = PlatformSpec("linux_armv7l")
         wheel = _wheel("foo-1.0-cp312-cp312-manylinux_2_34_armv7l.whl")
-        assert not _compatible(wheel, python_version="3.12", spec=spec)
+        assert _compatible(wheel, python_version="3.12", spec=spec)
 
 
 class TestTagsForTarget:
@@ -501,34 +484,35 @@ class TestTagsForTarget:
         members = TagSet.for_spec(python_version="3.15", spec=spec).members
         assert any(t.abi == "cp315t" for t in members)
 
-    def test_linux_includes_manylinux_at_or_below_libc_version(self) -> None:
+    def test_linux_includes_manylinux_at_or_below_runs_on_libc(self) -> None:
         """A glibc 2.17 target admits manylinux_2_17 and below."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
         assert "cp311-cp311-manylinux_2_17_x86_64" in tag_strs
         assert "cp311-cp311-manylinux_2_5_x86_64" in tag_strs
 
-    def test_linux_excludes_manylinux_above_libc_version(self) -> None:
+    def test_linux_excludes_manylinux_above_runs_on_libc(self) -> None:
         """manylinux_2_28 needs glibc 2.28; a 2.17 target cannot run it."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
         assert "cp311-cp311-manylinux_2_28_x86_64" not in tag_strs
 
-    def test_default_linux_admits_manylinux_2_28(self) -> None:
-        """The default glibc version admits manylinux_2_28."""
+    def test_default_linux_admits_any_manylinux(self) -> None:
+        """With no runs-on-libc, an undeclared target admits old and new glibc."""
         spec = PlatformSpec("linux_x86_64")
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
         assert "cp311-cp311-manylinux_2_28_x86_64" in tag_strs
+        assert "cp311-cp311-manylinux_2_39_x86_64" in tag_strs
 
     def test_linux_includes_legacy_aliases(self) -> None:
         """manylinux1, manylinux2010, manylinux2014 aliases are included."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
@@ -536,9 +520,9 @@ class TestTagsForTarget:
         assert "cp311-cp311-manylinux2010_x86_64" in tag_strs
         assert "cp311-cp311-manylinux2014_x86_64" in tag_strs
 
-    def test_linux_excludes_aliases_above_libc_version(self) -> None:
+    def test_linux_excludes_aliases_above_runs_on_libc(self) -> None:
         """manylinux2014 means glibc 2.17; a 2.12 target excludes it."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 12))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 12))
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
@@ -547,7 +531,7 @@ class TestTagsForTarget:
 
     def test_aarch64_manylinux_stops_at_2_17(self) -> None:
         """aarch64 does not descend below glibc 2.17 (PEP 599)."""
-        spec = PlatformSpec("linux_aarch64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_aarch64", runs_on_libc=(2, 17))
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
@@ -567,7 +551,7 @@ class TestTagsForTarget:
 
     def test_x86_64_keeps_legacy_alias_range(self) -> None:
         """x86_64 still descends to manylinux1 (glibc 2.5)."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
@@ -576,40 +560,41 @@ class TestTagsForTarget:
 
     def test_musl_includes_musllinux_at_or_below_version(self) -> None:
         """A musl 1.2 target admits musllinux_1_2 and below."""
-        spec = PlatformSpec("linux_x86_64", libc="musl", libc_version=(1, 2))
+        spec = PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2))
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
         assert "cp311-cp311-musllinux_1_2_x86_64" in tag_strs
         assert "cp311-cp311-musllinux_1_0_x86_64" in tag_strs
 
-    def test_macos_arm64_default_accepts_modern_wheels(self) -> None:
-        """The default ``macos_arm64`` admits ``macosx_11_0`` and ``macosx_12_0``."""
+    def test_macos_arm64_default_accepts_any_wheel(self) -> None:
+        """An undeclared ``macos_arm64`` sets no runs-on-macos: old and new admit."""
         spec = PlatformSpec("macos_arm64")
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
-        # mac_platforms yields versions <= the declared one
         assert "cp311-cp311-macosx_11_0_arm64" in tag_strs
         assert "cp311-cp311-macosx_12_0_arm64" in tag_strs
-        # Still a ceiling: a newer-than-default macOS wheel is excluded.
-        assert "cp311-cp311-macosx_13_0_arm64" not in tag_strs
+        assert "cp311-cp311-macosx_13_0_arm64" in tag_strs
+        assert "cp311-cp311-macosx_26_0_arm64" in tag_strs
 
-    def test_macos_x86_64_uses_default_min(self) -> None:
-        """``macos_x86_64`` defaults to macOS 10.13 (x86_64-era)."""
+    def test_macos_x86_64_default_accepts_any_wheel(self) -> None:
+        """An undeclared ``macos_x86_64`` admits both x86_64-era and newer wheels."""
         spec = PlatformSpec("macos_x86_64")
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
         assert "cp311-cp311-macosx_10_13_x86_64" in tag_strs
+        assert "cp311-cp311-macosx_15_0_x86_64" in tag_strs
 
-    def test_macos_explicit_min(self) -> None:
-        """An explicit ``macos_min`` overrides the default."""
-        spec = PlatformSpec("macos_arm64", macos_min=(14, 0))
+    def test_macos_explicit_runs_on_drops_newer_wheels(self) -> None:
+        """A set ``runs_on_macos`` admits its version and older, and drops newer."""
+        spec = PlatformSpec("macos_arm64", runs_on_macos=(14, 0))
         tag_strs = {
             str(t) for t in TagSet.for_spec(python_version="3.11", spec=spec).members
         }
         assert "cp311-cp311-macosx_14_0_arm64" in tag_strs
+        assert "cp311-cp311-macosx_15_0_arm64" not in tag_strs
 
     def test_windows_amd64(self) -> None:
         """Windows amd64 generates ``win_amd64`` tags."""
@@ -662,15 +647,15 @@ class TestWheelCompatibility:
         assert all(result is first for result in repeats)
         assert parse.call_count == 1
 
-    def test_accepts_manylinux_at_libc_version(self) -> None:
+    def test_accepts_manylinux_at_runs_on_libc(self) -> None:
         """A manylinux_2_17 wheel matches a glibc 2.17 target."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         assert _compatible(wheel, python_version="3.11", spec=spec)
 
-    def test_rejects_manylinux_above_libc_version(self) -> None:
+    def test_rejects_manylinux_above_runs_on_libc(self) -> None:
         """A manylinux_2_28 wheel does not match a glibc 2.17 target."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         wheel = _wheel("pkg-1.0-cp311-cp311-manylinux_2_28_x86_64.whl")
         assert not _compatible(wheel, python_version="3.11", spec=spec)
 
@@ -858,7 +843,7 @@ class TestSelectWheel:
         compatible.  manylinux_2_17 is the more-specific tag (PEP 600
         recommends preferring it) and should be selected.
         """
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         wheels = [
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"),
@@ -875,7 +860,7 @@ class TestSelectWheel:
         its equivalent manylinux_X_Y tag, so manylinux2014 outranks
         manylinux_2_5.
         """
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         wheels = [
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux2014_x86_64.whl"),
@@ -891,7 +876,7 @@ class TestSelectWheel:
         and manylinux_2_5 second, the loop must keep the first as
         best and not replace it.
         """
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         wheels = [
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"),
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_5_x86_64.whl"),
@@ -902,7 +887,7 @@ class TestSelectWheel:
 
     def test_higher_build_tag_wins_at_same_rank(self) -> None:
         """Among same-tag wheels, the higher PEP 427 build tag wins."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
         chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(
@@ -912,7 +897,7 @@ class TestSelectWheel:
 
     def test_build_tag_selection_is_order_independent(self) -> None:
         """The same wheel is chosen regardless of index file order."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
         forward = TagSet.for_spec(python_version="3.11", spec=spec).pick(
@@ -926,7 +911,7 @@ class TestSelectWheel:
 
     def test_build_tagged_wheel_beats_untagged_at_same_rank(self) -> None:
         """An absent build tag sorts lowest, so a tagged wheel wins."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         untagged = _wheel("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
         build3 = _wheel("pkg-1.0-3-cp311-cp311-manylinux_2_17_x86_64.whl")
         chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(
@@ -946,7 +931,7 @@ class TestSelectWheel:
 
     def test_malformed_build_tag_treated_as_absent(self) -> None:
         """A build segment without a leading digit sorts lowest."""
-        spec = PlatformSpec("linux_x86_64", libc_version=(2, 17))
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
         malformed = _wheel("pkg-1.0-x-cp311-cp311-manylinux_2_17_x86_64.whl")
         build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
         chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(
@@ -1172,12 +1157,13 @@ class TestLinuxPlatformOrderMatchesSysTags:
     def test_plain_linux_tag_comes_first(self) -> None:
         platforms = _platform_tags_for_spec(PlatformSpec("linux_x86_64"))
         assert platforms[0] == "linux_x86_64"
-        assert platforms[1] == "manylinux_2_28_x86_64"
+        # No runs-on-libc enumerates from the max down, so the top is manylinux_2_99.
+        assert platforms[1] == "manylinux_2_99_x86_64"
 
     def test_musl_target_ranks_the_plain_tag_first_too(self) -> None:
         platforms = _platform_tags_for_spec(PlatformSpec("linux_x86_64", libc="musl"))
         assert platforms[0] == "linux_x86_64"
-        assert platforms[1] == "musllinux_1_2_x86_64"
+        assert platforms[1] == "musllinux_1_99_x86_64"
 
     def test_plain_linux_wheel_wins_over_manylinux(self) -> None:
         """The install pick follows the ranking, as pip's does."""
@@ -1205,67 +1191,3 @@ class TestLinuxPlatformOrderMatchesSysTags:
         many = Tag("cp311", "cp311", "manylinux_2_28_x86_64")
         assert host.rank[plain] < host.rank[many]
         assert declared.rank[plain] < declared.rank[many]
-
-
-class TestDefaultCeilingAdmitting:
-    """``default_ceiling_admitting`` names an unset default ceiling, or nothing."""
-
-    def test_musl_default_ceiling_named(self) -> None:
-        """A musllinux wheel above the 1.2 default names the raise-to version."""
-        got = default_ceiling_admitting(
-            PlatformSpec("linux_x86_64", libc="musl"),
-            python_version="3.11",
-            implementation="cpython",
-            wheel_filename="pkg-2.0-cp311-cp311-musllinux_1_3_x86_64.whl",
-        )
-        assert got == ("libc-version", (1, 3))
-
-    def test_python_mismatch_is_not_a_ceiling(self) -> None:
-        """A cp312 wheel on a 3.11 target is not admitted by any ceiling change."""
-        got = default_ceiling_admitting(
-            PlatformSpec("macos_arm64"),
-            python_version="3.11",
-            implementation="cpython",
-            wheel_filename="pkg-2.0-cp312-cp312-macosx_14_0_arm64.whl",
-        )
-        assert got is None
-
-    def test_windows_target_has_no_ceiling(self) -> None:
-        """Windows names no versioned platform tag, so there is no ceiling."""
-        got = default_ceiling_admitting(
-            PlatformSpec("windows_amd64"),
-            python_version="3.11",
-            implementation="cpython",
-            wheel_filename="pkg-2.0-cp311-cp311-manylinux_2_34_x86_64.whl",
-        )
-        assert got is None
-
-    def test_non_wheel_filename_has_no_ceiling(self) -> None:
-        """A filename that is not a parseable wheel yields no candidate versions."""
-        got = default_ceiling_admitting(
-            PlatformSpec("macos_arm64"),
-            python_version="3.11",
-            implementation="cpython",
-            wheel_filename="pkg-2.0.tar.gz",
-        )
-        assert got is None
-
-    def test_below_ceiling_tag_is_not_a_ceiling(self) -> None:
-        """A manylinux 2.17 wheel is at or below the default, so nothing is raised."""
-        got = default_ceiling_admitting(
-            PlatformSpec("linux_x86_64"),
-            python_version="3.11",
-            implementation="cpython",
-            wheel_filename="pkg-2.0-cp311-cp311-manylinux_2_17_x86_64.whl",
-        )
-        assert got is None
-
-    def test_version_past_the_cap_is_not_raisable(self) -> None:
-        """A tag naming a version past the knob cap is not a ceiling nab can raise to."""
-        got = default_ceiling_admitting(
-            PlatformSpec("macos_arm64"),
-            python_version="3.11",
-            implementation="cpython",
-            wheel_filename="pkg-2.0-cp311-cp311-macosx_100_0_arm64.whl",
-        )
-        assert got is None

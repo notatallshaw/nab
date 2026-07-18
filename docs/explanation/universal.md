@@ -55,8 +55,8 @@ minor version. `platforms` is a list of platform ids
 (`linux_x86_64`, `linux_aarch64`, `linux_i686`, `linux_armv7l`,
 `macos_x86_64`, `macos_arm64`, `windows_amd64`, `windows_arm64`), each
 optionally written as a table to declare its
-wheel-tag knobs (libc family and version, macOS deployment target,
-free-threaded build).  See
+wheel-tag knobs (libc family, the libc and macOS the lock must run
+on, free-threaded build).  See
 [Configuration](../reference/configuration.md).
 
 `python-order` selects the resolution direction:

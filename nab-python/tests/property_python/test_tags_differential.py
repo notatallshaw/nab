@@ -63,14 +63,14 @@ linux_specs = st.one_of(
         PlatformSpec,
         platform_id=st.sampled_from(LINUX_IDS),
         libc=st.just("glibc"),
-        libc_version=st.tuples(st.just(2), st.integers(0, 35)),
+        runs_on_libc=st.tuples(st.just(2), st.integers(0, 35)),
         free_threaded=st.booleans(),
     ),
     st.builds(
         PlatformSpec,
         platform_id=st.sampled_from(LINUX_IDS),
         libc=st.just("musl"),
-        libc_version=st.tuples(st.just(1), st.integers(0, 4)),
+        runs_on_libc=st.tuples(st.just(1), st.integers(0, 4)),
         free_threaded=st.booleans(),
     ),
 )
@@ -78,7 +78,7 @@ macos_specs = st.sampled_from(MACOS_IDS).flatmap(
     lambda platform_id: st.builds(
         PlatformSpec,
         platform_id=st.just(platform_id),
-        macos_min=st.none()
+        runs_on_macos=st.none()
         | st.tuples(st.integers(10, 15), st.integers(0, 15)).filter(
             lambda v: v >= _MACOS_TAG_FLOOR[_PLATFORM_ARCH[platform_id]]
         ),
