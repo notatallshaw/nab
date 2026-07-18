@@ -212,6 +212,7 @@ class MarkerSet:
             raise UnserializableSetError(msg)
         return text
 
+    @_bounded
     def __repr__(self) -> str:
         return f"MarkerSet({self._tree!r})"
 
