@@ -224,7 +224,9 @@ class CachedAsyncSimpleClient:
         Metadata is decoded from the hash-verified bytes as utf-8 rather
         than the transport's ``.text``, which a backend may decode under
         the response Content-Type charset. This keeps the parsed text
-        tied to the bytes the hash covers.
+        tied to the bytes the hash covers.  A body that is not valid utf-8
+        raises :class:`MalformedSimpleResponseError` (an :class:`HttpError`
+        subclass) rather than a raw :class:`UnicodeDecodeError`.
         """
         cached = self._cache.get_metadata(package, metadata_url)
         if cached is not None:
@@ -239,7 +241,14 @@ class CachedAsyncSimpleClient:
         content = response.content
         if metadata_hash is not None:
             _verify_metadata_hash(content, metadata_hash)
-        text = content.decode("utf-8")
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            msg = (
+                f"{metadata_url} served a malformed PEP 658 metadata sidecar "
+                f"for {package}=={version}: body is not valid UTF-8"
+            )
+            raise MalformedSimpleResponseError(msg) from exc
         self._cache.put_metadata(package, metadata_url, text)
         return text
 

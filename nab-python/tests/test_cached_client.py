@@ -1422,6 +1422,61 @@ class TestGetMetadataText:
         assert [str(req) for req in parsed.requires_dist] == ["bar>=2"]
 
 
+class TestNonUtf8MetadataSidecar:
+    """A hash-valid but non-UTF-8 PEP 658 sidecar raises a clean HttpError.
+
+    The bytes pass the published hash, then fail to decode as utf-8. Like
+    ``TestNonUtf8ListingBody`` on the listing path, a body that cannot be
+    decoded surfaces as an :class:`HttpError` subclass, not a raw
+    :class:`UnicodeDecodeError`.
+    """
+
+    _LATIN1_SIDECAR = "Metadata-Version: 2.1\nName: pkg\nSummary: café\n".encode(
+        "latin-1"
+    )
+
+    def test_hash_valid_non_utf8_raises_http_error_and_skips_cache(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        digest = hashlib.sha256(self._LATIN1_SIDECAR).hexdigest()
+        transport = _FakeTransport([_FakeResponse(self._LATIN1_SIDECAR)])
+
+        async def go() -> str:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_metadata_text(
+                    "pkg", "1.0", "https://x/pkg.metadata", ("sha256", digest)
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(MalformedSimpleResponseError, match="metadata") as caught:
+            asyncio.run(go())
+        assert isinstance(caught.value, HttpError)
+        assert cache.get_metadata("pkg", "https://x/pkg.metadata") is None
+
+    def test_unhashed_non_utf8_raises_http_error_and_skips_cache(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(self._LATIN1_SIDECAR)])
+
+        async def go() -> str:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_metadata_text(
+                    "pkg", "1.0", "https://x/pkg.metadata"
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(MalformedSimpleResponseError, match="metadata") as caught:
+            asyncio.run(go())
+        assert isinstance(caught.value, HttpError)
+        assert cache.get_metadata("pkg", "https://x/pkg.metadata") is None
+
+
 class TestGetSdistFiles:
     def test_cold_cache_fetches_and_stores_both(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
