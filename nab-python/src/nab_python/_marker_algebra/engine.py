@@ -39,7 +39,7 @@ from .atoms import (
     make_or,
     partition_axis,
 )
-from .errors import UnserializableSet
+from .errors import UnserializableSetError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -273,7 +273,7 @@ def _complement_version(atom: Atom, op: str, var: str) -> Formula:
     if op in ("==", "!=") and is_pure_version(var) and not atom.swapped:
         return AtomLeaf(replace(atom, op="!=" if op == "==" else "=="))
     msg = f"cannot complement version atom on {var!r}"
-    raise UnserializableSet(msg)
+    raise UnserializableSetError(msg)
 
 
 def _complement_string(atom: Atom, op: str) -> Formula:
@@ -339,7 +339,7 @@ def _quote(literal: str) -> str:
     # literals only ever arrive through the exclusive-quote grammar, so a value
     # holding both is unreachable from any parsed input.
     msg = f"literal {literal!r} has no marker-string quoting"  # pragma: no cover
-    raise UnserializableSet(msg)  # pragma: no cover
+    raise UnserializableSetError(msg)  # pragma: no cover
 
 
 def _render_atom(atom: Atom) -> str:

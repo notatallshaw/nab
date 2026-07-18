@@ -6,7 +6,7 @@ from functools import wraps
 from typing import TYPE_CHECKING, ParamSpec, TypeVar
 
 from . import atoms, engine
-from .errors import ComplexityLimitExceeded, UnserializableSet
+from .errors import ComplexityLimitError, UnserializableSetError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -26,7 +26,7 @@ def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
 
     A tree walk recurses as deep as the marker nests, so a marker nested past the
     interpreter's stack raises :class:`RecursionError`. The construction and
-    decision methods it decorates report it as :class:`ComplexityLimitExceeded`,
+    decision methods it decorates report it as :class:`ComplexityLimitError`,
     the one bounded failure the algebra promises on pathological input.
     """
 
@@ -36,7 +36,7 @@ def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
             return method(*args, **kwargs)
         except RecursionError as exc:
             msg = "marker nests too deeply to decide"
-            raise ComplexityLimitExceeded(msg) from exc
+            raise ComplexityLimitError(msg) from exc
 
     return wrapper
 
@@ -188,21 +188,21 @@ class MarkerSet:
 
         ``None`` means the universal set (no marker). The empty set, and any set
         whose complement structure the marker grammar cannot express, raise
-        :class:`UnserializableSet` rather than emit a wrong string. The produced
+        :class:`UnserializableSetError` rather than emit a wrong string. The produced
         string is verified equivalent to this set before it is returned.
         """
         if self.is_tautology():
             return None
         if self.is_empty():
             msg = "the empty set has no marker string"
-            raise UnserializableSet(msg)
+            raise UnserializableSetError(msg)
         text = engine.serialize(engine.to_nnf(self._tree))
         rebuilt = MarkerSet.from_marker(text, max_cells=self._max_cells)
         if not self.equivalent(rebuilt):  # pragma: no cover
             # A last-resort guard: the per-atom complements are sound by
             # construction, so a non-equivalent round-trip is unreachable.
             msg = "serialisation is not round-trip sound"
-            raise UnserializableSet(msg)
+            raise UnserializableSetError(msg)
         return text
 
     def __repr__(self) -> str:

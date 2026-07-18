@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-class ComplexityLimitExceeded(Exception):  # noqa: N818
+class ComplexityLimitError(Exception):
     """A decision procedure hit a resource guard on pathological input.
 
     Raised loudly instead of hanging or overflowing the stack: the caller sees a
@@ -12,7 +12,7 @@ class ComplexityLimitExceeded(Exception):  # noqa: N818
     """
 
 
-class UnserializableSet(Exception):  # noqa: N818
+class UnserializableSetError(Exception):
     """A set has no marker-string spelling.
 
     Raised, rather than emitting a wrong or masquerading string, for the empty

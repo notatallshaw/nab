@@ -28,7 +28,7 @@ from .._vendor.packaging.markers import (
 )
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import InvalidVersion, Version
-from .errors import ComplexityLimitExceeded
+from .errors import ComplexityLimitError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -410,7 +410,7 @@ def _reject_oversized_version_literals(variable: str, literals: Sequence[str]) -
 
     A numeric component over sys.get_int_max_str_digits() digits makes
     packaging's Version raise a bare ValueError; convert it to the bounded
-    ComplexityLimitExceeded here.
+    ComplexityLimitError here.
     """
     if is_version_dispatch(variable) and any(
         _oversized_numeric(literal) for literal in literals
@@ -419,7 +419,7 @@ def _reject_oversized_version_literals(variable: str, literals: Sequence[str]) -
             "version literal numeric component exceeds the "
             f"{sys.get_int_max_str_digits()}-digit parse limit"
         )
-        raise ComplexityLimitExceeded(msg)
+        raise ComplexityLimitError(msg)
 
 
 def _reject_undefined_operator(
@@ -585,7 +585,7 @@ def _elevate_epochs(
             elevated.append(f"{epoch}!{text}")
             if len(elevated) > max_cells:
                 msg = f"version pool exceeds max_cells={max_cells}"
-                raise ComplexityLimitExceeded(msg)
+                raise ComplexityLimitError(msg)
     return elevated
 
 
@@ -622,7 +622,7 @@ def _dedupe_candidates(
         ordered.append(candidate)
         if len(ordered) > max_cells:
             msg = f"value candidate set exceeds max_cells={max_cells}"
-            raise ComplexityLimitExceeded(msg)
+            raise ComplexityLimitError(msg)
     return ordered
 
 
@@ -667,7 +667,7 @@ def _value_candidates(
     _reject_oversized_version_literals(variable, literals)
     if _reduce_work_exceeds(variable, literals, len(atoms), max_cells):
         msg = f"axis work over {len(atoms)} atoms exceeds max_cells={max_cells}"
-        raise ComplexityLimitExceeded(msg)
+        raise ComplexityLimitError(msg)
 
     candidates: list[str] = []
     raw_kind = DOMAIN_REGISTRY[variable]
@@ -686,7 +686,7 @@ def _value_candidates(
             spent += _substring_cost(atom.literal)
             if spent > max_cells:
                 msg = f"substring enumeration exceeds max_cells={max_cells}"
-                raise ComplexityLimitExceeded(msg)
+                raise ComplexityLimitError(msg)
             candidates.extend(_membership_candidates(atom))
 
     if is_version_dispatch(variable):
@@ -713,7 +713,7 @@ def _reduce_cells(
         msg = (
             f"axis work {len(points)}x{len(atoms)} atoms exceeds max_cells={max_cells}"
         )
-        raise ComplexityLimitExceeded(msg)
+        raise ComplexityLimitError(msg)
 
     representatives: dict[tuple, object] = {}
     for point in points:
@@ -747,7 +747,7 @@ def partition_set_axis(atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
     count = len(names)
     if (1 << count) > max_cells:
         msg = f"set powerset over {count} names exceeds max_cells={max_cells}"
-        raise ComplexityLimitExceeded(msg)
+        raise ComplexityLimitError(msg)
     subsets = [
         frozenset(names[i] for i in range(count) if mask & (1 << i))
         for mask in range(1 << count)
@@ -777,7 +777,7 @@ def guarded_product_size(sizes: Iterable[int], max_cells: int) -> int:
         total *= size
         if total > max_cells:
             msg = f"cell product exceeds max_cells={max_cells}"
-            raise ComplexityLimitExceeded(msg)
+            raise ComplexityLimitError(msg)
     return total
 
 
