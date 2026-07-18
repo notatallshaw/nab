@@ -8,10 +8,13 @@ itself is under test.
 
 from __future__ import annotations
 
+import ast
 import gzip
 import hashlib
+import inspect
 import io
 import tarfile
+import textwrap
 import zlib
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -27,6 +30,8 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.multi_index import IndexConfig
 from nab_python._provider import sources
 from nab_python._provider.sources import _fetch_archive_bytes
+from nab_python._vendor.packaging.utils import canonicalize_name
+from nab_python._vendor.packaging.version import Version
 from nab_python.download import (
     DownloadError,
     _reject_colliding_targets,
@@ -34,6 +39,7 @@ from nab_python.download import (
 )
 from nab_python.fetch import FetchCoordinator, InMemoryIndex
 from nab_python.lockfile import ArchivePin, LockInput, TargetLock
+from nab_python.metadata import WheelMetadata
 from nab_python.provider import (
     ArchiveSource,
     BuildPolicy,
@@ -795,3 +801,105 @@ class TestExtractArchive:
         root = extract_sdist_archive(buf.getvalue(), out)
         assert root == out.resolve()
         assert (root / "foo-1.0.0" / "pyproject.toml").is_file()
+
+
+def _attribute_docstrings(cls: type) -> dict[str, str]:
+    """Return each class attribute's docstring, keyed by attribute name.
+
+    A bare string literal after an assignment in a class body is an attribute
+    docstring.  It is not reachable at runtime (``member.__doc__`` returns the
+    class docstring), so read it from source the way Sphinx and IDEs do.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(cls)))
+    classdef = tree.body[0]
+    assert isinstance(classdef, ast.ClassDef)
+
+    docs: dict[str, str] = {}
+    pending: str | None = None
+    for node in classdef.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            pending = node.targets[0].id
+            continue
+        if (
+            pending is not None
+            and isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            docs[pending] = node.value.value
+        pending = None
+    return docs
+
+
+class TestArchiveBuildPolicyLevels:
+    """Archive sources across the three build-policy levels.
+
+    Pins the behaviour the BuildPolicy attribute docstrings enumerate: a
+    static ``[project]`` archive is read at every level, and a dynamic
+    archive is skipped until build-remote, where the backend is invoked.
+    """
+
+    def _extract(self, policy: BuildPolicy, path: Path) -> WheelMetadata:
+        coordinator = MagicMock()
+        coordinator.index = InMemoryIndex()
+        provider = Provider(coordinator, build_policy=policy)
+        return sources.extract_source_metadata(
+            provider,
+            path,
+            descriptor="archive source 'pkg'",
+            package=canonicalize_name("pkg"),
+            kind="archive",
+        )
+
+    @pytest.mark.parametrize("policy", [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL])
+    def test_static_archive_read_below_build_remote(
+        self, policy: BuildPolicy, tmp_path: Path
+    ) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "pkg"\nversion = "1.0.0"\n'
+            'dependencies = ["requests>=2"]\n',
+            encoding="utf-8",
+        )
+        metadata = self._extract(policy, tmp_path)
+        assert metadata.name == "pkg"
+        assert [str(r) for r in metadata.requires_dist] == ["requests>=2"]
+
+    @pytest.mark.parametrize("policy", [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL])
+    def test_dynamic_archive_skipped_below_build_remote(
+        self, policy: BuildPolicy, tmp_path: Path
+    ) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "pkg"\nversion = "1.0.0"\ndynamic = ["dependencies"]\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(UnsupportedSdistError, match="BuildPolicy.BUILD_REMOTE"):
+            self._extract(policy, tmp_path)
+
+    def test_dynamic_archive_builds_at_build_remote(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "pkg"\nversion = "1.0.0"\ndynamic = ["dependencies"]\n',
+            encoding="utf-8",
+        )
+        built = WheelMetadata(
+            name="pkg",
+            version=Version("1.0.0"),
+            requires_python=None,
+            requires_dist=[],
+            provides_extra=[],
+        )
+        monkeypatch.setattr(
+            "nab_python.build_backend.extract_metadata",
+            lambda _path, **_kwargs: built,
+        )
+        assert self._extract(BuildPolicy.BUILD_REMOTE, tmp_path) is built
+
+    @pytest.mark.parametrize("member", ["NEVER", "BUILD_LOCAL", "BUILD_REMOTE"])
+    def test_level_docstring_names_archive_sources(self, member: str) -> None:
+        docstring = _attribute_docstrings(BuildPolicy)[member]
+        assert "archive" in docstring.lower()
