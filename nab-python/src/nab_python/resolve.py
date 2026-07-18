@@ -24,13 +24,14 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from nab_resolver.resolver import (
     Incompatibility,
     IncompatibilityCause,
     ResolutionError,
     Resolver,
+    ResolverObserver,
 )
 
 from ._conflict_kind import dependency_marker_holds, membership_set_in_marker
@@ -92,6 +93,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "InstallContexts",
+    "ProgressSink",
     "ResolveFork",
     "ResolveResult",
     "TargetResult",
@@ -106,6 +108,45 @@ _logger = logging.getLogger(__name__)
 # One environment, as a hashable key: two targets that differ only by
 # their conflict-fork selection share it.
 EnvSignature = tuple[tuple[str, str], ...]
+
+
+class ProgressSink(Protocol):
+    """What the engine reports resolve progress to; the CLI implements it.
+
+    ``on_fetch`` fires once per package listing fetched (from the fetcher
+    thread); ``on_pin`` reports the current count of decided packages (from
+    the resolving thread).  Both are best-effort display hooks.
+    """
+
+    def on_fetch(self) -> None:
+        """Record that one package listing has been fetched."""
+
+    def on_pin(self, decided: int) -> None:
+        """Record the current count of decided (pinned) packages."""
+
+
+class _ResolveObserver(ResolverObserver[str, "Version"]):
+    """Log resolver decisions at DEBUG and drive an optional progress sink.
+
+    A decision level is the count of packages currently decided, so it is the
+    live pinned gauge; a backjump lowers it, keeping the count honest under
+    backtracking.  Logging is unconditional (the log level gates it, so ``-vv``
+    surfaces the pin trace); ``sink`` is present only while a progress line is
+    being rendered.
+    """
+
+    def __init__(self, sink: ProgressSink | None) -> None:
+        self._sink = sink
+
+    def on_decision(self, package: str, version: Version, level: int) -> None:
+        _logger.debug("pinned %s %s", package, version)
+        if self._sink is not None:
+            self._sink.on_pin(level)
+
+    def on_backjump(self, from_level: int, to_level: int) -> None:
+        _logger.debug("backjumped from level %d to %d", from_level, to_level)
+        if self._sink is not None:
+            self._sink.on_pin(to_level)
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +280,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     resolution_strategy: ResolutionStrategy | None = None,
+    progress: ProgressSink | None = None,
 ) -> ResolveResult:
     """Resolve the project at ``path`` for every environment it targets.
 
@@ -292,6 +334,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
         cache_dir=cache_dir,
         offline=offline,
         index_routes=index_routes_from_config(config),
+        on_fetch=progress.on_fetch if progress is not None else None,
     ) as coordinator:
         return resolve_with_coordinator(
             coordinator,
@@ -301,6 +344,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
             forks=forks,
             base_requirements=base_requirements,
             resolution_strategy=resolution_strategy,
+            progress=progress,
         )
 
 
@@ -316,6 +360,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bar
     resolution_strategy: ResolutionStrategy | None = None,
     align_across_targets: bool = True,
     preferences: Mapping[str, Version] | None = None,
+    progress: ProgressSink | None = None,
 ) -> ResolveResult:
     """Resolve ``targets`` against an already-open coordinator.
 
@@ -349,6 +394,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bar
             if resolution_strategy is not None
             else effective.resolution
         ),
+        progress=progress,
     )
     fork_list = (
         list(forks) if forks is not None else [ResolveFork((), tuple(requirements))]
@@ -527,6 +573,7 @@ class _EngineSettings:
     cache_dir: Path | None
     align: bool
     resolution: ResolutionStrategy
+    progress: ProgressSink | None = None
     # Shared by every target of every pass: the coordinator and the policy
     # config the pre-tag half of the listing filter reads are both fixed here.
     listing_filter_cache: ListingFilterCache = field(default_factory=ListingFilterCache)
@@ -643,10 +690,12 @@ def _resolve_one_target(
         preferences=dict(preferences),
         listing_filter_cache=settings.listing_filter_cache,
     )
+    observer = _ResolveObserver(settings.progress)
     resolver: Resolver[str, Version] = Resolver(
-        provider, range_type=VersionRange, root_version="0"
+        provider, observer=observer, range_type=VersionRange, root_version="0"
     )
 
+    _logger.debug("resolving %s", target.label)
     start = time.monotonic()
     try:
         raw = resolver.resolve(resolver_requirements, constraints=resolver_constraints)
@@ -662,6 +711,14 @@ def _resolve_one_target(
             **_target_stats(resolver, provider),
         )
     elapsed = time.monotonic() - start
+    _logger.info(
+        "resolved %d packages for %s in %.2fs (%d distributions seen, %d fetched)",
+        len(pins),
+        target.label,
+        elapsed,
+        provider.stats.distributions_seen,
+        provider.stats.metadata_fetched,
+    )
     base_roots, selector_roots = _install_context_roots(contexts, environment)
     return TargetResult(
         target=target,

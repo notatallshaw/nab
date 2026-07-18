@@ -38,6 +38,7 @@ from .cli import (
     _require_pyproject_file,
     app,
     effective_config,
+    printer,
 )
 
 ActionArg = Annotated[str, tyro.conf.Positional]
@@ -136,14 +137,13 @@ def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
         sys.stdout.write(rendered)
         return
 
-    sys.stderr.write(
-        f"Error: unknown config action {action!r};"
-        " expected one of 'list', 'get', 'explain'\n"
+    printer().error(
+        f"unknown config action {action!r}; expected one of 'list', 'get', 'explain'"
     )
     sys.exit(1)
 
 
 def _require_key_arg(key: str, action: str) -> None:
     if not key:
-        sys.stderr.write(f"Error: `nab config {action}` requires a <key>\n")
+        printer().error(f"`nab config {action}` requires a <key>")
         sys.exit(1)

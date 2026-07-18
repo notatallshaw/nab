@@ -28,7 +28,7 @@ from nab_index.multi_index import IndexConfig, MultiIndexClient
 from ._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from typing_extensions import Self
 
@@ -557,6 +557,7 @@ class FetchCoordinator:
         cache_backend: CacheBackend | None = None,
         offline: bool = False,
         index_routes: list[IndexRoute] | None = None,
+        on_fetch: Callable[[], None] | None = None,
     ) -> None:
         """Create a coordinator that wraps ``transport``.
 
@@ -604,6 +605,9 @@ class FetchCoordinator:
             self._cache = NullCache()
         self._cache_dir = cache_dir
         self._index_routes = list(index_routes or [])
+        # Progress hook: fired once per successful listing fetch, from the
+        # fetcher thread.  ``None`` when nothing is watching (the common case).
+        self._on_fetch = on_fetch
         self.index = InMemoryIndex()
         self._thread: threading.Thread | None = None
         self._started = False
@@ -1056,6 +1060,9 @@ class FetchCoordinator:
         # filter (mirrors the sdist pyproject store-before-fire ordering).
         self._record_serving_index(client, req.package)
         self.index.store_listing(req.package, files)
+        logger.debug("fetched listing: %s (%d files)", req.package, len(files))
+        if self._on_fetch is not None:
+            self._on_fetch()
 
         # Auto-prefetch metadata for the newest candidates (files are
         # oldest-first). One wheel per version: the first with a sidecar is the
@@ -1103,6 +1110,7 @@ class FetchCoordinator:
             req.package, req.version, req.url, req.metadata_hash
         )
         self.index.store_metadata(req.package, req.version, text, req.url)
+        logger.debug("fetched metadata: %s %s", req.package, req.version)
 
     async def _fetch_sdist(
         self,
