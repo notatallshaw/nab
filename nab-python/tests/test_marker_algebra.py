@@ -199,6 +199,16 @@ def test_const_vs_const_folds() -> None:
     assert ms('"linux" == "win32"').is_empty()
 
 
+def test_const_vs_known_variable_literal_routes_like_swap() -> None:
+    platform = ms('"linux" == "sys_platform"')
+    assert not platform.is_empty()
+    assert platform.evaluate({"sys_platform": "linux"})
+    assert not platform.evaluate({"sys_platform": "win32"})
+    version = ms('"3.9" == "python_version"')
+    assert version.evaluate({"python_version": "3.9"})
+    assert not version.evaluate({"python_version": "3.11"})
+
+
 def test_swapped_atoms() -> None:
     assert ms('"linux" == sys_platform').equivalent(ms('sys_platform == "linux"'))
     assert ms('"3.9" == python_version').evaluate({"python_full_version": "3.9.4"})
@@ -220,6 +230,23 @@ def test_undefined_operator_rejected_at_construction(text: str) -> None:
 def test_version_tilde_operator_builds() -> None:
     # ~= parses as a specifier on a version field, so it does not raise.
     assert ms('python_full_version ~= "3.9"').evaluate({"python_full_version": "3.9.4"})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'python_full_version ~= "' + "9" * 5000 + '.0"',
+        '"' + "9" * 5000 + '.0" ~= python_full_version',
+        'implementation_version ~= "' + "9" * 5000 + '.0"',
+        'platform_release ~= "' + "9" * 5000 + '.0"',
+    ],
+)
+def test_oversized_tilde_literal_reports_complexity(text: str) -> None:
+    # A ~= literal whose numeric component overruns the int-from-string limit
+    # crashes packaging's Specifier with a bare ValueError at parse time; the
+    # bounded guard fires during construction instead.
+    with pytest.raises(ComplexityLimitExceeded):
+        ms(text)
 
 
 def test_membership_var_in_literal_is_exact() -> None:

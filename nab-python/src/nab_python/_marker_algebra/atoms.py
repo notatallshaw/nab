@@ -322,8 +322,13 @@ def _convert_atom(item: tuple) -> Formula:
     if isinstance(rhs, Variable):
         return _make_atom(rhs.value, op, lhs.value, swapped=True)
 
-    # packaging rejects const-vs-const; fold it by evaluating the operator. The
-    # string table applies, so ~= and === raise.
+    # Neither side is a Variable node. packaging reads the right operand as an
+    # environment key, so a quoted literal naming a known variable routes like a
+    # swapped variable atom. A right operand naming no known variable folds via
+    # the string operator table (packaging raises UndefinedEnvironmentName at
+    # evaluate; the algebra evaluates, a documented divergence).
+    if rhs.value in DOMAIN_REGISTRY:
+        return _make_atom(rhs.value, op, lhs.value, swapped=True)
     return BoolConst(value=_apply(lhs.value, op, rhs.value, key=""))
 
 
@@ -398,6 +403,12 @@ def _reject_undefined_operator(
 ) -> None:
     if op not in _ORDERED_UNDEFINED:
         return
+    if is_version_dispatch(variable) and _oversized_numeric(literal):
+        msg = (
+            "version literal numeric component exceeds the "
+            f"{sys.get_int_max_str_digits()}-digit parse limit"
+        )
+        raise ComplexityLimitExceeded(msg)
     probe = "1.0"
     try:
         if swapped:
