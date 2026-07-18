@@ -438,6 +438,17 @@ class TestFetchCoordinator:
             assert len(listing) >= 2
 
     @respx.mock
+    def test_on_fetch_callback_fires_per_listing(self) -> None:
+        respx.get("https://pypi.org/simple/testpkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+        calls: list[int] = []
+        with _coord(on_fetch=lambda: calls.append(1)) as coord:
+            event = coord.request_listing("testpkg")
+            event.wait(timeout=5)
+        assert calls == [1]
+
+    @respx.mock
     def test_request_listing_cached(self) -> None:
         with _coord() as coord:
             coord.index.store_listing("cached", ["data"])

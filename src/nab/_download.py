@@ -33,6 +33,7 @@ from .cli import (
     ResolutionFlag,
     app,
 )
+from .output import ProgressReporter
 
 
 @app.command
@@ -120,11 +121,12 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         cache_dir=effective_cache_dir,
         offline=settings.offline,
         transport=transport,
-        failure_prefix="Cannot download",
+        failure_prefix="cannot download",
         python=python,
         groups=selected_groups,
         extras=selected_extras,
         resolution_strategy=settings.resolution,
+        progress=ProgressReporter(_cli.printer()),
     )
     lock_input = _cli.build_lock_input(
         result,
@@ -142,13 +144,13 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
             max_concurrency=settings.max_concurrency,
         )
     except DownloadError as e:
-        sys.stderr.write(f"Download failed: {e}\n")
+        _cli.printer().error(f"download failed: {e}")
         sys.exit(1)
     except OSError as e:
-        sys.stderr.write(f"Error: cannot write to output directory {output}: {e}\n")
+        _cli.printer().error(f"cannot write to output directory {output}: {e}")
         sys.exit(1)
 
-    sys.stderr.write(
+    _cli.printer().done(
         f"Downloaded {len(outcome.written)} files,"
-        f" {len(outcome.skipped)} already present, into {output}\n"
+        f" {len(outcome.skipped)} already present, into {output}"
     )

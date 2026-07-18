@@ -36,6 +36,7 @@ from nab.cli import (
     _default_cache_dir,
     _make_transport,
     _normalize_layered_bool_flags,
+    _resolve,
     app,
     main,
 )
@@ -45,7 +46,7 @@ from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.version import Version
-from nab_python.config import ConfigError
+from nab_python.config import ConfigError, read_pyproject_config
 from nab_python.config_sources import SourceRoots
 from nab_python.download import DownloadError
 from nab_python.lockfile import (
@@ -451,7 +452,7 @@ class TestLockCommandSpecific:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
-        assert "Resolution failed: conflict" in capsys.readouterr().err
+        assert "resolution failed: conflict" in capsys.readouterr().err
 
     def test_pylock_to_stdout(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -495,7 +496,7 @@ class TestLockCommandSpecific:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject)
-        assert "Resolution failed" in capsys.readouterr().err
+        assert "resolution failed" in capsys.readouterr().err
 
     def test_unknown_group_exits_cleanly(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -614,7 +615,7 @@ class TestLockCommandSpecific:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject)
-        assert "Cannot lock" in capsys.readouterr().err
+        assert "cannot lock" in capsys.readouterr().err
 
     def test_invalid_requirement_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -645,7 +646,7 @@ class TestLockCommandSpecific:
         ):
             lock(pyproject)
         err = capsys.readouterr().err
-        assert "Cannot lock" in err
+        assert "cannot lock" in err
         assert "503" in err
 
     def test_malformed_simple_response_exits(
@@ -684,7 +685,7 @@ class TestLockCommandSpecific:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject)
-        assert "Cannot lock" in capsys.readouterr().err
+        assert "cannot lock" in capsys.readouterr().err
 
     def test_lookup_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -721,7 +722,7 @@ class TestLockCommandSpecific:
         ):
             lock(pyproject)
         err = capsys.readouterr().err
-        assert "Cannot lock" in err
+        assert "cannot lock" in err
         assert "does not provide extra 'nonexistent'" in err
         assert "Traceback" not in err
 
@@ -768,7 +769,7 @@ class TestLockCommandSpecific:
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
 
         err = capsys.readouterr().err
-        assert "Cannot lock" in err
+        assert "cannot lock" in err
         assert "sha256 mismatch" in err
         assert "0" * 64 in err
         assert "Traceback" not in err
@@ -790,7 +791,7 @@ class TestLockCommandSpecific:
             lock(pyproject)
 
         err = capsys.readouterr().err
-        assert "Cannot lock" in err
+        assert "cannot lock" in err
         assert "sdist sha256 mismatch" in err
         assert "Traceback" not in err
 
@@ -820,7 +821,7 @@ class TestLockCommandSpecific:
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject, offline=True, output=Path("-"), cache=False)
         err = capsys.readouterr().err
-        assert "Cannot lock" in err
+        assert "cannot lock" in err
         assert "has dynamic metadata" in err
         assert "Traceback" not in err
 
@@ -1001,7 +1002,7 @@ class TestLockCommandSpecific:
         # (the shared [tool.nab] error map) rather than later in the
         # run-settings fold.
         err = capsys.readouterr().err
-        assert "Error in [tool.nab]:" in err
+        assert "in [tool.nab]:" in err
         assert "conflicting values" in err
 
     def test_standalone_nab_toml_malformed_exits(
@@ -1025,7 +1026,7 @@ class TestLockCommandSpecific:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=out)
-        assert "Config error:" in capsys.readouterr().err
+        assert "config error:" in capsys.readouterr().err
 
     def test_standalone_nab_toml_unknown_key_exits(
         self,
@@ -1049,7 +1050,7 @@ class TestLockCommandSpecific:
         ):
             lock(pyproject, output=out)
         err = capsys.readouterr().err
-        assert "Config error:" in err
+        assert "config error:" in err
         assert "typoo" in err
 
 
@@ -1086,7 +1087,7 @@ class TestPythonFlag:
         assert exc.value.code == 1
         err = capsys.readouterr().err
         assert (
-            "Error: --python must be a version like '3.12' or '3.12.4',"
+            "error: --python must be a version like '3.12' or '3.12.4',"
             " got '3.12.x'" in err
         )
         assert "[tool.nab]" not in err
@@ -1100,7 +1101,7 @@ class TestPythonFlag:
             download(pyproject, output=tmp_path / "wheels", python="3.12.x")
         assert exc.value.code == 1
         err = capsys.readouterr().err
-        assert "Error: --python must be a version like" in err
+        assert "error: --python must be a version like" in err
         assert "[tool.nab]" not in err
 
     def test_rejected_in_universal_mode(
@@ -1194,7 +1195,7 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, output=out)
         err = capsys.readouterr().err
-        assert "Error in [tool.nab]:" in err
+        assert "in [tool.nab]:" in err
         assert "gpuu" in err
 
     def test_not_implemented_vcs_exits(
@@ -1252,7 +1253,7 @@ class TestLockCommandUniversal:
             lock(pyproject, output=Path("-"), groups=("alpha", "beta"), offline=True)
 
         err = capsys.readouterr().err
-        assert "Resolution failed:" in err
+        assert "resolution failed:" in err
         assert "'alpha' and 'beta' conflict on 'idna'" in err
         assert "Traceback" not in err
 
@@ -1385,7 +1386,7 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
-        assert "Cannot lock" in capsys.readouterr().err
+        assert "cannot lock" in capsys.readouterr().err
 
     def test_pylock_disjointness_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1411,7 +1412,7 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
         err = capsys.readouterr().err
-        assert f"Error: {hint}\n" in err
+        assert f"error: {hint}\n" in err
 
     def test_pylock_divergent_base_dep_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1436,7 +1437,7 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
-        assert f"Error: {message}\n" in capsys.readouterr().err
+        assert f"error: {message}\n" in capsys.readouterr().err
 
     def test_universal_lock_collision_without_conflict_shows_hint(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1479,7 +1480,7 @@ class TestLockCommandUniversal:
                 extras=("cpu", "gpu"),
             )
         err = capsys.readouterr().err
-        assert "Error:" in err
+        assert "error:" in err
         assert "foo" in err
         assert "[tool.nab].conflicts" in err
 
@@ -1497,7 +1498,7 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
         err = capsys.readouterr().err
-        assert "Cannot lock" in err
+        assert "cannot lock" in err
         assert "refusing direct-URL requirement" in err
 
     def test_per_tuple_pins_to_stdout_by_default(
@@ -1579,9 +1580,9 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
-        out = capsys.readouterr().out
-        assert "FAILED" in out
-        assert "#   ResolutionError: conflict" in out
+        err = capsys.readouterr().err
+        assert "FAILED" in err
+        assert "#   ResolutionError: conflict" in err
 
     def test_failed_tuple_multi_line_error(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1599,10 +1600,10 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
-        out = capsys.readouterr().out
-        assert "#   ResolutionError: first line" in out
-        assert "#   second line" in out
-        assert "#   third line" in out
+        err = capsys.readouterr().err
+        assert "#   ResolutionError: first line" in err
+        assert "#   second line" in err
+        assert "#   third line" in err
 
     def test_failed_tuple_no_error_message(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1617,7 +1618,7 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
-        assert "FAILED" in capsys.readouterr().out
+        assert "FAILED" in capsys.readouterr().err
 
     def test_missing_dependencies_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1663,7 +1664,7 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements-without-hashes")
         err = capsys.readouterr().err
-        assert "Cannot lock" in err
+        assert "cannot lock" in err
         assert "503" in err
 
     def test_missing_extra_exits(
@@ -1701,7 +1702,7 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements-without-hashes")
         err = capsys.readouterr().err
-        assert "Cannot lock" in err
+        assert "cannot lock" in err
         assert "malformed Simple-API" in err
 
     def test_requirements_missing_hash_exits(
@@ -1721,7 +1722,7 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements")
-        assert "Cannot lock" in capsys.readouterr().err
+        assert "cannot lock" in capsys.readouterr().err
 
     def test_print_blocks_includes_succeeded_tuples(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1747,10 +1748,10 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
-        out = capsys.readouterr().out
-        assert "# py311-linux_x86_64" in out
-        assert "foo==1.0" in out
-        assert "# py311-windows_amd64: FAILED" in out
+        err = capsys.readouterr().err
+        assert "# py311-linux_x86_64" in err
+        assert "foo==1.0" in err
+        assert "# py311-windows_amd64: FAILED" in err
 
     def test_print_blocks_surfaces_base_pass_failure(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1780,14 +1781,14 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
-        out = capsys.readouterr().out
-        assert "foo==1.0" in out
+        err = capsys.readouterr().err
+        assert "foo==1.0" in err
         # The succeeded base pass contributes no block: only the failed
         # one renders, and the per-tuple labels stay distinct.
-        assert "# base/py311-linux_x86_64: FAILED" not in out
-        assert "# base/py312-linux_x86_64: FAILED" in out
-        assert "#   ResolutionError: base unresolvable" in out
-        assert "#   Diagnostics: missing" in out
+        assert "# base/py311-linux_x86_64: FAILED" not in err
+        assert "# base/py312-linux_x86_64: FAILED" in err
+        assert "#   ResolutionError: base unresolvable" in err
+        assert "#   Diagnostics: missing" in err
 
     def test_template_writes_one_file_per_tuple(self, tmp_path: Path) -> None:
         """``{python_version}`` in --output expands to one file per tuple."""
@@ -2068,7 +2069,7 @@ class TestLockCommandUniversal:
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements", output=out)
-        assert "Cannot lock" in capsys.readouterr().err
+        assert "cannot lock" in capsys.readouterr().err
 
     def test_template_missing_hash_writes_no_file(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2548,7 +2549,7 @@ class TestConfigErrors:
         )
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject)
-        assert "Error in [tool.nab]" in capsys.readouterr().err
+        assert "in [tool.nab]" in capsys.readouterr().err
 
     def test_workspace_discovery_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2566,7 +2567,7 @@ class TestConfigErrors:
         member.write_text('[project]\nname = "alpha"\nversion = "0"\n')
         with pytest.raises(SystemExit, match="1"):
             lock(member)
-        assert "Workspace discovery error" in capsys.readouterr().err
+        assert "workspace discovery error" in capsys.readouterr().err
 
 
 class TestDetermineLockAnchor:
@@ -2954,7 +2955,7 @@ class TestLockedFlag:
                 prog="nab",
             )
         assert exc.value.code == 1
-        assert "Cannot lock" in capsys.readouterr().err
+        assert "cannot lock" in capsys.readouterr().err
         assert out.read_bytes() == before
 
     def test_malformed_committed_lock_exits_one(
@@ -3686,14 +3687,42 @@ class TestMain:
     def test_keyboard_interrupt_aborts_clean(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Ctrl-C during ``app.cli()`` prints ``Aborted.`` and exits 130."""
+        """Ctrl-C during ``app.cli()`` reports an interrupt and exits 130."""
         monkeypatch.setattr(sys, "argv", ["nab"])
         with patch("nab.cli.app") as mock_app:
             mock_app.cli.side_effect = KeyboardInterrupt
             with pytest.raises(SystemExit) as info:
                 main()
         assert info.value.code == 130
-        assert "Aborted." in capsys.readouterr().err
+        assert "error: interrupted" in capsys.readouterr().err
+
+    def test_bad_color_flag_exits_two(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A malformed --color value is reported and exits 2 before tyro runs."""
+        monkeypatch.setattr(sys, "argv", ["nab", "--color", "rainbow", "lock"])
+        with pytest.raises(SystemExit) as info:
+            main()
+        assert info.value.code == 2
+        assert "error:" in capsys.readouterr().err
+
+    def test_resolve_without_progress_reporter(self, tmp_path: Path) -> None:
+        """_resolve tolerates progress=None (the clear step is skipped)."""
+        pyproject = _make_pyproject(tmp_path)
+        config = read_pyproject_config(pyproject)
+        with patch(
+            "nab.cli.resolve_for_targets",
+            return_value=_stub_resolve_result(pins={}),
+        ):
+            result = _resolve(
+                pyproject,
+                config=config,
+                cache_dir=None,
+                offline=False,
+                transport=MagicMock(),
+                failure_prefix="cannot lock",
+            )
+        assert result.success
 
 
 class TestMakeTransport:
@@ -3806,7 +3835,7 @@ class TestDownloadCommand:
         ):
             download(pyproject)
         err = capsys.readouterr().err
-        assert "Error in [tool.nab]:" in err
+        assert "in [tool.nab]:" in err
         assert "exactly one" in err
 
     @pytest.mark.parametrize("bad", [0, -1])
@@ -3829,7 +3858,7 @@ class TestDownloadCommand:
             pytest.raises(SystemExit, match="1"),
         ):
             download(pyproject)
-        assert "Resolution failed" in capsys.readouterr().err
+        assert "resolution failed" in capsys.readouterr().err
 
     def test_missing_extra_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3872,7 +3901,7 @@ class TestDownloadCommand:
             pytest.raises(SystemExit, match="1"),
         ):
             download(pyproject)
-        assert "Cannot download" in capsys.readouterr().err
+        assert "cannot download" in capsys.readouterr().err
 
     def test_download_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3884,7 +3913,7 @@ class TestDownloadCommand:
             pytest.raises(SystemExit, match="1"),
         ):
             download(pyproject)
-        assert "Download failed" in capsys.readouterr().err
+        assert "download failed" in capsys.readouterr().err
 
     def test_output_is_existing_file_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

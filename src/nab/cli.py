@@ -79,6 +79,14 @@ from nab_python.resolve import (
 from nab_python.workspace import WorkspaceDiscoveryError
 from nab_resolver.resolver import ResolutionError
 
+from .output import (
+    OutputOptionError,
+    Printer,
+    ProgressReporter,
+    install_log_handler,
+    parse_output_options,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -88,6 +96,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "main",
+    "printer",
 ]
 
 
@@ -130,6 +139,18 @@ _SIGINT_EXIT_CODE = 130
 
 app = SubcommandApp()
 
+_printer: Printer | None = None
+
+
+def printer() -> Printer:
+    """Return the run's :class:`~nab.output.Printer`.
+
+    :func:`main` installs the printer resolved from the global output flags.
+    A subcommand called directly (bypassing ``main``, as many tests do) gets a
+    fresh default printer that reads the current process streams.
+    """
+    return _printer if _printer is not None else Printer()
+
 
 def _make_transport(backend: HttpBackend) -> AsyncHttpTransport:
     # httpx is an optional extra; import lazily so a urllib3-only
@@ -140,9 +161,7 @@ def _make_transport(backend: HttpBackend) -> AsyncHttpTransport:
                 HttpxAsyncTransport,
             )
         except ImportError:
-            sys.stderr.write(
-                "Error: httpx is not installed; run `pip install nab[httpx]`\n"
-            )
+            printer().error("httpx is not installed; run `pip install nab[httpx]`")
             sys.exit(1)
         return HttpxAsyncTransport()
 
@@ -388,8 +407,8 @@ def _layered_run_settings_or_exit(
 
 
 def _fail_config(exc: SourceConfigError) -> NoReturn:
-    """Map a layered config error to the shared ``Config error:`` exit."""
-    sys.stderr.write(f"Config error: {exc}\n")
+    """Map a layered config error to the shared ``error: config error:`` exit."""
+    printer().error(f"config error: {exc}")
     sys.exit(1)
 
 
@@ -416,12 +435,12 @@ def _require_pyproject_file(path: Path) -> None:
     """
     if not path.is_file():
         reason = "is a directory" if path.is_dir() else "not found"
-        sys.stderr.write(f"Error: {path} {reason}\n")
+        printer().error(f"{path} {reason}")
         sys.exit(1)
     if _is_pylock(path):
-        sys.stderr.write(
-            f"Error: {path} is a PEP 751 lockfile, not a pyproject.  nab resolves"
-            f" from project inputs, so pass the pyproject.toml instead.\n"
+        printer().error(
+            f"{path} is a PEP 751 lockfile, not a pyproject.  nab resolves"
+            " from project inputs, so pass the pyproject.toml instead."
         )
         sys.exit(1)
 
@@ -443,10 +462,10 @@ def _load_config(
             cli_overrides=cli_overrides,
         )
     except ConfigError as exc:
-        sys.stderr.write(f"Error in [tool.nab]: {exc}\n")
+        printer().error(f"in [tool.nab]: {exc}")
         sys.exit(1)
     except WorkspaceDiscoveryError as exc:
-        sys.stderr.write(f"Workspace discovery error: {exc}\n")
+        printer().error(f"workspace discovery error: {exc}")
         sys.exit(1)
 
 
@@ -464,9 +483,9 @@ def _reject_python_override_in_universal(
     the user did not ask for.
     """
     if python is not None and config.mode is ResolveMode.UNIVERSAL:
-        sys.stderr.write(
-            "Error: --python is not supported in universal mode;"
-            " [tool.nab.matrix].python declares the Python axis.\n"
+        printer().error(
+            "--python is not supported in universal mode;"
+            " [tool.nab.matrix].python declares the Python axis."
         )
         sys.exit(1)
 
@@ -482,11 +501,11 @@ def _python_override_or_exit(
     try:
         return with_python_override(config, python)
     except ConfigError as e:
-        sys.stderr.write(f"Error: {e}\n")
+        printer().error(str(e))
         sys.exit(1)
 
 
-def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg / exit-mapped error
+def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targets kwarg / exit-mapped error
     path: Path,
     *,
     config: NabProjectConfig,
@@ -498,45 +517,55 @@ def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg
     groups: tuple[str, ...] = (),
     extras: tuple[str, ...] = (),
     resolution_strategy: ResolutionStrategy | None = None,
+    progress: ProgressReporter | None = None,
 ) -> ResolveResult:
     """Run the resolver and translate every failure to an exit.
 
     A returned result is always fully successful: a target that did not
     resolve is reported (one line for a single environment, a per-tuple
     block for a matrix) and the process exits 1.
+
+    ``progress`` renders the live resolve line while ``resolve_for_targets``
+    runs; it is cleared before any summary or error is written, so the two
+    never collide.
     """
     config = _python_override_or_exit(config, python)
     try:
-        result = resolve_for_targets(
-            path,
-            transport,
-            config=config,
-            cache_dir=cache_dir,
-            offline=offline,
-            groups=groups,
-            extras=extras,
-            resolution_strategy=resolution_strategy,
-        )
+        try:
+            result = resolve_for_targets(
+                path,
+                transport,
+                config=config,
+                cache_dir=cache_dir,
+                offline=offline,
+                groups=groups,
+                extras=extras,
+                resolution_strategy=resolution_strategy,
+                progress=progress,
+            )
+        finally:
+            if progress is not None:
+                progress.clear()
     except ResolutionError as e:
-        sys.stderr.write(f"Resolution failed: {e}\n")
+        printer().error(f"resolution failed: {e}")
         sys.exit(1)
     except (UnsupportedVcsError, MissingExtraError) as e:
-        sys.stderr.write(f"{failure_prefix}: {e}\n")
+        printer().error(f"{failure_prefix}: {e}")
         sys.exit(1)
     except InvalidUploadTimeError as e:
-        sys.stderr.write(f"Error: {e}\n")
+        printer().error(str(e))
         sys.exit(1)
     except KeyError:
-        sys.stderr.write(f"Error: {path} has no [project].dependencies\n")
+        printer().error(f"{path} has no [project].dependencies")
         sys.exit(1)
     except InvalidProjectTableError as e:
-        sys.stderr.write(f"Error in {path}: {e}\n")
+        printer().error(f"in {path}: {e}")
         sys.exit(1)
     except InvalidProjectRequirementError as e:
-        sys.stderr.write(f"Error: {e}\n")
+        printer().error(str(e))
         sys.exit(1)
     except LookupError as e:
-        sys.stderr.write(f"Error: {e}\n")
+        printer().error(str(e))
         sys.exit(1)
     except (
         MissingHashError,
@@ -545,16 +574,16 @@ def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg
         MetadataHashMismatchError,
         SdistHashMismatchError,
     ) as e:
-        sys.stderr.write(f"{failure_prefix}: {e}\n")
+        printer().error(f"{failure_prefix}: {e}")
         sys.exit(1)
     except NotImplementedError as e:
-        sys.stderr.write(f"{failure_prefix}: {e}\n")
+        printer().error(f"{failure_prefix}: {e}")
         sys.exit(1)
     except ConfigError as e:
-        sys.stderr.write(f"Error in [tool.nab]: {e}\n")
+        printer().error(f"in [tool.nab]: {e}")
         sys.exit(1)
     except HttpError as e:
-        sys.stderr.write(f"{failure_prefix}: {e}\n")
+        printer().error(f"{failure_prefix}: {e}")
         sys.exit(1)
 
     if not result.success:
@@ -569,11 +598,13 @@ def _report_failures(result: ResolveResult, *, matrix: bool) -> None:
     A project resolving for one environment has one error, and it is the
     run's error.  A matrix has one per tuple, and the pins that did
     resolve are as informative as the failures, so each tuple gets a
-    labelled block on stdout.
+    labelled block.  Both go to stderr: a failed run exits non-zero, so
+    the report is a diagnostic, not the requested lock, and stdout stays
+    clean for a caller that piped it.
     """
     if not matrix:
         first = next(tr.error for tr in result.every_result if tr.error is not None)
-        sys.stderr.write(f"Resolution failed: {first}\n")
+        printer().error(f"resolution failed: {first}")
         return
 
     blocks: list[str] = []
@@ -594,7 +625,7 @@ def _report_failures(result: ResolveResult, *, matrix: bool) -> None:
         blocks.append(f"# base/{br.target.label}: FAILED")
         blocks.extend(_error_lines(br.error))
 
-    sys.stdout.write("\n".join(blocks) + "\n")
+    sys.stderr.write("\n".join(blocks) + "\n")
 
 
 def _error_lines(error: ResolutionError | None) -> list[str]:
@@ -659,15 +690,30 @@ from . import _lock as _lock_module  # noqa: E402, F401 - side-effect
 
 def main() -> None:
     """Entry point for the nab command."""
-    # Tyro's SubcommandApp does not surface a global ``--version`` flag,
-    # so the check runs before ``app.cli()`` parses the sub-command.
+    global _printer  # noqa: PLW0603 - the run's printer is a module singleton main() sets
+    # Tyro's SubcommandApp does not surface global flags, so ``--version`` and
+    # the output flags (-v/-q, --color, --no-progress) are parsed before
+    # ``app.cli()`` sees the sub-command.
     argv = sys.argv[1:]
     if argv and argv[0] in {"--version", "-V"}:
         sys.stdout.write(f"nab {__version__}\n")
         return
 
     try:
-        app.cli(prog="nab", args=_normalize_layered_bool_flags(argv))
+        options, rest = parse_output_options(argv, os.environ)
+    except OutputOptionError as exc:
+        sys.stderr.write(f"error: {exc}\n")
+        sys.exit(2)
+
+    _printer = Printer(
+        verbosity=options.verbosity, color=options.color, progress=options.progress
+    )
+    install_log_handler(
+        options.verbosity, stream=sys.stderr, color_enabled=_printer.color_enabled
+    )
+
+    try:
+        app.cli(prog="nab", args=_normalize_layered_bool_flags(rest))
     except KeyboardInterrupt:
-        sys.stderr.write("Aborted.\n")
+        _printer.error("interrupted")
         sys.exit(_SIGINT_EXIT_CODE)

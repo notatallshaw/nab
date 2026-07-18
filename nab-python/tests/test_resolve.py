@@ -53,6 +53,7 @@ from nab_python.resolve import (
     _group_requirements_by_group,
     _ProjectTables,
     _raise_for_source_python,
+    _ResolveObserver,
     _walk_no_versions_packages,
     build_lock_input,
     resolve_for_targets,
@@ -3792,3 +3793,53 @@ class TestSidecarFetchFailure:
                 _resolved(pyproject, transport, python_version="3.12.0")
         finally:
             asyncio.run(transport.aclose())
+
+
+class _RecordingSink:
+    """A :class:`~nab_python.resolve.ProgressSink` that records its calls."""
+
+    def __init__(self) -> None:
+        self.fetches = 0
+        self.pins: list[int] = []
+
+    def on_fetch(self) -> None:
+        self.fetches += 1
+
+    def on_pin(self, decided: int) -> None:
+        self.pins.append(decided)
+
+
+class TestProgressReporting:
+    """The progress sink is threaded to the coordinator and the resolver."""
+
+    def test_sink_records_pins_and_reaches_coordinator(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n', encoding="utf-8"
+        )
+        coordinator = make_coordinator(
+            listings={"foo": _index_wheels("foo", "1.0")},
+            metadata_by_version={"1.0": _metadata("foo", "1.0")},
+        )
+        sink = _RecordingSink()
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            result = _resolved(
+                pyproject, _FAKE_TRANSPORT, python_version="3.12.0", progress=sink
+            )
+        assert result.success
+        assert sink.pins
+        assert mock_coord_cls.call_args.kwargs["on_fetch"] is not None
+
+    def test_observer_reports_decision_and_backjump_levels(self) -> None:
+        sink = _RecordingSink()
+        observer = _ResolveObserver(sink)
+        observer.on_decision("foo", V("1.0"), 3)
+        observer.on_backjump(3, 1)
+        assert sink.pins == [3, 1]
+
+    def test_observer_without_sink_only_logs(self) -> None:
+        observer = _ResolveObserver(None)
+        observer.on_decision("foo", V("1.0"), 3)
+        observer.on_backjump(3, 1)

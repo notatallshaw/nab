@@ -680,7 +680,7 @@ def test_lock_exits_cleanly_on_layered_config_error(
     _write(tmp_path / "usr" / "nab.toml", 'resolution = "lowest"\n')
     with pytest.raises(SystemExit):
         lock(hermetic_roots / "pyproject.toml", output=hermetic_roots / "pylock.toml")
-    assert "Config error" in capsys.readouterr().err
+    assert "config error" in capsys.readouterr().err
 
 
 def test_lock_exits_on_pyproject_user_key_via_fold(
@@ -692,7 +692,7 @@ def test_lock_exits_on_pyproject_user_key_via_fold(
     with pytest.raises(SystemExit):
         lock(hermetic_roots / "pyproject.toml", output=hermetic_roots / "pylock.toml")
     err = capsys.readouterr().err
-    assert "Error in [tool.nab]" in err
+    assert "in [tool.nab]" in err
     assert "user-scope option" in err
 
 
@@ -949,4 +949,4 @@ class TestDownloadLadder:
         _write(hermetic_roots.parent / "usr" / "nab.toml", 'resolution = "lowest"\n')
         with pytest.raises(SystemExit):
             download(hermetic_roots / "pyproject.toml", output=hermetic_roots / "out")
-        assert "Config error" in capsys.readouterr().err
+        assert "config error" in capsys.readouterr().err
