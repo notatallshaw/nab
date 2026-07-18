@@ -82,6 +82,19 @@ def test_exclusive_above_prerelease_literal() -> None:
     assert gap.witness() is not None
 
 
+def test_exclusive_above_post_release_literal() -> None:
+    covered = ms('python_full_version <= "3.14.0.post1"') | ms(
+        'python_full_version > "3.14"'
+    )
+    assert not covered.is_tautology()
+    above = ms('python_full_version > "3.14.0rc1.post1"')
+    assert not above.implies(ms('python_full_version > "3.14.0rc1"'))
+    band = ms('python_full_version > "3.14.0.post5"') & ms(
+        'python_full_version < "3.14.1"'
+    )
+    assert not band.is_empty()
+
+
 def test_m1_string_ordering_non_negation() -> None:
     less = ms('sys_platform < "linux"')
     greater_equal = ms('sys_platform >= "linux"')
