@@ -24,6 +24,7 @@ import tyro
 from tyro.extras import SubcommandApp
 
 from nab._version import __version__
+from nab_index.client import MetadataHashMismatchError, SdistHashMismatchError
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python.config import (
@@ -537,7 +538,13 @@ def _resolve(  # noqa: PLR0913, C901 - one wrapper per resolve_for_targets kwarg
     except LookupError as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)
-    except (MissingHashError, MissingSdistError, MetadataError) as e:
+    except (
+        MissingHashError,
+        MissingSdistError,
+        MetadataError,
+        MetadataHashMismatchError,
+        SdistHashMismatchError,
+    ) as e:
         sys.stderr.write(f"{failure_prefix}: {e}\n")
         sys.exit(1)
     except NotImplementedError as e:

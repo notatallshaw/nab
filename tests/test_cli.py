@@ -7,6 +7,7 @@ import builtins
 import contextlib
 import importlib
 import io
+import json
 import runpy
 import stat
 import sys
@@ -38,6 +39,7 @@ from nab.cli import (
     app,
     main,
 )
+from nab_index.client import SdistHashMismatchError
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
@@ -192,6 +194,47 @@ def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(body or '[project]\ndependencies = ["foo"]\n')
     return pyproject
+
+
+class _SidecarResponse:
+    """Minimal HttpResponse for the fake index transport."""
+
+    def __init__(self, body: bytes) -> None:
+        self.content = body
+        self.status_code = 200
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {}
+
+    @property
+    def text(self) -> str:
+        return self.content.decode()
+
+    def json(self) -> object:
+        return json.loads(self.content)
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+class _SidecarTransport:
+    """Serves a Simple-API listing and its PEP 658 sidecar bytes, keyed by URL."""
+
+    def __init__(self, bodies: dict[str, bytes]) -> None:
+        self._bodies = bodies
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> _SidecarResponse:
+        del headers
+        if url not in self._bodies:
+            msg = f"unexpected request to {url}"
+            raise AssertionError(msg)
+        return _SidecarResponse(self._bodies[url])
+
+    async def aclose(self) -> None:
+        return None
 
 
 def _universal_pyproject(tmp_path: Path) -> Path:
@@ -680,6 +723,75 @@ class TestLockCommandSpecific:
         err = capsys.readouterr().err
         assert "Cannot lock" in err
         assert "does not provide extra 'nonexistent'" in err
+        assert "Traceback" not in err
+
+    def test_metadata_hash_mismatch_exits(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A PEP 658 sidecar failing its published hash exits 1, not a traceback.
+
+        Drives a real resolve against a fake index that serves a wheel
+        advertising a ``core-metadata`` sha256 the sidecar bytes do not match.
+        """
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        pyproject = _make_pyproject(tmp_path)
+
+        wheel_url = "https://files.example.com/foo-1.0-py3-none-any.whl"
+        listing = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": wheel_url,
+                    "core-metadata": {"sha256": "0" * 64},
+                }
+            ]
+        }
+        transport = _SidecarTransport(
+            {
+                "https://pypi.org/simple/foo/": json.dumps(listing).encode(),
+                f"{wheel_url}.metadata": (
+                    b"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n\n"
+                ),
+            }
+        )
+
+        with (
+            patch("nab.cli._make_transport", return_value=transport),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
+
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "sha256 mismatch" in err
+        assert "0" * 64 in err
+        assert "Traceback" not in err
+
+    def test_sdist_hash_mismatch_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An sdist archive failing its published hash exits 1, not a traceback."""
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                side_effect=SdistHashMismatchError(
+                    f"sdist sha256 mismatch: expected {'0' * 64}, got abc123"
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+
+        err = capsys.readouterr().err
+        assert "Cannot lock" in err
+        assert "sdist sha256 mismatch" in err
         assert "Traceback" not in err
 
     def test_dynamic_local_source_forbidden_build_exits(
