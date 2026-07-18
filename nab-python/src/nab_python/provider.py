@@ -760,6 +760,13 @@ class Provider:
         # queueing once ``_MAX_FORCE_BACKTRACKS_PER_PKG`` is reached.
         self._force_backtrack_counts: dict[str, int] = {}
 
+        # Set while ``has_satisfying_version`` probes.  Both look-ahead
+        # shortcuts can return a version the decided blocker rejects: the abort
+        # returns its first pick, and past ``_BROAD_LA_REJECT_CAP`` rejections
+        # the scan drops decision-checking.  Suppress both so the probe scans to
+        # a real answer.
+        self._probing_satisfiable = False
+
         self.stats = ProviderStats()
 
         if self.root_requirements:
@@ -1309,7 +1316,7 @@ class Provider:
     def has_satisfying_version(
         self, package: str, version_range: RangeProtocol[Version]
     ) -> bool:
-        """Report whether ``choose_version`` would pick a version, side-effect-free.
+        """Report whether a usable version exists, side-effect-free.
 
         Runs the real ``choose_version`` over ``version_range`` so look-ahead
         rejections are honored, then rolls back the state it records: the queued
@@ -1317,12 +1324,23 @@ class Provider:
         markers, force-backtrack budget, and no-versions reasons are restored to
         their pre-probe values.  A failed-resolve attribution probe therefore
         cannot alter a later decision.
+
+        The probe also suppresses both look-ahead shortcuts, which could
+        otherwise report a version the decided blocker rejects: it hides the
+        abort markers (so neither a fresh abort nor a recorded skip fires) and
+        sets ``_probing_satisfiable`` to skip the abort and to keep checking
+        decisions past ``_BROAD_LA_REJECT_CAP``.
         """
         saved_aborted = dict(self._lookahead_aborted)
         saved_counts = dict(self._force_backtrack_counts)
         saved_reasons = dict(self._no_versions_reasons)
 
-        found = self.choose_version(package, version_range) is not None
+        self._lookahead_aborted = {}
+        self._probing_satisfiable = True
+        try:
+            found = self.choose_version(package, version_range) is not None
+        finally:
+            self._probing_satisfiable = False
 
         self.consume_pending_clauses()
         self.consume_force_backtrack_targets()
@@ -1468,7 +1486,10 @@ class Provider:
         when the abort fires, or None to keep scanning further batches.
         """
         for version in batch:
-            check_decisions = broad_rejections < self._BROAD_LA_REJECT_CAP
+            check_decisions = (
+                self._probing_satisfiable
+                or broad_rejections < self._BROAD_LA_REJECT_CAP
+            )
             if self._look_ahead_ok(
                 normalized, version, check_decisions=check_decisions
             ):
@@ -1480,6 +1501,8 @@ class Provider:
             if first_candidate is None:
                 continue
             if broad_rejections < self._LOOKAHEAD_ABORT_THRESHOLD:
+                continue
+            if self._probing_satisfiable:
                 continue
             if self._try_abort_lookahead(normalized):
                 return first_candidate, broad_rejections
