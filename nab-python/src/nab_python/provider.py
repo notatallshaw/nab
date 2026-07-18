@@ -186,8 +186,9 @@ class BuildPolicy(enum.Enum):
     """Static metadata only, from any source.
 
     Wheels, PEP 643 sdists, sdists with a static ``pyproject.toml`` fallback,
-    local checkouts via ``[[tool.nab.local-sources]]``, and VCS clones via
-    ``[[tool.nab.vcs-sources]]`` are all read statically.  Sources whose
+    local checkouts via ``[[tool.nab.local-sources]]``, VCS clones via
+    ``[[tool.nab.vcs-sources]]``, and archive sources via
+    ``[[tool.nab.archive-sources]]`` are all read statically.  Sources whose
     metadata is dynamic without a static fallback are skipped.
     """
 
@@ -196,15 +197,16 @@ class BuildPolicy(enum.Enum):
 
     Adds backend invocation for ``[[tool.nab.local-sources]]`` and
     workspace members when their ``pyproject.toml`` cannot be read
-    statically.  VCS clones and remote PyPI sdists remain static-only.
+    statically.  VCS clones, archive sources, and remote PyPI sdists
+    remain static-only.
     """
 
     BUILD_REMOTE = "build-remote"
-    """Builds extend to VCS clones and remote PyPI sdists.
+    """Builds extend to VCS clones, archive sources, and remote PyPI sdists.
 
     On top of :attr:`BUILD_LOCAL`, invokes the backend on VCS-cloned
-    trees and on fetched sdists when their metadata is dynamic and has
-    no static fallback.
+    trees, extracted archive trees, and fetched sdists when their
+    metadata is dynamic and has no static fallback.
     """
 
 
