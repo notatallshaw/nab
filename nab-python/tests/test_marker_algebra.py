@@ -117,6 +117,22 @@ def test_exclusive_above_dev_literal() -> None:
     ).evaluate(env2)
 
 
+def test_exclusive_below_dev_literal() -> None:
+    band = ms('python_version >= "3.14.0.dev2" and python_full_version < "3.14.0.dev2"')
+    assert not band.is_empty()
+    env = band.witness()
+    assert env is not None
+
+    lower = ms('python_full_version < "3.14.0.dev2"') & ms(
+        'python_full_version > "3.14.0.dev0"'
+    )
+    assert not lower.is_empty()
+
+
+def test_dev0_literal_mints_no_below_neighbour() -> None:
+    assert not ms('python_full_version == "3.14.0.dev0"').is_empty()
+
+
 def test_m1_string_ordering_non_negation() -> None:
     less = ms('sys_platform < "linux"')
     greater_equal = ms('sys_platform >= "linux"')

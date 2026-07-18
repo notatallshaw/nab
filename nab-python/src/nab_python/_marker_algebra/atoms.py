@@ -474,6 +474,8 @@ def _version_neighbours(text: str) -> list[str]:
     release = version.release
     epoch = version.epoch
     major = release[0]
+    release_str = ".".join(str(part) for part in release)
+    pre_part = f"{version.pre[0]}{version.pre[1]}" if version.pre is not None else ""
     out = [base]
 
     # Bumps stay in the literal's own epoch: the release bump of 1!3.9 is 1!3.10,
@@ -492,52 +494,39 @@ def _version_neighbours(text: str) -> list[str]:
         out.append(bump)
         out.append(f"{bump}.dev0")
 
-    if version.pre is not None:
-        # An exclusive > / < against a prerelease literal excludes V's own
-        # post/local/dev variants, so the point just above is the next prerelease
-        # of the same release, which no release or suffix bump mints.
-        letter, number = version.pre
-        release_str = ".".join(str(part) for part in release)
-        out.append(str(Version(f"{version.epoch}!{release_str}{letter}{number + 1}")))
-
-    if version.post is not None:
-        # The point just above an exclusive > against a post-release literal is
-        # the next post-release of the same release; no release or suffix bump
-        # mints it.
-        release_str = ".".join(str(part) for part in release)
-        pre_part = (
-            f"{version.pre[0]}{version.pre[1]}" if version.pre is not None else ""
-        )
-        out.append(
-            str(
-                Version(
-                    f"{version.epoch}!{release_str}{pre_part}.post{version.post + 1}"
-                )
-            )
-        )
-
-    if version.dev is not None:
-        # An exclusive > / < against a dev literal excludes V's own local
-        # variants, so the point just above is the next dev of the same release,
-        # which no release or suffix bump mints.
-        release_str = ".".join(str(part) for part in release)
-        pre_part = (
-            f"{version.pre[0]}{version.pre[1]}" if version.pre is not None else ""
-        )
-        post_part = f".post{version.post}" if version.post is not None else ""
-        out.append(
-            str(
-                Version(
-                    f"{version.epoch}!{release_str}{pre_part}{post_part}"
-                    f".dev{version.dev + 1}"
-                )
-            )
-        )
+    out.extend(_suffix_neighbours(version, release_str, pre_part))
 
     for suffix in (".dev0", "a0", ".post0", ".1", "+l"):
         candidate = f"{base}{suffix}"
         if _strict_version(candidate):
             out.append(candidate)
+    return out
+
+
+def _suffix_neighbours(version: Version, release_str: str, pre_part: str) -> list[str]:
+    """Mint the points adjacent to a pre/post/dev literal.
+
+    An exclusive comparison against a suffixed literal excludes the literal's own
+    lower-precedence variants, so the adjacent point is the next or previous
+    suffix of the same release, which no release bump reaches.
+    """
+    out: list[str] = []
+    epoch = version.epoch
+    if version.pre is not None:
+        letter, number = version.pre
+        out.append(str(Version(f"{epoch}!{release_str}{letter}{number + 1}")))
+
+    if version.post is not None:
+        out.append(
+            str(Version(f"{epoch}!{release_str}{pre_part}.post{version.post + 1}"))
+        )
+
+    if version.dev is not None:
+        post_part = f".post{version.post}" if version.post is not None else ""
+        stem = f"{epoch}!{release_str}{pre_part}{post_part}"
+        out.append(str(Version(f"{stem}.dev{version.dev + 1}")))
+        if version.dev > 0:
+            out.append(str(Version(f"{stem}.dev{version.dev - 1}")))
     return out
 
 
