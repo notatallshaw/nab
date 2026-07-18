@@ -1,32 +1,41 @@
 lock-version = "1.0"
 environments = [
-    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
-    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
-    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
-    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
-    "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
-    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
-    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
-    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
-    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
-    "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
-    "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
-    "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
-    "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
-    "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
-    "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
-    "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
-    "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
-    "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
-    "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
-    "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
-    "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
-    "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
-    "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
-    "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
-    "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+    "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+    "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
 ]
+requires-python = ">=3.10"
 dependency-groups = [
+    "pre-commit",
+]
+default-groups = [
     "pre-commit",
 ]
 created-by = "nab"
@@ -35,6 +44,13 @@ created-by = "nab"
 name = "build"
 version = "1.5.0"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "colorama" },
+    { name = "importlib-metadata" },
+    { name = "packaging" },
+    { name = "pyproject-hooks" },
+    { name = "tomli" },
+]
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
@@ -58,6 +74,7 @@ sha256 = "13f3eecb844759ab66efec90ca17639bbf14dc06cb2fdf37a9010322d9c50a6f"
 [[packages]]
 name = "cfgv"
 version = "3.5.0"
+marker = "\"pre-commit\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
@@ -82,7 +99,7 @@ sha256 = "a8dc6b26ad22ff227d2634a65cb388215ce6cc96bbcc5cfde7641ae87e8dacc0"
 [[packages]]
 name = "colorama"
 version = "0.4.6"
-marker = "(python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")"
+marker = "(python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\") or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")"
 requires-python = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,>=2.7"
 index = "https://pypi.org/simple/"
 
@@ -107,6 +124,7 @@ sha256 = "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"
 [[packages]]
 name = "distlib"
 version = "0.4.0"
+marker = "\"pre-commit\" in dependency_groups"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
@@ -154,6 +172,7 @@ sha256 = "b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b"
 [[packages]]
 name = "filelock"
 version = "3.29.0"
+marker = "\"pre-commit\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
@@ -178,6 +197,7 @@ sha256 = "96f5f6344709aa1572bbf631c640e4ebeeb519e08da902c39a001882f30ac258"
 [[packages]]
 name = "identify"
 version = "2.6.19"
+marker = "\"pre-commit\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
@@ -202,8 +222,11 @@ sha256 = "20e6a87f786f768c092a721ad107fc9df0eb89347be9396cadf3f4abbd1fb78a"
 [[packages]]
 name = "importlib-metadata"
 version = "9.0.0"
-marker = "(python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")"
+marker = "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "zipp" },
+]
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
@@ -251,6 +274,7 @@ sha256 = "011d045df8b954ced7dde3a7e42ae4418da40ecda7990f2d11d5ed7c146fd98b"
 [[packages]]
 name = "nodeenv"
 version = "1.10.0"
+marker = "\"pre-commit\" in dependency_groups"
 requires-python = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,>=2.7"
 index = "https://pypi.org/simple/"
 
@@ -299,6 +323,7 @@ sha256 = "5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"
 [[packages]]
 name = "platformdirs"
 version = "4.9.6"
+marker = "\"pre-commit\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
@@ -323,7 +348,15 @@ sha256 = "e61adb1d5e5cb3441b4b7710bea7e4c12250ca49439228cc1021c00dcfac0917"
 [[packages]]
 name = "pre-commit"
 version = "4.6.0"
+marker = "\"pre-commit\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "cfgv" },
+    { name = "identify" },
+    { name = "nodeenv" },
+    { name = "pyyaml" },
+    { name = "virtualenv" },
+]
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
@@ -371,7 +404,12 @@ sha256 = "9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913"
 [[packages]]
 name = "python-discovery"
 version = "1.3.1"
+marker = "\"pre-commit\" in dependency_groups"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "filelock" },
+    { name = "platformdirs" },
+]
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
@@ -395,6 +433,7 @@ sha256 = "ed188687ebb3b82c01a17cd5ac62fc94d9f6487a7f1a0f9dfe89753fec91039c"
 [[packages]]
 name = "pyyaml"
 version = "6.0.3"
+marker = "\"pre-commit\" in dependency_groups"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
@@ -408,40 +447,13 @@ size = 130960
 sha256 = "d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f"
 
 [[packages.wheels]]
-name = "pyyaml-6.0.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2025-09-25 21:31:51.828716+00:00
-url = "https://files.pythonhosted.org/packages/7a/1e/7acc4f0e74c4b3d9531e24739e0ab832a5edf40e64fbae1a9c01941cabd7/pyyaml-6.0.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 770293
+name = "pyyaml-6.0.3-cp310-cp310-macosx_10_13_x86_64.whl"
+upload-time = 2025-09-25 21:31:46.040932+00:00
+url = "https://files.pythonhosted.org/packages/f4/a0/39350dd17dd6d6c6507025c0e53aef67a9293a6d37d3511f23ea510d5800/pyyaml-6.0.3-cp310-cp310-macosx_10_13_x86_64.whl"
+size = 184227
 
 [packages.wheels.hashes]
-sha256 = "9c7708761fccb9397fe64bbc0395abcae8c4bf7b0eac081e12b809bf47700d0b"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp310-cp310-musllinux_1_2_x86_64.whl"
-upload-time = 2025-09-25 21:31:54.807344+00:00
-url = "https://files.pythonhosted.org/packages/1f/15/2bc9c8faf6450a8b3c9fc5448ed869c599c0a74ba2669772b1f3a0040180/pyyaml-6.0.3-cp310-cp310-musllinux_1_2_x86_64.whl"
-size = 758828
-
-[packages.wheels.hashes]
-sha256 = "5e0b74767e5f8c593e8c9b5912019159ed0533c70051e9cce3e8b6aa699fcd69"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-upload-time = 2025-09-25 21:31:49.210067+00:00
-url = "https://files.pythonhosted.org/packages/43/f7/0e6a5ae5599c838c696adb4e6330a59f463265bfa1e116cfd1fbb0abaaae/pyyaml-6.0.3-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-size = 740646
-
-[packages.wheels.hashes]
-sha256 = "b30236e45cf30d2b8e7b3e85881719e98507abed1011bf463a8fa23e9c3e98a8"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp310-cp310-musllinux_1_2_aarch64.whl"
-upload-time = 2025-09-25 21:31:53.282215+00:00
-url = "https://files.pythonhosted.org/packages/8b/ef/abd085f06853af0cd59fa5f913d61a8eab65d7639ff2a658d18a25d6a89d/pyyaml-6.0.3-cp310-cp310-musllinux_1_2_aarch64.whl"
-size = 732872
-
-[packages.wheels.hashes]
-sha256 = "418cf3f2111bc80e0933b2cd8cd04f286338bb88bdc7bc8e6dd775ebde60b5e0"
+sha256 = "214ed4befebe12df36bcc8bc2b64b396ca31be9304b8f59e25c11cf94a4c033b"
 
 [[packages.wheels]]
 name = "pyyaml-6.0.3-cp310-cp310-macosx_11_0_arm64.whl"
@@ -453,13 +465,22 @@ size = 174019
 sha256 = "02ea2dfa234451bbb8772601d7b8e426c2bfa197136796224e50e35a78777956"
 
 [[packages.wheels]]
-name = "pyyaml-6.0.3-cp310-cp310-macosx_10_13_x86_64.whl"
-upload-time = 2025-09-25 21:31:46.040932+00:00
-url = "https://files.pythonhosted.org/packages/f4/a0/39350dd17dd6d6c6507025c0e53aef67a9293a6d37d3511f23ea510d5800/pyyaml-6.0.3-cp310-cp310-macosx_10_13_x86_64.whl"
-size = 184227
+name = "pyyaml-6.0.3-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+upload-time = 2025-09-25 21:31:49.210067+00:00
+url = "https://files.pythonhosted.org/packages/43/f7/0e6a5ae5599c838c696adb4e6330a59f463265bfa1e116cfd1fbb0abaaae/pyyaml-6.0.3-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+size = 740646
 
 [packages.wheels.hashes]
-sha256 = "214ed4befebe12df36bcc8bc2b64b396ca31be9304b8f59e25c11cf94a4c033b"
+sha256 = "b30236e45cf30d2b8e7b3e85881719e98507abed1011bf463a8fa23e9c3e98a8"
+
+[[packages.wheels]]
+name = "pyyaml-6.0.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2025-09-25 21:31:51.828716+00:00
+url = "https://files.pythonhosted.org/packages/7a/1e/7acc4f0e74c4b3d9531e24739e0ab832a5edf40e64fbae1a9c01941cabd7/pyyaml-6.0.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 770293
+
+[packages.wheels.hashes]
+sha256 = "9c7708761fccb9397fe64bbc0395abcae8c4bf7b0eac081e12b809bf47700d0b"
 
 [[packages.wheels]]
 name = "pyyaml-6.0.3-cp310-cp310-win_amd64.whl"
@@ -471,40 +492,13 @@ size = 158561
 sha256 = "bdb2c67c6c1390b63c6ff89f210c8fd09d9a1217a465701eac7316313c915e4c"
 
 [[packages.wheels]]
-name = "pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2025-09-25 21:32:04.553491+00:00
-url = "https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 806638
+name = "pyyaml-6.0.3-cp311-cp311-macosx_10_13_x86_64.whl"
+upload-time = 2025-09-25 21:31:58.655967+00:00
+url = "https://files.pythonhosted.org/packages/6d/16/a95b6757765b7b031c9374925bb718d55e0a9ba8a1b6a12d25962ea44347/pyyaml-6.0.3-cp311-cp311-macosx_10_13_x86_64.whl"
+size = 185826
 
 [packages.wheels.hashes]
-sha256 = "b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp311-cp311-musllinux_1_2_x86_64.whl"
-upload-time = 2025-09-25 21:32:07.367150+00:00
-url = "https://files.pythonhosted.org/packages/f2/6a/b627b4e0c1dd03718543519ffb2f1deea4a1e6d42fbab8021936a4d22589/pyyaml-6.0.3-cp311-cp311-musllinux_1_2_x86_64.whl"
-size = 794986
-
-[packages.wheels.hashes]
-sha256 = "37503bfbfc9d2c40b344d06b2199cf0e96e97957ab1c1b546fd4f87e53e5d3e4"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-upload-time = 2025-09-25 21:32:01.310546+00:00
-url = "https://files.pythonhosted.org/packages/0c/62/d2eb46264d4b157dae1275b573017abec435397aa59cbcdab6fc978a8af4/pyyaml-6.0.3-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-size = 775556
-
-[packages.wheels.hashes]
-sha256 = "10892704fc220243f5305762e276552a0395f7beb4dbf9b14ec8fd43b57f126c"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp311-cp311-musllinux_1_2_aarch64.whl"
-upload-time = 2025-09-25 21:32:06.152188+00:00
-url = "https://files.pythonhosted.org/packages/dd/6f/529b0f316a9fd167281a6c3826b5583e6192dba792dd55e3203d3f8e655a/pyyaml-6.0.3-cp311-cp311-musllinux_1_2_aarch64.whl"
-size = 767463
-
-[packages.wheels.hashes]
-sha256 = "1d37d57ad971609cf3c53ba6a7e365e40660e3be0e5175fa9f2365a379d6095a"
+sha256 = "44edc647873928551a01e7a563d7452ccdebee747728c1080d881d68af7b997e"
 
 [[packages.wheels]]
 name = "pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl"
@@ -516,13 +510,22 @@ size = 175577
 sha256 = "652cb6edd41e718550aad172851962662ff2681490a8a711af6a4d288dd96824"
 
 [[packages.wheels]]
-name = "pyyaml-6.0.3-cp311-cp311-macosx_10_13_x86_64.whl"
-upload-time = 2025-09-25 21:31:58.655967+00:00
-url = "https://files.pythonhosted.org/packages/6d/16/a95b6757765b7b031c9374925bb718d55e0a9ba8a1b6a12d25962ea44347/pyyaml-6.0.3-cp311-cp311-macosx_10_13_x86_64.whl"
-size = 185826
+name = "pyyaml-6.0.3-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+upload-time = 2025-09-25 21:32:01.310546+00:00
+url = "https://files.pythonhosted.org/packages/0c/62/d2eb46264d4b157dae1275b573017abec435397aa59cbcdab6fc978a8af4/pyyaml-6.0.3-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+size = 775556
 
 [packages.wheels.hashes]
-sha256 = "44edc647873928551a01e7a563d7452ccdebee747728c1080d881d68af7b997e"
+sha256 = "10892704fc220243f5305762e276552a0395f7beb4dbf9b14ec8fd43b57f126c"
+
+[[packages.wheels]]
+name = "pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2025-09-25 21:32:04.553491+00:00
+url = "https://files.pythonhosted.org/packages/71/60/917329f640924b18ff085ab889a11c763e0b573da888e8404ff486657602/pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 806638
+
+[packages.wheels.hashes]
+sha256 = "b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d"
 
 [[packages.wheels]]
 name = "pyyaml-6.0.3-cp311-cp311-win_amd64.whl"
@@ -534,40 +537,13 @@ size = 158763
 sha256 = "9f3bfb4965eb874431221a3ff3fdcddc7e74e3b07799e0e84ca4a0f867d449bf"
 
 [[packages.wheels]]
-name = "pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2025-09-25 21:32:16.431392+00:00
-url = "https://files.pythonhosted.org/packages/8b/9d/b3589d3877982d4f2329302ef98a8026e7f4443c765c46cfecc8858c6b4b/pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 807870
+name = "pyyaml-6.0.3-cp312-cp312-macosx_10_13_x86_64.whl"
+upload-time = 2025-09-25 21:32:11.445337+00:00
+url = "https://files.pythonhosted.org/packages/d1/33/422b98d2195232ca1826284a76852ad5a86fe23e31b009c9886b2d0fb8b2/pyyaml-6.0.3-cp312-cp312-macosx_10_13_x86_64.whl"
+size = 182063
 
 [packages.wheels.hashes]
-sha256 = "ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp312-cp312-musllinux_1_2_x86_64.whl"
-upload-time = 2025-09-25 21:32:18.834540+00:00
-url = "https://files.pythonhosted.org/packages/be/8e/98435a21d1d4b46590d5459a22d88128103f8da4c2d4cb8f14f2a96504e1/pyyaml-6.0.3-cp312-cp312-musllinux_1_2_x86_64.whl"
-size = 790181
-
-[packages.wheels.hashes]
-sha256 = "41715c910c881bc081f1e8872880d3c650acf13dfa8214bad49ed4cede7c34ea"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-upload-time = 2025-09-25 21:32:13.652062+00:00
-url = "https://files.pythonhosted.org/packages/ed/23/7a778b6bd0b9a8039df8b1b1d80e2e2ad78aa04171592c8a5c43a56a6af4/pyyaml-6.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-size = 775116
-
-[packages.wheels.hashes]
-sha256 = "9149cad251584d5fb4981be1ecde53a1ca46c891a79788c0df828d2f166bda28"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp312-cp312-musllinux_1_2_aarch64.whl"
-upload-time = 2025-09-25 21:32:17.560500+00:00
-url = "https://files.pythonhosted.org/packages/05/c0/b3be26a015601b822b97d9149ff8cb5ead58c66f981e04fedf4e762f4bd4/pyyaml-6.0.3-cp312-cp312-musllinux_1_2_aarch64.whl"
-size = 761089
-
-[packages.wheels.hashes]
-sha256 = "8dc52c23056b9ddd46818a57b78404882310fb473d63f17b07d5c40421e47f8e"
+sha256 = "7f047e29dcae44602496db43be01ad42fc6f1cc0d8cd6c83d342306c32270196"
 
 [[packages.wheels]]
 name = "pyyaml-6.0.3-cp312-cp312-macosx_11_0_arm64.whl"
@@ -579,13 +555,22 @@ size = 173973
 sha256 = "fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0"
 
 [[packages.wheels]]
-name = "pyyaml-6.0.3-cp312-cp312-macosx_10_13_x86_64.whl"
-upload-time = 2025-09-25 21:32:11.445337+00:00
-url = "https://files.pythonhosted.org/packages/d1/33/422b98d2195232ca1826284a76852ad5a86fe23e31b009c9886b2d0fb8b2/pyyaml-6.0.3-cp312-cp312-macosx_10_13_x86_64.whl"
-size = 182063
+name = "pyyaml-6.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+upload-time = 2025-09-25 21:32:13.652062+00:00
+url = "https://files.pythonhosted.org/packages/ed/23/7a778b6bd0b9a8039df8b1b1d80e2e2ad78aa04171592c8a5c43a56a6af4/pyyaml-6.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+size = 775116
 
 [packages.wheels.hashes]
-sha256 = "7f047e29dcae44602496db43be01ad42fc6f1cc0d8cd6c83d342306c32270196"
+sha256 = "9149cad251584d5fb4981be1ecde53a1ca46c891a79788c0df828d2f166bda28"
+
+[[packages.wheels]]
+name = "pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2025-09-25 21:32:16.431392+00:00
+url = "https://files.pythonhosted.org/packages/8b/9d/b3589d3877982d4f2329302ef98a8026e7f4443c765c46cfecc8858c6b4b/pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 807870
+
+[packages.wheels.hashes]
+sha256 = "ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc"
 
 [[packages.wheels]]
 name = "pyyaml-6.0.3-cp312-cp312-win_amd64.whl"
@@ -597,40 +582,13 @@ size = 154003
 sha256 = "5fcd34e47f6e0b794d17de1b4ff496c00986e1c83f7ab2fb8fcfe9616ff7477b"
 
 [[packages.wheels]]
-name = "pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2025-09-25 21:32:28.878522+00:00
-url = "https://files.pythonhosted.org/packages/74/27/e5b8f34d02d9995b80abcef563ea1f8b56d20134d8f4e5e81733b1feceb2/pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 801626
+name = "pyyaml-6.0.3-cp313-cp313-macosx_10_13_x86_64.whl"
+upload-time = 2025-09-25 21:32:23.673728+00:00
+url = "https://files.pythonhosted.org/packages/d1/11/0fd08f8192109f7169db964b5707a2f1e8b745d4e239b784a5a1dd80d1db/pyyaml-6.0.3-cp313-cp313-macosx_10_13_x86_64.whl"
+size = 181669
 
 [packages.wheels.hashes]
-sha256 = "0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp313-cp313-musllinux_1_2_x86_64.whl"
-upload-time = 2025-09-25 21:32:31.353769+00:00
-url = "https://files.pythonhosted.org/packages/3d/e0/7966e1a7bfc0a45bf0a7fb6b98ea03fc9b8d84fa7f2229e9659680b69ee3/pyyaml-6.0.3-cp313-cp313-musllinux_1_2_x86_64.whl"
-size = 794115
-
-[packages.wheels.hashes]
-sha256 = "eda16858a3cab07b80edaf74336ece1f986ba330fdb8ee0d6c0d68fe82bc96be"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-upload-time = 2025-09-25 21:32:26.575286+00:00
-url = "https://files.pythonhosted.org/packages/50/31/b20f376d3f810b9b2371e72ef5adb33879b25edb7a6d072cb7ca0c486398/pyyaml-6.0.3-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-size = 767081
-
-[packages.wheels.hashes]
-sha256 = "ee2922902c45ae8ccada2c5b501ab86c36525b883eff4255313a253a3160861c"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp313-cp313-musllinux_1_2_aarch64.whl"
-upload-time = 2025-09-25 21:32:30.178904+00:00
-url = "https://files.pythonhosted.org/packages/f9/11/ba845c23988798f40e52ba45f34849aa8a1f2d4af4b798588010792ebad6/pyyaml-6.0.3-cp313-cp313-musllinux_1_2_aarch64.whl"
-size = 753613
-
-[packages.wheels.hashes]
-sha256 = "f7057c9a337546edc7973c0d3ba84ddcdf0daa14533c2065749c9075001090e6"
+sha256 = "8da9669d359f02c0b91ccc01cac4a67f16afec0dac22c2ad09f46bee0697eba8"
 
 [[packages.wheels]]
 name = "pyyaml-6.0.3-cp313-cp313-macosx_11_0_arm64.whl"
@@ -642,13 +600,22 @@ size = 173252
 sha256 = "2283a07e2c21a2aa78d9c4442724ec1eb15f5e42a723b99cb3d822d48f5f7ad1"
 
 [[packages.wheels]]
-name = "pyyaml-6.0.3-cp313-cp313-macosx_10_13_x86_64.whl"
-upload-time = 2025-09-25 21:32:23.673728+00:00
-url = "https://files.pythonhosted.org/packages/d1/11/0fd08f8192109f7169db964b5707a2f1e8b745d4e239b784a5a1dd80d1db/pyyaml-6.0.3-cp313-cp313-macosx_10_13_x86_64.whl"
-size = 181669
+name = "pyyaml-6.0.3-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+upload-time = 2025-09-25 21:32:26.575286+00:00
+url = "https://files.pythonhosted.org/packages/50/31/b20f376d3f810b9b2371e72ef5adb33879b25edb7a6d072cb7ca0c486398/pyyaml-6.0.3-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+size = 767081
 
 [packages.wheels.hashes]
-sha256 = "8da9669d359f02c0b91ccc01cac4a67f16afec0dac22c2ad09f46bee0697eba8"
+sha256 = "ee2922902c45ae8ccada2c5b501ab86c36525b883eff4255313a253a3160861c"
+
+[[packages.wheels]]
+name = "pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2025-09-25 21:32:28.878522+00:00
+url = "https://files.pythonhosted.org/packages/74/27/e5b8f34d02d9995b80abcef563ea1f8b56d20134d8f4e5e81733b1feceb2/pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 801626
+
+[packages.wheels.hashes]
+sha256 = "0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6"
 
 [[packages.wheels]]
 name = "pyyaml-6.0.3-cp313-cp313-win_amd64.whl"
@@ -660,40 +627,13 @@ size = 154090
 sha256 = "79005a0d97d5ddabfeeea4cf676af11e647e41d81c9a7722a193022accdb6b7c"
 
 [[packages.wheels]]
-name = "pyyaml-6.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2025-09-25 21:32:40.865549+00:00
-url = "https://files.pythonhosted.org/packages/88/f9/16491d7ed2a919954993e48aa941b200f38040928474c9e85ea9e64222c3/pyyaml-6.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 794175
+name = "pyyaml-6.0.3-cp314-cp314-macosx_10_13_x86_64.whl"
+upload-time = 2025-09-25 21:32:35.712547+00:00
+url = "https://files.pythonhosted.org/packages/9d/8c/f4bd7f6465179953d3ac9bc44ac1a8a3e6122cf8ada906b4f96c60172d43/pyyaml-6.0.3-cp314-cp314-macosx_10_13_x86_64.whl"
+size = 181814
 
 [packages.wheels.hashes]
-sha256 = "c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp314-cp314-musllinux_1_2_x86_64.whl"
-upload-time = 2025-09-25 21:32:43.362137+00:00
-url = "https://files.pythonhosted.org/packages/d7/ce/af88a49043cd2e265be63d083fc75b27b6ed062f5f9fd6cdc223ad62f03e/pyyaml-6.0.3-cp314-cp314-musllinux_1_2_x86_64.whl"
-size = 789194
-
-[packages.wheels.hashes]
-sha256 = "5190d403f121660ce8d1d2c1bb2ef1bd05b5f68533fc5c2ea899bd15f4399b35"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-upload-time = 2025-09-25 21:32:37.966620+00:00
-url = "https://files.pythonhosted.org/packages/92/b5/47e807c2623074914e29dabd16cbbdd4bf5e9b2db9f8090fa64411fc5382/pyyaml-6.0.3-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-size = 766454
-
-[packages.wheels.hashes]
-sha256 = "501a031947e3a9025ed4405a168e6ef5ae3126c59f90ce0cd6f2bfc477be31b7"
-
-[[packages.wheels]]
-name = "pyyaml-6.0.3-cp314-cp314-musllinux_1_2_aarch64.whl"
-upload-time = 2025-09-25 21:32:42.084806+00:00
-url = "https://files.pythonhosted.org/packages/dd/3f/5989debef34dc6397317802b527dbbafb2b4760878a53d4166579111411e/pyyaml-6.0.3-cp314-cp314-musllinux_1_2_aarch64.whl"
-size = 755228
-
-[packages.wheels.hashes]
-sha256 = "7c6610def4f163542a622a73fb39f534f8c101d690126992300bf3207eab9764"
+sha256 = "8d1fab6bb153a416f9aeb4b8763bc0f22a5586065f86f7664fc23339fc1c1fac"
 
 [[packages.wheels]]
 name = "pyyaml-6.0.3-cp314-cp314-macosx_11_0_arm64.whl"
@@ -705,13 +645,22 @@ size = 173809
 sha256 = "34d5fcd24b8445fadc33f9cf348c1047101756fd760b4dacb5c3e99755703310"
 
 [[packages.wheels]]
-name = "pyyaml-6.0.3-cp314-cp314-macosx_10_13_x86_64.whl"
-upload-time = 2025-09-25 21:32:35.712547+00:00
-url = "https://files.pythonhosted.org/packages/9d/8c/f4bd7f6465179953d3ac9bc44ac1a8a3e6122cf8ada906b4f96c60172d43/pyyaml-6.0.3-cp314-cp314-macosx_10_13_x86_64.whl"
-size = 181814
+name = "pyyaml-6.0.3-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+upload-time = 2025-09-25 21:32:37.966620+00:00
+url = "https://files.pythonhosted.org/packages/92/b5/47e807c2623074914e29dabd16cbbdd4bf5e9b2db9f8090fa64411fc5382/pyyaml-6.0.3-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+size = 766454
 
 [packages.wheels.hashes]
-sha256 = "8d1fab6bb153a416f9aeb4b8763bc0f22a5586065f86f7664fc23339fc1c1fac"
+sha256 = "501a031947e3a9025ed4405a168e6ef5ae3126c59f90ce0cd6f2bfc477be31b7"
+
+[[packages.wheels]]
+name = "pyyaml-6.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2025-09-25 21:32:40.865549+00:00
+url = "https://files.pythonhosted.org/packages/88/f9/16491d7ed2a919954993e48aa941b200f38040928474c9e85ea9e64222c3/pyyaml-6.0.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 794175
+
+[packages.wheels.hashes]
+sha256 = "c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5"
 
 [[packages.wheels]]
 name = "pyyaml-6.0.3-cp314-cp314-win_amd64.whl"
@@ -738,49 +687,13 @@ size = 17543
 sha256 = "7c7e1a961a0b2f2472c1ac5b69affa0ae1132c39adcb67aba98568702b9cc23f"
 
 [[packages.wheels]]
-name = "tomli-2.4.1-py3-none-any.whl"
-upload-time = 2026-03-25 20:22:03.012768+00:00
-url = "https://files.pythonhosted.org/packages/7b/61/cceae43728b7de99d9b847560c262873a1f6c98202171fd5ed62640b494b/tomli-2.4.1-py3-none-any.whl"
-size = 14583
+name = "tomli-2.4.1-cp311-cp311-macosx_10_9_x86_64.whl"
+upload-time = 2026-03-25 20:21:10.473841+00:00
+url = "https://files.pythonhosted.org/packages/f4/11/db3d5885d8528263d8adc260bb2d28ebf1270b96e98f0e0268d32b8d9900/tomli-2.4.1-cp311-cp311-macosx_10_9_x86_64.whl"
+size = 154704
 
 [packages.wheels.hashes]
-sha256 = "0d85819802132122da43cb86656f8d1f8c6587d54ae7dcaf30e90533028b49fe"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2026-03-25 20:21:14.569419+00:00
-url = "https://files.pythonhosted.org/packages/48/c1/f41d9cb618acccca7df82aaf682f9b49013c9397212cb9f53219e3abac37/tomli-2.4.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 243824
-
-[packages.wheels.hashes]
-sha256 = "5a881ab208c0baf688221f8cecc5401bd291d67e38a1ac884d6736cbcd8247e9"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp311-cp311-musllinux_1_2_x86_64.whl"
-upload-time = 2026-03-25 20:21:17.001171+00:00
-url = "https://files.pythonhosted.org/packages/6b/49/2b2a0ef529aa6eec245d25f0c703e020a73955ad7edf73e7f54ddc608aa5/tomli-2.4.1-cp311-cp311-musllinux_1_2_x86_64.whl"
-size = 247859
-
-[packages.wheels.hashes]
-sha256 = "ec9bfaf3ad2df51ace80688143a6a4ebc09a248f6ff781a9945e51937008fcbc"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-upload-time = 2026-03-25 20:21:13.098441+00:00
-url = "https://files.pythonhosted.org/packages/61/71/81c50943cf953efa35bce7646caab3cf457a7d8c030b27cfb40d7235f9ee/tomli-2.4.1-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-size = 237561
-
-[packages.wheels.hashes]
-sha256 = "96481a5786729fd470164b47cdb3e0e58062a496f455ee41b4403be77cb5a076"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp311-cp311-musllinux_1_2_aarch64.whl"
-upload-time = 2026-03-25 20:21:15.712337+00:00
-url = "https://files.pythonhosted.org/packages/22/e4/5a816ecdd1f8ca51fb756ef684b90f2780afc52fc67f987e3c61d800a46d/tomli-2.4.1-cp311-cp311-musllinux_1_2_aarch64.whl"
-size = 242227
-
-[packages.wheels.hashes]
-sha256 = "47149d5bd38761ac8be13a84864bf0b7b70bc051806bc3669ab1cbc56216b23c"
+sha256 = "f8f0fc26ec2cc2b965b7a3b87cd19c5c6b8c5e5f436b984e85f486d652285c30"
 
 [[packages.wheels]]
 name = "tomli-2.4.1-cp311-cp311-macosx_11_0_arm64.whl"
@@ -792,13 +705,22 @@ size = 149454
 sha256 = "4ab97e64ccda8756376892c53a72bd1f964e519c77236368527f758fbc36a53a"
 
 [[packages.wheels]]
-name = "tomli-2.4.1-cp311-cp311-macosx_10_9_x86_64.whl"
-upload-time = 2026-03-25 20:21:10.473841+00:00
-url = "https://files.pythonhosted.org/packages/f4/11/db3d5885d8528263d8adc260bb2d28ebf1270b96e98f0e0268d32b8d9900/tomli-2.4.1-cp311-cp311-macosx_10_9_x86_64.whl"
-size = 154704
+name = "tomli-2.4.1-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+upload-time = 2026-03-25 20:21:13.098441+00:00
+url = "https://files.pythonhosted.org/packages/61/71/81c50943cf953efa35bce7646caab3cf457a7d8c030b27cfb40d7235f9ee/tomli-2.4.1-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+size = 237561
 
 [packages.wheels.hashes]
-sha256 = "f8f0fc26ec2cc2b965b7a3b87cd19c5c6b8c5e5f436b984e85f486d652285c30"
+sha256 = "96481a5786729fd470164b47cdb3e0e58062a496f455ee41b4403be77cb5a076"
+
+[[packages.wheels]]
+name = "tomli-2.4.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-03-25 20:21:14.569419+00:00
+url = "https://files.pythonhosted.org/packages/48/c1/f41d9cb618acccca7df82aaf682f9b49013c9397212cb9f53219e3abac37/tomli-2.4.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 243824
+
+[packages.wheels.hashes]
+sha256 = "5a881ab208c0baf688221f8cecc5401bd291d67e38a1ac884d6736cbcd8247e9"
 
 [[packages.wheels]]
 name = "tomli-2.4.1-cp311-cp311-win_amd64.whl"
@@ -810,40 +732,13 @@ size = 108084
 sha256 = "5ee18d9ebdb417e384b58fe414e8d6af9f4e7a0ae761519fb50f721de398dd4e"
 
 [[packages.wheels]]
-name = "tomli-2.4.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2026-03-25 20:21:25.177901+00:00
-url = "https://files.pythonhosted.org/packages/10/90/d62ce007a1c80d0b2c93e02cab211224756240884751b94ca72df8a875ca/tomli-2.4.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 253341
+name = "tomli-2.4.1-cp312-cp312-macosx_10_13_x86_64.whl"
+upload-time = 2026-03-25 20:21:21.626567+00:00
+url = "https://files.pythonhosted.org/packages/c1/ba/42f134a3fe2b370f555f44b1d72feebb94debcab01676bf918d0cb70e9aa/tomli-2.4.1-cp312-cp312-macosx_10_13_x86_64.whl"
+size = 155924
 
 [packages.wheels.hashes]
-sha256 = "136443dbd7e1dee43c68ac2694fde36b2849865fa258d39bf822c10e8068eac5"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp312-cp312-musllinux_1_2_x86_64.whl"
-upload-time = 2026-03-25 20:21:27.460413+00:00
-url = "https://files.pythonhosted.org/packages/99/e7/c6f69c3120de34bbd882c6fba7975f3d7a746e9218e56ab46a1bc4b42552/tomli-2.4.1-cp312-cp312-musllinux_1_2_x86_64.whl"
-size = 253290
-
-[packages.wheels.hashes]
-sha256 = "5cb41aa38891e073ee49d55fbc7839cfdb2bc0e600add13874d048c94aadddd1"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-upload-time = 2026-03-25 20:21:24.040813+00:00
-url = "https://files.pythonhosted.org/packages/5c/05/79d13d7c15f13bdef410bdd49a6485b1c37d28968314eabee452c22a7fda/tomli-2.4.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-size = 244948
-
-[packages.wheels.hashes]
-sha256 = "ff18e6a727ee0ab0388507b89d1bc6a22b138d1e2fa56d1ad494586d61d2eae9"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp312-cp312-musllinux_1_2_aarch64.whl"
-upload-time = 2026-03-25 20:21:26.364996+00:00
-url = "https://files.pythonhosted.org/packages/1a/7e/caf6496d60152ad4ed09282c1885cca4eea150bfd007da84aea07bcc0a3e/tomli-2.4.1-cp312-cp312-musllinux_1_2_aarch64.whl"
-size = 248159
-
-[packages.wheels.hashes]
-sha256 = "5e262d41726bc187e69af7825504c933b6794dc3fbd5945e41a79bb14c31f585"
+sha256 = "c742f741d58a28940ce01d58f0ab2ea3ced8b12402f162f4d534dfe18ba1cd6a"
 
 [[packages.wheels]]
 name = "tomli-2.4.1-cp312-cp312-macosx_11_0_arm64.whl"
@@ -855,13 +750,22 @@ size = 150018
 sha256 = "7f86fd587c4ed9dd76f318225e7d9b29cfc5a9d43de44e5754db8d1128487085"
 
 [[packages.wheels]]
-name = "tomli-2.4.1-cp312-cp312-macosx_10_13_x86_64.whl"
-upload-time = 2026-03-25 20:21:21.626567+00:00
-url = "https://files.pythonhosted.org/packages/c1/ba/42f134a3fe2b370f555f44b1d72feebb94debcab01676bf918d0cb70e9aa/tomli-2.4.1-cp312-cp312-macosx_10_13_x86_64.whl"
-size = 155924
+name = "tomli-2.4.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+upload-time = 2026-03-25 20:21:24.040813+00:00
+url = "https://files.pythonhosted.org/packages/5c/05/79d13d7c15f13bdef410bdd49a6485b1c37d28968314eabee452c22a7fda/tomli-2.4.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+size = 244948
 
 [packages.wheels.hashes]
-sha256 = "c742f741d58a28940ce01d58f0ab2ea3ced8b12402f162f4d534dfe18ba1cd6a"
+sha256 = "ff18e6a727ee0ab0388507b89d1bc6a22b138d1e2fa56d1ad494586d61d2eae9"
+
+[[packages.wheels]]
+name = "tomli-2.4.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-03-25 20:21:25.177901+00:00
+url = "https://files.pythonhosted.org/packages/10/90/d62ce007a1c80d0b2c93e02cab211224756240884751b94ca72df8a875ca/tomli-2.4.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 253341
+
+[packages.wheels.hashes]
+sha256 = "136443dbd7e1dee43c68ac2694fde36b2849865fa258d39bf822c10e8068eac5"
 
 [[packages.wheels]]
 name = "tomli-2.4.1-cp312-cp312-win_amd64.whl"
@@ -873,40 +777,13 @@ size = 108847
 sha256 = "52c8ef851d9a240f11a88c003eacb03c31fc1c9c4ec64a99a0f922b93874fda9"
 
 [[packages.wheels]]
-name = "tomli-2.4.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2026-03-25 20:21:36.012836+00:00
-url = "https://files.pythonhosted.org/packages/10/8f/d3ddb16c5a4befdf31a23307f72828686ab2096f068eaf56631e136c1fdd/tomli-2.4.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 251628
+name = "tomli-2.4.1-cp313-cp313-macosx_10_13_x86_64.whl"
+upload-time = 2026-03-25 20:21:31.650748+00:00
+url = "https://files.pythonhosted.org/packages/07/06/b823a7e818c756d9a7123ba2cda7d07bc2dd32835648d1a7b7b7a05d848d/tomli-2.4.1-cp313-cp313-macosx_10_13_x86_64.whl"
+size = 155866
 
 [packages.wheels.hashes]
-sha256 = "f3c6818a1a86dd6dca7ddcaaf76947d5ba31aecc28cb1b67009a5877c9a64f3f"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp313-cp313-musllinux_1_2_x86_64.whl"
-upload-time = 2026-03-25 20:21:38.298846+00:00
-url = "https://files.pythonhosted.org/packages/d3/74/16336ffd19ed4da28a70959f92f506233bd7cfc2332b20bdb01591e8b1d1/tomli-2.4.1-cp313-cp313-musllinux_1_2_x86_64.whl"
-size = 251674
-
-[packages.wheels.hashes]
-sha256 = "51529d40e3ca50046d7606fa99ce3956a617f9b36380da3b7f0dd3dd28e68cb5"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-upload-time = 2026-03-25 20:21:34.510750+00:00
-url = "https://files.pythonhosted.org/packages/5c/e0/90637574e5e7212c09099c67ad349b04ec4d6020324539297b634a0192b0/tomli-2.4.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-size = 243704
-
-[packages.wheels.hashes]
-sha256 = "c7f2c7f2b9ca6bdeef8f0fa897f8e05085923eb091721675170254cbc5b02897"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp313-cp313-musllinux_1_2_aarch64.whl"
-upload-time = 2026-03-25 20:21:37.136802+00:00
-url = "https://files.pythonhosted.org/packages/e3/f1/dbeeb9116715abee2485bf0a12d07a8f31af94d71608c171c45f64c0469d/tomli-2.4.1-cp313-cp313-musllinux_1_2_aarch64.whl"
-size = 247180
-
-[packages.wheels.hashes]
-sha256 = "d312ef37c91508b0ab2cee7da26ec0b3ed2f03ce12bd87a588d771ae15dcf82d"
+sha256 = "36d2bd2ad5fb9eaddba5226aa02c8ec3fa4f192631e347b3ed28186d43be6b54"
 
 [[packages.wheels]]
 name = "tomli-2.4.1-cp313-cp313-macosx_11_0_arm64.whl"
@@ -918,13 +795,22 @@ size = 149887
 sha256 = "eb0dc4e38e6a1fd579e5d50369aa2e10acfc9cace504579b2faabb478e76941a"
 
 [[packages.wheels]]
-name = "tomli-2.4.1-cp313-cp313-macosx_10_13_x86_64.whl"
-upload-time = 2026-03-25 20:21:31.650748+00:00
-url = "https://files.pythonhosted.org/packages/07/06/b823a7e818c756d9a7123ba2cda7d07bc2dd32835648d1a7b7b7a05d848d/tomli-2.4.1-cp313-cp313-macosx_10_13_x86_64.whl"
-size = 155866
+name = "tomli-2.4.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+upload-time = 2026-03-25 20:21:34.510750+00:00
+url = "https://files.pythonhosted.org/packages/5c/e0/90637574e5e7212c09099c67ad349b04ec4d6020324539297b634a0192b0/tomli-2.4.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+size = 243704
 
 [packages.wheels.hashes]
-sha256 = "36d2bd2ad5fb9eaddba5226aa02c8ec3fa4f192631e347b3ed28186d43be6b54"
+sha256 = "c7f2c7f2b9ca6bdeef8f0fa897f8e05085923eb091721675170254cbc5b02897"
+
+[[packages.wheels]]
+name = "tomli-2.4.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-03-25 20:21:36.012836+00:00
+url = "https://files.pythonhosted.org/packages/10/8f/d3ddb16c5a4befdf31a23307f72828686ab2096f068eaf56631e136c1fdd/tomli-2.4.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 251628
+
+[packages.wheels.hashes]
+sha256 = "f3c6818a1a86dd6dca7ddcaaf76947d5ba31aecc28cb1b67009a5877c9a64f3f"
 
 [[packages.wheels]]
 name = "tomli-2.4.1-cp313-cp313-win_amd64.whl"
@@ -936,40 +822,13 @@ size = 108755
 sha256 = "8d65a2fbf9d2f8352685bc1364177ee3923d6baf5e7f43ea4959d7d8bc326a36"
 
 [[packages.wheels]]
-name = "tomli-2.4.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2026-03-25 20:21:45.620261+00:00
-url = "https://files.pythonhosted.org/packages/df/6d/c5fad00d82b3c7a3ab6189bd4b10e60466f22cfe8a08a9394185c8a8111c/tomli-2.4.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 252084
+name = "tomli-2.4.1-cp314-cp314-macosx_10_15_x86_64.whl"
+upload-time = 2026-03-25 20:21:42.230154+00:00
+url = "https://files.pythonhosted.org/packages/3c/fb/9a5c8d27dbab540869f7c1f8eb0abb3244189ce780ba9cd73f3770662072/tomli-2.4.1-cp314-cp314-macosx_10_15_x86_64.whl"
+size = 155726
 
 [packages.wheels.hashes]
-sha256 = "01f520d4f53ef97964a240a035ec2a869fe1a37dde002b57ebc4417a27ccd853"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp314-cp314-musllinux_1_2_x86_64.whl"
-upload-time = 2026-03-25 20:21:48.467732+00:00
-url = "https://files.pythonhosted.org/packages/67/50/361e986652847fec4bd5e4a0208752fbe64689c603c7ae5ea7cb16b1c0ca/tomli-2.4.1-cp314-cp314-musllinux_1_2_x86_64.whl"
-size = 256223
-
-[packages.wheels.hashes]
-sha256 = "ede3e6487c5ef5d28634ba3f31f989030ad6af71edfb0055cbbd14189ff240ba"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-upload-time = 2026-03-25 20:21:44.474645+00:00
-url = "https://files.pythonhosted.org/packages/ce/48/66341bdb858ad9bd0ceab5a86f90eddab127cf8b046418009f2125630ecb/tomli-2.4.1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
-size = 244713
-
-[packages.wheels.hashes]
-sha256 = "559db847dc486944896521f68d8190be1c9e719fced785720d2216fe7022b662"
-
-[[packages.wheels]]
-name = "tomli-2.4.1-cp314-cp314-musllinux_1_2_aarch64.whl"
-upload-time = 2026-03-25 20:21:46.937942+00:00
-url = "https://files.pythonhosted.org/packages/00/71/3a69e86f3eafe8c7a59d008d245888051005bd657760e96d5fbfb0b740c2/tomli-2.4.1-cp314-cp314-musllinux_1_2_aarch64.whl"
-size = 247973
-
-[packages.wheels.hashes]
-sha256 = "7f94b27a62cfad8496c8d2513e1a222dd446f095fca8987fceef261225538a15"
+sha256 = "fd0409a3653af6c147209d267a0e4243f0ae46b011aa978b1080359fddc9b6cf"
 
 [[packages.wheels]]
 name = "tomli-2.4.1-cp314-cp314-macosx_11_0_arm64.whl"
@@ -981,6 +840,24 @@ size = 149859
 sha256 = "a120733b01c45e9a0c34aeef92bf0cf1d56cfe81ed9d47d562f9ed591a9828ac"
 
 [[packages.wheels]]
+name = "tomli-2.4.1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+upload-time = 2026-03-25 20:21:44.474645+00:00
+url = "https://files.pythonhosted.org/packages/ce/48/66341bdb858ad9bd0ceab5a86f90eddab127cf8b046418009f2125630ecb/tomli-2.4.1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+size = 244713
+
+[packages.wheels.hashes]
+sha256 = "559db847dc486944896521f68d8190be1c9e719fced785720d2216fe7022b662"
+
+[[packages.wheels]]
+name = "tomli-2.4.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-03-25 20:21:45.620261+00:00
+url = "https://files.pythonhosted.org/packages/df/6d/c5fad00d82b3c7a3ab6189bd4b10e60466f22cfe8a08a9394185c8a8111c/tomli-2.4.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 252084
+
+[packages.wheels.hashes]
+sha256 = "01f520d4f53ef97964a240a035ec2a869fe1a37dde002b57ebc4417a27ccd853"
+
+[[packages.wheels]]
 name = "tomli-2.4.1-cp314-cp314-win_amd64.whl"
 upload-time = 2026-03-25 20:21:50.506850+00:00
 url = "https://files.pythonhosted.org/packages/14/58/640ac93bf230cd27d002462c9af0d837779f8773bc03dee06b5835208214/tomli-2.4.1-cp314-cp314-win_amd64.whl"
@@ -988,6 +865,15 @@ size = 109082
 
 [packages.wheels.hashes]
 sha256 = "88dceee75c2c63af144e456745e10101eb67361050196b0b6af5d717254dddf7"
+
+[[packages.wheels]]
+name = "tomli-2.4.1-py3-none-any.whl"
+upload-time = 2026-03-25 20:22:03.012768+00:00
+url = "https://files.pythonhosted.org/packages/7b/61/cceae43728b7de99d9b847560c262873a1f6c98202171fd5ed62640b494b/tomli-2.4.1-py3-none-any.whl"
+size = 14583
+
+[packages.wheels.hashes]
+sha256 = "0d85819802132122da43cb86656f8d1f8c6587d54ae7dcaf30e90533028b49fe"
 
 [[packages]]
 name = "tomli-w"
@@ -1041,6 +927,9 @@ sha256 = "adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981"
 name = "typeguard"
 version = "4.5.1"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
@@ -1089,6 +978,11 @@ sha256 = "f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"
 name = "tyro"
 version = "1.0.13"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "docstring-parser" },
+    { name = "typeguard" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
@@ -1136,7 +1030,15 @@ sha256 = "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
 [[packages]]
 name = "virtualenv"
 version = "21.3.2"
+marker = "\"pre-commit\" in dependency_groups"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "distlib" },
+    { name = "filelock" },
+    { name = "platformdirs" },
+    { name = "python-discovery" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
@@ -1160,7 +1062,7 @@ sha256 = "c58ea748fa50bb2a4367da5ba3d30b02458ed40b4ea888faad94021f3309f764"
 [[packages]]
 name = "zipp"
 version = "3.23.1"
-marker = "(python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")"
+marker = "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -1183,12 +1085,14 @@ size = 10378
 sha256 = "0b3596c50a5c700c9cb40ba8d86d9f2cc4807e9bedb06bcdf7fac85633e444dc"
 
 [tool.nab]
-nab-version = "0.0.2"
+nab-version = "0.0.10.dev0"
 created-at = 2026-05-20 04:01:43.488182+00:00
 command-line = [
-    "/home/damian/opensource/remote/projects/resolver/nab/src/nab/__main__.py",
+    "nab",
     "lock",
     "--groups",
+    "pre-commit",
+    "--project-default-group",
     "pre-commit",
     "--no-emit-workspace",
     "--output",
@@ -1203,4 +1107,7 @@ platforms = [
     "macos_arm64",
     "macos_x86_64",
     "windows_amd64",
+]
+cli-project-overrides = [
+    "--project-default-group=pre-commit",
 ]

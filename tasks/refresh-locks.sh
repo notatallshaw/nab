@@ -27,6 +27,10 @@ EXTRA_ARGS=("$@")
 # comes from whoever runs this, which is Linux, as both builders are.
 DOCS_PYTHON="3.13"
 
+# Each lock covers a single group, so that group is also its default: pip and
+# uv seed the PEP 751 dependency_groups marker from default-groups and cannot
+# select a non-default group at install time, so without this the group's
+# packages carry a marker no install-time flag ever satisfies and are skipped.
 for group in tests types pre-commit crosshair release docs; do
     echo "==> Locking group: ${group}"
     group_args=()
@@ -35,6 +39,7 @@ for group in tests types pre-commit crosshair release docs; do
     fi
     "${NAB[@]}" lock \
         --groups "${group}" \
+        --project-default-group "${group}" \
         --no-emit-workspace \
         --output ".github/requirements/pylock.${group}.toml" \
         "${group_args[@]}" \
