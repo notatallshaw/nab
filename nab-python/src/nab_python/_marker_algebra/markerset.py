@@ -25,9 +25,9 @@ def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
     """Report stack exhaustion on a deeply nested tree as the resource guard.
 
     A tree walk recurses as deep as the marker nests, so a marker nested past the
-    interpreter's stack raises :class:`RecursionError`. The construction and
-    decision methods it decorates report it as :class:`ComplexityLimitError`,
-    the one bounded failure the algebra promises on pathological input.
+    interpreter's stack raises :class:`RecursionError`. The public methods it
+    decorates report it as :class:`ComplexityLimitError`, the one bounded
+    failure the algebra promises on pathological input.
     """
 
     @wraps(method)
@@ -177,7 +177,12 @@ class MarkerSet:
 
     @_bounded
     def witness(self) -> dict[str, str | frozenset[str]] | None:
-        """Return a satisfying environment, or ``None`` when none is found."""
+        """Return a satisfying environment, or ``None`` when none is found.
+
+        ``None`` is returned for the empty set, and may also be returned for a
+        non-empty set when a value constraint and a substring (``contains``)
+        constraint on one variable share no jointly realisable environment.
+        """
         return engine.witness(self._tree, self._max_cells)
 
     # ---- serialisation
