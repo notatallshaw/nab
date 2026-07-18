@@ -295,6 +295,29 @@ class TestDownloadLock:
         assert (tmp_path / "foo-1.0-py3-none-any.whl").read_bytes() == wheel_bytes
         assert len(result.written) == 1
 
+    def test_interrupted_write_leaves_no_partial_at_target(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        wheel_bytes = b"WHEELDATA" * 64
+        wheel_sha = hashlib.sha256(wheel_bytes).hexdigest()
+        pin = _index_pin(wheel_sha=wheel_sha)
+        transport = _FakeTransport({"https://example.com/foo-1.0.whl": wheel_bytes})
+
+        def crash(_src: object, _dst: object) -> None:
+            msg = "interrupted mid-write"
+            raise OSError(msg)
+
+        monkeypatch.setattr("nab_index.atomic.os.replace", crash)
+
+        with pytest.raises(OSError, match="interrupted mid-write"):
+            download_lock(
+                LockInput(targets=_one({"foo": pin})),
+                transport,  # type: ignore[arg-type]
+                tmp_path,
+            )
+        assert not (tmp_path / "foo-1.0-py3-none-any.whl").exists()
+        assert list(tmp_path.iterdir()) == []
+
     def test_uppercase_recorded_digest_verifies(self, tmp_path: Path) -> None:
         wheel_bytes = b"WHEELDATA"
         wheel_sha = hashlib.sha256(wheel_bytes).hexdigest().upper()

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from nab_index.atomic import atomic_write
 from nab_index.client import AsyncSimpleClient
 from nab_index.local_index import parse_file_url
 from nab_index.transport import HttpError
@@ -236,7 +237,7 @@ async def _run_downloads(
                     f"  expected: {entry.digest}\n  actual:   {actual}"
                 )
                 raise DownloadError(msg)
-            target.write_bytes(data)
+            atomic_write(target, data)
             written.append(target)
             logger.info("wrote %s", target)
 
