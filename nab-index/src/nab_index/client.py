@@ -56,10 +56,11 @@ _SUPPORTS_DATA_FILTER = hasattr(tarfile, "data_filter")
 
 
 class MalformedSimpleResponseError(HttpError):
-    """The index served a 200 response that is not a usable Simple-API listing.
+    """The index served a 200 response that is not a usable Simple-API body.
 
-    Subclasses :class:`HttpError` so a broken listing is caught alongside
-    transport and 4xx/5xx failures.
+    Covers a listing that is not valid JSON and a PEP 658 metadata sidecar
+    that is not valid UTF-8. Subclasses :class:`HttpError` so a broken body
+    is caught alongside transport and 4xx/5xx failures.
     """
 
 
