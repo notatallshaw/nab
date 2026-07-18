@@ -124,6 +124,12 @@ class TestRetryPolicy:
         assert not GET_RETRY.is_retry("GET", 404, has_retry_after=False)
         assert not GET_RETRY.is_retry("GET", 403, has_retry_after=False)
 
+    def test_cloudflare_transient_5xx_is_retried(self) -> None:
+        """520 and 527 are Cloudflare's transient origin errors, so they retry."""
+        for status in (520, 527):
+            assert status in RETRY_STATUSES
+            assert GET_RETRY.is_retry("GET", status, has_retry_after=False)
+
     def test_budget_is_bounded(self) -> None:
         """Every failure class is capped, so nothing retries forever."""
         assert GET_RETRY.total is None
@@ -366,6 +372,29 @@ class TestHttpxAsyncTransport:
         """A bare 503 is a blip, so ask again before believing it."""
         route = respx.get("https://example.com/pkg").mock(
             side_effect=[httpx.Response(503), httpx.Response(200, json={"ok": True})]
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        resp = asyncio.run(go())
+        resp.raise_for_status()
+        assert resp.status_code == 200
+        assert route.call_count == 2
+        assert slept == [0.0]
+
+    @pytest.mark.parametrize("status", [520, 527])
+    @respx.mock
+    def test_get_retries_a_cloudflare_transient_status(
+        self, status: int, slept: list[float]
+    ) -> None:
+        """A Cloudflare 520/527 is a blip, so ask again before believing it."""
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=[httpx.Response(status), httpx.Response(200, json={"ok": True})]
         )
 
         async def go() -> _HttpxResponse:
@@ -639,6 +668,24 @@ class TestUrllib3AsyncTransport:
     def test_get_retries_a_bare_transient_status(self) -> None:
         """One 503 with no Retry-After must not read as the index's answer."""
         with _stub_index([503]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/pkg-1.0.whl.metadata"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            resp.raise_for_status()
+            assert resp.status_code == 200
+            assert len(index.seen) == 2
+
+    @pytest.mark.parametrize("status", [520, 527])
+    def test_get_retries_a_cloudflare_transient_status(self, status: int) -> None:
+        """One Cloudflare 520/527 with no Retry-After must not end the fetch."""
+        with _stub_index([status]) as index:
             url = f"http://127.0.0.1:{index.server_port}/pkg/pkg-1.0.whl.metadata"
 
             async def go() -> _Urllib3Response:
