@@ -927,15 +927,25 @@ def _validate_pylock_output_name(
 
     A pylock-format lockfile must be ``pylock.toml`` or match
     ``pylock.<name>.toml`` (dot separators).  stdout (``-``) and the
-    requirements formats are exempt; exits 1 on a bad name with a
-    suggested correction.
+    requirements formats are exempt; a directory-like output (no file
+    name) and a bad name both exit 1, the latter with a suggested
+    correction.
     """
     if format != "pylock" or output is None or _cli.is_stdout(output):
         return
     if is_valid_pylock_path(output):
         return
-    dotted = output.with_name(output.name.replace("-", "."))
-    suggestion = dotted.name if is_valid_pylock_path(dotted) else "pylock.toml"
+    if not output.name:
+        _cli.printer().error(
+            f"--output {str(output)!r} names a directory, not a file; the"
+            " pylock output must be a file named 'pylock.toml' or"
+            " 'pylock.<name>.toml'."
+        )
+        sys.exit(1)
+    # Path(name), not output.with_name(name): with_name raises on names its
+    # dotted form can produce, such as '.' from a bare '-'.
+    dotted = output.name.replace("-", ".")
+    suggestion = dotted if is_valid_pylock_path(Path(dotted)) else "pylock.toml"
     _cli.printer().error(
         f"output file name {output.name!r} must match 'pylock.toml'"
         " or 'pylock.<name>.toml' per PEP 751 (note the dot separator,"
