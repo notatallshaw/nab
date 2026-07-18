@@ -593,6 +593,79 @@ class TestHasSatisfyingVersion:
         assert provider._lookahead_aborted == {"bar": ("baz", V("1.0"))}
         assert provider._force_backtrack_counts == {"baz": 2}
 
+    def test_false_when_every_candidate_hits_the_abort_blocker(self) -> None:
+        """The look-ahead abort's optimistic pick is not a satisfying version.
+
+        Every candidate in range is rejected by one decided blocker, tripping
+        ``choose_version``'s monolithic-rejection abort, which returns the first
+        candidate for the resolver to decide and back-jump.  The probe must
+        report that no usable version exists, both when the abort
+        fires fresh and when a prior abort is already recorded.
+        """
+        versions = [f"{n}.0" for n in range(8, 0, -1)]
+        wheels = [make_wheel(v) for v in versions]
+        meta_template = "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\nRequires-Dist: bar==9.0\n"
+        coordinator = make_coordinator(
+            wheels,
+            metadata_by_version={v: meta_template.format(ver=v) for v in versions},
+            package="foo",
+        )
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        provider.receive_partial_solution_hint({}, {"bar": V("5.0")})
+        # choose_version takes the abort shortcut: returns the first pick and
+        # records the skip state a later call would reuse.
+        assert provider.choose_version("foo", VersionRange.full()) == V("8.0")
+        assert provider._lookahead_aborted == {"foo": ("bar", V("5.0"))}
+        # The probe ignores both the recorded skip and a fresh abort.
+        assert not provider.has_satisfying_version("foo", VersionRange.full())
+
+    def test_true_when_a_usable_version_sits_past_the_abort_threshold(self) -> None:
+        """Suppressing the abort still finds a usable version deep in the scan.
+
+        The newest eight candidates are rejected by the decided blocker, so a
+        fired abort would stop before the ninth, usable one.  The probe keeps
+        scanning and reports True.
+        """
+        usable, blocked = "1.0", [f"{n}.0" for n in range(9, 1, -1)]
+        wheels = [make_wheel(v) for v in [*blocked, usable]]
+        metadata = {
+            v: (
+                "Metadata-Version: 2.1\nName: foo\nVersion: "
+                f"{v}\nRequires-Dist: bar=={'5.0' if v == usable else '9.0'}\n"
+            )
+            for v in [*blocked, usable]
+        }
+        coordinator = make_coordinator(
+            wheels, metadata_by_version=metadata, package="foo"
+        )
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        provider.receive_partial_solution_hint({}, {"bar": V("5.0")})
+        assert provider.has_satisfying_version("foo", VersionRange.full())
+
+    def test_false_when_conflicts_exceed_the_reject_cap(self) -> None:
+        """The reject-cap fallback is not a second route to a false positive.
+
+        Suppressing the abort lets the probe scan every candidate.  With more
+        than ``_BROAD_LA_REJECT_CAP`` (64) versions all rejected by one decided
+        blocker, decision-checking would otherwise flip off past the cap and let
+        a later candidate pass unchecked.  The probe must pin decision-checking
+        for the whole scan and report that no usable version exists.
+        """
+        versions = [f"{n}.0" for n in range(70, 0, -1)]
+        wheels = [make_wheel(v) for v in versions]
+        meta_template = "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\nRequires-Dist: bar==9.0\n"
+        coordinator = make_coordinator(
+            wheels,
+            metadata_by_version={v: meta_template.format(ver=v) for v in versions},
+            package="foo",
+        )
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        provider.receive_partial_solution_hint({}, {"bar": V("5.0")})
+        assert not provider.has_satisfying_version("foo", VersionRange.full())
+
 
 class TestResolutionStrategy:
     """``choose_version`` honours ``ResolutionStrategy``."""
@@ -2963,6 +3036,91 @@ class TestLookAheadAbort:
         assert chosen is None
         # Stale record was dropped.
         assert "foo" not in provider._lookahead_aborted
+
+
+class TestConstraintNotBlamedWhenProbeAborts:
+    """A transitive-conflict failure must not be blamed on a user constraint
+    just because the causation probe's un-narrowed range is large enough to
+    trip the look-ahead abort.
+
+    ``record_no_versions`` labels a clause CONSTRAINT only when
+    ``has_satisfying_version`` finds a version over the un-narrowed range.  When
+    that range holds enough candidates that all conflict with one decided
+    dependency, the monolithic-rejection abort returns an optimistic pick; the
+    probe must not read that as "the constraint hid a usable version".
+    """
+
+    @staticmethod
+    def _wheel(name: str, version: str) -> WheelFile:
+        return WheelFile(
+            filename=f"{name}-{version}-py3-none-any.whl",
+            url=f"https://example.com/{name}-{version}-py3-none-any.whl",
+            version=version,
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+        )
+
+    def _resolve(self, constraint: str, foo_deps: dict[str, str]) -> str:
+        listings = {
+            "foo": [self._wheel("foo", v) for v in foo_deps],
+            "bar": [self._wheel("bar", "90.0"), self._wheel("bar", "50.0")],
+            "baz": [self._wheel("baz", "3.0")],
+        }
+        metadata = {
+            v: (
+                f"Metadata-Version: 2.1\nName: foo\nVersion: {v}\n"
+                f"Requires-Dist: {dep}\n\n"
+            )
+            for v, dep in foo_deps.items()
+        }
+        metadata["90.0"] = "Metadata-Version: 2.1\nName: bar\nVersion: 90.0\n\n"
+        metadata["50.0"] = "Metadata-Version: 2.1\nName: bar\nVersion: 50.0\n\n"
+        metadata["3.0"] = (
+            "Metadata-Version: 2.1\nName: baz\nVersion: 3.0\n"
+            "Requires-Dist: bar==50.0\n\n"
+        )
+        coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
+        root_reqs = {
+            "foo": VersionRange.full(admit_arbitrary=False),
+            "baz": SpecifierSet("==3.0").to_range(),
+        }
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(
+                root_reqs, constraints={"foo": SpecifierSet(constraint).to_range()}
+            )
+        return str(exc_info.value)
+
+    def test_transitive_conflict_not_blamed_on_constraint(self) -> None:
+        """Twelve foo versions leave eight in the probe range once the top four
+        are excluded, so the abort fires inside the probe.
+
+        Every foo needs ``bar==90.0`` but ``baz`` pins ``bar`` at ``50.0``, so
+        the resolve fails on that transitive conflict with or without the
+        constraint.  ``foo>=108.0`` clips only the top four versions, which also
+        fail, so it is not causal and must not be named.
+        """
+        message = self._resolve(
+            ">=108.0", {f"{100 + i}.0": "bar==90.0" for i in range(12)}
+        )
+        assert "the user constrained" not in message
+        assert "no versions of foo" in message
+
+    def test_constraint_that_hides_a_usable_version_is_still_blamed(self) -> None:
+        """The suppression must not hide a usable version.
+
+        ``foo==100.0`` needs ``bar==50.0`` (the pinned version), so it resolves
+        without the constraint.  ``foo>=101.0`` excludes it; the probe scans
+        past the eight blocked newer versions and still finds it, so the
+        constraint keeps the blame.
+        """
+        foo_deps = {
+            f"{100 + i}.0": ("bar==50.0" if i == 0 else "bar==90.0") for i in range(12)
+        }
+        message = self._resolve(">=101.0", foo_deps)
+        assert "the user constrained foo" in message
 
 
 class TestPrioritize:
