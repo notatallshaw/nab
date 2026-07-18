@@ -22,7 +22,7 @@ from nab_python._marker_algebra import MarkerSet
 from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.version import Version
 
-# Boundary-rich grids: version values straddle every literal the alphabets use
+# Version values straddle every literal the alphabets use
 # (3.9, 3.10, 3.14), including the 3.14 prerelease-carve-out witnesses, an epoch
 # version (full ordering and major.minor truncation diverge), and a local one.
 PFV_GRID = [

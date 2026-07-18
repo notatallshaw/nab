@@ -25,9 +25,9 @@ def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
     """Report stack exhaustion on a deeply nested tree as the resource guard.
 
     A tree walk recurses as deep as the marker nests, so a marker nested past the
-    interpreter's stack raises :class:`RecursionError`. Every public boundary that
-    walks the tree reports it as :class:`ComplexityLimitExceeded`, the one bounded
-    failure the algebra promises on pathological input.
+    interpreter's stack raises :class:`RecursionError`. The construction and
+    decision methods it decorates report it as :class:`ComplexityLimitExceeded`,
+    the one bounded failure the algebra promises on pathological input.
     """
 
     @wraps(method)
