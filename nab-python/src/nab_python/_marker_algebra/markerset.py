@@ -156,6 +156,7 @@ class MarkerSet:
             if missing:
                 msg = f"restrict() has no value for {sorted(missing)}"
                 raise ValueError(msg)
+        engine.reject_oversized_literals(self._tree, env)
         return MarkerSet(engine.restrict_tree(self._tree, env), self._max_cells)
 
     @_bounded
@@ -173,6 +174,7 @@ class MarkerSet:
     @_bounded
     def evaluate(self, env: Mapping[str, str | AbstractSet[str]]) -> bool:
         """Whether a full environment is in the set (extras are sets)."""
+        engine.reject_oversized_literals(self._tree, env)
         return engine.evaluate_tree(self._tree, env)
 
     @_bounded

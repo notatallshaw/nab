@@ -405,7 +405,7 @@ def _make_set_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Fo
     return AtomLeaf(Atom(AXIS_SET, variable, variable, op, name, positive=positive))
 
 
-def _reject_oversized_version_literals(variable: str, literals: Sequence[str]) -> None:
+def reject_oversized_version_literals(variable: str, literals: Sequence[str]) -> None:
     """Raise before a numeric component past the parse limit reaches packaging.
 
     A numeric component over sys.get_int_max_str_digits() digits makes
@@ -427,7 +427,7 @@ def _reject_undefined_operator(
 ) -> None:
     if op not in _ORDERED_UNDEFINED:
         return
-    _reject_oversized_version_literals(variable, (literal,))
+    reject_oversized_version_literals(variable, (literal,))
     try:
         if swapped:
             _apply(literal, op, probe, key=variable)
@@ -682,7 +682,7 @@ def _value_candidates(
 ) -> list[str]:
     literals = [atom.literal for atom in atoms]
 
-    _reject_oversized_version_literals(variable, literals)
+    reject_oversized_version_literals(variable, literals)
     if _reduce_work_exceeds(variable, literals, len(atoms), max_cells):
         msg = f"axis work over {len(atoms)} atoms exceeds max_cells={max_cells}"
         raise ComplexityLimitError(msg)

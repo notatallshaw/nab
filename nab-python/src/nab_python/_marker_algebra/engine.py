@@ -38,6 +38,7 @@ from .atoms import (
     make_not,
     make_or,
     partition_axis,
+    reject_oversized_version_literals,
 )
 from .errors import UnserializableSetError
 
@@ -65,6 +66,13 @@ def collect_atoms(node: Formula) -> list[Atom]:
     out: list[Atom] = []
     _walk(node, out)
     return out
+
+
+def reject_oversized_literals(node: Formula, env: Mapping[str, object]) -> None:
+    """Raise the bounded guard before an oversized literal reaches packaging."""
+    for atom in collect_atoms(node):
+        if _atom_env_value(atom, env) is not _MISSING:
+            reject_oversized_version_literals(atom.variable, (atom.literal,))
 
 
 def variables_of(node: Formula) -> frozenset[str]:

@@ -794,6 +794,28 @@ def test_guard_oversized_numeric_literal(text: str) -> None:
         marker.is_empty()
 
 
+@pytest.mark.parametrize("op", ["<", ">=", "=="])
+def test_evaluate_rejects_oversized_literal(op: str) -> None:
+    marker = ms(f'python_full_version {op} "' + "9" * 5000 + '"')
+    with pytest.raises(ComplexityLimitError):
+        marker.evaluate({"python_full_version": "3.9"})
+
+
+@pytest.mark.parametrize("op", ["<", ">=", "=="])
+def test_restrict_rejects_oversized_literal(op: str) -> None:
+    marker = ms(f'python_full_version {op} "' + "9" * 5000 + '"')
+    with pytest.raises(ComplexityLimitError):
+        marker.restrict({"python_full_version": "3.9"})
+
+
+def test_restrict_keeps_oversized_literal_when_unprovided() -> None:
+    marker = ms(
+        'python_full_version < "' + "9" * 5000 + '" and sys_platform == "linux"'
+    )
+    residual = marker.restrict({"sys_platform": "linux"})
+    assert isinstance(residual, MarkerSet)
+
+
 def test_string_axis_ignores_oversized_numeric_literal() -> None:
     # A string variable never parses its literal as a version, so a long numeric
     # literal is an ordinary string and the guard must not fire.
