@@ -398,17 +398,29 @@ def _make_set_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Fo
     return AtomLeaf(Atom(AXIS_SET, variable, variable, op, name, positive=positive))
 
 
-def _reject_undefined_operator(
-    variable: str, op: str, literal: str, *, swapped: bool
-) -> None:
-    if op not in _ORDERED_UNDEFINED:
-        return
-    if is_version_dispatch(variable) and _oversized_numeric(literal):
+def _reject_oversized_version_literals(variable: str, literals: Sequence[str]) -> None:
+    """Raise before a numeric component past the parse limit reaches packaging.
+
+    A numeric component over sys.get_int_max_str_digits() digits makes
+    packaging's Version raise a bare ValueError; convert it to the bounded
+    ComplexityLimitExceeded here.
+    """
+    if is_version_dispatch(variable) and any(
+        _oversized_numeric(literal) for literal in literals
+    ):
         msg = (
             "version literal numeric component exceeds the "
             f"{sys.get_int_max_str_digits()}-digit parse limit"
         )
         raise ComplexityLimitExceeded(msg)
+
+
+def _reject_undefined_operator(
+    variable: str, op: str, literal: str, *, swapped: bool
+) -> None:
+    if op not in _ORDERED_UNDEFINED:
+        return
+    _reject_oversized_version_literals(variable, (literal,))
     probe = "1.0"
     try:
         if swapped:
@@ -646,16 +658,7 @@ def _value_candidates(
 ) -> list[str]:
     literals = [atom.literal for atom in atoms]
 
-    if is_version_dispatch(variable) and any(
-        _oversized_numeric(literal) for literal in literals
-    ):
-        # A numeric component past the parse limit crashes packaging's Version
-        # with a bare ValueError; raise the bounded failure instead.
-        msg = (
-            "version literal numeric component exceeds the "
-            f"{sys.get_int_max_str_digits()}-digit parse limit"
-        )
-        raise ComplexityLimitExceeded(msg)
+    _reject_oversized_version_literals(variable, literals)
     if _reduce_work_exceeds(variable, literals, len(atoms), max_cells):
         msg = f"axis work over {len(atoms)} atoms exceeds max_cells={max_cells}"
         raise ComplexityLimitExceeded(msg)
