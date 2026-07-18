@@ -5,8 +5,8 @@ over typed atoms, with the packaging-faithful ``(variable, operator, literal)``
 dispatch, A1 lowering of ``python_version`` onto the ``python_full_version``
 axis, set-valued extras, and opaque ``contains`` atoms. The denotation of a
 value atom is delegated to packaging's own ``_eval_op`` so it matches packaging
-exactly. Every representation consumes this tree and reuses the per-axis cell
-partition and per-atom evaluation defined here.
+exactly. The decision engine in :mod:`.engine` consumes this tree and reuses the
+per-axis cell partition and per-atom evaluation defined here.
 """
 
 from __future__ import annotations
@@ -339,7 +339,9 @@ def _make_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Formul
         return _make_python_version_atom(op, literal, swapped=swapped)
     if op in _MEMBERSHIP:
         return _make_membership_atom(variable, op, literal, swapped=swapped)
-    _reject_undefined_operator(variable, op, literal, swapped=swapped)
+    # These axes seed single-segment pool points, so a single-segment probe drives
+    # the swapped-operator validity check.
+    _reject_undefined_operator(variable, op, literal, swapped=swapped, probe="0")
     return AtomLeaf(Atom(AXIS_VALUE, variable, variable, op, literal, swapped=swapped))
 
 
@@ -356,6 +358,11 @@ def _make_python_version_atom(op: str, literal: str, *, swapped: bool) -> Formul
                 positive=op == "in",
             )
         )
+    # python_version A1-lowers to major.minor, so the swapped decision RHS is
+    # always two-segment; a two-segment probe matches its validity.
+    _reject_undefined_operator(
+        "python_version", op, literal, swapped=swapped, probe="1.0"
+    )
     # A1: lower onto python_full_version, evaluated on the major.minor of the point.
     return AtomLeaf(
         Atom(
@@ -416,12 +423,11 @@ def _reject_oversized_version_literals(variable: str, literals: Sequence[str]) -
 
 
 def _reject_undefined_operator(
-    variable: str, op: str, literal: str, *, swapped: bool
+    variable: str, op: str, literal: str, *, swapped: bool, probe: str
 ) -> None:
     if op not in _ORDERED_UNDEFINED:
         return
     _reject_oversized_version_literals(variable, (literal,))
-    probe = "1.0"
     try:
         if swapped:
             _apply(literal, op, probe, key=variable)
