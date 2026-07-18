@@ -95,6 +95,28 @@ def test_exclusive_above_post_release_literal() -> None:
     assert not band.is_empty()
 
 
+def test_exclusive_above_dev_literal() -> None:
+    band = ms('python_full_version > "3.14.0.dev1"') & ms(
+        'python_full_version < "3.14.1"'
+    )
+    assert not band.is_empty()
+    env = band.witness()
+    assert env is not None
+    assert Marker(
+        'python_full_version > "3.14.0.dev1" and python_full_version < "3.14.1"'
+    ).evaluate(env)
+
+    combined = ms('python_full_version > "3.14.0a1.dev2"') & ms(
+        'python_full_version < "3.14.0a1"'
+    )
+    assert not combined.is_empty()
+    env2 = combined.witness()
+    assert env2 is not None
+    assert Marker(
+        'python_full_version > "3.14.0a1.dev2" and python_full_version < "3.14.0a1"'
+    ).evaluate(env2)
+
+
 def test_m1_string_ordering_non_negation() -> None:
     less = ms('sys_platform < "linux"')
     greater_equal = ms('sys_platform >= "linux"')

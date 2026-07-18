@@ -516,6 +516,24 @@ def _version_neighbours(text: str) -> list[str]:
             )
         )
 
+    if version.dev is not None:
+        # An exclusive > / < against a dev literal excludes V's own local
+        # variants, so the point just above is the next dev of the same release,
+        # which no release or suffix bump mints.
+        release_str = ".".join(str(part) for part in release)
+        pre_part = (
+            f"{version.pre[0]}{version.pre[1]}" if version.pre is not None else ""
+        )
+        post_part = f".post{version.post}" if version.post is not None else ""
+        out.append(
+            str(
+                Version(
+                    f"{version.epoch}!{release_str}{pre_part}{post_part}"
+                    f".dev{version.dev + 1}"
+                )
+            )
+        )
+
     for suffix in (".dev0", "a0", ".post0", ".1", "+l"):
         candidate = f"{base}{suffix}"
         if _strict_version(candidate):
