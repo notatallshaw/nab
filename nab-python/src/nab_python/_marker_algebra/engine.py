@@ -70,10 +70,15 @@ def collect_atoms(node: Formula) -> list[Atom]:
 
 
 def reject_oversized_literals(node: Formula, env: Mapping[str, object]) -> None:
-    """Raise the bounded guard before an oversized literal reaches packaging."""
+    """Raise the bounded guard for an oversized version literal or env value.
+
+    Runs before either could reach packaging's Version and raise a bare
+    ValueError.
+    """
     for atom in collect_atoms(node):
-        if _atom_env_value(atom, env) is not _MISSING:
-            reject_oversized_version_literals(atom.variable, (atom.literal,))
+        value = _atom_env_value(atom, env)
+        if value is not _MISSING:
+            reject_oversized_version_literals(atom.variable, (atom.literal, str(value)))
 
 
 def variables_of(node: Formula) -> frozenset[str]:

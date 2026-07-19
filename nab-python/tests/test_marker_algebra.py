@@ -869,6 +869,26 @@ def test_string_axis_ignores_oversized_numeric_literal() -> None:
     assert not ms('sys_platform == "' + "9" * 5000 + '"').is_empty()
 
 
+@pytest.mark.parametrize("op", ["<", ">=", "=="])
+def test_evaluate_rejects_oversized_value(op: str) -> None:
+    marker = ms(f'python_full_version {op} "3.9"')
+    with pytest.raises(ComplexityLimitError):
+        marker.evaluate({"python_full_version": "9" * 5000})
+
+
+@pytest.mark.parametrize("op", ["<", ">=", "=="])
+def test_restrict_rejects_oversized_value(op: str) -> None:
+    marker = ms(f'python_full_version {op} "3.9"')
+    with pytest.raises(ComplexityLimitError):
+        marker.restrict({"python_full_version": "9" * 5000})
+
+
+def test_string_axis_ignores_oversized_numeric_value() -> None:
+    # A string variable never parses its env value as a version, so an oversized
+    # numeric value is an ordinary string and the guard must not fire.
+    assert ms('sys_platform == "linux"').evaluate({"sys_platform": "9" * 5000}) is False
+
+
 def test_oversized_literal_allowed_when_int_limit_disabled() -> None:
     # A zero int-string limit disables the interpreter's overflow check, so the
     # literal parses and the guard stands down.
