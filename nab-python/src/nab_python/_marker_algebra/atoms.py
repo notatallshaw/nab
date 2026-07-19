@@ -726,6 +726,10 @@ def _reduce_cells(
     for point in points:
         vector = tuple(atom.holds(point) for atom in atoms)
         representatives.setdefault(vector, point)
+        # Every one of the 2**len(atoms) truth vectors now has a representative;
+        # the remaining points can only repeat one.
+        if len(representatives) == 1 << len(atoms):
+            break
     return [Cell(point, vector) for vector, point in representatives.items()]
 
 
