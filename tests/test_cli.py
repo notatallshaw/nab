@@ -2518,6 +2518,30 @@ class TestPylockOutputNameValidation:
             lock(pyproject, output=tmp_path / "lock.toml")
         assert "pylock.toml" in capsys.readouterr().err
 
+    @pytest.mark.parametrize("raw", [".", "/", ""])
+    def test_empty_name_rejected_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], raw: str
+    ) -> None:
+        """A directory-like ``--output`` has no file name, so it exits 1."""
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=Path(raw))
+        err = capsys.readouterr().err
+        assert "names a directory, not a file" in err
+        assert "pylock.toml" in err
+
+    @pytest.mark.parametrize("raw", ["sub/-", "a/b/-"])
+    def test_hyphen_name_rejected_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], raw: str
+    ) -> None:
+        """A non-stdout ``-`` component whose dotted form is invalid still exits 1."""
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=tmp_path / raw)
+        err = capsys.readouterr().err
+        assert "PEP 751" in err
+        assert "pylock.toml" in err
+
     def test_stdout_skips_validation(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
