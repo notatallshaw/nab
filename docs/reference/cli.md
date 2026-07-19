@@ -230,6 +230,6 @@ matching extra.
 | ---- | ------- |
 | `0`  | Success. |
 | `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
-| `130` | Interrupted with Ctrl-C. `nab` prints `Aborted.` and exits. |
+| `130` | Interrupted with Ctrl-C. `nab` prints `error: interrupted` and exits. |
 
 [PEP 751]: https://peps.python.org/pep-0751/
