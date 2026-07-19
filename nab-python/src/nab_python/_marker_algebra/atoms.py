@@ -342,6 +342,9 @@ def _make_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Formul
     # These axes seed single-segment pool points, so a single-segment probe drives
     # the swapped-operator validity check.
     _reject_undefined_operator(variable, op, literal, swapped=swapped, probe="0")
+    if op == "===":
+        msg = f"{op!r} is undefined on {variable!r} with literal {literal!r}"
+        raise UndefinedComparison(msg)
     return AtomLeaf(Atom(AXIS_VALUE, variable, variable, op, literal, swapped=swapped))
 
 

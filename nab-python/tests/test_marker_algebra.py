@@ -275,6 +275,8 @@ def test_swapped_atoms() -> None:
         'python_version ~= "2!0"',
         'python_version ~= "0"',
         '"1.0" ~= python_full_version',
+        'python_full_version === "3.9"',
+        '"3.9" === python_full_version',
     ],
 )
 def test_undefined_operator_rejected_at_construction(text: str) -> None:
@@ -287,7 +289,6 @@ def test_undefined_operator_rejected_at_construction(text: str) -> None:
     [
         '"1.0" ~= python_version',
         '"1.0" === python_version',
-        '"1.0" === python_full_version',
         'python_version ~= "3.9"',
     ],
 )

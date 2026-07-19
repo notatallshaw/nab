@@ -177,8 +177,10 @@ def witness(node: Formula, max_cells: int) -> dict[str, str | frozenset[str]] | 
     The returned environment is verified against the tree before it is returned.
     The search over ``contains`` atoms is incomplete: ``None`` is returned for the
     empty set, and may also be returned for a non-empty set when a value
-    constraint and a substring constraint on one variable have no jointly
-    realisable cell representative.
+    constraint and a substring constraint on the same axis have no jointly
+    realisable cell representative. ``python_version`` and
+    ``python_full_version`` share one axis, so the two constraints can sit on
+    different variables.
     """
     for cell in _satisfying_cells(node, max_cells):
         env = _materialize(cell)
