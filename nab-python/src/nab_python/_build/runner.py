@@ -214,7 +214,11 @@ def _parse_metadata(metadata_path: Path) -> WheelMetadata:
     if not metadata_path.is_file():
         msg = f"backend produced no METADATA file at {metadata_path}"
         raise BuildBackendError(msg)
-    text = metadata_path.read_text(encoding="utf-8")
+    try:
+        text = metadata_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        msg = f"backend METADATA at {metadata_path} is not valid UTF-8: {exc}"
+        raise BuildBackendError(msg) from exc
     msg_obj = message_from_string(text)
 
     name_raw = msg_obj.get("Name")
