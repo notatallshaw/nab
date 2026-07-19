@@ -3,8 +3,10 @@
 ``tests`` runs one workspace's suite and gates each package it owns at 100
 percent. ``fail_under`` and the ``[tool.coverage.paths]`` remaps live in
 ``pyproject.toml``; the per-package ``--include`` globs are built here.
-``types`` runs one type-checker over ``nab-resolver/src``. Both take their
-pinned dependencies from ``.github/requirements``.
+``types`` runs one type-checker over ``nab-resolver/src``. ``dists`` builds
+every distribution and installs each sdist and wheel to catch packaging
+regressions that building alone misses. All take their pinned dependencies
+from ``.github/requirements``.
 
 The Python version comes from whoever launches nox, so CI drives the matrix
 through ``actions/setup-python`` and stays off the per-OS versioned-binary
@@ -12,6 +14,7 @@ lookup. Run a single cell locally, for example::
 
     nox -s "tests(workspace='python')"
     nox -s "types(checker='mypy')"
+    nox -s dists
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ nox.options.default_venv_backend = "venv"
 
 TESTS_LOCK = ".github/requirements/pylock.tests.toml"
 TYPES_LOCK = ".github/requirements/pylock.types.toml"
+DISTS_LOCK = ".github/requirements/pylock.dists.toml"
 
 # workspace -> (editable packages, pytest paths, coverage-gated packages).
 # nab-index rides with the python workspace: nab-python is its only consumer
@@ -90,3 +94,13 @@ def types(session: nox.Session, checker: str) -> None:
     # their source-path config, not installs.
     _install(session, TYPES_LOCK, ["nab-resolver"])
     session.run(*TYPE_CHECKERS[checker])
+
+
+@nox.session
+def dists(session: nox.Session) -> None:
+    """Build every distribution and prove each sdist and wheel installs."""
+    # Only the build toolchain lands here; the check builds each package in a
+    # subprocess and installs it into its own throwaway venv.
+    session.install("--upgrade", "pip>=26.1")
+    session.install("-r", DISTS_LOCK)
+    session.run("python", "tasks/check_dists.py")

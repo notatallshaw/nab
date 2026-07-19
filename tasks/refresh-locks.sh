@@ -31,7 +31,7 @@ DOCS_PYTHON="3.13"
 # uv seed the PEP 751 dependency_groups marker from default-groups and cannot
 # select a non-default group at install time, so without this the group's
 # packages carry a marker no install-time flag ever satisfies and are skipped.
-for group in tests types pre-commit crosshair release docs nox; do
+for group in tests types pre-commit crosshair release docs nox dists; do
     echo "==> Locking group: ${group}"
     group_args=()
     if [[ "${group}" == "docs" ]]; then
