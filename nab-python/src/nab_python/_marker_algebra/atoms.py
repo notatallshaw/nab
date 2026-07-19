@@ -700,9 +700,15 @@ def _value_candidates(
             candidates.extend(_membership_candidates(atom))
 
     if is_version_dispatch(variable):
+        pool_seed = list(literals)
+        for atom in atoms:
+            if atom.op in _MEMBERSHIP:
+                pool_seed.extend(
+                    s for s in _substrings(atom.literal) if _parses_version(s)
+                )
         candidates.extend(
             _version_pool(
-                literals,
+                pool_seed,
                 elevate_epoch=_mixes_mm_and_full(atoms),
                 max_cells=max_cells,
             )

@@ -487,6 +487,27 @@ def test_epoch_gap_between_literals_is_sound() -> None:
     assert not ms(taut_text).is_tautology()
 
 
+def test_membership_substrings_mint_epoch_twins() -> None:
+    # A membership literal's version substrings feed the epoch-elevating pool, so
+    # the axis carries a twin for every epoch band and the decisions stay sound.
+    marker = ms('python_full_version >= "3.14" and python_version in "3.9 3.10"')
+    env = {"python_full_version": "1!3.9", "python_version": "3.9"}
+    assert not marker.is_empty()
+    assert marker.evaluate(env)
+    assert Marker(
+        'python_full_version >= "3.14" and python_version in "3.9 3.10"'
+    ).evaluate(env)
+
+
+def test_membership_epoch_twin_witnesses_non_implication() -> None:
+    # ~= "1!3.9" holds at 1!3.12, whose major.minor is 3.12, outside the set; the
+    # epoch twin of the membership substrings must exist or the implication is
+    # wrongly proven.
+    compat = ms('python_full_version ~= "1!3.9"')
+    member = ms('python_version in "3.9 3.10 3.11"')
+    assert not compat.implies(member)
+
+
 # --------------------------------------------------------------- restrict
 
 
