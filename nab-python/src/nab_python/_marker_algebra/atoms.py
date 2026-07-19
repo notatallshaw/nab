@@ -350,17 +350,7 @@ def _make_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Formul
 
 def _make_python_version_atom(op: str, literal: str, *, swapped: bool) -> Formula:
     if op in _MEMBERSHIP and swapped:
-        # "literal" in python_version is the opaque contains direction.
-        return AtomLeaf(
-            Atom(
-                AXIS_CONTAINS,
-                "python_version",
-                "python_version",
-                op,
-                literal,
-                positive=op == "in",
-            )
-        )
+        return _make_membership_atom("python_version", op, literal, swapped=swapped)
     # python_version A1-lowers to major.minor, so the swapped decision RHS is
     # always two-segment; a two-segment probe matches its validity.
     _reject_undefined_operator(
