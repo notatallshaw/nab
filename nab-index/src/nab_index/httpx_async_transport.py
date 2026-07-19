@@ -88,8 +88,9 @@ class HttpxAsyncTransport:
         while True:
             try:
                 response = await self._client.get(url, headers=headers)
-            except httpx.TooManyRedirects as exc:
-                # A redirect loop is persistent, so it is raised rather than retried.
+            except (httpx.TooManyRedirects, httpx.UnsupportedProtocol) as exc:
+                # A redirect loop and an unsupported scheme are persistent, so
+                # they are raised rather than retried.
                 msg = f"GET {url} failed: {exc}"
                 raise HttpError(msg) from exc
             except httpx.HTTPError as exc:
