@@ -6293,11 +6293,7 @@ class TestSpeculativePrefetchSkipsNonWheelDists:
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
         provider.fetch_versions("foo")
-        # Batch should only contain the wheel v1.0, not the sdist v2.0.
-        if coordinator.request_metadata_batch.called:
-            items = coordinator.request_metadata_batch.call_args[0][0]
-            for _, ver, _, _ in items:
-                assert ver != "2.0"
+        assert _prefetched_batch_versions(coordinator) == ["1.0"]
 
 
 class TestChooseVersionBatchLoop:
