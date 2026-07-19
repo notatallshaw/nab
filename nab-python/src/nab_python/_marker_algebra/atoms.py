@@ -464,7 +464,7 @@ def _substrings(text: str) -> list[str]:
     return sorted(out)
 
 
-def _version_neighbours(text: str) -> list[str]:
+def _version_neighbors(text: str) -> list[str]:
     base = text.removesuffix(".*")
     try:
         version = Version(base)
@@ -494,7 +494,7 @@ def _version_neighbours(text: str) -> list[str]:
         out.append(bump)
         out.append(f"{bump}.dev0")
 
-    out.extend(_suffix_neighbours(version, release_str, pre_part))
+    out.extend(_suffix_neighbors(version, release_str, pre_part))
 
     for suffix in (".dev0", "a0", ".post0", ".1", "+l"):
         candidate = f"{base}{suffix}"
@@ -503,7 +503,7 @@ def _version_neighbours(text: str) -> list[str]:
     return out
 
 
-def _suffix_neighbours(version: Version, release_str: str, pre_part: str) -> list[str]:
+def _suffix_neighbors(version: Version, release_str: str, pre_part: str) -> list[str]:
     """Mint the points adjacent to a pre/post/dev literal.
 
     An exclusive comparison against a suffixed literal excludes the literal's own
@@ -551,7 +551,7 @@ def _version_pool(
 ) -> list[str]:
     pool = ["0", "0.dev0", "99999"]
     for literal in literals:
-        pool.extend(_version_neighbours(literal))
+        pool.extend(_version_neighbors(literal))
 
     parsed: list[tuple[Version, str]] = []
     seen: set[str] = set()

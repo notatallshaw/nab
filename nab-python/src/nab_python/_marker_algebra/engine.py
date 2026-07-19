@@ -176,13 +176,13 @@ def witness(node: Formula, max_cells: int) -> dict[str, str | frozenset[str]] | 
     realisable cell representative.
     """
     for cell in _satisfying_cells(node, max_cells):
-        env = _materialise(cell)
+        env = _materialize(cell)
         if evaluate_tree(node, env):
             return env
     return None
 
 
-def _materialise(
+def _materialize(
     cell: Mapping[tuple[str, ...], Cell],
 ) -> dict[str, str | frozenset[str]]:
     env: dict[str, str | frozenset[str]] = {}
