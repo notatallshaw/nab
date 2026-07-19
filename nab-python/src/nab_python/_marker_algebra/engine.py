@@ -363,7 +363,7 @@ def _render_atom(atom: Atom) -> str:
         return f"{_quote(atom.literal)} {op} {atom.origin}"
     if atom.kind == AXIS_CONTAINS:
         op = "in" if atom.positive else "not in"
-        return f"{_quote(atom.literal)} {op} {atom.variable}"
+        return f"{_quote(atom.literal)} {op} {atom.origin}"
     if atom.swapped:
         return f"{_quote(atom.literal)} {atom.op} {atom.origin}"
     return f"{atom.origin} {atom.op} {_quote(atom.literal)}"
