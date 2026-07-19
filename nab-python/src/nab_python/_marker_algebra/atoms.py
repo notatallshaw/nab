@@ -811,7 +811,10 @@ def evaluate_atom(atom: Atom, env: Mapping[str, object]) -> bool:
 
     A referenced variable absent from ``env`` raises
     :class:`UndefinedEnvironmentName` on every axis, matching packaging and
-    keeping the missing-key behaviour uniform across scalars and sets.
+    keeping the missing-key behaviour uniform across scalars and sets. A
+    ``python_version`` atom reads ``python_full_version`` in preference to
+    ``python_version``, so an environment supplying both keys is read through
+    ``python_full_version``.
     """
     if atom.kind == AXIS_VALUE:
         if atom.derive_mm and "python_full_version" not in env:

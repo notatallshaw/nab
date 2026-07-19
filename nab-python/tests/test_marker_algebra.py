@@ -375,6 +375,15 @@ def test_evaluate_python_version_only_env() -> None:
     assert not marker.evaluate({"python_version": "3.10"})
 
 
+def test_evaluate_python_version_prefers_full_version() -> None:
+    # With both keys present, A1 reads python_full_version, so a disagreeing
+    # python_version key is not consulted.
+    marker = ms('python_version == "3.9"')
+    assert not marker.evaluate(
+        {"python_full_version": "3.10.1", "python_version": "3.9"}
+    )
+
+
 def test_evaluate_set_variable_as_string() -> None:
     # A set variable passed as a str is one name, matching restrict().
     marker = ms('extra == "cpu"')
