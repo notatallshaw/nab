@@ -360,13 +360,10 @@ def _quote(literal: str) -> str:
 
 
 def _render_atom(atom: Atom) -> str:
-    if atom.kind == AXIS_SET:
-        if atom.origin == "extra":
-            op = "==" if atom.positive else "!="
-            return f"extra {op} {_quote(atom.literal)}"
-        op = "in" if atom.positive else "not in"
-        return f"{_quote(atom.literal)} {op} {atom.origin}"
-    if atom.kind == AXIS_CONTAINS:
+    if atom.kind == AXIS_SET and atom.origin == "extra":
+        op = "==" if atom.positive else "!="
+        return f"extra {op} {_quote(atom.literal)}"
+    if atom.kind in (AXIS_SET, AXIS_CONTAINS):
         op = "in" if atom.positive else "not in"
         return f"{_quote(atom.literal)} {op} {atom.origin}"
     if atom.swapped:
