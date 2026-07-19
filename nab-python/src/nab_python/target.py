@@ -789,8 +789,8 @@ class ResolveTarget:
         The python axis is re-derived when the overlay moves it, so
         ``python_version`` and ``python_full_version`` never describe two
         different interpreters.  The tag set does not move with it: an
-        overlay names no libc floor or macOS deployment target, so it
-        cannot rebuild the wheel-tag axis.  The result is no longer
+        overlay names no runs-on libc or macOS, so it cannot rebuild the
+        wheel-tag axis.  The result is no longer
         host-faithful; a build backend run under it reports the host's
         metadata, not the impersonated target's.
 

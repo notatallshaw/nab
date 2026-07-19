@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import cache, cached_property, lru_cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
@@ -47,7 +47,6 @@ __all__ = [
     "PlatformSpec",
     "TagSet",
     "TagsSource",
-    "default_ceiling_admitting",
     "platform_kind",
     "supports_free_threading",
     "wheel_tag_set",
@@ -79,37 +78,16 @@ _MAX_WHEEL_TAGS = 4096
 _WHEEL_PARTS_WITH_BUILD = 6
 _BUILD_TAG_RE = re.compile(r"(\d{1,9})(\D.*)?$", re.ASCII)
 
-# A libc version is a floor on the machine and a ceiling on the tag: the
-# target accepts every manylinux/musllinux tag at or below it, so a target
-# that runs a newer libc has to say so to reach the wheels built above the
-# default.  glibc 2.28 is the manylinux_2_28 build image; musl 1.2 is the
-# Alpine 3.13 baseline musllinux wheels target.
+# runs-on-libc (or runs-on-macos) names a system the lock must run on.  A
+# wheel is a member iff it runs there: the target accepts every
+# manylinux/musllinux (or macosx) tag at or below the named level and drops a
+# wheel that needs something newer.  Unset, the knob names no system and a
+# wheel of any level is accepted, deferring compatibility to install time, the
+# way uv resolves.
 DEFAULT_LIBC: Libc = "glibc"
-_DEFAULT_LIBC_VERSION: Mapping[Libc, tuple[int, int]] = MappingProxyType(
-    {"glibc": (2, 28), "musl": (1, 2)}
-)
-# A glibc default the arch raises above the family's.  armv7l's current PyPI
-# wheels are built at manylinux_2_31 (Debian bullseye / Raspberry Pi OS is glibc
-# 2.31), and a 2.28 floor would reject every one of them.  The floor stays a
-# ceiling on the tag, so this only holds where armv7l machines run 2.31 or newer;
-# an older one has to declare its libc-version.  musl armv7l keeps the 1.2 default.
-_ARCH_DEFAULT_GLIBC: Mapping[str, tuple[int, int]] = MappingProxyType(
-    {"armv7l": (2, 31)}
-)
 # The only major each family has shipped.  Tags expand within the declared
 # major, so a foreign major names platform tags no wheel is built for.
 LIBC_MAJOR: Mapping[Libc, int] = MappingProxyType({"glibc": 2, "musl": 1})
-
-# The macOS version is the deployment target of the machine, which
-# ``mac_platforms`` reads as a ceiling: the target accepts a wheel built for
-# its own version and older, never newer.  The defaults are deliberately
-# conservative, because the two ways to be wrong are not symmetric: too low
-# only misses the newest wheels and falls back to an older version or an
-# sdist, while too high writes a wheel into the lock that an older machine
-# cannot install.
-_DEFAULT_MACOS_MIN: Mapping[str, tuple[int, int]] = MappingProxyType(
-    {"arm64": (12, 0), "x86_64": (10, 13)}
-)
 
 # The oldest macOS each arch can name a wheel tag for.  ``mac_platforms``
 # yields no x86_64 binary format below 10.4, and Apple Silicon shipped at
@@ -129,16 +107,28 @@ _LEGACY_MANYLINUX: dict[tuple[int, int], str] = {
 
 # A tag list runs one entry per version below the declared one, so a typo
 # like "2.99999999" would build tags until it ran out of memory.  No libc or
-# macOS release is anywhere near this cap.
+# macOS release is anywhere near this max.
 _MAX_VERSION_PART = 99
 
-# Lowest glibc 2.x minor a manylinux wheel may target, by arch.  manylinux1
+# The no-limit sentinel an unset knob stands in for.  A tag generator reads a
+# version as a max and yields it and every older one, so the sentinel admits
+# every real tag.  macOS enumerates on the major for 11+, so the sentinel major
+# is 11 or newer; the minor is 0, which is all mac_platforms emits above 11.
+_MACOS_NO_LIMIT = (_MAX_VERSION_PART, 0)
+
+
+def _libc_no_limit(libc: Libc) -> tuple[int, int]:
+    """Return a libc family's no-limit sentinel: its major at the max minor."""
+    return (LIBC_MAJOR[libc], _MAX_VERSION_PART)
+
+
+# Glibc 2.x minor floor a manylinux wheel may target, by arch.  manylinux1
 # (PEP 513) and manylinux2010 (PEP 571) cover only x86_64/i686; manylinux2014
 # (PEP 599, glibc 2.17) was the first to add other arches, so every other arch
 # stops at glibc 2.17.
 _X86_MANYLINUX_ARCHS = frozenset({"x86_64", "i686"})
-_X86_MIN_GLIBC2_MINOR = 5
-_OTHER_MIN_GLIBC2_MINOR = 17
+_X86_GLIBC2_MINOR_FLOOR = 5
+_OTHER_GLIBC2_MINOR_FLOOR = 17
 
 
 @dataclass(frozen=True)
@@ -147,9 +137,12 @@ class PlatformSpec:
 
     ``libc`` names the C library the Linux target runs; a machine links one,
     so the target emits that family's wheel tags and never the other's.
-    ``libc_version`` is the version the target guarantees, and a wheel built
-    against an older libc runs on a newer one, so every version at or below
-    it is accepted.  Unset, it takes the family default.
+    ``runs_on_libc`` names a glibc or musl the lock must run on: a wheel built
+    against it or an older libc runs there and is accepted, and one built
+    against a newer libc is dropped.  Unset, the knob names no system and a
+    wheel of any level is accepted, deferring compatibility to install time.
+    ``runs_on_macos`` reads the same way for macOS: a macOS the lock must run
+    on.
 
     ``platform_release`` and ``platform_version`` set the corresponding PEP 508
     marker values.  Left empty, a kernel-conditioned marker
@@ -162,8 +155,8 @@ class PlatformSpec:
 
     platform_id: str
     libc: Libc = DEFAULT_LIBC
-    libc_version: tuple[int, int] | None = None  # unset: the family default
-    macos_min: tuple[int, int] | None = None  # unset: the arch default
+    runs_on_libc: tuple[int, int] | None = None  # unset: accept any level
+    runs_on_macos: tuple[int, int] | None = None  # unset: accept any level
     platform_release: str = ""
     platform_version: str = ""
     free_threaded: bool = False
@@ -185,59 +178,51 @@ class PlatformSpec:
             return
 
         if kind == "linux":
-            self._check_libc_version()
-        elif self.libc != DEFAULT_LIBC or self.libc_version is not None:
-            msg = f"libc is a Linux knob, and {self.platform_id} is not Linux"
+            self._check_runs_on_libc()
+        elif self.libc != DEFAULT_LIBC or self.runs_on_libc is not None:
+            msg = (
+                "libc and runs-on-libc are Linux knobs, and"
+                f" {self.platform_id} is not Linux"
+            )
             raise ValueError(msg)
 
         if kind == "macos":
-            self._check_macos_min()
-        elif self.macos_min is not None:
-            msg = f"macos-min is a macOS knob, and {self.platform_id} is not macOS"
+            self._check_runs_on_macos()
+        elif self.runs_on_macos is not None:
+            msg = f"runs-on-macos is a macOS knob, and {self.platform_id} is not macOS"
             raise ValueError(msg)
 
-    def _check_libc_version(self) -> None:
+    def _check_runs_on_libc(self) -> None:
         """Reject a libc version outside its family's only major."""
-        if self.libc_version is None:
+        if self.runs_on_libc is None:
             return
         major = LIBC_MAJOR[self.libc]
-        if self.libc_version[0] != major:
+        if self.runs_on_libc[0] != major:
             msg = (
-                f"{self.libc} has only a {major}.x series, so libc-version"
-                f" {_version_tag(self.libc_version)} names platform tags"
+                f"{self.libc} has only a {major}.x series, so runs-on-libc"
+                f" {_version_tag(self.runs_on_libc)} names platform tags"
                 f" nothing is built for"
             )
             raise ValueError(msg)
-        _check_version_cap("libc-version", self.libc_version)
+        _check_version_max("runs-on-libc", self.runs_on_libc)
 
-    def _check_macos_min(self) -> None:
+    def _check_runs_on_macos(self) -> None:
         """Reject a macOS version below the oldest this arch can name a tag for."""
-        if self.macos_min is None:
+        if self.runs_on_macos is None:
             return
         floor = _MACOS_TAG_FLOOR[self.arch]
-        if self.macos_min < floor:
+        if self.runs_on_macos < floor:
             msg = (
-                f"macos-min {_version_tag(self.macos_min)} is below"
+                f"runs-on-macos {_version_tag(self.runs_on_macos)} is below"
                 f" {_version_tag(floor)}, the oldest macOS {self.arch} runs"
             )
             raise ValueError(msg)
-        _check_version_cap("macos-min", self.macos_min)
+        _check_version_max("runs-on-macos", self.runs_on_macos)
 
     @property
     def arch(self) -> str:
         """The architecture suffix used in platform tags."""
         return _PLATFORM_ARCH[self.platform_id]
-
-    @property
-    def effective_libc_version(self) -> tuple[int, int]:
-        """The declared libc version, or the arch/family default."""
-        if self.libc_version is not None:
-            return self.libc_version
-        if self.libc == "glibc":
-            arch_default = _ARCH_DEFAULT_GLIBC.get(self.arch)
-            if arch_default is not None:
-                return arch_default
-        return _DEFAULT_LIBC_VERSION[self.libc]
 
     @property
     def label(self) -> str:
@@ -253,11 +238,11 @@ class PlatformSpec:
 
         # The family shows even without a version, so a musl target never
         # renders the label of a glibc one.
-        if self.libc != DEFAULT_LIBC or self.libc_version is not None:
-            parts.append(f"-{self.libc}{_version_tag(self.libc_version)}")
+        if self.libc != DEFAULT_LIBC or self.runs_on_libc is not None:
+            parts.append(f"-{self.libc}{_version_tag(self.runs_on_libc)}")
 
         fields = (
-            ("macos", _version_tag(self.macos_min)),
+            ("macos", _version_tag(self.runs_on_macos)),
             ("rel", _escape_label_value(self.platform_release)),
             ("ver", _escape_label_value(self.platform_version)),
         )
@@ -291,7 +276,7 @@ _PLATFORM_KIND: dict[str, str] = {
 }
 
 
-def _check_version_cap(key: str, version: tuple[int, int]) -> None:
+def _check_version_max(key: str, version: tuple[int, int]) -> None:
     """Reject a version so high the tag list it names would exhaust memory."""
     if max(version) > _MAX_VERSION_PART:
         msg = (
@@ -304,87 +289,6 @@ def _check_version_cap(key: str, version: tuple[int, int]) -> None:
 def platform_kind(platform_id: str) -> str | None:
     """Return a platform id's kind, or ``None`` if nab does not know the id."""
     return _PLATFORM_KIND.get(platform_id)
-
-
-# The libc/OS version a versioned platform tag carries, which the target reads
-# as a ceiling.  Used to pull the ``(major, minor)`` back out of a wheel's tag
-# when deciding whether raising an unset default ceiling would admit it.
-_MACOS_PLATFORM_RE = re.compile(r"^macosx_(\d+)_(\d+)_")
-_MANYLINUX_PLATFORM_RE = re.compile(r"^manylinux_(\d+)_(\d+)_")
-_MUSLLINUX_PLATFORM_RE = re.compile(r"^musllinux_(\d+)_(\d+)_")
-
-
-def _platform_versions(
-    wheel_filename: str, pattern: re.Pattern[str]
-) -> list[tuple[int, int]]:
-    """Return the ``(major, minor)`` pairs ``pattern`` matches in a wheel's tags."""
-    wheel_tags = wheel_tag_set(wheel_filename)
-    if wheel_tags is None:
-        return []
-    out: list[tuple[int, int]] = []
-    for tag in wheel_tags:
-        match = pattern.match(tag.platform)
-        if match is not None:
-            out.append((int(match.group(1)), int(match.group(2))))
-    return out
-
-
-def default_ceiling_admitting(
-    spec: PlatformSpec,
-    *,
-    python_version: str,
-    implementation: str,
-    wheel_filename: str,
-) -> tuple[str, tuple[int, int]] | None:
-    """Return the unset default ceiling that alone keeps a wheel out, or ``None``.
-
-    A macOS or Linux target reads its OS/libc version as a ceiling on the
-    wheels it accepts.  When that version is a default the caller never set,
-    an incompatible wheel might be one the target would install if the
-    ceiling were raised.  This returns ``(knob, raise_to)`` naming the knob
-    (``macos-min`` or ``libc-version``) and the lowest version it would need
-    to be raised to, but only when raising it is enough: the result is
-    confirmed by rebuilding the target's tags at ``raise_to`` and rechecking
-    acceptance, so an arch, Python, ABI, or libc-family mismatch (which no
-    ceiling change fixes) yields ``None``.  A ceiling the caller set, and any
-    non-macOS/Linux target, also yield ``None``.
-    """
-    kind = platform_kind(spec.platform_id)
-    if kind == "macos" and spec.macos_min is None:
-        knob = "macos-min"
-        current = _DEFAULT_MACOS_MIN[spec.arch]
-        candidates = _platform_versions(wheel_filename, _MACOS_PLATFORM_RE)
-        field = "macos_min"
-    elif kind == "linux" and spec.libc_version is None:
-        knob = "libc-version"
-        current = _DEFAULT_LIBC_VERSION[spec.libc]
-        pattern = (
-            _MUSLLINUX_PLATFORM_RE if spec.libc == "musl" else _MANYLINUX_PLATFORM_RE
-        )
-        candidates = _platform_versions(wheel_filename, pattern)
-        field = "libc_version"
-    else:
-        return None
-
-    higher = [version for version in candidates if version > current]
-    if not higher:
-        return None
-    raise_to = min(higher)
-
-    try:
-        raised = TagSet.for_spec(
-            python_version=python_version,
-            spec=replace(spec, **{field: raise_to}),
-            implementation=implementation,
-        )
-    except ValueError:
-        # A tag naming a version past the knob's cap (or below its floor) is
-        # not a ceiling nab can raise to, so it is not the sole cause.
-        return None
-
-    if raised.accepts(wheel_filename):
-        return knob, raise_to
-    return None
 
 
 def _version_tag(version: tuple[int, int] | None) -> str:
@@ -420,13 +324,13 @@ def _manylinux_platform_tags(arch: str, glibc_version: tuple[int, int]) -> list[
     The target stops at the arch's oldest tag: 2.5 for x86, 2.17 otherwise.
     """
     major, minor = glibc_version
-    min_minor = (
-        _X86_MIN_GLIBC2_MINOR
+    floor_minor = (
+        _X86_GLIBC2_MINOR_FLOOR
         if arch in _X86_MANYLINUX_ARCHS
-        else _OTHER_MIN_GLIBC2_MINOR
+        else _OTHER_GLIBC2_MINOR_FLOOR
     )
     out: list[str] = []
-    for m in range(minor, min_minor - 1, -1):
+    for m in range(minor, floor_minor - 1, -1):
         out.append(f"manylinux_{major}_{m}_{arch}")
         legacy = _LEGACY_MANYLINUX.get((major, m))
         if legacy is not None:
@@ -470,14 +374,22 @@ def _platform_tags_for_spec(spec: PlatformSpec) -> list[str]:
     arch = spec.arch
 
     if kind == "linux":
-        return _linux_platform_tags(
-            arch, libc=spec.libc, libc_version=spec.effective_libc_version
+        # Unset runs-on-libc names no system: enumerate to the max so a wheel
+        # of any manylinux/musllinux level is a set member.
+        libc_version = (
+            spec.runs_on_libc
+            if spec.runs_on_libc is not None
+            else _libc_no_limit(spec.libc)
         )
+        return _linux_platform_tags(arch, libc=spec.libc, libc_version=libc_version)
 
     if kind == "macos":
-        macos_min = spec.macos_min or _DEFAULT_MACOS_MIN[arch]
-        # mac_platforms treats the declared OS as a max and yields older too.
-        return list(ptags.mac_platforms(version=macos_min, arch=arch))
+        # Unset runs-on-macos names no system; the sentinel accepts every macosx
+        # tag.  mac_platforms treats the version as a max and yields older.
+        macos_version = (
+            spec.runs_on_macos if spec.runs_on_macos is not None else _MACOS_NO_LIMIT
+        )
+        return list(ptags.mac_platforms(version=macos_version, arch=arch))
 
     if kind == "windows":
         return [f"win_{arch}"]

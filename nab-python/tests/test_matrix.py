@@ -306,7 +306,7 @@ class TestTargetLabels:
             python="==3.11",
             platforms=(
                 PlatformSpec("linux_x86_64"),
-                PlatformSpec("linux_x86_64", libc_version=(2, 34)),
+                PlatformSpec("linux_x86_64", runs_on_libc=(2, 34)),
                 PlatformSpec("linux_x86_64", libc="musl"),
             ),
         )
