@@ -662,10 +662,9 @@ class TestRenderers:
 
     def test_render_get_cache_dir_set(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        eff = _resolve(
-            SourceRoots(project_dir=tmp_path), cli={"cache-dir": Path("/c/cli")}
-        )
-        assert render_get(eff, "cache-dir") == "/c/cli\n"
+        cache_dir = Path("/c/cli")
+        eff = _resolve(SourceRoots(project_dir=tmp_path), cli={"cache-dir": cache_dir})
+        assert render_get(eff, "cache-dir") == f"{cache_dir}\n"
 
     def test_render_get_unknown_key(self, tmp_path: Path) -> None:
         _project(tmp_path)

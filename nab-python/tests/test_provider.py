@@ -7959,12 +7959,14 @@ class TestConsultedMarkers:
 
     def test_a_marker_that_holds_is_recorded_too(self) -> None:
         """A True marker keeps its dep, so it still gated the resolve."""
+        # _PY312 pins python_version to 3.12, so this marker holds on every
+        # host the suite runs on, unlike a platform marker like sys_platform.
         provider = Provider(
-            self._coordinator('bar ; sys_platform != "win32"'), target=_PY312
+            self._coordinator('bar ; python_version == "3.12"'), target=_PY312
         )
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in deps
-        assert provider.consulted_markers == {Marker('sys_platform != "win32"')}
+        assert provider.consulted_markers == {Marker('python_version == "3.12"')}
 
     def test_an_unmarked_dependency_records_nothing(self) -> None:
         provider = Provider(self._coordinator("bar"), target=_PY312)

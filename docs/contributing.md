@@ -24,11 +24,20 @@ docs, and types groups available via `hatch run`.
 ## Running the tests
 
 The default suite is fast (under a minute) and covers every module
-under `nab_resolver`, `nab_python`, and `nab`:
+under `nab_resolver`, `nab_python`, `nab_index`, and `nab`:
 
 ```bash
 .venv/bin/python -m pytest                # default selection (no markers)
 .venv/bin/python -m pytest --cov          # with branch coverage
+```
+
+CI gates each workspace's coverage on its own tests through nox (see
+`noxfile.py`). With nox installed (`pip install nox`), reproduce a single
+workspace, or all of them, with:
+
+```bash
+nox -s tests                              # every workspace, each gated
+nox -s "tests(workspace='python')"        # just one workspace
 ```
 
 Property-based tests are opt-in via marker:
@@ -68,9 +77,13 @@ the floor.
 ## Coverage policy
 
 The `pyproject.toml` `[tool.coverage.report] fail_under = 100`
-setting requires `pytest --cov` to report 100 percent branch
-coverage on `nab_resolver`, `nab_python`, and `nab`. When code is
-genuinely unreachable from the default suite, prefer:
+setting requires 100 percent branch coverage on every workspace
+package: `nab_resolver`, `nab_python`, `nab_index`, and `nab`. The
+full local suite (`pytest --cov`) checks all four together; nox splits
+them per workspace in CI so each workspace's tests cover only its own
+package, with `nab_index` gated alongside `nab_python`, whose tests
+exercise it. When code is genuinely unreachable from the default
+suite, prefer:
 
 * `# pragma: no cover` for a platform-specific or defensively
   unreachable line.

@@ -18,7 +18,7 @@ env:
 
 jobs:
   test:
-    name: ${{ matrix.os }} / ${{ matrix.python-version }}
+    name: ${{ matrix.workspace }} / ${{ matrix.os }} / ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}-latest
     timeout-minutes: 30
     strategy:
@@ -26,6 +26,8 @@ jobs:
       matrix:
         os: [ubuntu, windows, macos]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        # noxfile.py maps each workspace to its tests and coverage gates.
+        workspace: [resolver, python, umbrella]
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -38,23 +40,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
           check-latest: true
           cache: pip
-          cache-dependency-path: .github/requirements/pylock.tests.toml
+          cache-dependency-path: |
+            .github/requirements/pylock.nox.toml
+            .github/requirements/pylock.tests.toml
           allow-prereleases: true
 
       - name: Upgrade pip to PEP 751 install support
         run: python -m pip install --upgrade "pip>=26.1"
 
-      - name: Install third-party deps
-        run: pip install -r .github/requirements/pylock.tests.toml
+      - name: Install nox
+        run: pip install -r .github/requirements/pylock.nox.toml
 
-      - name: Install workspace packages
-        run: pip install --no-deps -e nab-resolver -e nab-python -e nab-index -e .
-
-      - name: Run tests with coverage
-        run: |
-          python -m coverage run -m pytest
-          python -m coverage combine
-          python -m coverage report
+      # Test and coverage logic lives in noxfile.py. The workspace goes through
+      # env, not inline ${{ }}, for zizmor; shell: bash expands it on Windows.
+      - name: Test the ${{ matrix.workspace }} workspace
+        run: nox -s "tests(workspace='${WORKSPACE}')"
+        shell: bash
+        env:
+          WORKSPACE: ${{ matrix.workspace }}
 
   property-tests:
     name: Property tests

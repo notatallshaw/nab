@@ -623,7 +623,14 @@ def _sdist_member_top_level(name: str) -> tuple[int, str, str]:
     return (len(parts) - 1, top_dir, parts[-1])
 
 
-def extract_sdist_archive(data: bytes, target_dir: Path) -> Path:
+# The tar data filter (PEP 706) this extraction requires ships in 3.10.12 /
+# 3.11.4 / 3.12. The guard below raises on older patch releases and never
+# extracts, so the CI cell still on 3.10.11 exercises only one side of it and
+# cannot reach the extraction path. Drop the pragma when that cell moves to a
+# build carrying the filter or 3.10 reaches EOL (2026-10).
+def extract_sdist_archive(
+    data: bytes, target_dir: Path
+) -> Path:  # pragma: no cover (tar data filter)
     """Extract a .tar.gz sdist into ``target_dir`` and return the source root.
 
     Anything the extractor cannot read raises :class:`ValueError`: a corrupt or
