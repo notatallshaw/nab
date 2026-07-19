@@ -321,6 +321,44 @@ def _partition_indexes(
     return first_inside, first_above
 
 
+def _lattice_release(version: Version, parts: int, *, above: bool) -> Version:
+    """The nearest ``parts``-component release to ``version`` on the lattice.
+
+    Truncates ``version``'s release to ``parts`` components, padding a shorter
+    release with zeros, to land on a lattice point at or below it. With
+    ``above`` the result must be strictly greater than ``version``, so a
+    truncation that lands at or below it is rounded up by one; otherwise a
+    truncation equal to ``version`` is kept and only a strictly smaller one is
+    rounded up.
+    """
+    release = version.release[:parts]
+    padded = (*release, *((0,) * (parts - len(release))))
+    candidate = Version.from_parts(epoch=version.epoch, release=padded)
+    if candidate > version or (not above and candidate == version):
+        return candidate
+    bumped = (*padded[:-1], padded[-1] + 1)
+    return Version.from_parts(epoch=version.epoch, release=bumped)
+
+
+def _release_boundary_point(
+    value: BoundaryVersion | Version | None, parts: int
+) -> Version | None:
+    """The lattice release one interval edge transitions membership at.
+
+    ``None`` for an unbounded (``-inf`` / ``+inf``) edge. A boundary sentinel
+    reports the smallest lattice release strictly above the version it sits
+    over (its final release when that version is a pre-release). A plain
+    version reports its own release projected onto the lattice: the release
+    itself when it is a lattice point, otherwise the smallest lattice release
+    above it.
+    """
+    if value is None:
+        return None
+    if isinstance(value, BoundaryVersion):
+        return _lattice_release(value.version, parts, above=True)
+    return _lattice_release(Version(value.base_version), parts, above=False)
+
+
 # Repr helpers:
 
 
@@ -1256,6 +1294,54 @@ class VersionRange:
             pre_region=self._pre_region,
             prereleases_configured=self._prereleases_configured,
         )
+
+    def release_intervals(
+        self, parts: int
+    ) -> tuple[tuple[Version | None, Version | None], ...]:
+        """The half-open release intervals on which this range is satisfied.
+
+        Projects the range onto the lattice of releases with ``parts`` numeric
+        components and returns the maximal ``[lower, upper)`` intervals it covers,
+        as ``(lower, upper)`` release pairs. ``None`` on a side is unbounded there.
+        Structure finer than the lattice, such as prereleases or posts between two
+        releases, is not represented.
+
+        >>> SpecifierSet(">=3.11.4").to_range().release_intervals(3)
+        ((<Version('3.11.4')>, None),)
+        >>> SpecifierSet("==3.11.4").to_range().release_intervals(3)
+        ((<Version('3.11.4')>, <Version('3.11.5')>),)
+
+        :raises ValueError: if ``parts`` is less than 1.
+        """
+        if parts < 1:
+            raise ValueError(f"parts must be at least 1, got {parts}")
+
+        intervals: list[tuple[Version | None, Version | None]] = []
+        for lower, upper in self._bounds:
+            lower_point = _release_boundary_point(lower.version, parts)
+            upper_point = _release_boundary_point(upper.version, parts)
+            if (
+                lower_point is not None
+                and upper_point is not None
+                and lower_point >= upper_point
+            ):
+                continue
+            if intervals:
+                prev_lower, prev_upper = intervals[-1]
+                if (
+                    prev_upper is not None
+                    and lower_point is not None
+                    and prev_upper >= lower_point
+                ):
+                    merged_upper = (
+                        None
+                        if upper_point is None
+                        else max(prev_upper, upper_point)
+                    )
+                    intervals[-1] = (prev_lower, merged_upper)
+                    continue
+            intervals.append((lower_point, upper_point))
+        return tuple(intervals)
 
     @classmethod
     def _from_specifier_set(cls, specifier_set: SpecifierSet) -> VersionRange:

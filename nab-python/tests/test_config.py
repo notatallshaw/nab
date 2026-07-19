@@ -900,15 +900,13 @@ class TestRequiresPython:
     def test_matrix_target_message_names_the_matrix_knobs(self, tmp_path: Path) -> None:
         """A matrix target is moved by the matrix, not by --python.
 
-        A minor expands at patch 0 unless ``python-patches`` names a patch,
-        so a micro-level floor excludes the target the matrix plans.  Both
-        knobs the host wording names are hard errors under a matrix, so the
-        message may not name either.
+        Both knobs the host wording names are hard errors under a matrix, so
+        the message may not name either; it names ``matrix.python`` instead.
         """
         path = write(
             tmp_path,
-            '[tool.nab]\nmode = "universal"\nrequires-python = ">=3.11.4"\n'
-            '[tool.nab.matrix]\npython = ">=3.11,<3.12"\n'
+            '[tool.nab]\nmode = "universal"\nrequires-python = ">=3.12"\n'
+            '[tool.nab.matrix]\npython = ">=3.11,<3.13"\n'
             'platforms = ["linux_x86_64"]\n',
         )
         config = read_pyproject_config(path)
@@ -916,12 +914,29 @@ class TestRequiresPython:
             plan_targets(config)
         message = str(exc.value)
         assert "excludes the resolve target Python 3.11.0" in message
-        assert "[tool.nab.matrix.python-patches]" in message
+        assert "matrix.python" in message
+        assert "python-patches" not in message
         assert "--python" not in message
         assert "[tool.nab.environment]" not in message
 
-    def test_python_patches_admits_the_matrix_target(self, tmp_path: Path) -> None:
-        """The knob the matrix message names has to clear the error."""
+    def test_a_micro_floor_admits_the_whole_matrix_minor(self, tmp_path: Path) -> None:
+        """A micro Requires-Python floor admits the language minor it names.
+
+        ``>= "3.11.4"`` overlaps the whole 3.11 minor, so the 3.11 target the
+        matrix expands is admitted rather than excluded at its synthetic ``.0``
+        floor.  The scalar probe the old code used was a no-op trap.
+        """
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\nrequires-python = ">=3.11.4"\n'
+            '[tool.nab.matrix]\npython = ">=3.11,<3.12"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
+        assert target.python_version == "3.11"
+
+    def test_python_patches_pins_the_matrix_target(self, tmp_path: Path) -> None:
+        """python-patches pins the minor to one concrete deployment micro."""
         path = write(
             tmp_path,
             '[tool.nab]\nmode = "universal"\nrequires-python = ">=3.11.4"\n'

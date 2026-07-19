@@ -599,7 +599,6 @@ class Provider:
         # the Python a candidate could be rejecting (see _provider.listing).
         if target is None:
             self.python_version: str | None = None
-            self.python_release: Version | None = None
             self.environment: dict[str, str] = host_environment()
             self.env_with_extra: dict[str, str | frozenset[str]] = {
                 **self.environment,
@@ -607,7 +606,6 @@ class Provider:
             }
         else:
             self.python_version = target.python_full_version
-            self.python_release = target.python_release
             self.environment = dict(target.marker_env)
             self.env_with_extra = target.env_with_membership()
 

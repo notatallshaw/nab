@@ -80,6 +80,8 @@ from .target import (
     ResolveTarget,
     environment_declaration,
     marker_variables,
+    micro_boundary_points,
+    slices_from_points,
 )
 
 if TYPE_CHECKING:
@@ -401,6 +403,158 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bar
     )
     constraints = [Requirement(text) for text in effective.constraints]
 
+    return _resolve_with_micro_narrowing(
+        list(targets),
+        fork_list,
+        constraints,
+        settings,
+        preferences,
+        base_requirements,
+    )
+
+
+# The number of split-and-resolve passes the micro-narrowing fixpoint runs
+# before giving up.  Each pass resolves the slices the previous pass revealed,
+# which can expose a boundary reachable only above an earlier split; the set of
+# split points grows every pass, so a real graph converges in a couple.  The
+# cap turns a graph that somehow does not converge into a loud error rather than
+# a hang.
+_MAX_MICRO_SPLIT_PASSES = 10
+
+
+def _resolve_with_micro_narrowing(
+    targets: Sequence[ResolveTarget],
+    fork_list: Sequence[ResolveFork],
+    constraints: Sequence[Requirement],
+    settings: _EngineSettings,
+    preferences: Mapping[str, Version] | None,
+    base_requirements: Sequence[Requirement] | None,
+) -> ResolveResult:
+    """Resolve ``targets``, then split any minor a marker cut and re-resolve.
+
+    A consulted marker can cut a minor's micro line
+    (``python_full_version < "3.10.2"``).  Resolving the minor once at its
+    synthesized ``.0`` declares the whole minor by how ``.0`` read the clause,
+    excluding the real interpreters on the other side.  Resolving one target
+    per micro slice instead lets each slice declare its own environment row and
+    pins.
+
+    The split points come from the markers a resolve consulted, so a boundary
+    reachable only above an earlier split is not visible until that slice has
+    been resolved.  The loop is a fixpoint: it re-splits and re-resolves until a
+    pass reveals no new boundary.  Only a minor that split is re-resolved; every
+    target no marker cut (host targets among them, since they name a real micro)
+    keeps its first-pass result.
+    """
+    result = _resolve_passes(
+        targets, fork_list, constraints, settings, preferences, base_requirements
+    )
+    seed = _threaded_preferences(
+        dict(preferences or {}), result.target_results, align=settings.align
+    )
+    points: list[list[Version]] = [[] for _ in targets]
+    combined = result
+    for _ in range(_MAX_MICRO_SPLIT_PASSES):
+        grown = _grow_micro_points(targets, points, combined)
+        if grown is None:
+            return combined
+        points = grown
+        split_sigs = {
+            env_signature(target)
+            for target, target_points in zip(targets, points, strict=True)
+            if target_points
+        }
+        slices = [
+            sliced
+            for target, target_points in zip(targets, points, strict=True)
+            if target_points
+            for sliced in slices_from_points(target, target_points)
+        ]
+        slice_result = _resolve_passes(
+            slices, fork_list, constraints, settings, seed, base_requirements
+        )
+        combined = _merge_micro_results(targets, result, slice_result, split_sigs)
+    msg = (
+        "environment micro-boundary splitting did not converge in"
+        f" {_MAX_MICRO_SPLIT_PASSES} passes"
+    )
+    raise ResolutionError(msg)
+
+
+def _grow_micro_points(
+    targets: Sequence[ResolveTarget],
+    points: Sequence[Sequence[Version]],
+    result: ResolveResult,
+) -> list[list[Version]] | None:
+    """Return ``points`` grown by the boundaries ``result`` consulted, or None.
+
+    None means no minor gained a split point: the fixpoint has settled.  Each
+    target's boundaries are gathered from every slice it currently has, so a
+    boundary a marker consults only above an earlier split is picked up once
+    that slice has been resolved.
+    """
+    consulted_by_sig: dict[EnvSignature, set[Marker]] = defaultdict(set)
+    for tr in result.every_result:
+        consulted_by_sig[env_signature(tr.target)] |= set(tr.consulted)
+
+    grown: list[list[Version]] = []
+    changed = False
+    for target, target_points in zip(targets, points, strict=True):
+        found = set(target_points)
+        for sliced in slices_from_points(target, target_points):
+            consulted = consulted_by_sig.get(env_signature(sliced), set())
+            found.update(micro_boundary_points(target, consulted))
+        ordered = sorted(found)
+        if ordered != list(target_points):
+            changed = True
+        grown.append(ordered)
+    return grown if changed else None
+
+
+def _merge_micro_results(
+    targets: Sequence[ResolveTarget],
+    result: ResolveResult,
+    slice_result: ResolveResult,
+    split_sigs: set[EnvSignature],
+) -> ResolveResult:
+    """Fold ``slice_result`` back over the first-pass ``result``.
+
+    A target that split is dropped from ``result`` (its ``.0`` entry and its
+    base pass) and its slices are taken from ``slice_result`` instead; every
+    unsplit target keeps its first-pass entry, so it is never resolved again.
+    """
+
+    def kept(results: Sequence[TargetResult]) -> list[TargetResult]:
+        return [tr for tr in results if env_signature(tr.target) not in split_sigs]
+
+    env_base_names = {
+        sig: names
+        for sig, names in result.env_base_names.items()
+        if sig not in split_sigs
+    }
+    env_base_names.update(slice_result.env_base_names)
+    unsplit = tuple(t for t in targets if env_signature(t) not in split_sigs)
+    return ResolveResult(
+        targets=(*unsplit, *slice_result.targets),
+        target_results=kept(result.target_results) + list(slice_result.target_results),
+        base_results=kept(result.base_results) + list(slice_result.base_results),
+        env_base_names=env_base_names,
+    )
+
+
+def _resolve_passes(
+    targets: Sequence[ResolveTarget],
+    fork_list: Sequence[ResolveFork],
+    constraints: Sequence[Requirement],
+    settings: _EngineSettings,
+    preferences: Mapping[str, Version] | None,
+    base_requirements: Sequence[Requirement] | None,
+) -> ResolveResult:
+    """Resolve every fork against every target, plus the base pass.
+
+    The fork loop threads each target's pins forward across the whole run;
+    the base pass, when given, records the no-member pins per environment.
+    """
     accumulated = dict(preferences or {})
     results: list[TargetResult] = []
     for fork in fork_list:
@@ -1341,16 +1495,15 @@ def _raise_for_source_python(
     )
     if not managed:
         return
-    python = target.python_release
     for name, version in pins.items():
         normalized = canonicalize_name(name)
         if normalized not in managed:
             continue
         spec = provider.metadata_cache[(normalized, version)].requires_python
-        if spec is not None and python not in spec:
+        if spec is not None and not target.admits_requires_python(spec):
             msg = (
                 f"{normalized} {version} requires Python {spec} but the"
-                f" {target.label} resolve targets Python {python}"
+                f" {target.label} resolve targets Python {target.python_full_version}"
             )
             raise ResolutionError(msg)
 
