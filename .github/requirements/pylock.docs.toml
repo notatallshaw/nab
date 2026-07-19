@@ -1,9 +1,12 @@
 lock-version = "1.0"
 environments = [
-    "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2\"",
+    "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
 ]
 requires-python = ">=3.10"
 dependency-groups = [
+    "docs",
+]
+default-groups = [
     "docs",
 ]
 created-by = "nab"
@@ -11,6 +14,7 @@ created-by = "nab"
 [[packages]]
 name = "accessible-pygments"
 version = "0.0.5"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 dependencies = [
     { name = "pygments" },
@@ -38,6 +42,7 @@ sha256 = "88ae3211e68a1d0b011504b2ffc1691feafce124b845bd072ab6f9f66f34d4b7"
 [[packages]]
 name = "alabaster"
 version = "1.0.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
@@ -62,6 +67,7 @@ sha256 = "fc6786402dc3fcb2de3cabd5fe455a2db534b371124f1f21de8731783dec828b"
 [[packages]]
 name = "babel"
 version = "2.18.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
@@ -86,6 +92,7 @@ sha256 = "e2b422b277c2b9a9630c1d7903c2a00d0830c409c59ac8cae9081c92f1aeba35"
 [[packages]]
 name = "beautifulsoup4"
 version = "4.15.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7.0"
 dependencies = [
     { name = "soupsieve" },
@@ -142,6 +149,7 @@ sha256 = "13f3eecb844759ab66efec90ca17639bbf14dc06cb2fdf37a9010322d9c50a6f"
 [[packages]]
 name = "certifi"
 version = "2026.6.17"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
@@ -166,6 +174,7 @@ sha256 = "2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db"
 [[packages]]
 name = "charset-normalizer"
 version = "3.4.7"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
@@ -223,6 +232,7 @@ sha256 = "b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b"
 [[packages]]
 name = "docutils"
 version = "0.22.4"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -247,6 +257,7 @@ sha256 = "d0013f540772d1420576855455d050a2180186c91c15779301ac2ccb3eeb68de"
 [[packages]]
 name = "furo"
 version = "2025.12.19"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.8"
 dependencies = [
     { name = "accessible-pygments" },
@@ -278,6 +289,7 @@ sha256 = "bb0ead5309f9500130665a26bee87693c41ce4dbdff864dbfb6b0dae4673d24f"
 [[packages]]
 name = "idna"
 version = "3.18"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -302,6 +314,7 @@ sha256 = "7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2"
 [[packages]]
 name = "imagesize"
 version = "2.0.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = "<3.15,>=3.10"
 index = "https://pypi.org/simple/"
 
@@ -350,6 +363,7 @@ sha256 = "011d045df8b954ced7dde3a7e42ae4418da40ecda7990f2d11d5ed7c146fd98b"
 [[packages]]
 name = "jinja2"
 version = "3.1.6"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7"
 dependencies = [
     { name = "markupsafe" },
@@ -377,6 +391,7 @@ sha256 = "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67"
 [[packages]]
 name = "linkify-it-py"
 version = "2.1.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
     { name = "uc-micro-py" },
@@ -404,6 +419,7 @@ sha256 = "0d252c1594ecba2ecedc444053db5d3a9b7ec1b0dd929c8f1d74dce89f86c05e"
 [[packages]]
 name = "markdown-it-py"
 version = "4.2.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
     { name = "mdurl" },
@@ -431,6 +447,7 @@ sha256 = "9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"
 [[packages]]
 name = "markupsafe"
 version = "3.0.3"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -455,6 +472,7 @@ sha256 = "ccfcd093f13f0f0b7fdd0f198b90053bf7b2f02a3927a30e63f3ccc9df56b676"
 [[packages]]
 name = "mdit-py-plugins"
 version = "0.6.1"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
     { name = "markdown-it-py" },
@@ -482,6 +500,7 @@ sha256 = "214c82fb2ac524472ab6a5bcab1de80f73b50443e187f401bfd77efbc7c6481d"
 [[packages]]
 name = "mdurl"
 version = "0.1.2"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
@@ -506,6 +525,7 @@ sha256 = "84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"
 [[packages]]
 name = "myst-parser"
 version = "5.1.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.11"
 dependencies = [
     { name = "docutils" },
@@ -562,6 +582,7 @@ sha256 = "5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"
 [[packages]]
 name = "pygments"
 version = "2.20.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -610,6 +631,7 @@ sha256 = "9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913"
 [[packages]]
 name = "pyyaml"
 version = "6.0.3"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
@@ -634,6 +656,7 @@ sha256 = "0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6"
 [[packages]]
 name = "requests"
 version = "2.34.2"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
     { name = "certifi" },
@@ -664,6 +687,7 @@ sha256 = "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
 [[packages]]
 name = "roman-numerals"
 version = "4.1.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
@@ -688,6 +712,7 @@ sha256 = "647ba99caddc2cc1e55a51e4360689115551bf4476d90e8162cf8c345fe233c7"
 [[packages]]
 name = "snowballstemmer"
 version = "3.1.1"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.3"
 index = "https://pypi.org/simple/"
 
@@ -712,6 +737,7 @@ sha256 = "7e207fa178741da09cdee59d3ecec3827ad5f92b1fc5c9ff3755b639f71f5752"
 [[packages]]
 name = "soupsieve"
 version = "2.8.4"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -736,6 +762,7 @@ sha256 = "e7e6b0769c8f51ed59acab6e994b00621096cfb1c640a7509295987388fbaf65"
 [[packages]]
 name = "sphinx"
 version = "9.1.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.12"
 dependencies = [
     { name = "alabaster" },
@@ -778,6 +805,7 @@ sha256 = "c84fdd4e782504495fe4f2c0b3413d6c2bf388589bb352d439b2a3bb99991978"
 [[packages]]
 name = "sphinx-basic-ng"
 version = "1.0.0b2"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7"
 dependencies = [
     { name = "sphinx" },
@@ -805,6 +833,7 @@ sha256 = "eb09aedbabfb650607e9b4b68c9d240b90b1e1be221d6ad71d61c52e29f7932b"
 [[packages]]
 name = "sphinx-copybutton"
 version = "0.5.2"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7"
 dependencies = [
     { name = "sphinx" },
@@ -832,6 +861,7 @@ sha256 = "fb543fd386d917746c9a2c50360c7905b605726b9355cd26e9974857afeae06e"
 [[packages]]
 name = "sphinx-design"
 version = "0.7.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.11"
 dependencies = [
     { name = "sphinx" },
@@ -859,6 +889,7 @@ sha256 = "f82bf179951d58f55dca78ab3706aeafa496b741a91b1911d371441127d64282"
 [[packages]]
 name = "sphinxcontrib-applehelp"
 version = "2.0.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -883,6 +914,7 @@ sha256 = "4cd3f0ec4ac5dd9c17ec65e9ab272c9b867ea77425228e68ecf08d6b28ddbdb5"
 [[packages]]
 name = "sphinxcontrib-devhelp"
 version = "2.0.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -907,6 +939,7 @@ sha256 = "aefb8b83854e4b0998877524d1029fd3e6879210422ee3780459e28a1f03a8a2"
 [[packages]]
 name = "sphinxcontrib-htmlhelp"
 version = "2.1.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -931,6 +964,7 @@ sha256 = "166759820b47002d22914d64a075ce08f4c46818e17cfc9470a9786b759b19f8"
 [[packages]]
 name = "sphinxcontrib-jsmath"
 version = "1.0.1"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.5"
 index = "https://pypi.org/simple/"
 
@@ -955,6 +989,7 @@ sha256 = "2ec2eaebfb78f3f2078e73666b1415417a116cc848b72e5172e596c871103178"
 [[packages]]
 name = "sphinxcontrib-qthelp"
 version = "2.0.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -979,6 +1014,7 @@ sha256 = "b18a828cdba941ccd6ee8445dbe72ffa3ef8cbe7505d8cd1fa0d42d3f2d5f3eb"
 [[packages]]
 name = "sphinxcontrib-serializinghtml"
 version = "2.0.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -1164,6 +1200,7 @@ sha256 = "982da1d566005f1b2a6b56f6be6c6929c96f0e5fab9d61bc6097573ddfaf8d13"
 [[packages]]
 name = "uc-micro-py"
 version = "2.0.0"
+marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
@@ -1210,12 +1247,14 @@ size = 131087
 sha256 = "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
 
 [tool.nab]
-nab-version = "0.0.9.dev0"
+nab-version = "0.0.10.dev0"
 created-at = 2026-07-12 21:09:20.266433+00:00
 command-line = [
-    "/home/damian/opensource/remote/projects/resolver/worktrees/docs-rtd/src/nab/__main__.py",
+    "nab",
     "lock",
     "--groups",
+    "docs",
+    "--project-default-group",
     "docs",
     "--no-emit-workspace",
     "--output",
@@ -1230,4 +1269,5 @@ mode = "specific"
 python-specifier = ">=3.10"
 cli-project-overrides = [
     "--project-mode=specific",
+    "--project-default-group=docs",
 ]
