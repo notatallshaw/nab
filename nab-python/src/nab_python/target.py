@@ -56,7 +56,9 @@ __all__ = [
     "environment_declaration",
     "host_environment",
     "marker_variables",
+    "micro_boundary_points",
     "python_axis_environment",
+    "slices_from_points",
     "unboundable_variables",
 ]
 
@@ -334,6 +336,14 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
             clauses.extend(_version_clauses(declaring, texts, name))
         else:
             clauses.append(f'{name} == "{target.marker_env[name]}"')
+
+    # A micro-slice target (see :func:`slices_from_points`) carries the
+    # python_full_version bounds of its slice explicitly, so the environment
+    # row covers exactly that slice even if the consulted markers did not pin
+    # both ends.  Deduped against what _version_clauses derived.
+    for clause in target.micro_clauses:
+        if clause not in clauses:
+            clauses.append(clause)
     return " and ".join(clauses)
 
 
@@ -557,6 +567,164 @@ def _declared_clause(
     return complement
 
 
+# The comparison operators whose truth, over the releases of one minor,
+# flips exactly at the literal (``<``/``>=``) or just past it, at the smallest
+# real micro above it (``<=``/``>``).  A clause using one of these against an
+# in-minor literal is a boundary the micro line has to be split on.
+_SPLIT_AT_LITERAL = frozenset({"<", ">="})
+_SPLIT_AFTER_LITERAL = frozenset({"<=", ">"})
+
+# PEP 508 lets either operand be the variable, and packaging preserves the
+# written order, so ``python_full_version < "3.10.2"`` and its literal-first
+# equivalent ``"3.10.2" > python_full_version`` both reach the split path.
+# When the literal is on the left, the operator's meaning is mirrored, so it
+# is flipped back to the variable-on-left form before the flip release is read.
+_MIRRORED_OPERATOR: dict[str, str] = {"<": ">", ">": "<", "<=": ">=", ">=": "<="}
+
+
+def slices_from_points(
+    target: ResolveTarget, points: Sequence[Version]
+) -> list[ResolveTarget]:
+    """Partition ``target``'s minor into one slice per micro interval.
+
+    ``points`` are the in-minor releases the micro line is cut at (see
+    :func:`micro_boundary_points`), sorted ascending.  They partition
+    ``[{minor}.0, inf)`` into intervals; each interval becomes ``target``
+    moved onto its lower-bound release, carrying the python_full_version
+    bounds that fence it off (see :meth:`ResolveTarget.with_micro_slice`).
+    Every marker answers unambiguously at an interval's lower bound, so that
+    release is where the slice resolves.  Each slice declares its own
+    environment row and pins, so a marker that genuinely splits the micros is
+    honoured per slice rather than lifted onto the whole minor.
+
+    Returns ``[target]`` unchanged when ``points`` is empty: nothing cut the
+    minor, so the whole minor resolves at once.
+    """
+    if not points:
+        return [target]
+    floor = Version(f"{target.python_version}.0")
+    reps = [floor, *points]
+    lowers: list[Version | None] = [None, *points]
+    uppers: list[Version | None] = [*points, None]
+
+    slices: list[ResolveTarget] = []
+    for rep, low, high in zip(reps, lowers, uppers, strict=True):
+        clauses: list[str] = []
+        if low is not None:
+            clauses.append(f'python_full_version >= "{low}"')
+        if high is not None:
+            clauses.append(f'python_full_version < "{high}"')
+        slices.append(target.with_micro_slice(str(rep), tuple(clauses)))
+    return slices
+
+
+def micro_boundary_points(
+    target: ResolveTarget, consulted: Iterable[Marker]
+) -> list[Version]:
+    """Return the in-minor releases ``consulted`` cuts ``target``'s minor at.
+
+    A declared target names a minor and synthesizes ``{minor}.0`` for its
+    ``python_full_version``.  When a consulted marker compares
+    ``python_full_version`` against a literal inside that minor
+    (``python_full_version < "3.10.2"``), the minor was resolved at ``.0``,
+    where that clause reads one way, but a real interpreter on the other side
+    of the literal (every real 3.10 is 3.10.2 or newer) reads it the other way
+    and needs a different package set.  The release the clause flips at is a
+    point the micro line has to be split on (see :func:`slices_from_points`).
+
+    Only the ordered operators cut a line: ``<``/``>=`` flip at the literal,
+    ``<=``/``>`` at the release just after it.  ``==``/``!=``/``~=``/``===``
+    and membership tests name a single release or a set with no single flip,
+    and are left to the whole-minor declaration.
+
+    A host-faithful target is the running interpreter, so its micro is the
+    real one it reports and nothing is cut, even on the rare host that reports
+    ``{minor}.0``.  Every other target synthesizes ``{minor}.0``: a matrix
+    tuple, a platform ``[tool.nab.environment]``, and equally a ``--python
+    <minor>`` or platform-less ``[tool.nab.environment]`` target, which shares
+    the host's platform but names only a minor.  All of those are cut the same
+    way.  A target a user pinned to a real patch release
+    (``python_full_version`` past ``.0``) names a real deployment micro and is
+    left alone.
+    """
+    if target.host_faithful:
+        return []
+    minor = target.python_version
+    floor_str = f"{minor}.0"
+    if target.python_full_version != floor_str:
+        return []
+    minor_release = Version(floor_str).release[:_PYTHON_VERSION_PARTS]
+    floor = Version(floor_str)
+
+    points: set[Version] = set()
+    for marker in consulted:
+        for atom in _MARKER_CLAUSE_RE.finditer(str(marker)):
+            point = _clause_split_point(_clause_parts(atom), minor_release, floor)
+            if point is not None:
+                points.add(point)
+    return sorted(points)
+
+
+def _clause_split_point(
+    parts: tuple[str, str, str],
+    minor_release: tuple[int, ...],
+    floor: Version,
+) -> Version | None:
+    """Return the release ``lhs op rhs`` splits ``floor``'s minor at, or None.
+
+    None when the clause is not an ordered comparison of
+    ``python_full_version`` against an in-minor literal whose flip release is
+    above ``floor``.  The flip is what matters, not the literal: ``<``/``>=``
+    flip at the literal, so a literal equal to ``floor`` cuts nothing, but
+    ``<=``/``>`` flip one release past it, so ``> "3.10.0"`` still cuts the
+    line at ``3.10.1``.  A literal-first clause (``"3.10.2" > python_full_version``)
+    has the operator mirrored back to variable-on-left form first, so it reads
+    the same flip as its ``python_full_version < "3.10.2"`` equivalent.
+    """
+    lhs, op, rhs = parts
+    if "python_full_version" not in (lhs, rhs):
+        return None
+    if lhs == "python_full_version":
+        literal = rhs
+    else:
+        literal = lhs
+        op = _MIRRORED_OPERATOR.get(op, op)
+    if not literal.startswith('"'):
+        return None
+    try:
+        boundary = Version(literal.strip('"'))
+    except InvalidVersion:
+        return None
+    if boundary.release[:_PYTHON_VERSION_PARTS] != minor_release:
+        return None
+    point = _split_point(op, boundary)
+    if point is None or point <= floor:
+        return None
+    return point
+
+
+def _split_point(op: str, boundary: Version) -> Version | None:
+    """Return the release the micro line splits at for ``op boundary``.
+
+    ``<``/``>=`` flip exactly at the boundary.  ``<=``/``>`` flip at the
+    smallest real micro strictly above it: the boundary's own final release
+    when the boundary is a prerelease or dev release of it (``<= "3.11.0a6"``
+    flips at ``3.11.0``, not ``3.11.1``, so it does not narrow a whole 3.11),
+    and the next micro otherwise (``<= "3.11.0"`` flips at ``3.11.1``).  Any
+    other operator returns ``None`` (not split here).
+    """
+    if op in _SPLIT_AT_LITERAL:
+        return boundary
+    if op in _SPLIT_AFTER_LITERAL:
+        release = boundary.release
+        micro = release[2] if len(release) >= _PYTHON_FULL_VERSION_PARTS else 0
+        final = Version(f"{release[0]}.{release[1]}.{micro}")
+        if final > boundary:
+            return final
+        return Version(f"{release[0]}.{release[1]}.{micro + 1}")
+    return None
+
+
 def host_environment(
     env_source: EnvironmentSource = default_environment,
 ) -> dict[str, str]:
@@ -665,6 +833,12 @@ class ResolveTarget:
     platform_spec: PlatformSpec | None = field(default=None, compare=False)
     multi_implementation: bool = field(default=False, compare=False)
     tags_faithful: bool = field(default=True, compare=False)
+    # The python_full_version clauses bounding this target's micro slice, set
+    # by :func:`slices_from_points` when a consulted marker splits the minor.
+    # Empty for an ordinary target.  Appended to
+    # :attr:`environment_marker_string` so the per-package pins of one slice
+    # do not leak onto another slice of the same python/platform.
+    micro_clauses: tuple[str, ...] = field(default=(), compare=False)
 
     def __post_init__(self) -> None:
         """Reject a python the resolve cannot compare Requires-Python against.
@@ -765,6 +939,8 @@ class ResolveTarget:
         )
         if self.declares_implementation:
             marker += f' and implementation_name == "{self.implementation}"'
+        for clause in self.micro_clauses:
+            marker += f" and {clause}"
         return marker
 
     @property
@@ -838,6 +1014,30 @@ class ResolveTarget:
             self,
             label=base + _selection_suffix(selection),
             selection=selection,
+        )
+
+    def with_micro_slice(
+        self, python_full_version: str, clauses: tuple[str, ...]
+    ) -> ResolveTarget:
+        """Return this target moved onto one micro slice of its minor.
+
+        ``python_full_version`` is the representative release the slice
+        resolves at (its lower bound), and ``clauses`` are the
+        python_full_version bounds that fence the slice off from the others,
+        appended to :attr:`environment_marker_string`.  The label gains a
+        ``-pfXYZ`` suffix so each slice pins under its own key.  The python
+        axis is re-derived, so ``python_version`` stays the minor and only
+        the micro (and, on CPython, ``implementation_version``) moves; the
+        wheel tags do not move with the micro, so they stay faithful.
+        """
+        env = dict(self.marker_env)
+        apply_python_axis_overlay(env, {"python_full_version": python_full_version})
+        compact = python_full_version.replace(".", "")
+        return replace(
+            self,
+            label=f"{self.label}-pf{compact}",
+            marker_env=env,
+            micro_clauses=clauses,
         )
 
     @classmethod

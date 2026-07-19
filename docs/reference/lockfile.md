@@ -145,7 +145,7 @@ absolute, machine-specific path.
 ### The environments the lock is for
 
 A resolve answers for the environments it targeted: the
-[resolve target](configuration.md), or one per tuple of a declared
+[resolve target](configuration.md), or the tuples of a declared
 matrix. Every dependency whose PEP 508 marker was false on a target
 was dropped there, so the pins are not a package set another
 environment can install. The lock says so in the top-level
@@ -184,14 +184,27 @@ so it declares nothing, and a variable no marker's answer turned on
 leaves its axis open.
 
 The lock is then installable on every micro release that reads the
-resolve's markers the way the resolve did, and a marker that
-genuinely splits the micros (`python_full_version >= "3.13.4"`)
-still partitions them. Pinning the value instead would refuse every
-other micro, including every real one when the target names a minor:
-`--python 3.13` synthesizes `3.13.0`, which no released interpreter
-reports. A clause whose complement cannot be stated as a clause (an
-unusual operator such as `~=`, or a PEP 440 prerelease boundary)
-falls back to pinning the exact value.
+resolve's markers the way the resolve did. A clause whose boundary
+lies outside the minor, or on a `.0` prerelease below its floor
+(`<= "3.11.0a6"`), reads the same for every real micro and is declared
+as one clause-complemented row. A clause whose boundary lies inside the
+minor reads differently on each side, so a target whose micro is
+synthesized (a matrix tuple, a declared environment, or a `--python
+<minor>` or platform-less `[tool.nab.environment]` target, which names
+only a minor) is split into micro slices instead, each with its own
+`environments` row and pins: `python_full_version >= "3.13.4"` on a 3.13
+target becomes a `< 3.13.4` row and a `>= 3.13.4` row (see Universal
+mode below).
+
+Pinning the value would refuse every other micro, including every real
+one when the target names a minor: `--python 3.13` synthesizes
+`3.13.0`, which no released interpreter reports, so such a target is
+split rather than pinned. The host target proper, the running
+interpreter nab reads, names a real micro and is not split; its whole
+minor is declared by clause, and so is a target the user pinned to a
+real patch release. A clause whose complement cannot be stated as a
+clause (an unusual operator such as `~=`, or a PEP 440 prerelease
+boundary) falls back to pinning the exact value.
 
 Two variables are never declared: `platform_release` and
 `platform_version` name one machine's kernel build, so a lock
@@ -215,10 +228,14 @@ with PEP 508 markers built from each tuple's `python_version`,
 `sys_platform` and `platform_machine`, plus `implementation_name` on
 the same terms as the `environments` declarations above.
 
-`environments` carries one declaration per tuple, built the same way
-a single-environment lock builds its one: from the markers that
-tuple's resolve consulted. A tuple's `packages.dependencies` edges
-are the union across the tuples an entry covers.
+`environments` carries a declaration per tuple, built the same way a
+single-environment lock builds its one: from the markers that tuple's
+resolve consulted. A tuple whose minor an in-minor `python_full_version`
+boundary splits carries one declaration per micro slice, so a tuple can
+contribute more than one entry (see
+[Universal resolution](../explanation/universal.md)). A tuple's
+`packages.dependencies` edges are the union across the tuples an entry
+covers.
 
 ## Pip-compatible `requirements.txt`
 

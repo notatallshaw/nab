@@ -26,8 +26,9 @@ alignment.
 
 The lock a matrix produces is the lock a single environment produces,
 with more environments in it: same shape, same
-[environment declaration](../reference/lockfile.md) per tuple, same
-dependency edges.
+[environment declaration](../reference/lockfile.md) mechanism, same
+dependency edges. A tuple whose minor a marker splits contributes one
+declaration per micro slice (see Patch-release markers below).
 
 ## Declaring the matrix
 
@@ -110,9 +111,23 @@ exits 1.
 
 ## Patch-release markers
 
-`python_full_version` defaults to `<minor>.0` per cell. If a
-marker in the dependency graph compares against a patch release,
-declare the real patch you ship on:
+`python_full_version` defaults to `<minor>.0` per cell. When a
+dependency marker compares `python_full_version` against a patch
+release inside a cell's minor (`python_full_version >= "3.11.4"`),
+that minor has a different package set on each side of the boundary,
+so resolving the whole minor at `.0` would declare it by how `.0` read
+the clause and exclude the real interpreters on the other side. nab
+splits the minor at the boundary and resolves one cell per micro slice
+instead: for `>= "3.11.4"`, one cell for `< 3.11.4` and one for
+`>= 3.11.4`, each with its own pins and its own `environments` entry.
+The two entries are disjoint and together cover the whole minor, and
+the gated dep is present only on the slice that reaches it. A marker
+whose boundary lies in a deeper slice (a dep pulled in only above an
+earlier split) is found by re-splitting until no new boundary appears.
+
+Only the ordered comparisons cut a minor (`<`, `<=`, `>`, `>=`). A
+marker naming a single release (`==`, `!=`, `~=`) does not, so declare
+the patch you ship on when one of those gates a dependency:
 
 ```toml
 [tool.nab.matrix.python-patches]
@@ -120,10 +135,9 @@ declare the real patch you ship on:
 "3.12" = "3.12.1"
 ```
 
-Without this, markers like `python_full_version >= "3.11.4"`
-evaluate False on a 3.11 cell, the safe direction (drop the
-gated dep) but a silent failure if your deployed interpreter is
-actually 3.11.4 or later.
+This moves a cell off `.0` onto the micro you name, so such a marker
+evaluates against the interpreter you deploy. A cell a patch names is
+not split: it already sits on a real release.
 
 ## Interpreter implementations
 
