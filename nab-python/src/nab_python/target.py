@@ -19,7 +19,6 @@ report metadata for the target or for someone else.
 
 from __future__ import annotations
 
-import itertools
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -38,6 +37,7 @@ from .tags import (
 )
 
 if TYPE_CHECKING:
+    from ._vendor.packaging.ranges import VersionRange
     from .tags import TagsSource
 
 
@@ -49,6 +49,7 @@ __all__ = [
     "UNBOUNDABLE_MARKER_VARIABLES",
     "EnvironmentSource",
     "Matrix",
+    "NonIntervalMarkerError",
     "ResolveTarget",
     "apply_python_axis_overlay",
     "check_free_threaded",
@@ -56,7 +57,9 @@ __all__ = [
     "environment_declaration",
     "host_environment",
     "marker_variables",
+    "micro_boundary_points",
     "python_axis_environment",
+    "slices_from_points",
     "unboundable_variables",
 ]
 
@@ -233,26 +236,14 @@ _MARKER_VARIABLE_RE = re.compile(
     r"\b(" + "|".join(sorted(PEP508_MARKER_VARIABLES)) + r")\b"
 )
 
-# The variables a lock declares by constraint rather than by value: see
-# :func:`_version_clauses`.  Both carry a micro release, and on CPython they
-# carry the same one (``implementation_version`` comes from
-# ``sys.implementation.version``), so pinning either collapses the lock to a
-# single patch release.
+# The variables a lock never declares by value: their bounds come only from a
+# slice's ``python_full_version`` clauses (see :func:`slices_from_points`).
+# Both carry a micro release, and on CPython they carry the same one
+# (``implementation_version`` comes from ``sys.implementation.version``), so
+# declaring either by value would pin the lock to a single patch release.  A
+# consulted marker on one splits the minor at its boundary instead, and each
+# slice emits the bounds that fence it off; an unsplit minor emits neither.
 _BY_CONSTRAINT = ("python_full_version", "implementation_version")
-
-# The operator that states the complement of each comparison.  PEP 508 has no
-# ``not``, so a clause the resolve found False is declared by flipping its
-# operator.  ``~=``, ``===`` and the membership operators have no
-# single-clause complement and are deliberately absent; a clause using one is
-# declared by value instead.
-_COMPLEMENT_OPERATOR: dict[str, str] = {
-    "<": ">=",
-    "<=": ">",
-    ">": "<=",
-    ">=": "<",
-    "==": "!=",
-    "!=": "==",
-}
 
 # One ``lhs op rhs`` comparison of a marker, matched against the string form
 # :func:`Marker.__str__` normalises to: an operand is either a quoted literal
@@ -265,13 +256,6 @@ _MARKER_CLAUSE_RE = re.compile(
     r"(?P<op>===|==|!=|<=|>=|~=|<|>|not\s+in|in)\s*"
     rf"(?P<rhs>{_MARKER_OPERAND})"
 )
-
-# How many clauses of one marker the lock can leave open before
-# :func:`_deciding_clauses` stops asking which of its clauses the answer
-# turned on: the question is settled by reading every combination of them, so
-# the cost doubles per clause.  Past this, every clause on the variable is
-# declared.
-_MAX_FREE_CLAUSES = 8
 
 
 def marker_variables(marker_text: str) -> frozenset[str]:
@@ -289,26 +273,28 @@ def marker_variables(marker_text: str) -> frozenset[str]:
 def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) -> str:
     """Render the PEP 751 ``environments`` marker for ``target``.
 
-    Declares every variable the ``consulted`` markers named, plus
-    :data:`_ALWAYS_DECLARED` and, when the target names an interpreter
-    other than the sole default (see
-    :attr:`ResolveTarget.declares_implementation`),
-    ``implementation_name``.  A resolve drops every dependency whose
-    marker is False under the target, so an installer that consults the
-    same variable and gets a different answer would be missing the deps
-    that environment needs: the declaration refuses it instead.
+    Declares :data:`_ALWAYS_DECLARED`, ``implementation_name`` when the
+    target names a non-default interpreter (see
+    :attr:`ResolveTarget.declares_implementation`), and every variable the
+    ``consulted`` markers named.  The resolve dropped every dependency whose
+    marker was False here, so a lock that let an installer answer one of
+    those variables differently would miss deps; the declaration refuses it.
 
-    Most variables are declared by value: a marker on ``platform_system``
-    pins the OS.  The variables in :data:`_BY_CONSTRAINT` are declared by
-    constraint (see :func:`_version_clauses`), because a lock that pinned
-    the micro release would refuse the very interpreters it resolved for.
-    The variables :func:`unboundable_variables` names for the target are
-    dropped: the kernel axes always, and ``implementation_version`` on a
-    non-CPython target, whose value is the target's Python level rather than
-    the interpreter's own release.  Dropping it leaves the lock open on that
-    axis, so a dependency the resolve gated on ``implementation_version``
-    under PyPy may still be missed at install; the resolve's own use of the
-    synthetic value stays a known limitation (a real axis is needed).
+    Most variables are declared by value (a ``platform_system`` marker pins
+    the OS).  The :data:`_BY_CONSTRAINT` variables (``python_full_version``,
+    and ``implementation_version`` on CPython) are not, since pinning the
+    micro release would refuse the interpreters the resolve ran for.  A minor
+    target is a micro interval: a consulted marker that splits it (see
+    :func:`micro_boundary_points`) leaves each slice its
+    :attr:`~ResolveTarget.micro_clauses` bounds and the row emits those,
+    while an unsplit minor emits none and stays a plain ``python_version``
+    row.  On CPython ``implementation_version`` tracks ``python_full_version``,
+    so a marker consulting it gets the same bounds mirrored onto its name.
+
+    The variables :func:`unboundable_variables` names are dropped: the kernel
+    axes always, and ``implementation_version`` on a non-CPython target (its
+    value there is the Python level, not the interpreter's release), so a dep
+    gated on that axis may be missed at install.
     """
     texts = sorted({str(marker) for marker in consulted})
     variables: set[str] = set()
@@ -318,206 +304,23 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     always = list(_ALWAYS_DECLARED)
     if target.declares_implementation:
         always.append("implementation_name")
-    names = [
-        *always,
-        *sorted(variables - set(always) - unboundable_variables(target)),
-    ]
-    declaring = _Declaring(
-        marker_env=target.marker_env,
-        environment=target.env_with_membership(),
-        pinned=frozenset(name for name in names if name not in _BY_CONSTRAINT),
-    )
+    by_value = variables - set(always) - unboundable_variables(target)
+    names = [*always, *sorted(by_value - set(_BY_CONSTRAINT))]
 
-    clauses: list[str] = []
-    for name in names:
-        if name in _BY_CONSTRAINT:
-            clauses.extend(_version_clauses(declaring, texts, name))
-        else:
-            clauses.append(f'{name} == "{target.marker_env[name]}"')
+    clauses = [f'{name} == "{target.marker_env[name]}"' for name in names]
+
+    # A micro-slice target (see :func:`slices_from_points`) carries the
+    # python_full_version bounds of its slice explicitly, so the environment
+    # row covers exactly that slice.  On CPython implementation_version equals
+    # python_full_version, so a marker that consulted it gets the same bounds
+    # mirrored onto its own name.
+    clauses.extend(target.micro_clauses)
+    if "implementation_version" in variables and target.implementation == "cpython":
+        clauses.extend(
+            clause.replace("python_full_version", "implementation_version")
+            for clause in target.micro_clauses
+        )
     return " and ".join(clauses)
-
-
-@dataclass(frozen=True, slots=True)
-class _Declaring:
-    """What deciding a clause of a consulted marker needs.
-
-    ``environment`` is the target's marker env seeded with the empty
-    membership sets the resolve evaluated its dependency markers under, so a
-    marker reads here exactly as it read there.  ``pinned`` is the set of
-    variables the declaration states by value: a clause on one of those
-    answers the same in every environment the lock admits, so it can be held
-    at the answer it gave.  Every other clause (``extra``, a kernel axis, the
-    other by-constraint variable) is one the lock leaves open, so it has to
-    be tried both ways.
-    """
-
-    marker_env: Mapping[str, str]
-    environment: Mapping[str, str | frozenset[str]]
-    pinned: frozenset[str]
-
-    def constant(self, *, value: bool) -> str:
-        """Render a clause that reads ``value`` under :attr:`environment`.
-
-        ``python_version`` is always declared by value, so a clause on it
-        reads the same in every environment the lock admits; here it is only
-        a carrier for a truth value substituted into a marker.
-        """
-        operator = "==" if value else "!="
-        return f'python_version {operator} "{self.marker_env["python_version"]}"'
-
-
-def _version_clauses(
-    declaring: _Declaring, texts: Sequence[str], variable: str
-) -> list[str]:
-    """Declare how the resolve read ``variable``, not its value.
-
-    Pinning the target's own ``python_full_version`` would refuse every
-    other micro release, including every real one when the target names a
-    minor (``--python 3.13`` synthesizes ``3.13.0``, which no released
-    interpreter reports).  The pins do not depend on the micro; they depend
-    on how the markers reading it answered.  So that is what the lock
-    declares: a clause the marker's answer turned on is declared as it
-    stands when it held, and complemented when it did not
-    (``python_full_version <= "3.11.0a6"`` read False becomes
-    ``python_full_version > "3.11.0a6"``).  A clause the answer did not turn
-    on (see :func:`_deciding_clauses`) is not declared at all, and a
-    variable no marker's answer turned on leaves its axis open.  Every
-    environment the result admits answers the resolve's markers the way the
-    resolve did, and a marker that genuinely splits the micros (``>=
-    "3.13.4"``) still partitions them.
-
-    Each clause is decided by asking packaging: it is rebuilt as a marker of
-    its own and evaluated against the target through the public
-    ``Marker.evaluate``, so no marker semantics are re-derived here.
-
-    A clause whose outcome nab cannot state as a clause falls back to
-    declaring the target's exact value, which is sound if narrow: an unusual
-    operator (``~=``, ``===``, a membership test), a comparison against
-    another variable rather than a literal, or a PEP 440 boundary where the
-    flipped operator is not the complement: ``< "3.10.2"`` excludes the
-    prereleases of 3.10.2 and so does ``>= "3.10.2"``, so on a ``3.10.2rc1``
-    target neither side holds.
-    """
-    exact = f'{variable} == "{declaring.marker_env[variable]}"'
-    declared: set[str] = set()
-    for text in texts:
-        for lhs, op, rhs in _deciding_clauses(declaring, text, variable):
-            declaration = _declared_clause(lhs, op, rhs, declaring, variable)
-            if declaration is None:
-                return [exact]
-            declared.add(declaration)
-
-    return sorted(declared)
-
-
-def _deciding_clauses(
-    declaring: _Declaring, text: str, variable: str
-) -> list[tuple[str, str, str]]:
-    """Return the clauses of ``text`` on ``variable`` that decide its answer.
-
-    A marker is an ``and``/``or`` of clauses, so a clause on ``variable``
-    can be dead: the other side of an ``or`` already held
-    (``python_full_version >= "3.13.5" or sys_platform == "linux"`` on
-    Linux), or the other side of an ``and`` already failed.  Declaring a
-    dead clause would refuse a micro release that reads every consulted
-    marker exactly as the resolve did, which is the environment the lock
-    was resolved for.
-
-    A clause is dropped only when the marker answers the same however that
-    clause reads, whatever the clauses the lock leaves open read.  Both are
-    settled by substituting truth values into the marker text and asking
-    packaging for the answer: a marker has no ``not``, so its answer rises
-    with its clauses, and testing the two extremes of a set of clauses
-    settles every reading in between.
-
-    Dropping is decided for the set as a whole, so clauses that only matter
-    together cannot all go: ``>= "3.13.4" and >= "3.14"`` (both read False)
-    drops the first, keeps the second, and the declaration still refuses
-    3.14.
-
-    The analysis is exponential in the number of clauses the lock leaves
-    open, so past :data:`_MAX_FREE_CLAUSES` every clause on ``variable`` is
-    declared, which is the narrow but sound answer.
-    """
-    atoms = list(_MARKER_CLAUSE_RE.finditer(text))
-    candidates = [
-        index for index, atom in enumerate(atoms) if variable in _clause_variables(atom)
-    ]
-    if not candidates:
-        return []
-
-    free = [
-        index
-        for index, atom in enumerate(atoms)
-        if index not in candidates and not _clause_variables(atom) <= declaring.pinned
-    ]
-    if len(free) <= _MAX_FREE_CLAUSES:
-        released: set[int] = set()
-        for index in candidates:
-            trial = released | {index}
-            if _answer_ignores(declaring, text, atoms, free, trial):
-                released = trial
-        candidates = [index for index in candidates if index not in released]
-
-    return [_clause_parts(atoms[index]) for index in candidates]
-
-
-def _answer_ignores(
-    declaring: _Declaring,
-    text: str,
-    atoms: Sequence[re.Match[str]],
-    free: Sequence[int],
-    released: set[int],
-) -> bool:
-    """Whether ``text`` answers the same however the ``released`` clauses read.
-
-    Every combination of the ``free`` clauses is tried, since the lock does
-    not pin them and the installer's environment (or its choice of extras)
-    settles them.  Under each, the released clauses are read all False and
-    all True; a marker's answer rises with its clauses, so agreeing at those
-    two extremes means agreeing at every reading between them, the target's
-    own included.  Clauses that are neither free nor released keep the text
-    they had, and so keep the answer they gave the resolve.
-    """
-    for combination in itertools.product((False, True), repeat=len(free)):
-        fixed = dict(zip(free, combination, strict=True))
-        low = _substituted(
-            declaring, text, atoms, {**fixed, **dict.fromkeys(released, False)}
-        )
-        high = _substituted(
-            declaring, text, atoms, {**fixed, **dict.fromkeys(released, True)}
-        )
-        if Marker(low).evaluate(declaring.environment) != Marker(high).evaluate(
-            declaring.environment
-        ):
-            return False
-    return True
-
-
-def _substituted(
-    declaring: _Declaring,
-    text: str,
-    atoms: Sequence[re.Match[str]],
-    readings: Mapping[int, bool],
-) -> str:
-    """Return ``text`` with each clause in ``readings`` forced to its reading."""
-    pieces: list[str] = []
-    end = 0
-    for index, atom in enumerate(atoms):
-        if index not in readings:
-            continue
-        pieces.append(text[end : atom.start()])
-        pieces.append(declaring.constant(value=readings[index]))
-        end = atom.end()
-    pieces.append(text[end:])
-    return "".join(pieces)
-
-
-def _clause_variables(atom: re.Match[str]) -> frozenset[str]:
-    """Return the environment variables one ``lhs op rhs`` clause reads."""
-    return frozenset(
-        operand for operand in atom.group("lhs", "rhs") if not operand.startswith('"')
-    )
 
 
 def _clause_parts(atom: re.Match[str]) -> tuple[str, str, str]:
@@ -526,35 +329,244 @@ def _clause_parts(atom: re.Match[str]) -> tuple[str, str, str]:
     return lhs, " ".join(op.split()), rhs
 
 
-def _declared_clause(
-    lhs: str, op: str, rhs: str, declaring: _Declaring, variable: str
-) -> str | None:
-    """Return the clause declaring how ``lhs op rhs`` read, or None.
+# The operators nab cannot tile into a micro interval: a membership or verbatim
+# ``===`` test on python_full_version is not uniform across a slice.  A
+# consulted marker using one on a minor interval is a loud crash.
+_NON_INTERVAL_OPERATORS = frozenset({"===", "in", "not in"})
 
-    The clause is one comparison of a marker the resolve evaluated, with
-    ``variable`` on one side; packaging decides which way it read.
-    None means nab cannot state that outcome as a clause of its own, and the
-    caller declares the exact value instead.
+# The operators whose boundary lands at the literal.  A prerelease literal there
+# carves a slice whose release-floor representative sits outside it, so a
+# prerelease literal on one of these, strictly inside the minor, is not
+# renderable and crashes.  ``<=``/``>`` land after the literal at a real
+# release, so a prerelease there maps cleanly to that release.
+_AT_LITERAL_OPERATORS = frozenset({"<", ">=", "==", "!=", "~="})
 
-    A clause that held is declared as it stands, whatever its operator: an
-    environment satisfying it reads it the way the resolve did, and no
-    complement is needed.  Only a clause that read False needs one, so only
-    an operator PEP 508 cannot complement (``~=``, ``===``, a membership
-    test) sends the caller to the exact value.
+# PEP 508 lets either operand be the variable, and packaging preserves the
+# written order, so ``python_full_version < "3.10.2"`` and its literal-first
+# equivalent ``"3.10.2" > python_full_version`` both reach the scanner.  When
+# the literal is on the left, an ordered or symmetric operator is mirrored back
+# to the variable-on-left form; ``~=``/``===`` and the membership operators are
+# absent because they cannot be mirrored, so a literal-first one of those is not
+# tileable.
+_MIRRORED_OPERATOR: dict[str, str] = {
+    "<": ">",
+    ">": "<",
+    "<=": ">=",
+    ">=": "<=",
+    "==": "==",
+    "!=": "!=",
+}
+
+
+class NonIntervalMarkerError(ValueError):
+    """A consulted version marker cannot tile a minor interval.
+
+    A minor target stands for every micro of its minor, and each consulted
+    ``python_full_version`` (or, on CPython, ``implementation_version``)
+    comparison has to partition that interval so every real interpreter reads
+    it the same way its slice does.  A membership (``in``/``not in``), a
+    verbatim ``===``, a non-version string comparison, a comparison against
+    another variable, or a prerelease-version literal that would carve a slice
+    off a real micro cannot be tiled, so the resolve stops loudly rather than
+    pin the whole minor to one synthetic answer.
     """
-    literal = rhs if lhs == variable else lhs
-    if not literal.startswith('"'):
-        # A comparison against another variable states nothing about this one.
+
+
+def _non_interval(
+    parts: tuple[str, str, str], target: ResolveTarget
+) -> NonIntervalMarkerError:
+    """Build the crash for a clause that cannot tile ``target``'s minor."""
+    lhs, op, rhs = parts
+    return NonIntervalMarkerError(
+        f"consulted marker clause {lhs} {op} {rhs} cannot tile the"
+        f" {target.label} minor interval: a python_full_version membership,"
+        " verbatim ===, non-version, variable, or prerelease comparison names"
+        " no micro boundary the lock can render"
+    )
+
+
+def slices_from_points(
+    target: ResolveTarget, points: Sequence[Version]
+) -> list[ResolveTarget]:
+    """Partition ``target``'s minor into one slice per micro interval.
+
+    ``points`` are the in-minor releases the micro line is cut at (see
+    :func:`micro_boundary_points`), sorted ascending.  They partition
+    ``[{minor}.0, inf)`` into intervals; each interval becomes ``target``
+    moved onto its lower-bound release, carrying the python_full_version
+    bounds that fence it off (see :meth:`ResolveTarget.with_micro_slice`).
+    Every marker answers unambiguously at an interval's lower bound, so that
+    release is where the slice resolves.  Each slice declares its own
+    environment row and pins, so a marker that genuinely splits the micros is
+    honoured per slice rather than lifted onto the whole minor.
+
+    Returns ``[target]`` unchanged when ``points`` is empty: nothing cut the
+    minor, so the whole minor resolves at once.
+    """
+    if not points:
+        return [target]
+    floor = Version(f"{target.python_version}.0")
+    reps = [floor, *points]
+    lowers: list[Version | None] = [None, *points]
+    uppers: list[Version | None] = [*points, None]
+
+    slices: list[ResolveTarget] = []
+    for rep, low, high in zip(reps, lowers, uppers, strict=True):
+        clauses: list[str] = []
+        if low is not None:
+            clauses.append(f'python_full_version >= "{_dev0(low)}"')
+        if high is not None:
+            clauses.append(f'python_full_version < "{high}"')
+        slices.append(target.with_micro_slice(str(rep), tuple(clauses)))
+    return slices
+
+
+def _dev0(version: Version) -> str:
+    """Return the ``.dev0`` boundary form of a release ``version``.
+
+    The canonical disjoint and exhaustive split pair at a boundary ``X`` is
+    ``< "X"`` on the lower side and ``>= "X.dev0"`` on the upper: a verbatim
+    ``< "X"`` / ``>= "X"`` pair leaves a gap at prereleases of ``X`` (packaging
+    carries a ``< X`` upper as ``X.dev0``), so the ``>=`` lower edge is snapped
+    to ``X.dev0`` to meet the adjacent ``< "X"`` exactly.  The suffix is a
+    syntactic form on a packaging-parsed version, validated by re-parsing.
+    """
+    return str(Version(f"{version}.dev0"))
+
+
+def _scanned_version_variables(target: ResolveTarget) -> frozenset[str]:
+    """Return the version variables whose comparisons split ``target``.
+
+    Always ``python_full_version``.  On CPython ``implementation_version``
+    tracks it, so a comparison on it mints the same boundary; on other
+    implementations its value is synthetic (:func:`unboundable_variables`), so
+    it is never split and its markers stay a known limitation.
+    """
+    if target.implementation == "cpython":
+        return frozenset({"python_full_version", "implementation_version"})
+    return frozenset({"python_full_version"})
+
+
+def micro_boundary_points(
+    target: ResolveTarget, consulted: Iterable[Marker]
+) -> list[Version]:
+    """Return the in-minor releases ``consulted`` cuts ``target``'s minor at.
+
+    A minor target stands for every micro of its minor (its
+    ``python_full_version`` is the synthesized ``{minor}.0`` floor).  A
+    consulted marker comparing ``python_full_version`` against a literal inside
+    the minor (``python_full_version < "3.10.2"``) needs different package sets
+    on each side, so the release it flips at is a point the micro line is split
+    on (see :func:`slices_from_points`).  On CPython ``implementation_version``
+    tracks ``python_full_version``, so a comparison on it mints the same
+    boundary.
+
+    The per-operator boundary comes from the edges of the range's
+    :meth:`~packaging.ranges.VersionRange.release_intervals`:
+    ``<``/``>=`` at the literal, ``<=``/``>`` at the release just after it, and
+    ``==``/``!=``/``~=``/``== V.*`` at each edge of the region they name.  A
+    boundary outside the minor or at its floor cuts nothing.
+
+    An operator that cannot tile the interval raises
+    :class:`NonIntervalMarkerError` (see there); with the whole-minor pin gone,
+    an untileable marker stops the resolve loudly.  A whole target (a host, or
+    a python-patches pin) is not an interval and is never cut.
+    """
+    if not target.is_minor_interval:
+        return []
+    minor_release = Version(target.python_version).release[:_PYTHON_VERSION_PARTS]
+    floor = Version(f"{target.python_version}.0")
+    scanned = _scanned_version_variables(target)
+
+    points: set[Version] = set()
+    for marker in consulted:
+        for atom in _MARKER_CLAUSE_RE.finditer(str(marker)):
+            points.update(
+                _clause_boundary_points(
+                    _clause_parts(atom), scanned, minor_release, floor, target
+                )
+            )
+    return sorted(points)
+
+
+def _clause_boundary_points(
+    parts: tuple[str, str, str],
+    scanned: frozenset[str],
+    minor_release: tuple[int, ...],
+    floor: Version,
+    target: ResolveTarget,
+) -> set[Version]:
+    """Return the in-minor release boundaries one clause cuts the minor at.
+
+    Empty when the clause names no scanned version variable, or its boundaries
+    fall outside the minor or at its floor.  Raises
+    :class:`NonIntervalMarkerError` when the clause names a scanned variable
+    but cannot tile the interval.
+    """
+    parsed = _clause_interval_literal(parts, scanned, target)
+    if parsed is None:
+        return set()
+    op, raw, version = parsed
+
+    if version.is_prerelease and op in _AT_LITERAL_OPERATORS:
+        # The boundary lands at the prerelease itself; only a strictly interior
+        # one carves a slice whose release floor sits outside it.  A prerelease
+        # of the minor's floor, or one outside the minor, is uniform under the
+        # rides-with-X convention and splits nothing.
+        if _in_minor(Version(version.base_version), minor_release, floor):
+            raise _non_interval(parts, target)
+        return set()
+
+    intervals = (
+        SpecifierSet(f"{op}{raw}")
+        .to_range()
+        .release_intervals(_PYTHON_FULL_VERSION_PARTS)
+    )
+    return {
+        edge
+        for lower, upper in intervals
+        for edge in (lower, upper)
+        if edge is not None and _in_minor(edge, minor_release, floor)
+    }
+
+
+def _in_minor(point: Version, minor_release: tuple[int, ...], floor: Version) -> bool:
+    """Whether ``point`` is an interior micro of the minor above its floor."""
+    return point.release[:_PYTHON_VERSION_PARTS] == minor_release and point > floor
+
+
+def _clause_interval_literal(
+    parts: tuple[str, str, str], scanned: frozenset[str], target: ResolveTarget
+) -> tuple[str, str, Version] | None:
+    """Return ``(op, literal, version)`` for a version-boundary clause.
+
+    ``None`` when the clause names no scanned version variable.  Raises
+    :class:`NonIntervalMarkerError` when it names one but cannot tile an
+    interval.  A literal-first clause has an ordered or symmetric operator
+    mirrored back to variable-on-left form; ``~=``/``===`` and the membership
+    operators cannot be mirrored, so a literal-first one of those is untileable.
+    """
+    lhs, op, rhs = parts
+    if lhs in scanned:
+        literal = rhs
+    elif rhs in scanned:
+        literal = lhs
+        mirrored = _MIRRORED_OPERATOR.get(op)
+        if mirrored is None:
+            raise _non_interval(parts, target)
+        op = mirrored
+    else:
         return None
-    clause = f"{lhs} {op} {rhs}"
-    if Marker(clause).evaluate(declaring.environment):
-        return clause
-    if op not in _COMPLEMENT_OPERATOR:
-        return None
-    complement = f"{lhs} {_COMPLEMENT_OPERATOR[op]} {rhs}"
-    if not Marker(complement).evaluate(declaring.environment):
-        return None
-    return complement
+
+    if op in _NON_INTERVAL_OPERATORS or not literal.startswith('"'):
+        raise _non_interval(parts, target)
+    raw = literal.strip('"')
+    base = raw.removesuffix(".*")
+    try:
+        version = Version(base)
+    except InvalidVersion:
+        raise _non_interval(parts, target) from None
+    return op, raw, version
 
 
 def host_environment(
@@ -665,6 +677,12 @@ class ResolveTarget:
     platform_spec: PlatformSpec | None = field(default=None, compare=False)
     multi_implementation: bool = field(default=False, compare=False)
     tags_faithful: bool = field(default=True, compare=False)
+    # The python_full_version clauses bounding this target's micro slice, set
+    # by :func:`slices_from_points` when a consulted marker splits the minor.
+    # Empty for an ordinary target.  Appended to
+    # :attr:`environment_marker_string` so the per-package pins of one slice
+    # do not leak onto another slice of the same python/platform.
+    micro_clauses: tuple[str, ...] = field(default=(), compare=False)
 
     def __post_init__(self) -> None:
         """Reject a python the resolve cannot compare Requires-Python against.
@@ -703,6 +721,46 @@ class ResolveTarget:
         candidate for.  pip compares ``sys.version_info``, and so does this.
         """
         return Version(Version(self.python_full_version).base_version)
+
+    @property
+    def is_minor_interval(self) -> bool:
+        """Whether this target is a bare minor resolved as a micro interval.
+
+        A host reports a real interpreter and a python-patches pin names a
+        concrete micro; both are whole and resolve at one point.  A bare minor
+        synthesizes ``{minor}.0`` and stands for every real micro of the minor,
+        so the micro line can be split on it and Requires-Python is answered
+        against the whole minor, not the synthetic floor.  A slice off that
+        minor carries ``micro_clauses`` and still stands for every interpreter
+        its bounds admit, so it too is an interval answering Requires-Python at
+        the same whole minor.
+        """
+        if self.host_faithful:
+            return False
+        if self.micro_clauses:
+            return True
+        return self.python_full_version == f"{self.python_version}.0"
+
+    @property
+    def minor_range(self) -> VersionRange:
+        """The ``[X.Y.0, X.(Y+1).0)`` range this target's minor covers."""
+        release = Version(self.python_version).release
+        major, minor = release[0], release[1]
+        return SpecifierSet(f">={major}.{minor}.0,<{major}.{minor + 1}.0").to_range()
+
+    def admits_requires_python(self, spec: SpecifierSet) -> bool:
+        """Whether a candidate's ``Requires-Python`` admits this target.
+
+        A whole target (host or a concrete micro) is admitted when its single
+        release satisfies ``spec``.  A minor interval is admitted when ``spec``
+        overlaps the whole minor, so a micro floor like ``>= "3.13.2"`` admits
+        the 3.13 minor instead of excluding it at the synthetic ``.0`` floor.
+        The test is range overlap, not a scalar ``in``: ``>= "3.13.2"`` would
+        exclude both ``3.13`` and ``3.13.0``.
+        """
+        if self.is_minor_interval:
+            return not spec.to_range().intersection(self.minor_range).is_empty
+        return self.python_release in spec
 
     @property
     def implementation(self) -> str:
@@ -765,6 +823,8 @@ class ResolveTarget:
         )
         if self.declares_implementation:
             marker += f' and implementation_name == "{self.implementation}"'
+        for clause in self.micro_clauses:
+            marker += f" and {clause}"
         return marker
 
     @property
@@ -840,6 +900,30 @@ class ResolveTarget:
             selection=selection,
         )
 
+    def with_micro_slice(
+        self, python_full_version: str, clauses: tuple[str, ...]
+    ) -> ResolveTarget:
+        """Return this target moved onto one micro slice of its minor.
+
+        ``python_full_version`` is the representative release the slice
+        resolves at (its lower bound), and ``clauses`` are the
+        python_full_version bounds that fence the slice off from the others,
+        appended to :attr:`environment_marker_string`.  The label gains a
+        ``-pfXYZ`` suffix so each slice pins under its own key.  The python
+        axis is re-derived, so ``python_version`` stays the minor and only
+        the micro (and, on CPython, ``implementation_version``) moves; the
+        wheel tags do not move with the micro, so they stay faithful.
+        """
+        env = dict(self.marker_env)
+        apply_python_axis_overlay(env, {"python_full_version": python_full_version})
+        compact = python_full_version.replace(".", "")
+        return replace(
+            self,
+            label=f"{self.label}-pf{compact}",
+            marker_env=env,
+            micro_clauses=clauses,
+        )
+
     @classmethod
     def for_host(
         cls,
@@ -897,9 +981,11 @@ class ResolveTarget:
     ) -> ResolveTarget:
         """Return a target declared as (python, platform, implementation).
 
-        ``python_full_version`` overrides the default ``{minor}.0``
-        patch release, which makes a marker like ``python_full_version >=
-        "3.11.4"`` evaluate against the user's actual deployment.
+        A bare minor resolves as a micro interval: its ``python_full_version``
+        floor is ``{minor}.0`` and a consulted ``python_full_version`` marker
+        splits it at the boundary it names.  Passing ``python_full_version``
+        pins the target to one concrete deployment micro and resolves it whole,
+        the manual single-point alternative to splitting.
         """
         return cls(
             label=_python_label(python_version, implementation) + f"-{spec.label}",
@@ -968,12 +1054,10 @@ class Matrix:
     propagates, so older Pythons diverge only when the new version is
     incompatible).
 
-    ``python_patches``: optional ``{minor: full_version}`` mapping that
-    sets the per-target ``python_full_version`` marker.  Defaults to
-    ``{minor}.0`` per target, which makes a marker like
-    ``python_full_version >= "3.11.4"`` evaluate False on a 3.11 target.
-    Users with deployments on later patch releases should declare them
-    here so marker evaluation matches reality.  Example:
+    ``python_patches``: optional ``{minor: full_version}`` mapping that pins a
+    matrix minor to one concrete deployment micro and resolves it whole,
+    instead of as a micro interval split at each consulted boundary.  Use it to
+    resolve a minor as the single patch release you deploy.  Example:
     ``python_patches={"3.11": "3.11.4", "3.12": "3.12.1"}``.
 
     ``implementations``: the interpreter implementations to model

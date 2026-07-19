@@ -158,9 +158,10 @@ class MatrixConfig:
 class EnvironmentConfig:
     """The single environment ``[tool.nab.environment]`` declares.
 
-    One cell of a matrix: the axes a target is made of.  An unset axis
-    takes the host's value, so an empty table is the host and a table
-    naming only ``python`` is the host machine running another Python.
+    The axes a target is made of, the same ones a matrix entry carries.
+    An unset axis takes the host's value, so an empty table is the host
+    and a table naming only ``python`` is the host machine running
+    another Python.
 
     ``platform`` is the same :class:`~nab_python.tags.PlatformSpec` a
     ``matrix.platforms`` entry parses to, so the wheel-tag knobs (the libc
@@ -1167,18 +1168,22 @@ def _check_requires_python_admits_target(
     does not support would produce a lock the project's own metadata
     rejects, so it fails loud and names the knob that moves the target.
 
-    Which knob that is depends on the target.  A matrix declares the python
-    axis of every target it expands, and both ``--python`` and
-    ``[tool.nab.environment]`` are themselves errors alongside one, so a
-    matrix target is moved by ``matrix.python`` and
-    ``[tool.nab.matrix.python-patches]`` instead.
+    A minor-interval target is admitted when ``requires-python`` overlaps its
+    whole minor, so a micro floor like ``>= "3.11.4"`` admits the 3.11 minor
+    rather than excluding it at the synthetic ``.0`` floor.  Which knob the
+    error names depends on the target.  A matrix declares the python axis of
+    every target it expands, and both ``--python`` and ``[tool.nab.environment]``
+    are themselves errors alongside one, so a matrix target is moved by
+    ``matrix.python`` instead.
     """
     if requires_python is None:
         return
-    # The release, not the marker value: a specifier admits no prerelease
-    # unless it names one, so ">=3.14" has to admit a 3.14 candidate host.
-    # This is the comparison every candidate's Requires-Python takes too.
-    if target.python_release in SpecifierSet(requires_python):
+    # A minor-interval target is admitted when the specifier overlaps the whole
+    # minor; a whole target when its single release satisfies it.  A specifier
+    # admits no prerelease unless it names one, so ">=3.14" has to admit a 3.14
+    # candidate host.  This is the comparison every candidate's Requires-Python
+    # takes too (see ResolveTarget.admits_requires_python).
+    if target.admits_requires_python(SpecifierSet(requires_python)):
         return
     excludes = (
         f"{source} = {requires_python!r} excludes the resolve target"
@@ -1187,10 +1192,8 @@ def _check_requires_python_admits_target(
     if matrix:
         msg = (
             f"{excludes}  [tool.nab.matrix] declares the python axis of every"
-            " target it expands, and a matrix minor resolves at patch 0 unless"
-            " [tool.nab.matrix.python-patches] names a patch: pin"
-            f" {target.python_version} there if only its patch level is excluded,"
-            " narrow matrix.python to drop the version, or widen requires-python."
+            " target it expands: narrow matrix.python to drop the version, or"
+            " widen requires-python."
         )
     else:
         msg = (

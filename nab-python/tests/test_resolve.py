@@ -3511,14 +3511,13 @@ class TestLockDeclaresItsEnvironment:
         assert "bar" not in _locked(lock_input)
         assert "implementation_version" not in caplog.text
 
-    def test_a_full_version_marker_declares_how_it_read_not_the_micro(
+    def test_a_uniform_full_version_marker_leaves_a_plain_row(
         self, tmp_path: Path
     ) -> None:
-        """``--python 3.12`` invents the micro 3.12.0; no interpreter reports it.
-
-        Pinning it would refuse every real 3.12, so the lock declares what
-        the resolve actually depends on: the marker read false, and it
-        reads false on every 3.12.
+        """A ``3.12`` minor is a micro interval, but ``<= "3.11.0a6"`` reads the
+        same (false) on every real 3.12, so it names no in-minor boundary.  The
+        minor is not split, ``tomli`` is dropped, and the row is the plain minor
+        with no ``python_full_version`` clause.
         """
         lock_input = self._resolve(
             tmp_path,
@@ -3528,27 +3527,59 @@ class TestLockDeclaresItsEnvironment:
             ),
         )
         (environment,) = lock_input.environments
-        assert 'python_full_version > "3.11.0a6"' in str(environment)
-        assert "python_full_version ==" not in str(environment)
+        assert "python_full_version" not in str(environment)
+        assert str(environment) == (
+            'python_version == "3.12" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64"'
+        )
         assert "tomli" not in _locked(lock_input)
         assert Marker(str(environment)).evaluate(_PY312_ENV)
 
-    def test_a_marker_that_splits_the_micros_refuses_the_other_side(
+    def test_a_marker_that_splits_the_micros_resolves_each_side(
         self, tmp_path: Path
     ) -> None:
-        """Here the micro really does change the pins, so the lock says so."""
-        lock_input = self._resolve(
-            tmp_path,
-            self._PYPROJECT,
-            self._coordinator('Requires-Dist: bar ; python_full_version >= "3.12.4"\n'),
+        """A micro that changes the pins splits the minor into two slices.
+
+        ``foo`` needs ``bar`` only on 3.12.4 and up, so the minor cannot be
+        declared by how ``3.12.0`` read the clause: that would exclude every
+        real 3.12.  The engine resolves one slice per side of the boundary, each
+        with its own environment row and pins, and ``bar`` joins only the upper
+        slice.
+        """
+        coordinator = make_coordinator(
+            listings={
+                "foo": _index_wheels("foo", "1.0"),
+                "bar": _index_wheels("bar", "2.0"),
+            },
+            metadata_by_version={
+                "1.0": (
+                    "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+                    'Requires-Dist: bar ; python_full_version >= "3.12.4"\n'
+                ),
+                "2.0": "Metadata-Version: 2.1\nName: bar\nVersion: 2.0\n",
+            },
         )
-        (environment,) = lock_input.environments
-        assert 'python_full_version < "3.12.4"' in str(environment)
-        assert "bar" not in _locked(lock_input)
-        assert Marker(str(environment)).evaluate(_PY312_ENV)
-        assert not Marker(str(environment)).evaluate(
-            {**_PY312_ENV, "python_full_version": "3.12.5"}
-        )
+        lock_input = self._resolve(tmp_path, self._PYPROJECT, coordinator)
+
+        below = lock_input.targets["py312-linux_x86_64-pf3120"]
+        above = lock_input.targets["py312-linux_x86_64-pf3124"]
+        assert set(below.pins) == {"foo"}
+        assert set(above.pins) == {"foo", "bar"}
+
+        rows = {
+            "below" if 'python_full_version < "3.12.4"' in str(m) else "above": str(m)
+            for m in lock_input.environments
+        }
+        assert set(rows) == {"below", "above"}
+        assert 'python_full_version >= "3.12.4.dev0"' in rows["above"]
+
+        # The two rows are disjoint and together cover the whole minor.
+        low = {**_PY312_ENV, "python_full_version": "3.12.1"}
+        high = {**_PY312_ENV, "python_full_version": "3.12.5"}
+        assert Marker(rows["below"]).evaluate(low)
+        assert not Marker(rows["below"]).evaluate(high)
+        assert Marker(rows["above"]).evaluate(high)
+        assert not Marker(rows["above"]).evaluate(low)
 
 
 class TestExtraAndGroupMembershipMarkers:

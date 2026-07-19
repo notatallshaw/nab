@@ -145,7 +145,7 @@ absolute, machine-specific path.
 ### The environments the lock is for
 
 A resolve answers for the environments it targeted: the
-[resolve target](configuration.md), or one per tuple of a declared
+[resolve target](configuration.md), or the targets of a declared
 matrix. Every dependency whose PEP 508 marker was false on a target
 was dropped there, so the pins are not a package set another
 environment can install. The lock says so in the top-level
@@ -163,35 +163,46 @@ A marker nab evaluated is a question whose answer changed the package
 set, so an installer that answers it differently must not use this
 lock.
 
-`python_full_version` is the exception: it is declared by
-constraint, not by value. The pins do not depend on the micro
-release, they depend on how each marker clause reading it answered,
-so that is what the lock declares. A clause that held is declared as
-it stands; one that did not is declared complemented, since PEP 508
-has no `not`:
+`python_full_version` is the exception: it is never declared by
+value. A target that names a minor (a matrix target, a declared
+environment, or a `--python <minor>` target) stands for every micro
+of that minor, so pinning one micro would refuse every other real
+one. Instead the minor covers all its micros, and a consulted
+`python_full_version` marker whose boundary lies inside it splits it
+at that boundary. Each side becomes its own slice with its own
+`environments` row and pins: `pytest ; python_full_version >= "3.13.4"`
+on a 3.13 target cuts the minor into a `< "3.13.4"` slice and a
+`>= "3.13.4.dev0"` slice, and `pytest` joins only the upper one (see
+Universal mode below).
 
-```text
-tomli ; python_full_version <= "3.11.0a6"   read false
-    -> python_full_version > "3.11.0a6"
-```
+The two slice bounds meet at `3.13.4.dev0`: the lower slice ends at
+`< "3.13.4"` and the upper starts at `>= "3.13.4.dev0"`, which together
+cover the minor with no gap and no overlap. The `.dev0` on the lower
+edge is deliberate. A verbatim `< "3.13.4"` / `>= "3.13.4"` pair would
+leave the prereleases of 3.13.4 (`3.13.4rc1`) in neither slice, because
+PEP 440 keeps them out of both; snapping the lower edge to
+`>= "3.13.4.dev0"` puts them on the upper side, so a user on a
+prerelease of 3.13.4 gets the pins intended for 3.13.4.
 
-Only the clauses a marker's answer turned on are declared. A marker
-is an `and`/`or` of clauses, so a clause on the micro release can be
-dead: the other side of an `or` already held, or the other side of an
-`and` already failed. `pytest ; python_full_version >= "3.13.5" or
-sys_platform == "linux"` reads true on Linux whatever the micro is,
-so it declares nothing, and a variable no marker's answer turned on
-leaves its axis open.
+A minor no marker split reverts to a plain `python_version == "3.13"`
+row with no `python_full_version` clause: a marker whose boundary lies
+outside the minor, or a prerelease of the minor's floor
+(`<= "3.11.0a6"`), reads the same for every real micro, so it names no
+in-minor boundary and its dependency is simply kept or dropped for the
+whole minor.
 
-The lock is then installable on every micro release that reads the
-resolve's markers the way the resolve did, and a marker that
-genuinely splits the micros (`python_full_version >= "3.13.4"`)
-still partitions them. Pinning the value instead would refuse every
-other micro, including every real one when the target names a minor:
-`--python 3.13` synthesizes `3.13.0`, which no released interpreter
-reports. A clause whose complement cannot be stated as a clause (an
-unusual operator such as `~=`, or a PEP 440 prerelease boundary)
-falls back to pinning the exact value.
+A whole target is never split: the host interpreter nab reads names a
+real micro, and a `[tool.nab.matrix.python-patches]` pin names one
+concrete deployment micro. Both resolve at that single micro and emit
+the plain `python_version == "X.Y"` row.
+
+A consulted `python_full_version` marker that cannot be tiled into an
+interval is a loud error rather than a pin of the whole minor to one
+answer: a membership (`in` / `not in`), a verbatim `===`, a non-version
+string comparison, a comparison against another variable, or a
+prerelease-version literal strictly inside the minor on an operator that
+fixes the boundary at the literal (`<`, `>=`, `==`, `!=`, `~=`). On `<=`
+or `>` a prerelease literal lands at the next release and tiles cleanly.
 
 Two variables are never declared: `platform_release` and
 `platform_version` name one machine's kernel build, so a lock
@@ -208,17 +219,21 @@ the target's Python. It bounds what the project supports; the
 
 Under `[tool.nab].mode = "universal"`, `nab lock --format pylock`
 writes a single file covering every
-`(python, platform, implementation)` tuple in the matrix. Packages
-whose pinned version is identical across every tuple appear once with
+`(python, platform, implementation)` target in the matrix. Packages
+whose pinned version is identical across every target appear once with
 no marker; packages that diverge appear as multiple `Package` entries
-with PEP 508 markers built from each tuple's `python_version`,
+with PEP 508 markers built from each target's `python_version`,
 `sys_platform` and `platform_machine`, plus `implementation_name` on
 the same terms as the `environments` declarations above.
 
-`environments` carries one declaration per tuple, built the same way
-a single-environment lock builds its one: from the markers that
-tuple's resolve consulted. A tuple's `packages.dependencies` edges
-are the union across the tuples an entry covers.
+`environments` carries a declaration per target, built the same way a
+single-environment lock builds its one: from the markers that target's
+resolve consulted. A target whose minor an in-minor `python_full_version`
+boundary splits carries one declaration per slice, so a target can
+contribute more than one entry (see
+[Universal resolution](../explanation/universal.md)). A target's
+`packages.dependencies` edges are the union across the targets an entry
+covers.
 
 ## Pip-compatible `requirements.txt`
 

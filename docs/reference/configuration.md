@@ -60,8 +60,9 @@ nab resolves for the interpreter it is running on.  The host is the
 target, like pip: the same lock command on a Python 3.14 machine
 resolves the markers a Python 3.14 install evaluates.
 
-`[tool.nab.environment]` retargets it.  The table is one cell of a
-matrix, and every axis it leaves out keeps the host's value:
+`[tool.nab.environment]` retargets it.  The table declares one target's
+axes, the same axes a matrix entry carries; every axis it leaves out
+keeps the host's value:
 
 ```toml
 [tool.nab.environment]
@@ -111,7 +112,7 @@ refuses it elsewhere.  To lock for several machines at once, use
 `mode = "universal"`.
 
 `[tool.nab.environment]` and `[tool.nab.matrix]` cannot both be set: the
-matrix already declares one environment per tuple.
+matrix already declares one environment per target.
 
 ### `[tool.nab.marker-environment]` (deprecated)
 
@@ -561,7 +562,7 @@ over HTTP.
 ## Universal mode
 
 Universal resolution resolves one target per declared
-`(python, platform, implementation)` tuple, on the same engine a
+`(python, platform, implementation)` point, on the same engine a
 single-environment resolve uses, sharing one fetcher so metadata is
 fetched at most once per package.  The multi-target lockfile format it
 produces is experimental and may change without notice.
@@ -580,15 +581,15 @@ python-patches = { "3.11" = "3.11.4" }
 
 The matrix has three axes, and nab resolves the full cross product:
 the example above declares 3 pythons, 2 platforms and 2
-implementations, so it plans 12 tuples.
+implementations, so it plans 12 targets.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `python` | required | A PEP 440 range like `>=3.11,<3.14`, expanded into one tuple per minor |
+| `python` | required | A PEP 440 range like `>=3.11,<3.14`, expanded into one target per minor |
 | `platforms` | required | The platforms to model; a bare id, or a table of the tag knobs below |
 | `implementations` | `["cpython"]` | The interpreter implementations to model: `"cpython"`, `"pypy"` |
-| `python-order` | `"asc"` | Cross-tuple alignment direction |
-| `python-patches` | per-minor `.0` | Overrides the `python_full_version` marker value for a minor |
+| `python-order` | `"asc"` | Cross-target alignment direction |
+| `python-patches` | none | Pins a minor to one patch release, resolved whole instead of split into slices |
 
 `python-order` sets the alignment direction: `asc` mirrors uv's
 `fork-strategy=fewest`, `desc` mirrors `fork-strategy=requires-python`.
@@ -596,7 +597,7 @@ implementations, so it plans 12 tuples.
 ### Interpreter implementations
 
 `implementations` names the interpreters to model, and each entry
-multiplies the tuple count.  An unknown implementation, a duplicate,
+multiplies the target count.  An unknown implementation, a duplicate,
 and an empty list are each a config error.  See
 [Universal resolution](../explanation/universal.md) for how the axis is
 modelled and what it puts on the lockfile markers.
@@ -682,7 +683,7 @@ marker and the lock could not tell their pins apart.  Locking a second
 libc family, or a free-threaded build alongside the GIL one, is a
 second lock run with its own config and output file.
 
-Each tuple impersonates a platform, so universal mode cannot build on
+Each target impersonates a platform, so universal mode cannot build on
 the host: `build-policy` defaults to `never` and cannot be raised.  An
 explicit non-`never` value (global or in any override) is a config
 error.  See [Build policy](build-policy.md).
@@ -702,10 +703,10 @@ error.  See [Build policy](build-policy.md).
   to the host's.  A single version, not a specifier.  `--python X.Y`
   overrides it for one run.
 * `[tool.nab.matrix].python`: a range like `>=3.11,<3.14`, expanded into
-  one tuple per minor version.  Used only by universal mode.  Pair with
+  one target per minor version.  Used only by universal mode.  Pair with
   `[tool.nab.matrix].platforms`, `[tool.nab.matrix].implementations` and
   (optionally) `[tool.nab.matrix].python-patches` to control the resolve
-  and marker shape across all tuples.
+  and marker shape across all targets.
 
 Declaring a `[tool.nab.matrix]` table while `mode` is `specific` is an
 error: the matrix is the list of targets to resolve, so leaving mode

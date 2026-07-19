@@ -1820,3 +1820,264 @@ class TestSharedListingFilter:
 
         assert result.success
         assert [tr.distributions_seen for tr in result.target_results] == [2, 2]
+
+
+class TestMicroBoundaryNarrowing:
+    """A minor a consulted marker cuts is resolved once per micro slice.
+
+    A declared target names a minor and synthesizes ``{minor}.0``.  When a
+    marker's python_full_version boundary lies inside that minor, resolving
+    the whole minor at ``.0`` would declare it by how ``.0`` read the clause,
+    excluding the real interpreters on the other side.  The engine splits the
+    minor and resolves each slice instead.
+    """
+
+    @staticmethod
+    def _coordinator(metadata: dict[str, str]) -> MagicMock:
+        listings = {
+            name: [_make_wheel(version, package=name)]
+            for name, version in (("foo", "1.0"), ("mid", "2.0"), ("top", "3.0"))
+        }
+        return make_coordinator(listings=listings, metadata_by_version=metadata)
+
+    @staticmethod
+    def _meta(name: str, version: str, *requires: str) -> str:
+        head = f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+        return head + "".join(f"Requires-Dist: {req}\n" for req in requires)
+
+    @staticmethod
+    def _pins_by_label(result: ResolveResult) -> dict[str, set[str]]:
+        return {tr.target.label: set(tr.pins) for tr in result.target_results}
+
+    def test_only_split_targets_are_re_resolved(self) -> None:
+        """An unsplit minor keeps its first-pass result; only the split one
+        is resolved again, so the whole matrix is not re-run."""
+        coordinator = self._coordinator(
+            {
+                "1.0": self._meta(
+                    "foo", "1.0", 'mid ; python_full_version >= "3.10.4"'
+                ),
+                "2.0": self._meta("mid", "2.0"),
+            }
+        )
+        targets = Matrix(
+            python=">=3.10,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+
+        with patch.object(
+            resolve_mod,
+            "_resolve_one_target",
+            wraps=resolve_mod._resolve_one_target,
+        ) as spy:
+            result = resolve_with_coordinator(
+                coordinator, targets, _reqs("foo"), config=_no_build()
+            )
+
+        assert result.success
+        labels = [call.args[0].label for call in spy.call_args_list]
+        # 3.11 and 3.12 have no in-minor boundary, so each resolves once.
+        assert labels.count("py311-linux_x86_64") == 1
+        assert labels.count("py312-linux_x86_64") == 1
+        # Three minors resolved once each, plus 3.10's two slices: no full re-run.
+        assert len(labels) == 5
+
+    def test_a_host_target_is_not_split(self) -> None:
+        """A host target names a real micro, so no ``.0`` is synthesized and a
+        full-version marker never splits it."""
+        coordinator = self._coordinator(
+            {
+                "1.0": self._meta(
+                    "foo", "1.0", 'mid ; python_full_version >= "3.10.4"'
+                ),
+                "2.0": self._meta("mid", "2.0"),
+            }
+        )
+
+        with patch.object(
+            resolve_mod,
+            "_resolve_one_target",
+            wraps=resolve_mod._resolve_one_target,
+        ) as spy:
+            result = resolve_with_coordinator(
+                coordinator,
+                [ResolveTarget.for_host()],
+                _reqs("foo"),
+                config=_no_build(),
+            )
+
+        assert result.success
+        assert len(result.target_results) == 1
+        assert spy.call_count == 1
+
+    @staticmethod
+    def _linux_host_env() -> dict[str, str]:
+        return {
+            "implementation_name": "cpython",
+            "os_name": "posix",
+            "platform_machine": "x86_64",
+            "platform_python_implementation": "CPython",
+            "platform_release": "6.8.0",
+            "platform_system": "Linux",
+            "python_full_version": "3.13.2",
+            "python_version": "3.13",
+            "sys_platform": "linux",
+        }
+
+    def test_a_bare_minor_python_target_splits_and_covers_the_minor(self) -> None:
+        """``--python 3.11`` (and a platform-less ``[tool.nab.environment]``)
+        synthesizes ``3.11.0`` yet carries no ``platform_spec``.  A dep gated
+        below a patch still splits it, so the lock covers every real 3.11
+        instead of a row an installer rejects on 3.11.9.
+        """
+        coordinator = self._coordinator(
+            {
+                "1.0": self._meta("foo", "1.0", 'mid ; python_full_version < "3.11.4"'),
+                "2.0": self._meta("mid", "2.0"),
+            }
+        )
+        target = ResolveTarget.for_host_python("3.11", env_source=self._linux_host_env)
+
+        result = resolve_with_coordinator(
+            coordinator, [target], _reqs("foo"), config=_no_build()
+        )
+
+        assert result.success
+        assert self._pins_by_label(result) == {
+            "py311-host-pf3110": {"foo", "mid"},
+            "py311-host-pf3114": {"foo"},
+        }
+        rows = build_lock_input(result, config=_no_build()).environments
+        assert len(rows) == 2
+        real_3119 = {
+            "python_version": "3.11",
+            "python_full_version": "3.11.9",
+            "sys_platform": "linux",
+            "platform_machine": "x86_64",
+            "implementation_name": "cpython",
+        }
+        assert any(row.evaluate(real_3119) for row in rows)
+
+    def _fixpoint_coordinator(self) -> MagicMock:
+        return self._coordinator(
+            {
+                "1.0": self._meta(
+                    "foo", "1.0", 'mid ; python_full_version >= "3.10.2"'
+                ),
+                "2.0": self._meta(
+                    "mid", "2.0", 'top ; python_full_version >= "3.10.5"'
+                ),
+                "3.0": self._meta("top", "3.0"),
+            }
+        )
+
+    def test_a_boundary_reachable_only_above_a_split_is_found(self) -> None:
+        """``top``'s 3.10.5 boundary is consulted only once ``mid`` is present,
+        which needs 3.10.2 first.  The fixpoint re-splits until it settles."""
+        targets = Matrix(
+            python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+
+        result = resolve_with_coordinator(
+            self._fixpoint_coordinator(), targets, _reqs("foo"), config=_no_build()
+        )
+
+        assert result.success
+        assert self._pins_by_label(result) == {
+            "py310-linux_x86_64-pf3100": {"foo"},
+            "py310-linux_x86_64-pf3102": {"foo", "mid"},
+            "py310-linux_x86_64-pf3105": {"foo", "mid", "top"},
+        }
+
+    def test_a_split_that_does_not_converge_raises(self) -> None:
+        """The pass cap turns a graph that never settles into a loud error
+        rather than a hang."""
+        targets = Matrix(
+            python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+
+        with (
+            patch.object(resolve_mod, "_MAX_MICRO_SPLIT_PASSES", 1),
+            pytest.raises(ResolutionError, match="did not converge"),
+        ):
+            resolve_with_coordinator(
+                self._fixpoint_coordinator(),
+                targets,
+                _reqs("foo"),
+                config=_no_build(),
+            )
+
+    def test_divergent_slice_pins_validate_as_disjoint(self) -> None:
+        """Two slices pinning one package at different versions carry disjoint
+        micro markers, so the emitted lock passes disjointness validation."""
+        coordinator = make_coordinator(
+            listings={
+                "bar": [
+                    _make_wheel("1.0", package="bar"),
+                    _make_wheel("2.0", package="bar"),
+                ]
+            },
+            auto_metadata=True,
+        )
+        targets = Matrix(
+            python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+
+        result = resolve_with_coordinator(
+            coordinator,
+            targets,
+            _reqs(
+                'bar==1.0 ; python_full_version < "3.10.4"',
+                'bar==2.0 ; python_full_version >= "3.10.4"',
+            ),
+            config=_no_build(),
+        )
+
+        assert result.success
+        versions = {
+            tr.target.label: str(tr.pins["bar"]) for tr in result.target_results
+        }
+        assert versions == {
+            "py310-linux_x86_64-pf3100": "1.0",
+            "py310-linux_x86_64-pf3104": "2.0",
+        }
+
+        pylock = build_pylock(build_lock_input(result, config=_no_build()))
+        pylock.validate()
+        bars = [pkg for pkg in pylock.packages if str(pkg.name) == "bar"]
+        assert len(bars) == 2
+
+    def test_a_literal_on_the_left_marker_splits_and_covers_the_minor(self) -> None:
+        """A dep gated by a literal-first marker (``"3.10.4" > pfv``) splits
+        the minor the same as ``pfv < "3.10.4"`` would, so the two rows cover
+        every real 3.10 with no interpreter left between them.
+        """
+        coordinator = self._coordinator(
+            {
+                "1.0": self._meta("foo", "1.0", 'mid ; "3.10.4" > python_full_version'),
+                "2.0": self._meta("mid", "2.0"),
+            }
+        )
+        targets = Matrix(
+            python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+
+        result = resolve_with_coordinator(
+            coordinator, targets, _reqs("foo"), config=_no_build()
+        )
+
+        assert result.success
+        assert self._pins_by_label(result) == {
+            "py310-linux_x86_64-pf3100": {"foo", "mid"},
+            "py310-linux_x86_64-pf3104": {"foo"},
+        }
+        rows = build_lock_input(result, config=_no_build()).environments
+        assert len(rows) == 2
+        for micro in ("3.10.0", "3.10.3", "3.10.4", "3.10.19"):
+            env = {
+                "python_version": "3.10",
+                "python_full_version": micro,
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "implementation_name": "cpython",
+            }
+            assert sum(row.evaluate(env) for row in rows) == 1
