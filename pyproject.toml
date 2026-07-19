@@ -106,6 +106,7 @@ release = [
     "build>=1.2",
     "hatchling>=1.27",
     "twine>=6.1",
+    "pypi-attestations>=0.0.21",
 ]
 # The dists nox session builds every distribution and installs it. It needs
 # build plus the hatchling backend, since it builds without isolation.
