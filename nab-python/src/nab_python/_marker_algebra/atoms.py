@@ -111,7 +111,7 @@ def _strict_version(text: str) -> bool:
     return True
 
 
-def _derive_major_minor(full: str) -> str:
+def derive_major_minor(full: str) -> str:
     """A1: ``python_version`` is the major.minor truncation of the full version."""
     try:
         release = Version(full).release
@@ -177,7 +177,7 @@ def _holds_value(atom: Atom, value: object) -> bool:
     op, literal = atom.op, atom.literal
     text = str(value)
     if atom.derive_mm:
-        mm = _derive_major_minor(text)
+        mm = derive_major_minor(text)
         if atom.swapped:
             return _apply(literal, op, mm, key="python_version")
         return _apply(mm, op, literal, key="python_version")

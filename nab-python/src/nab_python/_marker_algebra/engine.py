@@ -30,6 +30,7 @@ from .atoms import (
     NotNode,
     OrNode,
     as_name_set,
+    derive_major_minor,
     evaluate_atom,
     guarded_product_size,
     is_pure_version,
@@ -196,6 +197,9 @@ def _materialise(
             contains.setdefault(axis[1], []).append((axis[2], bool(piece.point)))
     for variable, items in contains.items():
         if variable in env:
+            continue
+        if variable == "python_version" and "python_full_version" in env:
+            env[variable] = derive_major_minor(str(env["python_full_version"]))
             continue
         env[variable] = "".join(sorted(lit for lit, present in items if present))
     return env

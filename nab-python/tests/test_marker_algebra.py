@@ -600,6 +600,28 @@ def test_witness_none_for_opaque_over_approximation() -> None:
     assert marker.witness() is None
 
 
+def test_witness_none_for_python_version_alias_conflict() -> None:
+    # A python_version substring and a python_version value constraint share the
+    # python_full_version axis under A1, so the materialised major.minor cannot
+    # also carry the substring; witness reports no realisable environment rather
+    # than an inconsistent python_version / python_full_version pair.
+    conflict = ms('"9" in python_version and python_version == "3.10"')
+    assert not conflict.is_empty()
+    assert conflict.witness() is None
+    # Against a full-version bound the realisable representatives lie at 3.9 or
+    # 3.19, off the cell boundary the decomposition mints, so witness stays
+    # incomplete here too.
+    spanning = ms('"9" in python_version and python_full_version >= "3.0"')
+    assert spanning.witness() is None
+
+
+def test_witness_of_python_version_contains() -> None:
+    marker = ms('"9" in python_version')
+    env = marker.witness()
+    assert env is not None
+    assert marker.evaluate(env)
+
+
 # ------------------------------------------------------------ serialisation
 
 
