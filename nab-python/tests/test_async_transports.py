@@ -490,6 +490,41 @@ class TestHttpxAsyncTransport:
         assert route.call_count == MAX_RETRIES + 1
         assert slept == [0.0, 0.5, 1.0]
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "ftp://example.com/x.tar.gz",
+            "gopher://example.com/x",
+            "not-a-url",
+            "://nohost/path",
+        ],
+    )
+    def test_get_does_not_retry_an_unsupported_scheme(
+        self, url: str, slept: list[float], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A URL httpx cannot issue is permanent, so it is raised on the first try."""
+        attempts = 0
+
+        async def go() -> None:
+            transport = HttpxAsyncTransport(http2=False)
+            real_get = transport._client.get
+
+            async def counting_get(*args: object, **kwargs: object) -> object:
+                nonlocal attempts
+                attempts += 1
+                return await real_get(*args, **kwargs)
+
+            monkeypatch.setattr(transport._client, "get", counting_get)
+            try:
+                await transport.get(url)
+            finally:
+                await transport.aclose()
+
+        with pytest.raises(HttpError, match=f"GET {url} failed"):
+            asyncio.run(go())
+        assert attempts == 1
+        assert slept == []
+
     @respx.mock
     def test_get_does_not_retry_a_client_error(self, slept: list[float]) -> None:
         """A 404 is the index's answer, so it is fetched once."""
