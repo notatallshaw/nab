@@ -4,11 +4,13 @@ from __future__ import annotations
 
 
 class ComplexityLimitError(Exception):
-    """A decision procedure hit a resource guard on pathological input.
+    """A marker operation hit a resource guard on pathological input.
 
-    Raised loudly instead of hanging or overflowing the stack: the caller sees a
-    bounded failure rather than an unbounded cell enumeration under the
-    ``max_cells`` guard, or a marker nested too deeply for the tree walk.
+    Raised loudly instead of hanging, overflowing the stack, or failing
+    obscurely: the caller sees a bounded failure rather than an unbounded cell
+    enumeration under the ``max_cells`` guard, a marker nested too deeply for the
+    tree walk, or a version literal whose numeric component exceeds the digit
+    parse limit.
     """
 
 
