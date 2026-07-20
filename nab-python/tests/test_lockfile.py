@@ -41,6 +41,7 @@ from nab_python.config import (
     ConflictMember,
     ConflictPolicy,
     ConflictSet,
+    NabProjectConfig,
     conflict_exclusion_groups,
     conflict_member_groups,
 )
@@ -80,6 +81,7 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_python.resolve import ResolveResult, TargetResult, build_lock_input
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
 
@@ -4013,10 +4015,39 @@ class TestWriteRequirementsPerTarget:
         assert text == "foo==1.0\n"
 
 
-def test_vcs_config_unused_in_lockfile_path() -> None:
-    """VcsConfig is consumed by the provider; lockfile builder ignores it."""
-    cfg = VcsConfig(policy=VcsPolicy.BLOCK)
-    assert cfg.policy is VcsPolicy.BLOCK
+def test_lock_input_ignores_vcs_policy() -> None:
+    """VcsConfig gates the provider, not the lock builder.
+
+    Building the same resolve under ALLOW and BLOCK yields an identical
+    lock input. The pin is VCS-sourced so a policy leaking into the
+    builder would have something to act on.
+    """
+    lock = TargetLock(
+        target=_HOST,
+        pins={
+            "foo": VcsPin(
+                name="foo",
+                version="1.0",
+                repo_url="https://github.com/x/y.git",
+                bare_repo_url="https://github.com/x/y.git",
+                commit_id="a" * 40,
+            )
+        },
+    )
+    result = ResolveResult(
+        targets=(_HOST,),
+        target_results=[TargetResult(target=_HOST, success=True, lock=lock)],
+    )
+
+    allow = build_lock_input(
+        result, config=NabProjectConfig(vcs=VcsConfig(policy=VcsPolicy.ALLOW))
+    )
+    block = build_lock_input(
+        result, config=NabProjectConfig(vcs=VcsConfig(policy=VcsPolicy.BLOCK))
+    )
+
+    assert allow == block
+    assert "foo" in allow.targets[_HOST.label].pins
 
 
 class TestDependencyGraph:
