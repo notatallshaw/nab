@@ -206,6 +206,7 @@ class MarkerSet:
         if self.is_empty():
             msg = "the empty set has no marker string"
             raise UnserializableSetError(msg)
+
         text = engine.serialize(engine.to_nnf(self._tree))
         rebuilt = MarkerSet.from_marker(text, max_cells=self._max_cells)
         if not self.equivalent(rebuilt):  # pragma: no cover

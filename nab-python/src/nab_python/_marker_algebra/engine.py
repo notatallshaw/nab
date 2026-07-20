@@ -202,6 +202,7 @@ def _materialize(
             env[axis[1]] = frozenset(piece.point)  # type: ignore[arg-type]
         else:
             contains.setdefault(axis[1], []).append((axis[2], bool(piece.point)))
+
     for variable, items in contains.items():
         if variable in env:
             continue

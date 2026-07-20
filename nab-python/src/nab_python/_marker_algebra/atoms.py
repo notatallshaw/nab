@@ -339,6 +339,7 @@ def _make_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Formul
         return _make_python_version_atom(op, literal, swapped=swapped)
     if op in _MEMBERSHIP:
         return _make_membership_atom(variable, op, literal, swapped=swapped)
+
     # These axes seed single-segment pool points, so a single-segment probe drives
     # the swapped-operator validity check.
     _reject_undefined_operator(variable, op, literal, swapped=swapped, probe="0")
@@ -357,6 +358,7 @@ def _make_python_version_atom(op: str, literal: str, *, swapped: bool) -> Formul
         # seeds; reject it, as the other version-dispatch axes do.
         msg = f"{op!r} is undefined on 'python_version' with literal {literal!r}"
         raise UndefinedComparison(msg)
+
     # A1-lowering maps python_version onto major.minor, so a two-segment probe
     # matches the validity of the non-swapped ~= and === forms.
     _reject_undefined_operator(
@@ -509,6 +511,7 @@ def _version_neighbors(text: str) -> list[str]:
         # The band above a non-zero-epoch literal continues into the next epoch
         # (2!0 outranks every 1!* release), beyond any same-epoch bump.
         bumps.append(f"{epoch + 1}!0")
+
     for bump in bumps:
         out.append(bump)
         out.append(f"{bump}.dev0")
