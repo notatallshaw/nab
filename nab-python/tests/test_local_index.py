@@ -531,6 +531,83 @@ class TestPep503Directory:
         assert len(result) == 1
         assert result[0].local_path == wheel_path.resolve()
 
+    def test_base_href_redirects_relative_anchor(self, tmp_path: Path) -> None:
+        # An absolute <base href> moves the resolution base off the page
+        # directory; the relative anchor must land on the real wheel there.
+        packages = tmp_path / "packages"
+        packages.mkdir()
+        wheel_path = packages / "foo-1.0-py3-none-any.whl"
+        wheel_path.write_bytes(b"")
+        package_dir = tmp_path / "foo"
+        package_dir.mkdir()
+        body = (
+            f'<base href="{packages.as_uri()}/">'
+            '<a href="foo-1.0-py3-none-any.whl">foo</a>'
+        )
+        (package_dir / "index.html").write_text(body, encoding="utf-8")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert len(result) == 1
+        assert result[0].local_path == wheel_path
+        assert parse_file_url(result[0].url) == wheel_path
+
+    def test_base_href_relative_resolves_against_page(self, tmp_path: Path) -> None:
+        # A relative <base href> resolves against the index page URL, so a
+        # sibling directory is reachable from the listing.
+        packages = tmp_path / "packages"
+        packages.mkdir()
+        wheel_path = packages / "foo-1.0-py3-none-any.whl"
+        wheel_path.write_bytes(b"")
+        package_dir = tmp_path / "foo"
+        package_dir.mkdir()
+        body = '<base href="../packages/"><a href="foo-1.0-py3-none-any.whl">foo</a>'
+        (package_dir / "index.html").write_text(body, encoding="utf-8")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert len(result) == 1
+        assert result[0].local_path == wheel_path
+
+    def test_first_base_href_wins(self, tmp_path: Path) -> None:
+        packages = tmp_path / "packages"
+        packages.mkdir()
+        wheel_path = packages / "foo-1.0-py3-none-any.whl"
+        wheel_path.write_bytes(b"")
+        package_dir = tmp_path / "foo"
+        package_dir.mkdir()
+        body = (
+            f'<base href="{packages.as_uri()}/">'
+            f'<base href="{tmp_path.as_uri()}/other/">'
+            '<a href="foo-1.0-py3-none-any.whl">foo</a>'
+        )
+        (package_dir / "index.html").write_text(body, encoding="utf-8")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert len(result) == 1
+        assert result[0].local_path == wheel_path
+
+    def test_base_without_href_ignored(self, tmp_path: Path) -> None:
+        body = '<base target="_blank"><a href="foo-1.0-py3-none-any.whl">foo</a>'
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert len(result) == 1
+        assert (
+            result[0].local_path == package_dir.resolve() / "foo-1.0-py3-none-any.whl"
+        )
+
+    def test_base_href_ignored_by_absolute_anchor(self, tmp_path: Path) -> None:
+        body = (
+            f'<base href="{tmp_path.as_uri()}/packages/">'
+            '<a href="https://example.com/foo/foo-1.0-py3-none-any.whl">foo</a>'
+        )
+        self._make_index(tmp_path, body)
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert len(result) == 1
+        assert result[0].url == "https://example.com/foo/foo-1.0-py3-none-any.whl"
+        assert result[0].local_path is None
+
     def test_https_href_pass_through(self, tmp_path: Path) -> None:
         body = '<a href="https://example.com/foo/foo-1.0-py3-none-any.whl">foo</a>'
         self._make_index(tmp_path, body)
