@@ -94,7 +94,11 @@ _SCHEME_PROBE = (
 
 
 class BuildEnvError(Exception):
-    """The build env could not be set up (resolve, download, or install)."""
+    """The build env could not be set up.
+
+    Covers venv creation, the interpreter scheme probe, and the inner
+    resolve, download, and install of ``[build-system].requires``.
+    """
 
 
 class NabBuildEnv:
@@ -154,13 +158,17 @@ class NabBuildEnv:
         """Lay out the venv, install build requirements, populate paths."""
         self._venv_path = root / "venv"
         wheel_dir = root / "wheels"
-        wheel_dir.mkdir()
 
         logger.debug("creating build venv at %s", self._venv_path)
         builder = venv.EnvBuilder(
             with_pip=False, symlinks=_supports_symlinks(), clear=False
         )
-        builder.create(self._venv_path)
+        try:
+            wheel_dir.mkdir()
+            builder.create(self._venv_path)
+        except OSError as exc:
+            msg = f"could not create build venv at {self._venv_path}: {exc}"
+            raise BuildEnvError(msg) from exc
 
         self._python_executable = _venv_python(self._venv_path)
         self._scripts_dir = self._python_executable.parent
@@ -356,13 +364,22 @@ def _venv_scheme_paths(python_executable: Path) -> dict[str, str]:
     the base interpreter rather than the venv, so the header root comes
     from the venv's own prefix instead.
     """
-    result = subprocess.run(  # noqa: S603 - controlled command, no shell
-        [str(python_executable), "-c", _SCHEME_PROBE],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    probe = json.loads(result.stdout)
+    try:
+        result = subprocess.run(  # noqa: S603 - controlled command, no shell
+            [str(python_executable), "-c", _SCHEME_PROBE],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        msg = f"build venv interpreter probe failed: {exc}"
+        raise BuildEnvError(msg) from exc
+
+    try:
+        probe = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        msg = f"build venv interpreter probe returned non-JSON output: {exc}"
+        raise BuildEnvError(msg) from exc
 
     paths: dict[str, str] = dict(probe["paths"])
     paths["headers"] = str(
