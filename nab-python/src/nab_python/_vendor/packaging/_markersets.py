@@ -957,11 +957,6 @@ def reject_oversized_literals(node: Formula, env: Mapping[str, object]) -> None:
             reject_oversized_version_literals(atom.variable, (atom.literal, str(value)))
 
 
-def variables_of(node: Formula) -> frozenset[str]:
-    """Return the variables a tree references, as written."""
-    return frozenset(atom.origin for atom in collect_atoms(node))
-
-
 def membership_literals_of(node: Formula) -> frozenset[tuple[str, str]]:
     """Return the ``(variable, canonical name)`` set-memberships a tree tests."""
     return frozenset(
