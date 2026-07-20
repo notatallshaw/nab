@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import random
 import re
@@ -10,7 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import ClassVar
 
 import pytest
 
@@ -23,7 +24,6 @@ from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
 from nab_python._lockfile.builder import _common_requires_python
 from nab_python._lockfile.disjointness import (
-    _restrict_to_referenced,
     validate_marker_disjointness,
 )
 from nab_python._lockfile.pylock import (
@@ -35,6 +35,7 @@ from nab_python._lockfile.pylock import (
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.markers import Marker
+from nab_python._vendor.packaging.markersets import IntractableMarkerSet
 from nab_python._vendor.packaging.pylock import Package, PackageWheel, Pylock
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
@@ -1926,11 +1927,11 @@ class TestMarkerDisjointness:
                 groups=(),
             )
 
-    def test_powerset_pruned_when_no_marker_uses_extras(self) -> None:
-        # Airflow declares ~120 extras; materialising 2**120 subsets
-        # OOMs the validator.  When no candidate marker references
-        # ``extras``, the powerset must collapse to ``{()}`` and the
-        # validator must finish without enumerating subsets.
+    def test_unreferenced_extras_add_no_membership_axis(self) -> None:
+        # Airflow declares ~120 extras.  When no candidate marker
+        # references ``extras``, the algebra reads the parsed atoms and
+        # adds no membership axis for the variable, so the check does not
+        # scale with the declared list.
         envs = {
             "linux": {
                 "python_version": "3.11",
@@ -1939,9 +1940,9 @@ class TestMarkerDisjointness:
             },
         }
         many_extras = tuple(f"e{i}" for i in range(120))
-        # Markers that only constrain the environment must succeed
-        # quickly even with 120 declared extras: 2**120 powerset is
-        # untenable; pruning to 1 subset is what makes this finish.
+        # Markers that only constrain the environment succeed regardless
+        # of how many extras are declared: with no extras axis, 120
+        # declared names cost the same as none.
         validate_marker_disjointness(
             [
                 self._pkg("foo", "1.0", "sys_platform == 'linux'"),
@@ -1955,9 +1956,9 @@ class TestMarkerDisjointness:
     def test_extras_collision_with_normalization_mismatch(self) -> None:
         # PEP 685 compares extra names under normalization.  The
         # declared names and the marker literals here differ only by
-        # case and separator, so the powerset pruning must normalize
-        # both sides; otherwise both extras drop out of the universe
-        # and the {cpu, fast-io} collision is silently missed.
+        # case and separator, so the algebra must canonicalize both
+        # sides; otherwise the referenced literals miss the declared
+        # extras and the {cpu, fast-io} collision goes unreported.
         envs = {
             "linux": {
                 "python_version": "3.11",
@@ -1976,10 +1977,11 @@ class TestMarkerDisjointness:
                 groups=(),
             )
 
-    def test_powerset_pruned_when_no_marker_uses_groups(self) -> None:
-        # Symmetric pruning for ``dependency_groups``: a project with
+    def test_unreferenced_groups_add_no_membership_axis(self) -> None:
+        # Symmetric behaviour for ``dependency_groups``: a project with
         # many declared groups whose markers do not reference the
-        # variable must not enumerate ``2**N`` subsets.
+        # variable adds no membership axis for it, so the check does not
+        # scale with the declared list.
         envs = {
             "linux": {
                 "python_version": "3.11",
@@ -1998,34 +2000,36 @@ class TestMarkerDisjointness:
             groups=many_groups,
         )
 
-    def test_powerset_falls_back_when_bare_token_without_named_literal(self) -> None:
-        # Defensive path: a marker that mentions the bare ``extras``
-        # token but does not match the literal-extraction regex must
-        # fall back to the full declared list so a real collision
-        # still surfaces.  Construct a minimal stand-in marker that
-        # exercises this branch through the public ``Marker``
-        # interface without subclassing the frozen Package dataclass.
-        class _BareTokenMarker:
-            def __str__(self) -> str:
-                # Bare ``extras`` token in a context the literal regex
-                # does not match (a ``not (...)`` wrapper round a
-                # comparison the regex does not anticipate).
-                return "extras and python_version >= '3.10'"
-
-        relevant = _restrict_to_referenced(
-            ("a", "b", "c"),
-            [cast("Marker", _BareTokenMarker())],
-            "extras",
+    def test_quoted_extras_value_is_not_a_membership_reference(self) -> None:
+        # A marker whose quoted value is the token ``extras``
+        # (``platform_release == "extras"``) references no membership
+        # variable: the algebra reads the parsed atoms, not the marker
+        # text, so it adds no extras axis.  The 40 declared extras then
+        # cost nothing and the pair does not collide.
+        envs = {
+            "linux": {
+                "python_version": "3.11",
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+                "platform_release": "",
+            },
+        }
+        many_extras = tuple(f"e{i}" for i in range(40))
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "sys_platform == 'linux'"),
+                self._pkg("foo", "2.0", 'platform_release == "extras"'),
+            ],
+            environments=envs,
+            extras=many_extras,
+            groups=(),
         )
-        # No literal extracted, but the bare token appears -> safe
-        # over-approximation falls back to the full declared list.
-        assert relevant == ("a", "b", "c")
 
-    def test_powerset_pruned_to_referenced_extras_only(self) -> None:
+    def test_only_referenced_extras_form_membership_axis(self) -> None:
         # Of 50 declared extras, only ``"cpu"`` and ``"gpu"`` appear
-        # in markers; the powerset must restrict to those two so we
-        # iterate 4 subsets, not 2**50.  The collision on
-        # ``{cpu, gpu}`` is still reported.
+        # in markers; the membership axis spans only those two, so the
+        # check stays small instead of scaling with the declared list.
+        # The collision on ``{cpu, gpu}`` is still reported.
         envs = {
             "linux": {
                 "python_version": "3.11",
@@ -2136,11 +2140,10 @@ class TestMarkerDisjointness:
 
     def test_membership_markers_do_not_collide_at_empty_extras(self) -> None:
         """``'cpu' in frozenset()`` must evaluate False through
-        :class:`Marker`, so the empty-extras point in
-        :func:`_enumerate_valid_points` never makes two membership-gated
-        entries collide.  Asserts the marker-eval primitive in isolation
-        so a later switch to a different Marker library cannot regress
-        this without breaking a focused test."""
+        :class:`Marker`, so the empty-extras selection never makes two
+        membership-gated entries collide.  Asserts the marker-eval
+        primitive in isolation so a later switch to a different Marker
+        library cannot regress this without breaking a focused test."""
         empty_context = {
             "sys_platform": "linux",
             "extras": frozenset(),
@@ -2176,6 +2179,113 @@ class TestMarkerDisjointness:
             groups=(),
             exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "fast-io")})],
         )
+
+    def test_undeclared_extra_reference_is_pinned_absent(self) -> None:
+        # The universe only selects declared names.  Both entries gate on
+        # an extra the producer never declared, so no install context
+        # selects it and the two never fire together: no collision, even
+        # with no conflict declared.
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "'ghost' in extras"),
+                self._pkg("foo", "2.0", "'ghost' in extras"),
+            ],
+            environments=self._LINUX,
+            extras=("cpu",),
+            groups=(),
+        )
+
+    def test_collision_only_outside_declared_envs_does_not_raise(self) -> None:
+        # foo 1.0 fires only on darwin, foo 2.0 fires everywhere; they
+        # overlap only at darwin, which is not a declared environment.
+        # The universe is the declared envs, so the pair is disjoint.
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "sys_platform == 'darwin'"),
+                self._pkg("foo", "2.0"),
+            ],
+            environments=self._LINUX,
+            extras=(),
+            groups=(),
+        )
+
+    def test_collision_inside_declared_env_still_raises(self) -> None:
+        # The mirror of the above: the overlap is at a declared env
+        # (linux), so it must raise.
+        with pytest.raises(DisjointnessError, match="foo"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", "1.0", "sys_platform == 'linux'"),
+                    self._pkg("foo", "2.0"),
+                ],
+                environments=self._LINUX,
+                extras=(),
+                groups=(),
+            )
+
+    def test_bare_positive_conflict_forks_validate_across_many_sets(self) -> None:
+        # Five independent at-most-one pairs; the 32 bare-positive forks
+        # of one name are pairwise disjoint only because the conflict
+        # declaration prunes every co-selection.  The algebra decides
+        # this without enumerating the 3**5 install-context points.
+        sets = [[f"s{i}a", f"s{i}b"] for i in range(5)]
+        declared = [m for s in sets for m in s]
+        forks = list(itertools.product(*sets))
+        packages = [
+            self._pkg(
+                "torch",
+                f"1.{fi}.0",
+                "python_version == '3.11'"
+                + "".join(f" and '{m}' in extras" for m in sorted(fork)),
+            )
+            for fi, fork in enumerate(forks)
+        ]
+        exclusive = [frozenset({("extra", a), ("extra", b)}) for a, b in sets]
+        validate_marker_disjointness(
+            packages,
+            environments=self._LINUX,
+            extras=declared,
+            groups=(),
+            exclusive_groups=exclusive,
+            declared_groups=exclusive,
+        )
+
+    def test_passes_when_all_names_distinct(self) -> None:
+        # No same-name pair exists, so there is nothing to check and the
+        # validator returns before touching the algebra.
+        validate_marker_disjointness(
+            [self._pkg("foo", "1.0"), self._pkg("bar", "2.0")],
+            environments=self._LINUX,
+            extras=(),
+            groups=(),
+        )
+
+    def test_contains_over_approximation_reports_without_witness(self) -> None:
+        # A ``contains`` atom is an opaque, over-approximating boolean.
+        # ``"ab" in v`` implies ``"a" in v``, so no realisable
+        # platform_version satisfies ``"ab" in v and "a" not in v``; the
+        # algebra cannot rule the pair out (over-approximates to
+        # non-disjoint) and no concrete witness exists.  The gate stays
+        # conservative and reports the pair without a point.  A declared
+        # env supplying platform_version would fold the atoms away, so
+        # this uses an env that omits it.
+        marker = "'ab' in platform_version and 'a' not in platform_version"
+        with pytest.raises(DisjointnessError, match="not disjoint"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", "1.0", marker),
+                    self._pkg("foo", "2.0", marker),
+                ],
+                environments={
+                    "linux": {
+                        "python_version": "3.11",
+                        "python_full_version": "3.11.0",
+                        "sys_platform": "linux",
+                    },
+                },
+                extras=(),
+                groups=(),
+            )
 
     def test_group_membership_drives_conflict_hint(self) -> None:
         # The collision fires at a witness where a referenced group is
@@ -2408,6 +2518,57 @@ class TestMarkerDisjointness:
                 extras=(),
                 groups=(),
             )
+
+    def test_large_mutually_exclusive_set_partitioned_pair_emits(self) -> None:
+        # Ten mutually-exclusive extras, split five and five across two
+        # same-name entries.  The conflict declaration forbids any two
+        # members co-selecting, so the entries never fire together and the
+        # pair is disjoint.  The selection walk decides this without the
+        # powerset over ten membership names.
+        members = [f"m{i}" for i in range(10)]
+        left = " or ".join(f"'{m}' in extras" for m in members[:5])
+        right = " or ".join(f"'{m}' in extras" for m in members[5:])
+        validate_marker_disjointness(
+            [self._pkg("foo", "1.0", left), self._pkg("foo", "2.0", right)],
+            environments=self._LINUX,
+            extras=tuple(members),
+            groups=(),
+            exclusive_groups=[frozenset(("extra", m) for m in members)],
+        )
+
+    def test_large_free_membership_set_fails_loud(self) -> None:
+        # Seventeen declared extras in no conflict set are free, so the
+        # selection count is 2**17.  That exceeds the guard, so the walk
+        # raises rather than iterating an unbounded number of selections.
+        free = [f"e{i}" for i in range(17)]
+        left = " or ".join(f"'{m}' in extras" for m in free[:9])
+        right = " or ".join(f"'{m}' in extras" for m in free[9:])
+        with pytest.raises(IntractableMarkerSet):
+            validate_marker_disjointness(
+                [self._pkg("foo", "1.0", left), self._pkg("foo", "2.0", right)],
+                environments=self._LINUX,
+                extras=tuple(free),
+                groups=(),
+            )
+
+    def test_overlapping_conflict_sets_prune_collision(self) -> None:
+        # Two conflict sets share member x: {x, y} and {x, z}.  foo 1.0
+        # needs x, foo 2.0 needs y or z.  Every selection that fires both
+        # co-activates a conflict set (x with y, or x with z), so all are
+        # pruned and the pair is disjoint.
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", "'x' in extras"),
+                self._pkg("foo", "2.0", "'y' in extras or 'z' in extras"),
+            ],
+            environments=self._LINUX,
+            extras=("x", "y", "z"),
+            groups=(),
+            exclusive_groups=[
+                frozenset({("extra", "x"), ("extra", "y")}),
+                frozenset({("extra", "x"), ("extra", "z")}),
+            ],
+        )
 
 
 class _FakeIndex:
