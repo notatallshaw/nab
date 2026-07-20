@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
@@ -14,6 +13,7 @@ from ._conflict_kind import dependency_marker_holds
 from ._vendor.packaging.dependency_groups import resolve_dependency_groups
 from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
+from ._vendor.packaging.markersets import MarkerSet
 from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 from ._vendor.packaging.utils import InvalidName, canonicalize_name
 
@@ -285,161 +285,32 @@ def _and_markers(marker: Marker | None, gates: frozenset[str]) -> Marker:
     return Marker(" and ".join(f"({p})" for p in parts))
 
 
-def _decide_extra_conjunct(conjunct: str, extra: str) -> bool:
-    """Evaluate a single ``extra`` comparison under the bound value.
-
-    The caller only passes a lone comparison that references ``extra`` (and so
-    no environment variable), so packaging's public ``Marker.evaluate`` decides
-    it outright.
-    """
-    return Marker(conjunct).evaluate({"extra": extra})
-
-
-def _split_top_level(text: str, op: str) -> list[str]:
-    """Split ``text`` on its top-level `` op `` (quote- and paren-aware).
-
-    The scan skips the operator inside quoted operands (e.g. ``"android"``
-    contains ``and``) and inside parenthesised groups, so only the outermost
-    ``and`` / ``or`` operands split.
-    """
-    sep = f" {op} "
-    parts: list[str] = []
-    depth = 0
-    quote = ""
-    start = 0
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if quote:
-            if ch == quote:
-                quote = ""
-        elif ch in "'\"":
-            quote = ch
-        elif ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-        elif depth == 0 and text.startswith(sep, i):
-            parts.append(text[start:i].strip())
-            i += len(sep)
-            start = i
-            continue
-        i += 1
-    parts.append(text[start:].strip())
-    return parts
-
-
-def _strip_wrapping_parens(text: str) -> str:
-    """Remove parentheses that wrap the whole expression, repeatedly."""
-    while text.startswith("(") and text.endswith(")"):
-        depth = 0
-        quote = ""
-        wraps = True
-        for i, ch in enumerate(text):
-            if quote:
-                if ch == quote:
-                    quote = ""
-            elif ch in "'\"":
-                quote = ch
-            elif ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-                if depth == 0 and i != len(text) - 1:
-                    wraps = False
-                    break
-        if not wraps:
-            break
-        text = text[1:-1].strip()
-    return text
-
-
-def _wrap_for_and(text: str) -> str:
-    """Parenthesise ``text`` when it is a top-level ``or`` (precedence)."""
-    return f"({text})" if len(_split_top_level(text, "or")) > 1 else text
-
-
-_QUOTED_LITERAL = re.compile(r"'[^']*'|\"[^\"]*\"")
-_EXTRA_VARIABLE = re.compile(r"\bextra\b")
-
-
-def _references_extra_variable(text: str) -> bool:
-    """Whether ``text`` uses the ``extra`` marker variable.
-
-    Quoted values are dropped and a word boundary applied so neither a value
-    that contains ``extra`` (``sys_platform == "extraos"``) nor the distinct
-    ``extras`` set variable is mistaken for it.
-    """
-    return bool(_EXTRA_VARIABLE.search(_QUOTED_LITERAL.sub("", text)))
-
-
-def _reduce_conjunct(conjunct: str, extra: str) -> str | bool:
-    """Reduce one ``and`` conjunct under a bound ``extra``.
-
-    Returns ``True`` when the conjunct is satisfied (and drops out), ``False``
-    for a contradiction, or a residual string of environment conditions.
-    """
-    inner = _strip_wrapping_parens(conjunct)
-    references_extra = _references_extra_variable(inner)
-    is_group = len(_split_top_level(inner, "or")) > 1 or (
-        references_extra and len(_split_top_level(inner, "and")) > 1
-    )
-    if is_group:
-        reduced = _reduce_marker_string(inner, extra)
-        return reduced if isinstance(reduced, bool) else _wrap_for_and(reduced)
-    if not references_extra:
-        return inner
-    return _decide_extra_conjunct(inner, extra)
-
-
-def _reduce_marker_string(text: str, extra: str) -> str | bool:
-    """Reduce a marker string under a bound ``extra`` (interim, string-based).
-
-    Returns ``True`` (tautology), ``False`` (contradiction), or a residual
-    marker string of the surviving environment conditions.  Handles a
-    top-level ``or`` of ``and`` groups and recurses into parenthesised
-    subgroups; each conjunct that references only ``extra`` is decided
-    through packaging's public ``Marker.evaluate``.
-
-    This should move to a public packaging marker-reduction API once one
-    exists; nab deliberately does not reach into ``Marker._markers`` (see the
-    rejected-precedent note in :mod:`nab_python._lockfile.disjointness`).
-    """
-    text = _strip_wrapping_parens(text)
-    disjuncts = _split_top_level(text, "or")
-    if len(disjuncts) > 1:
-        surviving: list[str] = []
-        for disjunct in disjuncts:
-            reduced = _reduce_marker_string(disjunct, extra)
-            if reduced is True:
-                return True
-            if isinstance(reduced, str):
-                surviving.append(reduced)
-        if not surviving:
-            return False
-        return " or ".join(surviving)
-    residual: list[str] = []
-    for conjunct in _split_top_level(text, "and"):
-        reduced = _reduce_conjunct(conjunct, extra)
-        if reduced is False:
-            return False
-        if isinstance(reduced, str):
-            residual.append(reduced)
-    if not residual:
-        return True
-    return " and ".join(residual)
-
-
 def _environment_residual(marker: Marker, extra: str) -> str | bool:
     """Reduce a self-ref activation marker against a bound ``extra``.
 
     A self-reference is reached only because its extra is selected, so its
-    ``extra == "<extra>"`` clause is already decided at expansion.  Delegates
-    to :func:`_reduce_marker_string` over ``str(marker)``: returns ``True``
-    (tautology, a bare dep), ``False`` (contradiction, does not activate), or
-    a residual string of the surviving environment conditions.
+    ``extra == "<extra>"`` clause is already decided at expansion.  Restricts
+    the marker's environment set with ``extra`` bound to that one name and
+    reads off what survives: ``True`` (tautology, a bare dep), ``False``
+    (contradiction, does not activate), or a residual marker string of the
+    surviving environment conditions.
+
+    ``extra`` binds as a one-name set, the PEP 685 set model the algebra
+    evaluates ``extra ==`` / ``extra !=`` under.  Environment variables the
+    binding leaves untouched stay in the residual, so a
+    variable-vs-variable clause naming ``extra`` (``sys_platform ==
+    extra``) is kept as a residual atom over the target's own value rather
+    than decided against the machine running nab.
     """
-    return _reduce_marker_string(str(marker), extra)
+    residual = MarkerSet.from_marker(marker).restrict(
+        {"extra": frozenset({extra})}, on_unknown_variable="residual"
+    )
+
+    if residual.is_empty():
+        return False
+
+    text = residual.to_marker_string()
+    return True if text is None else text
 
 
 def expand_extra_requirements(

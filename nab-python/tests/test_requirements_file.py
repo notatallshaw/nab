@@ -919,6 +919,50 @@ class TestExpandExtraRequirements:
         names = {r.name for r in expand_extra_requirements(opt, "mypkg", ["a"])}
         assert {"depA", "depB"} <= names
 
+    def test_self_ref_var_vs_var_extra_gate_kept_as_target_residual(self) -> None:
+        """A variable-vs-variable self-ref gate naming ``extra``
+        (``sys_platform == extra``) survives as a residual atom over the
+        target's ``sys_platform``, not decided against the machine running nab.
+        """
+        opt = {
+            "all": ["mypkg[fast]; sys_platform == extra"],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is not None
+        # packaging reads the RHS variable name as a literal, so the residual
+        # sys_platform == "extra" fires only where sys_platform is that string.
+        assert dep.marker.evaluate({"sys_platform": "extra"})
+        assert not dep.marker.evaluate({"sys_platform": "linux"})
+
+    def test_self_ref_negated_extra_gate_for_walked_extra_drops(self) -> None:
+        """``extra != "all"`` on the walked extra ``all`` is a contradiction,
+        so the reached dep never activates through that path."""
+        opt = {
+            "all": ['mypkg[fast]; extra != "all"'],
+            "fast": ["some-dep"],
+        }
+        names = {r.name for r in expand_extra_requirements(opt, "mypkg", ["all"])}
+        assert "some-dep" not in names
+
+    def test_self_ref_negated_other_extra_gate_is_unconditional(self) -> None:
+        """``extra != "other"`` on the walked extra ``all`` is a tautology, so
+        the reached dep is bare (activates on every target)."""
+        opt = {
+            "all": ['mypkg[fast]; extra != "other"'],
+            "fast": ["some-dep"],
+        }
+        dep = next(
+            r
+            for r in expand_extra_requirements(opt, "mypkg", ["all"])
+            if r.name == "some-dep"
+        )
+        assert dep.marker is None
+
 
 class TestExpandGroupIncludes:
     def test_no_include_returns_input(self) -> None:
