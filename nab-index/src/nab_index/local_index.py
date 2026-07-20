@@ -28,7 +28,7 @@ from email.parser import BytesParser, Parser
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import url2pathname
 
 from ._naming import canonical as _canonical
@@ -120,44 +120,67 @@ def _html_advertises_metadata(value: str | None) -> bool:
     return bool(sep and algo and digest)
 
 
+def _parse_anchor(
+    attrs: list[tuple[str, str | None]],
+) -> tuple[str, str | None, bool] | None:
+    """Turn an anchor's attributes into ``(href, requires_python, has_metadata)``.
+
+    Returns ``None`` for an anchor with no ``href`` or one carrying
+    ``data-yanked`` (PEP 592), so a yanked link never reaches the listing.
+    The PEP 714 ``data-core-metadata`` attribute (or legacy
+    ``data-dist-info-metadata``) is read so a wheel's advertised sidecar is
+    honoured, matching the PEP 691 JSON behaviour in
+    :func:`nab_index.client._parse_files`.
+    """
+    href: str | None = None
+    requires_python: str | None = None
+    yanked = False
+    core_metadata: str | None = None
+    legacy_metadata: str | None = None
+    for name, value in attrs:
+        if name == "href":
+            href = value
+        elif name == _REQUIRES_PYTHON_ATTR:
+            requires_python = value
+        elif name == _YANKED_ATTR:
+            yanked = True
+        elif name == _CORE_METADATA_ATTR:
+            core_metadata = value
+        elif name == _LEGACY_METADATA_ATTR:
+            legacy_metadata = value
+    if href is None or yanked:
+        return None
+    advertised = core_metadata if core_metadata is not None else legacy_metadata
+    return (href, requires_python, _html_advertises_metadata(advertised))
+
+
 class _Pep503Parser(HTMLParser):
     """Collect ``<a href="..." data-requires-python="...">`` entries.
 
-    Anchors carrying ``data-yanked`` (PEP 592) are dropped at parse
-    time so the listing never surfaces them.  The PEP 714
-    ``data-core-metadata`` attribute (or legacy ``data-dist-info-metadata``)
-    is read so a wheel's advertised sidecar is honoured, matching the PEP
-    691 JSON behaviour in :func:`nab_index.client._parse_files`.
+    The first ``<base href>`` is kept so relative anchors resolve against
+    it rather than the page directory, matching how pip and uv read a
+    Simple-repository page.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.links: list[tuple[str, str | None, bool]] = []
+        self.base_href: str | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "base":
+            if self.base_href is None:
+                for name, value in attrs:
+                    if name == "href":
+                        self.base_href = value
+                        break
+            return
+
         if tag != "a":
             return
-        href: str | None = None
-        requires_python: str | None = None
-        yanked = False
-        core_metadata: str | None = None
-        legacy_metadata: str | None = None
-        for name, value in attrs:
-            if name == "href":
-                href = value
-            elif name == _REQUIRES_PYTHON_ATTR:
-                requires_python = value
-            elif name == _YANKED_ATTR:
-                yanked = True
-            elif name == _CORE_METADATA_ATTR:
-                core_metadata = value
-            elif name == _LEGACY_METADATA_ATTR:
-                legacy_metadata = value
-        if href is not None and not yanked:
-            advertised = core_metadata if core_metadata is not None else legacy_metadata
-            self.links.append(
-                (href, requires_python, _html_advertises_metadata(advertised))
-            )
+        link = _parse_anchor(attrs)
+        if link is not None:
+            self.links.append(link)
 
 
 _FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
@@ -180,9 +203,16 @@ def _scan_pep503_directory(
 
     parser = _Pep503Parser()
     parser.feed(text)
+    if parser.base_href is not None:
+        base_url: str | None = urljoin(index_html.as_uri(), parser.base_href)
+    else:
+        base_url = None
+
     files: list[WheelFile | SdistFile] = []
     for href, requires_python, has_metadata in parser.links:
-        filename, file_url, local_path, hashes = _resolve_local_link(href, package_dir)
+        filename, file_url, local_path, hashes = _resolve_local_link(
+            href, package_dir, base_url
+        )
         if filename is None:
             continue
         record = _make_record(
@@ -202,8 +232,13 @@ def _scan_pep503_directory(
 def _resolve_local_link(
     href: str,
     package_dir: Path,
+    base_url: str | None,
 ) -> tuple[str | None, str, Path | None, tuple[tuple[str, str], ...]]:
     """Resolve an anchor href to ``(filename, url, local_path, hashes)``.
+
+    ``base_url`` is the page's ``<base href>`` when it carries one, else
+    ``None``.  A relative href joins against it; an absolute href ignores
+    it per RFC 3986.
 
     PEP 503 carries the artefact's hash in the URL fragment as
     ``#<algo>=<hexdigest>``; this is the only place the hash appears
@@ -217,6 +252,8 @@ def _resolve_local_link(
     """
     href_no_frag, _, fragment = href.partition("#")
     hashes = _parse_pep503_hash_fragment(fragment)
+    if base_url is not None:
+        href_no_frag = urljoin(base_url, href_no_frag)
     parsed = urlparse(href_no_frag)
 
     if parsed.scheme in {"http", "https"}:
@@ -226,7 +263,7 @@ def _resolve_local_link(
         path = parse_file_url(href_no_frag)
         return (path.name, href_no_frag, path, hashes)
 
-    # A relative href resolves against the package page wherever it points;
+    # Without a base href a relative link resolves against the package page;
     # the standard mirror layout links to a shared ../../packages/ tree, so the
     # target legitimately sits outside the package directory.
     target = (package_dir.resolve() / unquote(href_no_frag)).resolve()
