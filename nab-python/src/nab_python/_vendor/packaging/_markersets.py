@@ -1081,6 +1081,8 @@ def _materialize(
             env[variable] = derive_major_minor(str(env["python_full_version"]))
             continue
         env[variable] = "".join(sorted(lit for lit, present in items if present))
+    if "python_full_version" in env and "python_version" not in env:
+        env["python_version"] = derive_major_minor(str(env["python_full_version"]))
     return env
 
 

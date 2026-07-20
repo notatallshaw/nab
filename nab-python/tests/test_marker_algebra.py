@@ -690,6 +690,14 @@ def test_witness_of_python_version_contains() -> None:
     assert marker.evaluate(env)
 
 
+def test_witness_of_python_version_value_satisfies_packaging() -> None:
+    marker = ms('python_version == "3.9"')
+    env = marker.witness()
+    assert env is not None
+    assert marker.evaluate(env)
+    assert Marker('python_version == "3.9"').evaluate(env)
+
+
 # ------------------------------------------------------------ serialisation
 
 
