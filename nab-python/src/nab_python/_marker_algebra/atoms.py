@@ -421,6 +421,26 @@ def reject_oversized_version_literals(variable: str, literals: Sequence[str]) ->
         raise ComplexityLimitError(msg)
 
 
+def _reject_mint_overflow(literals: Sequence[str]) -> None:
+    """Reserve one digit so neighbour minting cannot overflow the parse limit.
+
+    Cell decomposition mints version neighbours by incrementing one numeric
+    component, so a run at the limit width rolls to one digit past it and
+    makes packaging's Version raise a bare ValueError. Reject one digit early.
+    """
+    limit = sys.get_int_max_str_digits()
+    if limit and any(
+        len(run.group()) >= limit
+        for literal in literals
+        for run in _DIGIT_RUN.finditer(literal)
+    ):
+        msg = (
+            "version literal numeric component leaves no headroom under the "
+            f"{limit}-digit parse limit"
+        )
+        raise ComplexityLimitError(msg)
+
+
 def _reject_undefined_operator(
     variable: str, op: str, literal: str, *, swapped: bool, probe: str
 ) -> None:
@@ -696,6 +716,7 @@ def _value_candidates(
             candidates.extend(_membership_candidates(atom))
 
     if is_version_dispatch(variable):
+        _reject_mint_overflow(literals)
         pool_seed = list(literals)
         for atom in atoms:
             if atom.op in _MEMBERSHIP:

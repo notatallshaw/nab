@@ -922,6 +922,23 @@ def test_oversized_literal_allowed_when_int_limit_disabled() -> None:
         sys.set_int_max_str_digits(original)
 
 
+def test_mint_overflow_at_parse_limit_reports_complexity() -> None:
+    # A literal whose numeric run is exactly the parse-limit width leaves no
+    # room for neighbour minting to increment a component, so decomposition
+    # reports the algebra's bounded failure rather than a bare ValueError.
+    original = sys.get_int_max_str_digits()
+    limit = 640
+    sys.set_int_max_str_digits(limit)
+    try:
+        marker = ms('python_full_version > "' + "9" * limit + '"')
+        with pytest.raises(ComplexityLimitError):
+            marker.is_empty()
+        with pytest.raises(ComplexityLimitError):
+            marker.witness()
+    finally:
+        sys.set_int_max_str_digits(original)
+
+
 def _nested_alternating(depth: int) -> MarkerSet:
     # Algebra assembles the op-tree without recursing, so a tree far deeper than
     # the stack is built at any recursion limit; only the walk that decides it
