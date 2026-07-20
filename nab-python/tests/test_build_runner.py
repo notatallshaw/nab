@@ -1051,6 +1051,120 @@ class TestNabBuildEnvEnterInstall:
         assert env._tmpdir is None  # type: ignore[attr-defined]
 
 
+class TestInstallWheelsCorruptArtifact:
+    """A corrupt or malformed build-dependency wheel surfaces as
+    ``BuildEnvError`` rather than a raw zip or installer error.
+
+    A downloaded wheel has no hash to reject bad bytes, so corruption is
+    only found when ``installer`` opens it.
+    """
+
+    def _env(self, tmp_path: Path) -> NabBuildEnv:
+        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        venv_path = tmp_path / "venv"
+        venv_path.mkdir()
+        env._python_executable = venv_path / "bin" / "python"  # type: ignore[attr-defined]
+        return env
+
+    def _scheme(self, tmp_path: Path) -> dict[str, str]:
+        return {
+            "purelib": str(tmp_path / "site"),
+            "headers": str(tmp_path / "include"),
+        }
+
+    def test_non_zip_wheel_raises_build_env_error(self, tmp_path: Path) -> None:
+        env = self._env(tmp_path)
+        corrupt = tmp_path / "setuptools-70.0.0-py3-none-any.whl"
+        corrupt.write_bytes(b"<html><body>404 Not Found</body></html>")
+        with pytest.raises(BuildEnvError, match="setuptools-70.0.0-py3-none-any.whl"):
+            env._install_wheels([corrupt], self._scheme(tmp_path))
+
+    def test_truncated_wheel_raises_build_env_error(self, tmp_path: Path) -> None:
+        env = self._env(tmp_path)
+        good = tmp_path / "good-1.0-py3-none-any.whl"
+        _make_installable_wheel(good, "good", "1.0")
+        truncated = tmp_path / "setuptools-70.0.0-py3-none-any.whl"
+        data = good.read_bytes()
+        truncated.write_bytes(data[: len(data) // 2])
+        with pytest.raises(BuildEnvError, match="could not install build dependency"):
+            env._install_wheels([truncated], self._scheme(tmp_path))
+
+    def test_malformed_record_raises_build_env_error(self, tmp_path: Path) -> None:
+        env = self._env(tmp_path)
+        broken = tmp_path / "good-1.0-py3-none-any.whl"
+        files = {
+            "good/__init__.py": b"",
+            "good-1.0.dist-info/METADATA": (
+                b"Metadata-Version: 2.1\nName: good\nVersion: 1.0\n"
+            ),
+            "good-1.0.dist-info/WHEEL": (
+                b"Wheel-Version: 1.0\nGenerator: nab-test\n"
+                b"Root-Is-Purelib: true\nTag: py3-none-any\n"
+            ),
+        }
+        record = "".join(
+            f"{p},{_wheel_record_hash(d)},{len(d)}\n" for p, d in files.items()
+        )
+        record += "brokenrow,onlytwocols\n"
+        record += "good-1.0.dist-info/RECORD,,\n"
+        files["good-1.0.dist-info/RECORD"] = record.encode()
+        with zipfile.ZipFile(broken, "w") as zf:
+            for member, data in files.items():
+                zf.writestr(member, data)
+        with pytest.raises(BuildEnvError, match="could not install build dependency"):
+            env._install_wheels([broken], self._scheme(tmp_path))
+
+    def test_run_build_backend_wraps_corrupt_build_dep(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A corrupt build-dep wheel makes ``run_build_backend`` raise
+        ``BuildBackendError`` (its documented contract) rather than a raw
+        ``zipfile.BadZipFile``.
+        """
+        from nab_python._build import env as env_mod
+
+        class _Builder:
+            def __init__(self, **_kw: object) -> None:
+                pass
+
+            def create(self, path: Path) -> None:
+                path.mkdir(parents=True, exist_ok=True)
+                (path / "bin").mkdir(exist_ok=True)
+                (path / "bin" / "python").touch()
+
+        import venv as venv_mod
+
+        monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
+        monkeypatch.setattr(
+            env_mod,
+            "_venv_scheme_paths",
+            lambda _python: {
+                "purelib": str(tmp_path / "site"),
+                "headers": str(tmp_path / "include"),
+            },
+        )
+        corrupt = tmp_path / "setuptools-70.0.0-py3-none-any.whl"
+        corrupt.write_bytes(b"not a wheel")
+        monkeypatch.setattr(
+            NabBuildEnv, "_resolve_and_download", lambda self, _wd: [corrupt]
+        )
+        (tmp_path / "pyproject.toml").write_text(
+            "[build-system]\n"
+            'requires = ["setuptools"]\n'
+            'build-backend = "setuptools.build_meta"\n'
+            "[project]\n"
+            'name = "foo"\n'
+            'version = "1.0"\n'
+            'dynamic = ["dependencies"]\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="build env setup"):
+            run_build_backend(tmp_path, config=config)
+
+
 class TestBuildEnvHeaderScheme:
     """A build requirement whose wheel ships a ``.data/headers/`` payload.
 

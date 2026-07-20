@@ -175,22 +175,33 @@ class NabBuildEnv:
     def _install_wheels(
         self, wheel_paths: list[Path], scheme_paths: dict[str, str]
     ) -> None:
-        """Write each wheel into the venv with ``installer``."""
+        """Write each wheel into the venv with ``installer``.
+
+        A downloaded build dependency can be corrupt or malformed, so
+        opening or installing it surfaces as :class:`BuildEnvError`
+        rather than a raw zip or installer error.
+        """
         for wheel_path in wheel_paths:
             logger.debug("installing %s", wheel_path.name)
-            with WheelFile.open(wheel_path) as source:
-                destination = _FastSchemeDictionaryDestination(
-                    scheme_dict=_dist_scheme_paths(scheme_paths, source.distribution),
-                    interpreter=str(self._python_executable),
-                    script_kind=_LAUNCHER_KIND,
-                    bytecode_optimization_levels=(),
-                    overwrite_existing=True,
-                )
-                installer_install(
-                    source=source,
-                    destination=destination,
-                    additional_metadata={"INSTALLER": b"nab\n"},
-                )
+            try:
+                with WheelFile.open(wheel_path) as source:
+                    destination = _FastSchemeDictionaryDestination(
+                        scheme_dict=_dist_scheme_paths(
+                            scheme_paths, source.distribution
+                        ),
+                        interpreter=str(self._python_executable),
+                        script_kind=_LAUNCHER_KIND,
+                        bytecode_optimization_levels=(),
+                        overwrite_existing=True,
+                    )
+                    installer_install(
+                        source=source,
+                        destination=destination,
+                        additional_metadata={"INSTALLER": b"nab\n"},
+                    )
+            except Exception as exc:
+                msg = f"could not install build dependency {wheel_path.name}: {exc}"
+                raise BuildEnvError(msg) from exc
 
     def __exit__(self, *args: object) -> None:
         """Remove the temp tree that holds the venv and downloaded wheels."""
