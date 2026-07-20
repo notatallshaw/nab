@@ -228,11 +228,11 @@ def expand_self_extras(
 
     A self-reference carrying a PEP 508 marker (``{name}[fast];
     python_version < "3.10"``) activates its extra only when the marker
-    evaluates true under ``environment``.  ``extra`` is bound to the
-    extra being walked so a marker like ``extra == "all"`` resolves
-    against it.  ``environment`` ``None`` skips that check and walks
-    every self-reference, which is what a caller that defers marker
-    evaluation to each target wants.
+    evaluates true under ``environment``.  ``extra`` binds to the
+    one-name set of the extra being walked, so ``extra == "all"``
+    resolves against it.  ``environment`` ``None`` skips that check and
+    walks every self-reference, which is what a caller that defers
+    marker evaluation to each target wants.
 
     The original ``selected`` order is preserved at the front of the
     result; reachable extras are appended in BFS order without
@@ -266,7 +266,7 @@ def expand_self_extras(
                 environment is not None
                 and req.marker is not None
                 and not dependency_marker_holds(
-                    req.marker, {**environment, "extra": extra}
+                    req.marker, {**environment, "extra": frozenset({extra})}
                 )
             ):
                 continue
