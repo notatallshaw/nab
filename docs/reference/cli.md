@@ -10,10 +10,14 @@ runtime knobs and can override a project key for one run with a
 
 ```
 nab [--version | -V]
-nab lock     [PATH] [RUNTIME OPTIONS] [--output PATH] [--format pylock|requirements|requirements-without-hashes]
-nab download [PATH] [RUNTIME OPTIONS] [--output DIR] [--max-concurrency N]
-nab config   {list | get <key> | explain <key>} [--path PATH]
+nab [OUTPUT FLAGS] lock     [PATH] [RUNTIME OPTIONS] [--output PATH] [--format pylock|requirements|requirements-without-hashes]
+nab [OUTPUT FLAGS] download [PATH] [RUNTIME OPTIONS] [--output DIR] [--max-concurrency N]
+nab [OUTPUT FLAGS] config   {list | get <key> | explain <key>} [--path PATH]
 ```
+
+`OUTPUT FLAGS` are the global verbosity, colour, and progress knobs listed
+under Output control below. They are read before the subcommand, so they may
+appear anywhere on the line.
 
 `PATH` is positional and defaults to `pyproject.toml` in the
 current directory. Run `nab lock --help` (or `-h`) for the full
@@ -218,11 +222,49 @@ matching extra.
 | `--version`, `-V` | Print `nab <version>` and exit `0`. |
 | `--help`, `-h` | Standard argparse-style help. Per-subcommand help works too: `nab lock --help`. |
 
+The verbosity, colour, and progress flags below are also global.
+
+## Output control
+
+These flags set how much `nab` writes to stderr, whether it colours it,
+and whether it animates a progress line. They are global: `nab` reads them
+before the subcommand, so they work with `lock`, `download`, and `config`.
+stdout carries only the requested output (the lockfile, the requirements
+list, the `config` dump), so it stays pipeable at every verbosity.
+
+| Flag | Effect |
+| ---- | ------ |
+| `-v`, `-vv`, `--verbose` | Raise verbosity. `-v` adds the engine's `INFO` records, `-vv` adds `DEBUG`. `--verbose` counts as one `-v`; repeats add, and `-vvv` saturates at `-vv`. |
+| `-q`, `-qq`, `--quiet` | Lower verbosity. `-q` drops the run summary and notes, keeping warnings and errors; `-qq` keeps only errors. `--quiet` counts as one `-q`. |
+| `--color` | When to colour stderr: `auto` (default), `always`, or `never`. `auto` colours only an stderr terminal and honours `NO_COLOR`, `FORCE_COLOR`, and `TERM=dumb`; `always` and `never` win outright. Colour touches only a message's leading token, so it reads the same stripped. |
+| `--no-color` | Shorthand for `--color never`. |
+| `--no-progress` | Suppress the live progress line (also `NAB_NO_PROGRESS`). |
+
+Verbosity is the count of `-v` minus the count of `-q`. The five levels,
+quietest first, are silent (`-qq`), quiet (`-q`), normal (the default),
+verbose (`-v`), and debug (`-vv`). Errors print at every level; warnings
+print unless `-qq`; the run summary and notes print at normal and above.
+
+While `nab lock` or `nab download` resolves, a live line repaints on
+stderr, counting package listings fetched and packages pinned:
+
+```
+Resolving... 12 fetched, 5 pinned
+```
+
+It shows only at normal verbosity on an stderr terminal; `--no-progress`
+(or `NAB_NO_PROGRESS`) turns it off, and it never writes to stdout.
+
 ## Environment variables
 
 | Variable | Effect |
 | -------- | ------ |
 | `XDG_CACHE_HOME` | If set, `nab`'s default cache root is `$XDG_CACHE_HOME/nab` instead of `~/.cache/nab`. |
+| `NAB_VERBOSITY` | Default verbosity when no `-v` / `-q` flag is given: one of `silent`, `quiet`, `normal`, `verbose`, `debug`. A `-v` / `-q` flag overrides it. An unrecognised value is rejected. |
+| `NAB_NO_PROGRESS` | If set to a non-empty value, suppress the live progress line, like `--no-progress`. |
+| `NO_COLOR` | If set to a non-empty value, disable colour under `--color auto`. |
+| `FORCE_COLOR` | If set to a non-empty value, force colour under `--color auto`. |
+| `TERM` | `dumb` disables colour under `--color auto`. |
 
 ## Exit codes
 
