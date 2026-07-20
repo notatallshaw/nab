@@ -170,7 +170,7 @@ class Atom:
 
     kind: str
     variable: str  # axis variable (python_version lowers to python_full_version)
-    origin: str  # the variable as written, for variables()/serialisation
+    origin: str  # the variable as written, for env lookup and serialisation
     op: str
     literal: str
     swapped: bool = False
