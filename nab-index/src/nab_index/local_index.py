@@ -63,13 +63,13 @@ class UnsupportedWheelError(Exception):
 
 
 class MalformedLocalListingError(HttpError):
-    """A local ``file://`` index's ``index.html`` is not a usable listing.
+    """A local ``file://`` index's ``index.html`` or metadata sidecar is unreadable.
 
     Subclasses :class:`~nab_index.transport.HttpError` so a broken local
-    listing fails through the same path as a remote index error rather
-    than surfacing a raw decode error.  Raising, rather than returning an
-    empty listing, keeps a malformed index from reading as an absent
-    package.
+    listing or PEP 658 sidecar fails through the same path as a remote
+    index error rather than surfacing a raw decode error.  Raising, rather
+    than returning an empty listing, keeps a malformed index from reading
+    as an absent package.
     """
 
 
@@ -518,10 +518,18 @@ class LocalIndexClient:
         """Return PEP 658 metadata text for a wheel sitting on disk.
 
         The on-disk sidecar is trusted, so ``metadata_hash`` is accepted
-        only to match the remote client signature and is not verified.
+        only to match the remote client signature and is not verified.  A
+        sidecar that is not valid UTF-8 raises
+        :class:`MalformedLocalListingError` (an :class:`HttpError` subclass)
+        rather than a raw :class:`UnicodeDecodeError`, matching the
+        ``index.html`` reader.
         """
         path = parse_file_url(metadata_url)
-        return path.read_text(encoding="utf-8")
+        try:
+            return path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            msg = f"{path} is not valid UTF-8: {exc}"
+            raise MalformedLocalListingError(msg) from exc
 
     async def get_sdist_files(
         self,
