@@ -17,9 +17,11 @@ Relative `path` entries resolve against the directory holding
 `pyproject.toml`, not the process's current working directory.
 Absolute paths are recorded as-is.
 
-The directory is read once.  nab takes the version from
-`[project].version` in the local pyproject.toml; if absent, the
-package is pinned to the synthetic version `0.0.0+local`.
+The directory is read once.  nab reads the version from
+`[project].version` in the local pyproject.toml.  When the pyproject
+declares `dynamic = ["version"]`, nab computes it through the build
+backend instead, the same PEP 517 path used for dynamic dependencies
+below.
 
 The named package becomes the only candidate the resolver will
 consider for that name; the resolver does not fall back to

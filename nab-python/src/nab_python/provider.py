@@ -231,9 +231,10 @@ class LocalSource:
     """A source tree on disk used as the only candidate for a package.
 
     ``name`` is the package name; the resolver pins the package to a
-    single synthetic version derived from the directory's
-    ``[project].version`` field (or ``"0.0.0+local"`` if absent).
-    ``path`` is the absolute filesystem path to the source tree.
+    single synthetic version, read from the directory's
+    ``[project].version`` field or computed by the build backend when
+    that field is declared dynamic.  ``path`` is the absolute filesystem
+    path to the source tree.
 
     ``editable`` requests a PEP 660 editable install in the lockfile;
     ``subdirectory`` is a path under ``path`` for monorepo layouts.
