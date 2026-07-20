@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -424,3 +425,49 @@ def test_progress_clear_wipes_then_is_noop() -> None:
     err.seek(0)
     reporter.clear()
     assert err.getvalue() == ""
+
+
+_CLI_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
+
+
+def _cli_reference_text() -> str:
+    return _CLI_REFERENCE.read_text(encoding="utf-8")
+
+
+class TestCliReferenceDocumentsOutputPolicy:
+    """The CLI reference must list every output-policy flag and env var the CLI accepts.
+
+    ``parse_output_options`` defines the flags and ``Printer`` reads the env vars.
+    """
+
+    def test_verbosity_flags_documented(self) -> None:
+        text = _cli_reference_text()
+        for flag in ("-v", "-vv", "-q", "-qq", "--verbose", "--quiet"):
+            assert f"`{flag}`" in text, f"CLI reference omits verbosity flag {flag}"
+
+    def test_color_flags_documented(self) -> None:
+        text = _cli_reference_text()
+        assert "`--color`" in text
+        assert "`--no-color`" in text
+        for choice in ColorChoice:
+            assert f"`{choice.value}`" in text, (
+                f"CLI reference omits --color value {choice.value}"
+            )
+
+    def test_progress_documented(self) -> None:
+        text = _cli_reference_text()
+        assert "`--no-progress`" in text
+        assert "Resolving" in text
+
+    def test_output_env_vars_documented(self) -> None:
+        text = _cli_reference_text()
+        for var in ("NAB_VERBOSITY", "NAB_NO_PROGRESS", "NO_COLOR", "FORCE_COLOR"):
+            assert var in text, f"CLI reference omits env var {var}"
+
+    def test_nab_verbosity_values_documented(self) -> None:
+        text = _cli_reference_text()
+        for level in Verbosity:
+            name = level.name.lower()
+            assert f"`{name}`" in text, (
+                f"CLI reference omits NAB_VERBOSITY value {name!r}"
+            )
