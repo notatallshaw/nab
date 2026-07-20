@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import sys
 from pathlib import Path
 
 import pytest
@@ -216,8 +217,8 @@ def test_progress_blocked_by_env() -> None:
 
 def test_defaults_use_process_streams() -> None:
     printer = Printer(env={})
-    assert printer._out is not None
-    assert printer._err is not None
+    assert printer._out is sys.stdout
+    assert printer._err is sys.stderr
 
 
 def test_parse_counts_and_passthrough() -> None:
