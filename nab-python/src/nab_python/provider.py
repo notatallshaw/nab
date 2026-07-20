@@ -1281,7 +1281,16 @@ class Provider:
         abort markers (so neither a fresh abort nor a recorded skip fires) and
         sets ``_probing_satisfiable`` to skip the abort and to keep checking
         decisions past ``_BROAD_LA_REJECT_CAP``.
+
+        The un-narrowed range spans versions the constraint clipped away, so
+        look-ahead can reach one whose metadata raises a hard error the narrowed
+        resolve never touched.  The probe catches those and returns ``False``
+        rather than letting them abort the resolve; the ``finally`` restores the
+        snapshot either way.
         """
+        # Late import: config imports provider at module load.
+        from .config import OverrideConflictError  # noqa: PLC0415
+
         saved_aborted = dict(self._lookahead_aborted)
         saved_counts = dict(self._force_backtrack_counts)
         saved_reasons = dict(self._no_versions_reasons)
@@ -1289,17 +1298,23 @@ class Provider:
         self._lookahead_aborted = {}
         self._probing_satisfiable = True
         try:
-            found = self.choose_version(package, version_range) is not None
+            return self.choose_version(package, version_range) is not None
+        except (
+            MetadataHashMismatchError,
+            SdistHashMismatchError,
+            UnsupportedVcsError,
+            InvalidUploadTimeError,
+            OverrideConflictError,
+            NotImplementedError,
+        ):
+            return False
         finally:
             self._probing_satisfiable = False
-
-        self.consume_pending_clauses()
-        self.consume_force_backtrack_targets()
-        self._lookahead_aborted = saved_aborted
-        self._force_backtrack_counts = saved_counts
-        self._no_versions_reasons = saved_reasons
-
-        return found
+            self.consume_pending_clauses()
+            self.consume_force_backtrack_targets()
+            self._lookahead_aborted = saved_aborted
+            self._force_backtrack_counts = saved_counts
+            self._no_versions_reasons = saved_reasons
 
     def _try_abort_skip(self, normalized: str, first: Version) -> Version | None:
         """Return the first candidate when a prior abort is still valid.
