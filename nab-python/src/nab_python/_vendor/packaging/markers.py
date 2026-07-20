@@ -21,6 +21,8 @@ from .utils import canonicalize_name
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from . import markersets
+
 __all__ = [
     "Environment",
     "EvaluateContext",
@@ -541,6 +543,14 @@ class Marker:
 
         return _evaluate_markers(
             self._markers, _repair_python_full_version(current_environment)
+        )
+
+    def to_set(self, *, max_cells: int | None = None) -> markersets.MarkerSet:
+        """Return this marker's denotation as a :class:`~packaging.markersets.MarkerSet`."""
+        from .markersets import DEFAULT_MAX_CELLS, MarkerSet  # noqa: PLC0415
+
+        return MarkerSet.from_marker(
+            self, max_cells=DEFAULT_MAX_CELLS if max_cells is None else max_cells
         )
 
 

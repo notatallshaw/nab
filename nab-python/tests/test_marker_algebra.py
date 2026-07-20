@@ -12,15 +12,16 @@ import traceback
 
 import pytest
 
-from nab_python._marker_algebra import (
-    ComplexityLimitError,
-    MarkerSet,
-    UnserializableSetError,
-)
 from nab_python._vendor.packaging.markers import (
     InvalidMarker,
     Marker,
     UndefinedEnvironmentName,
+)
+from nab_python._vendor.packaging.markersets import (
+    IntractableMarkerSet,
+    MarkerSet,
+    UnserializableMarkerSet,
+    variable_names,
 )
 
 
@@ -317,7 +318,7 @@ def test_oversized_tilde_literal_reports_complexity(text: str) -> None:
     # A ~= literal whose numeric component overruns the int-from-string limit
     # crashes packaging's Specifier with a bare ValueError at parse time; the
     # bounded guard fires during construction instead.
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         ms(text)
 
 
@@ -574,10 +575,47 @@ def test_restrict_through_complement() -> None:
 # ------------------------------------------------------ variables / literals
 
 
-def test_variables_reports_origins() -> None:
-    marker = ms('python_version >= "3.9" and sys_platform == "linux"')
-    assert marker.variables() == frozenset({"python_version", "sys_platform"})
-    assert MarkerSet.true().variables() == frozenset()
+def test_variable_names_accepts_a_marker_instance() -> None:
+    assert variable_names(Marker('sys_platform == "linux"')) == frozenset(
+        {"sys_platform"}
+    )
+
+
+def test_variable_names_rejects_a_non_marker_argument() -> None:
+    with pytest.raises(TypeError):
+        variable_names(42)  # type: ignore[arg-type]
+
+
+def test_variable_names_of_empty_input_is_empty() -> None:
+    assert variable_names("") == frozenset()
+    assert variable_names("   ") == frozenset()
+
+
+def test_variable_names_of_an_invalid_marker_raises() -> None:
+    with pytest.raises(InvalidMarker):
+        variable_names("this is not a marker")
+
+
+def test_variable_names_walks_nested_and_or_groups() -> None:
+    names = variable_names(
+        'python_full_version === "3.13.5"'
+        ' and (sys_platform == "linux" or os_name == "posix")'
+    )
+    assert names == frozenset({"python_full_version", "sys_platform", "os_name"})
+
+
+def test_variable_names_collects_both_sides_of_a_variable_comparison() -> None:
+    assert variable_names("python_version == python_full_version") == frozenset(
+        {"python_version", "python_full_version"}
+    )
+
+
+def test_variable_names_of_a_literal_only_comparison_is_empty() -> None:
+    assert variable_names('"linux" == "linux"') == frozenset()
+
+
+def test_variable_names_collects_a_literal_that_names_a_variable() -> None:
+    assert variable_names('"3.9" == "python_version"') == frozenset({"python_version"})
 
 
 def test_membership_literals() -> None:
@@ -661,9 +699,9 @@ def test_to_marker_string_none_for_tautology() -> None:
 
 
 def test_to_marker_string_raises_for_empty() -> None:
-    with pytest.raises(UnserializableSetError):
+    with pytest.raises(UnserializableMarkerSet):
         MarkerSet.false().to_marker_string()
-    with pytest.raises(UnserializableSetError):
+    with pytest.raises(UnserializableMarkerSet):
         ms('python_full_version < "0"').to_marker_string()
 
 
@@ -735,12 +773,12 @@ def test_double_negation_serialises() -> None:
 
 
 def test_unserializable_ordered_version_complement() -> None:
-    with pytest.raises(UnserializableSetError):
+    with pytest.raises(UnserializableMarkerSet):
         ms('python_full_version >= "3.9"').complement().to_marker_string()
 
 
 def test_unserializable_twin_equality_complement() -> None:
-    with pytest.raises(UnserializableSetError):
+    with pytest.raises(UnserializableMarkerSet):
         ms('platform_release == "6.6"').complement().to_marker_string()
 
 
@@ -754,13 +792,13 @@ def test_repr_is_stable() -> None:
 
 def test_guard_set_powerset() -> None:
     marker = ms(" and ".join(f'extra == "pkg{i}"' for i in range(20)), max_cells=1000)
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
 def test_guard_substring_enumeration() -> None:
     marker = ms('sys_platform in "abcdefghij"', max_cells=3)
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
@@ -768,7 +806,7 @@ def test_guard_substring_low_entropy() -> None:
     # A repeated-character literal has few distinct substrings but a quadratic
     # index loop; the guard bounds the loop work, so it fires here.
     marker = ms('sys_platform in "' + "a" * 50 + '"', max_cells=100)
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
@@ -777,7 +815,7 @@ def test_guard_version_pool_epoch_elevation() -> None:
     # triggers epoch elevation, whose product is bounded as it is generated.
     epochs = " and ".join(f'python_full_version == "{e}!2.0"' for e in range(1, 16))
     marker = ms(f'python_version == "3.9" and {epochs}', max_cells=1000)
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
@@ -790,13 +828,13 @@ def test_guard_repeated_clause_tree_walk() -> None:
         + [f'"a{i}" in python_version' for i in range(1, 12)]
     )
     marker = ms(" or ".join(f"({axes})" for _ in range(8)))
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
 def test_guard_value_candidates() -> None:
     marker = ms('python_full_version == "3.9"', max_cells=1)
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
@@ -806,7 +844,7 @@ def test_guard_cell_product() -> None:
         'and platform_machine == "x86_64"',
         max_cells=2,
     )
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
@@ -816,7 +854,7 @@ def test_guard_axis_work() -> None:
     marker = ms(
         " or ".join(f'sys_platform == "p{i}"' for i in range(60)), max_cells=100
     )
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
@@ -824,7 +862,7 @@ def test_guard_set_axis_work() -> None:
     # A set axis clears the powerset cap (two subsets) yet its subsets x atoms
     # product does not, so the per-axis reduce guard fires.
     marker = ms('extra == "a" and extra != "a"', max_cells=3)
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
@@ -835,7 +873,7 @@ def test_guard_version_axis_literal_count() -> None:
         " or ".join(f'python_full_version == "{i}.0"' for i in range(200)),
         max_cells=100,
     )
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
@@ -858,21 +896,21 @@ def test_guard_oversized_numeric_literal(text: str) -> None:
     # int-from-string limit crashes packaging's Version with a bare ValueError;
     # the decision procedures report the algebra's bounded failure instead.
     marker = ms(text)
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
 @pytest.mark.parametrize("op", ["<", ">=", "=="])
 def test_evaluate_rejects_oversized_literal(op: str) -> None:
     marker = ms(f'python_full_version {op} "' + "9" * 5000 + '"')
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.evaluate({"python_full_version": "3.9"})
 
 
 @pytest.mark.parametrize("op", ["<", ">=", "=="])
 def test_restrict_rejects_oversized_literal(op: str) -> None:
     marker = ms(f'python_full_version {op} "' + "9" * 5000 + '"')
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.restrict({"python_full_version": "3.9"})
 
 
@@ -893,14 +931,14 @@ def test_string_axis_ignores_oversized_numeric_literal() -> None:
 @pytest.mark.parametrize("op", ["<", ">=", "=="])
 def test_evaluate_rejects_oversized_value(op: str) -> None:
     marker = ms(f'python_full_version {op} "3.9"')
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.evaluate({"python_full_version": "9" * 5000})
 
 
 @pytest.mark.parametrize("op", ["<", ">=", "=="])
 def test_restrict_rejects_oversized_value(op: str) -> None:
     marker = ms(f'python_full_version {op} "3.9"')
-    with pytest.raises(ComplexityLimitError):
+    with pytest.raises(IntractableMarkerSet):
         marker.restrict({"python_full_version": "9" * 5000})
 
 
@@ -931,9 +969,9 @@ def test_mint_overflow_at_parse_limit_reports_complexity() -> None:
     sys.set_int_max_str_digits(limit)
     try:
         marker = ms('python_full_version > "' + "9" * limit + '"')
-        with pytest.raises(ComplexityLimitError):
+        with pytest.raises(IntractableMarkerSet):
             marker.is_empty()
-        with pytest.raises(ComplexityLimitError):
+        with pytest.raises(IntractableMarkerSet):
             marker.witness()
     finally:
         sys.set_int_max_str_digits(original)
@@ -959,7 +997,7 @@ def test_deep_nesting_decision_reports_complexity() -> None:
         # fires below the interpreter limit whatever the ambient limit is.
         sys.setrecursionlimit(len(traceback.extract_stack()) + 300)
         for decide in (deep.is_empty, deep.to_marker_string, deep.witness):
-            with pytest.raises(ComplexityLimitError):
+            with pytest.raises(IntractableMarkerSet):
                 decide()
     finally:
         sys.setrecursionlimit(original)
@@ -974,7 +1012,7 @@ def test_deep_nesting_construction_reports_complexity() -> None:
     original = sys.getrecursionlimit()
     try:
         sys.setrecursionlimit(len(traceback.extract_stack()) + 300)
-        with pytest.raises(ComplexityLimitError):
+        with pytest.raises(IntractableMarkerSet):
             MarkerSet.from_marker(marker)
     finally:
         sys.setrecursionlimit(original)

@@ -18,8 +18,8 @@ import random
 
 import pytest
 
-from nab_python._marker_algebra import MarkerSet
 from nab_python._vendor.packaging.markers import Marker
+from nab_python._vendor.packaging.markersets import MarkerSet
 from nab_python._vendor.packaging.version import Version
 
 # Version values straddle every literal the alphabets use
