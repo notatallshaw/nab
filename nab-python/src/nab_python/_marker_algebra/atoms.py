@@ -351,8 +351,14 @@ def _make_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Formul
 def _make_python_version_atom(op: str, literal: str, *, swapped: bool) -> Formula:
     if op in _MEMBERSHIP and swapped:
         return _make_membership_atom("python_version", op, literal, swapped=swapped)
-    # python_version A1-lowers to major.minor, so the swapped decision RHS is
-    # always two-segment; a two-segment probe matches its validity.
+    if op == "~=" and swapped:
+        # A swapped ~= makes the environment value the specifier bound, so the
+        # true region is the same-major lower-minor band the version pool never
+        # seeds; reject it, as the other version-dispatch axes do.
+        msg = f"{op!r} is undefined on 'python_version' with literal {literal!r}"
+        raise UndefinedComparison(msg)
+    # A1-lowering maps python_version onto major.minor, so a two-segment probe
+    # matches the validity of the non-swapped ~= and === forms.
     _reject_undefined_operator(
         "python_version", op, literal, swapped=swapped, probe="1.0"
     )

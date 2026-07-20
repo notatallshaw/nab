@@ -277,6 +277,10 @@ def test_swapped_atoms() -> None:
         '"1.0" ~= python_full_version',
         'python_full_version === "3.9"',
         '"3.9" === python_full_version',
+        '"1.0" ~= python_version',
+        '"2!0" ~= python_version',
+        '"3.14.0rc1" ~= python_version',
+        '"3.14.0.dev0" ~= python_version',
     ],
 )
 def test_undefined_operator_rejected_at_construction(text: str) -> None:
@@ -287,17 +291,12 @@ def test_undefined_operator_rejected_at_construction(text: str) -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        '"1.0" ~= python_version',
         '"1.0" === python_version',
         'python_version ~= "3.9"',
     ],
 )
 def test_defined_ordered_operator_decides(text: str) -> None:
     assert isinstance(ms(text).is_empty(), bool)
-
-
-def test_swapped_tilde_python_version_decides_empty() -> None:
-    assert ms('"2!0" ~= python_version').is_empty()
 
 
 def test_version_tilde_operator_builds() -> None:
