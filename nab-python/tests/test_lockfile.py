@@ -35,7 +35,7 @@ from nab_python._lockfile.pylock import (
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.markers import Marker
-from nab_python._vendor.packaging.markersets import IntractableMarkerSet
+from nab_python._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 from nab_python._vendor.packaging.pylock import Package, PackageWheel, Pylock
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
@@ -1976,6 +1976,43 @@ class TestMarkerDisjointness:
                 extras=("cpu", "fast-io"),
                 groups=(),
             )
+
+    def test_large_conflict_fork_negation_stays_within_budget(self) -> None:
+        # A fork that negates every co-member of three declared 5-member
+        # sets carries 15 membership atoms.  The conflict-respecting
+        # selection binds all of them, so the pair is decided without
+        # the unrestricted membership powerset that would overrun the
+        # cell budget.
+        envs = {
+            "linux": {
+                "python_version": "3.11",
+                "sys_platform": "linux",
+                "platform_machine": "x86_64",
+            },
+        }
+
+        sets = [tuple(f"{letter}{i}" for i in range(5)) for letter in ("a", "b", "c")]
+        all_names = tuple(name for members in sets for name in members)
+
+        def _fork_marker(picks: tuple[str, ...]) -> str:
+            clauses = [f"'{name}' in extras" for name in picks]
+            for members in sets:
+                clauses += [
+                    f"'{name}' not in extras" for name in members if name not in picks
+                ]
+            return " and ".join(clauses)
+
+        exclusive = [frozenset(("extra", name) for name in members) for members in sets]
+        validate_marker_disjointness(
+            [
+                self._pkg("foo", "1.0", _fork_marker(("a0", "b0", "c0"))),
+                self._pkg("foo", "2.0", _fork_marker(("a1", "b1", "c1"))),
+            ],
+            environments=envs,
+            extras=all_names,
+            groups=(),
+            exclusive_groups=exclusive,
+        )
 
     def test_unreferenced_groups_add_no_membership_axis(self) -> None:
         # Symmetric behaviour for ``dependency_groups``: a project with
@@ -4926,3 +4963,291 @@ class TestLockPruneObservability:
         with caplog.at_level(logging.DEBUG, logger=_BUILDER_LOGGER):
             build_target_lock(provider, _HOST, {"foo": Version("1.0")})
         assert not [r for r in caplog.records if r.name == _BUILDER_LOGGER]
+
+
+def _selection_pin(name: str, version: str) -> IndexPin:
+    # PEP 427 escapes ``-`` to ``_`` in the wheel filename's name field.
+    escaped = canonicalize_name(name).replace("-", "_")
+    return IndexPin(
+        name=name,
+        version=version,
+        index="pypi",
+        wheels=(
+            WheelArtifact(
+                filename=f"{escaped}-{version}-py3-none-any.whl",
+                url=f"https://example.com/{escaped}-{version}-py3-none-any.whl",
+                hashes=(("sha256", "a" * 64),),
+            ),
+        ),
+    )
+
+
+class TestConflictForkNegatedEmission:
+    """A conflict fork's per-package marker negates its conflict co-members.
+
+    nab emits ``"cpu" in extras and "gpu" not in extras`` for the cpu
+    fork, not the bare positive clause, so a PEP 751 consumer that never
+    reads ``[tool.nab].conflicts`` still installs at most one fork.  Built
+    and emitted through nab's own ``write_lock``, then read back by
+    packaging's reference consumer ``Pylock.select``.
+    """
+
+    _BASE: ClassVar[ResolveTarget] = _target(python_version="3.12")
+    _ENV: ClassVar[dict[str, str]] = dict(_target(python_version="3.12").marker_env)
+    _CPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "cpu"),)
+    _GPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "gpu"),)
+
+    def _lock(self) -> Pylock:
+        cpu = self._BASE.with_selection(self._CPU)
+        gpu = self._BASE.with_selection(self._GPU)
+
+        targets = {
+            cpu.label: TargetLock(
+                target=cpu,
+                pins={
+                    "onnxruntime": _selection_pin("onnxruntime", "1.20.0"),
+                    "torch": _selection_pin("torch", "2.5.0"),
+                },
+            ),
+            gpu.label: TargetLock(
+                target=gpu,
+                pins={
+                    "onnxruntime-gpu": _selection_pin("onnxruntime-gpu", "1.20.0"),
+                    "torch": _selection_pin("torch", "2.6.0"),
+                },
+            ),
+        }
+
+        conflicts = (
+            ConflictSet(
+                members=(
+                    ConflictMember(ConflictKind.EXTRA, "cpu"),
+                    ConflictMember(ConflictKind.EXTRA, "gpu"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            ),
+        )
+
+        text = write_lock(
+            LockInput(
+                targets=targets,
+                env_base_names={_env_signature(cpu): frozenset()},
+                extras=("cpu", "gpu"),
+                conflicts=conflicts,
+            )
+        )
+        return Pylock.from_dict(tomllib.loads(text))
+
+    def _select(self, pylock: Pylock, extras: list[str]) -> set[str]:
+        return {
+            str(pkg.name)
+            for pkg, _ in pylock.select(
+                environment=self._ENV,  # type: ignore[arg-type]
+                extras=extras,
+                dependency_groups=(),
+            )
+        }
+
+    def test_emitted_markers_carry_the_negation(self) -> None:
+        pylock = self._lock()
+        by_name = {str(p.name): str(p.marker) for p in pylock.packages}
+        assert '"cpu" in extras and "gpu" not in extras' in by_name["onnxruntime"]
+        assert '"gpu" in extras and "cpu" not in extras' in by_name["onnxruntime-gpu"]
+
+    def test_select_both_extras_installs_neither_conflicting_name(self) -> None:
+        # {cpu, gpu} together matches neither fork's pin.
+        pylock = self._lock()
+        assert self._select(pylock, ["cpu", "gpu"]) == set()
+
+    def test_single_extra_selection_unchanged(self) -> None:
+        pylock = self._lock()
+        assert self._select(pylock, ["cpu"]) == {"onnxruntime", "torch"}
+        assert self._select(pylock, ["gpu"]) == {"onnxruntime-gpu", "torch"}
+
+    def test_empty_extras_selects_nothing(self) -> None:
+        pylock = self._lock()
+        assert self._select(pylock, []) == set()
+
+    def test_same_name_fork_no_double_select(self) -> None:
+        # Both torch entries share a name; {cpu, gpu} selects neither.
+        pylock = self._lock()
+        assert "torch" not in self._select(pylock, ["cpu", "gpu"])
+
+    def test_partitions_are_disjoint_without_the_conflict_universe(self) -> None:
+        # The emitted markers are disjoint with no conflict-declaration
+        # universe; the constraint lives in the marker.
+        pylock = self._lock()
+        by_name = {str(p.name): p.marker for p in pylock.packages}
+        left = MarkerSet.from_marker(str(by_name["onnxruntime"]))
+        right = MarkerSet.from_marker(str(by_name["onnxruntime-gpu"]))
+        assert left.is_disjoint(right)
+
+        torch_markers = [
+            MarkerSet.from_marker(str(p.marker))
+            for p in pylock.packages
+            if str(p.name) == "torch"
+        ]
+        assert len(torch_markers) == 2
+        assert torch_markers[0].is_disjoint(torch_markers[1])
+
+    def test_gate_accepts_partitions_without_the_conflict_universe(self) -> None:
+        # The torch pair passes the gate with empty ``exclusive_groups``;
+        # the negation in the markers makes the entries disjoint.
+        pylock = self._lock()
+        validate_marker_disjointness(
+            pylock.packages,
+            environments={"env": self._ENV},
+            extras=("cpu", "gpu"),
+            groups=(),
+            exclusive_groups=(),
+        )
+
+    def test_two_conflict_sets_negate_only_within_set(self) -> None:
+        # A member is negated only within its own conflict set: cpu
+        # excludes gpu, mkl excludes openblas, never across sets.
+        cpu_mkl = self._BASE.with_selection((("extra", "cpu"), ("extra", "mkl")))
+        gpu_blas = self._BASE.with_selection((("extra", "gpu"), ("extra", "openblas")))
+
+        targets = {
+            cpu_mkl.label: TargetLock(
+                target=cpu_mkl, pins={"fast": _selection_pin("fast", "1.0")}
+            ),
+            gpu_blas.label: TargetLock(
+                target=gpu_blas, pins={"slow": _selection_pin("slow", "1.0")}
+            ),
+        }
+
+        conflicts = (
+            ConflictSet(
+                members=(
+                    ConflictMember(ConflictKind.EXTRA, "cpu"),
+                    ConflictMember(ConflictKind.EXTRA, "gpu"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            ),
+            ConflictSet(
+                members=(
+                    ConflictMember(ConflictKind.EXTRA, "mkl"),
+                    ConflictMember(ConflictKind.EXTRA, "openblas"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            ),
+        )
+
+        text = write_lock(
+            LockInput(
+                targets=targets,
+                env_base_names={_env_signature(cpu_mkl): frozenset()},
+                extras=("cpu", "gpu", "mkl", "openblas"),
+                conflicts=conflicts,
+            )
+        )
+        pylock = Pylock.from_dict(tomllib.loads(text))
+
+        fast = next(str(p.marker) for p in pylock.packages if str(p.name) == "fast")
+        assert '"cpu" in extras' in fast
+        assert '"mkl" in extras' in fast
+        assert '"gpu" not in extras' in fast
+        assert '"openblas" not in extras' in fast
+
+    def test_single_set_draw_negates_only_that_set(self) -> None:
+        # Drawing from one of two sets negates that set's co-members
+        # alone; the other set stays open, so {cpu, mkl} installs cpu.
+        cpu = self._BASE.with_selection((("extra", "cpu"),))
+        gpu = self._BASE.with_selection((("extra", "gpu"),))
+
+        targets = {
+            cpu.label: TargetLock(
+                target=cpu,
+                pins={"onnxruntime": _selection_pin("onnxruntime", "1.20.0")},
+            ),
+            gpu.label: TargetLock(
+                target=gpu,
+                pins={"onnxruntime-gpu": _selection_pin("onnxruntime-gpu", "1.20.0")},
+            ),
+        }
+
+        conflicts = (
+            ConflictSet(
+                members=(
+                    ConflictMember(ConflictKind.EXTRA, "cpu"),
+                    ConflictMember(ConflictKind.EXTRA, "gpu"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            ),
+            ConflictSet(
+                members=(
+                    ConflictMember(ConflictKind.EXTRA, "mkl"),
+                    ConflictMember(ConflictKind.EXTRA, "openblas"),
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            ),
+        )
+
+        text = write_lock(
+            LockInput(
+                targets=targets,
+                env_base_names={_env_signature(cpu): frozenset()},
+                extras=("cpu", "gpu", "mkl", "openblas"),
+                conflicts=conflicts,
+            )
+        )
+        pylock = Pylock.from_dict(tomllib.loads(text))
+
+        cpu_marker = next(
+            str(p.marker) for p in pylock.packages if str(p.name) == "onnxruntime"
+        )
+        assert '"gpu" not in extras' in cpu_marker
+        assert '"mkl" not in extras' not in cpu_marker
+        assert '"openblas" not in extras' not in cpu_marker
+        assert self._select(pylock, ["cpu", "mkl"]) == {"onnxruntime"}
+
+    def test_three_large_sets_write_lock_within_budget(self) -> None:
+        # Three declared 5-member at-most-one sets, each fork drawing one
+        # member per set, so every per-package marker negates 12
+        # co-members.  The disjointness gate binds them through the
+        # selection instead of the full membership powerset, so the lock
+        # is written rather than raising IntractableMarkerSet.
+        sets = [tuple(f"{letter}{i}" for i in range(5)) for letter in ("a", "b", "c")]
+        all_names = tuple(name for members in sets for name in members)
+
+        fork_one = self._BASE.with_selection(
+            (("extra", "a0"), ("extra", "b0"), ("extra", "c0"))
+        )
+        fork_two = self._BASE.with_selection(
+            (("extra", "a1"), ("extra", "b1"), ("extra", "c1"))
+        )
+
+        targets = {
+            fork_one.label: TargetLock(
+                target=fork_one, pins={"torch": _selection_pin("torch", "2.5.0")}
+            ),
+            fork_two.label: TargetLock(
+                target=fork_two, pins={"torch": _selection_pin("torch", "2.6.0")}
+            ),
+        }
+
+        conflicts = tuple(
+            ConflictSet(
+                members=tuple(
+                    ConflictMember(ConflictKind.EXTRA, name) for name in members
+                ),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            )
+            for members in sets
+        )
+
+        text = write_lock(
+            LockInput(
+                targets=targets,
+                env_base_names={_env_signature(fork_one): frozenset()},
+                extras=all_names,
+                conflicts=conflicts,
+            )
+        )
+        pylock = Pylock.from_dict(tomllib.loads(text))
+
+        torch_versions = {
+            str(p.version) for p in pylock.packages if str(p.name) == "torch"
+        }
+        assert torch_versions == {"2.5.0", "2.6.0"}

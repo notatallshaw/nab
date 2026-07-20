@@ -73,12 +73,12 @@ member:
 [[packages]]
 name = "black"
 version = "22.1.0"
-marker = "... and \"black22\" in dependency_groups"
+marker = "... and \"black22\" in dependency_groups and \"black23\" not in dependency_groups and \"black24\" not in dependency_groups"
 
 [[packages]]
 name = "black"
 version = "23.12.0"
-marker = "... and \"black23\" in dependency_groups"
+marker = "... and \"black23\" in dependency_groups and \"black22\" not in dependency_groups and \"black24\" not in dependency_groups"
 ```
 
 The requirements formats name a fork with the `{selection}` variable in
@@ -131,11 +131,14 @@ conjunction across those sets; this stays correct for one set, the
 common case.
 
 The lockfile stays within PEP 751: the membership markers use the
-standard `extras` and `dependency_groups` variables, and the install
-context that would activate two members of one set is pruned by the
-declared conflict, so the two entries never collide for a reader. A
-collision that is *not* covered by a declared conflict still raises a
-`DisjointnessError`, now with a hint pointing at the `conflicts` key.
+standard `extras` and `dependency_groups` variables, and each fork's
+marker negates the co-members of every conflict set it draws from
+(`"cpu" in extras and "gpu" not in extras`), so the forks are mutually
+exclusive in the markers themselves. A PEP 751 consumer that never
+reads `[tool.nab].conflicts` still installs at most one fork; the two
+entries cannot collide for a reader. A collision that is *not* covered
+by a declared conflict still raises a `DisjointnessError`, with a hint
+pointing at the `conflicts` key.
 
 ## Trade-offs
 

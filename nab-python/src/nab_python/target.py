@@ -660,8 +660,9 @@ class ResolveTarget:
     ``(kind, name)`` members (``kind`` is ``"extra"`` or ``"group"``)
     active in this fork's resolve, empty for an unforked one.  When set,
     it adds a ``'name' in extras`` / ``'name' in dependency_groups``
-    clause to :attr:`marker_string` so the lockfile entry fires only
-    when the user selects that member.
+    clause to :attr:`marker_string`; the lockfile emitter derives the
+    per-package marker, which also negates the co-members of the conflict
+    sets that forbid co-selection, from it.
 
     ``platform_spec`` is set on a declared (matrix) target and names the
     tag knobs it was expanded from; a host target has none.
@@ -836,13 +837,15 @@ class ResolveTarget:
 
     @property
     def marker_string(self) -> str:
-        """Return the per-package PEP 508 marker that selects this target.
+        """Return :attr:`environment_marker_string` plus a bare membership clause.
 
-        This is :attr:`environment_marker_string` plus a bare membership
-        clause per active conflict-fork member.  The emit-time
-        disjointness validator prunes the install contexts that activate
-        two members of one declared conflict, so the bare clause needs no
-        ``not in`` negation against the other members.
+        Each ``(kind, name)`` member of :attr:`selection` adds
+        ``'name' in extras`` / ``'name' in dependency_groups`` in sorted
+        order.  The clause is bare: it names the members this fork
+        selects, not the co-members it excludes.  The lockfile emitter
+        derives the mutually-exclusive per-package marker, which also
+        negates the co-members of the conflict sets that forbid
+        co-selection, from the target's environment and selection.
         """
         marker = self.environment_marker_string
         for kind, name in sorted(self.selection):

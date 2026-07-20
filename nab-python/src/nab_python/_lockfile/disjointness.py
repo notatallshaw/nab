@@ -98,8 +98,8 @@ def validate_marker_disjointness(
     ``[tool.nab].conflicts``: each entry is a set of ``(kind, name)``
     members (``kind`` is ``"extra"`` or ``"group"``) of which at most
     one may be active.  Their co-selection points are removed from the
-    universe, so a universal lock can carry one fork per conflicting
-    extra/group under bare ``'name' in extras`` markers.  A collision
+    universe, so a same-name pair that can fire together only at a
+    forbidden co-selection is not counted as a collision.  A collision
     outside every pruned point still raises, hinting at the
     ``conflicts`` key when extras or groups drive the colliding markers.
 
@@ -289,10 +289,10 @@ def _pair_collision(
     fold to constants, leaving the membership residual).  Each
     conflict-respecting selection binds the membership variables, so the
     pair collides in that environment when both bound residuals stay
-    non-empty together.  On a collision the label, the
-    environment, and a concrete satisfying assignment (the selection
-    merged with :meth:`MarkerSet.witness`) are returned; the witness is
-    ``None`` when the first colliding selection is an opaque-``contains``
+    non-empty together.  On a collision the label, the environment, and a
+    concrete satisfying assignment (the selection merged with
+    :meth:`MarkerSet.witness`) are returned; the witness is ``None`` when
+    the first colliding selection is an opaque-``contains``
     over-approximation the algebra cannot reduce to a point.
     """
     for label, env in distinct_environments:
