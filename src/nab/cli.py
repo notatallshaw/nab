@@ -445,6 +445,24 @@ def _require_pyproject_file(path: Path) -> None:
         sys.exit(1)
 
 
+def _project_cli_overrides_or_exit(project_overrides: Mapping[str, object]) -> None:
+    """Exit 1 when a ``--project-*`` override has a bad value, naming the flag.
+
+    These overrides otherwise reach validation only through the
+    ``[tool.nab]`` parse in :func:`_load_config`, which stamps every error
+    ``in [tool.nab]:`` and points at a table the project may not have.
+    Parsing them here surfaces the error against the flag instead.
+    """
+    for spec in OPTIONS:
+        if spec.key not in project_overrides:
+            continue
+        try:
+            build_cli_layer({spec.key: project_overrides[spec.key]})
+        except SourceConfigError as exc:
+            printer().error(f"{spec.cli_flag}: {exc}")
+            sys.exit(1)
+
+
 def _load_config(
     path: Path,
     *,
