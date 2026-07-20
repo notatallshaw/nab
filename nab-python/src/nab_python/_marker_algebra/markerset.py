@@ -183,7 +183,7 @@ class MarkerSet:
 
         ``None`` is returned for the empty set, and may also be returned for a
         non-empty set when a value constraint and a substring (``contains``)
-        constraint on the same axis have no jointly realisable environment.
+        constraint on the same axis have no jointly realisable cell representative.
         ``python_version`` and ``python_full_version`` share one axis, so the
         two constraints can sit on different variables.
         """
