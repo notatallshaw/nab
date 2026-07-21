@@ -56,6 +56,7 @@ class UnserializableMarkerSet(ValueError):
     Subclasses :class:`ValueError` to match packaging's marker exceptions.
     """
 
+
 # Axis kinds. Atoms on the same axis share one cell partition and are each
 # constant on every one of its cells.
 AXIS_VALUE = "value"
@@ -1263,3 +1264,19 @@ def serialize(node: Formula) -> str:
         return " or ".join(_paren(child) for child in node.children)
     msg = "a bare constant has no marker-atom spelling"  # pragma: no cover
     raise RuntimeError(msg)  # pragma: no cover
+
+
+def describe(node: Formula) -> str:
+    """A short human summary of a set, for :func:`repr`. Total and never raises.
+
+    Renders the constant sets as words and any other set as its marker string,
+    falling back to a placeholder for a complement the grammar cannot spell. It
+    never exposes the private op-tree and never raises, so a ``MarkerSet`` is
+    always safe to print, including inside a traceback.
+    """
+    if isinstance(node, BoolConst):
+        return "universe" if node.value else "empty"
+    try:
+        return serialize(to_nnf(node))
+    except UnserializableMarkerSet:
+        return "unrepresentable"

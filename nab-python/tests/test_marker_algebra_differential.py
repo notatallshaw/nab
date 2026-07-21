@@ -168,7 +168,7 @@ def test_decisions_are_never_unsound() -> None:
         sa, sb = MarkerSet.from_marker(ta), MarkerSet.from_marker(tb)
         if sa.is_disjoint(sb):
             assert _grid_disjoint(pa, pb), ("disjoint", ta, tb)
-        if sa.implies(sb):
+        if sa.is_subset(sb):
             assert _grid_implies(pa, pb), ("implies", ta, tb)
         if sa.equivalent(sb):
             assert _grid_equivalent(pa, pb), ("equivalent", ta, tb)
@@ -184,7 +184,7 @@ def test_is_empty_and_tautology_never_unsound() -> None:
         algebra = MarkerSet.from_marker(text)
         if algebra.is_empty():
             assert not any(marker.evaluate(e) for e in GRID), ("empty", text)
-        if algebra.is_tautology():
+        if algebra.is_full():
             assert all(marker.evaluate(e) for e in GRID), ("tautology", text)
 
 
@@ -201,7 +201,7 @@ def _rand(rng: random.Random) -> MarkerSet:
 def test_boolean_algebra_laws(seed: int) -> None:
     rng = random.Random(seed)  # noqa: S311
     a, b, c = _rand(rng), _rand(rng), _rand(rng)
-    t, f = MarkerSet.true(), MarkerSet.false()
+    t, f = MarkerSet.full(), MarkerSet.empty()
 
     assert (a & b).complement().equivalent(a.complement() | b.complement())
     assert (a | b).complement().equivalent(a.complement() & b.complement())
@@ -214,5 +214,5 @@ def test_boolean_algebra_laws(seed: int) -> None:
     assert (a | f).equivalent(a)
     assert (a | t).equivalent(t)
     assert (a & f).equivalent(f)
-    assert (a | a.complement()).is_tautology()
+    assert (a | a.complement()).is_full()
     assert (a & a.complement()).is_empty()

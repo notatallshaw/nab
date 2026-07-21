@@ -12,6 +12,7 @@ import traceback
 
 import pytest
 
+from nab_python._vendor.packaging import markersets
 from nab_python._vendor.packaging.markers import (
     InvalidMarker,
     Marker,
@@ -25,8 +26,8 @@ from nab_python._vendor.packaging.markersets import (
 )
 
 
-def ms(text: str, **kw: int) -> MarkerSet:
-    return MarkerSet.from_marker(text, **kw)
+def ms(text: str) -> MarkerSet:
+    return MarkerSet.from_marker(text)
 
 
 # --------------------------------------------------------------- acceptance
@@ -51,7 +52,7 @@ def test_pep751_same_variable_partitions() -> None:
     cpu = ms('"cpu" in extras')
     not_cpu = ms('"cpu" not in extras')
     assert cpu.is_disjoint(not_cpu)
-    assert (cpu | not_cpu).is_tautology()
+    assert (cpu | not_cpu).is_full()
 
 
 def test_a1_python_version_contradiction() -> None:
@@ -63,11 +64,11 @@ def test_a1_python_version_contradiction() -> None:
 
 def test_prerelease_carve_out_314rc1() -> None:
     naive = ms('python_full_version < "3.14"') | ms('python_full_version >= "3.14"')
-    assert not naive.is_tautology()
+    assert not naive.is_full()
     corrected = ms('python_full_version < "3.14"') | ms(
         'python_full_version >= "3.14.dev0"'
     )
-    assert corrected.is_tautology()
+    assert corrected.is_full()
     assert ms('python_full_version < "3.14"').is_disjoint(
         ms('python_full_version >= "3.14"')
     )
@@ -76,7 +77,7 @@ def test_prerelease_carve_out_314rc1() -> None:
 def test_exclusive_above_prerelease_literal() -> None:
     above = ms('python_full_version > "3.14.0rc1"')
     from_final = ms('python_full_version >= "3.14"')
-    assert not above.implies(from_final)
+    assert not above.is_subset(from_final)
     assert not above.equivalent(from_final)
     gap = above & from_final.complement()
     assert not gap.is_empty()
@@ -87,9 +88,9 @@ def test_exclusive_above_post_release_literal() -> None:
     covered = ms('python_full_version <= "3.14.0.post1"') | ms(
         'python_full_version > "3.14"'
     )
-    assert not covered.is_tautology()
+    assert not covered.is_full()
     above = ms('python_full_version > "3.14.0rc1.post1"')
-    assert not above.implies(ms('python_full_version > "3.14.0rc1"'))
+    assert not above.is_subset(ms('python_full_version > "3.14.0rc1"'))
     band = ms('python_full_version > "3.14.0.post5"') & ms(
         'python_full_version < "3.14.1"'
     )
@@ -138,7 +139,7 @@ def test_m1_string_ordering_non_negation() -> None:
     less = ms('sys_platform < "linux"')
     greater_equal = ms('sys_platform >= "linux"')
     assert not less.complement().equivalent(greater_equal)
-    assert not (less | greater_equal).is_tautology()
+    assert not (less | greater_equal).is_full()
     assert less.is_empty()  # < is constant-false on a string variable.
 
 
@@ -147,13 +148,13 @@ def test_uv_comma_list_non_collapse() -> None:
 
 
 def test_deplogic_tautology() -> None:
-    assert ms('os_name == "a" or os_name == "b" or os_name != "a"').is_tautology()
+    assert ms('os_name == "a" or os_name == "b" or os_name != "a"').is_full()
 
 
 def test_poetry_allows_all_not_in() -> None:
     notin = ms('"x86" not in platform_machine')
     neq = ms('platform_machine != "arm"')
-    assert not notin.implies(neq)
+    assert not notin.is_subset(neq)
 
 
 def test_parenthesisation_round_trip() -> None:
@@ -171,10 +172,10 @@ def test_parenthesisation_round_trip() -> None:
 
 
 def test_true_false_and_absent_marker() -> None:
-    assert MarkerSet.true().is_tautology()
-    assert MarkerSet.false().is_empty()
-    assert ms("").is_tautology()
-    assert ms("   ").is_tautology()
+    assert MarkerSet.full().is_full()
+    assert MarkerSet.empty().is_empty()
+    assert ms("").is_full()
+    assert ms("   ").is_full()
 
 
 def test_from_marker_accepts_marker_object() -> None:
@@ -196,14 +197,10 @@ def test_from_marker_rejects_malformed_string() -> None:
         Marker("sys_platform ==")
 
 
-def test_max_cells_must_be_positive() -> None:
-    for factory in (
-        lambda: MarkerSet.true(max_cells=0),
-        lambda: MarkerSet.false(max_cells=-1),
-        lambda: ms('sys_platform == "linux"', max_cells=0),
-    ):
-        with pytest.raises(ValueError, match="max_cells"):
-            factory()
+def test_direct_construction_is_refused() -> None:
+    # The op-tree is private; a set is built only through the factories.
+    with pytest.raises(TypeError, match="from_marker"):
+        MarkerSet()  # type: ignore[call-arg]
 
 
 # ----------------------------------------------------------------- algebra
@@ -212,19 +209,19 @@ def test_max_cells_must_be_positive() -> None:
 def test_and_or_complement() -> None:
     a = ms('sys_platform == "linux"')
     b = ms('os_name == "posix"')
-    assert (a & b).implies(a)
-    assert a.implies(a | b)
+    assert (a & b).is_subset(a)
+    assert a.is_subset(a | b)
     assert a.complement().is_disjoint(a)
-    assert (a | a.complement()).is_tautology()
+    assert (a | a.complement()).is_full()
 
 
 def test_double_complement_and_identity_folding() -> None:
     a = ms('sys_platform == "linux"')
     assert a.complement().complement().equivalent(a)
-    assert (a & MarkerSet.true()).equivalent(a)
-    assert (a | MarkerSet.false()).equivalent(a)
-    assert (a | MarkerSet.true()).is_tautology()
-    assert (a & MarkerSet.false()).is_empty()
+    assert (a & MarkerSet.full()).equivalent(a)
+    assert (a | MarkerSet.empty()).equivalent(a)
+    assert (a | MarkerSet.full()).is_full()
+    assert (a & MarkerSet.empty()).is_empty()
 
 
 def test_and_of_identical_atoms_dedupes() -> None:
@@ -232,12 +229,36 @@ def test_and_of_identical_atoms_dedupes() -> None:
     assert (a & a).equivalent(a)
 
 
+def test_named_algebra_matches_operators() -> None:
+    a = ms('sys_platform == "linux"')
+    b = ms('os_name == "posix"')
+    assert a.intersection(b).equivalent(a & b)
+    assert a.union(b).equivalent(a | b)
+    assert a.complement().equivalent(~a)
+
+
+def test_is_superset_mirrors_is_subset() -> None:
+    inner = ms('sys_platform == "linux"')
+    outer = ms('sys_platform == "linux"') | ms('os_name == "posix"')
+    assert outer.is_superset(inner)
+    assert not inner.is_superset(outer)
+
+
+def test_operators_reject_foreign_operands() -> None:
+    a = ms('sys_platform == "linux"')
+    for other in ("linux", 3, None):
+        assert a.__and__(other) is NotImplemented
+        assert a.__or__(other) is NotImplemented
+    with pytest.raises(TypeError):
+        _ = a & "linux"  # type: ignore[operator]
+
+
 # ------------------------------------------------- leaf-shape edge cases
 
 
 def test_variable_vs_variable_is_faithful() -> None:
     # packaging turns the RHS variable name into the literal; the two differ.
-    assert not ms("os_name == sys_platform").is_tautology()
+    assert not ms("os_name == sys_platform").is_full()
     assert ms("os_name == sys_platform").evaluate(
         {"os_name": "sys_platform", "sys_platform": "sys_platform"}
     )
@@ -247,7 +268,7 @@ def test_variable_vs_variable_is_faithful() -> None:
 
 
 def test_const_vs_const_folds() -> None:
-    assert ms('"linux" == "linux"').is_tautology()
+    assert ms('"linux" == "linux"').is_full()
     assert ms('"linux" == "win32"').is_empty()
 
 
@@ -428,7 +449,7 @@ def test_implementation_version_is_version_or_string_twin() -> None:
     ver = ms('implementation_version == "foo"')
     assert not ver.is_empty()
     assert ver.witness() is not None
-    assert not ms('implementation_version != "foo"').is_tautology()
+    assert not ms('implementation_version != "foo"').is_full()
     assert not ms('"foo" in implementation_version').is_empty()
     for text in (
         'implementation_version == "foo"',
@@ -447,7 +468,7 @@ def test_epoch_version_decisions_are_sound() -> None:
     high = ms('python_full_version >= "3.14"')
     low_mm = ms('python_version < "3.14"')
     assert not high.is_disjoint(low_mm)
-    assert not high.implies(ms('python_version >= "3.10"'))
+    assert not high.is_subset(ms('python_version >= "3.10"'))
     assert not ms(
         'python_full_version >= "3.14" and python_version == "3.9"'
     ).is_empty()
@@ -460,7 +481,7 @@ def test_epoch_literal_pure_axis_decisions_are_sound() -> None:
     above = ms('python_full_version > "1!3.9"')
     band = ms('python_full_version ~= "1!3.9"')
     at_or_above = ms('python_full_version >= "1!3.9"')
-    assert not above.implies(band)
+    assert not above.is_subset(band)
     assert not at_or_above.equivalent(band)
     residue = above & band.complement()
     assert not residue.is_empty()
@@ -484,7 +505,7 @@ def test_epoch_gap_between_literals_is_sound() -> None:
         'python_full_version >= "2!0" or python_version != "3.10" '
         'or python_full_version <= "3.14.dev0"'
     )
-    assert not ms(taut_text).is_tautology()
+    assert not ms(taut_text).is_full()
 
 
 def test_membership_substrings_mint_epoch_twins() -> None:
@@ -505,7 +526,7 @@ def test_membership_epoch_twin_witnesses_non_implication() -> None:
     # wrongly proven.
     compat = ms('python_full_version ~= "1!3.9"')
     member = ms('python_version in "3.9 3.10 3.11"')
-    assert not compat.implies(member)
+    assert not compat.is_subset(member)
 
 
 # --------------------------------------------------------------- restrict
@@ -518,30 +539,30 @@ def test_restrict_residual_and_full() -> None:
     dropped = marker.restrict({"sys_platform": "win32"})
     assert dropped.is_empty()
     full = marker.restrict({"python_full_version": "3.10.0", "sys_platform": "linux"})
-    assert full.is_tautology()
+    assert full.is_full()
 
 
 def test_restrict_python_version_key_variants() -> None:
     marker = ms('python_version >= "3.10"')
-    assert marker.restrict({"python_full_version": "3.10.1"}).is_tautology()
+    assert marker.restrict({"python_full_version": "3.10.1"}).is_full()
     assert marker.restrict({"python_version": "3.9"}).is_empty()
     assert marker.restrict({"sys_platform": "linux"}).equivalent(marker)
 
 
 def test_restrict_extras_and_contains() -> None:
     extras = ms('"cpu" in extras')
-    assert extras.restrict({"extras": {"cpu"}}).is_tautology()
+    assert extras.restrict({"extras": {"cpu"}}).is_full()
     assert extras.restrict({"extras": set()}).is_empty()
     assert extras.restrict({"sys_platform": "linux"}).equivalent(extras)
     contains = ms('"x86" in platform_machine')
-    assert contains.restrict({"platform_machine": "x86_64"}).is_tautology()
+    assert contains.restrict({"platform_machine": "x86_64"}).is_full()
     assert contains.restrict({"platform_machine": "arm64"}).is_empty()
     assert contains.restrict({"sys_platform": "linux"}).equivalent(contains)
 
 
 def test_restrict_extra_as_string_value() -> None:
     marker = ms('extra == "cpu"')
-    assert marker.restrict({"extra": "cpu"}).is_tautology()
+    assert marker.restrict({"extra": "cpu"}).is_full()
     assert marker.restrict({"extra": ""}).is_empty()
 
 
@@ -554,7 +575,7 @@ def test_restrict_error_policy() -> None:
         {"python_full_version": "3.10.0", "sys_platform": "linux"},
         on_unknown_variable="error",
     )
-    assert restricted.is_tautology()
+    assert restricted.is_full()
 
 
 def test_restrict_rejects_bad_policy() -> None:
@@ -563,12 +584,12 @@ def test_restrict_rejects_bad_policy() -> None:
 
 
 def test_restrict_constant_set() -> None:
-    assert MarkerSet.true().restrict({"sys_platform": "linux"}).is_tautology()
+    assert MarkerSet.full().restrict({"sys_platform": "linux"}).is_full()
 
 
 def test_restrict_through_complement() -> None:
     marker = ms('sys_platform == "linux"').complement()
-    assert marker.restrict({"sys_platform": "win32"}).is_tautology()
+    assert marker.restrict({"sys_platform": "win32"}).is_full()
     assert marker.restrict({"sys_platform": "linux"}).is_empty()
 
 
@@ -630,7 +651,7 @@ def test_membership_literals() -> None:
 
 
 def test_witness_of_empty_is_none() -> None:
-    assert MarkerSet.false().witness() is None
+    assert MarkerSet.empty().witness() is None
     assert ms('python_full_version < "0"').witness() is None
 
 
@@ -642,7 +663,7 @@ def test_witness_of_value_set_satisfies() -> None:
 
 
 def test_witness_of_tautology() -> None:
-    env = MarkerSet.true().witness()
+    env = MarkerSet.full().witness()
     assert env == {}
 
 
@@ -702,13 +723,13 @@ def test_witness_of_python_version_value_satisfies_packaging() -> None:
 
 
 def test_to_marker_string_none_for_tautology() -> None:
-    assert MarkerSet.true().to_marker_string() is None
+    assert MarkerSet.full().to_marker_string() is None
     assert ms('os_name == "a" or os_name != "a"').to_marker_string() is None
 
 
 def test_to_marker_string_raises_for_empty() -> None:
     with pytest.raises(UnserializableMarkerSet):
-        MarkerSet.false().to_marker_string()
+        MarkerSet.empty().to_marker_string()
     with pytest.raises(UnserializableMarkerSet):
         ms('python_full_version < "0"').to_marker_string()
 
@@ -790,39 +811,56 @@ def test_unserializable_twin_equality_complement() -> None:
         ms('platform_release == "6.6"').complement().to_marker_string()
 
 
-def test_repr_is_stable() -> None:
-    assert "MarkerSet" in repr(ms('sys_platform == "linux"'))
-    assert "MarkerSet" in repr(MarkerSet.true())
+def test_repr_summarises_without_leaking_the_tree() -> None:
+    # repr renders a marker-string summary, never the private op-tree, and never
+    # raises: the constant sets read as words, a plain set as its marker string,
+    # and a grammar-inexpressible complement as a placeholder.
+    assert (
+        repr(ms('sys_platform == "linux"')) == "<MarkerSet 'sys_platform == \"linux\"'>"
+    )
+    assert repr(MarkerSet.full()) == "<MarkerSet 'universe'>"
+    assert repr(MarkerSet.empty()) == "<MarkerSet 'empty'>"
+    assert repr(~ms('python_full_version >= "3.10"')) == "<MarkerSet 'unrepresentable'>"
+    for rendered in (
+        repr(ms('sys_platform == "linux"')),
+        repr(~ms('python_full_version >= "3.10"')),
+    ):
+        assert "AtomLeaf" not in rendered
+        assert "NotNode" not in rendered
 
 
 # ------------------------------------------------------------------ guards
 
 
-def test_guard_set_powerset() -> None:
-    marker = ms(" and ".join(f'extra == "pkg{i}"' for i in range(20)), max_cells=1000)
+def test_guard_set_powerset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 1000)
+    marker = ms(" and ".join(f'extra == "pkg{i}"' for i in range(20)))
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
-def test_guard_substring_enumeration() -> None:
-    marker = ms('sys_platform in "abcdefghij"', max_cells=3)
+def test_guard_substring_enumeration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 3)
+    marker = ms('sys_platform in "abcdefghij"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
-def test_guard_substring_low_entropy() -> None:
+def test_guard_substring_low_entropy(monkeypatch: pytest.MonkeyPatch) -> None:
     # A repeated-character literal has few distinct substrings but a quadratic
     # index loop; the guard bounds the loop work, so it fires here.
-    marker = ms('sys_platform in "' + "a" * 50 + '"', max_cells=100)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 100)
+    marker = ms('sys_platform in "' + "a" * 50 + '"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
-def test_guard_version_pool_epoch_elevation() -> None:
+def test_guard_version_pool_epoch_elevation(monkeypatch: pytest.MonkeyPatch) -> None:
     # Mixing python_version with many distinct-epoch python_full_version atoms
     # triggers epoch elevation, whose product is bounded as it is generated.
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 1000)
     epochs = " and ".join(f'python_full_version == "{e}!2.0"' for e in range(1, 16))
-    marker = ms(f'python_version == "3.9" and {epochs}', max_cells=1000)
+    marker = ms(f'python_version == "3.9" and {epochs}')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
@@ -840,47 +878,46 @@ def test_guard_repeated_clause_tree_walk() -> None:
         marker.is_empty()
 
 
-def test_guard_value_candidates() -> None:
-    marker = ms('python_full_version == "3.9"', max_cells=1)
+def test_guard_value_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 1)
+    marker = ms('python_full_version == "3.9"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
-def test_guard_cell_product() -> None:
+def test_guard_cell_product(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 2)
     marker = ms(
         'sys_platform == "linux" and os_name == "posix" '
-        'and platform_machine == "x86_64"',
-        max_cells=2,
+        'and platform_machine == "x86_64"'
     )
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
-def test_guard_axis_work() -> None:
+def test_guard_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
     # Many distinct atoms on one axis: the point count stays under the cap but
     # points x atoms does not, so the guard fires instead of doing O(N^2) work.
-    marker = ms(
-        " or ".join(f'sys_platform == "p{i}"' for i in range(60)), max_cells=100
-    )
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 100)
+    marker = ms(" or ".join(f'sys_platform == "p{i}"' for i in range(60)))
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
-def test_guard_set_axis_work() -> None:
+def test_guard_set_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
     # A set axis clears the powerset cap (two subsets) yet its subsets x atoms
     # product does not, so the per-axis reduce guard fires.
-    marker = ms('extra == "a" and extra != "a"', max_cells=3)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 3)
+    marker = ms('extra == "a" and extra != "a"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
-def test_guard_version_axis_literal_count() -> None:
+def test_guard_version_axis_literal_count(monkeypatch: pytest.MonkeyPatch) -> None:
     # Many distinct version literals already exceed the cap; the axis is
     # rejected up front, before the neighbour pool is materialised.
-    marker = ms(
-        " or ".join(f'python_full_version == "{i}.0"' for i in range(200)),
-        max_cells=100,
-    )
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 100)
+    marker = ms(" or ".join(f'python_full_version == "{i}.0"' for i in range(200)))
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
@@ -1034,7 +1071,7 @@ def test_other_cell_survives_literal_collision() -> None:
     # so a string field keeps its two cells whatever the literal spells.
     for literal in ("zzz-no-literal-equals-this", "z" * 40, ""):
         marker = ms(f'sys_platform == "{literal}"')
-        assert not marker.is_tautology()
+        assert not marker.is_full()
         assert not marker.evaluate({"sys_platform": "linux"})
         assert marker.evaluate({"sys_platform": literal})
 
