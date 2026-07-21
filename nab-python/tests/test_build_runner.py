@@ -24,6 +24,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import build
 import pytest
 from installer.utils import SCHEME_NAMES, Scheme
 
@@ -621,6 +622,105 @@ class TestBuildWheelExtraction:
 
         with pytest.raises(BuildBackendError, match="no .dist-info"):
             _build_wheel_and_extract(_Builder(), tmp_path)  # type: ignore[arg-type]
+
+
+class TestRunBuildBackendCorruptBuiltWheel:
+    """A ``build_wheel`` hook that succeeds but emits an unreadable wheel must
+    normalize to ``BuildBackendError``, not leak the ``zipfile.BadZipFile`` from
+    reading the wheel back nor the bare ``ValueError`` ``build`` raises for an
+    unparseable wheel name. The read-back sits outside the hook-error wrapper on
+    both the ``build.metadata_path`` fallback and the runner's own skip path.
+    """
+
+    def _pyproject(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            "[build-system]\n"
+            "requires = []\n"
+            'build-backend = "nab_test_backend"\n'
+            'backend-path = ["."]\n',
+            encoding="utf-8",
+        )
+
+    def _mock_env(self) -> MagicMock:
+        env = MagicMock()
+        env.__enter__ = MagicMock(return_value=env)
+        env.__exit__ = MagicMock(return_value=None)
+        return env
+
+    def _corrupt_building_project(self, wheel_name: str) -> MagicMock:
+        """A project whose ``build_wheel`` writes non-zip bytes and returns
+        ``wheel_name``. ``prepare`` returns None so ``metadata_path`` runs
+        ``build``'s real build_wheel fallback, whose read-back hits the real
+        ``parse_wheel_filename`` and ``zipfile.ZipFile``.
+        """
+        project = MagicMock()
+        project.get_requires_for_build.return_value = []
+        project.prepare.return_value = None
+
+        def fake_build(_dist: str, outdir: str, *_a: object, **_k: object) -> str:
+            path = Path(outdir) / wheel_name
+            path.write_bytes(b"not a zip")
+            return str(path)
+
+        project.build.side_effect = fake_build
+        project.metadata_path.side_effect = lambda outdir: (
+            build.ProjectBuilder.metadata_path(project, outdir)
+        )
+        return project
+
+    def _run(
+        self, tmp_path: Path, config: NabProjectConfig, project: MagicMock
+    ) -> None:
+        with (
+            patch(
+                "nab_python._build.runner.NabBuildEnv",
+                return_value=self._mock_env(),
+            ),
+            patch(
+                "nab_python._build.runner.build.ProjectBuilder.from_isolated_env",
+                return_value=project,
+            ),
+            pytest.raises(BuildBackendError, match="unreadable wheel"),
+        ):
+            run_build_backend(tmp_path, config=config)
+
+    def test_default_path_corrupt_wheel_wrapped(
+        self, tmp_path: Path, config: NabProjectConfig
+    ) -> None:
+        """The backend has no prepare hook, so ``build.metadata_path`` builds a
+        wheel and reads it with ``zipfile.ZipFile`` after the hook wrapper; a
+        corrupt wheel raises ``BadZipFile`` there, which the runner normalizes.
+        """
+        self._pyproject(tmp_path)
+        self._run(
+            tmp_path, config, self._corrupt_building_project("foo-1.0-py3-none-any.whl")
+        )
+
+    def test_invalid_wheel_name_wrapped(
+        self, tmp_path: Path, config: NabProjectConfig
+    ) -> None:
+        """``build.metadata_path`` raises a bare ``ValueError('Invalid wheel')``
+        when the built wheel's name does not parse; the runner normalizes it.
+        """
+        self._pyproject(tmp_path)
+        self._run(tmp_path, config, self._corrupt_building_project("garbage.whl"))
+
+    def test_skip_prepare_corrupt_wheel_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On the skip-prepare path the runner's own ``_build_wheel_and_extract``
+        reads the built wheel; a corrupt wheel there normalizes as well.
+        """
+        from nab_python._build import runner as runner_mod
+
+        self._pyproject(tmp_path)
+        monkeypatch.setattr(runner_mod, "_should_skip_prepare", lambda *_a: True)
+        self._run(
+            tmp_path, config, self._corrupt_building_project("foo-1.0-py3-none-any.whl")
+        )
 
 
 class TestRunBuildBackendDefaults:
