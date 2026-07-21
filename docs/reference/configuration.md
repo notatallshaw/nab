@@ -525,10 +525,14 @@ every `build-policy` level.  Dynamic dependencies require
 
 ## Pinned VCS sources
 
-`[[tool.nab.vcs-sources]]` pins a package to a VCS URL.  Requires
-`vcs.policy = "allow"`; reading static dependencies works at any
-`build-policy`.  Dynamic dependencies on a VCS clone require
-`build-policy = "build-remote"`.
+`[[tool.nab.vcs-sources]]` pins a package to a VCS URL.  Each URL
+passes the same `[tool.nab.vcs]` gate as a direct-URL requirement:
+beyond `vcs.policy = "allow"`, the URL's scheme must be listed in
+`vcs.allowed-schemes` and its repository in `vcs.allowed-repos`, both
+empty by default so each denies every URL until an entry is added, and
+the URL must pin a 40-char commit hash unless `vcs.require-pin = false`.
+Reading static dependencies works at any `build-policy`.  Dynamic
+dependencies on a VCS clone require `build-policy = "build-remote"`.
 
 ```toml
 [[tool.nab.vcs-sources]]
