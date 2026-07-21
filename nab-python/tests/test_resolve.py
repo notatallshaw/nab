@@ -2824,6 +2824,53 @@ class TestAugmentResolutionError:
         assert "bar" in diagnostics
         assert "foo: no version matches the requirement" not in diagnostics
 
+    def test_constraint_does_not_hide_the_transitive_blocker(
+        self, tmp_path: Path
+    ) -> None:
+        """A user constraint keeps the blocker reason, not a bare no-match.
+
+        ``foo<2.0`` clips away foo's only versions, which each need
+        ``lib==5.0`` and so conflict with ``app``'s ``lib==9.0``.  The
+        constraint-attribution probe recomputes the blocker reason, so it
+        must survive: the failure names the ``lib`` conflict rather than
+        reporting "no version matches the requirement", which would point
+        the user at a missing release that does not exist.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo", "app"]\n'
+            '[tool.nab]\nconstraints = ["foo<2.0"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": _index_wheels("foo", "3.0", "4.0"),
+                "app": _index_wheels("app", "1.0"),
+                "lib": _index_wheels("lib", "5.0", "9.0"),
+            },
+            metadata_by_version={
+                "3.0": _metadata("foo", "3.0", "lib==5.0"),
+                "4.0": _metadata("foo", "4.0", "lib==5.0"),
+                "1.0": _metadata("app", "1.0", "lib==9.0"),
+                "5.0": _metadata("lib", "5.0"),
+                "9.0": _metadata("lib", "9.0"),
+            },
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        diagnostics = str(info.value).split("Diagnostics:")[1]
+        assert (
+            "foo: every version in range was rejected: requires lib != 9.0"
+            in diagnostics
+        )
+        assert "foo: no version matches the requirement" not in diagnostics
+
 
 def _tuple_for_python(python_version: str) -> ResolveTarget:
     """Build a linux_x86_64 target for ``python_version``.
