@@ -102,10 +102,12 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         cli_constraint=project_constraint,
         cli_default_group=project_default_group,
     )
+    project_overrides = _cli.project_config_overrides(overrides)
+    _cli._project_cli_overrides_or_exit(project_overrides)  # noqa: SLF001
     config = _cli._load_config(  # noqa: SLF001
         path,
         discover_workspace=workspace_discovery,
-        cli_overrides=_cli.project_config_overrides(overrides),
+        cli_overrides=project_overrides,
     )
     settings = _cli._layered_run_settings_or_exit(  # noqa: SLF001
         path, overrides, produces_lock=False

@@ -1142,6 +1142,93 @@ class TestPythonFlag:
         assert "--python is not supported in universal mode" in capsys.readouterr().err
 
 
+class TestProjectFlagErrors:
+    """A bad ``--project-*`` value reads as a flag error, not a table one.
+
+    These overrides fold through the same ``[tool.nab]`` parse the file
+    uses, so the error must name the flag rather than the ``[tool.nab]``
+    table, which the project may not even have.
+    """
+
+    def test_requires_python_bad_value_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(pyproject, output=out, project_requires_python="@@@")
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert (
+            "error: --project-requires-python: requires-python must be a"
+            " PEP 440 specifier, got '@@@'" in err
+        )
+        assert "[tool.nab]" not in err
+        assert not out.exists()
+
+    def test_uploaded_prior_to_bad_value_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(pyproject, output=out, project_uploaded_prior_to="not-a-date")
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "--project-uploaded-prior-to: uploaded-prior-to must be an" in err
+        assert "[tool.nab]" not in err
+        assert not out.exists()
+
+    def test_constraint_bad_value_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(pyproject, output=out, project_constraint=("this is not pep508 !!!",))
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "--project-constraint: constraints[0] is not a valid requirement" in err
+        assert "[tool.nab]" not in err
+        assert not out.exists()
+
+    def test_download_requires_python_bad_value_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            download(
+                pyproject, output=tmp_path / "wheels", project_requires_python="@@@"
+            )
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "error: --project-requires-python: requires-python must be a" in err
+        assert "[tool.nab]" not in err
+
+    def test_valid_override_threads_through(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+        ) as mock_resolve:
+            lock(pyproject, output=out, project_requires_python="==3.11")
+        assert mock_resolve.call_args.kwargs["config"].requires_python == "==3.11"
+
+    def test_bad_file_value_still_reads_as_a_table_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = "@@@"\n',
+        )
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(pyproject, output=out)
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "in [tool.nab]: requires-python must be a PEP 440 specifier" in err
+
+
 class TestLockCommandUniversal:
     """Tests for `nab lock` in universal mode."""
 

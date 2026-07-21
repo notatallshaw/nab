@@ -167,6 +167,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         cli_default_group=project_default_group,
     )
     project_overrides = _cli.project_config_overrides(overrides)
+    _cli._project_cli_overrides_or_exit(project_overrides)  # noqa: SLF001
     anchor = _determine_lock_anchor(
         path,
         output=output,
