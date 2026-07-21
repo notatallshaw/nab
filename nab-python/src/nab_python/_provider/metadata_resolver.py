@@ -480,6 +480,7 @@ def _reject_incompatible_python(
     target = provider.target
     if target is None:
         return
+
     package, version = cache_key
     override_rp = provider.effective_requires_python(package, version)
     spec = (
@@ -489,6 +490,7 @@ def _reject_incompatible_python(
     )
     if spec is None or target.admits_requires_python(spec):
         return
+
     msg = (
         f"{package} {version} requires Python {spec} but the"
         f" {target.label} resolve targets Python {target.python_full_version}"

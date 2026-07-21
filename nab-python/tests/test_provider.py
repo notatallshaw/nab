@@ -3967,6 +3967,35 @@ class TestRequiresPythonMetadataGate:
         with pytest.raises(MetadataError, match="requires Python >=3.12"):
             provider.get_dependencies("foo", V("1.0"))
 
+    def test_prefetch_batch_skips_incompatible_non_first_version(self) -> None:
+        # The prefetch batch parses a non-first candidate's METADATA directly,
+        # so an incompatible Requires-Python there must skip that version, not
+        # abort the scan. 3.0 and 2.0 exclude the 3.8 target; the scan leaves
+        # them un-cached and falls through to 1.0.
+        def _meta(version: str, requires_python: str) -> str:
+            return (
+                f"Metadata-Version: 2.1\nName: foo\nVersion: {version}\n"
+                f"Requires-Python: {requires_python}\n\n"
+            )
+
+        coordinator = make_coordinator(
+            [make_wheel("3.0"), make_wheel("2.0"), make_wheel("1.0")],
+            metadata_by_version={
+                "3.0": _meta("3.0", ">=3.99"),
+                "2.0": _meta("2.0", ">=3.99"),
+                "1.0": _meta("1.0", ">=3.8"),
+            },
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            target=ResolveTarget.for_host_python("3.8.0"),
+            root_requirements={"foo": VersionRange.full()},
+        )
+        assert provider.choose_version("foo", VersionRange.full()) == V("1.0")
+        assert ("foo", V("2.0")) not in provider.deps_cache
+        assert provider.has_invalid_metadata("foo", V("2.0"))
+
 
 class TestSkipFetch:
     """A complete ``dependencies`` override skips the metadata fetch/build."""

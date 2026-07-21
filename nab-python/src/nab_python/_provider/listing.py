@@ -728,6 +728,9 @@ def await_metadata_batch(
     submitted: list[tuple[Version, str, str, threading.Event]],
 ) -> None:
     """Wait for all submitted metadata to arrive, then parse into cache."""
+    # Imported lazily: provider.py imports this module.
+    from ..provider import IncompatiblePythonError
+
     for version, ver_str, metadata_url, event in submitted:
         cache_key = (package, version)
         if cache_key in provider.deps_cache:
@@ -756,8 +759,14 @@ def await_metadata_batch(
             continue
         try:
             provider.parse_and_cache_metadata(cache_key, text)
-        except (ValueError, InvalidVersion, InvalidSpecifier):
-            # Malformed metadata: same reason, refuse via get_dependencies
+        except (
+            ValueError,
+            InvalidVersion,
+            InvalidSpecifier,
+            IncompatiblePythonError,
+        ):
+            # Malformed metadata or a Python-incompatible METADATA
+            # Requires-Python: same reason, refuse via get_dependencies
             # (_invalid_metadata) instead of caching empty deps.
             continue
 
