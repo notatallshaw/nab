@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import zipfile
 from email import message_from_string
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -68,7 +69,8 @@ def run_build_backend(
     Returns a :class:`~nab_python.metadata.WheelMetadata` parsed from
     the ``METADATA`` file the backend produces.  Raises
     :class:`BuildBackendError` on any failure: backend import
-    error, hook crash, malformed METADATA, or sdist-only build deps.
+    error, hook crash, malformed METADATA, an unreadable built
+    wheel, or sdist-only build deps.
 
     The build runs in an isolated venv driven by
     :class:`NabBuildEnv`; nothing in the user's main environment is
@@ -110,10 +112,17 @@ def run_build_backend(
 
             with tempfile.TemporaryDirectory(prefix="nab-build-meta-") as out_str:
                 output_dir = Path(out_str)
-                if skip_prepare:
-                    metadata_dir = _build_wheel_and_extract(project, output_dir)
-                else:
-                    metadata_dir = Path(project.metadata_path(output_dir))
+                try:
+                    if skip_prepare:
+                        metadata_dir = _build_wheel_and_extract(project, output_dir)
+                    else:
+                        metadata_dir = Path(project.metadata_path(output_dir))
+                # build raises a bare ValueError for a wheel whose name will not parse
+                except (zipfile.BadZipFile, ValueError, OSError) as exc:
+                    msg = (
+                        f"build backend {backend!r} produced an unreadable wheel: {exc}"
+                    )
+                    raise BuildBackendError(msg) from exc
                 return _parse_metadata(metadata_dir / "METADATA")
     except (
         build.BuildException,
@@ -184,10 +193,6 @@ def _build_wheel_and_extract(
     """
     wheel = project.build("wheel", str(output_directory))
     wheel_path = Path(wheel)
-    # zipfile is only needed for the build path; deferred to keep
-    # import-time work minimal.
-    import zipfile
-
     with zipfile.ZipFile(wheel_path) as zf:
         dist_info_members = [
             n
