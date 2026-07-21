@@ -39,7 +39,7 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 
 from .._vcs_admission import UnsupportedVcsError
 from ..config import NabProjectConfig
-from ..download import download_lock
+from ..download import DownloadError, download_lock
 from ..requirements_file import InvalidProjectRequirementError
 
 if TYPE_CHECKING:
@@ -348,7 +348,15 @@ class NabBuildEnv:
             )
             raise BuildEnvError(msg)
 
-        download_result = download_lock(lock_input, transport, wheel_dir)
+        try:
+            download_result = download_lock(lock_input, transport, wheel_dir)
+        except DownloadError as exc:
+            # A build dependency failed its HTTP fetch or hash check. Wrap it so
+            # the outer resolve skips this sdist rather than aborting on the raw
+            # download error.
+            msg = f"build env download failed: {exc}"
+            raise BuildEnvError(msg) from exc
+
         # Both wheels and sdists are downloaded; only wheels feed
         # ``installer.install``.  The sdists are inert clutter under
         # the temp dir, cleaned up with the env.
