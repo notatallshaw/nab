@@ -441,6 +441,9 @@ class NabProjectConfig:
     uploaded_prior_to: datetime | None = None
     dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST
     build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL
+    # How many build environments may be opened beneath the first one, to
+    # build a build requirement that publishes no wheel this host installs.
+    build_requires_depth: int = 0
     trust_unverified_sdist_deps: bool = False
     # The declared resolve environment from ``[tool.nab.environment]``, or
     # ``None`` for the host.  Mutually exclusive with ``matrix``.
@@ -771,6 +774,7 @@ def _config_from_effective(
         uploaded_prior_to=effective["uploaded-prior-to"].value,
         dist_policy=dist_policy,
         build_policy=build_policy,
+        build_requires_depth=effective["build-requires-depth"].value,
         trust_unverified_sdist_deps=trust_unverified,
         environment=environment,
         indexes=indexes,

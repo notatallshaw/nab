@@ -51,6 +51,10 @@ dist-policy = "wheel-or-sdist"
 
 # PEP 517 build policy.
 build-policy = "build-local"    # "never" | "build-local" | "build-remote"
+
+# Build environments nab may open beneath the first one, to build a
+# build requirement with no installable wheel.  A non-negative integer.
+build-requires-depth = 0
 ```
 
 The global `dist-policy` may instead be a table that folds in the

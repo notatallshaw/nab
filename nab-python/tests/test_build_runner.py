@@ -41,33 +41,55 @@ from nab_python._build.env import (
     BuildEnvError,
     NabBuildEnv,
     _FastSchemeDictionaryDestination,
-    _picked_wheel_pin,
+    _PendingBuild,
     _venv_scheme_paths,
 )
 from nab_python._build.runner import (
     BuildBackendError,
     _build_wheel_and_extract,
     _validate_backend_path,
+    build_wheel_for_install,
     run_build_backend,
 )
 from nab_python._provider.metadata_resolver import pick_dist
+from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
-from nab_python.config import NabProjectConfig
+from nab_python.config import IndexOverride, NabProjectConfig
 from nab_python.download import DownloadError, DownloadResult, iter_artifacts
 from nab_python.lockfile import (
     IndexPin,
+    LocalPin,
     LockInput,
     SdistArtifact,
     TargetLock,
     WheelArtifact,
 )
-from nab_python.provider import MissingExtraError
+from nab_python.provider import BuildPolicy, DistPolicy, MissingExtraError
 from nab_python.resolve import ResolveResult, TargetResult
 from nab_python.tags import PlatformSpec, TagSet
 from nab_python.target import ResolveTarget
 from nab_resolver.resolver import ResolutionError
+
+
+def _unpack_fixture_sdist(data: bytes, target_dir: Path) -> Path:
+    """Stand in for ``extract_sdist_archive`` on any supported Python.
+
+    The real one refuses to run without the tar data filter (:pep:`706`),
+    which 3.10 and 3.11 before their .12 and .4 releases lack, and every
+    archive here is one a fixture just wrote.  Returns the lone top-level
+    directory, which is the source root the real one would return.
+    """
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        if hasattr(tarfile, "data_filter"):
+            tar.extractall(target_dir, filter="data")
+        else:
+            tar.extractall(target_dir)  # noqa: S202
+
+    entries = list(target_dir.iterdir())
+    return entries[0] if len(entries) == 1 and entries[0].is_dir() else target_dir
+
 
 # A minimal, in-tree PEP 517 backend.  Implements
 # ``prepare_metadata_for_build_wheel`` only, enough to exercise
@@ -145,6 +167,53 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
 '''
 
 
+# The backend shipped inside a buildable sdist fixture.  Writes a real,
+# installer-valid wheel, since the point is that the build env installs it.
+_SDIST_BACKEND_SRC = '''\
+"""In-tree PEP 517 backend for a nab_python._build sdist fixture."""
+import base64
+import hashlib
+import os
+import zipfile
+
+NAME = "{name}"
+VERSION = "{version}"
+
+
+def get_requires_for_build_wheel(config_settings=None):
+    return []
+
+
+def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
+    escaped = NAME.replace("-", "_")
+    distinfo = escaped + "-" + VERSION + ".dist-info"
+    members = {{
+        escaped + "/__init__.py": b"",
+        distinfo + "/METADATA": (
+            "Metadata-Version: 2.1\\nName: " + NAME + "\\nVersion: " + VERSION + "\\n"
+        ).encode(),
+        distinfo + "/WHEEL": (
+            b"Wheel-Version: 1.0\\nGenerator: nab-test\\n"
+            b"Root-Is-Purelib: true\\nTag: py3-none-any\\n"
+        ),
+    }}
+    records = []
+    for member, data in members.items():
+        digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
+        records.append(
+            member + ",sha256=" + digest.decode() + "," + str(len(data))
+        )
+    records.append(distinfo + "/RECORD,,")
+
+    wheel_name = escaped + "-" + VERSION + "-py3-none-any.whl"
+    with zipfile.ZipFile(os.path.join(wheel_directory, wheel_name), "w") as zf:
+        for member, data in members.items():
+            zf.writestr(member, data)
+        zf.writestr(distinfo + "/RECORD", "\\n".join(records) + "\\n")
+    return wheel_name
+'''
+
+
 def _wheel_record_hash(data: bytes) -> str:
     digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
     return "sha256=" + digest.decode()
@@ -197,20 +266,69 @@ def _make_pep643_sdist(path: Path, name: str, version: str) -> None:
         tf.addfile(info, io.BytesIO(pkg_info))
 
 
-def _make_local_index(root: Path, name: str, version: str) -> None:
-    """Create a PEP 503 ``file://`` index serving ``name`` as a wheel + sdist."""
+def _make_buildable_sdist(
+    path: Path, name: str, version: str, requires: tuple[str, ...] = ()
+) -> None:
+    """Write an sdist that builds into an installable wheel.
+
+    Static PKG-INFO so the inner resolve can read it without a build,
+    and an in-tree backend reached through ``backend-path`` so the
+    build needs nothing from an index beyond ``requires``.  Passing a
+    non-empty ``requires`` is how a fixture reaches a second level of
+    nesting.
+    """
+    escaped = name.replace("-", "_")
+    root = f"{name}-{version}"
+    requires_block = ", ".join(f'"{req}"' for req in requires)
+    members = {
+        "PKG-INFO": f"Metadata-Version: 2.2\nName: {name}\nVersion: {version}\n",
+        "pyproject.toml": (
+            "[build-system]\n"
+            f"requires = [{requires_block}]\n"
+            f'build-backend = "{escaped}_backend"\n'
+            'backend-path = ["."]\n'
+        ),
+        f"{escaped}_backend.py": _SDIST_BACKEND_SRC.format(name=name, version=version),
+    }
+    with tarfile.open(path, "w:gz") as tf:
+        for member, text in members.items():
+            data = text.encode()
+            info = tarfile.TarInfo(f"{root}/{member}")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+
+def _make_local_index(
+    root: Path,
+    name: str,
+    version: str,
+    *,
+    sdist_only: bool = False,
+    requires: tuple[str, ...] = (),
+) -> None:
+    """Create a PEP 503 ``file://`` index serving ``name``.
+
+    Serves a wheel beside the sdist by default.  ``sdist_only`` serves
+    an sdist alone, and that sdist is one a build can turn into a
+    wheel, declaring ``requires`` as its own build requirements.
+    """
     pkg_dir = root / name
     pkg_dir.mkdir(parents=True)
-    wheel = pkg_dir / f"{name}-{version}-py3-none-any.whl"
     sdist = pkg_dir / f"{name}-{version}.tar.gz"
-    _make_installable_wheel(wheel, name, version)
-    _make_pep643_sdist(sdist, name, version)
+    files = [sdist]
+    if sdist_only:
+        _make_buildable_sdist(sdist, name, version, requires)
+    else:
+        wheel = pkg_dir / f"{name}-{version}-py3-none-any.whl"
+        _make_installable_wheel(wheel, name, version)
+        _make_pep643_sdist(sdist, name, version)
+        files.append(wheel)
 
     def _digest(p: Path) -> str:
         return hashlib.sha256(p.read_bytes()).hexdigest()
 
     links = "".join(
-        f'<a href="{p.name}#sha256={_digest(p)}">{p.name}</a>\n' for p in (wheel, sdist)
+        f'<a href="{p.name}#sha256={_digest(p)}">{p.name}</a>\n' for p in files
     )
     (pkg_dir / "index.html").write_text(
         f"<!DOCTYPE html><html><body>{links}</body></html>", encoding="utf-8"
@@ -1454,9 +1572,7 @@ class TestNabBuildEnvOutsideContext:
 
 
 class TestNabBuildEnvInstall:
-    """The ``install`` shortcut: empty list, the inner re-resolve path,
-    and the sdist-only rejection.
-    """
+    """The ``install`` shortcut: empty list and the inner re-resolve path."""
 
     def test_install_empty_returns_immediately(
         self,
@@ -1519,29 +1635,18 @@ class TestNabBuildEnvInstall:
 
 
 class TestResolveAndDownload:
-    """``_resolve_and_download`` rejects sdist-only pins so the build
-    env never ends up with a dep that needs another build to install.
-    """
+    """What the inner build-requires resolve is allowed to see and do."""
 
-    def test_sdist_only_pin_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from nab_python._vendor.packaging.version import Version
-        from nab_python.lockfile import IndexPin, TargetLock
+    @staticmethod
+    def _capture_inner_config(
+        env: NabBuildEnv, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> NabProjectConfig:
+        """Run the inner resolve against stubs and return the config it got."""
         from nab_python.resolve import ResolveResult, TargetResult
-        from nab_python.target import ResolveTarget
 
-        env = NabBuildEnv(requires=["foo"], config=NabProjectConfig())
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]
         env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
         env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
-        sdist_pin = IndexPin(
-            name="foo",
-            version="1.0",
-            index="pypi",
-            wheels=(),
-            sdist=None,
-        )
         target = ResolveTarget.for_host()
         fake_result = ResolveResult(
             targets=(target,),
@@ -1549,16 +1654,79 @@ class TestResolveAndDownload:
                 TargetResult(
                     target=target,
                     success=True,
-                    pins={"foo": Version("1.0")},
-                    lock=TargetLock(target=target, pins={"foo": sdist_pin}),
+                    pins={},
+                    lock=TargetLock(target=target, pins={}),
                 )
             ],
         )
-        with patch("nab_python.resolve.resolve_for_targets", return_value=fake_result):
-            wheel_dir = tmp_path / "wheels"
-            wheel_dir.mkdir()
-            with pytest.raises(BuildEnvError, match="sdist-only"):
-                env._resolve_and_download(wheel_dir)
+        captured: dict[str, object] = {}
+
+        def fake_resolve(
+            _path: Path, _transport: object, **kwargs: object
+        ) -> ResolveResult:
+            captured.update(kwargs)
+            return fake_result
+
+        monkeypatch.setattr("nab_python.resolve.resolve_for_targets", fake_resolve)
+        monkeypatch.setattr(
+            "nab_python._build.env.download_lock",
+            lambda *_a, **_k: MagicMock(written=[], skipped=[]),
+        )
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+
+        env._resolve_and_download(wheel_dir)
+        inner = captured["config"]
+        assert isinstance(inner, NabProjectConfig)
+        return inner
+
+    def test_inner_resolve_admits_both_artifact_kinds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Candidacy is not narrowed to wheels.
+
+        Hiding the wheel-less versions from the resolver would settle
+        on an older build backend than the requirement asked for and
+        say nothing about it; whether the one it settles on can be
+        installed is decided after the resolve, by ``_plan_install``.
+        """
+        env = NabBuildEnv(requires=["foo"], config=NabProjectConfig())
+
+        inner = self._capture_inner_config(env, tmp_path, monkeypatch)
+
+        assert inner.dist_policy is DistPolicy.WHEEL_OR_SDIST
+
+    def test_inner_resolve_reads_metadata_statically(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The build env's own resolve never invokes a backend.
+
+        A build the depth budget does not count is one it cannot bound,
+        so an inherited override may keep its refusal and loses its
+        permission.
+        """
+        env = NabBuildEnv(
+            requires=["foo"],
+            config=NabProjectConfig(
+                build_policy=BuildPolicy.BUILD_REMOTE,
+                package_overrides=(
+                    pkg_override("foo", build_policy=BuildPolicy.BUILD_REMOTE),
+                    pkg_override("bar", build_policy=BuildPolicy.NEVER),
+                ),
+                index_overrides={
+                    "pypi": IndexOverride(build_policy=BuildPolicy.BUILD_REMOTE)
+                },
+            ),
+        )
+
+        inner = self._capture_inner_config(env, tmp_path, monkeypatch)
+
+        assert inner.build_policy is BuildPolicy.NEVER
+        assert [o.build_policy for o in inner.package_overrides] == [
+            None,
+            BuildPolicy.NEVER,
+        ]
+        assert inner.index_overrides["pypi"].build_policy is None
 
     def test_inner_resolve_runs_for_the_host(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1965,11 +2133,13 @@ class TestResolveAndDownloadSiblingWheels:
         assert requested == [self.MANYLINUX1]
         assert [p.name for p in wheels] == [self.MANYLINUX1]
 
-    def test_sdist_is_kept(
+    def test_sdist_goes_with_the_narrowed_wheels(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Narrowing the wheels leaves the sdist, so the pin does not
-        then read as sdist-only.
+        """The sdist of a pin installed from a wheel is not even fetched.
+
+        Nothing installs it, and a corrupt one would fail the download
+        and take a build with it that the wheel alone would satisfy.
         """
         requested, wheels = self._run(
             tmp_path,
@@ -1977,7 +2147,7 @@ class TestResolveAndDownloadSiblingWheels:
             [self.MANYLINUX2014, self.MANYLINUX1],
             with_sdist=True,
         )
-        assert requested == [self.SDIST, self.MANYLINUX2014]
+        assert requested == [self.MANYLINUX2014]
         assert [p.name for p in wheels] == [self.MANYLINUX2014]
 
     @pytest.mark.parametrize(
@@ -1996,10 +2166,9 @@ class TestResolveAndDownloadSiblingWheels:
         The provider's tag filter drops those wheels before a pin is
         built, so this holds a cross-module invariant rather than a
         case a real resolve reaches; hence the hand-built lock input.
+        With no sdist there is not even a build to refuse.
         """
-        with pytest.raises(
-            BuildEnvError, match="no wheel of demo==1.0 matches the build host's tags"
-        ):
+        with pytest.raises(BuildEnvError, match="no sdist to build"):
             self._run(tmp_path, monkeypatch, filenames)
 
 
@@ -2126,6 +2295,25 @@ class TestInstallPickIsNotTheMetadataPick:
             ),
         )
 
+    @staticmethod
+    def _env(depth: int = 0) -> NabBuildEnv:
+        return NabBuildEnv(
+            requires=[], config=NabProjectConfig(build_requires_depth=depth)
+        )
+
+    @classmethod
+    def _sdist_pin(cls) -> IndexPin:
+        return IndexPin(
+            name="demo",
+            version="1.0",
+            index="https://pypi.org/simple/",
+            sdist=SdistArtifact(
+                filename=cls.SDIST,
+                url=f"https://pypi.example/{cls.SDIST}",
+                hashes=(("sha256", "1" * 64),),
+            ),
+        )
+
     def test_tag_tie_goes_to_the_sidecar_only_for_metadata(self) -> None:
         """A tie breaks on the sidecar for metadata and on order for install.
 
@@ -2140,13 +2328,18 @@ class TestInstallPickIsNotTheMetadataPick:
         assert tags.wheel_rank(self.TIE_PLAIN) == tags.wheel_rank(self.TIE_SIDECAR)
         assert pick_dist(listed, tags).filename == self.TIE_SIDECAR
 
-        pin = _picked_wheel_pin(self._pin([self.TIE_PLAIN, self.TIE_SIDECAR]), tags)
+        pin = self._env()._planned_pin(
+            self._pin([self.TIE_PLAIN, self.TIE_SIDECAR]), tags, []
+        )
         assert isinstance(pin, IndexPin)
         assert [w.filename for w in pin.wheels] == [self.TIE_PLAIN]
 
     def test_metadata_may_come_from_a_wheel_the_host_cannot_install(self) -> None:
         """Two off-target wheels, since ``pick_dist`` falls back only
         when the tags rank nothing at all.
+
+        The install side has no such fallback, and with no sdist to
+        build there is nothing left to try.
         """
         tags = self._tags()
         listed = [
@@ -2157,32 +2350,302 @@ class TestInstallPickIsNotTheMetadataPick:
         assert picked.filename == self.WINDOWS
         assert not tags.accepts(picked.filename)
 
-        with pytest.raises(BuildEnvError, match="matches the build host's tags"):
-            _picked_wheel_pin(self._pin([self.WINDOWS, self.MACOS]), tags)
+        with pytest.raises(BuildEnvError, match="no sdist to build"):
+            self._env()._planned_pin(self._pin([self.WINDOWS, self.MACOS]), tags, [])
 
     def test_metadata_may_come_from_an_sdist(self) -> None:
         """A version publishing no wheel is read from its sdist.
 
         Two sdists, because ``pick_dist`` hands back a lone dist
-        without ranking anything.  The install side has no such
-        fallback: the pin comes back untouched, and the sdist-only
-        check rejects it.
+        without ranking anything.  Installing that version means
+        building the sdist, which the default depth refuses.
         """
         tags = self._tags()
         listed = [self._listed_sdist(self.SDIST), self._listed_sdist(self.SDIST_ZIP)]
         assert pick_dist(listed, tags) is listed[0]
 
-        pin = IndexPin(
-            name="demo",
-            version="1.0",
-            index="https://pypi.org/simple/",
-            sdist=SdistArtifact(
-                filename=self.SDIST,
-                url=f"https://pypi.example/{self.SDIST}",
-                hashes=(("sha256", "1" * 64),),
-            ),
+        with pytest.raises(BuildEnvError, match="build-requires-depth is 0"):
+            self._env()._planned_pin(self._sdist_pin(), tags, [])
+
+    def test_sdist_pin_is_queued_for_a_build_when_the_depth_allows(self) -> None:
+        """With budget the sdist stays, the wheels go, and a build is queued."""
+        to_build: list[_PendingBuild] = []
+        planned = self._env(depth=1)._planned_pin(
+            self._sdist_pin(), self._tags(), to_build
         )
-        assert _picked_wheel_pin(pin, tags) is pin
+
+        assert isinstance(planned, IndexPin)
+        assert planned.wheels == ()
+        assert planned.sdist is not None
+        assert [pending.label for pending in to_build] == ["demo 1.0"]
+
+    @pytest.mark.parametrize("depth", [1, 3], ids=["budget-spent", "budget-left"])
+    def test_a_pin_already_on_the_chain_is_a_cycle(self, depth: int) -> None:
+        """A build requirement that needs itself built is reported as a cycle.
+
+        At depth 1 the chain has also spent the budget, and the cycle
+        is still what the message says: raising the depth to walk into
+        a loop is the one piece of advice that cannot help.
+        """
+        env = NabBuildEnv(
+            requires=[],
+            config=NabProjectConfig(build_requires_depth=depth),
+            chain=("demo 1.0",),
+        )
+
+        with pytest.raises(BuildEnvError, match="cyclic build requirement: demo 1.0"):
+            env._planned_pin(self._sdist_pin(), self._tags(), [])
+
+    def test_a_pin_that_is_not_from_an_index_passes_through(self) -> None:
+        """A local pin carries no artifacts to choose between."""
+        pin = LocalPin(name="demo", version="1.0", path="/src/demo")
+
+        assert self._env()._planned_pin(pin, self._tags(), []) is pin
+
+    def test_a_refusal_names_the_builds_that_led_to_it(self) -> None:
+        """Nested refusals are unreadable without the path that reached them."""
+        env = NabBuildEnv(
+            requires=[], config=NabProjectConfig(), chain=("meson 1.4.2", "ninja 1.11")
+        )
+
+        with pytest.raises(BuildEnvError, match=r"chain: meson 1\.4\.2 -> ninja 1\.11"):
+            env._planned_pin(self._sdist_pin(), self._tags(), [])
+
+
+class TestBuildRequirementNeedingItsOwnBuild:
+    """A build requirement published as an sdist alone.
+
+    The env installs wheels, so satisfying one of these means building
+    it, which is what ``[tool.nab].build-requires-depth`` governs.  The
+    index is a local ``file://`` tree and the download step is stubbed
+    to copy from it, so the whole flow runs without network.
+    """
+
+    NAME = "buildstub"
+    VERSION = "1.0"
+
+    def _config(self, tmp_path: Path, depth: int) -> NabProjectConfig:
+        index_dir = tmp_path / "index"
+        _make_local_index(index_dir, self.NAME, self.VERSION, sdist_only=True)
+        return NabProjectConfig(
+            indexes=(IndexConfig("local", index_dir.as_uri()),),
+            build_requires_depth=depth,
+        )
+
+    @staticmethod
+    def _stub_download(monkeypatch: pytest.MonkeyPatch, index_dir: Path) -> None:
+        """Copy from the local index in place of the HTTP download.
+
+        ``download_lock`` speaks HTTP, so it cannot fetch the ``file://``
+        index these tests serve.  Extraction is swapped at the same time
+        for a fixture unpacker that does not need the tar data filter.
+        """
+
+        def fake_download_lock(
+            lock_input: LockInput, _transport: object, wheel_dir: Path, *_a: object
+        ) -> DownloadResult:
+            written = []
+            for lock in lock_input.targets.values():
+                for name, pin in lock.pins.items():
+                    assert isinstance(pin, IndexPin)
+                    assert pin.sdist is not None
+                    dest = wheel_dir / pin.sdist.filename
+                    dest.write_bytes(
+                        (index_dir / name / pin.sdist.filename).read_bytes()
+                    )
+                    written.append(dest)
+            return DownloadResult(written=tuple(written), skipped=())
+
+        monkeypatch.setattr("nab_python._build.env.download_lock", fake_download_lock)
+        monkeypatch.setattr(
+            "nab_python._build.env.extract_sdist_archive", _unpack_fixture_sdist
+        )
+
+    def test_built_and_installed_when_the_depth_allows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """At depth 1 the sdist is built and the wheel lands in the venv."""
+        config = self._config(tmp_path, depth=1)
+        self._stub_download(monkeypatch, tmp_path / "index")
+
+        with NabBuildEnv(requires=[self.NAME], config=config) as env:
+            installed = [str(root / rel) for root, rel in env._installed_files]
+
+        assert any(self.NAME in path for path in installed)
+
+    def test_refused_at_the_default_depth(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """At depth 0 the sdist is not a candidate, and the error says why."""
+        config = self._config(tmp_path, depth=0)
+        self._stub_download(monkeypatch, tmp_path / "index")
+
+        env = NabBuildEnv(requires=[self.NAME], config=config)
+        with pytest.raises(BuildEnvError, match="build-requires-depth is"):
+            env.__enter__()
+
+    def test_the_nested_env_carries_the_chain(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The env a nested build opens knows what it is nested inside."""
+        config = self._config(tmp_path, depth=1)
+        self._stub_download(monkeypatch, tmp_path / "index")
+        chains: list[tuple[str, ...]] = []
+        original = NabBuildEnv.__init__
+
+        def record(self: NabBuildEnv, *args: object, **kwargs: object) -> None:
+            original(self, *args, **kwargs)  # type: ignore[arg-type]
+            chains.append(self._chain)
+
+        monkeypatch.setattr(NabBuildEnv, "__init__", record)
+
+        with NabBuildEnv(requires=[self.NAME], config=config):
+            pass
+
+        assert chains == [(), (f"{self.NAME} {self.VERSION}",)]
+
+
+class TestBuildRequirementTwoLevelsDown:
+    """A build requirement whose own build requirement needs building.
+
+    ``buildstub`` publishes an sdist alone and build-requires
+    ``deepstub``, which publishes an sdist alone too.  Satisfying the
+    first is one nested env, satisfying the second is a second one, so
+    the pair pins that the budget is spent as the chain grows rather
+    than reread at every level.
+    """
+
+    OUTER = "buildstub"
+    INNER = "deepstub"
+    VERSION = "1.0"
+
+    def _config(self, tmp_path: Path, depth: int) -> NabProjectConfig:
+        index_dir = tmp_path / "index"
+        _make_local_index(
+            index_dir, self.OUTER, self.VERSION, sdist_only=True, requires=(self.INNER,)
+        )
+        _make_local_index(index_dir, self.INNER, self.VERSION, sdist_only=True)
+        return NabProjectConfig(
+            indexes=(IndexConfig("local", index_dir.as_uri()),),
+            build_requires_depth=depth,
+        )
+
+    def test_refused_one_level_short(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Depth 1 pays for the outer build and has nothing left for the inner."""
+        config = self._config(tmp_path, depth=1)
+        TestBuildRequirementNeedingItsOwnBuild._stub_download(
+            monkeypatch, tmp_path / "index"
+        )
+
+        env = NabBuildEnv(requires=[self.OUTER], config=config)
+        with pytest.raises(BuildEnvError) as excinfo:
+            env.__enter__()
+
+        message = str(excinfo.value)
+        assert self.INNER in message
+        assert f"chain: {self.OUTER} {self.VERSION}" in message
+
+    def test_built_when_the_depth_reaches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Depth 2 pays for both, and the outer wheel lands in the venv."""
+        config = self._config(tmp_path, depth=2)
+        TestBuildRequirementNeedingItsOwnBuild._stub_download(
+            monkeypatch, tmp_path / "index"
+        )
+
+        with NabBuildEnv(requires=[self.OUTER], config=config) as env:
+            installed = [str(root / rel) for root, rel in env._installed_files]
+
+        assert any(self.OUTER in path for path in installed)
+
+
+class TestBuildRequirementBuildFailures:
+    """``_build_requirement`` wraps every way the nested build can fail.
+
+    Each surfaces as ``BuildEnvError`` naming the requirement, so the
+    outer resolve skips the sdist it was building rather than aborting
+    on a raw archive or backend error.
+    """
+
+    PENDING = _PendingBuild(
+        label="demo 1.0",
+        sdist=SdistArtifact(
+            filename="demo-1.0.tar.gz",
+            url="https://pypi.example/demo-1.0.tar.gz",
+            hashes=(("sha256", "1" * 64),),
+        ),
+    )
+
+    @staticmethod
+    def _env() -> NabBuildEnv:
+        return NabBuildEnv(requires=[], config=NabProjectConfig(build_requires_depth=1))
+
+    def test_missing_archive(self, tmp_path: Path) -> None:
+        """The download step promised a file that is not there."""
+        with pytest.raises(BuildEnvError, match="could not be read"):
+            self._env()._build_requirement(self.PENDING, tmp_path)
+
+    def test_unextractable_archive(self, tmp_path: Path) -> None:
+        """A downloaded sdist that is not an archive at all."""
+        (tmp_path / self.PENDING.sdist.filename).write_bytes(b"not a tarball")
+
+        with pytest.raises(BuildEnvError, match="could not be extracted"):
+            self._env()._build_requirement(self.PENDING, tmp_path)
+
+    def test_backend_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sdist extracts but names a backend that cannot be imported."""
+        archive = tmp_path / self.PENDING.sdist.filename
+        members = {
+            "PKG-INFO": "Metadata-Version: 2.2\nName: demo\nVersion: 1.0\n",
+            "pyproject.toml": (
+                "[build-system]\nrequires = []\n"
+                'build-backend = "demo_missing_backend"\nbackend-path = ["."]\n'
+            ),
+        }
+        with tarfile.open(archive, "w:gz") as tf:
+            for member, text in members.items():
+                data = text.encode()
+                info = tarfile.TarInfo(f"demo-1.0/{member}")
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+        monkeypatch.setattr(
+            "nab_python._build.env.extract_sdist_archive", _unpack_fixture_sdist
+        )
+
+        with pytest.raises(BuildEnvError, match="could not be built"):
+            self._env()._build_requirement(self.PENDING, tmp_path)
+
+    def test_non_string_wheel_path(self, tmp_path: Path) -> None:
+        """A backend returning something other than a wheel's basename.
+
+        ``build`` joins the hook's result onto the output directory
+        without checking it, so the ``TypeError`` is nab's to report.
+        """
+        source_dir = tmp_path / "src"
+        source_dir.mkdir()
+        (source_dir / "nab_test_backend.py").write_text(
+            "def get_requires_for_build_wheel(config_settings=None):\n"
+            "    return []\n\n"
+            "def build_wheel(wheel_directory, config_settings=None,"
+            " metadata_directory=None):\n"
+            "    return 42\n",
+            encoding="utf-8",
+        )
+        (source_dir / "pyproject.toml").write_text(
+            "[build-system]\nrequires = []\n"
+            'build-backend = "nab_test_backend"\nbackend-path = ["."]\n',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(BuildBackendError, match="non-string path"):
+            build_wheel_for_install(
+                source_dir, output_dir=tmp_path / "out", config=NabProjectConfig()
+            )
 
 
 class TestNabBuildEnvLifecycle:
