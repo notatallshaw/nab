@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
@@ -1732,6 +1733,59 @@ class TestDependencyGroups:
         data = tomllib.loads(text)
         assert data["dependency-groups"] == ["dev-group", "doc-s"]
         assert data["default-groups"] == ["dev-group"]
+
+
+class TestSupportedKeysDocumented:
+    """The lockfile reference lists every key the pylock emitter writes."""
+
+    def _documented_keys(self) -> set[str]:
+        doc = Path(__file__).resolve().parents[2] / "docs" / "reference" / "lockfile.md"
+        text = doc.read_text(encoding="utf-8")
+        start = text.index("### Supported keys")
+        end = text.index("\n### ", start + 1)
+        section = text[start:end]
+        return set(re.findall(r"`([a-z][a-z0-9]*(?:-[a-z0-9]+)*)`", section))
+
+    def test_every_emitted_key_is_documented(self) -> None:
+        target_lock = TargetLock(
+            target=_HOST,
+            pins={
+                "foo": _index_pin("foo", "1.0"),
+                "mytool": _index_pin("mytool", "2.0"),
+                "mylocal": LocalPin(name="mylocal", version="3.0", path="libs/mylocal"),
+                "myvcs": VcsPin(
+                    name="myvcs",
+                    version="4.0",
+                    repo_url="https://github.com/x/y.git",
+                    bare_repo_url="https://github.com/x/y.git",
+                    commit_id="a" * 40,
+                ),
+                "myarchive": ArchivePin(
+                    name="myarchive",
+                    version="5.0",
+                    url="https://ex.com/myarchive-5.0.tar.gz",
+                    hashes=(("sha256", "e" * 64),),
+                ),
+            },
+            dependencies={"mytool": ("foo",)},
+            package_gates={"mytool": (("extra", "cli"),)},
+        )
+        lock_input = LockInput(
+            targets={_HOST.label: target_lock},
+            extras=("cli",),
+            dependency_groups=("dev",),
+            default_groups=("dev",),
+            requires_python=">=3.10",
+            environments=[Marker(_HOST.environment_marker_string)],
+        )
+
+        data = tomllib.loads(write_lock(lock_input))
+        emitted = set(data)
+        for package in data["packages"]:
+            emitted |= set(package)
+
+        undocumented = emitted - self._documented_keys()
+        assert not undocumented, f"undocumented emitted keys: {sorted(undocumented)}"
 
 
 class TestMarkerDisjointness:
