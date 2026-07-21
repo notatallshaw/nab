@@ -844,6 +844,17 @@ class TestMetadataAndSdist:
         text = run(client.get_metadata_text("foo", "1.0", meta_path.as_uri()))
         assert text.startswith("Name: foo")
 
+    def test_non_utf8_metadata_sidecar_raises_http_error(self, tmp_path: Path) -> None:
+        # A non-UTF-8 sidecar must fail through HttpError like the
+        # index.html reader, not a raw UnicodeDecodeError.
+        meta_path = tmp_path / "foo-1.0.metadata"
+        meta_path.write_bytes(b"Author: J\xe9an\n")
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(MalformedLocalListingError) as caught:
+            run(client.get_metadata_text("foo", "1.0", meta_path.as_uri()))
+        assert isinstance(caught.value, HttpError)
+        assert "not valid UTF-8" in str(caught.value)
+
     def test_get_sdist_files(self, tmp_path: Path) -> None:
         sdist_path = tmp_path / "foo-1.0.tar.gz"
         buf = io.BytesIO()
