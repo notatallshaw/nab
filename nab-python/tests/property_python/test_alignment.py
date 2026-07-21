@@ -20,8 +20,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
+from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
 from nab_python.lockfile import IndexPin, TargetLock
@@ -133,11 +133,22 @@ class TestMarkerFiltering:
     def test_parse_requirements_drops_non_matching_markers(
         self, reqs: list[str]
     ) -> None:
-        """Requirements with non-matching markers are absent from the parsed dict."""
-        linux_env = _fake_target().marker_env
+        """A name survives exactly when one of its requirements matches the env."""
+        linux_env = dict(_fake_target().marker_env)
+        parsed = [Requirement(text) for text in reqs]
+
+        applies: set[str] = set()
+        seen: set[str] = set()
+        for req in parsed:
+            name = str(canonicalize_name(req.name))
+            seen.add(name)
+            if req.marker is None or req.marker.evaluate(linux_env):
+                applies.add(name)
+        excluded = seen - applies
+
         try:
             out, _ = _build_resolver_inputs(
-                [Requirement(text) for text in reqs],
+                parsed,
                 NabProjectConfig(),
                 environment=linux_env,
             )
@@ -145,7 +156,11 @@ class TestMarkerFiltering:
             # Self-contradictory draws (e.g. ``pkg<0.0``) are rejected
             # by the function; this property tests marker filtering only.
             return
-        assert all(isinstance(v, VersionRange) for v in out.values())
+
+        for name in applies:
+            assert name in out
+        for name in excluded:
+            assert name not in out
 
 
 @st.composite
