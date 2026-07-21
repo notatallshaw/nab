@@ -399,6 +399,32 @@ class TestRunBuildBackend:
         ):
             run_build_backend(tmp_path, config=config)
 
+    def test_venv_creation_oserror_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An OSError building the venv is wrapped as BuildBackendError."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["setuptools"]\n'
+            'build-backend = "setuptools.build_meta"\n',
+            encoding="utf-8",
+        )
+
+        class _Builder:
+            def __init__(self, **_kw: object) -> None:
+                pass
+
+            def create(self, _path: Path) -> None:
+                raise OSError(28, "No space left on device")
+
+        import venv as venv_mod
+
+        monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
+        with pytest.raises(BuildBackendError, match="build env setup"):
+            run_build_backend(tmp_path, config=config)
+
 
 class TestShouldSkipPrepare:
     """Unit tests for the hatchling+dynamic-deps detection predicate."""
@@ -1050,6 +1076,29 @@ class TestNabBuildEnvEnterInstall:
             env.__enter__()
         assert env._tmpdir is None  # type: ignore[attr-defined]
 
+    def test_enter_wraps_venv_create_oserror(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An OSError from ``venv.EnvBuilder.create`` is wrapped as
+        BuildEnvError, and the temp directory is still cleaned up.
+        """
+
+        class _Builder:
+            def __init__(self, **_kw: object) -> None:
+                pass
+
+            def create(self, _path: Path) -> None:
+                raise OSError(28, "No space left on device")
+
+        import venv as venv_mod
+
+        monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
+        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        with pytest.raises(BuildEnvError, match="build venv"):
+            env.__enter__()
+        assert env._tmpdir is None  # type: ignore[attr-defined]
+
 
 class TestInstallWheelsCorruptArtifact:
     """A corrupt or malformed build-dependency wheel surfaces as
@@ -1244,6 +1293,34 @@ class TestBuildEnvHeaderScheme:
         assert header.read_bytes() == b"#define GREENLET_H\n"
         site = venv_path / "lib" / f"python{py_version}" / "site-packages"
         assert (site / "greenlet" / "__init__.py").is_file()
+
+
+class TestVenvSchemeProbeErrors:
+    """A failed interpreter scheme probe is wrapped as BuildEnvError."""
+
+    def test_probe_called_process_error_wrapped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-zero probe exit is wrapped as BuildEnvError."""
+
+        def _run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise subprocess.CalledProcessError(1, cmd)
+
+        monkeypatch.setattr(subprocess, "run", _run)
+        with pytest.raises(BuildEnvError, match="interpreter probe"):
+            _venv_scheme_paths(Path("/nonexistent/venv/bin/python"))
+
+    def test_probe_non_json_output_wrapped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Probe stdout that is not JSON is wrapped as BuildEnvError."""
+
+        def _run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="not json\n", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", _run)
+        with pytest.raises(BuildEnvError, match="interpreter probe"):
+            _venv_scheme_paths(Path("/nonexistent/venv/bin/python"))
 
 
 @pytest.mark.skipif(
