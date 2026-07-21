@@ -61,6 +61,7 @@ __all__ = [
     "DistFile",
     "DistPolicy",
     "ExtrasMode",
+    "IncompatiblePythonError",
     "InvalidUploadTimeError",
     "ListingFilterCache",
     "LocalSource",
@@ -290,6 +291,17 @@ class UnsupportedSdistError(MetadataError):
     under :attr:`BuildPolicy.BUILD_REMOTE`.  Caught by
     :meth:`Provider._look_ahead_ok` so the resolver skips the
     version instead of failing.
+    """
+
+
+class IncompatiblePythonError(MetadataError):
+    """An index candidate's METADATA Requires-Python excludes the resolve target.
+
+    The Simple-API ``requires-python`` hint is optional, so the listing gate
+    admits a version whose listing omits it.  Once the wheel METADATA (or sdist
+    PKG-INFO) is fetched, its authoritative ``Requires-Python`` is checked and
+    an incompatible candidate is rejected.  Caught by
+    :meth:`Provider._look_ahead_ok` so the resolver skips the version.
     """
 
 
@@ -1881,7 +1893,25 @@ class Provider:
             return self.deps_cache[cache_key]
 
         metadata_text, from_sdist = self._resolve_metadata(versions, package, version)
+        self._parse_and_cache_metadata_guarded(
+            cache_key, metadata_text, from_sdist=from_sdist
+        )
 
+        self.stats.metadata_fetched += 1
+        self.prefetch_new_deps(self.deps_cache[cache_key])
+
+        return self.deps_cache[cache_key]
+
+    def _parse_and_cache_metadata_guarded(
+        self, cache_key: tuple[str, Version], metadata_text: str, *, from_sdist: bool
+    ) -> None:
+        """Parse fetched metadata, routing each failure to its own cache.
+
+        A disallowed build, a Python-incompatible candidate, and an unparseable
+        payload each record their own failure kind so a re-query is answered
+        from cache. Hard errors propagate unrecorded.
+        """
+        package, version = cache_key
         from .config import OverrideConflictError  # noqa: PLC0415 (config import cycle)
 
         try:
@@ -1890,6 +1920,9 @@ class Provider:
             )
         except UnsupportedSdistError:
             self._unsupported_sdists.add(cache_key)
+            raise
+        except IncompatiblePythonError as exc:
+            self._invalid_metadata[cache_key] = str(exc)
             raise
         except (
             SdistHashMismatchError,
@@ -1915,11 +1948,6 @@ class Provider:
             msg = f"Invalid metadata for {package}=={version}: {exc}"
             self._invalid_metadata[cache_key] = msg
             raise MetadataError(msg) from exc
-
-        self.stats.metadata_fetched += 1
-        self.prefetch_new_deps(self.deps_cache[cache_key])
-
-        return self.deps_cache[cache_key]
 
     def prefetch_new_deps(self, deps: dict[str, VersionRange]) -> None:
         """See :func:`nab_python._provider.listing.prefetch_new_deps`."""

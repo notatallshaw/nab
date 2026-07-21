@@ -49,6 +49,7 @@ from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
     ExtrasMode,
+    IncompatiblePythonError,
     InvalidUploadTimeError,
     LocalSource,
     MetadataError,
@@ -3901,6 +3902,70 @@ class TestRequiresPythonListingGate:
             package_overrides=(pkg_override("foo", requires_python=">=3.11"),),
         )
         assert len(provider.fetch_versions("foo")) == 1
+
+
+class TestRequiresPythonMetadataGate:
+    """The wheel METADATA Requires-Python gates a candidate the listing admits.
+
+    The Simple-API requires-python hint is optional, so a listing that omits
+    it admits the version; the fetched METADATA carries the authoritative
+    field, and ``get_dependencies`` rejects a candidate it marks incompatible.
+    """
+
+    @staticmethod
+    def _coordinator(requires_python: str | None) -> MagicMock:
+        body = f"Requires-Python: {requires_python}\n" if requires_python else ""
+        return make_coordinator(
+            [make_wheel("1.0", requires_python=None)],
+            package="foo",
+            metadata_text=f"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n{body}\n",
+        )
+
+    def test_excludes_when_listing_omits_hint(self) -> None:
+        provider = Provider(
+            self._coordinator(">=3.12"),
+            target=ResolveTarget.for_host_python("3.8.0"),
+        )
+        with pytest.raises(IncompatiblePythonError, match="requires Python >=3.12"):
+            provider.get_dependencies("foo", V("1.0"))
+
+    def test_admits_when_metadata_python_is_compatible(self) -> None:
+        provider = Provider(
+            self._coordinator(">=3.8"),
+            target=ResolveTarget.for_host_python("3.8.0"),
+        )
+        assert provider.get_dependencies("foo", V("1.0")) == {}
+
+    def test_admits_when_metadata_omits_requires_python(self) -> None:
+        provider = Provider(
+            self._coordinator(None),
+            target=ResolveTarget.for_host_python("3.8.0"),
+        )
+        assert provider.get_dependencies("foo", V("1.0")) == {}
+
+    def test_no_target_skips_metadata_gate(self) -> None:
+        provider = Provider(self._coordinator(">=3.99"), target=None)
+        assert provider.get_dependencies("foo", V("1.0")) == {}
+
+    def test_override_replaces_incompatible_metadata_python(self) -> None:
+        provider = Provider(
+            self._coordinator(">=3.12"),
+            target=ResolveTarget.for_host_python("3.8.0"),
+            package_overrides=(pkg_override("foo", requires_python=">=3.8"),),
+        )
+        assert provider.get_dependencies("foo", V("1.0")) == {}
+
+    def test_rejection_caches_invalid_and_leaves_no_deps(self) -> None:
+        provider = Provider(
+            self._coordinator(">=3.12"),
+            target=ResolveTarget.for_host_python("3.8.0"),
+        )
+        with pytest.raises(IncompatiblePythonError):
+            provider.get_dependencies("foo", V("1.0"))
+        assert ("foo", V("1.0")) not in provider.deps_cache
+        assert provider.has_invalid_metadata("foo", V("1.0"))
+        with pytest.raises(MetadataError, match="requires Python >=3.12"):
+            provider.get_dependencies("foo", V("1.0"))
 
 
 class TestSkipFetch:

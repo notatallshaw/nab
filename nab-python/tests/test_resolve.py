@@ -3209,6 +3209,46 @@ class TestLocalVcsRequiresPython:
             result = _resolved(root, _FAKE_TRANSPORT)
         assert _pins(result)["foo"] == V("1.0")
 
+    def test_resolve_index_metadata_requires_python_rejects_omitted_listing(
+        self, tmp_path: Path
+    ) -> None:
+        """The wheel METADATA gates an index candidate the listing does not.
+
+        The Simple-API requires-python hint is optional; when the listing omits
+        it the wheel's METADATA carries the authoritative Requires-Python, and a
+        candidate it marks incompatible with the target is rejected rather than
+        written to the lock.
+        """
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://example.com/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+        )
+        root = tmp_path / "pyproject.toml"
+        root.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n',
+            encoding="utf-8",
+        )
+        fake = make_coordinator(
+            [wheel],
+            package="foo",
+            metadata_text=(
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+                "Requires-Python: >=3.12\n\n"
+            ),
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.build_target_lock"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda _self: fake
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError, match="requires Python"):
+                _resolved(root, _FAKE_TRANSPORT, python_version="3.8.0")
+
 
 def _metadata(name: str, version: str, *requires: str) -> str:
     """METADATA text for ``name`` ``version`` with one Requires-Dist per entry."""

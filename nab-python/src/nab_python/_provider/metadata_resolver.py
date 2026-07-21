@@ -458,7 +458,42 @@ def parse_and_cache_metadata(
     ):
         metadata = resolve_dynamic_sdist(provider, cache_key, metadata)
 
+    _reject_incompatible_python(provider, cache_key, metadata)
     cache_deps_from_metadata(provider, cache_key, metadata)
+
+
+def _reject_incompatible_python(
+    provider: Provider, cache_key: tuple[str, Version], metadata: WheelMetadata
+) -> None:
+    """Reject an index candidate whose METADATA Requires-Python excludes the target.
+
+    The listing gate (:func:`nab_python._provider.listing.excluded_by_python`)
+    reads the optional Simple-API ``requires-python`` hint, so a version whose
+    listing omits it reaches here unfiltered.  The wheel's own METADATA (or the
+    sdist's PKG-INFO) carries the authoritative field; a per-package override
+    still replaces it, matching the listing gate.  Raised before the deps are
+    cached so no partial state survives the rejection.
+    """
+    # Late import: ``provider`` imports this module at module load.
+    from ..provider import IncompatiblePythonError
+
+    target = provider.target
+    if target is None:
+        return
+    package, version = cache_key
+    override_rp = provider.effective_requires_python(package, version)
+    spec = (
+        SpecifierSet(override_rp)
+        if override_rp is not None
+        else metadata.requires_python
+    )
+    if spec is None or target.admits_requires_python(spec):
+        return
+    msg = (
+        f"{package} {version} requires Python {spec} but the"
+        f" {target.label} resolve targets Python {target.python_full_version}"
+    )
+    raise IncompatiblePythonError(msg)
 
 
 def cache_deps_from_metadata(
