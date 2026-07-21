@@ -12,7 +12,7 @@ Everything else is derived by iterating :data:`OPTIONS`:
   table against the registry, raising on any key that names an option
   not allowed in that source kind (the category gate).
 * :func:`read_env_layer` reads ``NAB_*`` for the rows that declare an
-  env var, and rejects a ``NAB_<KEY>`` that names a PROJECT option.
+  env var, and warns on any ``NAB_*`` name it does not recognize.
 * :func:`resolve_config` merges the discovered layers low-to-high and
   attaches ``(scope, origin)`` provenance to each effective value.
 * :func:`render_list` / :func:`render_get` / :func:`render_explain`
@@ -27,6 +27,7 @@ the registry so the one place the CLI surface is not registry-derived
 from __future__ import annotations
 
 import enum
+import logging
 import types
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -53,6 +54,8 @@ from .provider import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "OPTIONS",
@@ -1348,21 +1351,24 @@ def _read_raw_table(path: Path, kind: SourceKind) -> Mapping[str, Any]:
 def read_env_layer(
     environ: Mapping[str, str],
     *,
+    reserved_env: Iterable[str] = (),
     rejections: list[RejectedLayer] | None = None,
 ) -> Layer:
     """Read ``NAB_*`` for every registry row that declares an env var.
 
     PROJECT options never declare an env var, so the env layer carries
     USER options only.  A ``NAB_<KEY>`` naming a PROJECT option (e.g.
-    ``NAB_RESOLUTION``) is a hard error caught by
-    :func:`_reject_renamed_env`; any other unknown ``NAB_*`` name (e.g. a
-    typo) is rejected by :func:`_reject_unknown_env`.  When ``rejections``
-    is supplied (``nab config explain --include-rejected``) those env
-    casualties are recorded there and skipped instead of raised, mirroring
-    the TOML loader.
+    ``NAB_RESOLUTION``) draws a warning from :func:`_warn_renamed_env`;
+    any other unknown ``NAB_*`` name (e.g. a typo) one from
+    :func:`_warn_unknown_env`.  Neither is applied, and neither is fatal.
+    ``reserved_env`` names the ``NAB_*`` vars other layers own (nab's
+    output layer consumes ``NAB_VERBOSITY`` and ``NAB_NO_PROGRESS``), so
+    the guard skips them silently.  When ``rejections`` is supplied
+    (``nab config explain --include-rejected``) those env casualties are
+    recorded there instead of warned, mirroring the TOML loader.
     """
-    _reject_renamed_env(environ, rejections=rejections)
-    _reject_unknown_env(environ, rejections=rejections)
+    _warn_renamed_env(environ, rejections=rejections)
+    _warn_unknown_env(environ, reserved_env=reserved_env, rejections=rejections)
     values: dict[str, Any] = {}
     for spec in OPTIONS:
         if spec.env_var is None:
@@ -1374,34 +1380,43 @@ def read_env_layer(
     return Layer(Origin(SourceKind.ENV, "env"), values)
 
 
-def _reject_unknown_env(
+def _warn_unknown_env(
     environ: Mapping[str, str],
     *,
+    reserved_env: Iterable[str] = (),
     rejections: list[RejectedLayer] | None = None,
 ) -> None:
-    """Reject any ``NAB_*`` var that is neither a known nor renamed name.
+    """Warn about any ``NAB_*`` var that is neither a known nor renamed name.
 
-    The env half of the category gate: a typo'd or made-up
-    ``NAB_<KEY>`` (e.g. ``NAB_OFLINE``) must crash naming the variable
-    rather than being silently dropped.  Renamed PROJECT names are left
-    for :func:`_reject_renamed_env`, which gives the more specific
-    not-env-settable message.  When ``rejections`` is supplied the var is
-    recorded there and skipped instead of raised.
+    The env half of the category gate: a typo'd or made-up ``NAB_<KEY>``
+    (e.g. ``NAB_OFLINE``) is ignored with a warning naming the variable,
+    never applied and never fatal.  Renamed PROJECT names are left for
+    :func:`_warn_renamed_env`, which gives the more specific
+    not-env-settable message.  ``reserved_env`` names ``NAB_*`` vars owned
+    by other layers (the output layer's ``NAB_VERBOSITY`` and
+    ``NAB_NO_PROGRESS``); those are skipped silently.  When ``rejections``
+    is supplied the var is recorded there instead of warned.
     """
     known = {spec.env_var for spec in OPTIONS if spec.env_var is not None}
     renamed = set(_renamed_env_names())
+    reserved = set(reserved_env)
     for name in environ:
-        if not name.startswith("NAB_") or name in known or name in renamed:
+        if (
+            not name.startswith("NAB_")
+            or name in known
+            or name in renamed
+            or name in reserved
+        ):
             continue
         valid = sorted(known)
         msg = (
-            f"{name} is not a valid nab setting; the known NAB_* variables"
-            f" are {valid!r}."
+            f"{name} is not a recognized nab setting and was ignored; the"
+            f" known NAB_* variables are {valid!r}."
         )
         if rejections is not None:
             rejections.append(RejectedLayer(Origin(SourceKind.ENV, name), name, msg))
             continue
-        raise SourceConfigError(msg)
+        _logger.warning("%s", msg)
 
 
 def _renamed_env_names() -> dict[str, OptionSpec]:
@@ -1414,16 +1429,17 @@ def _renamed_env_names() -> dict[str, OptionSpec]:
     return names
 
 
-def _reject_renamed_env(
+def _warn_renamed_env(
     environ: Mapping[str, str],
     *,
     rejections: list[RejectedLayer] | None = None,
 ) -> None:
-    """Reject a ``NAB_<KEY>`` that names a PROJECT (non-env-settable) option.
+    """Warn about a ``NAB_<KEY>`` naming a PROJECT (non-env-settable) option.
 
-    When ``rejections`` is supplied the var is recorded there under the
-    spec's key (so ``explain <key> --include-rejected`` lists it) and
-    skipped instead of raised.
+    The variable is ignored, never applied and never fatal.  When
+    ``rejections`` is supplied the var is recorded there under the spec's
+    key (so ``explain <key> --include-rejected`` lists it) instead of
+    warned.
     """
     for env_name, spec in _renamed_env_names().items():
         if env_name in environ:
@@ -1435,7 +1451,7 @@ def _reject_renamed_env(
                 else f", or override per-run with {spec.cli_flag}"
             )
             msg = (
-                f"{env_name} is not a valid nab setting: {spec.key!r} is a"
+                f"{env_name} was ignored: {spec.key!r} is a"
                 f" {spec.scope.value}-scope option and is not env-settable."
                 f"  Set it in pyproject [tool.nab].{spec.key} or a project-dir"
                 f" nab.toml{override}."
@@ -1445,7 +1461,7 @@ def _reject_renamed_env(
                     RejectedLayer(Origin(SourceKind.ENV, env_name), spec.key, msg)
                 )
                 continue
-            raise SourceConfigError(msg)
+            _logger.warning("%s", msg)
 
 
 def discover_layers(

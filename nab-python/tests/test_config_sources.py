@@ -11,6 +11,7 @@ renderers.  Search roots are injected so nothing reads the real
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -149,13 +150,18 @@ class TestResolutionLadder:
         with pytest.raises(SourceConfigError, match="cannot be set in a system"):
             _resolve(roots)
 
-    def test_nab_resolution_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_resolution_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="NAB_RESOLUTION is not a valid"):
-            _resolve(
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
+            eff = _resolve(
                 SourceRoots(project_dir=tmp_path),
                 environ={"NAB_RESOLUTION": "lowest"},
             )
+        assert eff["resolution"].value is ResolutionStrategy.HIGHEST
+        assert "NAB_RESOLUTION" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_bad_resolution_value_errors(self, tmp_path: Path) -> None:
         _project(tmp_path, 'resolution = "sideways"\n')
@@ -225,14 +231,19 @@ class TestOfflineLadder:
                 environ={"NAB_OFFLINE": "maybe"},
             )
 
-    def test_unknown_nab_env_var_errors(self, tmp_path: Path) -> None:
-        # A typo'd NAB_* var (e.g. NAB_OFLINE) must crash, not be dropped.
+    def test_unknown_nab_env_var_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A typo'd NAB_* var (e.g. NAB_OFLINE) warns and is ignored.
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="NAB_OFLINE is not a valid"):
-            _resolve(
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
+            eff = _resolve(
                 SourceRoots(project_dir=tmp_path),
                 environ={"NAB_OFLINE": "true"},
             )
+        assert eff["offline"].value is False
+        assert "NAB_OFLINE" in caplog.text
+        assert "ignored" in caplog.text
 
     def test_offline_in_pyproject_errors(self, tmp_path: Path) -> None:
         _project(tmp_path, "offline = true\n")
@@ -919,12 +930,16 @@ class TestScalarProjectOptions:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_mode_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_mode_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(
                 SourceRoots(project_dir=tmp_path), environ={"NAB_MODE": "universal"}
             )
+        assert "NAB_MODE" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_mode_bad_value_keeps_existing_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'mode = "sideways"\n')
@@ -1132,13 +1147,17 @@ class TestTableProjectOptions:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_marker_environment_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_marker_environment_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(
                 SourceRoots(project_dir=tmp_path),
                 environ={"NAB_MARKER_ENVIRONMENT": "x"},
             )
+        assert "NAB_MARKER_ENVIRONMENT" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_marker_environment_bad_value_keeps_message(self, tmp_path: Path) -> None:
         _project(
@@ -1239,10 +1258,14 @@ class TestTableProjectOptions:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_vcs_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_vcs_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_VCS": "x"})
+        assert "NAB_VCS" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_vcs_bad_value_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, '[tool.nab.vcs]\npolicy = "sometimes"\n')
@@ -1304,10 +1327,14 @@ class TestTableProjectOptions:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_workspace_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_workspace_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_WORKSPACE": "x"})
+        assert "NAB_WORKSPACE" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_workspace_bad_value_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, '[tool.nab.workspace]\nmember = ["pkgs/a"]\n')
@@ -1397,12 +1424,16 @@ class TestArrayProjectOptions:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_constraints_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_constraints_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(
                 SourceRoots(project_dir=tmp_path), environ={"NAB_CONSTRAINTS": "x"}
             )
+        assert "NAB_CONSTRAINTS" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_constraints_bad_pep508_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'constraints = ["not a valid !! req"]\n')
@@ -1458,13 +1489,17 @@ class TestArrayProjectOptions:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_default_groups_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_default_groups_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(
                 SourceRoots(project_dir=tmp_path),
                 environ={"NAB_DEFAULT_GROUPS": "x"},
             )
+        assert "NAB_DEFAULT_GROUPS" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_default_groups_non_string_item_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, "default-groups = [1]\n")
@@ -1593,10 +1628,14 @@ class TestArrayOfTablesSources:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_indexes_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_indexes_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_INDEXES": "x"})
+        assert "NAB_INDEXES" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_indexes_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'indexes = "pypi"\n')
@@ -1687,13 +1726,17 @@ class TestArrayOfTablesSources:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_local_sources_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_local_sources_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(
                 SourceRoots(project_dir=tmp_path),
                 environ={"NAB_LOCAL_SOURCES": "x"},
             )
+        assert "NAB_LOCAL_SOURCES" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_local_sources_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'local-sources = "pkg"\n')
@@ -1753,13 +1796,17 @@ class TestArrayOfTablesSources:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_vcs_sources_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_vcs_sources_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(
                 SourceRoots(project_dir=tmp_path),
                 environ={"NAB_VCS_SOURCES": "x"},
             )
+        assert "NAB_VCS_SOURCES" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_vcs_sources_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'vcs-sources = "pkg"\n')
@@ -1852,10 +1899,14 @@ class TestOverrideTables:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_packages_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_packages_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_PACKAGES": "x"})
+        assert "NAB_PACKAGES" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_packages_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, '[[tool.nab.packages]]\nmatch = ["foo"]\n')
@@ -1958,13 +2009,17 @@ class TestOverrideTables:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_package_rules_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_package_rules_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(
                 SourceRoots(project_dir=tmp_path),
                 environ={"NAB_PACKAGE_RULES": "x"},
             )
+        assert "NAB_PACKAGE_RULES" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_package_rules_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'package-rules = ["x"]\n')
@@ -2013,10 +2068,14 @@ class TestOverrideTables:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_index_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_index_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_INDEX": "x"})
+        assert "NAB_INDEX" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_index_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'index = "pypi"\n')
@@ -2202,10 +2261,14 @@ class TestCrossFieldProjectOptions:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_conflicts_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_conflicts_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_CONFLICTS": "x"})
+        assert "NAB_CONFLICTS" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_conflicts_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'conflicts = "cpu"\n')
@@ -2292,10 +2355,14 @@ class TestCrossFieldProjectOptions:
         with pytest.raises(SourceConfigError, match="project-scope option"):
             _resolve(roots)
 
-    def test_nab_matrix_env_errors(self, tmp_path: Path) -> None:
+    def test_nab_matrix_env_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _project(tmp_path)
-        with pytest.raises(SourceConfigError, match="not env-settable"):
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_MATRIX": "x"})
+        assert "NAB_MATRIX" in caplog.text
+        assert "not env-settable" in caplog.text
 
     def test_matrix_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, "matrix = 3\n")

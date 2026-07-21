@@ -80,6 +80,7 @@ from nab_python.workspace import WorkspaceDiscoveryError
 from nab_resolver.resolver import ResolutionError
 
 from .output import (
+    OUTPUT_ENV_VARS,
     OutputOptionError,
     Printer,
     ProgressReporter,
@@ -246,7 +247,9 @@ def effective_config(
     # values (the resolve path uses its lockfile anchor instead).
     with inspector_anchor():
         layers = discover_layers(roots, rejections=sink)
-        env_layer = read_env_layer(os.environ, rejections=sink)
+        env_layer = read_env_layer(
+            os.environ, reserved_env=OUTPUT_ENV_VARS, rejections=sink
+        )
         cli_layer = build_cli_layer(cli_overrides or {})
         if rejected_out is not None:
             rejected_out.extend(rejected)

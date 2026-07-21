@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import io
+import logging
 from collections.abc import Mapping
 from contextlib import redirect_stderr, redirect_stdout, suppress
 from datetime import datetime, timezone
@@ -145,6 +146,41 @@ class TestConfigList:
         assert "lowest" in out
         assert "offline" in out
         assert "cache-dir" in out
+
+    @pytest.mark.parametrize(
+        ("var", "value"),
+        [("NAB_VERBOSITY", "verbose"), ("NAB_NO_PROGRESS", "1")],
+    )
+    def test_output_env_vars_do_not_trip_config_layer(
+        self,
+        hermetic_roots: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        var: str,
+        value: str,
+    ) -> None:
+        # NAB_VERBOSITY / NAB_NO_PROGRESS belong to the output layer, so the
+        # config env-layer must not reject them as unknown NAB_* settings.
+        _project(hermetic_roots)
+        monkeypatch.setenv(var, value)
+        out = _run_config(["list", "--path", str(hermetic_roots / "pyproject.toml")])
+        assert "offline" in out
+
+    def test_unknown_env_var_warns_and_runs(
+        self,
+        hermetic_roots: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # An unrecognized NAB_* var warns and is ignored; the run completes.
+        _project(hermetic_roots)
+        monkeypatch.setenv("NAB_OFLINE", "1")
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
+            out = _run_config(
+                ["list", "--path", str(hermetic_roots / "pyproject.toml")]
+            )
+        assert "offline" in out
+        assert "NAB_OFLINE" in caplog.text
+        assert "ignored" in caplog.text
 
 
 class TestConfigGet:

@@ -834,6 +834,7 @@ by discovery. `nab config` shows the value as written, like
 | `NAB_MAX_CONCURRENCY` | `max-concurrency` | Parallel HTTP fetches for `nab download` (at least `1`). |
 
 A `NAB_*` name that is not one of these (a typo, or `NAB_RESOLUTION`
-for a project-scope option) is an error rather than being silently
-ignored. Run `nab config list` to see every effective value and where
-it came from.
+for a project-scope option) is ignored with a warning naming the
+variable. `NAB_VERBOSITY` and `NAB_NO_PROGRESS` belong to the
+[output layer](cli.md) and pass through silently. Run
+`nab config list` to see every effective value and where it came from.
