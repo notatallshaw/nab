@@ -183,8 +183,9 @@ def prepare_clone(
         )
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        # Unmarked tree from an interrupted run: wipe and retry.
+    if dest.exists() and not _clone_complete(dest):
+        # A concurrent run may have completed dest since the top check;
+        # only wipe a partial.
         shutil.rmtree(dest)
 
     tmp = Path(tempfile.mkdtemp(dir=dest.parent, prefix=f"{sha}.", suffix=".tmp"))
