@@ -261,12 +261,18 @@ match what pip-compile emits.
 
 Local and VCS pins are rendered without hashes, mirroring pip's
 behaviour. An editable local pin becomes a `-e` line and a
-`subdirectory` a `#subdirectory=` fragment:
+`subdirectory` a `#subdirectory=` fragment. An archive pin is a
+third form, `name @ <url>#sha256=...`, carrying its hash in the
+URL fragment so the line stays hash-checkable. Any
+`subdirectory` is appended to that fragment with `&`. Local,
+VCS, and archive pins render the same with or without hashes:
 
 ```
 my-fork @ file:///abs/path/to/checkout
 -e file:///abs/path/to/monorepo#subdirectory=packages/foo
 some-pkg @ git+https://github.com/me/x.git@<sha>
+my-archive @ https://example.com/my-archive-1.0.tar.gz#sha256=<hex>
+mono @ https://example.com/mono-3.0.tar.gz#sha256=<hex>&subdirectory=packages/foo
 ```
 
 `pip install --require-hashes -r requirements.txt` will accept
