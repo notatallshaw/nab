@@ -17,6 +17,7 @@ from nab_index.vcs import (
     _COMPLETE_MARKER,
     VcsCloneError,
     VcsRequest,
+    _clone_complete,
     _resolve_sha,
     _split_repo_ref,
     prepare_clone,
@@ -554,6 +555,47 @@ class TestPrepareClone:
         with pytest.raises(VcsCloneError, match="could not be moved into place"):
             prepare_clone(tmp_path, req, require_pin=True)
         assert [p for p in dest.parent.iterdir() if p != dest] == []
+
+    def test_clone_completing_after_top_check_is_not_wiped(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A clone completed by another run after the top check is reused, not wiped.
+
+        In the window between the top completion check and the pre-clone wipe, a
+        concurrent run renames its finished clone into place. The wipe re-checks
+        the marker so the completed tree survives.
+        """
+        sha = "b" * 40
+        repo_key = "0123456789abcdef"
+        dest = tmp_path / "vcs" / repo_key / sha
+        _mark_complete(dest)
+        payload = dest / "content.txt"
+        payload.write_text("kept")
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: repo_key)
+
+        checks = {"count": 0}
+
+        def racy_clone_complete(target: Path) -> bool:
+            checks["count"] += 1
+            if checks["count"] == 1:
+                return False
+            return _clone_complete(target)
+
+        monkeypatch.setattr("nab_index.vcs._clone_complete", racy_clone_complete)
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://example/repo.git", sha, "")
+        clone = prepare_clone(tmp_path, req, require_pin=True)
+        assert clone.path == dest
+        assert payload.read_text() == "kept"
 
 
 class TestProviderVcsIntegration:
