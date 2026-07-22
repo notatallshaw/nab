@@ -9,18 +9,23 @@ from __future__ import annotations
 
 import gzip
 import zlib
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 __all__ = [
+    "IDENTITY_HEADERS",
     "AsyncHttpTransport",
     "ContentDecodingError",
     "HttpError",
     "HttpResponse",
+    "accepts_gzip",
     "decode_body",
 ]
+
+# For a caller that needs the body exactly as stored, undecoded.
+IDENTITY_HEADERS: Final[dict[str, str]] = {"Accept-Encoding": "identity"}
 
 
 class HttpError(Exception):
@@ -33,6 +38,38 @@ class HttpError(Exception):
 
 class ContentDecodingError(Exception):
     """A response body did not decode as its Content-Encoding promised."""
+
+
+def _quality(params: str) -> float:
+    """Return an Accept-Encoding entry's ``q`` value, 1.0 when it carries none.
+
+    A ``q`` that does not parse reads as a refusal.
+    """
+    for param in params.split(";"):
+        key, _, value = param.partition("=")
+        if key.strip().lower() == "q":
+            try:
+                return float(value)
+            except ValueError:
+                return 0.0
+    return 1.0
+
+
+def accepts_gzip(request_headers: Mapping[str, str]) -> bool:
+    """Whether ``request_headers`` asked the server for gzip.
+
+    A static file server derives Content-Encoding from the filename, so it
+    serves a ``.tar.gz`` as its own untouched bytes under
+    ``Content-Encoding: gzip``. Decoding that yields a bare tar, which no
+    published digest covers, so only a coding the request asked for may be
+    undone.
+    """
+    folded = {name.lower(): value for name, value in request_headers.items()}
+    for entry in folded.get("accept-encoding", "").split(","):
+        coding, _, params = entry.partition(";")
+        if coding.strip().lower() == "gzip" and _quality(params) > 0:
+            return True
+    return False
 
 
 def decode_body(body: bytes, content_encoding: str | None) -> bytes:
@@ -104,6 +141,9 @@ class AsyncHttpTransport(Protocol):
         self, url: str, *, headers: dict[str, str] | None = None
     ) -> HttpResponse:
         """Send a GET request and return the response.
+
+        An implementation must not decode a coding ``headers`` did not ask
+        for; see :func:`accepts_gzip`.
 
         Raises :class:`HttpError` on a connection or transport failure.
         """

@@ -11,7 +11,7 @@ import httpx
 import truststore
 
 from .retry import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES, next_delay
-from .transport import ContentDecodingError, HttpError, decode_body
+from .transport import ContentDecodingError, HttpError, accepts_gzip, decode_body
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -24,10 +24,10 @@ __all__ = [
 class _HttpxResponse:
     """Adapter that gives an httpx response the HttpResponse shape.
 
-    The body is fetched undecoded and decoded by the transport (see
-    :func:`~nab_index.transport.decode_body`), so it is carried here
-    rather than read from the httpx response. raise_for_status is
-    translated so callers see one error type.
+    The body is fetched undecoded, and decoded by the transport when the
+    request asked for gzip (see :func:`~nab_index.transport.decode_body`),
+    so it is carried here rather than read from the httpx response.
+    raise_for_status is translated so callers see one error type.
     """
 
     __slots__ = ("_content", "_response")
@@ -87,13 +87,16 @@ class HttpxAsyncTransport:
         httpx has no retry machinery beyond reconnecting, so the shared policy
         runs in this loop rather than in the client. The body is read raw and
         decoded with ``decode_body``, so a truncated gzip stream is retried
-        instead of returned as if complete. Only gzip is advertised, the one
-        coding ``decode_body`` checks.
+        instead of returned as if complete. Only gzip is advertised, and a
+        caller can override that with
+        :data:`~nab_index.transport.IDENTITY_HEADERS` to get the body
+        undecoded.
         """
         request_headers = {"Accept-Encoding": "gzip"}
         if headers is not None:
             request_headers.update(headers)
 
+        decode = accepts_gzip(request_headers)
         failures = 0
 
         while True:
@@ -102,7 +105,11 @@ class HttpxAsyncTransport:
                     "GET", url, headers=request_headers
                 ) as response:
                     raw = b"".join([part async for part in response.aiter_raw()])
-                content = decode_body(raw, response.headers.get("Content-Encoding"))
+                content = (
+                    decode_body(raw, response.headers.get("Content-Encoding"))
+                    if decode
+                    else raw
+                )
             except (httpx.TooManyRedirects, httpx.UnsupportedProtocol) as exc:
                 # A redirect loop and an unsupported scheme are persistent, so
                 # they are raised rather than retried.

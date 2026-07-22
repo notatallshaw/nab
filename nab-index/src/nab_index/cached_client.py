@@ -34,6 +34,7 @@ from .lazy_wheel import (
     RangeOutcome,
     read_wheel_metadata_over_range,
 )
+from .transport import IDENTITY_HEADERS
 
 if TYPE_CHECKING:
     from packaging.utils import NormalizedName
@@ -379,7 +380,7 @@ class CachedAsyncSimpleClient:
             msg = f"No cached sdist PKG-INFO for {package}=={version} (offline mode)"
             raise OfflineError(msg)
 
-        response = await self._transport.get(sdist_url)
+        response = await self._transport.get(sdist_url, headers=IDENTITY_HEADERS)
         response.raise_for_status()
         selected = _select_artifact_hash(sdist_hashes)
         if selected is not None:
@@ -414,7 +415,7 @@ class CachedAsyncSimpleClient:
         if self._offline:
             msg = f"sdist archive fetch unavailable in offline mode ({sdist_url})"
             raise OfflineError(msg)
-        response = await self._transport.get(sdist_url)
+        response = await self._transport.get(sdist_url, headers=IDENTITY_HEADERS)
         response.raise_for_status()
         selected = _select_artifact_hash(sdist_hashes)
         if selected is not None:

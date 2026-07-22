@@ -31,6 +31,7 @@ from urllib.parse import urlsplit
 
 from .client import MalformedSimpleResponseError
 from .local_index import UnsupportedWheelError, wheel_metadata_member
+from .transport import IDENTITY_HEADERS
 
 if TYPE_CHECKING:
     from packaging.utils import NormalizedName
@@ -288,9 +289,7 @@ async def _range_get(
     transport: AsyncHttpTransport, url: str, range_header: str
 ) -> HttpResponse:
     """GET ``url`` for ``range_header`` bytes, forcing identity encoding."""
-    return await transport.get(
-        url, headers={"Accept-Encoding": "identity", "Range": range_header}
-    )
+    return await transport.get(url, headers={**IDENTITY_HEADERS, "Range": range_header})
 
 
 async def _suffix_attempt(
@@ -389,7 +388,7 @@ async def _full_body_fetch(transport: AsyncHttpTransport, url: str) -> bytes | N
     index cannot serve; a non-identity encoding returns ``None``, no usable
     bytes.
     """
-    response = await transport.get(url, headers={"Accept-Encoding": "identity"})
+    response = await transport.get(url, headers=IDENTITY_HEADERS)
     if response.status_code == _HTTP_OK and not _non_identity(response):
         return response.content
     response.raise_for_status()

@@ -25,7 +25,7 @@ from packaging.utils import (
 )
 from packaging.version import InvalidVersion, Version
 
-from .transport import HttpError
+from .transport import IDENTITY_HEADERS, HttpError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -279,7 +279,7 @@ class AsyncSimpleClient:
 
     async def download(self, url: str) -> bytes:
         """Fetch a distribution artefact (wheel or sdist) as raw bytes."""
-        response = await self._transport.get(url)
+        response = await self._transport.get(url, headers=IDENTITY_HEADERS)
         response.raise_for_status()
         return response.content
 
