@@ -12,14 +12,22 @@ files.
 from __future__ import annotations
 
 import sys
-from pathlib import Path  # noqa: TC003 - tyro evaluates the flag annotations at runtime
+from pathlib import Path
 from typing import Annotated
 
 import tyro
 
 from nab_index.cache import OnDiskCache, is_recognized_bucket
+from nab_python.config_sources import SourceConfigError
 
-from .cli import _default_cache_dir, app, printer
+from .cli import (
+    _cli_overrides,
+    _default_cache_dir,
+    _fail_config,
+    app,
+    effective_config,
+    printer,
+)
 
 ActionArg = Annotated[str, tyro.conf.Positional]
 
@@ -36,7 +44,7 @@ def cache_command(
     walks the cache read-only and reports corrupt entries. ``nab cache
     clear`` removes every recognized bucket.
     """
-    root = cache_dir if cache_dir is not None else _default_cache_dir()
+    root = _cache_root(cache_dir)
     if action == "dir":
         sys.stdout.write(f"{root}\n")
         return
@@ -50,6 +58,25 @@ def cache_command(
         f"unknown cache action {action!r}; expected one of 'dir', 'verify', 'clear'"
     )
     sys.exit(1)
+
+
+def _cache_root(cache_dir: Path | None) -> Path:
+    """Resolve the cache root a run in this directory would use.
+
+    ``cache-dir`` is a layered USER-scope option, so a system, user or
+    project ``nab.toml`` and ``NAB_CACHE_DIR`` set it as well as
+    ``--cache-dir``.  Discovery is rooted at the current directory, the
+    same place ``nab lock`` looks for its project sources by default.
+    """
+    overrides = _cli_overrides(
+        cli_resolution=None, cli_offline=None, cli_cache_dir=cache_dir
+    )
+    try:
+        effective = effective_config(Path("pyproject.toml"), cli_overrides=overrides)
+    except SourceConfigError as exc:
+        _fail_config(exc)
+    configured = effective["cache-dir"].value
+    return _default_cache_dir() if configured is None else configured
 
 
 def _verify(root: Path) -> None:

@@ -9,8 +9,31 @@ import pytest
 from nab import cli as nab_cli
 from nab.cli import app
 from nab_index.cache import CachePolicy, OnDiskCache
+from nab_python.config_sources import SourceRoots
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
+
+
+# Layout of the tmp config tree the autouse fixture points discovery at.
+_USER_TOML = Path("usr") / "nab.toml"
+_PROJECT_TOML = Path("proj") / "nab.toml"
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_config_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point config discovery at a tmp tree so the real ~/.config is never read."""
+    roots = SourceRoots(
+        system_toml=tmp_path / "sys" / "nab.toml",
+        user_toml=tmp_path / _USER_TOML,
+        project_dir=tmp_path / _PROJECT_TOML.parent,
+    )
+    monkeypatch.setattr(nab_cli, "_config_search_roots", lambda _: roots)
+    monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
+
+
+def _write_toml(path: Path, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
 
 
 def _symlink_or_skip(
@@ -76,6 +99,98 @@ class TestCacheDir:
         target = tmp_path / "never-created"
         _run_cache(["dir", "--cache-dir", str(target)])
         assert capsys.readouterr().out == f"{target}\n"
+
+
+class TestLayeredCacheDir:
+    """The default root comes from the same ladder a run resolves it through."""
+
+    def test_user_toml_sets_the_root(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        target = tmp_path / "user-declared"
+        _write_toml(tmp_path / _USER_TOML, f'cache-dir = "{target.as_posix()}"\n')
+        _run_cache(["dir"])
+        assert capsys.readouterr().out == f"{target}\n"
+
+    def test_project_toml_sets_the_root(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        target = tmp_path / "project-declared"
+        _write_toml(tmp_path / _PROJECT_TOML, f'cache-dir = "{target.as_posix()}"\n')
+        _run_cache(["dir"])
+        assert capsys.readouterr().out == f"{target}\n"
+
+    def test_env_var_sets_the_root(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        target = tmp_path / "env-declared"
+        monkeypatch.setenv("NAB_CACHE_DIR", str(target))
+        _run_cache(["dir"])
+        assert capsys.readouterr().out == f"{target}\n"
+
+    def test_env_var_beats_the_user_toml(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        declared = tmp_path / "user-declared"
+        _write_toml(tmp_path / _USER_TOML, f'cache-dir = "{declared.as_posix()}"\n')
+        target = tmp_path / "env-declared"
+        monkeypatch.setenv("NAB_CACHE_DIR", str(target))
+        _run_cache(["dir"])
+        assert capsys.readouterr().out == f"{target}\n"
+
+    def test_flag_beats_the_env_var(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("NAB_CACHE_DIR", str(tmp_path / "env-declared"))
+        target = tmp_path / "flagged"
+        _run_cache(["dir", "--cache-dir", str(target)])
+        assert capsys.readouterr().out == f"{target}\n"
+
+    def test_verify_reads_the_layered_root(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        root = tmp_path / "env-declared"
+        _populate(root)
+        policy_path = root / "simple-v0" / "pypi" / "foo.policy"
+        policy_path.write_bytes(b"not json")
+        monkeypatch.setenv("NAB_CACHE_DIR", str(root))
+        _run_cache(["verify"])
+        assert str(policy_path) in capsys.readouterr().err
+
+    def test_clear_empties_the_layered_root(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        root = tmp_path / "env-declared"
+        _populate(root)
+        monkeypatch.setenv("NAB_CACHE_DIR", str(root))
+        _run_cache(["clear"])
+        assert not (root / "simple-v0").exists()
+        assert not (root / "metadata-v1").exists()
+        assert str(root) in capsys.readouterr().err
+
+    def test_bad_layer_value_exits_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write_toml(tmp_path / _USER_TOML, "cache-dir = 5\n")
+        with pytest.raises(SystemExit) as exc:
+            _run_cache(["dir"])
+        assert exc.value.code == 1
+        assert "config error" in capsys.readouterr().err
 
 
 class TestCacheVerify:
