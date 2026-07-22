@@ -106,7 +106,7 @@ def _render_factored(clauses: list[frozenset[str]]) -> str:
     residual = [c for c in residual if c]
     inner = " or ".join(
         _clause_to_str(c) if len(c) == 1 else f"({_clause_to_str(c)})"
-        for c in sorted(residual, key=lambda s: sorted(s))
+        for c in sorted(residual, key=sorted)
     )
     if not common:
         return inner
