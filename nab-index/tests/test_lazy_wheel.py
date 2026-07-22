@@ -519,14 +519,30 @@ def test_absolute_probe_200_gzip_is_unsupported() -> None:
     assert result.outcome is RangeOutcome.UNSUPPORTED
 
 
-def test_absolute_probe_206_no_content_range_is_unsupported() -> None:
+@pytest.mark.parametrize(
+    "probe_headers",
+    [{}, {"content-range": "bytes 0-0/*"}],
+    ids=["absent", "unknown-length"],
+)
+def test_absolute_probe_206_without_total_falls_back_to_plain_get(
+    probe_headers: dict[str, str],
+) -> None:
+    """An honoured probe that reports no length steps down to the plain GET.
+
+    RFC 9110 section 14.4 allows ``*`` as the complete-length. It leaves
+    nothing to range against, and says nothing about fetching the wheel whole.
+    """
+
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
         if kind == "suffix":
             return _FakeResponse(501, {}, b"")
-        return _FakeResponse(206, {}, b"\x00")
+        if kind == "full":
+            return t.full()
+        return _FakeResponse(206, probe_headers, t.wheel[:1])
 
     result = _run_scripted(script)
-    assert result.outcome is RangeOutcome.UNSUPPORTED
+    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.text == _META.decode("utf-8")
 
 
 def test_absolute_probe_error_raises() -> None:
@@ -825,17 +841,6 @@ def test_suffix_206_unparseable_content_range_downgrades() -> None:
     assert result.text == _META.decode("utf-8")
 
 
-def test_absolute_probe_zero_total_is_unsupported() -> None:
-    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
-        if kind == "suffix":
-            return _FakeResponse(501, {}, b"")
-        return _FakeResponse(206, {"content-range": "bytes 0-0/0"}, b"")
-
-    result = _run_scripted(script)
-    assert result.outcome is RangeOutcome.UNSUPPORTED
-    assert result.text is None
-
-
 def test_memo_suffix_ok_no_reprobe() -> None:
     async def run() -> RangeCapability:
         memo = RangeCapabilityMemo()
@@ -953,6 +958,55 @@ def test_memo_ignored_absolute_latches_full_body() -> None:
     assert result.outcome is RangeOutcome.FULL_BODY
     assert result.text == _META.decode("utf-8")
     assert second_requests == 1
+
+
+def test_unknown_length_host_latches_full_body_only() -> None:
+    """A host that never reports a total is fetched whole, not given up on."""
+
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "full":
+            return t.full()
+        start = max(0, t.total - a) if kind == "suffix" else a
+        end = t.total - 1 if kind == "suffix" else min(b, t.total - 1)
+        headers = {"content-range": f"bytes {start}-{end}/*"}
+        return _FakeResponse(206, headers, t.wheel[start : end + 1])
+
+    async def run() -> tuple[RangeMetadataResult, int]:
+        memo = RangeCapabilityMemo()
+        transport = _ScriptedTransport(build_wheel(), script)
+        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        assert first.text == _META.decode("utf-8")
+        assert memo.capability("files.example.org") is RangeCapability.FULL_BODY_ONLY
+        before = len(transport.requests)
+        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        return second, len(transport.requests) - before
+
+    result, second_requests = asyncio.run(run())
+    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.text == _META.decode("utf-8")
+    assert second_requests == 1
+
+
+def test_zero_length_artifact_does_not_latch_netloc() -> None:
+    """A zero complete-length speaks for the one artifact, not for the host."""
+
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return _FakeResponse(501, {}, b"")
+        if kind == "full":
+            return _FakeResponse(200, {}, b"")
+        return _FakeResponse(206, {"content-range": "bytes 0-0/0"}, b"")
+
+    async def run() -> tuple[RangeMetadataResult, RangeCapability]:
+        memo = RangeCapabilityMemo()
+        transport = _ScriptedTransport(b"", script)
+        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        return result, memo.capability("files.example.org")
+
+    result, capability = asyncio.run(run())
+    assert result.outcome is RangeOutcome.MISSING
+    assert result.text is None
+    assert capability is RangeCapability.UNKNOWN
 
 
 def test_reject_416_does_not_latch_netloc() -> None:
