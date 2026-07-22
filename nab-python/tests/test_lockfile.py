@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import random
 import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -82,7 +84,12 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
-from nab_python.resolve import ResolveResult, TargetResult, build_lock_input
+from nab_python.resolve import (
+    ResolveResult,
+    TargetResult,
+    build_lock_input,
+    resolve_with_coordinator,
+)
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
 
@@ -2437,6 +2444,7 @@ class _FakeProvider:
         extra_deps_map: (
             dict[tuple[str, Version], dict[str, dict[str, object]]] | None
         ) = None,
+        tag_excluded_counts: dict[tuple[str, Version], int] | None = None,
     ) -> None:
         self._listings = listings or {}
         self._local = local_sources or {}
@@ -2448,6 +2456,7 @@ class _FakeProvider:
         self.coordinator = _FakeCoordinator(listing_indexes)
         self.deps_cache = deps_cache or {}
         self.extra_deps_map = extra_deps_map or {}
+        self._tag_excluded_counts = tag_excluded_counts or {}
 
     def local_source_for(self, canonical: str) -> LocalSource | None:
         return self._local.get(canonical)
@@ -2473,6 +2482,9 @@ class _FakeProvider:
 
     def effective_requires_python(self, canonical: str, version: Version) -> str | None:
         return self._requires_python_overrides.get(canonical)
+
+    def tag_excluded_wheel_count(self, canonical: str, version: Version) -> int:
+        return self._tag_excluded_counts.get((canonical, version), 0)
 
 
 def _wheel_file(
@@ -4494,3 +4506,262 @@ class TestMembershipGates:
             ' or (python_version == "3.11" and sys_platform == "linux"'
             ' and platform_machine == "x86_64")'
         )
+
+
+# Wheel tags spanning OS and arch, python levels, abi3, a free-threaded
+# build, several manylinux glibc levels, and musllinux.  A pure-python wheel
+# leads so the version survives on every declared target.
+_WHEEL_TAG_CATALOG = (
+    "py3-none-any",
+    "py2.py3-none-any",
+    "cp310-cp310-manylinux_2_17_x86_64",
+    "cp311-cp311-manylinux_2_17_x86_64",
+    "cp311-cp311-manylinux_2_28_x86_64",
+    "cp311-cp311-manylinux_2_34_x86_64",
+    "cp312-cp312-manylinux_2_17_x86_64",
+    "cp311-cp311-musllinux_1_2_x86_64",
+    "cp311-cp311-manylinux_2_17_aarch64",
+    "cp311-abi3-manylinux_2_17_x86_64",
+    "cp39-abi3-manylinux_2_17_x86_64",
+    "cp313-cp313t-manylinux_2_17_x86_64",
+    "cp311-cp311-macosx_11_0_arm64",
+    "cp311-cp311-macosx_14_0_arm64",
+    "cp39-abi3-macosx_11_0_arm64",
+    "cp311-cp311-macosx_10_9_x86_64",
+    "cp311-cp311-win_amd64",
+)
+
+
+def _tag_wheel(tag: str, version: str = "1.0", package: str = "pkg") -> WheelFile:
+    """An index-listing wheel carrying an explicit tag, with a hash for the lock."""
+    filename = f"{package}-{version}-{tag}.whl"
+    return WheelFile(
+        filename=filename,
+        url=f"https://example.com/{filename}",
+        version=version,
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+        hashes=(("sha256", "a" * 64),),
+    )
+
+
+def _tag_sdist(version: str = "1.0", package: str = "pkg") -> SdistFile:
+    filename = f"{package}-{version}.tar.gz"
+    return SdistFile(
+        filename=filename,
+        url=f"https://example.com/{filename}",
+        version=version,
+        requires_python=None,
+        upload_time=None,
+        hashes=(("sha256", "b" * 64),),
+    )
+
+
+_PRUNE_LINUX = ResolveTarget.for_declared(
+    python_version="3.11", spec=PlatformSpec("linux_x86_64")
+)
+_PRUNE_MACOS = ResolveTarget.for_declared(
+    python_version="3.11", spec=PlatformSpec("macos_arm64")
+)
+
+
+def _pkg_entry(pylock: object) -> object:
+    """The single ``pkg`` package entry of a built pylock."""
+    entries = [p for p in pylock.packages if str(p.name) == "pkg"]  # type: ignore[attr-defined]
+    assert len(entries) == 1
+    return entries[0]
+
+
+def _emitted_wheel_names(pkg_entry: object) -> set[str]:
+    return {w.name for w in (pkg_entry.wheels or [])}  # type: ignore[attr-defined]
+
+
+class TestLockWheelPrunePredicate:
+    """The lock keeps a wheel iff a contributing faithful target accepts it."""
+
+    def _resolve_matrix(
+        self, tags: Sequence[str], targets: Sequence[ResolveTarget]
+    ) -> ResolveResult:
+        coordinator = make_coordinator(
+            listings={"pkg": [_tag_wheel(t) for t in tags]}, auto_metadata=True
+        )
+        return resolve_with_coordinator(
+            coordinator,
+            list(targets),
+            [Requirement("pkg")],
+            config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+        )
+
+    def test_property_union_over_seeded_subsets(self) -> None:
+        """Over seeded random subsets the union is exactly the accepted wheels."""
+        targets = (_PRUNE_LINUX, _PRUNE_MACOS)
+        rng = random.Random(20260722)  # noqa: S311
+        for _ in range(40):
+            present = [t for t in _WHEEL_TAG_CATALOG[1:] if rng.random() < 0.5]
+            # Keep the pure-python wheel so every target holds the version.
+            tags = ["py3-none-any", *present]
+            filenames = [f"pkg-1.0-{t}.whl" for t in tags]
+
+            result = self._resolve_matrix(tags, targets)
+            assert result.success
+
+            accepted_by_some = {
+                fn for fn in filenames if any(t.tags.accepts(fn) for t in targets)
+            }
+            rejected_by_all = {
+                fn
+                for fn in filenames
+                if all(t.tags_faithful and not t.tags.accepts(fn) for t in targets)
+            }
+
+            emitted = _emitted_wheel_names(
+                _pkg_entry(build_pylock(build_lock_input(result)))
+            )
+            assert emitted == accepted_by_some
+            assert emitted.isdisjoint(rejected_by_all)
+
+            # Each target's own pin carries exactly the wheels it accepts.
+            for tr in result.target_results:
+                assert tr.lock is not None
+                pin = tr.lock.pins["pkg"]
+                assert isinstance(pin, IndexPin)
+                pin_names = {w.filename for w in pin.wheels}
+                assert pin_names == {
+                    fn for fn in filenames if tr.target.tags.accepts(fn)
+                }
+
+    def test_union_keeps_both_families_and_drops_windows(self) -> None:
+        """A linux+macos union keeps both platforms and drops the never-declared one."""
+        result = self._resolve_matrix(
+            [
+                "py3-none-any",
+                "cp311-cp311-manylinux_2_17_x86_64",
+                "cp311-cp311-macosx_11_0_arm64",
+                "cp311-cp311-win_amd64",
+            ],
+            (_PRUNE_LINUX, _PRUNE_MACOS),
+        )
+        assert result.success
+        emitted = _emitted_wheel_names(
+            _pkg_entry(build_pylock(build_lock_input(result)))
+        )
+        assert emitted == {
+            "pkg-1.0-py3-none-any.whl",
+            "pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl",
+            "pkg-1.0-cp311-cp311-macosx_11_0_arm64.whl",
+        }
+
+    def test_non_faithful_overlay_keeps_every_wheel(self) -> None:
+        """An overlay moves the markers off the tag axis, so no wheel is pruned."""
+        overlay = _PRUNE_LINUX.with_marker_overrides({"sys_platform": "win32"})
+        assert not overlay.tags_faithful
+        result = self._resolve_matrix(
+            [
+                "cp311-cp311-manylinux_2_17_x86_64",
+                "cp311-cp311-macosx_11_0_arm64",
+                "cp311-cp311-win_amd64",
+            ],
+            (overlay,),
+        )
+        assert result.success
+        lock = result.target_results[0].lock
+        assert lock is not None
+        pin = lock.pins["pkg"]
+        assert isinstance(pin, IndexPin)
+        assert {w.filename for w in pin.wheels} == {
+            "pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl",
+            "pkg-1.0-cp311-cp311-macosx_11_0_arm64.whl",
+            "pkg-1.0-cp311-cp311-win_amd64.whl",
+        }
+
+    def test_no_compatible_wheel_and_no_sdist_fails_loudly(self) -> None:
+        """A version pruned to nothing fails via the existing no-candidate error."""
+        result = self._resolve_matrix(["cp311-cp311-win_amd64"], (_PRUNE_LINUX,))
+        assert not result.success
+        error = result.target_results[0].error
+        assert error is not None
+        assert "none of the wheel's tags are compatible" in str(error)
+
+    def test_sdist_survives_when_every_wheel_is_pruned(self) -> None:
+        """The same pruned version keeps its sdist and pins the sdist alone."""
+        coordinator = make_coordinator(
+            listings={"pkg": [_tag_wheel("cp311-cp311-win_amd64"), _tag_sdist()]},
+            auto_metadata=True,
+            sdist_pkg_info="Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\n\n",
+        )
+        result = resolve_with_coordinator(
+            coordinator,
+            [_PRUNE_LINUX],
+            [Requirement("pkg")],
+            config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+        )
+        assert result.success
+        lock = result.target_results[0].lock
+        assert lock is not None
+        pin = lock.pins["pkg"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels == ()
+        assert pin.sdist is not None
+        assert pin.sdist.filename == "pkg-1.0.tar.gz"
+
+
+_BUILDER_LOGGER = "nab_python._lockfile.builder"
+
+
+class TestLockPruneObservability:
+    """The builder reports, per pinned package, how many wheels it omitted."""
+
+    def test_debug_line_only_for_a_pruning_package(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A real resolve logs one line for the pruned package, none for the clean one."""
+        coordinator = make_coordinator(
+            listings={
+                "pruner": [
+                    _tag_wheel("py3-none-any", package="pruner"),
+                    _tag_wheel("cp311-cp311-win_amd64", package="pruner"),
+                ],
+                "clean": [_tag_wheel("py3-none-any", package="clean")],
+            },
+            auto_metadata=True,
+        )
+        with caplog.at_level(logging.DEBUG, logger=_BUILDER_LOGGER):
+            result = resolve_with_coordinator(
+                coordinator,
+                [_PRUNE_LINUX],
+                [Requirement("pruner"), Requirement("clean")],
+                config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+            )
+        assert result.success
+        messages = [r.getMessage() for r in caplog.records if r.name == _BUILDER_LOGGER]
+        pruner_lines = [m for m in messages if "pruner" in m]
+        assert len(pruner_lines) == 1
+        assert "1" in pruner_lines[0]
+        assert not [m for m in messages if "clean" in m]
+
+    def test_builder_reads_the_provider_count(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The line reflects the provider's ``tag_excluded_wheel_count`` reading."""
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+            tag_excluded_counts={("foo", Version("1.0")): 3},
+        )
+        with caplog.at_level(logging.DEBUG, logger=_BUILDER_LOGGER):
+            build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        messages = [r.getMessage() for r in caplog.records if r.name == _BUILDER_LOGGER]
+        assert len(messages) == 1
+        assert "foo" in messages[0]
+        assert "3" in messages[0]
+
+    def test_no_line_when_nothing_pruned(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A package with a zero count emits no debug line."""
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+        )
+        with caplog.at_level(logging.DEBUG, logger=_BUILDER_LOGGER):
+            build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        assert not [r for r in caplog.records if r.name == _BUILDER_LOGGER]

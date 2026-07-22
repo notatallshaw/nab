@@ -11,6 +11,7 @@ through a matrix.
 
 from __future__ import annotations
 
+import random
 import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -682,6 +683,84 @@ class TestWheelTagFiltering:
         result = provider.fetch_versions("pkg")
         assert result == []
         assert provider.stats.excluded_versions_no_compatible_wheel == 1
+
+
+class TestPerVersionPruneCounter:
+    """A ``(name, version)``-keyed prune count the lock builder reads."""
+
+    def test_count_matches_the_per_canonical_tally(self) -> None:
+        """The per-version count and the per-canonical count share one event."""
+        wheels = [
+            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
+            _platform_wheel("1.0", "cp311-cp311-win_amd64"),
+            _platform_wheel("2.0", "cp311-cp311-win_amd64"),
+        ]
+        provider = Provider(
+            _index_with_files(wheels),
+            _linux_target(PlatformSpec("linux_x86_64")),
+        )
+        provider.filter_distributions("pkg", wheels)
+        assert provider.tag_excluded_wheel_count("pkg", Version("1.0")) == 1
+        assert provider.tag_excluded_wheel_count("pkg", Version("2.0")) == 1
+        assert provider.tag_excluded_wheels["pkg"] == 2
+
+    def test_no_prune_leaves_zero(self) -> None:
+        """A version whose every wheel the target keeps has a zero count."""
+        wheels = [_platform_wheel("1.0", "py3-none-any")]
+        provider = Provider(
+            _index_with_files(wheels),
+            _linux_target(PlatformSpec("linux_x86_64")),
+        )
+        provider.filter_distributions("pkg", wheels)
+        assert provider.tag_excluded_wheel_count("pkg", Version("1.0")) == 0
+
+    def test_unseen_version_is_zero(self) -> None:
+        """A version the funnel never saw has no recorded count."""
+        provider = Provider(
+            _index_with_files([_platform_wheel("1.0", "py3-none-any")]),
+            _linux_target(PlatformSpec("linux_x86_64")),
+        )
+        assert provider.tag_excluded_wheel_count("pkg", Version("9.9")) == 0
+
+
+# Wheel tags spanning OS and arch, python levels, abi3, a free-threaded
+# build, several manylinux glibc levels, and musllinux.
+_TAG_CATALOG = (
+    "py3-none-any",
+    "py2.py3-none-any",
+    "cp310-cp310-manylinux_2_17_x86_64",
+    "cp311-cp311-manylinux_2_17_x86_64",
+    "cp311-cp311-manylinux_2_28_x86_64",
+    "cp311-cp311-manylinux_2_34_x86_64",
+    "cp312-cp312-manylinux_2_17_x86_64",
+    "cp311-cp311-musllinux_1_2_x86_64",
+    "cp311-cp311-manylinux_2_17_aarch64",
+    "cp311-abi3-manylinux_2_17_x86_64",
+    "cp39-abi3-manylinux_2_17_x86_64",
+    "cp313-cp313t-manylinux_2_17_x86_64",
+    "cp311-cp311-macosx_11_0_arm64",
+    "cp311-cp311-macosx_14_0_arm64",
+    "cp39-abi3-macosx_11_0_arm64",
+    "cp311-cp311-macosx_10_9_x86_64",
+    "cp311-cp311-win_amd64",
+)
+
+
+class TestWheelTagFilterProperty:
+    """The funnel keeps exactly the wheels a faithful target's TagSet accepts."""
+
+    @pytest.mark.parametrize("platform", ["linux_x86_64", "macos_arm64"])
+    def test_filter_keeps_exactly_the_accepted_wheels(self, platform: str) -> None:
+        target = _linux_target(PlatformSpec(platform))
+        rng = random.Random(20260722)  # noqa: S311
+        for _ in range(60):
+            tags = [t for t in _TAG_CATALOG if rng.random() < 0.5]
+            wheels = [_platform_wheel("1.0", t) for t in tags]
+            provider = Provider(_index_with_files(wheels), target)
+            result = provider.filter_distributions("pkg", wheels)
+            kept = {dist.filename for _, dist in result}
+            expected = {w.filename for w in wheels if target.tags.accepts(w.filename)}
+            assert kept == expected
 
 
 class TestEqualVersionCanonicalization:

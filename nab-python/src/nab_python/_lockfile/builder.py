@@ -9,6 +9,7 @@ be read directly without a second fetch.  This module also owns the
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +44,9 @@ if TYPE_CHECKING:
     )
     from ..provider import ArchiveSource, DistPolicy, LocalSource, VcsSource
     from ..target import ResolveTarget
+
+
+logger = logging.getLogger(__name__)
 
 
 __all__ = [
@@ -124,6 +128,10 @@ class LockInputProvider(Protocol):
         self, canonical_name: str, version: Version, /
     ) -> str | None:
         """Return the ``requires-python`` override for ``canonical_name==version``."""
+        ...
+
+    def tag_excluded_wheel_count(self, canonical_name: str, version: Version, /) -> int:
+        """Return how many wheels the tag filter dropped at ``version``."""
         ...
 
 
@@ -288,6 +296,14 @@ def build_target_lock(
     lock_pins: dict[str, PinShape] = {}
     for raw_name, version in pins.items():
         canonical = canonicalize_name(raw_name)
+        pruned = provider.tag_excluded_wheel_count(canonical, version)
+        if pruned:
+            logger.debug(
+                "%s==%s: %d wheel(s) omitted from lock by target tags",
+                canonical,
+                version,
+                pruned,
+            )
         local_source = provider.local_source_for(canonical)
         if local_source is not None:
             lock_pins[canonical] = LocalPin(

@@ -658,6 +658,10 @@ class Provider:
         # than blame requires-python or the cutoff.
         self.tag_excluded_wheels: dict[str, int] = {}
 
+        # The same drops keyed by (canonical name, version), for the lock's
+        # per-package omitted count.  Bumped alongside tag_excluded_wheels.
+        self.tag_excluded_wheels_by_version: dict[tuple[str, Version], int] = {}
+
         # Canonical names whose listing lost a file to requires-python,
         # dist-policy, or the upload cutoff before the tag pass ran.  A
         # tag-rejected wheel on some other version must not then claim the
@@ -2127,3 +2131,8 @@ class Provider:
         normalized = canonicalize_name(canonical_name)
         listing = self.versions_cache.get(normalized, [])
         return [dist for v, dist in listing if v == version]
+
+    def tag_excluded_wheel_count(self, canonical_name: str, version: Version) -> int:
+        """Return how many wheels the tag filter dropped at ``version`` (0 if none)."""
+        normalized = canonicalize_name(canonical_name)
+        return self.tag_excluded_wheels_by_version.get((normalized, version), 0)
