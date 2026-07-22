@@ -2925,9 +2925,9 @@ class TestGetSdistFiles:
     ) -> None:
         """A crash while writing the entry must not leave a partial cache.
 
-        The first fetch loses its write as the single record is committed;
-        the second must still recover the full PKG-INFO plus pyproject.toml
-        pair.
+        The first fetch's write is dropped as the single record is
+        committed; the second must still recover the full PKG-INFO and
+        pyproject.toml pair.
         """
         cache = _make_cache(tmp_path)
         marker = b"partial-write-marker"

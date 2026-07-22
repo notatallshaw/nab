@@ -180,9 +180,8 @@ def _make_removable(root: Path) -> None:
 class OnDiskCache:
     """File-per-key cache for Simple API and wheel metadata.
 
-    Stores are best-effort: a write the filesystem refuses is dropped, the
-    way an entry that cannot be read is a miss. A root that is read-only,
-    full, or over quota costs a run its cache rather than ending it.
+    Stores are best-effort: a write the filesystem refuses is dropped,
+    just as an entry that cannot be read is a miss.
     """
 
     def __init__(
@@ -206,11 +205,11 @@ class OnDiskCache:
         self._sdist_dir = root / f"sdist-{CACHE_VERSION_SDIST}" / self._index
         self._store_failed = False
 
-    def _store(self, path: Path, data: bytes) -> None:
-        """Write ``data`` to ``path``, dropping the entry if the write fails.
+    def _store(self, path: Path, data: bytes) -> bool:
+        """Write ``data`` to ``path``, returning False if the write failed.
 
-        Only the first failure is reported: the rest of the run meets the
-        same one on every package.
+        Only the first failure warns: a root that refuses one write
+        refuses the rest.
         """
         try:
             _atomic_write(path, data)
@@ -220,6 +219,8 @@ class OnDiskCache:
                 logger.warning(
                     "cannot store cache entries under %s: %s", self._root, exc
                 )
+            return False
+        return True
 
     def _simple_paths(self, package: str) -> tuple[Path, Path]:
         segment = _require_single_segment(package)
@@ -265,10 +266,15 @@ class OnDiskCache:
         return (body, policy)
 
     def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> None:
-        """Write the body and the policy sidecar atomically."""
+        """Write the body and the policy sidecar atomically.
+
+        The sidecar goes out only once the body has landed, so a dropped
+        body write cannot stamp an older body with the new one's ETag and
+        freshness window.
+        """
         body_path, policy_path = self._simple_paths(package)
-        self._store(body_path, body)
-        self._store(policy_path, _encode_policy(policy))
+        if self._store(body_path, body):
+            self._store(policy_path, _encode_policy(policy))
 
     def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Replace the policy sidecar without touching the body.

@@ -286,9 +286,11 @@ the same refusal ends the run. See [Build policy](build-policy.md).
 others surface a helpful `ImportError` if selected without the
 matching extra.
 
-A cache root nab cannot write to (read-only, out of space, over quota)
-is not fatal. The run warns once and carries on, serving whatever the
-cache already holds but storing nothing new.
+A cache root nab cannot write to (read-only, full, over quota) does not
+stop an index fetch. The run warns once and carries on, serving what the
+index cache already holds and storing nothing new. Cloning a VCS
+requirement or unpacking a URL archive still needs a writable cache root
+and fails without one.
 
 ## Global flags
 

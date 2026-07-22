@@ -7,12 +7,13 @@ import logging
 import os
 import stat
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from nab_index.atomic import atomic_write_text
+from nab_index.atomic import atomic_write, atomic_write_text
 from nab_index.cache import (
     CACHE_VERSION_METADATA,
     CACHE_VERSION_SDIST,
@@ -458,6 +459,33 @@ class TestUnwritableRoot:
             )
         assert caplog.records == []
         assert cache.get_simple("foo") is not None
+
+    def test_dropped_body_write_keeps_the_old_policy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A body lost to ENOSPC must not be stamped with the new policy.
+
+        The small sidecar can land when the much larger body does not,
+        which would leave the old listing looking fresh under the new
+        body's ETag.
+        """
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        old_policy = CachePolicy(fetched_at=0, max_age=600, etag="E1")
+        cache.put_simple("foo", b"OLD-LISTING", old_policy)
+
+        def fail_body(path: Path, data: bytes) -> None:
+            if path.suffix == ".json":
+                raise OSError(28, "No space left on device")
+            atomic_write(path, data)
+
+        monkeypatch.setattr("nab_index.cache.atomic_write", fail_body)
+        cache.put_simple(
+            "foo",
+            b"NEW-LISTING",
+            CachePolicy(fetched_at=int(time.time()), max_age=600, etag="E2"),
+        )
+
+        assert cache.get_simple("foo") == (b"OLD-LISTING", old_policy)
 
     def test_bad_key_still_raises(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
