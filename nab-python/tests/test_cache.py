@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,7 @@ import pytest
 
 from nab_index.atomic import atomic_write_text
 from nab_index.cache import (
+    VCS_BUCKET,
     CachePolicy,
     NullCache,
     OfflineError,
@@ -685,7 +687,7 @@ class TestSourceBuckets:
 
     @staticmethod
     def _clone_into(cache_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        """Return the tree the real clone helper writes under ``cache_root``."""
+        """Return the tree ``prepare_clone`` writes under ``cache_root``."""
 
         def fake_run(cmd: list[str], **kwargs: object) -> object:
             cwd = Path(str(kwargs["cwd"]))
@@ -724,6 +726,27 @@ class TestSourceBuckets:
         assert "archive" in cache.clear_cache()
         assert not tree.exists()
         assert not (root / "archive").exists()
+
+    def test_clear_removes_a_read_only_clone(self, tmp_path: Path) -> None:
+        root = tmp_path / "cache"
+        cache = _populate(root)
+        tree = root / VCS_BUCKET / "vcs" / ("0" * 16) / ("a" * 40)
+        tree.mkdir(parents=True)
+        packfile = tree / "pack-0.pack"
+        packfile.write_bytes(b"PACK")
+
+        outside = tmp_path / "outside.txt"
+        outside.write_text("upstream")
+        outside.chmod(0o444)
+        _symlink_or_skip(tree / "link", outside)
+
+        # A read-only file stops rmtree on Windows, a read-only directory on POSIX.
+        packfile.chmod(0o444)
+        tree.chmod(0o500)
+
+        assert VCS_BUCKET in cache.clear_cache()
+        assert not (root / VCS_BUCKET).exists()
+        assert not outside.stat().st_mode & stat.S_IWUSR
 
     def test_verify_does_not_parse_source_trees(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

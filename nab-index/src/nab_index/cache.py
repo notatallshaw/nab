@@ -17,11 +17,11 @@ A versioned bucket name (``simple-v0``) gives zero-cost schema
 migration: when the on-disk format changes, bump the suffix and the
 old directory is harmless.
 
-A resolve materialises two more buckets under the same root, holding
-upstream trees rather than nab records:
+A resolve writes two more buckets under the same root, holding upstream
+source trees:
 
-    vcs/       <- shallow clones, written by :mod:`nab_index.vcs`
-    archive/   <- extracted archive sources, keyed by verified digest
+    vcs/vcs/<repo key>/<commit sha>/   <- shallow clone
+    archive/<archive digest>/          <- extracted archive
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,8 +64,8 @@ CACHE_VERSION_SDIST = "v1"
 # Buckets of nab-written records. simple-neg-* is covered by the simple- prefix.
 ENTRY_BUCKET_PREFIXES = ("simple-", "metadata-", "sdist-")
 
-# Buckets holding source trees a resolve materialises: cloned VCS checkouts and
-# extracted archives. nab owns the directories but not the files inside them.
+# Buckets a resolve fills with upstream source trees. nab owns the directories,
+# not the files inside them.
 VCS_BUCKET = "vcs"
 ARCHIVE_BUCKET = "archive"
 SOURCE_BUCKETS = (VCS_BUCKET, ARCHIVE_BUCKET)
@@ -131,6 +132,30 @@ def _require_single_segment(component: str) -> str:
         msg = f"cache key component is not a single path segment: {component!r}"
         raise ValueError(msg)
     return component
+
+
+def _add_owner_mode(path: Path, bits: int) -> None:
+    """Add ``bits`` to ``path``'s mode, leaving a symlink untouched."""
+    if path.is_symlink():
+        return
+    path.chmod(path.stat().st_mode | bits)
+
+
+def _make_removable(root: Path) -> None:
+    """Give the owner write on ``root`` and everything under it.
+
+    A clone carries read-only packfiles and an extracted archive keeps
+    the mode bits the archive declared, so either can leave a tree
+    ``rmtree`` cannot take apart. Symlinks are skipped so no chmod lands
+    outside the root.
+    """
+    _add_owner_mode(root, stat.S_IRWXU)
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        for name in dirnames:
+            _add_owner_mode(Path(dirpath, name), stat.S_IRWXU)
+        for name in filenames:
+            _add_owner_mode(Path(dirpath, name), stat.S_IWUSR)
 
 
 class OnDiskCache:
@@ -308,8 +333,8 @@ class OnDiskCache:
     def _entry_bucket_dirs(self) -> list[Path]:
         """Return the bucket entries holding records nab wrote.
 
-        The source buckets are excluded: they hold upstream files, which
-        have no nab record format to read.
+        The source buckets are excluded: they hold upstream files, not
+        nab records.
         """
         return [
             child for child in self._root_children() if _is_entry_bucket(child.name)
@@ -387,7 +412,11 @@ class OnDiskCache:
             if bucket.is_symlink():
                 bucket.unlink()
             elif bucket.is_dir():
-                shutil.rmtree(bucket)
+                try:
+                    shutil.rmtree(bucket)
+                except PermissionError:
+                    _make_removable(bucket)
+                    shutil.rmtree(bucket)
             else:
                 continue
             removed.append(bucket.name)

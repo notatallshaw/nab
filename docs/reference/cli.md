@@ -220,8 +220,8 @@ actions:
 * `nab cache verify` walks the cached index records read-only and
   reports any corrupt entry by path and reason. Cloned repositories and
   extracted archives hold upstream files, so they are not parsed.
-* `nab cache clear` removes every bucket under the root, cloned
-  repositories and extracted archives included, returning the cache to
+* `nab cache clear` removes every bucket under the root, including the
+  cloned repositories and extracted archives, returning the cache to
   cold.
 
 ## Runtime flags
