@@ -23,12 +23,17 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .atomic import atomic_write
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +43,7 @@ __all__ = [
     "NullCache",
     "OfflineError",
     "OnDiskCache",
+    "is_recognized_bucket",
 ]
 
 
@@ -45,6 +51,10 @@ CACHE_VERSION_SIMPLE = "v0"
 CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v1"
+
+# Bucket directories nab owns under a cache root. simple-neg-* is covered
+# by the simple- prefix.
+RECOGNIZED_BUCKET_PREFIXES = ("simple-", "metadata-", "sdist-")
 
 DEFAULT_PYPI_URLS = frozenset(
     [
@@ -70,6 +80,11 @@ class CachePolicy:
         """Return True if the entry is still within its freshness window."""
         current = int(time.time()) if now is None else now
         return current - self.fetched_at < self.max_age
+
+
+def is_recognized_bucket(name: str) -> bool:
+    """Whether ``name`` is a bucket directory nab owns under a cache root."""
+    return any(name.startswith(prefix) for prefix in RECOGNIZED_BUCKET_PREFIXES)
 
 
 def _index_dirname(index_url: str) -> str:
@@ -256,6 +271,95 @@ class OnDiskCache:
         """Remove any negative entry for ``package``. A miss is not an error."""
         self._neg_path(package).unlink(missing_ok=True)
 
+    def _bucket_dirs(self) -> list[Path]:
+        """Return the recognized bucket entries directly under the root.
+
+        Symlinks are included so the caller can decide how to handle one
+        rather than following it out of the root.
+        """
+        try:
+            children = list(self._root.iterdir())
+        except OSError:
+            return []
+        return [child for child in children if is_recognized_bucket(child.name)]
+
+    def iter_cache_entries(self) -> Iterator[Path]:
+        """Yield each entry file inside the recognized buckets.
+
+        A symlinked bucket or a symlinked file is skipped, never followed
+        out of the tree.
+        """
+        for bucket in self._bucket_dirs():
+            if bucket.is_symlink() or not bucket.is_dir():
+                continue
+            for dirpath, _dirnames, filenames in os.walk(bucket, followlinks=False):
+                base = Path(dirpath)
+                for name in filenames:
+                    entry = base / name
+                    if not entry.is_symlink():
+                        yield entry
+
+    def read_cache_entry(self, path: Path) -> str | None:
+        """Return a corruption reason for a cache entry, or ``None`` if it parses.
+
+        Parses by suffix, matching each kind's read path: ``.policy`` and
+        ``.neg`` decode as a policy, ``.metadata`` as UTF-8, ``.json`` as
+        JSON (an sdist record also carries its two fields). Any other suffix
+        is not a nab entry and is reported clean.
+        """
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            return f"unreadable: {exc.strerror or exc}"
+        suffix = path.suffix
+        if suffix in (".policy", ".neg"):
+            return None if _decode_policy(raw) is not None else "policy not decodable"
+        if suffix == ".metadata":
+            try:
+                raw.decode("utf-8")
+            except UnicodeDecodeError:
+                return "not valid UTF-8"
+            return None
+        if suffix == ".json":
+            return self._read_json_reason(path, raw)
+        return None
+
+    def _read_json_reason(self, path: Path, raw: bytes) -> str | None:
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            return "not valid JSON"
+        bucket = self._bucket_of(path)
+        if bucket.startswith("sdist-") and not (
+            isinstance(doc, dict) and "pkg_info" in doc and "pyproject" in doc
+        ):
+            return "sdist record missing fields"
+        return None
+
+    def _bucket_of(self, path: Path) -> str:
+        try:
+            rel = path.relative_to(self._root)
+        except ValueError:  # pragma: no cover - entries always sit under the root
+            return ""
+        return rel.parts[0] if rel.parts else ""
+
+    def clear_cache(self) -> list[str]:
+        """Remove the recognized bucket directories in full.
+
+        Returns the bucket names removed. A symlinked bucket has its link
+        removed rather than being followed, so a target outside the root is
+        left untouched; files nab does not own beside the buckets are never
+        touched.
+        """
+        removed: list[str] = []
+        for bucket in self._bucket_dirs():
+            if bucket.is_symlink():
+                bucket.unlink()
+            else:
+                shutil.rmtree(bucket)
+            removed.append(bucket.name)
+        return removed
+
 
 def _encode_policy(policy: CachePolicy) -> bytes:
     return json.dumps(
@@ -330,6 +434,18 @@ class CacheBackend(Protocol):
         """Remove any negative entry for ``package``."""
         ...
 
+    def iter_cache_entries(self) -> Iterator[Path]:
+        """Yield each entry file inside the recognized buckets."""
+        ...
+
+    def read_cache_entry(self, path: Path) -> str | None:
+        """Return a corruption reason for a cache entry, or ``None`` if it parses."""
+        ...
+
+    def clear_cache(self) -> list[str]:
+        """Remove the recognized bucket directories, returning the names removed."""
+        ...
+
 
 class NullCache:
     """No-op cache backend used when persistence is disabled.
@@ -378,3 +494,14 @@ class NullCache:
 
     def drop_negative(self, package: str) -> None:
         """Do nothing."""
+
+    def iter_cache_entries(self) -> Iterator[Path]:
+        """Yield nothing (no persistent entries)."""
+        return iter(())
+
+    def read_cache_entry(self, path: Path) -> str | None:
+        """Return ``None`` (a disabled cache never holds a corrupt entry)."""
+
+    def clear_cache(self) -> list[str]:
+        """Return an empty list (nothing to remove)."""
+        return []
