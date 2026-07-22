@@ -313,6 +313,48 @@ class TestOnDiskCache:
             tmp_path / "metadata-v1" / "pypi" / "foo"
         ]
 
+    def test_negative_round_trip(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        policy = CachePolicy(fetched_at=1000, max_age=600, etag=None)
+        cache.put_negative("foo", policy)
+        assert cache.get_negative("foo") == policy
+
+    def test_negative_layout_uses_neg_bucket(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        cache.put_negative("foo", CachePolicy(fetched_at=1, max_age=1, etag=None))
+        assert (tmp_path / "simple-neg-v0" / "pypi" / "foo.neg").exists()
+
+    def test_negative_miss_when_absent(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        assert cache.get_negative("none") is None
+
+    def test_negative_drop_then_get_is_none(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        cache.put_negative("foo", CachePolicy(fetched_at=1, max_age=1, etag=None))
+        cache.drop_negative("foo")
+        assert cache.get_negative("foo") is None
+
+    def test_negative_drop_missing_is_noop(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        cache.drop_negative("foo")
+        assert cache.get_negative("foo") is None
+
+    def test_negative_miss_on_corrupt_neg(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        path = cache._neg_path("foo")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"not-json")
+        assert cache.get_negative("foo") is None
+
+    def test_put_negative_rejects_multi_segment_package(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        with pytest.raises(ValueError, match="not a single path segment"):
+            cache.put_negative(
+                "foo/../../elsewhere",
+                CachePolicy(fetched_at=1, max_age=1, etag=None),
+            )
+        assert list(tmp_path.rglob("*.neg")) == []
+
 
 class TestNullCache:
     def test_get_returns_none_and_put_is_noop(self) -> None:
@@ -328,6 +370,14 @@ class TestNullCache:
         assert cache.put_sdist_files("foo", "1.0", "x", None) is None
         # And subsequent gets still miss.
         assert cache.get_simple("foo") is None
+
+    def test_negative_get_none_and_put_drop_noop(self) -> None:
+        cache = NullCache()
+        assert cache.get_negative("foo") is None
+        policy = CachePolicy(fetched_at=0, max_age=0, etag=None)
+        assert cache.put_negative("foo", policy) is None
+        assert cache.drop_negative("foo") is None
+        assert cache.get_negative("foo") is None
 
 
 class TestEncodePolicy:

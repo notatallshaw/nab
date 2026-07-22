@@ -9,6 +9,7 @@ Layout under ``root``:
 
     simple-v0/<index>/<package>.json       <- raw PyPI JSON body
     simple-v0/<index>/<package>.policy     <- {fetched_at, max_age, etag}
+    simple-neg-v0/<index>/<package>.neg    <- {fetched_at, max_age, etag}
     metadata-v1/<index>/<package>/<url digest>.metadata
     sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
 
@@ -38,6 +39,7 @@ __all__ = [
 
 
 CACHE_VERSION_SIMPLE = "v0"
+CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v1"
 
@@ -111,6 +113,7 @@ class OnDiskCache:
         self._root = root
         self._index = _index_dirname(index_url)
         self._simple_dir = root / f"simple-{CACHE_VERSION_SIMPLE}" / self._index
+        self._neg_dir = root / f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}" / self._index
         self._metadata_dir = root / f"metadata-{CACHE_VERSION_METADATA}" / self._index
         self._sdist_dir = root / f"sdist-{CACHE_VERSION_SDIST}" / self._index
 
@@ -119,6 +122,10 @@ class OnDiskCache:
         body = self._simple_dir / f"{segment}.json"
         policy = self._simple_dir / f"{segment}.policy"
         return (body, policy)
+
+    def _neg_path(self, package: str) -> Path:
+        segment = _require_single_segment(package)
+        return self._neg_dir / f"{segment}.neg"
 
     def _sdist_path(self, package: str, version: str) -> Path:
         package_segment = _require_single_segment(package)
@@ -144,14 +151,8 @@ class OnDiskCache:
             body = body_path.read_bytes()
         except OSError:
             return None
-        try:
-            policy_doc = json.loads(policy_bytes)
-            policy = CachePolicy(
-                fetched_at=int(policy_doc["fetched_at"]),
-                max_age=int(policy_doc["max_age"]),
-                etag=policy_doc.get("etag"),
-            )
-        except (ValueError, KeyError, TypeError):
+        policy = _decode_policy(policy_bytes)
+        if policy is None:
             return None
         return (body, policy)
 
@@ -211,6 +212,22 @@ class OnDiskCache:
             ),
         )
 
+    def get_negative(self, package: str) -> CachePolicy | None:
+        """Return the freshness policy of a cached name-level 404, or ``None``."""
+        try:
+            neg_bytes = self._neg_path(package).read_bytes()
+        except OSError:
+            return None
+        return _decode_policy(neg_bytes)
+
+    def put_negative(self, package: str, policy: CachePolicy) -> None:
+        """Record that ``package`` returned a name-level 404 from this index."""
+        _atomic_write(self._neg_path(package), _encode_policy(policy))
+
+    def drop_negative(self, package: str) -> None:
+        """Remove any negative entry for ``package``. A miss is not an error."""
+        self._neg_path(package).unlink(missing_ok=True)
+
 
 def _encode_policy(policy: CachePolicy) -> bytes:
     return json.dumps(
@@ -220,6 +237,18 @@ def _encode_policy(policy: CachePolicy) -> bytes:
             "etag": policy.etag,
         }
     ).encode("utf-8")
+
+
+def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
+    try:
+        doc = json.loads(policy_bytes)
+        return CachePolicy(
+            fetched_at=int(doc["fetched_at"]),
+            max_age=int(doc["max_age"]),
+            etag=doc.get("etag"),
+        )
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 class CacheBackend(Protocol):
@@ -261,6 +290,18 @@ class CacheBackend(Protocol):
         """Store the ``(pkg_info, pyproject_toml)`` pair as one record."""
         ...
 
+    def get_negative(self, package: str) -> CachePolicy | None:
+        """Return the freshness policy of a cached name-level 404, or ``None``."""
+        ...
+
+    def put_negative(self, package: str, policy: CachePolicy) -> None:
+        """Record that ``package`` returned a name-level 404 from this index."""
+        ...
+
+    def drop_negative(self, package: str) -> None:
+        """Remove any negative entry for ``package``."""
+        ...
+
 
 class NullCache:
     """No-op cache backend used when persistence is disabled.
@@ -300,3 +341,12 @@ class NullCache:
         pyproject_toml: str | None,
     ) -> None:
         """Discard the entry."""
+
+    def get_negative(self, package: str) -> CachePolicy | None:
+        """Return ``None`` (always a miss)."""
+
+    def put_negative(self, package: str, policy: CachePolicy) -> None:
+        """Discard the entry."""
+
+    def drop_negative(self, package: str) -> None:
+        """Do nothing."""
