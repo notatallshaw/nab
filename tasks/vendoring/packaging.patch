@@ -1,9 +1,9 @@
 diff --git a/nab-python/src/nab_python/_vendor/packaging/_markersets.py b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
 new file mode 100644
-index 0000000..28c8b18
+index 0000000..7b75bc8
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
-@@ -0,0 +1,1392 @@
+@@ -0,0 +1,1531 @@
 +"""Marker algebra engine: reason about PEP 508 markers as sets of environments.
 +
 +The private engine behind :class:`~packaging.markersets.MarkerSet`. Parses a
@@ -23,7 +23,7 @@ index 0000000..28c8b18
 +import re
 +import sys
 +from itertools import pairwise, product
-+from typing import TYPE_CHECKING, NamedTuple
++from typing import TYPE_CHECKING, NamedTuple, cast
 +
 +from ._parser import Op, Variable, parse_marker
 +from ._tokenizer import ParserSyntaxError
@@ -1396,6 +1396,145 @@ index 0000000..28c8b18
 +        return serialize(to_nnf(node))
 +    except UnserializableMarkerSet:
 +        return "unrepresentable"
++
++
++# ------------------------------------------------------------------- simplify
++
++
++def _atom_key(atom: Atom) -> tuple[str, str, str, bool, bool, str, str, bool]:
++    """A total order over atoms, for a deterministic factored serialisation."""
++    return (
++        atom.origin,
++        atom.op,
++        atom.literal,
++        atom.swapped,
++        atom.positive,
++        atom.kind,
++        atom.variable,
++        atom.derive_mm,
++    )
++
++
++def _clause_key(clause: frozenset[Atom]) -> tuple:
++    return tuple(_atom_key(atom) for atom in sorted(clause, key=_atom_key))
++
++
++def _to_clauses(node: Formula, max_cells: int) -> list[frozenset[Atom]]:
++    """Distribute an NNF tree into a disjunction of atom-set clauses (DNF).
++
++    An AND of ORs expands multiplicatively, so the running clause count is
++    checked against ``max_cells`` and a pathological non-DNF input fails as
++    :class:`IntractableMarkerSet` rather than expanding unbounded.
++    """
++    if isinstance(node, BoolConst):
++        return [frozenset()] if node.value else []
++    if isinstance(node, AtomLeaf):
++        return [frozenset((node.atom,))]
++    if isinstance(node, OrNode):
++        clauses: list[frozenset[Atom]] = []
++        for child in node.children:
++            clauses.extend(_to_clauses(child, max_cells))
++        return clauses
++    and_node = cast("AndNode", node)
++    product: list[frozenset[Atom]] = [frozenset()]
++    for child in and_node.children:
++        child_clauses = _to_clauses(child, max_cells)
++        product = [left | right for left in product for right in child_clauses]
++        if len(product) > max_cells:
++            msg = f"DNF clause count exceeds max_cells={max_cells}"
++            raise IntractableMarkerSet(msg)
++    return product
++
++
++def _clause_formula(clause: Iterable[Atom]) -> Formula:
++    return make_and(AtomLeaf(atom) for atom in clause)
++
++
++def _disjunction(clauses: Iterable[frozenset[Atom]]) -> Formula:
++    return make_or(_clause_formula(clause) for clause in clauses)
++
++
++def _equivalent_within(
++    left: Formula, right: Formula, universe: Formula, max_cells: int
++) -> bool:
++    """Whether two trees denote the same set on every point of ``universe``."""
++    return is_empty(
++        make_and((left, universe, make_not(right))), max_cells
++    ) and is_empty(make_and((right, universe, make_not(left))), max_cells)
++
++
++def _dedupe(clauses: list[frozenset[Atom]]) -> list[frozenset[Atom]]:
++    seen: set[frozenset[Atom]] = set()
++    out: list[frozenset[Atom]] = []
++    for clause in clauses:
++        if clause not in seen:
++            seen.add(clause)
++            out.append(clause)
++    return out
++
++
++def _drop_clauses(
++    clauses: list[frozenset[Atom]],
++    original: Formula,
++    universe: Formula,
++    max_cells: int,
++) -> list[frozenset[Atom]]:
++    kept = list(clauses)
++    for clause in sorted(clauses, key=_clause_key):
++        trial = [other for other in kept if other != clause]
++        if _equivalent_within(_disjunction(trial), original, universe, max_cells):
++            kept = trial
++    return kept
++
++
++def _drop_atoms(
++    clauses: list[frozenset[Atom]],
++    original: Formula,
++    universe: Formula,
++    max_cells: int,
++) -> list[frozenset[Atom]]:
++    working = [set(clause) for clause in clauses]
++    for clause in working:
++        for atom in sorted(clause, key=_atom_key):
++            clause.discard(atom)
++            trial = _disjunction(frozenset(current) for current in working)
++            if not _equivalent_within(trial, original, universe, max_cells):
++                clause.add(atom)
++    return [frozenset(clause) for clause in working]
++
++
++def _canonical(clauses: list[frozenset[Atom]]) -> tuple:
++    return tuple(sorted(_clause_key(clause) for clause in clauses))
++
++
++def simplify_within(node: Formula, universe: Formula, max_cells: int) -> Formula:
++    """Return the smallest tree equivalent to ``node`` on every point of ``universe``.
++
++    Greedy: drop each clause, then each atom, whose removal preserves
++    within-universe equivalence, to a fixpoint, then factor the atoms common to
++    every surviving clause into a leading conjunction. Every removal is verified,
++    so the result is sound; on a universe of ``TRUE`` it reduces to a
++    context-free factoring. Determinism is fixed by a total atom order.
++    """
++    nnf = node if isinstance(node, BoolConst) else to_nnf(node)
++    clauses = _dedupe(_to_clauses(nnf, max_cells))
++    original = _disjunction(clauses)
++    while True:
++        before = _canonical(clauses)
++        clauses = _drop_clauses(clauses, original, universe, max_cells)
++        clauses = _dedupe(_drop_atoms(clauses, original, universe, max_cells))
++        if _canonical(clauses) == before:
++            break
++    if not clauses:
++        return FALSE
++    clauses = sorted(clauses, key=_clause_key)
++    common = frozenset.intersection(*clauses)
++    residual = sorted((clause - common for clause in clauses), key=_clause_key)
++    lead = [AtomLeaf(atom) for atom in sorted(common, key=_atom_key)]
++    inner = make_or(
++        _clause_formula(sorted(clause, key=_atom_key)) for clause in residual
++    )
++    return make_and([*lead, inner])
 diff --git a/nab-python/src/nab_python/_vendor/packaging/markers.py b/nab-python/src/nab_python/_vendor/packaging/markers.py
 index c78fd5d..0d7ee1d 100644
 --- a/nab-python/src/nab_python/_vendor/packaging/markers.py
@@ -1424,10 +1563,10 @@ index c78fd5d..0d7ee1d 100644
      """
 diff --git a/nab-python/src/nab_python/_vendor/packaging/markersets.py b/nab-python/src/nab_python/_vendor/packaging/markersets.py
 new file mode 100644
-index 0000000..13b4574
+index 0000000..63b2994
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/markersets.py
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,339 @@
 +"""The public :class:`MarkerSet`: a marker's denotation as a set of environments.
 +
 +A :class:`MarkerSet` is the denotation of a PEP 508 marker as a set of
@@ -1715,6 +1854,29 @@ index 0000000..13b4574
 +        axis, so those constraints can sit on different variables.
 +        """
 +        return _markersets.witness(self._tree, _MAX_CELLS)
++
++    # ---- simplification
++
++    @_bounded
++    def simplify(self, *, within: MarkerSet) -> MarkerSet:
++        """Return the smallest set equivalent to this one on every point of ``within``.
++
++        ``within`` is the universe the result must agree with this set over: pass
++        the union of a lock's declared environments for universe-aware
++        simplification, or :meth:`full` for a context-free factoring. The result
++        is a ``MarkerSet``; call :meth:`to_marker_string` for its compact spelling.
++
++        :raises ValueError: if ``within`` is the empty set, which makes every set
++            vacuously equivalent.
++        :raises IntractableMarkerSet: if deciding a removal exceeds the internal
++            cell budget, or the marker nests past the stack.
++        """
++        if within.is_empty():
++            msg = "within must not be the empty set"
++            raise ValueError(msg)
++        return self._wrap(
++            _markersets.simplify_within(self._tree, within._tree, _MAX_CELLS)
++        )
 +
 +    # ---- serialisation
 +
