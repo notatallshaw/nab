@@ -71,6 +71,21 @@ def build_wheel_member_front(padding: int = 20000) -> bytes:
     return buf.getvalue()
 
 
+def build_wheel_member_last(metadata: bytes) -> bytes:
+    """Build a wheel whose METADATA is the last member by offset.
+
+    A stored blob and WHEEL precede METADATA, so METADATA has the largest
+    header offset and _member_span bounds it with the central-directory start
+    rather than a following entry.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr("widget/_pad.bin", b"\x00" * 20000)
+        zf.writestr("widget-1.0.dist-info/WHEEL", b"Wheel-Version: 1.0\n")
+        zf.writestr("widget-1.0.dist-info/METADATA", metadata)
+    return buf.getvalue()
+
+
 def _parse_range(value: str) -> tuple[str, int, int]:
     body = value.removeprefix("bytes=")
     if body.startswith("-"):
@@ -559,6 +574,25 @@ def test_member_fetch_gzip_is_missing() -> None:
 
     result = _run_scripted(script, wheel=build_wheel_member_front())
     assert result.outcome is RangeOutcome.MISSING
+
+
+def test_member_last_uses_directory_upper_bound() -> None:
+    big_meta = (
+        b"Metadata-Version: 2.1\nName: widget\nVersion: 1.0\n\n"
+        + b"filler line\n" * 400
+    )
+    wheel = build_wheel_member_last(big_meta)
+    with zipfile.ZipFile(io.BytesIO(wheel)) as zf:
+        meta_offset = zf.getinfo("widget-1.0.dist-info/METADATA").header_offset
+        directory_start = zf.start_dir
+    transport = FakeRangeTransport("well_behaved", wheel)
+    result = _read(transport, tail_size=64)
+    assert result.outcome is RangeOutcome.PARTIAL
+    assert result.text == big_meta.decode("utf-8")
+    assert any(
+        rng == f"bytes={meta_offset}-{directory_start - 1}"
+        for rng, _ in transport.requests
+    )
 
 
 def test_suffix_206_unparseable_content_range_is_full_body() -> None:
