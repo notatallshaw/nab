@@ -35,7 +35,7 @@ import os
 import shutil
 import stat
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -226,11 +226,18 @@ class OnDiskCache:
             return None
         return (body, policy)
 
-    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> None:
-        """Write the body and the policy sidecar atomically."""
+    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> str:
+        """Write the body and the policy sidecar atomically; return the digest.
+
+        The sha256 of ``body`` is stamped into the stored policy's
+        ``body_digest``, overriding any value the caller passed. The returned
+        digest is the binding key for the parsed blob the caller writes next.
+        """
         body_path, policy_path = self._simple_paths(package)
+        digest = hashlib.sha256(body).hexdigest()
         _atomic_write(body_path, body)
-        _atomic_write(policy_path, _encode_policy(policy))
+        _atomic_write(policy_path, _encode_policy(replace(policy, body_digest=digest)))
+        return digest
 
     def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Replace the policy sidecar without touching the body.
@@ -522,8 +529,12 @@ class CacheBackend(Protocol):
         """Return ``(body_bytes, policy)`` if cached, else ``None``."""
         ...
 
-    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> None:
-        """Store a Simple API body and its freshness policy."""
+    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> str:
+        """Store a Simple API body and its freshness policy; return the digest.
+
+        The returned value is the sha256 hex of ``body``, the binding key for
+        the parsed-listing blob the caller writes next.
+        """
         ...
 
     def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
@@ -604,8 +615,14 @@ class NullCache:
     def get_simple(self, package: str) -> tuple[bytes, CachePolicy] | None:
         """Return ``None`` (always a miss)."""
 
-    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> None:
-        """Discard the entry."""
+    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> str:
+        """Discard the entry; return the body digest for the parsed binding.
+
+        The digest is a pure function of ``body``, so a caller building a parsed
+        blob gets the same key a real backend would return.
+        """
+        del package, policy  # stored nowhere; only body determines the digest
+        return hashlib.sha256(body).hexdigest()
 
     def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Discard the policy refresh."""

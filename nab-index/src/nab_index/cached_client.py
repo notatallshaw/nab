@@ -34,6 +34,7 @@ from .lazy_wheel import (
     RangeOutcome,
     read_wheel_metadata_over_range,
 )
+from .parsed_listing import encode as _encode_parsed
 from .transport import IDENTITY_HEADERS
 
 if TYPE_CHECKING:
@@ -228,6 +229,9 @@ class CachedAsyncSimpleClient:
                     else policy.max_age
                 ),
                 etag=_header(response, "etag") or policy.etag,
+                # Body unchanged, so its digest carries forward and any parsed
+                # blob written for the old policy still binds; no reparse.
+                body_digest=policy.body_digest,
             )
             self._cache.refresh_simple_policy(package, new_policy)
             return self._parse_listing(body, package)
@@ -246,7 +250,8 @@ class CachedAsyncSimpleClient:
             max_age=_parse_max_age(_header(response, "cache-control")),
             etag=_header(response, "etag"),
         )
-        self._cache.put_simple(package, new_body, new_policy)
+        digest = self._cache.put_simple(package, new_body, new_policy)
+        self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
         return files
 
     async def _fetch_simple(self, package: str) -> list[WheelFile | SdistFile]:
@@ -266,7 +271,8 @@ class CachedAsyncSimpleClient:
             max_age=_parse_max_age(_header(response, "cache-control")),
             etag=_header(response, "etag"),
         )
-        self._cache.put_simple(package, body, policy)
+        digest = self._cache.put_simple(package, body, policy)
+        self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
         self._cache.drop_negative(package)
         return files
 

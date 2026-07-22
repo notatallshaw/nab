@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING, TypeVar
 
 import pytest
@@ -90,6 +91,7 @@ class DictCache:
 
     def __init__(self) -> None:
         self.simple: dict[str, tuple[bytes, CachePolicy]] = {}
+        self.parsed: dict[str, bytes] = {}
         self.metadata: dict[tuple[str, str], str] = {}
         self.sdist: dict[tuple[str, str], tuple[str | None, str | None]] = {}
         self.negative: dict[str, CachePolicy] = {}
@@ -97,12 +99,24 @@ class DictCache:
     def get_simple(self, package: str) -> tuple[bytes, CachePolicy] | None:
         return self.simple.get(package)
 
-    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> None:
-        self.simple[package] = (body, policy)
+    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> str:
+        digest = hashlib.sha256(body).hexdigest()
+        self.simple[package] = (body, replace(policy, body_digest=digest))
+        return digest
 
     def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         body, _ = self.simple[package]
         self.simple[package] = (body, policy)
+
+    def get_simple_policy(self, package: str) -> CachePolicy | None:
+        entry = self.simple.get(package)
+        return None if entry is None else entry[1]
+
+    def get_simple_parsed(self, package: str) -> bytes | None:
+        return self.parsed.get(package)
+
+    def put_simple_parsed(self, package: str, blob: bytes) -> None:
+        self.parsed[package] = blob
 
     def get_metadata(self, package: str, metadata_url: str) -> str | None:
         return self.metadata.get((package, metadata_url))
