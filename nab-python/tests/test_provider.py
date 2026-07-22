@@ -1382,6 +1382,52 @@ class TestNoVersionsReasons:
         assert "disjoint with current solution range" not in reason
 
 
+class TestMetadataBlockerCount:
+    """The metadata-error line counts versions, not look-ahead rejections."""
+
+    _META = (
+        "Metadata-Version: 2.1\nName: pkg\nVersion: {ver}\nRequires-Python: >=3.13\n\n"
+    )
+
+    def _provider(self, preferred: str | None) -> Provider:
+        versions = ("1.0", "2.0", "3.0")
+        coordinator = make_coordinator(
+            [make_wheel(v) for v in versions],
+            metadata_by_version={v: self._META.format(ver=v) for v in versions},
+            package="pkg",
+        )
+        return Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
+            preferences=None if preferred is None else {"pkg": V(preferred)},
+        )
+
+    def test_counts_each_version_once_without_a_preference(self) -> None:
+        """Three unusable versions read as three."""
+        provider = self._provider(None)
+        assert provider.choose_version("pkg", VersionRange.full()) is None
+        reason = provider.get_no_versions_reason("pkg")
+        assert reason is not None
+        assert "3 versions failed metadata extraction" in reason
+        assert "pkg 3.0 requires Python >=3.13" in reason
+
+    def test_preferred_version_is_not_counted_twice(self) -> None:
+        """A preference re-checked by the full scan must not inflate the count.
+
+        ``_preferred_version`` checks 2.0 first; when its metadata raises, the
+        scan reaches 2.0 again.
+        """
+        provider = self._provider("2.0")
+        assert provider.choose_version("pkg", VersionRange.full()) is None
+        reason = provider.get_no_versions_reason("pkg")
+        assert reason is not None
+        assert "3 versions failed metadata extraction" in reason
+        assert "4 versions" not in reason
+        # The version named is the first failure, here the preferred one.
+        assert "pkg 2.0 requires Python >=3.13" in reason
+
+
 class TestGetDependencies:
     def test_returns_deps_from_metadata(self) -> None:
         """Parse Requires-Dist from fetched metadata."""
@@ -3156,7 +3202,7 @@ class TestLookAheadAbort:
     def test_should_abort_none_when_metadata_block_present(self) -> None:
         provider = self._provider()
         provider.pending_blocks[("foo", "bar", V("1.0"))].append(V("0.9"))
-        provider.pending_metadata_blocks["foo"].append((V("0.8"), "metadata failure"))
+        provider.pending_metadata_blocks["foo"][V("0.8")] = "metadata failure"
         assert provider._should_abort_lookahead("foo") is None
 
     def test_should_abort_ignores_blocks_owned_by_other_packages(self) -> None:
@@ -3168,7 +3214,7 @@ class TestLookAheadAbort:
         provider.pending_range_blocks[
             ("other", "qux", SpecifierSet("<2.0").to_range())
         ].append(V("0.8"))
-        provider.pending_metadata_blocks["other"].append((V("0.5"), "x"))
+        provider.pending_metadata_blocks["other"][V("0.5")] = "x"
         assert provider._should_abort_lookahead("foo") == ("bar", V("1.0"))
 
     def test_discard_drops_only_target_candidate_blocks(self) -> None:
