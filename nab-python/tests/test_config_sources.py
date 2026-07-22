@@ -674,6 +674,24 @@ class TestRenderers:
         assert "cache-dir" in out
         assert "<computed>" in out  # cache-dir default render
 
+    def test_renderers_label_pyproject_as_project(self, tmp_path: Path) -> None:
+        _project(tmp_path, 'resolution = "lowest"\n')
+        eff = _resolve(SourceRoots(project_dir=tmp_path))
+
+        row = next(
+            line
+            for line in render_list(eff).splitlines()
+            if line.startswith("resolution")
+        )
+        assert row.split()[2] == "project"
+
+        winner = next(
+            line
+            for line in render_explain(eff, "resolution").splitlines()
+            if line.startswith(">")
+        )
+        assert winner.split()[1] == "project"
+
     def test_render_list_surfaces_orphan_rejection(self, tmp_path: Path) -> None:
         # An unknown NAB_* var attaches to no option, so it is unreachable
         # from explain; render_list surfaces it in a trailing section.
@@ -922,9 +940,16 @@ class TestRegistryShape:
             assert by_key[key].env_var == env
 
     def test_origin_scope_for_every_kind(self) -> None:
-        for kind in SourceKind:
-            origin = Origin(kind, "x")
-            assert isinstance(origin.scope, str)
+        # PYPROJECT reports "project": it shares the project precedence level.
+        assert {kind: Origin(kind, "x").scope for kind in SourceKind} == {
+            SourceKind.DEFAULT: "default",
+            SourceKind.SYSTEM_TOML: "system",
+            SourceKind.USER_TOML: "user",
+            SourceKind.PYPROJECT: "project",
+            SourceKind.PROJECT_TOML: "project",
+            SourceKind.ENV: "env",
+            SourceKind.CLI: "cli",
+        }
 
     def test_layer_dataclass_roundtrip(self) -> None:
         layer = Layer(Origin(SourceKind.CLI, "cli"), {"offline": True})
