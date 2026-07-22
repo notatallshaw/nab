@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import tarfile
+import time
 import zipfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -17,7 +18,7 @@ import pytest
 from packaging.utils import canonicalize_name
 
 import nab_index.cache as cache_mod
-from nab_index.cache import CachePolicy, OfflineError, OnDiskCache
+from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     _header,
@@ -1041,8 +1042,9 @@ class TestGetFiles:
                 await client.aclose()
 
         assert asyncio.run(go()) == []
-        # A 404 is not cached, so a later run re-queries the index.
+        # A 404 writes a negative sentinel, never a positive entry.
         assert cache.get_simple("absent") is None
+        assert cache.get_negative("absent") is not None
 
     def test_revalidate_404_returns_empty(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -1977,3 +1979,228 @@ class TestGetRangeMetadata:
 
         asyncio.run(go())
         assert memo.capability("files.example.com") is RangeCapability.SUFFIX_OK
+
+
+def _run_get_files(
+    transport: object, cache: object, package: str, *, offline: bool = False
+) -> list:
+    async def go() -> list:
+        client = CachedAsyncSimpleClient(transport, cache, offline=offline)  # type: ignore[arg-type]
+        try:
+            return await client.get_files(package)
+        finally:
+            await client.aclose()
+
+    return asyncio.run(go())
+
+
+def _fresh_policy() -> CachePolicy:
+    return CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None)
+
+
+def _stale_policy() -> CachePolicy:
+    return CachePolicy(fetched_at=0, max_age=1, etag=None)
+
+
+class TestNegativeCaching:
+    """Name-level 404s are cached as a bounded, revalidating sentinel."""
+
+    def test_404_writes_sentinel_next_read_no_transport(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        online = _FakeTransport([_FakeResponse(b"not found", status=404)])
+
+        assert _run_get_files(online, cache, "absent") == []
+        assert len(online.calls) == 1
+        assert cache.get_negative("absent") is not None
+
+        raising = _FakeTransport()
+        assert _run_get_files(raising, cache, "absent") == []
+        assert raising.calls == []
+
+    def test_negative_fresh_below_boundary_no_transport(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1599.0)
+        cache = _make_cache(tmp_path)
+        cache.put_negative(
+            "absent", CachePolicy(fetched_at=1000, max_age=600, etag=None)
+        )
+        transport = _FakeTransport()
+
+        assert _run_get_files(transport, cache, "absent") == []
+        assert transport.calls == []
+
+    def test_negative_stale_at_boundary_online_refetches_and_restamps(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1600.0)
+        cache = _make_cache(tmp_path)
+        cache.put_negative(
+            "absent", CachePolicy(fetched_at=1000, max_age=600, etag=None)
+        )
+        transport = _FakeTransport([_FakeResponse(b"gone", status=404)])
+
+        assert _run_get_files(transport, cache, "absent") == []
+        assert len(transport.calls) == 1
+        restamped = cache.get_negative("absent")
+        assert restamped is not None
+        assert restamped.fetched_at == 1600
+
+    def test_stale_negative_online_200_publishes_and_drops(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_negative("pkg", _stale_policy())
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES,
+                    headers={"etag": "v1", "cache-control": "max-age=600"},
+                )
+            ]
+        )
+
+        files = _run_get_files(transport, cache, "pkg")
+        assert len(files) == 1
+        assert cache.get_negative("pkg") is None
+        assert cache.get_simple("pkg") is not None
+
+        raising = _FakeTransport()
+        assert len(_run_get_files(raising, cache, "pkg")) == 1
+        assert raising.calls == []
+
+    def test_404_max_age_capped_at_600(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=404, headers={"cache-control": "max-age=9999"})]
+        )
+
+        _run_get_files(transport, cache, "absent")
+        neg = cache.get_negative("absent")
+        assert neg is not None
+        assert neg.max_age == 600
+
+    def test_404_max_age_from_header_below_cap(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=404, headers={"cache-control": "max-age=120"})]
+        )
+
+        _run_get_files(transport, cache, "absent")
+        neg = cache.get_negative("absent")
+        assert neg is not None
+        assert neg.max_age == 120
+
+    def test_404_no_cache_control_defaults_600(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(b"", status=404)])
+
+        _run_get_files(transport, cache, "absent")
+        neg = cache.get_negative("absent")
+        assert neg is not None
+        assert neg.max_age == 600
+
+    def test_null_cache_never_caches_negative(self, tmp_path: Path) -> None:
+        cache = NullCache()
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=404), _FakeResponse(b"", status=404)]
+        )
+
+        assert _run_get_files(transport, cache, "absent") == []
+        assert _run_get_files(transport, cache, "absent") == []
+        assert len(transport.calls) == 2
+
+    def test_negative_is_per_index(self, tmp_path: Path) -> None:
+        url_a = "https://a.example/simple/"
+        url_b = "https://b.example/simple/"
+        cache_a = OnDiskCache(tmp_path, url_a)
+        cache_b = OnDiskCache(tmp_path, url_b)
+        transport_a = _FakeTransport([_FakeResponse(b"", status=404)])
+
+        async def visit_a() -> list:
+            client = CachedAsyncSimpleClient(transport_a, cache_a, index_url=url_a)
+            try:
+                return await client.get_files("absent")
+            finally:
+                await client.aclose()
+
+        asyncio.run(visit_a())
+        assert cache_a.get_negative("absent") is not None
+        assert cache_b.get_negative("absent") is None
+
+        transport_b = _FakeTransport([_FakeResponse(b"", status=404)])
+
+        async def visit_b() -> list:
+            client = CachedAsyncSimpleClient(transport_b, cache_b, index_url=url_b)
+            try:
+                return await client.get_files("absent")
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(visit_b()) == []
+        assert len(transport_b.calls) == 1
+
+    def test_negative_shared_across_clients_same_index(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        first = _FakeTransport([_FakeResponse(b"", status=404)])
+        assert _run_get_files(first, cache, "absent") == []
+
+        second = _FakeTransport()
+        assert _run_get_files(second, cache, "absent") == []
+        assert second.calls == []
+
+    def test_offline_serves_fresh_negative(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_negative("absent", _fresh_policy())
+        transport = _FakeTransport()
+
+        assert _run_get_files(transport, cache, "absent", offline=True) == []
+        assert transport.calls == []
+
+    def test_offline_serves_stale_negative(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_negative("absent", _stale_policy())
+        transport = _FakeTransport()
+
+        assert _run_get_files(transport, cache, "absent", offline=True) == []
+        assert transport.calls == []
+
+    def test_offline_cold_negative_miss_raises(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport()
+
+        with pytest.raises(OfflineError, match="absent"):
+            _run_get_files(transport, cache, "absent", offline=True)
+        assert transport.calls == []
+
+    def test_revalidate_404_writes_sentinel(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg", LISTING_BYTES, CachePolicy(fetched_at=0, max_age=1, etag="old")
+        )
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    b"gone", status=404, headers={"cache-control": "max-age=9999"}
+                )
+            ]
+        )
+
+        assert _run_get_files(transport, cache, "pkg") == []
+        neg = cache.get_negative("pkg")
+        assert neg is not None
+        assert neg.max_age == 600
+
+    def test_present_positive_beats_negative_sentinel(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag="x"),
+        )
+        cache.put_negative("pkg", _fresh_policy())
+        transport = _FakeTransport()
+
+        files = _run_get_files(transport, cache, "pkg")
+        assert len(files) == 1
+        assert transport.calls == []
