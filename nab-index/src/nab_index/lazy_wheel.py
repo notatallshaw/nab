@@ -87,10 +87,11 @@ class RangeCapability(enum.Enum):
     suffix range stays ``SUFFIX_OK``, since leading with the suffix form again
     costs the same single request while a proxy that only ignores ranges while
     filling its cache gets to serve cheap partial reads again.
-    ``FULL_BODY_ONLY`` is for hosts that refused or ignored ranges once the
-    suffix form was already unusable; their wheels are fetched whole.  A 416
-    never latches it: an unsatisfiable range speaks for the one file, not the
-    netloc.
+    ``FULL_BODY_ONLY`` is for hosts that, once the suffix form was already
+    unusable, refused or ignored ranges or honoured one without reporting a
+    complete-length; their wheels are fetched whole.  An answer that speaks
+    for the one file never latches it: a 416 or a zero complete-length
+    describes an empty or shrunk artifact, not the netloc.
     """
 
     UNKNOWN = "unknown"
@@ -327,13 +328,15 @@ async def _absolute_attempt(
 ) -> tuple[RangeCapability, _AcqKind, object]:
     """Learn the length with ``bytes=0-0``, then read the tail absolutely.
 
-    A refused probe steps down to the plain GET: the refusal is aimed at the
-    Range header, not the file, so only the plain GET's answer is
-    authoritative for whether the wheel can be served at all.
+    A probe that is refused, or that reports no usable total, steps down to
+    the plain GET: neither answer says the file is unserveable, so only the
+    plain GET is authoritative for whether the wheel can be served at all.
     """
     probe = await _range_get(transport, url, "bytes=0-0")
     if probe.status_code in _RANGE_REJECT_STATUSES:
-        return await _fallback_full_body(transport, url, probe.status_code)
+        return await _fallback_full_body(
+            transport, url, latch=probe.status_code != _HTTP_RANGE_NOT_SATISFIABLE
+        )
     if _non_identity(probe):
         return _UNSUPPORTED_NONE
     if probe.status_code == _HTTP_OK:
@@ -343,9 +346,10 @@ async def _absolute_attempt(
         return _UNSUPPORTED_NONE
     parsed = _parse_content_range(probe.headers.get("content-range"))
     if parsed is None or parsed[2] == 0:
-        # A zero total has no tail to ask for, and would put the malformed
-        # range "bytes=0--1" on the wire.
-        return _UNSUPPORTED_NONE
+        # No total to range against.  An absent, unparseable, or "*" length
+        # (RFC 9110 section 14.4) leaves ranges unusable on this host; a zero
+        # speaks for this artifact, as a 416 does.
+        return await _fallback_full_body(transport, url, latch=parsed is None)
     return await _absolute_tail(transport, url, parsed[2], tail_size)
 
 
@@ -360,7 +364,9 @@ async def _absolute_tail(
     low = max(0, total - tail_size)
     tail = await _range_get(transport, url, f"bytes={low}-{total - 1}")
     if tail.status_code in _RANGE_REJECT_STATUSES:
-        return await _fallback_full_body(transport, url, tail.status_code)
+        return await _fallback_full_body(
+            transport, url, latch=tail.status_code != _HTTP_RANGE_NOT_SATISFIABLE
+        )
     if _non_identity(tail):
         return _UNSUPPORTED_NONE
     if tail.status_code == _HTTP_OK:
@@ -391,21 +397,22 @@ async def _full_body_fetch(transport: AsyncHttpTransport, url: str) -> bytes | N
 
 
 async def _fallback_full_body(
-    transport: AsyncHttpTransport, url: str, status: int
+    transport: AsyncHttpTransport, url: str, *, latch: bool
 ) -> tuple[RangeCapability, _AcqKind, object]:
-    """Step a refused range down to the plain GET, choosing what it teaches.
+    """Step an unusable range down to the plain GET, choosing what it teaches.
 
-    A refusal aimed at the Range mechanism latches the netloc
-    ``FULL_BODY_ONLY``, so later wheels on the host skip the refused probes.
-    A 416 speaks for the one file (empty, or shrunk since the listing), so it
-    teaches the memo nothing and later wheels probe ranges again.
+    ``latch`` records the netloc ``FULL_BODY_ONLY``, so later wheels skip the
+    wasted probes; it is for an answer that leaves the Range mechanism
+    unusable on this host.  An answer that speaks for the one file (a 416, or
+    a zero complete-length) teaches the memo nothing, and later wheels probe
+    ranges again.
     """
     body = await _full_body_fetch(transport, url)
     if body is None:
         return _UNSUPPORTED_NONE
-    if status == _HTTP_RANGE_NOT_SATISFIABLE:
-        return (RangeCapability.UNKNOWN, _AcqKind.FULL_BODY, body)
-    return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, body)
+    if latch:
+        return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, body)
+    return (RangeCapability.UNKNOWN, _AcqKind.FULL_BODY, body)
 
 
 async def _acquire(
@@ -602,8 +609,8 @@ async def read_wheel_metadata_over_range(
             transport, wheel_url, capability, tail_size
         )
         if new_capability is not RangeCapability.UNKNOWN:
-            # A 416-driven fallback returns UNKNOWN: it taught nothing about
-            # the netloc and must not erase a learned capability.
+            # A fallback that learned nothing about the netloc returns UNKNOWN
+            # and must not erase a learned capability.
             memo.record(netloc, new_capability)
     finally:
         # Settled (or failed): waiters re-read the memo, so the growth and
