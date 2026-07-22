@@ -125,6 +125,7 @@ class CachedAsyncSimpleClient:
         offline: bool = False,
         range_memo: RangeCapabilityMemo | None = None,
         serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE,
+        min_fresh_seconds: int | None = None,
     ) -> None:
         """Create a cached client wrapping ``transport``.
 
@@ -135,6 +136,11 @@ class CachedAsyncSimpleClient:
 
         ``serialization`` pins which Simple-API serialization this index is
         asked for and read as.
+
+        ``min_fresh_seconds`` is a read-time freshness floor for this index's
+        Simple listing. A stale positive listing or negative sentinel within
+        the floor is served without revalidation; it only extends freshness and
+        rewrites nothing on disk.
         """
         self._transport = transport
         self._cache = cache
@@ -145,6 +151,7 @@ class CachedAsyncSimpleClient:
         self._range_memo = (
             range_memo if range_memo is not None else RangeCapabilityMemo()
         )
+        self._min_fresh_seconds = min_fresh_seconds
 
     async def aclose(self) -> None:
         """Close the underlying transport."""
@@ -187,18 +194,47 @@ class CachedAsyncSimpleClient:
             if data is not None:
                 if policy.is_fresh() or self._offline:
                     return self._parse_body(data, package)
+                if self._floor_keeps_fresh(policy, package, "listing"):
+                    return self._parse_body(data, package)
                 return await self._revalidate_simple(package, body, policy)
             corrupt_positive = True
 
         if not corrupt_positive:
             negative = self._cache.get_negative(package)
-            if negative is not None and (negative.is_fresh() or self._offline):
+            if negative is not None and (
+                negative.is_fresh()
+                or self._offline
+                or self._floor_keeps_fresh(negative, package, "absent-name sentinel")
+            ):
                 return []
 
         if self._offline:
             msg = f"No cached listing for {package} (offline mode)"
             raise OfflineError(msg)
         return await self._fetch_simple(package)
+
+    def _floor_keeps_fresh(self, policy: CachePolicy, package: str, kind: str) -> bool:
+        """Whether the read-time freshness floor still covers a stale entry.
+
+        Consulted only after the stored policy has said stale and offline is
+        false.
+        """
+        if self._min_fresh_seconds is None:
+            return False
+        age = int(time.time()) - policy.fetched_at
+        if age >= self._min_fresh_seconds:
+            return False
+        logger.debug(
+            "assume-fresh-seconds=%d: %s for %r from %s kept fresh at age %ds "
+            "(server max-age %ds); skipping revalidation",
+            self._min_fresh_seconds,
+            kind,
+            package,
+            self._index_url,
+            age,
+            policy.max_age,
+        )
+        return True
 
     def _negative_policy(self, response: HttpResponse) -> CachePolicy:
         """Freshness policy for a name-level 404, clamped to the 600s cap."""
