@@ -12,13 +12,14 @@ import asyncio
 import json as _json
 import ssl
 import threading
+import time
 from typing import TYPE_CHECKING, Any
 
 import truststore
 import urllib3
 
-from .retry import GET_RETRY
-from .transport import HttpError
+from .retry import GET_RETRY, MAX_RETRIES, next_delay
+from .transport import ContentDecodingError, HttpError, decode_body
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -54,12 +55,18 @@ class _SSLContext(truststore.SSLContext):
 
 
 class _Urllib3Response:
-    """Adapter that gives a urllib3 response the HttpResponse shape."""
+    """Adapter that gives a urllib3 response the HttpResponse shape.
 
-    __slots__ = ("_response",)
+    The body is fetched undecoded and decoded by the transport (see
+    :func:`~nab_index.transport.decode_body`), so it is carried here
+    rather than read from the urllib3 response.
+    """
 
-    def __init__(self, response: urllib3.BaseHTTPResponse) -> None:
+    __slots__ = ("_content", "_response")
+
+    def __init__(self, response: urllib3.BaseHTTPResponse, content: bytes) -> None:
         self._response = response
+        self._content = content
 
     @property
     def status_code(self) -> int:
@@ -71,14 +78,14 @@ class _Urllib3Response:
 
     @property
     def content(self) -> bytes:
-        return self._response.data
+        return self._content
 
     @property
     def text(self) -> str:
-        return self._response.data.decode("utf-8")
+        return self._content.decode("utf-8")
 
     def json(self) -> Any:
-        return _json.loads(self._response.data)
+        return _json.loads(self._content)
 
     def raise_for_status(self) -> None:
         status = self._response.status
@@ -130,14 +137,38 @@ class Urllib3AsyncTransport:
                 self._pools.append(pool)
         return pool
 
-    def _request(self, url: str, headers: dict[str, str]) -> urllib3.BaseHTTPResponse:
-        return self._pool().request(
-            "GET",
-            url,
-            headers=headers,
-            timeout=self._timeout,
-            retries=GET_RETRY,
-        )
+    def _request(self, url: str, headers: dict[str, str]) -> _Urllib3Response:
+        """Issue the GET on this worker thread, retrying a truncated body.
+
+        The body is fetched raw and decoded with ``decode_body``. urllib3's
+        retries cover connection errors and statuses, not a body that decodes
+        short, so that case is retried here on the same schedule.
+        """
+        pool = self._pool()
+        failures = 0
+
+        while True:
+            response = pool.request(
+                "GET",
+                url,
+                headers=headers,
+                timeout=self._timeout,
+                retries=GET_RETRY,
+                decode_content=False,
+            )
+
+            try:
+                content = decode_body(
+                    response.data, response.headers.get("Content-Encoding")
+                )
+            except ContentDecodingError:
+                failures += 1
+                if failures > MAX_RETRIES:
+                    raise
+                time.sleep(next_delay(failures))
+                continue
+
+            return _Urllib3Response(response, content)
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
@@ -151,11 +182,10 @@ class Urllib3AsyncTransport:
         if headers is not None:
             request_headers.update(headers)
         try:
-            response = await asyncio.to_thread(self._request, url, request_headers)
-        except urllib3.exceptions.HTTPError as exc:
+            return await asyncio.to_thread(self._request, url, request_headers)
+        except (urllib3.exceptions.HTTPError, ContentDecodingError) as exc:
             msg = f"GET {url} failed: {exc}"
             raise HttpError(msg) from exc
-        return _Urllib3Response(response)
 
     async def aclose(self) -> None:
         """Close every per-thread pool."""
