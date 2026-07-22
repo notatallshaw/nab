@@ -461,6 +461,9 @@ considers and which end up in the lockfile.  The default
 via an override.  A wheel that ships no PEP 658 sidecar still resolves
 under any wheel-admitting policy: its METADATA is recovered by an HTTP
 range read of the remote wheel rather than the version being skipped.
+An index that cannot serve usable ranges has the whole wheel fetched
+instead, so recovery still works there at the cost of a full download
+per sidecar-less wheel the resolver visits.
 
 `sdist-install` is the policy to reach for when an installer needs
 to build the package from source (typically to link against
