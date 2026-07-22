@@ -424,7 +424,7 @@ def _apply_wheel_tags(
     result: list[tuple[Version, DistFile]] = []
     tag_rejected_versions: set[Version] = set()
     for version, dist in base:
-        if excluded_by_wheel_tags(provider, normalized, dist, tags):
+        if excluded_by_wheel_tags(provider, normalized, version, dist, tags):
             tag_rejected_versions.add(version)
             continue
         result.append((version, dist))
@@ -459,19 +459,28 @@ def _excluded_by_python_or_time(
 
 
 def excluded_by_wheel_tags(
-    provider: Provider, normalized: str, dist: DistFile, tags: TagSet
+    provider: Provider,
+    normalized: str,
+    version: Version,
+    dist: DistFile,
+    tags: TagSet,
 ) -> bool:
     """Return True when ``dist`` is a wheel the target cannot install.
 
     An sdist is never excluded here: it carries no tags, and building it
     produces a wheel for whatever machine runs the build.  Tallied per
-    package so a package left with no candidate can say why.
+    package (so a no-candidate package can say why) and per
+    ``(package, version)``.
     """
     if not isinstance(dist, WheelFile) or tags.accepts(dist.filename):
         return False
     provider.stats.excluded_by_wheel_tags += 1
     provider.tag_excluded_wheels[normalized] = (
         provider.tag_excluded_wheels.get(normalized, 0) + 1
+    )
+    key = (normalized, version)
+    provider.tag_excluded_wheels_by_version[key] = (
+        provider.tag_excluded_wheels_by_version.get(key, 0) + 1
     )
     return True
 

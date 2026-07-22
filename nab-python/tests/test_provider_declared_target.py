@@ -685,6 +685,44 @@ class TestWheelTagFiltering:
         assert provider.stats.excluded_versions_no_compatible_wheel == 1
 
 
+class TestPerVersionPruneCounter:
+    """A ``(name, version)``-keyed prune count the lock builder reads."""
+
+    def test_count_matches_the_per_canonical_tally(self) -> None:
+        """The per-version count and the per-canonical count share one event."""
+        wheels = [
+            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
+            _platform_wheel("1.0", "cp311-cp311-win_amd64"),
+            _platform_wheel("2.0", "cp311-cp311-win_amd64"),
+        ]
+        provider = Provider(
+            _index_with_files(wheels),
+            _linux_target(PlatformSpec("linux_x86_64")),
+        )
+        provider.filter_distributions("pkg", wheels)
+        assert provider.tag_excluded_wheel_count("pkg", Version("1.0")) == 1
+        assert provider.tag_excluded_wheel_count("pkg", Version("2.0")) == 1
+        assert provider.tag_excluded_wheels["pkg"] == 2
+
+    def test_no_prune_leaves_zero(self) -> None:
+        """A version whose every wheel the target keeps has a zero count."""
+        wheels = [_platform_wheel("1.0", "py3-none-any")]
+        provider = Provider(
+            _index_with_files(wheels),
+            _linux_target(PlatformSpec("linux_x86_64")),
+        )
+        provider.filter_distributions("pkg", wheels)
+        assert provider.tag_excluded_wheel_count("pkg", Version("1.0")) == 0
+
+    def test_unseen_version_is_zero(self) -> None:
+        """A version the funnel never saw has no recorded count."""
+        provider = Provider(
+            _index_with_files([_platform_wheel("1.0", "py3-none-any")]),
+            _linux_target(PlatformSpec("linux_x86_64")),
+        )
+        assert provider.tag_excluded_wheel_count("pkg", Version("9.9")) == 0
+
+
 # Wheel tags spanning OS and arch, python levels, abi3, a free-threaded
 # build, several manylinux glibc levels, and musllinux.
 _TAG_CATALOG = (

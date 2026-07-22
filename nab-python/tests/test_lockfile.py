@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import re
 import sys
@@ -2443,6 +2444,7 @@ class _FakeProvider:
         extra_deps_map: (
             dict[tuple[str, Version], dict[str, dict[str, object]]] | None
         ) = None,
+        tag_excluded_counts: dict[tuple[str, Version], int] | None = None,
     ) -> None:
         self._listings = listings or {}
         self._local = local_sources or {}
@@ -2454,6 +2456,7 @@ class _FakeProvider:
         self.coordinator = _FakeCoordinator(listing_indexes)
         self.deps_cache = deps_cache or {}
         self.extra_deps_map = extra_deps_map or {}
+        self._tag_excluded_counts = tag_excluded_counts or {}
 
     def local_source_for(self, canonical: str) -> LocalSource | None:
         return self._local.get(canonical)
@@ -2479,6 +2482,9 @@ class _FakeProvider:
 
     def effective_requires_python(self, canonical: str, version: Version) -> str | None:
         return self._requires_python_overrides.get(canonical)
+
+    def tag_excluded_wheel_count(self, canonical: str, version: Version) -> int:
+        return self._tag_excluded_counts.get((canonical, version), 0)
 
 
 def _wheel_file(
@@ -4698,3 +4704,64 @@ class TestLockWheelPrunePredicate:
         assert pin.wheels == ()
         assert pin.sdist is not None
         assert pin.sdist.filename == "pkg-1.0.tar.gz"
+
+
+_BUILDER_LOGGER = "nab_python._lockfile.builder"
+
+
+class TestLockPruneObservability:
+    """The builder reports, per pinned package, how many wheels it omitted."""
+
+    def test_debug_line_only_for_a_pruning_package(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A real resolve logs one line for the pruned package, none for the clean one."""
+        coordinator = make_coordinator(
+            listings={
+                "pruner": [
+                    _tag_wheel("py3-none-any", package="pruner"),
+                    _tag_wheel("cp311-cp311-win_amd64", package="pruner"),
+                ],
+                "clean": [_tag_wheel("py3-none-any", package="clean")],
+            },
+            auto_metadata=True,
+        )
+        with caplog.at_level(logging.DEBUG, logger=_BUILDER_LOGGER):
+            result = resolve_with_coordinator(
+                coordinator,
+                [_PRUNE_LINUX],
+                [Requirement("pruner"), Requirement("clean")],
+                config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+            )
+        assert result.success
+        messages = [r.getMessage() for r in caplog.records if r.name == _BUILDER_LOGGER]
+        pruner_lines = [m for m in messages if "pruner" in m]
+        assert len(pruner_lines) == 1
+        assert "1" in pruner_lines[0]
+        assert not [m for m in messages if "clean" in m]
+
+    def test_builder_reads_the_provider_count(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The line reflects the provider's ``tag_excluded_wheel_count`` reading."""
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+            tag_excluded_counts={("foo", Version("1.0")): 3},
+        )
+        with caplog.at_level(logging.DEBUG, logger=_BUILDER_LOGGER):
+            build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        messages = [r.getMessage() for r in caplog.records if r.name == _BUILDER_LOGGER]
+        assert len(messages) == 1
+        assert "foo" in messages[0]
+        assert "3" in messages[0]
+
+    def test_no_line_when_nothing_pruned(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A package with a zero count emits no debug line."""
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file())]},
+        )
+        with caplog.at_level(logging.DEBUG, logger=_BUILDER_LOGGER):
+            build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        assert not [r for r in caplog.records if r.name == _BUILDER_LOGGER]
