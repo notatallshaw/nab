@@ -25,6 +25,7 @@ from nab_index.client import (
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_python._provider import build_remote, metadata_resolver
+from nab_python._provider import listing as listing_mod
 from nab_python._provider.metadata_resolver import (
     add_classified_dep,
     cache_deps_from_metadata,
@@ -850,6 +851,27 @@ class TestEqualVersionDifferentStrings:
         assert v_forward is not None
         assert v_backward is not None
         assert str(v_forward) == str(v_backward)
+
+
+class TestCanonicalizeEqualVersions:
+    """Only a listing that holds an equal group is rebuilt."""
+
+    def test_distinct_versions_keep_the_same_list(self) -> None:
+        pairs = [(V("2.0"), make_wheel("2.0")), (V("1.0"), make_sdist("1.0"))]
+        assert listing_mod._canonicalize_equal_versions(pairs) is pairs
+
+    def test_one_version_across_two_artifacts_keeps_the_same_list(self) -> None:
+        """The listing interns its versions, so a repeat is the same object."""
+        version = V("1.0")
+        pairs = [(version, make_wheel("1.0")), (version, make_sdist("1.0"))]
+        assert listing_mod._canonicalize_equal_versions(pairs) is pairs
+
+    @pytest.mark.parametrize("first", ["1.0", "1.0.0"])
+    def test_equal_group_collapses_to_the_shortest_string(self, first: str) -> None:
+        second = "1.0.0" if first == "1.0" else "1.0"
+        pairs = [(V(first), make_wheel(first)), (V(second), make_sdist(second))]
+        result = listing_mod._canonicalize_equal_versions(pairs)
+        assert [str(version) for version, _ in result] == ["1.0", "1.0"]
 
 
 class TestPrereleaseAdmission:

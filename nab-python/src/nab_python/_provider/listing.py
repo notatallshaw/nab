@@ -514,13 +514,23 @@ def _canonicalize_equal_versions(
     pin is deterministic.
     """
     representative: dict[Version, Version] = {}
+    needs_rebuild = False
     for version, _ in result:
         chosen = representative.get(version)
-        if chosen is None or (len(version.release), str(version)) < (
-            len(chosen.release),
-            str(chosen),
-        ):
+        if chosen is None:
             representative[version] = version
+        elif chosen is not version:
+            # The listing interns its versions, so two distinct objects that
+            # compare equal are two spellings of one release.
+            needs_rebuild = True
+            if (len(version.release), str(version)) < (
+                len(chosen.release),
+                str(chosen),
+            ):
+                representative[version] = version
+
+    if not needs_rebuild:
+        return result
     return [(representative[version], dist) for version, dist in result]
 
 

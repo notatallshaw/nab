@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import re
+import sys
 from datetime import datetime
 
 _FRACTIONAL_SECONDS = re.compile(r"\.(\d+)")
+
+# From 3.11 ``fromisoformat`` reads the ``Z`` suffix and every fraction width
+# PEP 700 permits, so ``_to_isoformat`` is only the 3.10 fallback.
+_NATIVE_ACCEPTS_PEP_700 = sys.version_info >= (3, 11)
 
 
 def parse_iso_datetime(raw: str) -> datetime:
@@ -14,6 +19,12 @@ def parse_iso_datetime(raw: str) -> datetime:
     The offset in ``raw`` is preserved, and the result is naive when there is
     none, so each caller decides what a missing offset means.
     """
+    if _NATIVE_ACCEPTS_PEP_700:
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            pass
+
     return datetime.fromisoformat(_to_isoformat(raw))
 
 
