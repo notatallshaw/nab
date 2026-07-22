@@ -29,6 +29,8 @@ import subprocess
 import sys
 import tempfile
 import venv
+from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,7 +45,7 @@ from ..download import DownloadError, download_lock
 from ..requirements_file import InvalidProjectRequirementError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
     from typing_extensions import Self
 
     from installer.records import RecordEntry
@@ -55,6 +57,7 @@ __all__ = [
 ]
 
 
+@dataclass
 class _FastSchemeDictionaryDestination(SchemeDictionaryDestination):
     """``SchemeDictionaryDestination`` that skips bytecode-compile work.
 
@@ -64,12 +67,34 @@ class _FastSchemeDictionaryDestination(SchemeDictionaryDestination):
     still hits the filesystem twice per record.  Skipping the early
     work when the levels tuple is empty is safe because the body
     would have been a no-op.
+
+    ``written`` records ``(scheme root, path within it)`` for every
+    file the install writes, so a later install can remove them.
     """
+
+    written: list[tuple[Path, Path]] = field(
+        default_factory=list, init=False, repr=False
+    )
 
     def _compile_bytecode(self, scheme: Scheme, record: RecordEntry) -> None:
         if not self.bytecode_optimization_levels:
             return
         super()._compile_bytecode(scheme, record)
+
+    def finalize_installation(
+        self,
+        scheme: Scheme,
+        record_file_path: str,
+        records: Iterable[tuple[Scheme, RecordEntry]],
+    ) -> None:
+        # ``records`` is consumed once, so materialize it before passing it on.
+        entries = list(records)
+        self.written = [
+            (Path(self.scheme_dict[entry_scheme]), Path(entry.path))
+            for entry_scheme, entry in entries
+        ]
+
+        super().finalize_installation(scheme, record_file_path, entries)
 
 
 logger = logging.getLogger(__name__)
@@ -142,6 +167,7 @@ class NabBuildEnv:
         self._venv_path: Path | None = None
         self._python_executable: Path | None = None
         self._scripts_dir: Path | None = None
+        self._installed_files: list[tuple[Path, Path]] = []
 
     def __enter__(self) -> Self:
         """Build the venv, run the inner resolve, install build requirements."""
@@ -183,12 +209,22 @@ class NabBuildEnv:
     def _install_wheels(
         self, wheel_paths: list[Path], scheme_paths: dict[str, str]
     ) -> None:
-        """Write each wheel into the venv with ``installer``.
+        """Remove what this env installed before, then install ``wheel_paths``.
+
+        Each resolve produces a whole environment, so the previous
+        install comes out rather than being written over: two
+        ``.dist-info`` directories for one distribution leave the
+        version ``importlib.metadata`` reports up to listing order.
+        The removals all run before the first write, since two
+        distributions can ship the same path within a scheme.
 
         A downloaded build dependency can be corrupt or malformed, so
         opening or installing it surfaces as :class:`BuildEnvError`
         rather than a raw zip or installer error.
         """
+        _remove_files(self._installed_files)
+        self._installed_files = []
+
         for wheel_path in wheel_paths:
             logger.debug("installing %s", wheel_path.name)
             try:
@@ -207,6 +243,7 @@ class NabBuildEnv:
                         destination=destination,
                         additional_metadata={"INSTALLER": b"nab\n"},
                     )
+                    self._installed_files.extend(destination.written)
             except Exception as exc:
                 msg = f"could not install build dependency {wheel_path.name}: {exc}"
                 raise BuildEnvError(msg) from exc
@@ -249,8 +286,10 @@ class NabBuildEnv:
 
         Used for ``get_requires_for_build_wheel`` follow-up requests
         (the backend asks for additional deps after the env is
-        already up).  Same code path as the constructor's install,
-        targeting the same venv.
+        already up).  The inner resolve runs over ``requires`` and
+        ``requirements`` together, so its result is the whole build
+        env rather than an addition to it: it can pin a different
+        version of something already installed, or drop it.
         """
         if self._venv_path is None or self._python_executable is None:
             msg = "NabBuildEnv used outside its context-manager scope"
@@ -362,6 +401,42 @@ class NabBuildEnv:
         # the temp dir, cleaned up with the env.
         all_paths = list(download_result.written) + list(download_result.skipped)
         return [p for p in all_paths if p.suffix == ".whl"]
+
+
+def _remove_files(entries: list[tuple[Path, Path]]) -> None:
+    """Delete installed files and their bytecode, and directories left empty.
+
+    ``entries`` are ``(scheme root, path within it)`` pairs.  The
+    scheme roots stay, as does any directory still holding something
+    the install did not write.
+
+    Cached bytecode goes with its source file: the backend has already
+    run in this venv, so a removed package has usually been imported,
+    and the ``__pycache__`` that import wrote would keep its directory
+    importable as a namespace package.
+    """
+    directories: set[Path] = set()
+    roots: set[Path] = set()
+
+    for root, relative in entries:
+        target = root / relative
+        target.unlink(missing_ok=True)
+
+        if target.suffix == ".py":
+            cache = target.parent / "__pycache__"
+            for compiled in cache.glob(f"{target.stem}.*.pyc"):
+                compiled.unlink()
+            directories.add(cache)
+
+        roots.add(root)
+        directories.update(root / parent for parent in relative.parents)
+
+    # Deepest first, so a parent is tried after the children that emptied it.
+    for directory in sorted(
+        directories - roots, key=lambda path: len(path.parts), reverse=True
+    ):
+        with suppress(OSError):
+            directory.rmdir()
 
 
 def _venv_python(venv_path: Path) -> Path:
