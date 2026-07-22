@@ -2681,6 +2681,44 @@ class TestConfigErrors:
         assert "workspace discovery error" in capsys.readouterr().err
 
 
+_CONFLICTS_DOC = (
+    Path(__file__).resolve().parents[1] / "docs" / "explanation" / "conflicts.md"
+)
+
+
+def _console_block(text: str) -> list[str]:
+    lines = text.splitlines()
+    start = lines.index("```console")
+    return lines[start + 1 : lines.index("```", start + 1)]
+
+
+class TestConflictsDocTranscript:
+    """The conflicts page quotes the refusal line the CLI prints."""
+
+    _UMBRELLA = (
+        '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
+        "[project.optional-dependencies]\n"
+        "cpu = []\n"
+        "gpu = []\n"
+        'all = ["proj[cpu]", "proj[gpu]"]\n'
+        "[tool.nab]\n"
+        'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+    )
+
+    def test_umbrella_refusal_matches_documented_transcript(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An umbrella extra reaching both members prints the page's line."""
+        pyproject = _make_pyproject(tmp_path, self._UMBRELLA)
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, cache_dir=tmp_path / "cache", extras=("all",))
+        printed = capsys.readouterr().err.strip()
+
+        block = _console_block(_CONFLICTS_DOC.read_text(encoding="utf-8"))
+        assert block[0] == "$ nab lock --extras all"
+        assert printed in block[1:]
+
+
 class TestDetermineLockAnchor:
     """``_determine_lock_anchor`` chooses between fresh and reused anchors."""
 
