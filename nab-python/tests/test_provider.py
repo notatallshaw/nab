@@ -98,6 +98,19 @@ def make_wheel(
     )
 
 
+def make_tagged_wheel(tag: str, *, has_metadata: bool = True) -> WheelFile:
+    """Build a 1.0 WheelFile carrying an explicit PEP 425 tag."""
+    filename = f"pkg-1.0-{tag}.whl"
+    return WheelFile(
+        filename=filename,
+        url=f"https://example.com/{filename}",
+        version="1.0",
+        requires_python=None,
+        has_metadata=has_metadata,
+        upload_time=None,
+    )
+
+
 def make_sdist(
     version: str = "1.0",
     requires_python: str | None = None,
@@ -6188,8 +6201,13 @@ class TestPrefetchWalkAhead:
         assert "1.0" in versions
 
     def test_picks_wheel_when_both_present(self) -> None:
-        """A version with both a wheel and a sdist still prefetches the wheel."""
+        """A version with both a wheel and a sdist still prefetches the wheel.
+
+        2.0 is the newest, so the listing prefetch takes it and 1.0 is the
+        version left for the walk-ahead batch.
+        """
         wheels: list[WheelFile | SdistFile] = [
+            make_wheel("2.0"),
             make_sdist("1.0"),
             make_wheel("1.0"),
         ]
@@ -6817,7 +6835,7 @@ class TestPickDistForMetadata:
         sdist = make_sdist("1.0")
         wheel = make_wheel("1.0")
         versions = [(V("1.0"), sdist), (V("1.0"), wheel)]
-        assert pick_dist_for_metadata(versions, V("1.0")) is wheel
+        assert pick_dist_for_metadata(versions, V("1.0"), None) is wheel
 
     def test_prefers_any_wheel_over_sdist_when_no_pep658(self) -> None:
         """Without PEP 658, a plain wheel still wins over an sdist.
@@ -6832,26 +6850,60 @@ class TestPickDistForMetadata:
         sdist = make_sdist("1.0")
         wheel_no_meta = make_wheel("1.0", has_metadata=False)
         versions = [(V("1.0"), sdist), (V("1.0"), wheel_no_meta)]
-        assert pick_dist_for_metadata(versions, V("1.0")) is wheel_no_meta
+        assert pick_dist_for_metadata(versions, V("1.0"), None) is wheel_no_meta
 
     def test_falls_back_to_sdist_when_no_wheel_at_version(self) -> None:
         """When no wheel exists at the version, the sdist is returned."""
         sdist = make_sdist("1.0")
         versions = [(V("1.0"), sdist)]
-        assert pick_dist_for_metadata(versions, V("1.0")) is sdist
+        assert pick_dist_for_metadata(versions, V("1.0"), None) is sdist
 
     def test_returns_none_for_unknown_version(self) -> None:
         """No matching version yields ``None``."""
         versions = [(V("2.0"), make_wheel("2.0"))]
-        assert pick_dist_for_metadata(versions, V("1.0")) is None
+        assert pick_dist_for_metadata(versions, V("1.0"), None) is None
+
+    def test_prefers_the_wheel_the_tags_rank_most_specific(self) -> None:
+        """The tags rank the siblings; listing order does not.
+
+        An abi3 wheel published beside a full-ABI one is a routine
+        layout, and the target installs the full-ABI one.
+        """
+        tags = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_x86_64")
+        ).tags
+        abi3 = make_tagged_wheel("cp312-abi3-manylinux_2_17_x86_64")
+        full_abi = make_tagged_wheel("cp312-cp312-manylinux_2_17_x86_64")
+        versions = [(V("1.0"), abi3), (V("1.0"), full_abi)]
+        assert pick_dist_for_metadata(versions, V("1.0"), tags) is full_abi
+
+    def test_prefers_a_wheel_over_an_sdist_under_a_tag_set(self) -> None:
+        """The tag pick runs over the wheels; an sdist stays the last resort."""
+        tags = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_x86_64")
+        ).tags
+        sdist = make_sdist("1.0")
+        wheel = make_wheel("1.0")
+        versions = [(V("1.0"), sdist), (V("1.0"), wheel)]
+        assert pick_dist_for_metadata(versions, V("1.0"), tags) is wheel
+
+    def test_breaks_a_tag_tie_with_the_cheaper_metadata_source(self) -> None:
+        """Two wheels the tags rank equally fall back to the cheaper source."""
+        tags = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_x86_64")
+        ).tags
+        no_sidecar = make_tagged_wheel("py2.py3-none-any", has_metadata=False)
+        sidecar = make_tagged_wheel("py3-none-any")
+        versions = [(V("1.0"), no_sidecar), (V("1.0"), sidecar)]
+        assert pick_dist_for_metadata(versions, V("1.0"), tags) is sidecar
 
     def test_first_match_wins_for_each_dist_kind(self) -> None:
         """Repeated entries at the same version do not displace the first.
 
-        The picker keeps the *first* candidate in each preference tier
-        (wheel-with-meta, wheel-without-meta, sdist) it sees, so a
-        later candidate of the same kind never silently overrides an
-        earlier one.  Covers the ``is None`` guards on each tier.
+        With nothing to rank the wheels by, the picker keeps the *first*
+        candidate in each preference tier (wheel-with-meta,
+        wheel-without-meta, sdist) it sees, so a later candidate of the
+        same kind never silently overrides an earlier one.
         """
         first_meta = make_wheel("1.0")
         second_meta = WheelFile(
@@ -6887,7 +6939,7 @@ class TestPickDistForMetadata:
             (V("1.0"), first_meta),
             (V("1.0"), second_meta),
         ]
-        assert pick_dist_for_metadata(versions, V("1.0")) is first_meta
+        assert pick_dist_for_metadata(versions, V("1.0"), None) is first_meta
         # Strip PEP 658 wheels: the plain wheel still wins, first one
         # encountered wins within the tier.
         versions_no_meta = [
@@ -6896,13 +6948,15 @@ class TestPickDistForMetadata:
             (V("1.0"), first_plain),
             (V("1.0"), second_plain),
         ]
-        assert pick_dist_for_metadata(versions_no_meta, V("1.0")) is first_plain
+        assert pick_dist_for_metadata(versions_no_meta, V("1.0"), None) is first_plain
         # And with sdists only, first sdist wins.
         versions_sdist_only = [
             (V("1.0"), first_sdist),
             (V("1.0"), second_sdist),
         ]
-        assert pick_dist_for_metadata(versions_sdist_only, V("1.0")) is first_sdist
+        assert (
+            pick_dist_for_metadata(versions_sdist_only, V("1.0"), None) is first_sdist
+        )
 
 
 class TestBuildPolicyDefaults:

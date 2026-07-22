@@ -16,6 +16,7 @@ from .._iso8601 import parse_iso_datetime
 from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from .._vendor.packaging.version import InvalidVersion, Version
 from ..metadata import intern_version as _intern_version
+from .metadata_resolver import pick_dist, pick_dist_for_metadata
 
 if TYPE_CHECKING:
     import threading
@@ -114,38 +115,22 @@ def wheel_by_version(
 ) -> dict[Version, DistFile]:
     """Return the cached ``Version -> DistFile`` mapping for ``normalized``.
 
-    Keeps the cheapest metadata source per version (wheel with PEP 658
-    metadata, then any wheel, then sdist), so a same-version sdist does
-    not displace the wheel.
+    Each version maps to the dist
+    :func:`~nab_python._provider.metadata_resolver.pick_dist` picks, so a
+    prefetch keyed off this mapping warms the metadata the read asks for.
     """
     cached = provider.wheel_by_version_cache.get(normalized)
     if cached is None:
-        cached = {}
+        grouped: dict[Version, list[DistFile]] = {}
         for version, dist in version_list:
-            cached[version] = _prefer_metadata_source(cached.get(version), dist)
+            grouped.setdefault(version, []).append(dist)
+
+        cached = {
+            version: pick_dist(dists, provider.wheel_tags)
+            for version, dists in grouped.items()
+        }
         provider.wheel_by_version_cache[normalized] = cached
     return cached
-
-
-def _prefer_metadata_source(current: DistFile | None, candidate: DistFile) -> DistFile:
-    """Return the cheaper metadata source of ``current`` and ``candidate``.
-
-    Same ranking as
-    :func:`nab_python._provider.metadata_resolver.pick_dist_for_metadata`:
-    a wheel with a PEP 658 ``metadata_url``, then any wheel, then an sdist.
-    """
-    if current is None:
-        return candidate
-    return (
-        current if _metadata_rank(current) <= _metadata_rank(candidate) else candidate
-    )
-
-
-def _metadata_rank(dist: DistFile) -> int:
-    """Rank a dist by metadata-fetch cost (lower is cheaper)."""
-    if isinstance(dist, WheelFile):
-        return 0 if dist.has_metadata else 1
-    return 2
 
 
 def speculative_prefetch(
@@ -227,9 +212,13 @@ def prefetch_transitive_best(
     best = provider.pick_best_candidate(normalized, versions)
     if best is None:
         return
-    version, dist = best
+    version, _ = best
     if _has_complete_override(provider, normalized, version):
         return
+
+    # Prefetch the artifact the read picks, not the listing's first at that version.
+    dist = pick_dist_for_metadata(versions, version, provider.wheel_tags)
+
     cache_key = (normalized, version)
     if (
         cache_key not in provider.deps_cache
@@ -626,17 +615,6 @@ def excluded_by_time(
     return excluded
 
 
-def _first_wheel_per_version(
-    versions_list: list[tuple[Version, DistFile]],
-) -> dict[Version, WheelFile]:
-    """First wheel-with-PEP-658-metadata per unique version, in list order."""
-    out: dict[Version, WheelFile] = {}
-    for version, dist in versions_list:
-        if isinstance(dist, WheelFile) and dist.has_metadata:
-            out.setdefault(version, dist)
-    return out
-
-
 def prefetch_walk_ahead(
     provider: Provider,
     normalized: str,
@@ -648,16 +626,15 @@ def prefetch_walk_ahead(
     window.  Front-loading the rest of the walk lets ``_try_abort_skip``
     and any restart hit cache instead of one RTT per visit.
 
-    Walks ``versions_cache[normalized]`` directly so same-version
-    (wheel, sdist) pairs do not lose the wheel the way they would
-    via ``wheel_by_version_cache``.  Skips already-cached versions,
-    sdist-only versions, and versions whose metadata the coordinator
-    already holds.  Fire-and-forget.
+    Takes each version's artifact from :func:`wheel_by_version`, so the
+    sidecar it warms is the one the read asks for.  Skips already-cached
+    versions, versions whose artifact publishes no sidecar, and versions
+    whose metadata the coordinator already holds.  Fire-and-forget.
     """
     versions_list = provider.versions_cache.get(normalized)
     if not versions_list:
         return
-    wheel_for_v = _first_wheel_per_version(versions_list)
+    picked = wheel_by_version(provider, normalized, versions_list)
     coordinator_index = provider.coordinator.index
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
     seen_versions: set[Version] = set()
@@ -667,17 +644,16 @@ def prefetch_walk_ahead(
         seen_versions.add(version)
         if len(seen_versions) > deep_count:
             break
-        wheel = wheel_for_v.get(version)
-        if wheel is None or (normalized, version) in provider.deps_cache:
+        if (normalized, version) in provider.deps_cache:
+            continue
+        dist = picked[version]
+        if not isinstance(dist, WheelFile) or (url := dist.metadata_url) is None:
             continue
         if _has_complete_override(provider, normalized, version):
             continue
-        # ``_first_wheel_per_version`` keeps only wheels with a sidecar.
-        metadata_url = wheel.metadata_url
-        assert metadata_url is not None
-        if coordinator_index.has_metadata(normalized, wheel.version, metadata_url):
+        if coordinator_index.has_metadata(normalized, dist.version, url):
             continue
-        items.append((normalized, wheel.version, metadata_url, wheel.metadata_hash))
+        items.append((normalized, dist.version, url, dist.metadata_hash))
     if items:
         provider.coordinator.request_metadata_batch(items)
 
