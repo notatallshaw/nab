@@ -97,9 +97,7 @@ is refused before any network work:
 
 ```console
 $ nab lock --extras all
-Error in [tool.nab]: extra 'cpu', extra 'gpu' cannot be selected
-together: declared mutually exclusive (at-most-one) in
-[tool.nab].conflicts
+error: in [tool.nab]: extra 'cpu', extra 'gpu' cannot be selected together: declared mutually exclusive (at-most-one) in [tool.nab].conflicts
 ```
 
 This happens when an umbrella extra self-references both members

@@ -391,7 +391,7 @@ def _layered_run_settings_or_exit(
     """Fold the layered run settings, exiting on a category error.
 
     Wraps :func:`_layered_run_settings` with the single
-    ``SourceConfigError`` -> ``Config error: ...`` -> ``exit(1)`` mapping
+    ``SourceConfigError`` -> ``error: config error: ...`` -> ``exit(1)`` mapping
     shared by ``nab lock`` and ``nab download``.  On success it also emits
     the reproducibility notice when a PROJECT option was set on the CLI,
     so a result-shaping override is never silent.  ``produces_lock`` picks

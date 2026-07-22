@@ -222,7 +222,7 @@ class TestTopLevelKeys:
     def test_invalid_toml_rejected(self, tmp_path: Path) -> None:
         # A TOML syntax error (here a duplicated table) is reported as a
         # ConfigError, not a raw TOMLDecodeError, so the CLI renders it
-        # under "Error in [tool.nab]" like every other config problem.
+        # under "error: in [tool.nab]" like every other config problem.
         path = write(
             tmp_path,
             '[tool.nab.packages.foo]\nindex = "a"\n'

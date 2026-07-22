@@ -100,7 +100,7 @@ A template that maps two tuples onto one path is rejected, naming the
 variable that would separate them.
 
 Exits non-zero on resolution failure; the message starts with
-`Resolution failed:` followed by a derivation tree, and any
+`error: resolution failed:` followed by a derivation tree, and any
 captured diagnostics are appended under a `Diagnostics:` section.
 
 Universal mode (`[tool.nab].mode = "universal"`) is supported for
