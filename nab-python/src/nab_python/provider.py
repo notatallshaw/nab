@@ -602,6 +602,10 @@ class Provider:
         }
         self._package_overrides = tuple(package_overrides)
         self._index_overrides: Mapping[str, IndexOverride] = index_overrides or {}
+
+        # With no override on either surface, every lookup is the global default.
+        self._has_overrides = bool(self._package_overrides or self._index_overrides)
+
         # True when any override sets a time cutoff or disables one, so the
         # listing filter can skip the per-candidate dispatch otherwise.
         self.overrides_set_time = any(
@@ -870,6 +874,9 @@ class Provider:
         index_name: str | None = None,
     ) -> DistPolicy:
         """Return the dist policy for ``name==version`` served from ``index_name``."""
+        if not self._has_overrides:
+            return self._dist_policy
+
         result = self._effective_field(
             canonical_name,
             version,
@@ -897,6 +904,9 @@ class Provider:
         field.  A per-package (range-matching) and a per-index override
         that both set the field are a conflict.
         """
+        if not self._has_overrides:
+            return self.uploaded_prior_to
+
         result = self._effective_field(
             canonical_name,
             version,
@@ -962,6 +972,9 @@ class Provider:
         range-matching override sets (which may be ``""``, meaning "no Python
         requirement"), else ``None`` when nothing overrides it.
         """
+        if not self._package_overrides:
+            return None
+
         override = self._matching_package_override(
             canonical_name,
             version,

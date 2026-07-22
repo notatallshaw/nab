@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from nab_python import _iso8601
 from nab_python._iso8601 import _to_isoformat, parse_iso_datetime
 
 # PEP 700 serves upload-time as an ISO 8601 UTC timestamp, so an index may use
@@ -71,3 +72,43 @@ def test_offset_fraction_is_widened_too() -> None:
 def test_non_datetime_raises_value_error() -> None:
     with pytest.raises(ValueError, match="not-a-date"):
         parse_iso_datetime("not-a-date")
+
+
+# Shapes an index could serve, plus the malformed ones the parser has to refuse.
+PARSE_INPUTS = [
+    *[raw for raw, _ in PEP_700_WIDTHS],
+    "2024-01-15T12:30:45.1234567Z",
+    "2024-01-15T12:30:45.123456789Z",
+    "2024-01-15T12:30:45,123Z",
+    "2024-01-15T12:30:45",
+    "2024-01-15T12:30:45.5+05:30",
+    "2024-01-15T12:30:45.5+05:30:00.5",
+    "2024-01-15T12:30:45-00:00",
+    "20240115T123045Z",
+    "2024-01-15",
+    "2024-01-15T12:30:45.",
+    "2024-01-15T25:00:00Z",
+    "not-a-date",
+    "",
+]
+
+
+def _parse_or_error(raw: str) -> object:
+    try:
+        return parse_iso_datetime(raw)
+    except ValueError:
+        return ValueError
+
+
+@pytest.mark.parametrize("raw", PARSE_INPUTS)
+def test_native_path_agrees_with_compatibility_path(
+    raw: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Handing ``raw`` straight to ``fromisoformat`` must not change the verdict."""
+    monkeypatch.setattr(_iso8601, "_NATIVE_ACCEPTS_PEP_700", False)
+    compatibility = _parse_or_error(raw)
+
+    monkeypatch.setattr(_iso8601, "_NATIVE_ACCEPTS_PEP_700", True)
+    native = _parse_or_error(raw)
+
+    assert native == compatibility
