@@ -300,14 +300,14 @@ def _parse_files(
 
     PEP 592 ``yanked`` files are dropped unconditionally.
 
-    A single malformed *entry* (non-dict, or missing string ``filename``
-    / ``url``) is skipped so the usable entries in the same listing are
-    kept.  A malformed *body* (not a JSON object, or a ``files`` value
-    that is not a list) is a broken response, not an empty one, so it
-    raises :class:`MalformedSimpleResponseError` rather than returning no
-    files: an empty result means "package absent" to the multi-index router,
-    which would otherwise fall through to a lower-priority index and risk
-    pinning a different version.
+    A single malformed *entry* (non-dict, missing string ``filename`` /
+    ``url``, or a ``url`` that does not parse) is skipped so the usable
+    entries in the same listing are kept.  A malformed *body* (not a JSON
+    object, or a ``files`` value that is not a list) is a broken response,
+    not an empty one, so it raises :class:`MalformedSimpleResponseError`
+    rather than returning no files: an empty result means "package absent"
+    to the multi-index router, which would otherwise fall through to a
+    lower-priority index and risk pinning a different version.
     """
     expected = canonicalize_name(package)
     # PEP 691: relative URLs resolve against the package page, not the index root.
@@ -343,6 +343,25 @@ def _parse_files(
     return files
 
 
+def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
+    """Return the entry's absolute URL, or None when it does not parse.
+
+    PEP 691 allows a relative ``url``, which resolves against the package
+    page.  ``urlsplit`` raises on a netloc it cannot parse, such as an
+    unbalanced bracket in an IPv6 host.
+    """
+    try:
+        if raw_url.startswith(("https://", "http://")):
+            # Split only to reject a host urllib cannot parse; urljoin
+            # would hand back this same string.
+            urlsplit(raw_url)
+            return raw_url
+
+        return urljoin(base_url, raw_url)
+    except ValueError:
+        return None
+
+
 def _parse_file_entry(
     file_info: dict,
     filename: str,
@@ -354,16 +373,13 @@ def _parse_file_entry(
 
     ``filename`` and ``raw_url`` are the entry's already-validated string
     fields.  ``expected`` is the queried package's canonical name; files
-    whose parsed name differs, or whose filename packaging does not
-    recognise, are dropped (see :func:`_parse_files`).
+    whose parsed name differs, whose filename packaging does not
+    recognise, or whose URL does not parse are dropped (see
+    :func:`_parse_files`).
     """
-    # PyPI and most indexes emit absolute file URLs; urljoin then re-parses
-    # both sides only to return the URL unchanged. Skip it for the common
-    # absolute case; relative URLs still resolve against the page below.
-    if raw_url.startswith(("https://", "http://")):
-        file_url = raw_url
-    else:
-        file_url = urljoin(base_url, raw_url)
+    file_url = _resolve_file_url(raw_url, base_url)
+    if file_url is None:
+        return None
 
     hashes = _parse_hashes(file_info.get("hashes"))
     size = _parse_size(file_info.get("size"))

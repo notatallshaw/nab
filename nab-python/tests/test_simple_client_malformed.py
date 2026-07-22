@@ -101,3 +101,26 @@ def test_bad_entry_dropped_good_entry_kept(bad_entry: object) -> None:
     files = _parse_files(data, _INDEX, "foo")
     assert len(files) == 1
     assert files[0].filename == "foo-1.0-py3-none-any.whl"
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "https://[2001:db8::1/foo-2.0-py3-none-any.whl",
+        "http://2001:db8::1]/foo-2.0-py3-none-any.whl",
+        "//[2001:db8::1/foo-2.0-py3-none-any.whl",
+    ],
+)
+def test_entry_with_unsplittable_url_is_skipped(bad_url: str) -> None:
+    entry = {"filename": "foo-2.0-py3-none-any.whl", "url": bad_url}
+    files = _parse_files({"files": [entry, _good_file()]}, _INDEX, "foo")
+    assert [f.filename for f in files] == ["foo-1.0-py3-none-any.whl"]
+
+
+def test_sdist_entry_with_unsplittable_url_is_skipped() -> None:
+    entry = {
+        "filename": "foo-2.0.tar.gz",
+        "url": "https://[2001:db8::1/foo-2.0.tar.gz",
+    }
+    files = _parse_files({"files": [entry, _good_file()]}, _INDEX, "foo")
+    assert [f.filename for f in files] == ["foo-1.0-py3-none-any.whl"]
