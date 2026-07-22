@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 __all__ = [
+    "OUTPUT_ENV_VARS",
     "ColorChoice",
     "OutputOptionError",
     "OutputOptions",
@@ -39,6 +40,11 @@ __all__ = [
     "should_color",
     "verbosity_from_counts",
 ]
+
+NAB_VERBOSITY_ENV = "NAB_VERBOSITY"
+NAB_NO_PROGRESS_ENV = "NAB_NO_PROGRESS"
+OUTPUT_ENV_VARS: frozenset[str] = frozenset({NAB_VERBOSITY_ENV, NAB_NO_PROGRESS_ENV})
+"""The ``NAB_*`` environment variables the output layer owns."""
 
 
 class Verbosity(enum.IntEnum):
@@ -165,7 +171,7 @@ class Printer:
         self.color_enabled = should_color(color, self._err, environ)
         self.progress_allowed = (
             progress
-            and not environ.get("NAB_NO_PROGRESS")
+            and not environ.get(NAB_NO_PROGRESS_ENV)
             and verbosity is Verbosity.NORMAL
             and _isatty(self._err)
         )
@@ -403,13 +409,13 @@ _VERBOSITY_NAMES: dict[str, Verbosity] = {v.name.lower(): v for v in Verbosity}
 
 def _verbosity_from_env(env: Mapping[str, str]) -> Verbosity | None:
     """Read ``NAB_VERBOSITY`` as a level name, or ``None`` when unset."""
-    raw = env.get("NAB_VERBOSITY")
+    raw = env.get(NAB_VERBOSITY_ENV)
     if raw is None:
         return None
     name = raw.strip().lower()
     if name not in _VERBOSITY_NAMES:
         allowed = ", ".join(_VERBOSITY_NAMES)
-        msg = f"NAB_VERBOSITY={raw!r} is not one of {allowed}"
+        msg = f"{NAB_VERBOSITY_ENV}={raw!r} is not one of {allowed}"
         raise OutputOptionError(msg)
     return _VERBOSITY_NAMES[name]
 
