@@ -877,6 +877,44 @@ class TestMetadataAndSdist:
         assert pyproject is not None
         assert 'name = "foo"' in pyproject
 
+    def test_https_metadata_url_raises_http_error(self, tmp_path: Path) -> None:
+        # An absolute-href record admitted by get_files must fetch through
+        # HttpError, not a raw ValueError, when its sidecar is fetched.
+        package_dir = tmp_path / "foo"
+        package_dir.mkdir()
+        (package_dir / "index.html").write_text(
+            '<a href="https://files.example.com/foo-1.0-py3-none-any.whl"'
+            ' data-core-metadata="true">foo-1.0</a>',
+            encoding="utf-8",
+        )
+        client = LocalIndexClient(tmp_path.as_uri())
+        (record,) = run(client.get_files("foo"))
+        assert isinstance(record, WheelFile)
+        assert record.local_path is None
+        metadata_url = record.metadata_url
+        assert metadata_url == (
+            "https://files.example.com/foo-1.0-py3-none-any.whl.metadata"
+        )
+        with pytest.raises(HttpError):
+            run(client.get_metadata_text("foo", "1.0", metadata_url))
+
+    def test_https_sdist_url_raises_http_error(self, tmp_path: Path) -> None:
+        package_dir = tmp_path / "foo"
+        package_dir.mkdir()
+        (package_dir / "index.html").write_text(
+            '<a href="https://files.example.com/foo-1.0.tar.gz">foo-1.0</a>',
+            encoding="utf-8",
+        )
+        client = LocalIndexClient(tmp_path.as_uri())
+        (record,) = run(client.get_files("foo"))
+        assert isinstance(record, SdistFile)
+        assert record.local_path is None
+        assert record.url == "https://files.example.com/foo-1.0.tar.gz"
+        with pytest.raises(HttpError):
+            run(client.get_sdist_files("foo", "1.0", record.url))
+        with pytest.raises(HttpError):
+            run(client.get_sdist_archive("foo", "1.0", record.url))
+
 
 class TestMakeRecord:
     def test_unrecognised_extension_returns_none(self) -> None:

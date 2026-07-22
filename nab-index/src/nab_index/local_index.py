@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 __all__ = [
     "LocalIndexClient",
     "MalformedLocalListingError",
+    "NonLocalArtifactError",
     "UnsupportedWheelError",
     "parse_file_url",
     "read_wheel_metadata",
@@ -77,6 +78,17 @@ class MalformedLocalListingError(HttpError):
     """
 
 
+class NonLocalArtifactError(HttpError):
+    """A ``file://`` index advertised an artifact URL a local client cannot serve.
+
+    A :pep:`503` repository page may link to absolute ``http(s)`` artifact
+    URLs, so the listing is legal, but a filesystem-backed index cannot fetch
+    a remote artifact.  Subclasses :class:`~nab_index.transport.HttpError` so
+    the fetch fails through the same path as a remote index error rather than a
+    raw :class:`ValueError` from :func:`parse_file_url`.
+    """
+
+
 def parse_file_url(url: str) -> Path:
     """Resolve a ``file://`` URL to an absolute filesystem path.
 
@@ -101,6 +113,20 @@ def parse_file_url(url: str) -> Path:
         raise ValueError(msg)
 
     return Path(url2pathname(netloc + parsed.path))
+
+
+def _resolve_served_path(url: str) -> Path:
+    """Resolve a served-artifact URL to a local path.
+
+    :func:`parse_file_url` raises :class:`ValueError` for an ``http(s)`` or
+    non-local ``file://`` URL; re-raise it as :class:`NonLocalArtifactError` so
+    the fetch fails through the index-error path.
+    """
+    try:
+        return parse_file_url(url)
+    except ValueError as exc:
+        msg = f"local file:// index cannot serve artifact {url!r}"
+        raise NonLocalArtifactError(msg) from exc
 
 
 _REQUIRES_PYTHON_ATTR = "data-requires-python"
@@ -531,7 +557,7 @@ class LocalIndexClient:
         rather than a raw :class:`UnicodeDecodeError`, matching the
         ``index.html`` reader.
         """
-        path = parse_file_url(metadata_url)
+        path = _resolve_served_path(metadata_url)
         try:
             return path.read_text(encoding="utf-8")
         except UnicodeDecodeError as exc:
@@ -550,7 +576,7 @@ class LocalIndexClient:
         On-disk archives are trusted, so ``sdist_hashes`` matches the remote
         client signature but is not verified.
         """
-        path = parse_file_url(sdist_url)
+        path = _resolve_served_path(sdist_url)
         return _extract_sdist_files(path.read_bytes())
 
     async def get_sdist_archive(
@@ -565,7 +591,7 @@ class LocalIndexClient:
         On-disk archives are trusted, so ``sdist_hashes`` matches the remote
         client signature but is not verified.
         """
-        path = parse_file_url(sdist_url)
+        path = _resolve_served_path(sdist_url)
         return path.read_bytes()
 
     async def get_range_metadata(
