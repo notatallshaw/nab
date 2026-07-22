@@ -32,7 +32,7 @@ from nab_index.cache import (
     _encode_policy,
     is_recognized_bucket,
 )
-from nab_index.cached_client import CachedAsyncSimpleClient
+from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
 from nab_index.client import _parse_files
 from nab_index.parsed_listing import corruption_reason, decode, encode
 
@@ -691,3 +691,88 @@ class TestParsedCorruptionReason:
         # A build/digest mismatch is a benign self-heal, not corruption.
         tampered = _tamper_header(encode(_PARSED, "a" * 64), 0, 99)
         assert corruption_reason(tampered) is None
+
+
+class TestParsedCacheStats:
+    def test_default_is_zeroed(self) -> None:
+        stats = ParsedCacheStats()
+        assert (stats.hit, stats.miss, stats.rebuild) == (0, 0, 0)
+
+    def test_warm_hit_counts_a_hit(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache)
+        stats = ParsedCacheStats()
+        client = CachedAsyncSimpleClient(
+            _FakeTransport([]), cache, _INDEX, parsed_stats=stats
+        )
+
+        _run(client.get_files("pkg"))
+
+        assert (stats.hit, stats.miss, stats.rebuild) == (1, 0, 0)
+
+    def test_cold_parsed_miss_counts_a_miss(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            _LISTING_BYTES,
+            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+        )
+        stats = ParsedCacheStats()
+        client = CachedAsyncSimpleClient(
+            _FakeTransport([]), cache, _INDEX, parsed_stats=stats
+        )
+
+        _run(client.get_files("pkg"))
+
+        assert (stats.hit, stats.miss, stats.rebuild) == (0, 1, 0)
+
+    def test_digest_mismatch_counts_a_rebuild(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache)
+        cache.put_simple_parsed("pkg", encode(files, "f" * 64))
+        stats = ParsedCacheStats()
+        client = CachedAsyncSimpleClient(
+            _FakeTransport([]), cache, _INDEX, parsed_stats=stats
+        )
+
+        _run(client.get_files("pkg"))
+
+        assert (stats.hit, stats.miss, stats.rebuild) == (0, 0, 1)
+
+    def test_corrupt_blob_counts_a_rebuild(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache)
+        cache.put_simple_parsed("pkg", b"not marshal")
+        stats = ParsedCacheStats()
+        client = CachedAsyncSimpleClient(
+            _FakeTransport([]), cache, _INDEX, parsed_stats=stats
+        )
+
+        _run(client.get_files("pkg"))
+
+        assert (stats.hit, stats.miss, stats.rebuild) == (0, 0, 1)
+
+    def test_passed_instance_is_the_one_incremented(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache)
+        stats = ParsedCacheStats(hit=5)
+        client = CachedAsyncSimpleClient(
+            _FakeTransport([]), cache, _INDEX, parsed_stats=stats
+        )
+
+        _run(client.get_files("pkg"))
+
+        assert stats.hit == 6
+
+    def test_default_instance_when_none_passed(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache)
+        client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)
+
+        # No stats injected: the client owns a private sink and still serves.
+        got = _run(client.get_files("pkg"))
+
+        assert [f.filename for f in got] == [
+            "pkg-1.0-py3-none-any.whl",
+            "pkg-1.0.tar.gz",
+        ]

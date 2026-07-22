@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 from packaging.utils import canonicalize_name as canonicalize_name_boundary
 
 from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
-from nab_index.cached_client import CachedAsyncSimpleClient
+from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
 from nab_index.client import SdistFile, WheelFile
 from nab_index.lazy_wheel import RangeCapabilityMemo, RangeOutcome
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
@@ -784,6 +784,10 @@ class FetchCoordinator:
         # loop in _async_fetcher so each run starts with empty per-netloc state;
         # built here too so the attribute is always a real memo for typing.
         self._range_memo = RangeCapabilityMemo()
+        # Shared per-run parsed-listing cache counters, injected into every
+        # index client the same way; rebuilt on the fetcher loop so each run
+        # starts at zero.
+        self._parsed_cache_stats = ParsedCacheStats()
         self._thread: threading.Thread | None = None
         self._started = False
         self._crashed = False
@@ -805,6 +809,16 @@ class FetchCoordinator:
     def __exit__(self, *args: object) -> None:
         """Shut the fetcher thread down on context exit."""
         self.shutdown()
+
+    @property
+    def parsed_cache_stats(self) -> ParsedCacheStats:
+        """Parsed-listing cache counters for this run, shared by every index client.
+
+        Read after a run to confirm a warm resolve serves parsed blobs. The sink
+        is rebuilt at the start of each fetcher loop, so the counts reflect the
+        most recent run.
+        """
+        return self._parsed_cache_stats
 
     def start(self) -> None:
         """Start the fetcher thread (idempotent)."""
@@ -1148,12 +1162,16 @@ class FetchCoordinator:
             range_memo=self._range_memo,
             serialization=cfg.serialization,
             min_fresh_seconds=self._index_cache_floors.get(cfg.name),
+            parsed_stats=self._parsed_cache_stats,
         )
 
     async def _async_fetcher(self) -> None:
         # Fresh per-run memo, owned on this single loop thread, injected into
         # every client _build_client constructs below.
         self._range_memo = RangeCapabilityMemo()
+        # Fresh per-run parsed-listing counters, injected the same way, so a
+        # reused coordinator starts each run at zero.
+        self._parsed_cache_stats = ParsedCacheStats()
 
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         sem = asyncio.Semaphore(self._max_concurrency)

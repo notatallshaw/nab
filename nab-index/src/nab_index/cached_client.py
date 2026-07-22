@@ -14,7 +14,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import timezone
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
@@ -61,9 +61,30 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CachedAsyncSimpleClient",
+    "ParsedCacheStats",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class ParsedCacheStats:
+    """Mutable counters for parsed-listing cache outcomes on the fetcher thread.
+
+    One instance is shared across every per-index client in a run and read once
+    after it, so a benchmark can confirm a warm resolve serves parsed blobs
+    rather than reparsing.
+
+    Each fresh-or-offline consult of ``get_files`` bumps exactly one counter:
+    ``hit`` when a present blob binds the policy's body and is served without
+    reading the raw body; ``miss`` when no blob was present; ``rebuild`` when a
+    blob was present but was not served (a stale digest, a different build,
+    corruption, or no records in it) and was rebuilt from the raw body.
+    """
+
+    hit: int = 0
+    miss: int = 0
+    rebuild: int = 0
 
 
 _DEFAULT_MAX_AGE = 600
@@ -204,6 +225,7 @@ class CachedAsyncSimpleClient:
         range_memo: RangeCapabilityMemo | None = None,
         serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE,
         min_fresh_seconds: int | None = None,
+        parsed_stats: ParsedCacheStats | None = None,
     ) -> None:
         """Create a cached client wrapping ``transport``.
 
@@ -219,6 +241,11 @@ class CachedAsyncSimpleClient:
         Simple listing. A stale positive listing or negative sentinel within
         the floor is served without revalidation; it only extends freshness and
         rewrites nothing on disk.
+
+        ``parsed_stats`` is the per-run parsed-listing cache sink, shared the
+        same way so hit/miss/rebuild counts total across every index client. A
+        private sink is created when none is passed, so a stand-alone client
+        still counts its own outcomes.
         """
         self._transport = transport
         self._cache = cache
@@ -230,6 +257,9 @@ class CachedAsyncSimpleClient:
             range_memo if range_memo is not None else RangeCapabilityMemo()
         )
         self._min_fresh_seconds = min_fresh_seconds
+        self._parsed_stats = (
+            parsed_stats if parsed_stats is not None else ParsedCacheStats()
+        )
 
     async def aclose(self) -> None:
         """Close the underlying transport."""
@@ -344,20 +374,27 @@ class CachedAsyncSimpleClient:
         build/digest mismatch, or a corrupt blob all return ``None`` so the
         caller reparses the raw body; genuine corruption (garbage/truncated
         bytes) is logged at WARNING as a self-heal, while a build/digest
-        mismatch is a silent, expected rebuild.
+        mismatch is a silent rebuild.
 
         A blob that rehydrates to no records also declines. An empty listing
         carries a second fact the blob does not hold: whether the page offered
         only formats nab does not read, which decides between the "no such
         package" and the "nothing nab reads" report. Only the raw body answers
         that, and an empty listing is small enough to reparse.
+
+        This is the one place that reads the blob, so it records the outcome: a
+        served blob counts a ``hit``, an absent one a ``miss``, and a
+        present-but-not-served one a ``rebuild``.
         """
         blob = self._cache.get_simple_parsed(package)
         if blob is None:
+            self._parsed_stats.miss += 1
             return None
         records = _decode_parsed(blob, policy)
         if records:
+            self._parsed_stats.hit += 1
             return records
+        self._parsed_stats.rebuild += 1
         if records is not None:
             return None
         reason = _parsed_corruption(blob)

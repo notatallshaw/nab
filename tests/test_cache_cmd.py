@@ -9,6 +9,7 @@ import pytest
 from nab import cli as nab_cli
 from nab.cli import app
 from nab_index.cache import CACHE_VERSION_SIMPLE, CachePolicy, OnDiskCache
+from nab_index.parsed_listing import encode as _encode_parsed
 from nab_python.config_sources import SourceRoots
 
 # Derived so a bucket-version bump does not need every path updated.
@@ -66,6 +67,7 @@ def _populate(root: Path) -> OnDiskCache:
     """Write one valid entry of each kind under ``root`` and return the cache."""
     cache = OnDiskCache(root, "https://pypi.org/simple")
     cache.put_simple("foo", b'{"files": []}', _FRESH)
+    cache.put_simple_parsed("foo", _encode_parsed([], "0" * 64))
     cache.put_negative("bar", _FRESH)
     cache.put_metadata("foo", "https://example.com/foo.whl", "Name: foo\n")
     cache.put_sdist_files("foo", "1.0", "Name: foo\n", None)
@@ -276,6 +278,18 @@ class TestCacheVerify:
         captured = capsys.readouterr()
         assert captured.err == ""
         assert captured.out == ""
+
+    def test_reports_corrupt_parsed_entry(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "cache"
+        _populate(root)
+        parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
+        parsed_path.write_bytes(b"not marshal data")
+        _run_cache(["verify", "--cache-dir", str(root)])
+        err = capsys.readouterr().err
+        assert str(parsed_path) in err
+        assert "marshal" in err
 
     def test_does_not_read_through_symlinked_bucket(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
