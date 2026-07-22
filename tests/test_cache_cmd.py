@@ -13,6 +13,15 @@ from nab_index.cache import CachePolicy, NullCache, OnDiskCache
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
 
+def _symlink_or_skip(
+    link: Path, target: Path, *, target_is_directory: bool = False
+) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported on this platform")
+
+
 def _run_cache(args: list[str]) -> None:
     app.cli(args=["cache", *args], prog="nab")
 
@@ -100,7 +109,7 @@ class TestCacheVerify:
         (outside / "foo.policy").write_bytes(b"not json")
         root = tmp_path / "cache"
         root.mkdir()
-        (root / "simple-v0").symlink_to(outside, target_is_directory=True)
+        _symlink_or_skip(root / "simple-v0", outside, target_is_directory=True)
         _run_cache(["verify", "--cache-dir", str(root)])
         assert capsys.readouterr().err == ""
 
@@ -156,7 +165,7 @@ class TestCacheClear:
         root = tmp_path / "cache"
         root.mkdir()
         (root / "simple-v0").mkdir()
-        (root / "metadata-v1").symlink_to(outside, target_is_directory=True)
+        _symlink_or_skip(root / "metadata-v1", outside, target_is_directory=True)
         _run_cache(["clear", "--cache-dir", str(root)])
         assert (outside / "keep.txt").read_text() == "precious"
         assert not (root / "simple-v0").exists()
@@ -283,9 +292,13 @@ class TestIterCacheEntries:
         outside = tmp_path.parent / "iter-out"
         outside.mkdir()
         (outside / "x.json").write_text("{}")
-        (tmp_path / "linked-simple-v0").symlink_to(outside, target_is_directory=True)
+        _symlink_or_skip(
+            tmp_path / "linked-simple-v0", outside, target_is_directory=True
+        )
         (tmp_path / "sdist-v1-file").write_text("junk")
-        (tmp_path / "simple-v0" / "pypi" / "link.json").symlink_to(outside / "x.json")
+        _symlink_or_skip(
+            tmp_path / "simple-v0" / "pypi" / "link.json", outside / "x.json"
+        )
         names = {e.name for e in cache.iter_cache_entries()}
         assert "foo.json" in names
         assert "foo.policy" in names
@@ -299,7 +312,7 @@ class TestIterCacheEntries:
         (outside / "leak.json").write_text("{}")
         root = tmp_path / "cache"
         root.mkdir()
-        (root / "simple-v0").symlink_to(outside, target_is_directory=True)
+        _symlink_or_skip(root / "simple-v0", outside, target_is_directory=True)
         cache = OnDiskCache(root, "https://pypi.org/simple")
         assert list(cache.iter_cache_entries()) == []
 
