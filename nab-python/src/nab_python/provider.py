@@ -147,7 +147,8 @@ class DistPolicy(enum.Enum):
     """How to admit wheels and sdists during resolution."""
 
     WHEEL_ONLY = "wheel-only"
-    """Ignore sdists entirely. Only use wheels with PEP 658 metadata."""
+    """Ignore sdists entirely. Use wheels, reading PEP 658 metadata when
+    published or an HTTP range read of the wheel otherwise."""
 
     PREFER_WHEEL = "prefer-wheel"
     """Try wheels first, fall back to sdists for versions without wheels."""
@@ -336,6 +337,10 @@ class ProviderStats:
     listings_fetched: int = 0
     metadata_fetched: int = 0
     sdist_pkg_info_fetched: int = 0
+    wheel_metadata_range_fetched: int = 0
+    wheel_metadata_range_full_body: int = 0
+    wheel_metadata_range_unsupported: int = 0
+    wheel_metadata_range_missing: int = 0
     distributions_seen: int = 0
     wheels_seen: int = 0
     sdists_seen: int = 0

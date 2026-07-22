@@ -32,7 +32,8 @@ Each pinned package carries:
 The digests are the ones the index published, so nothing is hashed
 locally to build a lock. A resolve does fetch, but only to read
 metadata, and it takes the cheapest source available: a wheel's
-[PEP 658] metadata sidecar when the index publishes one, otherwise
+[PEP 658] metadata sidecar when the index publishes one, then an HTTP
+range read of the remote wheel when no sidecar is published, otherwise
 the sdist's PKG-INFO (built, if its dependencies are dynamic and the
 [build policy](build-policy.md) allows it). A wheel served from a
 local directory is read straight off disk, with no fetch. VCS and

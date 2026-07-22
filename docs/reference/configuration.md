@@ -458,7 +458,12 @@ considers and which end up in the lockfile.  The default
 
 `wheel-only` is the equivalent of pip's `--only-binary :all:` and
 `sdist-only` of `--no-binary :all:`, scoped per package or per index
-via an override.
+via an override.  A wheel that ships no PEP 658 sidecar still resolves
+under any wheel-admitting policy: its METADATA is recovered by an HTTP
+range read of the remote wheel rather than the version being skipped.
+An index that cannot serve usable ranges has the whole wheel fetched
+instead, so recovery still works there at the cost of a full download
+per sidecar-less wheel the resolver visits.
 
 `sdist-install` is the policy to reach for when an installer needs
 to build the package from source (typically to link against
@@ -469,7 +474,8 @@ lockfile pins only the sdist so `pip install --require-hashes`
 materialises that archive; the resolver, meanwhile, reads
 dependency metadata from whichever source is cheapest at the
 chosen version.  In practice that means the wheel's METADATA via
-PEP 658 when one is published, falling back to the sdist's
+PEP 658 when one is published, or an HTTP range read of the remote
+wheel when no sidecar is published, falling back to the sdist's
 PKG-INFO (with the usual PEP 643 and `pyproject.toml` fallbacks)
 when no wheel exists.  Equivalent in spirit to pip's
 `--no-binary <pkg>` for the install side, without paying the

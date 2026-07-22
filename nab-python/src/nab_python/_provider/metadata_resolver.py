@@ -8,9 +8,11 @@ each ``Requires-Dist`` entry into base deps vs per-extra deps.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
+from urllib.parse import urlsplit
 
 from nab_index.client import SdistFile, WheelFile
+from nab_index.lazy_wheel import RangeOutcome
 from nab_index.local_index import UnsupportedWheelError, read_wheel_metadata
 
 from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
@@ -63,9 +65,17 @@ def resolve_metadata(
 
     # Sibling wheels of one version can declare different dependencies, so the
     # read is keyed by the artifact this target would install.  ``versions`` is
-    # the target's own tag-filtered listing, so the pick is per-target.
+    # the target's own tag-filtered listing, so the pick is per-target.  A
+    # sidecar wheel keys on its sidecar URL; a bare remote wheel (rung 4) keys
+    # on its own wheel URL, so its range-recovered text stays independent of a
+    # sibling wheel's.
     dist = pick_dist_for_metadata(versions, version)
-    metadata_url = dist.metadata_url if isinstance(dist, WheelFile) else None
+    if _is_bare_remote_wheel(dist):
+        metadata_url = dist.url
+    elif isinstance(dist, WheelFile):
+        metadata_url = dist.metadata_url
+    else:
+        metadata_url = None
 
     text, from_sdist = index.get_metadata_with_origin(normalized, ver_str, metadata_url)
     if text is not None:
@@ -75,28 +85,20 @@ def resolve_metadata(
         msg = f"Version {version} of {package} not found in listing"
         raise MetadataError(msg)
 
-    from_sdist = False
-    if isinstance(dist, WheelFile) and (url := dist.metadata_url) is not None:
-        event = provider.coordinator.request_metadata(
-            normalized, ver_str, url, dist.metadata_hash
+    metadata_text, from_sdist = _read_direct_wheel_metadata(
+        provider, dist, normalized, ver_str
+    )
+
+    # Rung 4: a sidecar-less remote wheel recovers its METADATA over ranged
+    # HTTP reads.  Fires only for a bare http/https wheel (no PEP 658 URL, no
+    # local path); a malformed-UTF-8 blob or an advertised wheel the index
+    # cannot serve is re-raised and fails the resolve, like an unserveable
+    # sidecar, while a plain miss (including a host without usable ranges)
+    # leaves ``metadata_text`` None and the ladder steps to the sdist rung.
+    if metadata_text is None and _is_bare_remote_wheel(dist):
+        metadata_text, from_sdist = _read_range_metadata(
+            provider, normalized, ver_str, dist.url
         )
-        event.wait()
-        integrity_error = index.get_metadata_error(
-            normalized, ver_str, dist.metadata_url
-        )
-        if integrity_error is not None:
-            raise integrity_error
-        metadata_text, from_sdist = index.get_metadata_with_origin(
-            normalized, ver_str, dist.metadata_url
-        )
-    elif isinstance(dist, WheelFile) and dist.local_path is not None:
-        try:
-            metadata_text = read_wheel_metadata(dist.local_path)
-        except UnsupportedWheelError:
-            # A contradictory .dist-info is unusable, like an unreadable wheel.
-            metadata_text = None
-    else:
-        metadata_text = None
 
     if metadata_text is not None:
         return (metadata_text, from_sdist)
@@ -114,6 +116,93 @@ def resolve_metadata(
         f"no PEP 658 metadata and no sdist available"
     )
     raise MetadataError(msg)
+
+
+def _read_direct_wheel_metadata(
+    provider: Provider, dist: DistFile | None, package: str, version: str
+) -> tuple[str | None, bool]:
+    """Rungs 2 and 3: a PEP 658 sidecar read, then a local wheel read.
+
+    Returns ``(metadata_text, from_sdist)``; ``from_sdist`` is always ``False``
+    since both sources are wheel METADATA.  A recorded sidecar integrity error
+    is re-raised and fails the resolve; a contradictory local ``.dist-info``
+    reads back as ``None`` and the ladder steps on.
+    """
+    index = provider.coordinator.index
+    if isinstance(dist, WheelFile) and (url := dist.metadata_url) is not None:
+        event = provider.coordinator.request_metadata(
+            package, version, url, dist.metadata_hash
+        )
+        event.wait()
+        integrity_error = index.get_metadata_error(package, version, url)
+        if integrity_error is not None:
+            raise integrity_error
+        return index.get_metadata_with_origin(package, version, url)
+    if isinstance(dist, WheelFile) and dist.local_path is not None:
+        try:
+            return read_wheel_metadata(dist.local_path), False
+        except UnsupportedWheelError:
+            # A contradictory .dist-info is unusable, like an unreadable wheel.
+            return None, False
+    return None, False
+
+
+def _is_bare_remote_wheel(dist: DistFile | None) -> TypeGuard[WheelFile]:
+    """Whether ``dist`` is a sidecar-less remote wheel eligible for rung 4.
+
+    A bare wheel has no PEP 658 sidecar (``metadata_url`` is ``None``) and no
+    local path, and is served over ``http``/``https`` so its bytes can be read
+    with ranged requests.
+    """
+    return (
+        isinstance(dist, WheelFile)
+        and dist.metadata_url is None
+        and dist.local_path is None
+        and urlsplit(dist.url).scheme in ("http", "https")
+    )
+
+
+def _read_range_metadata(
+    provider: Provider, package: str, version: str, wheel_url: str
+) -> tuple[str | None, bool]:
+    """Run rung 4 for one bare wheel and return ``(metadata_text, from_sdist)``.
+
+    Blocks on the coordinator's range read, re-raises a recorded metadata
+    error (a malformed-UTF-8 blob, an unserveable wheel URL) so the resolve
+    fails, and otherwise records the outcome counter and reads the wheel's
+    slot.  ``from_sdist`` is ``False``: recovered wheel METADATA is
+    authoritative.
+    """
+    event = provider.coordinator.request_range_metadata(package, version, wheel_url)
+    event.wait()
+    index = provider.coordinator.index
+    integrity_error = index.get_metadata_error(package, version, wheel_url)
+    if integrity_error is not None:
+        raise integrity_error
+    _record_range_outcome(provider, package, version, wheel_url)
+    return index.get_metadata_with_origin(package, version, wheel_url)
+
+
+def _record_range_outcome(
+    provider: Provider, package: str, version: str, wheel_url: str
+) -> None:
+    """Bump the :class:`ProviderStats` counter for a range read's outcome.
+
+    The mechanical outcome is discovered in nab-index and recorded on the
+    index; the provider owns tier accounting.  A read that recorded no outcome
+    (a refused or offline-missed request) leaves every counter untouched.
+    """
+    outcome = provider.coordinator.index.get_range_outcome(package, version, wheel_url)
+    if outcome is None:
+        return
+    if outcome is RangeOutcome.PARTIAL:
+        provider.stats.wheel_metadata_range_fetched += 1
+    elif outcome is RangeOutcome.FULL_BODY:
+        provider.stats.wheel_metadata_range_full_body += 1
+    elif outcome is RangeOutcome.UNSUPPORTED:
+        provider.stats.wheel_metadata_range_unsupported += 1
+    else:
+        provider.stats.wheel_metadata_range_missing += 1
 
 
 def pick_dist_for_metadata(

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from nab_index.client import SdistFile, WheelFile
+    from nab_index.lazy_wheel import RangeMetadataResult
 
 
 _MINIMAL_METADATA = "Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\n"
@@ -144,6 +145,43 @@ def _wire_sdist_side_effects(
     coordinator.request_sdist.side_effect = _request_sdist
 
 
+def _wire_range_side_effects(
+    coordinator: MagicMock,
+    index: InMemoryIndex,
+    *,
+    range_result: RangeMetadataResult | None,
+    range_error: BaseException | None,
+    range_by_url: Mapping[str, RangeMetadataResult] | None,
+) -> None:
+    """Attach the ``request_range_metadata`` side effect.
+
+    Mirrors the coordinator's ``_fetch_range_metadata`` handler: a recorded
+    ``range_error`` lands a per-wheel metadata error (the malformed-UTF-8
+    blob, the unserveable wheel URL), otherwise the read stores the recovered
+    METADATA or marks the read absent.  ``range_by_url`` selects a result per
+    wheel URL, which is how sibling sidecar-less wheels of one version are
+    given different dependencies; ``range_result`` is the single-result
+    shortcut.  With none set the request is a no-op that still returns a done
+    event, so a rung-4 read finds nothing and the ladder steps to the sdist
+    rung.
+    """
+
+    def _request_range_metadata(pkg: str, ver: str, url: str) -> threading.Event:
+        if range_error is not None:
+            index.store_range_error(pkg, ver, url, range_error)
+            return _done_event()
+        result = range_by_url.get(url) if range_by_url is not None else range_result
+        if result is not None:
+            index.store_range_outcome(pkg, ver, url, result.outcome)
+            if result.text is None:
+                index.store_range_absent(pkg, ver, url)
+            else:
+                index.store_range_metadata(pkg, ver, url, result.text)
+        return _done_event()
+
+    coordinator.request_range_metadata.side_effect = _request_range_metadata
+
+
 def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-loads
     wheels: Sequence[WheelFile | SdistFile] | None = None,
     *,
@@ -155,6 +193,9 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     auto_metadata: bool = False,
     sdist_pkg_info: str | None = None,
     sdist_pyproject_toml: str | None = None,
+    range_result: RangeMetadataResult | None = None,
+    range_error: BaseException | None = None,
+    range_by_url: Mapping[str, RangeMetadataResult] | None = None,
 ) -> MagicMock:
     """Build a mock :class:`FetchCoordinator` backed by an :class:`InMemoryIndex`.
 
@@ -179,6 +220,12 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
       version are given different dependencies.
     * ``request_sdist`` writes ``sdist_pkg_info`` and, if not ``None``,
       ``sdist_pyproject_toml``.
+    * ``request_range_metadata`` records the recovered METADATA (or an absent
+      read when its text is ``None``), or lands ``range_error`` as a per-wheel
+      metadata error.  ``range_by_url`` picks a result per wheel URL, so sibling
+      sidecar-less wheels of one version get different dependencies;
+      ``range_result`` is the single-result shortcut.  With none it is a no-op,
+      so rung 4 finds nothing.
 
     Call sites that need request side effects beyond what this helper
     wires up (for example ``request_sdist_archive``) can reassign
@@ -206,5 +253,12 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
         index,
         sdist_pkg_info=sdist_pkg_info,
         sdist_pyproject_toml=sdist_pyproject_toml,
+    )
+    _wire_range_side_effects(
+        coordinator,
+        index,
+        range_result=range_result,
+        range_error=range_error,
+        range_by_url=range_by_url,
     )
     return coordinator

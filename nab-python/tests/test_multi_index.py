@@ -6,11 +6,13 @@ import asyncio
 from typing import TYPE_CHECKING, TypeVar
 
 import pytest
+from packaging.utils import canonicalize_name
 
 from nab_index._naming import canonical as _normalise_name
 from nab_index.cache import OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import SdistFile, WheelFile
+from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 
@@ -45,6 +47,7 @@ class FakeClient:
         self.get_files_calls: list[str] = []
         self.metadata_calls: list[tuple[str, str, str]] = []
         self.sdist_calls: list[tuple[str, str, str]] = []
+        self.range_calls: list[tuple[str, str, str]] = []
         self.closed = False
 
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
@@ -79,6 +82,16 @@ class FakeClient:
         sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> bytes:
         return b""
+
+    async def get_range_metadata(
+        self,
+        package: str,
+        version: str,
+        wheel_url: str,
+        canonical_name: str,
+    ) -> RangeMetadataResult:
+        self.range_calls.append((package, version, wheel_url))
+        return RangeMetadataResult(f"range:{package}:{version}", RangeOutcome.PARTIAL)
 
     async def aclose(self) -> None:
         self.closed = True
@@ -297,6 +310,45 @@ class TestMetadataRouting:
         )
         run(client.get_metadata_text("foo", "1.0", "https://x/m.metadata"))
         assert first.metadata_calls == [("foo", "1.0", "https://x/m.metadata")]
+
+    def test_range_metadata_goes_to_routed_client(self) -> None:
+        first = FakeClient({})
+        second = FakeClient({"foo": [_wheel("foo")]})
+        client = MultiIndexClient(
+            {"a": first, "b": second},
+            ["a", "b"],
+            {},
+        )
+        run(client.get_files("foo"))
+        result = run(
+            client.get_range_metadata(
+                "foo",
+                "1.0",
+                "https://x/foo-1.0-py3-none-any.whl",
+                canonicalize_name("foo"),
+            )
+        )
+        assert result.text == "range:foo:1.0"
+        assert result.outcome is RangeOutcome.PARTIAL
+        assert second.range_calls == [
+            ("foo", "1.0", "https://x/foo-1.0-py3-none-any.whl")
+        ]
+        assert first.range_calls == []
+
+    def test_range_metadata_without_prior_get_files_uses_first(self) -> None:
+        first = FakeClient({})
+        second = FakeClient({})
+        client = MultiIndexClient(
+            {"a": first, "b": second},
+            ["a", "b"],
+            {},
+        )
+        run(
+            client.get_range_metadata(
+                "foo", "1.0", "https://x/foo.whl", canonicalize_name("foo")
+            )
+        )
+        assert first.range_calls == [("foo", "1.0", "https://x/foo.whl")]
 
 
 class TestAClose:

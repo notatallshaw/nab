@@ -42,7 +42,10 @@ from .client import (
 from .transport import HttpError
 
 if TYPE_CHECKING:
+    from packaging.utils import NormalizedName
     from typing_extensions import Self
+
+    from .lazy_wheel import RangeMetadataResult
 
 __all__ = [
     "LocalIndexClient",
@@ -50,6 +53,7 @@ __all__ = [
     "UnsupportedWheelError",
     "parse_file_url",
     "read_wheel_metadata",
+    "wheel_metadata_member",
 ]
 
 
@@ -343,7 +347,7 @@ def _read_wheel_requires_python(wheel_path: Path, expected: str) -> str | None:
     """Return ``Requires-Python`` from a wheel's METADATA, or ``None``."""
     try:
         with zipfile.ZipFile(wheel_path) as archive:
-            member = _wheel_metadata_member(archive.namelist(), expected)
+            member = wheel_metadata_member(archive.namelist(), expected)
             if member is None:
                 return None
             raw = archive.read(member)
@@ -423,7 +427,7 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
         return None
     try:
         with zipfile.ZipFile(wheel_path) as zf:
-            member = _wheel_metadata_member(zf.namelist(), parsed[0])
+            member = wheel_metadata_member(zf.namelist(), parsed[0])
             if member is None:
                 return None
             return zf.read(member).decode("utf-8")
@@ -431,11 +435,14 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
         return None
 
 
-def _wheel_metadata_member(names: list[str], expected: str) -> str | None:
+def wheel_metadata_member(names: list[str], expected: str) -> str | None:
     """Return ``expected``'s own top-level ``*.dist-info/METADATA`` member.
 
-    ``expected`` is the wheel's canonical name from its filename.  Returns
-    ``None`` when no top-level ``.dist-info`` holds a METADATA file.  Raises
+    ``expected`` is the wheel's canonical name.  Both the local wheel reader
+    and the HTTP range reader select the METADATA member through this one
+    helper, so the two paths agree on what counts as a wheel's own metadata.
+    Returns ``None`` when no top-level ``.dist-info`` holds a METADATA file.
+    Raises
     :class:`UnsupportedWheelError` when the wheel carries several top-level
     ``.dist-info`` directories, or a single one whose name does not
     canonicalise to ``expected``.
@@ -560,3 +567,21 @@ class LocalIndexClient:
         """
         path = parse_file_url(sdist_url)
         return path.read_bytes()
+
+    async def get_range_metadata(
+        self,
+        package: str,  # noqa: ARG002 - matches CachedAsyncSimpleClient signature
+        version: str,  # noqa: ARG002
+        wheel_url: str,  # noqa: ARG002
+        canonical_name: NormalizedName,  # noqa: ARG002
+    ) -> RangeMetadataResult:
+        """Return the no-source result.
+
+        A local wheel is read through the resolver's ``local_path`` branch, not
+        over HTTP, so there is no range read to perform here.
+        """
+        # Imported inside the method to break the lazy_wheel <-> local_index
+        # import cycle: lazy_wheel imports this module's shared member selector.
+        from .lazy_wheel import RangeMetadataResult, RangeOutcome  # noqa: PLC0415
+
+        return RangeMetadataResult(None, RangeOutcome.UNSUPPORTED)

@@ -19,9 +19,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from packaging.utils import canonicalize_name as canonicalize_name_boundary
+
 from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import SdistFile, WheelFile
+from nab_index.lazy_wheel import RangeCapabilityMemo, RangeOutcome
 from nab_index.local_index import LocalIndexClient, parse_file_url
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 
@@ -63,6 +66,7 @@ class FetchKind(enum.Enum):
 
     LISTING = "listing"
     METADATA = "metadata"
+    RANGE_METADATA = "range-metadata"
     SDIST = "sdist"
     SDIST_ARCHIVE = "sdist-archive"
     DIRECT_ARCHIVE = "direct-archive"
@@ -120,6 +124,16 @@ def _metadata_key(package: str, version: str, metadata_url: str | None) -> str:
     return f"metadata:{package}:{version}:{metadata_url}"
 
 
+def _range_key(package: str, version: str, wheel_url: str) -> str:
+    """Return the pending key for one range read.
+
+    The wheel URL is in the key so sibling sidecar-less wheels of a version do
+    not share a request: sibling wheels can declare different dependencies, so a
+    waiter is released by the wheel it asked for, matching the sidecar path.
+    """
+    return f"range:{package}:{version}:{wheel_url}"
+
+
 class InMemoryIndex:
     """Thread-safe storage for fetched package data.
 
@@ -146,6 +160,11 @@ class InMemoryIndex:
         self._sdist_pyproject: dict[tuple[str, str], str | None] = {}
         self._sdist_archives: dict[tuple[str, str], bytes | None] = {}
         self._sdist_archive_errors: dict[tuple[str, str], BaseException] = {}
+        # The mechanical outcome of a rung-4 range read, per wheel URL, for
+        # the provider's tier accounting.  Discovered in nab-index, recorded
+        # here; keyed like the read itself so sibling wheels of one version
+        # do not overwrite each other's outcome.
+        self._range_outcomes: dict[tuple[str, str, str], RangeOutcome] = {}
         self._pending: dict[str, _Pending] = {}
 
         # Parsed metadata is a pure function of the underlying text, so it
@@ -409,6 +428,76 @@ class InMemoryIndex:
         with self._lock:
             return (package, version) in self._metadata_from_sdist
 
+    def store_range_metadata(
+        self, package: str, version: str, wheel_url: str, data: str
+    ) -> None:
+        """Store range-recovered wheel METADATA in the wheel's own slot.
+
+        The text is authoritative wheel METADATA, so it lands in the
+        ``(package, version, wheel_url)`` slot with ``from_sdist=False`` and
+        stays off the :pep:`643` dynamic-deps gate.  Keying by the wheel URL,
+        like the sidecar path, keeps sibling sidecar-less wheels of one version
+        independent: a matrix target that picks one wheel never reads another
+        wheel's dependencies.  Firing the ``range:`` pending releases the
+        provider thread blocked on rung 4.
+        """
+        key = _range_key(package, version, wheel_url)
+        with self._lock:
+            self._write_metadata_slot(
+                (package, version, wheel_url), data, from_sdist=False
+            )
+            pending = self._pending.get(key)
+        if pending is not None:
+            pending.result = data
+            pending.event.set()
+
+    def store_range_absent(self, package: str, version: str, wheel_url: str) -> None:
+        """Release a rung-4 waiter without writing a metadata slot.
+
+        A range read that yielded no METADATA (ranges unsupported, no matching
+        dist-info, an offline cold miss, a dead fetcher loop) is a rung miss,
+        not an error: the pending fires so the provider reads ``None`` and steps
+        to the sdist rung, which can still write the version-level slot.
+        """
+        key = _range_key(package, version, wheel_url)
+        with self._lock:
+            pending = self._pending.get(key)
+        if pending is not None:
+            pending.event.set()
+
+    def store_range_error(
+        self, package: str, version: str, wheel_url: str, error: BaseException
+    ) -> None:
+        """Record a failed range read as a per-wheel error and unblock rung 4.
+
+        Distinct from :meth:`store_range_absent`: a malformed-UTF-8 METADATA
+        blob, or a wheel URL the index advertised and then could not serve,
+        fails the resolve rather than falling through to the sdist, mirroring
+        :meth:`store_metadata_error` for an advertised sidecar.  The error
+        lands in the ``(package, version, wheel_url)`` slot the provider reads
+        for that wheel.  The ``range:`` pending fires so the waiter unblocks.
+        """
+        key = _range_key(package, version, wheel_url)
+        with self._lock:
+            self._metadata_errors[(package, version, wheel_url)] = error
+            pending = self._pending.get(key)
+        if pending is not None:
+            pending.event.set()
+
+    def store_range_outcome(
+        self, package: str, version: str, wheel_url: str, outcome: RangeOutcome
+    ) -> None:
+        """Record the mechanical outcome of a range read for tier accounting."""
+        with self._lock:
+            self._range_outcomes[(package, version, wheel_url)] = outcome
+
+    def get_range_outcome(
+        self, package: str, version: str, wheel_url: str
+    ) -> RangeOutcome | None:
+        """Return the recorded range-read outcome, or ``None`` if none ran."""
+        with self._lock:
+            return self._range_outcomes.get((package, version, wheel_url))
+
     def store_sdist_pyproject(self, package: str, version: str, data: str) -> None:
         """Store sdist-derived pyproject.toml text for static-metadata fallback.
 
@@ -609,6 +698,10 @@ class FetchCoordinator:
         # fetcher thread.  ``None`` when nothing is watching (the common case).
         self._on_fetch = on_fetch
         self.index = InMemoryIndex()
+        # Shared per-run range-capability memo.  Rebuilt fresh on the fetcher
+        # loop in _async_fetcher so each run starts with empty per-netloc state;
+        # built here too so the attribute is always a real memo for typing.
+        self._range_memo = RangeCapabilityMemo()
         self._thread: threading.Thread | None = None
         self._started = False
         self._crashed = False
@@ -686,6 +779,11 @@ class FetchCoordinator:
                 self.index.store_metadata_error(
                     req.package, req.version, error, req.url
                 )
+            elif req.kind is FetchKind.RANGE_METADATA:
+                # A dead loop is a rung miss: unblock the waiter and let it fall
+                # through to the sdist rung, not a candidate-dropping error.
+                assert req.url is not None
+                self.index.store_range_absent(req.package, req.version, req.url)
             elif req.kind is FetchKind.SDIST:
                 self.index.store_sdist_metadata_error(req.package, req.version, error)
             else:
@@ -732,6 +830,33 @@ class FetchCoordinator:
                     version=version,
                     url=url,
                     metadata_hash=metadata_hash,
+                )
+            )
+        return pending.event
+
+    def request_range_metadata(
+        self, package: str, version: str, wheel_url: str
+    ) -> threading.Event:
+        """Request a sidecar-less wheel's METADATA over an HTTP range read.
+
+        This is rung 4: the ``range:`` pending key is per
+        ``(package, version, wheel_url)``, so two provider threads asking for the
+        same wheel enqueue a single read, while sibling sidecar-less wheels of
+        one version (which a matrix picks per target and which can declare
+        different dependencies) each get their own read, matching the sidecar
+        path.  A warm cache hit is served inside the client, so there is no early
+        cache check here.
+        """
+        self._check_alive()
+        key = _range_key(package, version, wheel_url)
+        pending, existed = self.index.get_or_create_pending(key)
+        if not existed:
+            self._submit(
+                FetchRequest(
+                    kind=FetchKind.RANGE_METADATA,
+                    package=package,
+                    version=version,
+                    url=wheel_url,
                 )
             )
         return pending.event
@@ -913,10 +1038,14 @@ class FetchCoordinator:
             backend,
             url,
             offline=self._offline,
+            range_memo=self._range_memo,
         )
 
     async def _async_fetcher(self) -> None:
         self._loop = asyncio.get_running_loop()
+        # Fresh per-run memo, owned on this single loop thread, injected into
+        # every client _build_client constructs below.
+        self._range_memo = RangeCapabilityMemo()
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         self._async_q = queue
         self._queue_ready.set()
@@ -991,6 +1120,8 @@ class FetchCoordinator:
                     await self._fetch_sdist(client, req)
                 elif req.kind is FetchKind.SDIST_ARCHIVE:
                     await self._fetch_sdist_archive(client, req)
+                elif req.kind is FetchKind.RANGE_METADATA:
+                    await self._fetch_range_metadata(client, req)
                 else:
                     await self._fetch_direct_archive(req)
             except OfflineError as exc:
@@ -1032,12 +1163,33 @@ class FetchCoordinator:
             return
 
         assert req.version is not None
+        self._record_versioned_failure(req, exc, offline=offline)
 
+    def _record_versioned_failure(
+        self, req: FetchRequest, exc: Exception, *, offline: bool
+    ) -> None:
+        """Record the failure of a version-scoped fetch, unblocking its waiter.
+
+        Offline is the one deliberate degradation: the artifact is recorded
+        absent so the resolver works with what the cache holds.  Any other
+        failure is recorded as an error, because a file the listing advertised
+        and the index then failed to serve is not one that does not exist.
+        """
+        assert req.version is not None
         if req.kind is FetchKind.METADATA:
             if offline:
                 self.index.store_metadata(req.package, req.version, None, req.url)
             else:
                 self.index.store_metadata_error(req.package, req.version, exc, req.url)
+        elif req.kind is FetchKind.RANGE_METADATA:
+            assert req.url is not None
+            if offline:
+                # A cold offline miss is a rung miss: fall through to the sdist.
+                self.index.store_range_absent(req.package, req.version, req.url)
+            else:
+                # A malformed blob or an unserveable advertised wheel fails
+                # the resolve; record the per-wheel error.
+                self.index.store_range_error(req.package, req.version, req.url, exc)
         elif req.kind is FetchKind.SDIST:
             if offline:
                 self.index.store_sdist_metadata(req.package, req.version, None)
@@ -1111,6 +1263,40 @@ class FetchCoordinator:
         )
         self.index.store_metadata(req.package, req.version, text, req.url)
         logger.debug("fetched metadata: %s %s", req.package, req.version)
+
+    async def _fetch_range_metadata(
+        self,
+        client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
+        req: FetchRequest,
+    ) -> None:
+        """Recover a sidecar-less wheel's METADATA over an HTTP range read.
+
+        A read that returns text stores it in the wheel's own slot; a read
+        that returns none (ranges unsupported, no METADATA member) records the
+        outcome and fires the waiter with no slot, so the provider steps to the
+        sdist rung.  A malformed blob or an unserveable wheel URL raises out of
+        the client and is caught by :meth:`_handle` as a fetch failure.
+        """
+        assert req.version is not None
+        assert req.url is not None
+        result = await client.get_range_metadata(
+            req.package, req.version, req.url, canonicalize_name_boundary(req.package)
+        )
+        self.index.store_range_outcome(
+            req.package, req.version, req.url, result.outcome
+        )
+        if result.text is None:
+            self.index.store_range_absent(req.package, req.version, req.url)
+        else:
+            self.index.store_range_metadata(
+                req.package, req.version, req.url, result.text
+            )
+        logger.debug(
+            "range metadata: %s %s (%s)",
+            req.package,
+            req.version,
+            result.outcome.value,
+        )
 
     async def _fetch_sdist(
         self,

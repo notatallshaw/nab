@@ -7,12 +7,14 @@ import hashlib
 import io
 import json
 import tarfile
+import zipfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import pytest
+from packaging.utils import canonicalize_name
 
 import nab_index.cache as cache_mod
 from nab_index.cache import CachePolicy, OfflineError, OnDiskCache
@@ -31,6 +33,7 @@ from nab_index.client import (
     _parse_sdist_filename,
     _select_artifact_hash,
 )
+from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
 from nab_index.transport import HttpError
 from nab_python.metadata import parse_metadata
 
@@ -1788,3 +1791,189 @@ class TestContextManager:
 
         asyncio.run(go())
         assert closes == [True]
+
+
+_RANGE_META = b"Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n\nbody\n"
+_WHEEL_URL = "https://files.example.com/pkg-1.0-py3-none-any.whl"
+
+
+def _build_range_wheel() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("pkg/__init__.py", b"value = 1\n")
+        zf.writestr("pkg-1.0.dist-info/METADATA", _RANGE_META)
+        zf.writestr("pkg-1.0.dist-info/WHEEL", b"Wheel-Version: 1.0\n")
+    return buf.getvalue()
+
+
+class _WellBehavedRangeTransport:
+    """Serve a wheel over well-behaved 206 range responses, counting calls."""
+
+    def __init__(self, wheel: bytes) -> None:
+        self.wheel = wheel
+        self.total = len(wheel)
+        self.calls = 0
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> _FakeResponse:
+        self.calls += 1
+        headers = headers or {}
+        body = headers["Range"].removeprefix("bytes=")
+        if body.startswith("-"):
+            start = max(0, self.total - int(body[1:]))
+            end = self.total - 1
+        else:
+            lo, _, hi = body.partition("-")
+            start, end = int(lo), min(int(hi), self.total - 1)
+        data = self.wheel[start : end + 1]
+        return _FakeResponse(
+            data,
+            status=206,
+            headers={"content-range": f"bytes {start}-{end}/{self.total}"},
+        )
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _FullBodyJunkTransport:
+    """Ignore the range and hand back a 200 body that is not a zip."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> _FakeResponse:
+        self.calls += 1
+        return _FakeResponse(b"not a zip file", status=200)
+
+    async def aclose(self) -> None:
+        return None
+
+
+class TestGetRangeMetadata:
+    _NAME = canonicalize_name("pkg")
+
+    def test_cache_hit_returns_without_transport_and_works_offline(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_metadata("pkg", _WHEEL_URL, _RANGE_META.decode())
+        transport = _FakeTransport()  # raises on any request
+
+        async def go() -> RangeMetadataResult:
+            client = CachedAsyncSimpleClient(transport, cache, offline=True)
+            try:
+                return await client.get_range_metadata(
+                    "pkg", "1.0", _WHEEL_URL, self._NAME
+                )
+            finally:
+                await client.aclose()
+
+        result = asyncio.run(go())
+        assert result.text == _RANGE_META.decode()
+        assert result.outcome is RangeOutcome.PARTIAL
+        assert transport.calls == []
+
+    def test_cold_offline_raises(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport()
+
+        async def go() -> RangeMetadataResult:
+            client = CachedAsyncSimpleClient(transport, cache, offline=True)
+            try:
+                return await client.get_range_metadata(
+                    "pkg", "1.0", _WHEEL_URL, self._NAME
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(OfflineError, match="pkg==1.0"):
+            asyncio.run(go())
+
+    def test_recovery_writes_metadata_v1_store(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _WellBehavedRangeTransport(_build_range_wheel())
+
+        async def go() -> RangeMetadataResult:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_range_metadata(
+                    "pkg", "1.0", _WHEEL_URL, self._NAME
+                )
+            finally:
+                await client.aclose()
+
+        result = asyncio.run(go())
+        assert result.text == _RANGE_META.decode()
+        assert result.outcome is RangeOutcome.PARTIAL
+        assert transport.calls > 0
+        # Recovered METADATA lands in the metadata-v1 store keyed by wheel URL.
+        assert cache.get_metadata("pkg", _WHEEL_URL) == _RANGE_META.decode()
+
+    def test_warm_range_cache_returns_without_transport(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _WellBehavedRangeTransport(_build_range_wheel())
+
+        async def warm() -> None:
+            client = CachedAsyncSimpleClient(transport, cache)
+            await client.get_range_metadata("pkg", "1.0", _WHEEL_URL, self._NAME)
+            await client.aclose()
+
+        asyncio.run(warm())
+        first = transport.calls
+
+        offline = _FakeTransport()
+
+        async def again() -> RangeMetadataResult:
+            client = CachedAsyncSimpleClient(offline, cache, offline=True)
+            try:
+                return await client.get_range_metadata(
+                    "pkg", "1.0", _WHEEL_URL, self._NAME
+                )
+            finally:
+                await client.aclose()
+
+        result = asyncio.run(again())
+        assert result.text == _RANGE_META.decode()
+        assert transport.calls == first
+        assert offline.calls == []
+
+    def test_unreadable_wheel_returns_none_and_skips_cache(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FullBodyJunkTransport()
+
+        async def go() -> RangeMetadataResult:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_range_metadata(
+                    "pkg", "1.0", _WHEEL_URL, self._NAME
+                )
+            finally:
+                await client.aclose()
+
+        result = asyncio.run(go())
+        assert result.text is None
+        assert result.outcome is RangeOutcome.MISSING
+        assert cache.get_metadata("pkg", _WHEEL_URL) is None
+
+    def test_injected_memo_is_used(self, tmp_path: Path) -> None:
+        from nab_index.lazy_wheel import RangeCapability, RangeCapabilityMemo
+
+        cache = _make_cache(tmp_path)
+        memo = RangeCapabilityMemo()
+        transport = _WellBehavedRangeTransport(_build_range_wheel())
+
+        async def go() -> None:
+            client = CachedAsyncSimpleClient(transport, cache, range_memo=memo)
+            try:
+                await client.get_range_metadata("pkg", "1.0", _WHEEL_URL, self._NAME)
+            finally:
+                await client.aclose()
+
+        asyncio.run(go())
+        assert memo.capability("files.example.com") is RangeCapability.SUFFIX_OK

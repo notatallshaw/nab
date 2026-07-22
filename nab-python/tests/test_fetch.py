@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import zipfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -21,12 +22,14 @@ import respx
 from nab_index.cache import NullCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import (
+    MalformedSimpleResponseError,
     MetadataHashMismatchError,
     SdistFile,
     SdistHashMismatchError,
     WheelFile,
 )
 from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_index.lazy_wheel import RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 from nab_index.transport import HttpError
@@ -2015,3 +2018,321 @@ class TestSiblingWheelMetadata:
 
         assert linux.call_count == 1
         assert win.call_count == 1
+
+
+_RANGE_META = b"Metadata-Version: 2.1\nName: widget\nVersion: 1.0\n\nBody.\n"
+_RANGE_URL = "https://files.example.org/packages/widget-1.0-py3-none-any.whl"
+
+
+def _build_range_wheel(
+    *,
+    dist_info: str | None = "widget-1.0.dist-info",
+    metadata: bytes | None = _RANGE_META,
+) -> bytes:
+    """Build a small wheel zip in memory for range-reader round trips."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("widget/__init__.py", b"value = 1\n")
+        if dist_info is not None:
+            if metadata is not None:
+                zf.writestr(f"{dist_info}/METADATA", metadata)
+            zf.writestr(f"{dist_info}/WHEEL", b"Wheel-Version: 1.0\n")
+    return buf.getvalue()
+
+
+def _parse_range(value: str) -> tuple[str, int, int]:
+    body = value.removeprefix("bytes=")
+    if body.startswith("-"):
+        return ("suffix", int(body[1:]), 0)
+    start, _, end = body.partition("-")
+    return ("absolute", int(start), int(end))
+
+
+class _FakeRangeResponse:
+    def __init__(self, status: int, headers: dict[str, str], content: bytes) -> None:
+        self._status = status
+        self._headers = headers
+        self._content = content
+
+    @property
+    def status_code(self) -> int:
+        return self._status
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return self._headers
+
+    @property
+    def content(self) -> bytes:
+        return self._content
+
+    @property
+    def text(self) -> str:
+        return self._content.decode("utf-8")
+
+    def json(self) -> object:
+        return json.loads(self._content)
+
+    def raise_for_status(self) -> None:
+        if self._status >= 400:
+            msg = f"HTTP {self._status}"
+            raise HttpError(msg)
+
+
+class FakeRangeTransport:
+    """Serve wheel bytes over ranges per a named server-quirk mode."""
+
+    def __init__(self, mode: str, wheel_bytes: bytes) -> None:
+        self.mode = mode
+        self.wheel = wheel_bytes
+        self.total = len(wheel_bytes)
+        self.requests: list[str] = []
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> _FakeRangeResponse:
+        await asyncio.sleep(0)
+        headers = headers or {}
+        rng = headers["Range"]
+        self.requests.append(rng)
+        return self._respond(rng)
+
+    async def aclose(self) -> None:
+        return None
+
+    def _partial(
+        self, start: int, end: int, *, gzip: bool = False
+    ) -> _FakeRangeResponse:
+        end = min(end, self.total - 1)
+        data = self.wheel[start : end + 1]
+        headers = {"content-range": f"bytes {start}-{end}/{self.total}"}
+        if gzip:
+            headers["content-encoding"] = "gzip"
+        return _FakeRangeResponse(206, headers, data)
+
+    def _respond(self, rng: str) -> _FakeRangeResponse:
+        kind, a, b = _parse_range(rng)
+        if self.mode == "well_behaved":
+            if kind == "suffix":
+                return self._partial(max(0, self.total - a), self.total - 1)
+            return self._partial(a, b)
+        if self.mode == "gzip_range":
+            if kind == "suffix":
+                return self._partial(max(0, self.total - a), self.total - 1, gzip=True)
+            return self._partial(a, b, gzip=True)
+        if self.mode == "error_500":
+            return _FakeRangeResponse(500, {}, b"")
+        msg = f"unknown mode {self.mode}"
+        raise AssertionError(msg)
+
+
+_RANGE_URL_A = "https://files.example.org/packages/widget-1.0-cp312-linux.whl"
+_RANGE_URL_B = "https://files.example.org/packages/widget-1.0-cp312-macos.whl"
+
+
+class TestRangeMetadataIndex:
+    def test_store_range_metadata_fires_pending(self) -> None:
+        idx = InMemoryIndex()
+        key = f"range:widget:1.0:{_RANGE_URL_A}"
+        pending, _ = idx.get_or_create_pending(key)
+        idx.store_range_metadata("widget", "1.0", _RANGE_URL_A, "META")
+        assert pending.event.is_set()
+        assert idx.get_metadata("widget", "1.0", _RANGE_URL_A) == "META"
+        assert not idx.metadata_from_sdist("widget", "1.0")
+
+    def test_store_range_metadata_without_pending(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_range_metadata("widget", "1.0", _RANGE_URL_A, "META")
+        assert idx.get_metadata("widget", "1.0", _RANGE_URL_A) == "META"
+
+    def test_sibling_wheels_keep_independent_range_slots(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_range_metadata("widget", "1.0", _RANGE_URL_A, "META_A")
+        idx.store_range_metadata("widget", "1.0", _RANGE_URL_B, "META_B")
+        assert idx.get_metadata("widget", "1.0", _RANGE_URL_A) == "META_A"
+        assert idx.get_metadata("widget", "1.0", _RANGE_URL_B) == "META_B"
+
+    def test_store_range_absent_fires_pending_without_slot(self) -> None:
+        idx = InMemoryIndex()
+        key = f"range:widget:1.0:{_RANGE_URL_A}"
+        pending, _ = idx.get_or_create_pending(key)
+        idx.store_range_absent("widget", "1.0", _RANGE_URL_A)
+        assert pending.event.is_set()
+        assert idx.get_metadata("widget", "1.0", _RANGE_URL_A) is None
+
+    def test_store_range_absent_without_pending(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_range_absent("widget", "1.0", _RANGE_URL_A)
+        assert idx.get_metadata("widget", "1.0", _RANGE_URL_A) is None
+
+    def test_store_range_error_fires_pending_and_records(self) -> None:
+        idx = InMemoryIndex()
+        key = f"range:widget:1.0:{_RANGE_URL_A}"
+        pending, _ = idx.get_or_create_pending(key)
+        error = MalformedSimpleResponseError("bad")
+        idx.store_range_error("widget", "1.0", _RANGE_URL_A, error)
+        assert pending.event.is_set()
+        assert idx.get_metadata_error("widget", "1.0", _RANGE_URL_A) is error
+        assert idx.get_metadata("widget", "1.0", _RANGE_URL_A) is None
+
+    def test_store_range_error_without_pending(self) -> None:
+        idx = InMemoryIndex()
+        error = HttpError("boom")
+        idx.store_range_error("widget", "1.0", _RANGE_URL_A, error)
+        assert idx.get_metadata_error("widget", "1.0", _RANGE_URL_A) is error
+
+    def test_sibling_range_error_spares_the_other_wheel(self) -> None:
+        idx = InMemoryIndex()
+        error = HttpError("boom")
+        idx.store_range_error("widget", "1.0", _RANGE_URL_A, error)
+        idx.store_range_metadata("widget", "1.0", _RANGE_URL_B, "META_B")
+        assert idx.get_metadata_error("widget", "1.0", _RANGE_URL_A) is error
+        assert idx.get_metadata_error("widget", "1.0", _RANGE_URL_B) is None
+        assert idx.get_metadata("widget", "1.0", _RANGE_URL_B) == "META_B"
+
+    def test_range_outcome_roundtrip(self) -> None:
+        idx = InMemoryIndex()
+        assert idx.get_range_outcome("widget", "1.0", _RANGE_URL_A) is None
+        idx.store_range_outcome("widget", "1.0", _RANGE_URL_A, RangeOutcome.PARTIAL)
+        assert (
+            idx.get_range_outcome("widget", "1.0", _RANGE_URL_A) is RangeOutcome.PARTIAL
+        )
+        # Keyed like the read itself: a sibling wheel's slot stays empty.
+        assert idx.get_range_outcome("widget", "1.0", _RANGE_URL_B) is None
+
+
+def _crashed_range_coord() -> FetchCoordinator:
+    """Return a crashed coordinator caught before _crashed is visible."""
+    coord = _coord(index_routes=[IndexRoute(name="foo", index="missing")])
+    coord.start()
+    assert coord._thread is not None
+    coord._thread.join(timeout=5)
+    coord._crashed = False
+    return coord
+
+
+class TestRangeMetadataCoordinator:
+    def test_single_flight_one_enqueue(self) -> None:
+        transport = FakeRangeTransport("well_behaved", _build_range_wheel())
+        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+            submitted: list[FetchRequest] = []
+            orig = coord._submit
+
+            def spy(item: object) -> None:
+                if (
+                    isinstance(item, FetchRequest)
+                    and item.kind is FetchKind.RANGE_METADATA
+                ):
+                    submitted.append(item)
+                orig(item)  # type: ignore[arg-type]
+
+            coord._submit = spy  # type: ignore[method-assign, assignment]
+            e1 = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
+            e2 = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
+            assert e1 is e2
+            assert e1.wait(timeout=5)
+            assert len(submitted) == 1
+            assert (
+                coord.index.get_metadata("widget", "1.0", _RANGE_URL)
+                == _RANGE_META.decode()
+            )
+
+    def test_distinct_wheel_urls_enqueue_separately(self) -> None:
+        transport = FakeRangeTransport("well_behaved", _build_range_wheel())
+        other_url = _RANGE_URL.replace("py3-none-any", "cp312-cp312-macosx")
+        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+            submitted: list[FetchRequest] = []
+            orig = coord._submit
+
+            def spy(item: object) -> None:
+                if (
+                    isinstance(item, FetchRequest)
+                    and item.kind is FetchKind.RANGE_METADATA
+                ):
+                    submitted.append(item)
+                orig(item)  # type: ignore[arg-type]
+
+            coord._submit = spy  # type: ignore[method-assign, assignment]
+            e1 = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
+            e2 = coord.request_range_metadata("widget", "1.0", other_url)
+            assert e1 is not e2
+            assert e1.wait(timeout=5)
+            assert e2.wait(timeout=5)
+            assert len(submitted) == 2
+
+    def test_handler_stores_text(self) -> None:
+        transport = FakeRangeTransport("well_behaved", _build_range_wheel())
+        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+            event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
+            assert event.wait(timeout=5)
+            assert (
+                coord.index.get_metadata("widget", "1.0", _RANGE_URL)
+                == _RANGE_META.decode()
+            )
+            assert not coord.index.metadata_from_sdist("widget", "1.0")
+            assert coord.index.get_range_outcome("widget", "1.0", _RANGE_URL) in (
+                RangeOutcome.PARTIAL,
+                RangeOutcome.FULL_BODY,
+            )
+
+    def test_handler_stores_absent_on_missing(self) -> None:
+        transport = FakeRangeTransport(
+            "well_behaved", _build_range_wheel(dist_info=None)
+        )
+        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+            event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
+            assert event.wait(timeout=5)
+            assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
+            assert coord.index.get_metadata_error("widget", "1.0", _RANGE_URL) is None
+            assert (
+                coord.index.get_range_outcome("widget", "1.0", _RANGE_URL)
+                is RangeOutcome.MISSING
+            )
+
+    def test_handler_stores_absent_on_unsupported(self) -> None:
+        transport = FakeRangeTransport("gzip_range", _build_range_wheel())
+        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+            event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
+            assert event.wait(timeout=5)
+            assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
+            assert (
+                coord.index.get_range_outcome("widget", "1.0", _RANGE_URL)
+                is RangeOutcome.UNSUPPORTED
+            )
+
+    def test_handler_stores_error_on_bad_utf8(self) -> None:
+        transport = FakeRangeTransport(
+            "well_behaved", _build_range_wheel(metadata=b"\xff\xfe not utf-8")
+        )
+        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+            event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
+            assert event.wait(timeout=5)
+            assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
+            error = coord.index.get_metadata_error("widget", "1.0", _RANGE_URL)
+            assert isinstance(error, MalformedSimpleResponseError)
+
+    def test_handler_stores_error_on_transport_failure(self) -> None:
+        transport = FakeRangeTransport("error_500", _build_range_wheel())
+        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+            event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
+            assert event.wait(timeout=5)
+            assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
+            error = coord.index.get_metadata_error("widget", "1.0", _RANGE_URL)
+            assert isinstance(error, HttpError)
+
+    def test_offline_cold_stores_absent(self) -> None:
+        transport = FakeRangeTransport("well_behaved", _build_range_wheel())
+        with FetchCoordinator(transport=transport, offline=True) as coord:  # type: ignore[arg-type]
+            event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
+            assert event.wait(timeout=5)
+            assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
+            assert coord.index.get_metadata_error("widget", "1.0", _RANGE_URL) is None
+            assert transport.requests == []
+        assert not coord._crashed
+
+    def test_refused_request_releases_waiter(self) -> None:
+        coord = _crashed_range_coord()
+        event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
+        assert event.is_set()
+        assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
+        assert coord.index.get_metadata_error("widget", "1.0", _RANGE_URL) is None
