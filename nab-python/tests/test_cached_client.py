@@ -14,6 +14,7 @@ import tarfile
 import time
 import zipfile
 from collections.abc import Mapping
+from dataclasses import replace
 from email.utils import formatdate
 from pathlib import Path
 from typing import Any
@@ -4137,7 +4138,7 @@ class TestAssumeFreshFloor:
         monkeypatch.setattr(time, "time", lambda: 1000.0)
         cache = _make_cache(tmp_path)
         stored = CachePolicy(fetched_at=500, max_age=1, etag="e")
-        cache.put_simple("pkg", LISTING_BYTES, stored)
+        digest = cache.put_simple("pkg", LISTING_BYTES, stored)
         transport = _FakeTransport()
 
         _run_get_files_floor(transport, cache, "pkg", min_fresh_seconds=3600)
@@ -4146,7 +4147,8 @@ class TestAssumeFreshFloor:
         assert cached is not None
         body, policy = cached
         assert body == LISTING_BYTES
-        assert policy == stored
+        # put_simple stamps the body digest; the suppressed read leaves it be.
+        assert policy == replace(stored, body_digest=digest)
 
     def test_stored_sentinel_unchanged_after_floor_suppressed_read(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
