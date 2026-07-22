@@ -36,6 +36,27 @@ __all__ = [
 ]
 
 
+# Axes a reference leaves open rather than pinning to one value: the shared
+# python-version axis, which a minor interval carries as a range, and
+# implementation_version, which the resolve mirrors onto that range on CPython.
+_OPEN_PYTHON_AXIS = frozenset(
+    {"python_version", "python_full_version", "implementation_version"}
+)
+
+
+def _reference_pins(target: ResolveTarget) -> dict[str, str]:
+    """Return the env axes a reference pins to single equality values.
+
+    Every boundable axis :func:`declared_range_marker` fixes to one value,
+    minus the open python axis.
+    """
+    return {
+        name: value
+        for name, value in target.marker_env.items()
+        if name not in UNBOUNDABLE_MARKER_VARIABLES and name not in _OPEN_PYTHON_AXIS
+    }
+
+
 class CoverageError(ValueError):
     """A resolved target has no covering ``environments`` row.
 
@@ -76,7 +97,12 @@ def validate_marker_coverage(
         if marker in seen:
             continue
         seen.add(marker)
-        residual = MarkerSet.from_marker(marker) & ~covered
+        # Restrict the union to the reference's pinned axes before complementing.
+        # Complementing the whole matrix carries every row's atoms on every axis
+        # at once, overrunning the witness cell budget; restricting first leaves a
+        # single-platform, python-axis-only residual denoting the same set.
+        covered_here = covered.restrict(_reference_pins(target))
+        residual = MarkerSet.from_marker(marker) & ~covered_here
         witness = residual.witness()
         if witness is not None:
             raise CoverageError(_coverage_message(witness))
