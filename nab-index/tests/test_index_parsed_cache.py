@@ -26,6 +26,7 @@ from nab_index.cache import (
     CACHE_VERSION_SIMPLE_PARSED,
     CachePolicy,
     NullCache,
+    OfflineError,
     OnDiskCache,
     _decode_policy,
     _encode_policy,
@@ -33,7 +34,7 @@ from nab_index.cache import (
 )
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import _parse_files
-from nab_index.parsed_listing import decode, encode
+from nab_index.parsed_listing import corruption_reason, decode, encode
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
@@ -332,3 +333,354 @@ class TestWritePathParsedBlob:
         assert policy.body_digest == digest
         assert cache.get_simple_parsed("pkg") == old_blob
         assert decode(old_blob, policy) == files
+
+
+_PARSED = _parse_files(json.loads(_LISTING_BYTES), _INDEX_NORM, "pkg")
+
+_JSON_PATH_PARTS = ("simple-v0", "pypi", "pkg.json")
+
+
+def _warm_bound(
+    cache: OnDiskCache, *, fresh: bool = True, body: bytes = _LISTING_BYTES
+) -> tuple[list, str]:
+    """Warm a package's body, policy, and a parsed blob bound to that body."""
+    policy = CachePolicy(
+        fetched_at=2_000_000_000 if fresh else 0,
+        max_age=99999 if fresh else 0,
+        etag="e",
+    )
+    digest = cache.put_simple("pkg", body, policy)
+    files = _parse_files(json.loads(body), _INDEX_NORM, "pkg")
+    cache.put_simple_parsed("pkg", encode(files, digest))
+    return files, digest
+
+
+def _tamper_header(blob: bytes, index: int, value: object) -> bytes:
+    header, body = marshal.loads(blob)  # noqa: S302
+    header = list(header)
+    header[index] = value
+    return marshal.dumps((tuple(header), body))
+
+
+class TestReadPathParsedHit:
+    def test_hit_returns_without_reading_body_or_network(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache)
+        # Delete the raw body: a hit must serve the parsed blob alone.
+        tmp_path.joinpath(*_JSON_PATH_PARTS).unlink()
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert transport.calls == []
+
+    def test_hit_does_not_rewrite_the_blob(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache)
+        before = cache.get_simple_parsed("pkg")
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        _run(client.get_files("pkg"))
+
+        assert cache.get_simple_parsed("pkg") == before
+
+
+class TestReadPathRebuild:
+    def test_cold_parsed_miss_reparses_and_rebuilds(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        digest = cache.put_simple(
+            "pkg",
+            _LISTING_BYTES,
+            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+        )
+        assert cache.get_simple_parsed("pkg") is None
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        got = _run(client.get_files("pkg"))
+
+        assert got == _PARSED
+        assert transport.calls == []
+        blob = cache.get_simple_parsed("pkg")
+        assert blob is not None
+        result = cache.get_simple("pkg")
+        assert result is not None
+        _, policy = result
+        assert policy.body_digest == digest
+        assert decode(blob, policy) == got
+
+    def test_rebuild_on_digest_mismatch_no_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache)
+        # Rebind the blob to a foreign body digest so the gate fails.
+        cache.put_simple_parsed("pkg", encode(files, "f" * 64))
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        with caplog.at_level(logging.WARNING):
+            got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert "Corrupt parsed-listing" not in caplog.text
+        result = cache.get_simple("pkg")
+        assert result is not None
+        _, policy = result
+        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("format", 99),
+            ("codec", 99),
+            ("interp", (2, 0)),
+            ("key_scheme", 99),
+        ],
+    )
+    def test_rebuild_on_header_mismatch_no_warning(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        field: str,
+        value: object,
+    ) -> None:
+        cache = _cache(tmp_path)
+        files, digest = _warm_bound(cache)
+        index = ["format", "codec", "interp", "key_scheme"].index(field)
+        tampered = _tamper_header(encode(files, digest), index, value)
+        cache.put_simple_parsed("pkg", tampered)
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        with caplog.at_level(logging.WARNING):
+            got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert "Corrupt parsed-listing" not in caplog.text
+        result = cache.get_simple("pkg")
+        assert result is not None
+        _, policy = result
+        # The rebuilt blob is now well-formed and hits.
+        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+
+    @pytest.mark.parametrize("blob", [b"\xff\xfe not marshal", b"", b"\x00\x01\x02"])
+    def test_garbage_blob_warns_and_reparses(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, blob: bytes
+    ) -> None:
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache)
+        cache.put_simple_parsed("pkg", blob)
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        with caplog.at_level(logging.WARNING):
+            got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert "Corrupt parsed-listing" in caplog.text
+        result = cache.get_simple("pkg")
+        assert result is not None
+        _, policy = result
+        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+
+    def test_truncated_blob_warns_and_reparses(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _cache(tmp_path)
+        files, digest = _warm_bound(cache)
+        good = encode(files, digest)
+        cache.put_simple_parsed("pkg", good[: len(good) // 2])
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        with caplog.at_level(logging.WARNING):
+            got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert "Corrupt parsed-listing" in caplog.text
+
+    def test_pre_c1_policy_without_digest_self_heals(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        digest = cache.put_simple(
+            "pkg",
+            _LISTING_BYTES,
+            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+        )
+        # Simulate an entry written before body_digest existed: strip the digest.
+        cache.refresh_simple_policy(
+            "pkg",
+            CachePolicy(
+                fetched_at=2_000_000_000, max_age=99999, etag=None, body_digest=None
+            ),
+        )
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        got = _run(client.get_files("pkg"))
+
+        assert got == _PARSED
+        # The rebuild stamped the digest into the policy and bound a blob to it.
+        got_policy = cache.get_simple_policy("pkg")
+        assert got_policy is not None
+        assert got_policy.body_digest == digest
+        assert decode(cache.get_simple_parsed("pkg"), got_policy) == _PARSED
+
+
+class TestReadPathCorruptBody:
+    def test_fresh_corrupt_body_refetches_online(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            b"<html>not json",
+            CachePolicy(fetched_at=2_000_000_000, max_age=1, etag=None),
+        )
+        transport = _FakeTransport(
+            [_FakeResponse(_LISTING_BYTES, headers={"etag": "v1"})]
+        )
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        got = _run(client.get_files("pkg"))
+
+        assert got == _PARSED
+        assert len(transport.calls) == 1
+
+    def test_fresh_corrupt_body_offline_raises(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        cache.put_simple(
+            "pkg", b"<html>not json", CachePolicy(fetched_at=0, max_age=1, etag=None)
+        )
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX, offline=True)
+
+        with pytest.raises(OfflineError, match="pkg"):
+            _run(client.get_files("pkg"))
+        assert transport.calls == []
+
+
+class TestReadPathOffline:
+    def test_offline_parsed_hit_without_body_or_network(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache, fresh=False)
+        tmp_path.joinpath(*_JSON_PATH_PARTS).unlink()
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX, offline=True)
+
+        got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert transport.calls == []
+
+    def test_offline_reparse_fallback_on_corrupt_blob(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache, fresh=False)
+        cache.put_simple_parsed("pkg", b"\xff garbage")
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX, offline=True)
+
+        with caplog.at_level(logging.WARNING):
+            got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert transport.calls == []
+        assert "Corrupt parsed-listing" in caplog.text
+
+    def test_offline_policy_present_body_absent_raises(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        cache.put_simple(
+            "pkg", _LISTING_BYTES, CachePolicy(fetched_at=0, max_age=1, etag=None)
+        )
+        # Body torn away, policy left behind and no parsed blob.
+        tmp_path.joinpath(*_JSON_PATH_PARTS).unlink()
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX, offline=True)
+
+        with pytest.raises(OfflineError, match="pkg"):
+            _run(client.get_files("pkg"))
+        assert transport.calls == []
+
+    def test_offline_both_absent_raises(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX, offline=True)
+
+        with pytest.raises(OfflineError, match="pkg"):
+            _run(client.get_files("pkg"))
+
+
+class TestReadPathRevalidate:
+    def test_stale_online_200_replaces_body_and_blob(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache, fresh=False)
+        new_listing = json.dumps(
+            {
+                "meta": {"api-version": "1.0"},
+                "name": "pkg",
+                "files": [
+                    {
+                        "filename": "pkg-2.0-py3-none-any.whl",
+                        "url": "https://files.example.com/pkg-2.0-py3-none-any.whl",
+                        "hashes": {"sha256": "beef"},
+                    }
+                ],
+            }
+        ).encode()
+        transport = _FakeTransport(
+            [_FakeResponse(new_listing, status=200, headers={"etag": "v2"})]
+        )
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        got = _run(client.get_files("pkg"))
+
+        assert [f.version for f in got] == ["2.0"]
+        result = cache.get_simple("pkg")
+        assert result is not None
+        body, policy = result
+        assert body == new_listing
+        assert decode(cache.get_simple_parsed("pkg"), policy) == got
+
+    def test_stale_online_304_reuses_blob(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache, fresh=False)
+        before = cache.get_simple_parsed("pkg")
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=304, headers={"etag": "e"})]
+        )
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert cache.get_simple_parsed("pkg") == before
+        result = cache.get_simple("pkg")
+        assert result is not None
+        _, policy = result
+        assert decode(before, policy) == files
+
+
+class TestParsedCorruptionReason:
+    def test_garbage_is_corrupt(self) -> None:
+        assert corruption_reason(b"not marshal") is not None
+
+    def test_truncated_is_corrupt(self) -> None:
+        blob = encode(_PARSED, "a" * 64)
+        assert corruption_reason(blob[: len(blob) // 2]) is not None
+
+    def test_wrong_top_shape_is_corrupt(self) -> None:
+        assert corruption_reason(marshal.dumps((1, 2, 3))) is not None
+
+    def test_wrong_header_shape_is_corrupt(self) -> None:
+        assert corruption_reason(marshal.dumps(("bad", "body"))) is not None
+
+    def test_well_formed_blob_is_clean(self) -> None:
+        assert corruption_reason(encode(_PARSED, "a" * 64)) is None
+
+    def test_header_value_mismatch_is_clean(self) -> None:
+        # A build/digest mismatch is a benign self-heal, not corruption.
+        tampered = _tamper_header(encode(_PARSED, "a" * 64), 0, 99)
+        assert corruption_reason(tampered) is None

@@ -9,10 +9,12 @@ treated as immutable (cached forever; never revalidated).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from .cache import CacheBackend, CachePolicy, OfflineError
@@ -34,7 +36,15 @@ from .lazy_wheel import (
     RangeOutcome,
     read_wheel_metadata_over_range,
 )
-from .parsed_listing import encode as _encode_parsed
+from .parsed_listing import (
+    corruption_reason as _parsed_corruption,
+)
+from .parsed_listing import (
+    decode as _decode_parsed,
+)
+from .parsed_listing import (
+    encode as _encode_parsed,
+)
 from .transport import IDENTITY_HEADERS
 
 if TYPE_CHECKING:
@@ -127,12 +137,18 @@ class CachedAsyncSimpleClient:
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
         """Return parsed Simple API file list for ``package``.
 
-        Cache hit + fresh: parses cached body, no network.
-        Cache hit + stale + online: conditional revalidation; on 304
-        the body is reused, on 200 the body is replaced.
-        Cache hit + offline: cached body is returned regardless of age.
+        Cache hit + fresh (or offline): the parsed-listing blob is
+        rehydrated without reading the large raw body; on a blob miss,
+        build/digest mismatch, or corruption the raw body is reparsed and the
+        blob rebuilt (a WARNING self-heal on genuine corruption).
+        Cache hit + stale + online: conditional revalidation; on 304 the body
+        (and its parsed blob) are reused, on 200 both are replaced.
         Cache miss + offline: raises :class:`OfflineError`.
         Cache miss + online: fetches, caches, returns.
+
+        The policy sidecar is read first: it carries the freshness window and
+        the ``body_digest`` that gates the parsed blob, without the raw body. An
+        absent policy is a full miss.
 
         A positive entry beats the negative sentinel, so the sentinel is
         consulted only on a positive miss. A fresh sentinel, or any sentinel
@@ -141,20 +157,31 @@ class CachedAsyncSimpleClient:
         sentinel.
 
         A cached body that will not decode as JSON is a corrupt positive:
-        re-fetched online, raising :class:`OfflineError` offline. The
-        sentinel is not consulted then, so a corrupt body never answers the
-        name absent.
+        re-fetched online, raising :class:`OfflineError` offline. It is reached
+        only after a parsed-blob miss reads the body, so the sentinel is not
+        consulted then and a corrupt body never answers the name absent.
         """
-        cached = self._cache.get_simple(package)
+        policy = self._cache.get_simple_policy(package)
         corrupt_positive = False
-        if cached is not None:
-            body, policy = cached
-            data = self._decode_cached_listing(body, package)
-            if data is not None:
-                if policy.is_fresh() or self._offline:
-                    return _parse_files(data, self._index_url, package)
-                return await self._revalidate_simple(package, body, policy)
-            corrupt_positive = True
+        if policy is not None:
+            fresh_or_offline = policy.is_fresh() or self._offline
+            if fresh_or_offline:
+                hit = self._parsed_hit(package, policy)
+                if hit is not None:
+                    return hit
+            # A parsed miss (fresh/offline) or a stale-online revalidation both
+            # need the raw body now, so read it once here.
+            cached = self._cache.get_simple(package)
+            if cached is not None:
+                body, policy = cached
+                data = self._decode_cached_listing(body, package)
+                if data is not None:
+                    files = _parse_files(data, self._index_url, package)
+                    if fresh_or_offline:
+                        self._rebuild_parsed(package, body, policy, files)
+                        return files
+                    return await self._revalidate_simple(package, body, policy)
+                corrupt_positive = True
 
         if not corrupt_positive:
             negative = self._cache.get_negative(package)
@@ -165,6 +192,58 @@ class CachedAsyncSimpleClient:
             msg = f"No cached listing for {package} (offline mode)"
             raise OfflineError(msg)
         return await self._fetch_simple(package)
+
+    def _parsed_hit(
+        self, package: str, policy: CachePolicy
+    ) -> list[WheelFile | SdistFile] | None:
+        """Rehydrate the parsed blob for ``package``, or ``None`` on any miss.
+
+        Returns the records only when a present blob decodes and its header
+        binds ``policy``'s body. An absent blob, a build/digest mismatch, or a
+        corrupt blob all return ``None`` so the caller reparses the raw body;
+        genuine corruption (garbage/truncated bytes) is logged at WARNING as a
+        self-heal, while a build/digest mismatch is a silent, expected rebuild.
+        """
+        blob = self._cache.get_simple_parsed(package)
+        if blob is None:
+            return None
+        records = _decode_parsed(blob, policy)
+        if records is not None:
+            return records
+        reason = _parsed_corruption(blob)
+        if reason is not None:
+            logger.warning(
+                "Corrupt parsed-listing cache blob for %r from %s: %s; "
+                "rebuilding from the raw body",
+                package,
+                self._index_url,
+                reason,
+            )
+        return None
+
+    def _rebuild_parsed(
+        self,
+        package: str,
+        body: bytes,
+        policy: CachePolicy,
+        files: list[WheelFile | SdistFile],
+    ) -> None:
+        """Write a parsed blob for ``files`` bound to the on-disk ``body``.
+
+        An older policy carries no ``body_digest``; the blob would never bind,
+        so the digest is computed here and stamped into the refreshed policy so
+        the next read hits. A policy that already carries a digest reuses it,
+        sparing the body a rehash.
+        """
+        digest = policy.body_digest
+        if digest is None:
+            digest = hashlib.sha256(body).hexdigest()
+            self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
+            self._cache.refresh_simple_policy(
+                package, replace(policy, body_digest=digest)
+            )
+        else:
+            self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
 
     def _negative_policy(self, response: HttpResponse) -> CachePolicy:
         """Freshness policy for a name-level 404, clamped to the 600s cap."""
