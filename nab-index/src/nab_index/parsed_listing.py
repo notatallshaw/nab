@@ -37,21 +37,20 @@ from .client import SdistFile, WheelFile
 if TYPE_CHECKING:
     from .cache import CachePolicy
 
-__all__ = ["decode", "encode"]
+__all__ = ["corruption_reason", "decode", "encode"]
 
-# Record-shape version, redundant with the bucket suffix but cheap insurance
-# against a stale-shape blob surfacing under the current bucket.
+# Record-shape version, redundant with the bucket suffix but guards against a
+# stale-shape blob surfacing under the current bucket.
 FORMAT_VERSION = 0
 # Serialization variant that wrote the body, so a future codec switch
-# self-heals rather than misdecodes: 1 == M1 (flat per-record tuples, shipped),
-# 2 reserved for M2 (string-deduplicated table).
+# self-heals rather than misdecodes: 1 == flat per-record tuples (shipped),
+# 2 reserved for a string-deduplicated table.
 CODEC_M1 = 1
 CODEC_M2 = 2
 CODEC = CODEC_M1
-# Version sort-key scheme the rows carry. 0 == no precomputed keys. A later V1
-# scalar-key scheme bumps this and self-heals via a reparse with no format
-# break: higher schemes append their columns (a sort_key, an upload_epoch) to
-# the record tuples, and scheme 0 pays nothing because it appends nothing.
+# Version sort-key scheme the rows carry; 0 == no precomputed keys. A later
+# scheme bumps this and self-heals via a reparse: it appends its own columns to
+# the record tuples, and scheme 0 appends nothing.
 KEY_SCHEME_NONE = 0
 KEY_SCHEME = KEY_SCHEME_NONE
 
@@ -139,6 +138,30 @@ def decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | No
     ):
         return None
     return _decode_body(body)
+
+
+def corruption_reason(blob: bytes) -> str | None:
+    """Return a reason if ``blob`` is structurally corrupt, else ``None``.
+
+    Distinguishes genuine corruption (garbage or truncated bytes that do not
+    ``marshal.loads`` into a well-formed ``(header, body)`` record) from a
+    benign self-heal miss, where the blob decodes cleanly but its header names
+    a different build (``format`` / ``codec`` / ``interp`` / ``key_scheme``) or
+    binds a different body (``body_digest``).  The read path warns only on the
+    former; a build or body mismatch is an expected, silent rebuild.
+    :func:`decode` still returns ``None`` for every miss reason alike, so this
+    is a second, header-value-agnostic pass used only to gate that warning.
+    """
+    try:
+        loaded = marshal.loads(blob)  # noqa: S302
+    except (ValueError, EOFError, TypeError):
+        return "not valid marshal data"
+    if not (isinstance(loaded, tuple) and len(loaded) == _TOP_LEN):
+        return "unexpected top-level shape"
+    header = loaded[0]
+    if not (isinstance(header, tuple) and len(header) == _HEADER_LEN):
+        return "unexpected header shape"
+    return None
 
 
 def _decode_body(
