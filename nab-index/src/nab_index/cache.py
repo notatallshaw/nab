@@ -41,6 +41,7 @@ import os
 import shutil
 import stat
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -177,7 +178,12 @@ def _make_removable(root: Path) -> None:
 
 
 class OnDiskCache:
-    """File-per-key cache for Simple API and wheel metadata."""
+    """File-per-key cache for Simple API and wheel metadata.
+
+    Stores are best-effort: a write the filesystem refuses is dropped, the
+    way an entry that cannot be read is a miss. A root that is read-only,
+    full, or over quota costs a run its cache rather than ending it.
+    """
 
     def __init__(
         self,
@@ -198,6 +204,22 @@ class OnDiskCache:
         self._neg_dir = root / f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}" / simple_index
         self._metadata_dir = root / f"metadata-{CACHE_VERSION_METADATA}" / self._index
         self._sdist_dir = root / f"sdist-{CACHE_VERSION_SDIST}" / self._index
+        self._store_failed = False
+
+    def _store(self, path: Path, data: bytes) -> None:
+        """Write ``data`` to ``path``, dropping the entry if the write fails.
+
+        Only the first failure is reported: the rest of the run meets the
+        same one on every package.
+        """
+        try:
+            _atomic_write(path, data)
+        except OSError as exc:
+            if not self._store_failed:
+                self._store_failed = True
+                logger.warning(
+                    "cannot store cache entries under %s: %s", self._root, exc
+                )
 
     def _simple_paths(self, package: str) -> tuple[Path, Path]:
         segment = _require_single_segment(package)
@@ -245,8 +267,8 @@ class OnDiskCache:
     def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> None:
         """Write the body and the policy sidecar atomically."""
         body_path, policy_path = self._simple_paths(package)
-        _atomic_write(body_path, body)
-        _atomic_write(policy_path, _encode_policy(policy))
+        self._store(body_path, body)
+        self._store(policy_path, _encode_policy(policy))
 
     def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Replace the policy sidecar without touching the body.
@@ -255,7 +277,7 @@ class OnDiskCache:
         valid but the freshness window has slid forward.
         """
         _, policy_path = self._simple_paths(package)
-        _atomic_write(policy_path, _encode_policy(policy))
+        self._store(policy_path, _encode_policy(policy))
 
     def get_metadata(self, package: str, metadata_url: str) -> str | None:
         """Return the cached sidecar text for ``metadata_url``, or ``None``.
@@ -279,7 +301,7 @@ class OnDiskCache:
 
     def put_metadata(self, package: str, metadata_url: str, text: str) -> None:
         """Write the sidecar text served at ``metadata_url``. Immutable."""
-        _atomic_write(self._metadata_path(package, metadata_url), text.encode("utf-8"))
+        self._store(self._metadata_path(package, metadata_url), text.encode("utf-8"))
 
     def get_sdist_files(
         self, package: str, version: str
@@ -313,7 +335,7 @@ class OnDiskCache:
         pyproject_toml: str | None,
     ) -> None:
         """Write the ``(pkg_info, pyproject_toml)`` pair as one record."""
-        _atomic_write(
+        self._store(
             self._sdist_path(package, version),
             json.dumps({"pkg_info": pkg_info, "pyproject": pyproject_toml}).encode(
                 "utf-8"
@@ -337,11 +359,17 @@ class OnDiskCache:
 
     def put_negative(self, package: str, policy: CachePolicy) -> None:
         """Record that ``package`` returned a name-level 404 from this index."""
-        _atomic_write(self._neg_path(package), _encode_policy(policy))
+        self._store(self._neg_path(package), _encode_policy(policy))
 
     def drop_negative(self, package: str) -> None:
-        """Remove any negative entry for ``package``. A miss is not an error."""
-        self._neg_path(package).unlink(missing_ok=True)
+        """Remove any negative entry for ``package``.
+
+        A miss is not an error, and neither is a root that refuses the
+        unlink: there is nothing cached to contradict the fresh listing
+        the caller just fetched.
+        """
+        with suppress(OSError):
+            self._neg_path(package).unlink(missing_ok=True)
 
     def _root_children(self) -> list[Path]:
         try:

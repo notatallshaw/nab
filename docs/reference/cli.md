@@ -286,6 +286,10 @@ the same refusal ends the run. See [Build policy](build-policy.md).
 others surface a helpful `ImportError` if selected without the
 matching extra.
 
+A cache root nab cannot write to (read-only, out of space, over quota)
+is not fatal. The run warns once and carries on, serving whatever the
+cache already holds but storing nothing new.
+
 ## Global flags
 
 | Flag | Effect |
