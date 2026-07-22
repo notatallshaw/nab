@@ -37,6 +37,9 @@ from ._lockfile.requirements import (
 )
 from ._lockfile.validate import (
     LockDisqualification,
+    RootRequirement,
+    check_constraints,
+    check_direct_requirements,
     check_envelope,
 )
 from ._vendor.packaging.pylock import is_valid_pylock_path
@@ -66,12 +69,15 @@ __all__ = [
     "MissingVcsCommitError",
     "PinShape",
     "Provenance",
+    "RootRequirement",
     "SdistArtifact",
     "TargetLock",
     "VcsPin",
     "WheelArtifact",
     "build_pylock",
     "build_target_lock",
+    "check_constraints",
+    "check_direct_requirements",
     "check_envelope",
     "is_valid_pylock_path",
     "package_metadata_override_records",

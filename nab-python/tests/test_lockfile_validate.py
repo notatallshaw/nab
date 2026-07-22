@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
-from nab_python._vendor.packaging.pylock import Pylock
+from nab_python._vendor.packaging.pylock import (
+    Package,
+    PackageDirectory,
+    Pylock,
+)
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
-from nab_python.lockfile import LockDisqualification, check_envelope
+from nab_python.lockfile import (
+    LockDisqualification,
+    RootRequirement,
+    check_constraints,
+    check_direct_requirements,
+    check_envelope,
+)
 
 
 def make_pylock(
@@ -208,4 +219,205 @@ def test_lock_disqualification_is_frozen() -> None:
     except AttributeError:
         return
     msg = "LockDisqualification should be frozen"
+    raise AssertionError(msg)
+
+
+LINUX_ENV = {"sys_platform": "linux"}
+
+
+def index_pin(name: str, version: str) -> Package:
+    return Package(name=canonicalize_name(name), version=Version(version))
+
+
+def directory_pin(name: str, version: str | None = None) -> Package:
+    return Package(
+        name=canonicalize_name(name),
+        version=Version(version) if version is not None else None,
+        directory=PackageDirectory(path=f"./{name}"),
+    )
+
+
+def pylock_of(*packages: Package) -> Pylock:
+    return Pylock(
+        lock_version=Version("1.0"),
+        created_by="nab",
+        packages=packages,
+    )
+
+
+def root(text: str, source: str = "[project].dependencies") -> RootRequirement:
+    return RootRequirement(requirement=Requirement(text), source=source)
+
+
+def test_direct_present_and_satisfying_returns_none() -> None:
+    committed = pylock_of(index_pin("foo", "2.5"))
+    assert (
+        check_direct_requirements(committed, [root("foo>=2.0")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_direct_present_and_violating_fires() -> None:
+    committed = pylock_of(index_pin("foo", "1.5"))
+    result = check_direct_requirements(
+        committed, [root("foo>=2.0")], marker_env=LINUX_ENV
+    )
+    assert result is not None
+    assert result.reason == (
+        "[project].dependencies requires foo>=2.0 but the lock pins foo 1.5"
+    )
+
+
+def test_direct_missing_fires() -> None:
+    committed = pylock_of(index_pin("other", "1.0"))
+    result = check_direct_requirements(
+        committed, [root("bar>=1")], marker_env=LINUX_ENV
+    )
+    assert result is not None
+    assert result.reason == (
+        "[project].dependencies requires bar and its marker applies here, "
+        "but the lock has no bar pin"
+    )
+
+
+def test_direct_missing_names_the_source() -> None:
+    committed = pylock_of()
+    result = check_direct_requirements(
+        committed,
+        [root("bar>=1", source="[project.optional-dependencies].cli")],
+        marker_env=LINUX_ENV,
+    )
+    assert result is not None
+    assert result.reason.startswith("[project.optional-dependencies].cli requires bar")
+
+
+def test_direct_marker_true_applies_and_fires() -> None:
+    committed = pylock_of(index_pin("foo", "1.5"))
+    result = check_direct_requirements(
+        committed,
+        [root('foo>=2.0; sys_platform == "linux"')],
+        marker_env=LINUX_ENV,
+    )
+    assert result is not None
+    assert result.reason.startswith("[project].dependencies requires foo>=2.0")
+
+
+def test_direct_versionless_pin_skipped() -> None:
+    committed = pylock_of(directory_pin("foo"))
+    assert (
+        check_direct_requirements(committed, [root("foo>=2.0")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_direct_pin_with_version_skips_version_check() -> None:
+    committed = pylock_of(directory_pin("foo", "1.0"))
+    assert (
+        check_direct_requirements(committed, [root("foo>=2.0")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_direct_reference_skipped() -> None:
+    committed = pylock_of(directory_pin("foo", "1.0"))
+    assert (
+        check_direct_requirements(
+            committed,
+            [root("foo @ https://example.com/foo-9.9-py3-none-any.whl")],
+            marker_env=LINUX_ENV,
+        )
+        is None
+    )
+
+
+def test_direct_marker_false_absent_does_not_fire() -> None:
+    committed = pylock_of()
+    assert (
+        check_direct_requirements(
+            committed,
+            [root('bar>=1; sys_platform == "win32"')],
+            marker_env=LINUX_ENV,
+        )
+        is None
+    )
+
+
+def test_direct_indeterminate_form_skipped() -> None:
+    committed = pylock_of()
+    assert (
+        check_direct_requirements(
+            committed,
+            [root('bar>=1; extras == "x"')],
+            marker_env=LINUX_ENV,
+        )
+        is None
+    )
+
+
+def test_direct_no_requirements_returns_none() -> None:
+    assert check_direct_requirements(pylock_of(), [], marker_env=LINUX_ENV) is None
+
+
+def test_constraint_satisfied_returns_none() -> None:
+    committed = pylock_of(index_pin("baz", "2.0"))
+    assert (
+        check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_constraint_violated_fires() -> None:
+    committed = pylock_of(index_pin("baz", "3.1"))
+    result = check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
+    assert result is not None
+    assert result.reason == ("the constraint baz<3 is violated by the pinned baz 3.1")
+
+
+def test_constraint_marker_false_skipped() -> None:
+    committed = pylock_of(index_pin("baz", "3.1"))
+    assert (
+        check_constraints(
+            committed,
+            [Requirement('baz<3; sys_platform == "win32"')],
+            marker_env=LINUX_ENV,
+        )
+        is None
+    )
+
+
+def test_constraint_indeterminate_skipped() -> None:
+    committed = pylock_of(index_pin("baz", "3.1"))
+    assert (
+        check_constraints(
+            committed,
+            [Requirement('baz<3; extras == "x"')],
+            marker_env=LINUX_ENV,
+        )
+        is None
+    )
+
+
+def test_constraint_absent_package_noop() -> None:
+    committed = pylock_of(index_pin("other", "1.0"))
+    assert (
+        check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_constraint_versionless_pin_skipped() -> None:
+    committed = pylock_of(directory_pin("baz"))
+    assert (
+        check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_root_requirement_is_frozen() -> None:
+    rr = root("foo>=1")
+    try:
+        rr.source = "x"  # type: ignore[misc]
+    except AttributeError:
+        return
+    msg = "RootRequirement should be frozen"
     raise AssertionError(msg)
