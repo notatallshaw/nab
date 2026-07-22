@@ -326,6 +326,37 @@ def test_requires_python_excludes_host_falls_through(
     mock.assert_called_once()
 
 
+def test_dropped_workspace_member_direct_dep_falls_through(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # --no-emit-workspace drops the member from the lock, so the presence
+    # check must fall through rather than fire on its absence.
+    member = tmp_path / "alpha"
+    member.mkdir()
+    (member / "pyproject.toml").write_text(
+        '[project]\nname = "alpha"\nversion = "0"\n', encoding="utf-8"
+    )
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "ws"\nversion = "0"\ndependencies = ["alpha", "foo"]\n'
+        '[tool.nab.workspace]\nmembers = ["alpha"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(
+        pyproject,
+        out,
+        _result({"alpha": "0", "foo": "1.0"}),
+        "--no-emit-workspace",
+    )
+    capsys.readouterr()
+
+    mock = _locked_mock(_result({"alpha": "0", "foo": "1.0"}))
+    _run_locked(pyproject, out, mock, "--no-emit-workspace")
+
+    assert "is up to date" in capsys.readouterr().err
+    mock.assert_called_once()
+
+
 # --- precondition cases: no resolve runs ---
 
 

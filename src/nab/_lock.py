@@ -236,6 +236,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
             python=python,
             extras=selected_extras,
             groups=selected_groups,
+            workspace_to_drop=workspace_to_drop,
         )
 
     transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
@@ -372,14 +373,13 @@ def _fast_fail_locked(
     python: str | None,
     extras: tuple[str, ...],
     groups: tuple[str, ...],
+    workspace_to_drop: frozenset[str],
 ) -> None:
     """Fast-fail ``nab lock --locked`` before any resolve when a mismatch is proven.
 
-    Reads and parses the committed lock (reporting a missing or malformed
-    lock), then runs the resolver-free envelope and validity checks.  On the
-    first disqualification it prints the reason and exits non-zero; otherwise
-    it returns and the full resolve runs.  The tier is a disqualifier only,
-    so a return never means "up to date": only the full re-resolve says that.
+    Reads and parses the committed lock, then runs the envelope and validity
+    checks.  On the first disqualification it prints the reason and exits
+    non-zero; otherwise it returns and the full resolve runs.
     """
     target = _locked_target_path(output)
     committed = _read_committed_pylock(target)
@@ -392,7 +392,13 @@ def _fast_fail_locked(
     )
     if disqualification is None:
         disqualification = _check_locked_validity(
-            path, config, committed, python=python, extras=extras, groups=groups
+            path,
+            config,
+            committed,
+            python=python,
+            extras=extras,
+            groups=groups,
+            workspace_to_drop=workspace_to_drop,
         )
     if disqualification is None:
         return
@@ -411,15 +417,16 @@ def _check_locked_validity(
     python: str | None,
     extras: tuple[str, ...],
     groups: tuple[str, ...],
+    workspace_to_drop: frozenset[str],
 ) -> LockDisqualification | None:
-    """Run the Family V validity checks against the committed lock.
+    """Run the validity checks against the committed lock.
 
     Returns a disqualification for the first violated direct requirement or
-    constraint, or ``None`` to fall through.  Anything the tier cannot
-    assemble with certainty falls through rather than firing: a target the
-    declaration excludes (so a fresh resolve would fail for its own reason),
-    and a project whose requirements cannot be read (left for the full
-    resolve to report).
+    constraint, or ``None`` to fall through.  A target the declaration excludes
+    or a project whose requirements cannot be read both fall through, left for
+    the full resolve.  A direct requirement naming a ``workspace_to_drop``
+    member is skipped, since ``--no-emit-workspace`` drops it from the lock on
+    both sides.
     """
     try:
         target = plan_targets(with_python_override(config, python))[0]
@@ -434,6 +441,11 @@ def _check_locked_validity(
         LookupError,
     ):
         return None
+    roots = [
+        root
+        for root in roots
+        if canonicalize_name(root.requirement.name) not in workspace_to_drop
+    ]
     direct = check_direct_requirements(committed, roots, marker_env=target.marker_env)
     if direct is not None:
         return direct
