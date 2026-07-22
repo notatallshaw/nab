@@ -21,7 +21,6 @@ from nab_index.cache import OnDiskCache, is_recognized_bucket
 from nab_python.config_sources import SourceConfigError
 
 from .cli import (
-    _cli_overrides,
     _default_cache_dir,
     _fail_config,
     app,
@@ -63,18 +62,20 @@ def cache_command(
 def _cache_root(cache_dir: Path | None) -> Path:
     """Resolve the cache root a run in this directory would use.
 
-    ``cache-dir`` is a layered USER-scope option, so a system, user or
-    project ``nab.toml`` and ``NAB_CACHE_DIR`` set it as well as
-    ``--cache-dir``.  Discovery is rooted at the current directory, the
-    same place ``nab lock`` looks for its project sources by default.
+    ``--cache-dir`` is answered without reading any config, so the
+    maintenance verbs still work when a project file is broken.
+    Otherwise ``cache-dir`` comes off the ladder rooted at the current
+    directory, minus the pyproject layer: the key is USER scope, which
+    the category gate bars pyproject from setting.
     """
-    overrides = _cli_overrides(
-        cli_resolution=None, cli_offline=None, cli_cache_dir=cache_dir
-    )
+    if cache_dir is not None:
+        return cache_dir
+
     try:
-        effective = effective_config(Path("pyproject.toml"), cli_overrides=overrides)
+        effective = effective_config(Path("pyproject.toml"), read_pyproject=False)
     except SourceConfigError as exc:
         _fail_config(exc)
+
     configured = effective["cache-dir"].value
     return _default_cache_dir() if configured is None else configured
 

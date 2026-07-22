@@ -226,6 +226,7 @@ def effective_config(
     cli_overrides: Mapping[str, object] | None = None,
     collect_rejected: bool = False,
     rejected_out: list[RejectedLayer] | None = None,
+    read_pyproject: bool = True,
 ) -> dict[str, EffectiveValue]:
     """Resolve the full layered config for the pyproject at ``path``.
 
@@ -238,7 +239,9 @@ def effective_config(
     ``rejected_out``, when supplied, is filled with the full rejection
     list so the caller can also surface the orphan rejections (an unknown
     key or ``NAB_*`` var that names no registry option, and so attaches to
-    no key) that ``nab config list`` reports.
+    no key) that ``nab config list`` reports.  ``read_pyproject=False``
+    skips the pyproject layer, for a caller reading a USER-scope key that
+    pyproject may not set.
     """
     roots = _config_search_roots(path)
     rejected: list[RejectedLayer] = []
@@ -247,7 +250,7 @@ def effective_config(
     # durations across the two project files are not read as conflicting
     # values (the resolve path uses its lockfile anchor instead).
     with inspector_anchor():
-        layers = discover_layers(roots, rejections=sink)
+        layers = discover_layers(roots, rejections=sink, read_pyproject=read_pyproject)
         env_layer = read_env_layer(
             os.environ, reserved_env=OUTPUT_ENV_VARS, rejections=sink
         )

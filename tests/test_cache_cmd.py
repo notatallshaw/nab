@@ -14,21 +14,31 @@ from nab_python.config_sources import SourceRoots
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
 
-# Layout of the tmp config tree the autouse fixture points discovery at.
+# Relative to tmp_path, which the fixture below points discovery at.
 _USER_TOML = Path("usr") / "nab.toml"
 _PROJECT_TOML = Path("proj") / "nab.toml"
 
 
 @pytest.fixture(autouse=True)
-def _hermetic_config_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point config discovery at a tmp tree so the real ~/.config is never read."""
+def config_anchors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Point config discovery at a tmp tree so the real ~/.config is never read.
+
+    The returned list records the anchor each lookup was given.
+    """
     roots = SourceRoots(
         system_toml=tmp_path / "sys" / "nab.toml",
         user_toml=tmp_path / _USER_TOML,
         project_dir=tmp_path / _PROJECT_TOML.parent,
     )
-    monkeypatch.setattr(nab_cli, "_config_search_roots", lambda _: roots)
+    anchors: list[Path] = []
+
+    def _roots(pyproject: Path) -> SourceRoots:
+        anchors.append(pyproject)
+        return roots
+
+    monkeypatch.setattr(nab_cli, "_config_search_roots", _roots)
     monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
+    return anchors
 
 
 def _write_toml(path: Path, body: str) -> None:
@@ -102,9 +112,9 @@ class TestCacheDir:
 
 
 class TestLayeredCacheDir:
-    """The default root comes from the same ladder a run resolves it through."""
+    """Without ``--cache-dir`` the root comes off the config ladder."""
 
-    def test_user_toml_sets_the_root(
+    def test_user_toml_sets_root(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         target = tmp_path / "user-declared"
@@ -112,7 +122,7 @@ class TestLayeredCacheDir:
         _run_cache(["dir"])
         assert capsys.readouterr().out == f"{target}\n"
 
-    def test_project_toml_sets_the_root(
+    def test_project_toml_sets_root(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         target = tmp_path / "project-declared"
@@ -120,7 +130,7 @@ class TestLayeredCacheDir:
         _run_cache(["dir"])
         assert capsys.readouterr().out == f"{target}\n"
 
-    def test_env_var_sets_the_root(
+    def test_env_var_sets_root(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -131,7 +141,7 @@ class TestLayeredCacheDir:
         _run_cache(["dir"])
         assert capsys.readouterr().out == f"{target}\n"
 
-    def test_env_var_beats_the_user_toml(
+    def test_env_var_beats_user_toml(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -144,7 +154,7 @@ class TestLayeredCacheDir:
         _run_cache(["dir"])
         assert capsys.readouterr().out == f"{target}\n"
 
-    def test_flag_beats_the_env_var(
+    def test_flag_beats_env_var(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -155,7 +165,7 @@ class TestLayeredCacheDir:
         _run_cache(["dir", "--cache-dir", str(target)])
         assert capsys.readouterr().out == f"{target}\n"
 
-    def test_verify_reads_the_layered_root(
+    def test_verify_reads_layered_root(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -169,7 +179,7 @@ class TestLayeredCacheDir:
         _run_cache(["verify"])
         assert str(policy_path) in capsys.readouterr().err
 
-    def test_clear_empties_the_layered_root(
+    def test_clear_empties_layered_root(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -191,6 +201,45 @@ class TestLayeredCacheDir:
             _run_cache(["dir"])
         assert exc.value.code == 1
         assert "config error" in capsys.readouterr().err
+
+    def test_discovery_anchored_at_working_dir(
+        self, config_anchors: list[Path], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _run_cache(["dir"])
+        capsys.readouterr()
+        assert config_anchors == [Path("pyproject.toml")]
+
+    def test_flag_wins_over_bad_value(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write_toml(tmp_path / _PROJECT_TOML, "cache-dir = 5\n")
+        target = tmp_path / "flagged"
+        _run_cache(["dir", "--cache-dir", str(target)])
+        captured = capsys.readouterr()
+        assert captured.out == f"{target}\n"
+        assert captured.err == ""
+
+    def test_flag_wins_over_unparsable_toml(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write_toml(tmp_path / _PROJECT_TOML, "cache-dir = \n")
+        target = tmp_path / "flagged"
+        _run_cache(["clear", "--cache-dir", str(target)])
+        assert str(target) in capsys.readouterr().err
+
+    def test_pyproject_layer_not_read(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """pyproject cannot carry a USER-scope key, so it is not consulted."""
+        _write_toml(tmp_path / _PROJECT_TOML.parent / "pyproject.toml", "[project\n")
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xc"))
+        _run_cache(["dir"])
+        captured = capsys.readouterr()
+        assert captured.out == f"{tmp_path / 'xc' / 'nab'}\n"
+        assert captured.err == ""
 
 
 class TestCacheVerify:
