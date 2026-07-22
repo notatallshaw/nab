@@ -743,8 +743,9 @@ class Provider:
 
         # Diagnostic-only: metadata-error rejections so the failure message
         # can name the real cause (sdist build needed, malformed PKG-INFO, etc).
-        self.pending_metadata_blocks: defaultdict[str, list[tuple[Version, str]]] = (
-            defaultdict(list)
+        # Keyed by version so a re-checked candidate is counted once.
+        self.pending_metadata_blocks: defaultdict[str, dict[Version, str]] = (
+            defaultdict(dict)
         )
 
         # Last NO_VERSIONS reason per package; consumed by resolve.py to
@@ -1700,7 +1701,7 @@ class Provider:
         meta = self.pending_metadata_blocks.get(normalized)
         if meta:
             count = len(meta)
-            first_msg = meta[0][1]
+            first_msg = next(iter(meta.values()))
             if count == 1:
                 out.append(first_msg)
             else:

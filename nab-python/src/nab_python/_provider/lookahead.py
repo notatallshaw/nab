@@ -51,8 +51,8 @@ def look_ahead_ok(
         try:
             provider.get_dependencies(package, version)
         except MetadataError as exc:
-            provider.pending_metadata_blocks[canonicalize_name(package)].append(
-                (version, str(exc))
+            provider.pending_metadata_blocks[canonicalize_name(package)].setdefault(
+                version, str(exc)
             )
             return False
 
@@ -154,4 +154,4 @@ def flush_pending_blocks(provider: Provider) -> None:
     # Root- and metadata-blocks are diagnostic-only; drop them without
     # emitting clauses.
     provider.pending_root_blocks = defaultdict(list)
-    provider.pending_metadata_blocks = defaultdict(list)
+    provider.pending_metadata_blocks = defaultdict(dict)
