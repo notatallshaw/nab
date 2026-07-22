@@ -171,14 +171,14 @@ def decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | No
 def corruption_reason(blob: bytes) -> str | None:
     """Return a reason if ``blob`` is structurally corrupt, else ``None``.
 
-    Distinguishes genuine corruption (garbage or truncated bytes that do not
-    ``marshal.loads`` into a well-formed ``(header, body)`` record) from a
-    benign self-heal miss, where the blob decodes cleanly but its header names
-    a different build (``format`` / ``codec`` / ``interp`` / ``key_scheme``) or
-    binds a different body (``body_digest``).  The read path warns only on the
-    former; a build or body mismatch is an expected, silent rebuild.
-    :func:`decode` still returns ``None`` for every miss reason alike, so this
-    is a second, header-value-agnostic pass used only to gate that warning.
+    Distinguishes genuine corruption (garbage or truncated bytes, or a
+    same-build blob whose body is the wrong shape) from a benign miss, where the
+    header names a different build or binds a different body. The read path warns
+    only on the former. The body-shape check runs only once the header names this
+    exact build, since a foreign build may have written a shape this one never
+    did; checking it earlier would misreport version skew as corruption. This is
+    a second pass used only to gate that warning; :func:`decode` returns ``None``
+    for every miss reason alike.
     """
     try:
         loaded = marshal.loads(blob)  # noqa: S302
@@ -189,9 +189,18 @@ def corruption_reason(blob: bytes) -> str | None:
     header, body = loaded
     if not (isinstance(header, tuple) and len(header) == _HEADER_LEN):
         return "unexpected header shape"
-    # A well-formed header over a wrong-shape body is genuine on-disk corruption,
-    # not a build/digest mismatch, so it warrants the same warning; the decode
-    # here is header-value-agnostic and never runs on a served hit.
+    format_, codec, interp, key_scheme, _body_digest = header
+    if (
+        format_ != FORMAT_VERSION
+        or codec != CODEC
+        or interp != _INTERP
+        or key_scheme != KEY_SCHEME
+    ):
+        # A different-build header is benign version skew, not corruption; its
+        # body may be a shape this build never wrote. A same-build body_digest
+        # mismatch decodes cleanly below and returns None silently.
+        return None
+    # A same-build header over a wrong-shape body is genuine on-disk corruption.
     try:
         _decode_body(body)
     except (ValueError, TypeError, StopIteration):

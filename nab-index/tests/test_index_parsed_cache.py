@@ -730,6 +730,12 @@ class TestParsedCorruptionReason:
         tampered = _tamper_header(encode(_PARSED, "a" * 64), 0, 99)
         assert corruption_reason(tampered) is None
 
+    def test_foreign_build_with_wrong_body_is_clean(self) -> None:
+        # A future build may bump the codec and write a body shape this build
+        # never wrote; that is benign version skew, not on-disk corruption.
+        tampered = _tamper_body(_tamper_header(encode(_PARSED, "a" * 64), 1, 99), ())
+        assert corruption_reason(tampered) is None
+
 
 class TestParsedCacheStats:
     def test_default_is_zeroed(self) -> None:
