@@ -458,9 +458,9 @@ override does not match a source.
 ### Per-index overrides
 
 `[tool.nab.index.<name>]` is keyed by a declared index name.  Each entry
-sets policy only (`dist-policy`, `build-policy`, `uploaded-prior-to`) and
-applies to every package served from that index.  It carries no routing
-and no version scope.
+sets policy only (`dist-policy`, `build-policy`, `uploaded-prior-to`,
+`assume-fresh-seconds`) and applies to every package served from that
+index.  It carries no routing and no version scope.
 
 ```toml
 # Everything served from PyPI is wheel-only.
@@ -471,7 +471,16 @@ dist-policy = "wheel-only"
 [tool.nab.index.internal]
 build-policy = "build-remote"
 uploaded-prior-to = "2026-05-01T00:00:00Z"
+# Trust this index's package listings as fresh for an hour.
+assume-fresh-seconds = 3600
 ```
+
+`assume-fresh-seconds` treats a cached package listing from this index as
+fresh for at least that many seconds, skipping the revalidation a
+short-lived server `max-age` would otherwise force.  It only extends
+freshness, never shortens it, and reaches only the mutable listing: a
+release published inside the window stays hidden until it lapses.  It
+never affects the metadata and artifacts nab caches by hash.
 
 ### Conflicts across the two surfaces
 
