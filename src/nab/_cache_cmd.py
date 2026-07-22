@@ -71,16 +71,17 @@ def _clear(root: Path) -> None:
 def _refuse_foreign_root(root: Path) -> None:
     """Exit 1 when ``root`` is a file or a populated non-cache directory.
 
-    A directory holding no recognized bucket but other files is someone's
-    directory, not a nab cache, so a maintenance verb refuses it rather
-    than reading or deleting under it.  A missing or empty root is a
-    harmless no-op and passes.
+    A directory holding other files but no recognized bucket is not a nab
+    cache, so a maintenance verb refuses it. A recognized name on a plain
+    file does not make the root a cache. A missing or empty root passes.
     """
     if root.exists() and not root.is_dir():
         printer().error(f"{root} is not a directory")
         sys.exit(1)
     if root.is_dir():
         children = list(root.iterdir())
-        if children and not any(is_recognized_bucket(c.name) for c in children):
+        if children and not any(
+            is_recognized_bucket(c.name) and c.is_dir() for c in children
+        ):
             printer().error(f"{root} does not look like a nab cache directory")
             sys.exit(1)

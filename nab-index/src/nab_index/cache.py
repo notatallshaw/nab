@@ -344,19 +344,20 @@ class OnDiskCache:
         return rel.parts[0] if rel.parts else ""
 
     def clear_cache(self) -> list[str]:
-        """Remove the recognized bucket directories in full.
+        """Remove the recognized bucket directories in full, returning their names.
 
-        Returns the bucket names removed. A symlinked bucket has its link
-        removed rather than being followed, so a target outside the root is
-        left untouched; files nab does not own beside the buckets are never
-        touched.
+        A symlinked bucket has its link removed, never followed, so a
+        target outside the root survives. A recognized-named plain file is
+        left in place and not counted.
         """
         removed: list[str] = []
         for bucket in self._bucket_dirs():
             if bucket.is_symlink():
                 bucket.unlink()
-            else:
+            elif bucket.is_dir():
                 shutil.rmtree(bucket)
+            else:
+                continue
             removed.append(bucket.name)
         return removed
 

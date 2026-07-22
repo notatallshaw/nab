@@ -158,6 +158,30 @@ class TestCacheClear:
         assert str(root) in capsys.readouterr().err
         assert not root.exists()
 
+    def test_leaves_bucket_named_file(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "cache"
+        _populate(root)
+        foreign = root / "metadata-notes.txt"
+        foreign.write_text("mine")
+        _run_cache(["clear", "--cache-dir", str(root)])
+        assert not (root / "simple-v0").exists()
+        assert not (root / "metadata-v1").exists()
+        assert foreign.read_text() == "mine"
+        assert str(root) in capsys.readouterr().err
+
+    def test_refuses_root_whose_only_bucket_named_child_is_a_file(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "home"
+        root.mkdir()
+        (root / "metadata-notes.txt").write_text("data")
+        with pytest.raises(SystemExit) as exc:
+            _run_cache(["clear", "--cache-dir", str(root)])
+        assert exc.value.code == 1
+        assert (root / "metadata-notes.txt").read_text() == "data"
+
 
 class TestCacheUnknownAction:
     def test_unknown_action_exits_one(
