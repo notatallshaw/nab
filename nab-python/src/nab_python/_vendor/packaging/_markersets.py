@@ -16,9 +16,8 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass, replace
 from itertools import pairwise, product
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from ._parser import Op, Variable, parse_marker
 from ._tokenizer import ParserSyntaxError
@@ -165,18 +164,97 @@ def _oversized_numeric(text: str) -> bool:
 # ---------------------------------------------------------------------------- atoms
 
 
-@dataclass(frozen=True)
+# A value atom's denotation is memoised per atom, so the cache lives and dies
+# with the atom's tree. The bound stops a long-lived atom evaluated against
+# ever-new points from accumulating them. The oversized-value guards run
+# uncached before any ``holds`` call, so a warm cache never bypasses them.
+_HOLDS_CACHE_LIMIT = 1024
+
+
 class Atom:
-    """A normalised leaf whose ``holds`` gives its denotation on one point."""
+    """A normalised leaf whose ``holds`` gives its denotation on one point.
+
+    Immutable once constructed, apart from two private caches minted lazily. A
+    value atom memoises ``holds`` per point text, since decisions re-evaluate
+    the same points across cell partitions; a version atom mints its pool
+    entries once. Equality and hashing run off a field tuple precomputed at
+    construction; the caches never take part.
+    """
+
+    __slots__ = (
+        "_hash",
+        "_holds_cache",
+        "_key",
+        "_pool_entries",
+        "derive_mm",
+        "kind",
+        "literal",
+        "op",
+        "origin",
+        "positive",
+        "swapped",
+        "variable",
+    )
 
     kind: str
     variable: str  # axis variable (python_version lowers to python_full_version)
     origin: str  # the variable as written, for env lookup and serialisation
     op: str
     literal: str
-    swapped: bool = False
-    positive: bool = True
-    derive_mm: bool = False  # A1: evaluate on the major.minor of the point
+    swapped: bool
+    positive: bool
+    derive_mm: bool  # A1: evaluate on the major.minor of the point
+
+    _key: tuple[str, str, str, str, str, bool, bool, bool]
+    _hash: int
+    _holds_cache: dict[str, bool]
+    _pool_entries: tuple[tuple[Version, str], ...] | None
+
+    def __init__(
+        self,
+        kind: str,
+        variable: str,
+        origin: str,
+        op: str,
+        literal: str,
+        *,
+        swapped: bool = False,
+        positive: bool = True,
+        derive_mm: bool = False,
+    ) -> None:
+        self.kind = kind
+        self.variable = variable
+        self.origin = origin
+        self.op = op
+        self.literal = literal
+        self.swapped = swapped
+        self.positive = positive
+        self.derive_mm = derive_mm
+        self._key = (kind, variable, origin, op, literal, swapped, positive, derive_mm)
+        self._hash = hash(self._key)
+        self._holds_cache = {}
+        self._pool_entries = None
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Atom):
+            return NotImplemented
+        return self._key == other._key
+
+    def __hash__(self) -> int:
+        return self._hash
+
+    def replaced(self, *, op: str | None = None, positive: bool | None = None) -> Atom:
+        """Return a copy with ``op`` or ``positive`` swapped out, for complements."""
+        return Atom(
+            self.kind,
+            self.variable,
+            self.origin,
+            self.op if op is None else op,
+            self.literal,
+            swapped=self.swapped,
+            positive=self.positive if positive is None else positive,
+            derive_mm=self.derive_mm,
+        )
 
     def axis(self) -> tuple[str, ...]:
         """Return the axis this atom partitions and is constant on."""
@@ -190,16 +268,39 @@ class Atom:
     def holds(self, point: object) -> bool:
         """Return the atom's truth on one point of its axis."""
         if self.kind == AXIS_VALUE:
-            return _holds_value(self, point)
+            text = str(point)
+            cache = self._holds_cache
+            if text in cache:
+                return cache[text]
+            result = _holds_value(self, text)
+            if len(cache) < _HOLDS_CACHE_LIMIT:
+                cache[text] = result
+            return result
         if self.kind == AXIS_SET:
             member = self.literal in point  # type: ignore[operator]
             return member if self.positive else not member
         return bool(point) if self.positive else not bool(point)
 
+    def pool_entries(self) -> tuple[tuple[Version, str], ...]:
+        """The parsed version-pool points this atom seeds, minted lazily once.
 
-def _holds_value(atom: Atom, value: object) -> bool:
+        A pure property of the literal: its version neighbours, plus the
+        neighbours of its version-parseable substrings for a membership atom.
+        """
+        entries = self._pool_entries
+        if entries is None:
+            texts = list(_version_neighbors(self.literal))
+            if self.op in _MEMBERSHIP:
+                for sub in _substrings(self.literal):
+                    if _parses_version(sub):
+                        texts.extend(_version_neighbors(sub))
+            entries = tuple((Version(text), text) for text in texts)
+            self._pool_entries = entries
+        return entries
+
+
+def _holds_value(atom: Atom, text: str) -> bool:
     op, literal = atom.op, atom.literal
-    text = str(value)
     if atom.derive_mm:
         mm = derive_major_minor(text)
         if atom.swapped:
@@ -213,39 +314,49 @@ def _holds_value(atom: Atom, value: object) -> bool:
 # --------------------------------------------------------------------- the op-tree
 
 
-@dataclass(frozen=True)
 class BoolConst:
     """A first-class TRUE/FALSE, produced eagerly wherever a combination collapses."""
 
-    value: bool
+    __slots__ = ("value",)
+
+    def __init__(self, value: bool) -> None:
+        self.value = value
 
 
-@dataclass(frozen=True)
 class AtomLeaf:
     """A single atom."""
 
-    atom: Atom
+    __slots__ = ("atom",)
+
+    def __init__(self, atom: Atom) -> None:
+        self.atom = atom
 
 
-@dataclass(frozen=True)
 class AndNode:
     """A conjunction of two or more non-constant formulas."""
 
-    children: tuple[Formula, ...]
+    __slots__ = ("children",)
+
+    def __init__(self, children: tuple[Formula, ...]) -> None:
+        self.children = children
 
 
-@dataclass(frozen=True)
 class OrNode:
     """A disjunction of two or more non-constant formulas."""
 
-    children: tuple[Formula, ...]
+    __slots__ = ("children",)
+
+    def __init__(self, children: tuple[Formula, ...]) -> None:
+        self.children = children
 
 
-@dataclass(frozen=True)
 class NotNode:
     """A structural complement, negated per cell at decision time."""
 
-    child: Formula
+    __slots__ = ("child",)
+
+    def __init__(self, child: Formula) -> None:
+        self.child = child
 
 
 Formula = BoolConst | AtomLeaf | AndNode | OrNode | NotNode
@@ -525,8 +636,7 @@ def _reject_undefined_operator(
 # -------------------------------------------------------- domain-partition cells
 
 
-@dataclass(frozen=True)
-class Cell:
+class Cell(NamedTuple):
     """One piece of an axis's domain: a representative point and its truth vector."""
 
     point: object
@@ -615,8 +725,7 @@ def _suffix_neighbors(version: Version, release_str: str, pre_part: str) -> list
     return out
 
 
-def _between(low: str, high: str) -> str | None:
-    vlow, vhigh = Version(low), Version(high)
+def _between(vlow: Version, low: str, vhigh: Version) -> str | None:
     for candidate in (
         f"{low}.post0",
         f"{low}+m",
@@ -624,34 +733,38 @@ def _between(low: str, high: str) -> str | None:
         f"{low}.1",
         f"{low}a1",
     ):
-        if not _strict_version(candidate):
+        try:
+            parsed = Version(candidate)
+        except InvalidVersion:
             continue
-        if vlow < Version(candidate) < vhigh:
+        if vlow < parsed < vhigh:
             return candidate
     return None
 
 
-def _version_pool(
-    literals: Sequence[str], *, elevate_epoch: bool, max_cells: int
-) -> list[str]:
-    pool = ["0", "0.dev0", "99999"]
-    for literal in literals:
-        pool.extend(_version_neighbors(literal))
+# The fixed points anchoring every pool below and above the literal bands.
+_POOL_ANCHORS: tuple[tuple[Version, str], ...] = tuple(
+    (Version(text), text) for text in ("0", "0.dev0", "99999")
+)
 
-    parsed: list[tuple[Version, str]] = []
-    seen: set[str] = set()
-    for text in pool:
+
+def _version_pool(
+    entries: Iterable[tuple[Version, str]], *, elevate_epoch: bool, max_cells: int
+) -> list[str]:
+    parsed: list[tuple[Version, str]] = list(_POOL_ANCHORS)
+    seen: set[str] = {text for _, text in _POOL_ANCHORS}
+    for version, text in entries:
         if text in seen:
             continue
         seen.add(text)
-        parsed.append((Version(text), text))
+        parsed.append((version, text))
     parsed.sort()
 
     extra: list[str] = []
-    for (vlow, slow), (vhigh, shigh) in pairwise(parsed):
+    for (vlow, slow), (vhigh, _shigh) in pairwise(parsed):
         if vlow == vhigh:
             continue
-        mid = _between(slow, shigh)
+        mid = _between(vlow, slow, vhigh)
         if mid is not None:
             extra.append(mid)
 
@@ -783,15 +896,12 @@ def _value_candidates(
 
     if is_version_dispatch(variable):
         _reject_mint_overflow(literals)
-        pool_seed = list(literals)
+        entries: list[tuple[Version, str]] = []
         for atom in atoms:
-            if atom.op in _MEMBERSHIP:
-                pool_seed.extend(
-                    s for s in _substrings(atom.literal) if _parses_version(s)
-                )
+            entries.extend(atom.pool_entries())
         candidates.extend(
             _version_pool(
-                pool_seed,
+                entries,
                 elevate_epoch=_mixes_mm_and_full(atoms),
                 max_cells=max_cells,
             )
@@ -1165,27 +1275,27 @@ def _complement_version(atom: Atom, op: str, var: str) -> Formula:
     # comparisons have the prerelease hole, and the twins can hold a non-version,
     # so neither complements to a single atom.
     if op in ("==", "!=") and is_pure_version(var) and not atom.swapped:
-        return AtomLeaf(replace(atom, op="!=" if op == "==" else "=="))
+        return AtomLeaf(atom.replaced(op="!=" if op == "==" else "=="))
     msg = f"cannot complement version atom on {var!r}"
     raise UnserializableMarkerSet(msg)
 
 
 def _complement_string(atom: Atom, op: str) -> Formula:
     if op in ("==", ">=", "<="):
-        return AtomLeaf(replace(atom, op="!="))
+        return AtomLeaf(atom.replaced(op="!="))
     if op == "!=":
-        return AtomLeaf(replace(atom, op="=="))
+        return AtomLeaf(atom.replaced(op="=="))
     if op == "in":
-        return AtomLeaf(replace(atom, op="not in"))
+        return AtomLeaf(atom.replaced(op="not in"))
     if op == "not in":
-        return AtomLeaf(replace(atom, op="in"))
+        return AtomLeaf(atom.replaced(op="in"))
     # < and > are constant-false on a string variable, so the complement is all.
     return TRUE
 
 
 def _complement_leaf(atom: Atom) -> Formula:
     if atom.kind in (AXIS_SET, AXIS_CONTAINS):
-        return AtomLeaf(replace(atom, positive=not atom.positive))
+        return AtomLeaf(atom.replaced(positive=not atom.positive))
     op, var = atom.op, atom.variable
     if is_version_dispatch(var) and _builds_specifier(op, atom.literal):
         return _complement_version(atom, op, var)
