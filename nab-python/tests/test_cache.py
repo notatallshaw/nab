@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +21,7 @@ from nab_index.cache import (
     _encode_policy,
     _index_dirname,
 )
+from nab_index.vcs import VcsRequest, prepare_clone
 
 # Two wheels of one version, each with its own PEP 658 sidecar.
 METADATA_URLS = (
@@ -676,6 +678,65 @@ class TestClearCache:
         cache = OnDiskCache(root, "https://pypi.org/simple")
         assert cache.clear_cache() == []
         assert foreign.read_text() == "mine"
+
+
+class TestSourceBuckets:
+    """The clone and archive trees a resolve leaves under the cache root."""
+
+    @staticmethod
+    def _clone_into(cache_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """Return the tree the real clone helper writes under ``cache_root``."""
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            if cmd[:2] == ["git", "checkout"]:
+                (cwd / "pyproject.toml").write_text("[project]\n")
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        request = VcsRequest("git", "https://example/repo.git", "a" * 40, "")
+        return prepare_clone(cache_root, request, require_pin=True).path
+
+    @staticmethod
+    def _extract_into(cache_root: Path) -> Path:
+        tree = cache_root / ("b" * 64)
+        tree.mkdir(parents=True)
+        (tree / "pyproject.toml").write_text("[project]\n")
+        return tree
+
+    def test_clear_removes_the_clone_tree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "cache"
+        cache = _populate(root)
+        clone = self._clone_into(root / "vcs", monkeypatch)
+        assert (clone / "pyproject.toml").is_file()
+        assert "vcs" in cache.clear_cache()
+        assert not clone.exists()
+        assert not (root / "vcs").exists()
+
+    def test_clear_removes_the_archive_tree(self, tmp_path: Path) -> None:
+        root = tmp_path / "cache"
+        cache = _populate(root)
+        tree = self._extract_into(root / "archive")
+        assert "archive" in cache.clear_cache()
+        assert not tree.exists()
+        assert not (root / "archive").exists()
+
+    def test_verify_does_not_parse_source_trees(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "cache"
+        cache = _populate(root)
+        clone = self._clone_into(root / "vcs", monkeypatch)
+        (clone / "fixture.json").write_text("not json")
+        (self._extract_into(root / "archive") / "data.json").write_text("not json")
+        names = {entry.name for entry in cache.iter_cache_entries()}
+        assert "fixture.json" not in names
+        assert "data.json" not in names
+        assert "foo.json" in names
 
 
 class TestNullCacheEnumeration:

@@ -26,6 +26,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_resolver.resolver import (
     Incompatibility,
     IncompatibilityCause,
@@ -833,9 +834,9 @@ def _resolve_one_target(
         vcs_config=config.vcs,
         local_sources=list(config.local_sources) or None,
         vcs_sources=list(config.vcs_sources) or None,
-        vcs_cache_dir=cache_dir / "vcs" if cache_dir is not None else None,
+        vcs_cache_dir=cache_dir / VCS_BUCKET if cache_dir is not None else None,
         archive_sources=list(config.archive_sources) or None,
-        archive_cache_dir=cache_dir / "archive" if cache_dir is not None else None,
+        archive_cache_dir=cache_dir / ARCHIVE_BUCKET if cache_dir is not None else None,
         build_config=config,
         resolution_strategy=settings.resolution,
         direct_packages=frozenset(

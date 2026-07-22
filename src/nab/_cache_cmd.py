@@ -1,8 +1,9 @@
 """``nab cache`` subcommand: inspect and clear the on-disk cache.
 
 ``dir`` prints the resolved cache root, whether or not it exists.
-``verify`` walks the recognized buckets read-only and reports corrupt
-entries by path and reason. ``clear`` removes the recognized buckets.
+``verify`` walks the record buckets read-only and reports corrupt
+entries by path and reason. ``clear`` removes every bucket nab owns,
+including the cloned and extracted source trees.
 
 ``verify`` and ``clear`` descend only into the buckets nab owns, never
 follow a symlink out of the root, and refuse a root that holds foreign
