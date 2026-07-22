@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter, defaultdict
+from functools import reduce
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +22,7 @@ from nab_index.atomic import atomic_write_text
 
 from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.markers import Marker
+from .._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 from .._vendor.packaging.pylock import (
     Package,
     PackageArchive,
@@ -54,9 +56,20 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DivergentBaseDependencyError",
+    "UnsoundSimplificationError",
     "build_pylock",
     "write_lock",
 ]
+
+
+class UnsoundSimplificationError(ValueError):
+    """A simplified per-package marker disagrees with the original over the universe.
+
+    Simplification must preserve which environments the marker selects within
+    the lock's declared environments.  Verified on the serialised-and-reparsed
+    bytes at emission, so a mismatch is a bug and emission crashes rather than
+    ship a marker that would install differently.
+    """
 
 
 class DivergentBaseDependencyError(ValueError):
@@ -128,7 +141,8 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
 
     base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
     exclusion_groups = conflict_exclusion_groups(lock_input.conflicts)
-    package_records = _build_packages(lock_input, base, exclusion_groups)
+    universe = _emission_universe(lock_input)
+    package_records = _build_packages(lock_input, base, exclusion_groups, universe)
     package_records.sort(key=_package_sort_key)
     validate_marker_disjointness(
         package_records,
@@ -340,10 +354,70 @@ def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
     )
 
 
+def _emission_universe(lock_input: LockInput) -> MarkerSet:
+    """Return the environment universe simplification must agree over.
+
+    The union of the declared ``environments`` rows, or the full set when none
+    are declared.  PEP 751 step 4 has a conforming installer read a per-package
+    marker only in an environment some row admits, so within-universe
+    equivalence is the sound contract.
+    """
+    if not lock_input.environments:
+        return MarkerSet.full()
+    return reduce(
+        MarkerSet.union,
+        (MarkerSet.from_marker(m) for m in lock_input.environments),
+        MarkerSet.empty(),
+    )
+
+
+def _finalize_marker(
+    raw: Marker | None, within: MarkerSet, name: str = ""
+) -> Marker | None:
+    """Return ``raw`` in its shortest form equivalent over ``within``.
+
+    ``None`` passes through.  The simplified set is serialised, reparsed, and
+    checked equivalent to ``raw`` over ``within`` before return; a mismatch
+    raises :class:`UnsoundSimplificationError`.  A set full over the universe
+    serialises to ``None``.
+
+    A marker whose membership powerset overruns the cell budget cannot be
+    decided, so it ships unsimplified: the raw marker is already correct and
+    gated, and simplification is only a compaction.
+    """
+    if raw is None:
+        return None
+    try:
+        simplified = MarkerSet.from_marker(raw).simplify(within=within)
+        text = simplified.to_marker_string()
+        if text is None:
+            return None
+        rebuilt = Marker(text)
+        _verify_within_universe(raw, rebuilt, within, name)
+    except IntractableMarkerSet:
+        return raw
+    return rebuilt
+
+
+def _verify_within_universe(
+    raw: Marker, rebuilt: Marker, within: MarkerSet, name: str
+) -> None:
+    """Raise if ``rebuilt`` and ``raw`` differ on any environment in ``within``."""
+    raw_set = MarkerSet.from_marker(raw)
+    rebuilt_set = MarkerSet.from_marker(rebuilt)
+    if not (raw_set & within).equivalent(rebuilt_set & within):
+        msg = (
+            f"{name}: simplified marker {str(rebuilt)!r} is not equivalent to"
+            f" {str(raw)!r} over the declared environments"
+        )
+        raise UnsoundSimplificationError(msg)
+
+
 def _build_packages(
     lock_input: LockInput,
     lock_dir: Path,
     exclusion_groups: Sequence[AbstractSet[tuple[str, str]]],
+    universe: MarkerSet,
 ) -> list[Package]:
     """Collapse the per-target pins into Package entries with markers.
 
@@ -358,8 +432,8 @@ def _build_packages(
       unioned across the contributing targets so target-specific
       wheels (e.g. cp310-manylinux vs cp311-macos) survive.
 
-    The emitted marker is the raw OR of the per-target marker
-    expressions; no Boolean minimisation runs.
+    Each emitted marker is finalised to its shortest form equivalent over
+    the declared environments (:func:`_finalize_marker`).
 
     A package a selected extra or group reaches while the project's own
     dependencies do not is gated on that selection, so a default install
@@ -418,6 +492,7 @@ def _build_packages(
                 base_names,
                 selection_markers,
             )
+            marker = _finalize_marker(marker, universe, canonical_name)
             out.append(
                 _pin_to_package(
                     _merge_pins_in_group(pins),
