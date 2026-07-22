@@ -14,7 +14,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from .cache import CacheBackend, CachePolicy, OfflineError
@@ -55,9 +55,30 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CachedAsyncSimpleClient",
+    "ParsedCacheStats",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class ParsedCacheStats:
+    """Mutable counters for parsed-listing cache outcomes on the fetcher thread.
+
+    One instance is shared across every per-index client in a run and read once
+    after it, so a benchmark can confirm a warm resolve serves parsed blobs
+    rather than reparsing.
+
+    Each fresh-or-offline consult of ``get_files`` bumps exactly one counter:
+    ``hit`` when a present blob binds the policy's body and is served without
+    reading the raw body; ``miss`` when no blob was present; ``rebuild`` when a
+    blob was present but did not bind (a stale digest, a different build, or
+    corruption) and was rebuilt from the raw body.
+    """
+
+    hit: int = 0
+    miss: int = 0
+    rebuild: int = 0
 
 
 _JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
@@ -106,6 +127,7 @@ class CachedAsyncSimpleClient:
         *,
         offline: bool = False,
         range_memo: RangeCapabilityMemo | None = None,
+        parsed_stats: ParsedCacheStats | None = None,
     ) -> None:
         """Create a cached client wrapping ``transport``.
 
@@ -113,6 +135,11 @@ class CachedAsyncSimpleClient:
         indexes' clients; the coordinator owns the shared instance and injects
         it. A fresh memo is built when none is passed, so a stand-alone client
         still learns each host's range behaviour within its own lifetime.
+
+        ``parsed_stats`` is the per-run parsed-listing cache sink, shared the
+        same way so hit/miss/rebuild counts total across every index client. A
+        private sink is created when none is passed, so a stand-alone client
+        still counts its own outcomes.
         """
         self._transport = transport
         self._cache = cache
@@ -120,6 +147,9 @@ class CachedAsyncSimpleClient:
         self._offline = offline
         self._range_memo = (
             range_memo if range_memo is not None else RangeCapabilityMemo()
+        )
+        self._parsed_stats = (
+            parsed_stats if parsed_stats is not None else ParsedCacheStats()
         )
 
     async def aclose(self) -> None:
@@ -202,14 +232,21 @@ class CachedAsyncSimpleClient:
         binds ``policy``'s body. An absent blob, a build/digest mismatch, or a
         corrupt blob all return ``None`` so the caller reparses the raw body;
         genuine corruption (garbage/truncated bytes) is logged at WARNING as a
-        self-heal, while a build/digest mismatch is a silent, expected rebuild.
+        self-heal, while a build/digest mismatch is a silent rebuild.
+
+        This is the one place that reads the blob, so it records the outcome: a
+        served blob counts a ``hit``, an absent one a ``miss``, and a
+        present-but-unusable one a ``rebuild``.
         """
         blob = self._cache.get_simple_parsed(package)
         if blob is None:
+            self._parsed_stats.miss += 1
             return None
         records = _decode_parsed(blob, policy)
         if records is not None:
+            self._parsed_stats.hit += 1
             return records
+        self._parsed_stats.rebuild += 1
         reason = _parsed_corruption(blob)
         if reason is not None:
             logger.warning(

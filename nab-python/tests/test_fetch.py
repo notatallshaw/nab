@@ -2033,6 +2033,47 @@ class TestMultiIndexCoordinator:
         finally:
             coord.shutdown()
 
+    def test_parsed_cache_stats_shared_across_index_clients(
+        self, tmp_path: Path
+    ) -> None:
+        """Every per-index client shares the coordinator's parsed-cache sink."""
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path / "cache",
+            indexes=[
+                IndexConfig("pypi", "https://pypi.org/simple/"),
+                IndexConfig("alt", "https://alt.example/"),
+            ],
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, MultiIndexClient)
+            stats = coord.parsed_cache_stats
+            subclients = list(client._clients.values())
+            for sub in subclients:
+                assert isinstance(sub, CachedAsyncSimpleClient)
+                assert sub._parsed_stats is stats
+            # Increments through the separate index clients total on one sink.
+            subclients[0]._parsed_stats.hit += 1
+            subclients[1]._parsed_stats.miss += 1
+            assert (stats.hit, stats.miss, stats.rebuild) == (1, 1, 0)
+        finally:
+            coord.shutdown()
+
+    def test_parsed_cache_stats_shared_on_single_index(self, tmp_path: Path) -> None:
+        """A single-index client shares the coordinator's sink too."""
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path,
+            indexes=[IndexConfig("custom", "https://custom.example/")],
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, CachedAsyncSimpleClient)
+            assert client._parsed_stats is coord.parsed_cache_stats
+        finally:
+            coord.shutdown()
+
 
 _SIBLING_LINUX = "foo-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"
 _SIBLING_WIN = "foo-1.0-cp311-cp311-win_amd64.whl"
