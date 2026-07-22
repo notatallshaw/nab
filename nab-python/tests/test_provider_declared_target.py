@@ -32,6 +32,7 @@ from nab_python.provider import (
     ListingFilterCache,
     MetadataError,
     Provider,
+    UnsupportedVcsError,
     VcsConfig,
     VcsPolicy,
     VcsSource,
@@ -875,6 +876,27 @@ class TestVcsConfigPlumbing:
         )
         assert provider.vcs_source_for("pkg") is source
         assert provider.vcs_config.policy is VcsPolicy.ALLOW
+
+    def test_allow_policy_alone_refuses_vcs_source(self) -> None:
+        """``vcs.policy = "allow"`` with empty allowlists still refuses a source.
+
+        Each declared URL passes through ``admit_vcs_url``, so the empty
+        default ``allowed-schemes`` (deny-all) rejects the source even under
+        ALLOW.
+        """
+        coordinator = _make_coordinator([])
+        source = VcsSource(
+            name="pkg",
+            url=f"git+https://example.com/pkg.git@{_FORTY_SHA}",
+        )
+        with pytest.raises(UnsupportedVcsError, match="vcs.allowed-schemes"):
+            Provider(
+                coordinator,
+                _LINUX_TARGET,
+                vcs_config=VcsConfig(policy=VcsPolicy.ALLOW),
+                vcs_sources=[source],
+                build_policy=BuildPolicy.NEVER,
+            )
 
     def test_vcs_cache_dir_set_on_provider(self, tmp_path: Path) -> None:
         """``vcs_cache_dir`` is stored on the provider for later use.
