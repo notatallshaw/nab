@@ -144,6 +144,13 @@ already up to date, writing nothing. It exits non-zero if the lock would
 change or is missing, so CI can assert the lock is current. It covers
 `pylock` output to a file in single-environment mode.
 
+When a mismatch is provable from the inputs alone, a changed direct
+dependency, a narrowed `requires-python`, a changed extra or group, or a
+tightened constraint, `--locked` fails fast with that reason before
+resolving. Otherwise it runs the full re-resolve, and only that comparison
+reports the lock up to date: nab is non-sticky, so a lock can satisfy every
+input yet be stale once a newer admissible version exists.
+
 `--upgrade` re-anchors the `P<n>D` resolve window to the current time
 instead of reusing the timestamp recorded in an existing lockfile, and
 prints a notice naming the cutoff it dropped.

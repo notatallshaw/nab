@@ -323,6 +323,10 @@ locked packages fails it; volatile provenance metadata is
 ignored. `--locked` applies to a `pylock.toml` file in
 single-environment mode.
 
+Some mismatches are provable from your inputs without resolving, so
+`--locked` can fail fast with the reason before it re-resolves; see the
+[CLI reference](cli.md).
+
 ## `nab download`
 
 `nab download` resolves the project again, then fetches every wheel,
