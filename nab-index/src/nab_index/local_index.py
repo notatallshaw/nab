@@ -50,6 +50,7 @@ __all__ = [
     "UnsupportedWheelError",
     "parse_file_url",
     "read_wheel_metadata",
+    "wheel_metadata_member",
 ]
 
 
@@ -343,7 +344,7 @@ def _read_wheel_requires_python(wheel_path: Path, expected: str) -> str | None:
     """Return ``Requires-Python`` from a wheel's METADATA, or ``None``."""
     try:
         with zipfile.ZipFile(wheel_path) as archive:
-            member = _wheel_metadata_member(archive.namelist(), expected)
+            member = wheel_metadata_member(archive.namelist(), expected)
             if member is None:
                 return None
             raw = archive.read(member)
@@ -423,7 +424,7 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
         return None
     try:
         with zipfile.ZipFile(wheel_path) as zf:
-            member = _wheel_metadata_member(zf.namelist(), parsed[0])
+            member = wheel_metadata_member(zf.namelist(), parsed[0])
             if member is None:
                 return None
             return zf.read(member).decode("utf-8")
@@ -431,11 +432,14 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
         return None
 
 
-def _wheel_metadata_member(names: list[str], expected: str) -> str | None:
+def wheel_metadata_member(names: list[str], expected: str) -> str | None:
     """Return ``expected``'s own top-level ``*.dist-info/METADATA`` member.
 
-    ``expected`` is the wheel's canonical name from its filename.  Returns
-    ``None`` when no top-level ``.dist-info`` holds a METADATA file.  Raises
+    ``expected`` is the wheel's canonical name.  Both the local wheel reader
+    and the HTTP range reader select the METADATA member through this one
+    helper, so the two paths agree on what counts as a wheel's own metadata.
+    Returns ``None`` when no top-level ``.dist-info`` holds a METADATA file.
+    Raises
     :class:`UnsupportedWheelError` when the wheel carries several top-level
     ``.dist-info`` directories, or a single one whose name does not
     canonicalise to ``expected``.
