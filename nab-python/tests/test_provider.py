@@ -15,12 +15,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nab_index.client import (
+    MalformedSimpleResponseError,
     MetadataHashMismatchError,
     SdistFile,
     SdistHashMismatchError,
     WheelFile,
     _parse_files,
 )
+from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider.metadata_resolver import (
@@ -1665,6 +1667,127 @@ class TestGetDependencies:
         assert "custom-build" in deps["bar"]
         assert V("1.0") not in deps["bar"]
         assert "baz" in deps
+
+
+_RANGE_METADATA = (
+    "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar>=2\n"
+)
+
+
+class TestRangeMetadataRung:
+    """Rung 4: a sidecar-less remote wheel recovers METADATA over an HTTP range."""
+
+    def test_bare_remote_wheel_resolves_via_range(self) -> None:
+        """A bare remote wheel with no sidecar resolves from a range read."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0", has_metadata=False)],
+            package="foo",
+            range_result=RangeMetadataResult(_RANGE_METADATA, RangeOutcome.PARTIAL),
+        )
+        provider = Provider(coordinator, target=_PY312)
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "bar" in deps
+        assert V("2.0") in deps["bar"]
+        assert V("1.0") not in deps["bar"]
+        assert provider.stats.wheel_metadata_range_fetched == 1
+
+    def test_range_miss_falls_to_sdist(self) -> None:
+        """A range read that yields no METADATA steps to the sdist rung."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0", has_metadata=False), make_sdist("1.0")],
+            package="foo",
+            range_result=RangeMetadataResult(None, RangeOutcome.MISSING),
+            sdist_pkg_info=(
+                "Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n"
+                "Requires-Dist: baz>=3\n"
+            ),
+        )
+        provider = Provider(coordinator, target=_PY312)
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "baz" in deps
+        assert provider.stats.wheel_metadata_range_missing == 1
+        assert provider.stats.sdist_pkg_info_fetched == 1
+
+    def test_range_utf8_error_drops_candidate(self) -> None:
+        """Malformed-UTF-8 METADATA from a range read drops the candidate."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0", has_metadata=False), make_sdist("1.0")],
+            package="foo",
+            range_error=MalformedSimpleResponseError("bad utf-8"),
+            sdist_pkg_info=(
+                "Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n"
+                "Requires-Dist: baz>=3\n"
+            ),
+        )
+        provider = Provider(coordinator, target=_PY312)
+        with pytest.raises(MalformedSimpleResponseError):
+            provider.get_dependencies("foo", V("1.0"))
+
+    @pytest.mark.parametrize(
+        ("outcome", "text", "stat_name"),
+        [
+            (RangeOutcome.PARTIAL, _RANGE_METADATA, "wheel_metadata_range_fetched"),
+            (RangeOutcome.FULL_BODY, _RANGE_METADATA, "wheel_metadata_range_full_body"),
+            (RangeOutcome.UNSUPPORTED, None, "wheel_metadata_range_unsupported"),
+            (RangeOutcome.MISSING, None, "wheel_metadata_range_missing"),
+        ],
+    )
+    def test_each_outcome_increments_its_counter(
+        self, outcome: RangeOutcome, text: str | None, stat_name: str
+    ) -> None:
+        """Each range outcome bumps exactly its own ProviderStats counter."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0", has_metadata=False), make_sdist("1.0")],
+            package="foo",
+            range_result=RangeMetadataResult(text, outcome),
+            sdist_pkg_info=(
+                "Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n"
+                "Requires-Dist: baz>=3\n"
+            ),
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.get_dependencies("foo", V("1.0"))
+        counters = {
+            "wheel_metadata_range_fetched",
+            "wheel_metadata_range_full_body",
+            "wheel_metadata_range_unsupported",
+            "wheel_metadata_range_missing",
+        }
+        assert getattr(provider.stats, stat_name) == 1
+        for other in counters - {stat_name}:
+            assert getattr(provider.stats, other) == 0
+
+    def test_no_outcome_recorded_leaves_counters_zero(self) -> None:
+        """A refused or offline-missed range read records no outcome counter."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0", has_metadata=False), make_sdist("1.0")],
+            package="foo",
+            sdist_pkg_info=(
+                "Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n"
+                "Requires-Dist: baz>=3\n"
+            ),
+        )
+        provider = Provider(coordinator, target=_PY312)
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "baz" in deps
+        assert provider.stats.wheel_metadata_range_fetched == 0
+        assert provider.stats.wheel_metadata_range_full_body == 0
+        assert provider.stats.wheel_metadata_range_unsupported == 0
+        assert provider.stats.wheel_metadata_range_missing == 0
+
+    def test_wheel_only_bare_wheel_resolves_over_range(self) -> None:
+        """Under WHEEL_ONLY a sidecar-less wheel now resolves instead of skipping."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0", has_metadata=False)],
+            package="foo",
+            range_result=RangeMetadataResult(_RANGE_METADATA, RangeOutcome.PARTIAL),
+        )
+        provider = Provider(
+            coordinator, target=_PY312, dist_policy=DistPolicy.WHEEL_ONLY
+        )
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "bar" in deps
+        assert provider.stats.wheel_metadata_range_fetched == 1
 
 
 class TestTransitiveDirectUrlDep:
