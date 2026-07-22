@@ -65,9 +65,17 @@ def resolve_metadata(
 
     # Sibling wheels of one version can declare different dependencies, so the
     # read is keyed by the artifact this target would install.  ``versions`` is
-    # the target's own tag-filtered listing, so the pick is per-target.
+    # the target's own tag-filtered listing, so the pick is per-target.  A
+    # sidecar wheel keys on its sidecar URL; a bare remote wheel (rung 4) keys
+    # on its own wheel URL, so its range-recovered text stays independent of a
+    # sibling wheel's.
     dist = pick_dist_for_metadata(versions, version)
-    metadata_url = dist.metadata_url if isinstance(dist, WheelFile) else None
+    if _is_bare_remote_wheel(dist):
+        metadata_url = dist.url
+    elif isinstance(dist, WheelFile):
+        metadata_url = dist.metadata_url
+    else:
+        metadata_url = None
 
     text, from_sdist = index.get_metadata_with_origin(normalized, ver_str, metadata_url)
     if text is not None:
@@ -166,11 +174,11 @@ def _read_range_metadata(
     event = provider.coordinator.request_range_metadata(package, version, wheel_url)
     event.wait()
     index = provider.coordinator.index
-    integrity_error = index.get_metadata_error(package, version)
+    integrity_error = index.get_metadata_error(package, version, wheel_url)
     if integrity_error is not None:
         raise integrity_error
     _record_range_outcome(provider, package, version)
-    return index.get_metadata_with_origin(package, version)
+    return index.get_metadata_with_origin(package, version, wheel_url)
 
 
 def _record_range_outcome(provider: Provider, package: str, version: str) -> None:

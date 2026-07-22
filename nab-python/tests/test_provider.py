@@ -1775,6 +1775,58 @@ class TestRangeMetadataRung:
         assert provider.stats.wheel_metadata_range_unsupported == 0
         assert provider.stats.wheel_metadata_range_missing == 0
 
+    def test_sibling_bare_wheels_isolated_across_targets(self) -> None:
+        """Two sibling sidecar-less wheels of one version keep separate deps.
+
+        In a matrix resolve two targets share one coordinator and pick different
+        bare wheels of the same ``(package, version)`` from their own
+        tag-filtered listings.  Each must read the deps of the wheel it picked,
+        not whichever sibling ranged first.
+        """
+        url_a = "https://example.com/foo-1.0-cp312-manylinux.whl"
+        url_b = "https://example.com/foo-1.0-cp312-macosx.whl"
+        wheel_a = WheelFile(
+            filename="foo-1.0-cp312-manylinux.whl",
+            url=url_a,
+            version="1.0",
+            requires_python=None,
+            has_metadata=False,
+            upload_time=None,
+        )
+        wheel_b = WheelFile(
+            filename="foo-1.0-cp312-macosx.whl",
+            url=url_b,
+            version="1.0",
+            requires_python=None,
+            has_metadata=False,
+            upload_time=None,
+        )
+        meta_a = (
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: linux-dep\n"
+        )
+        meta_b = (
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: macos-dep\n"
+        )
+        coordinator = make_coordinator(
+            [wheel_a, wheel_b],
+            package="foo",
+            range_by_url={
+                url_a: RangeMetadataResult(meta_a, RangeOutcome.PARTIAL),
+                url_b: RangeMetadataResult(meta_b, RangeOutcome.PARTIAL),
+            },
+        )
+        provider = Provider(coordinator, target=_PY312)
+        text_a, from_a = metadata_resolver.resolve_metadata(
+            provider, [(V("1.0"), wheel_a)], "foo", V("1.0")
+        )
+        text_b, from_b = metadata_resolver.resolve_metadata(
+            provider, [(V("1.0"), wheel_b)], "foo", V("1.0")
+        )
+        assert text_a == meta_a
+        assert text_b == meta_b
+        assert not from_a
+        assert not from_b
+
     def test_wheel_only_bare_wheel_resolves_over_range(self) -> None:
         """Under WHEEL_ONLY a sidecar-less wheel now resolves instead of skipping."""
         coordinator = make_coordinator(
