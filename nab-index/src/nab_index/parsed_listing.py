@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import marshal
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .client import SdistFile, WheelFile
 
@@ -61,6 +61,29 @@ _TOP_LEN = 2
 _HEADER_LEN = 5
 _TAG_WHEEL = 0
 _TAG_SDIST = 1
+
+# Field types the encoder wrote; the row is cast to these after the structural
+# gate so the decoded fields flow typed into the record constructors.
+_WheelRow = tuple[
+    str,
+    str,
+    str,
+    "str | None",
+    bool,
+    "str | None",
+    tuple[tuple[str, str], ...],
+    "int | None",
+    "tuple[str, str] | None",
+]
+_SdistRow = tuple[
+    str,
+    str,
+    str,
+    "str | None",
+    "str | None",
+    tuple[tuple[str, str], ...],
+    "int | None",
+]
 
 
 def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
@@ -204,7 +227,7 @@ def _decode_wheel(row: tuple[object, ...]) -> WheelFile:
         hashes,
         size,
         metadata_hash,
-    ) = row
+    ) = cast("_WheelRow", row)
     return WheelFile(
         filename=filename,
         url=url,
@@ -219,7 +242,9 @@ def _decode_wheel(row: tuple[object, ...]) -> WheelFile:
 
 
 def _decode_sdist(row: tuple[object, ...]) -> SdistFile:
-    filename, url, version, requires_python, upload_time, hashes, size = row
+    filename, url, version, requires_python, upload_time, hashes, size = cast(
+        "_SdistRow", row
+    )
     return SdistFile(
         filename=filename,
         url=url,
