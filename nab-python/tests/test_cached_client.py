@@ -2284,6 +2284,42 @@ class TestCorruptCachedListing:
         assert transport.calls == []
         assert len(_cached_warnings(caplog)) == 1
 
+    def test_corrupt_positive_beats_fresh_negative_online(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        cache.put_negative("pkg", _fresh_policy())
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
+
+        with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
+            files = _run_get_files(transport, cache, "pkg")
+
+        assert len(files) == 1
+        assert len(transport.calls) == 1
+        healed = cache.get_simple("pkg")
+        assert healed is not None
+        assert healed[0] == LISTING_BYTES
+        assert cache.get_negative("pkg") is None
+        assert len(_cached_warnings(caplog)) == 1
+
+    def test_corrupt_positive_beats_fresh_negative_offline(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        cache.put_negative("pkg", _fresh_policy())
+        transport = _FakeTransport()
+
+        with (
+            caplog.at_level(logging.WARNING, logger="nab_index.cached_client"),
+            pytest.raises(OfflineError, match="pkg"),
+        ):
+            _run_get_files(transport, cache, "pkg", offline=True)
+
+        assert transport.calls == []
+        assert len(_cached_warnings(caplog)) == 1
+
     def test_parseable_wrong_shape_does_not_self_heal(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

@@ -132,19 +132,19 @@ class CachedAsyncSimpleClient:
         Cache miss + offline: raises :class:`OfflineError`.
         Cache miss + online: fetches, caches, returns.
 
-        A positive entry always beats a negative one, so the negative
-        sentinel is consulted only on a positive miss. A fresh sentinel,
-        or any sentinel offline, answers an absent name with an empty
-        listing and no transport call; a stale sentinel online falls
-        through to an unconditional fetch. A 404 records a sentinel and
-        yields an empty listing.
+        A positive entry beats the negative sentinel, so the sentinel is
+        consulted only on a positive miss. A fresh sentinel, or any sentinel
+        offline, answers an absent name empty with no transport call; a
+        stale sentinel online falls through to a fetch. A 404 records a
+        sentinel.
 
-        A cached body that will not decode as JSON is structural corruption
-        of derived data, so the entry is treated as a positive miss and the
-        name is re-fetched (online) or raises :class:`OfflineError`
-        (offline), the same as a cold miss.
+        A cached body that will not decode as JSON is a corrupt positive:
+        re-fetched online, raising :class:`OfflineError` offline. The
+        sentinel is not consulted then, so a corrupt body never answers the
+        name absent.
         """
         cached = self._cache.get_simple(package)
+        corrupt_positive = False
         if cached is not None:
             body, policy = cached
             data = self._decode_cached_listing(body, package)
@@ -152,10 +152,12 @@ class CachedAsyncSimpleClient:
                 if policy.is_fresh() or self._offline:
                     return _parse_files(data, self._index_url, package)
                 return await self._revalidate_simple(package, body, policy)
+            corrupt_positive = True
 
-        negative = self._cache.get_negative(package)
-        if negative is not None and (negative.is_fresh() or self._offline):
-            return []
+        if not corrupt_positive:
+            negative = self._cache.get_negative(package)
+            if negative is not None and (negative.is_fresh() or self._offline):
+                return []
 
         if self._offline:
             msg = f"No cached listing for {package} (offline mode)"
