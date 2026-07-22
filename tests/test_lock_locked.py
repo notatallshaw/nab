@@ -357,6 +357,63 @@ def test_dropped_workspace_member_direct_dep_falls_through(
     mock.assert_called_once()
 
 
+def _foo_package(version: str, marker: str) -> str:
+    return (
+        "[[packages]]\n"
+        'name = "foo"\n'
+        f'version = "{version}"\n'
+        'index = "pypi"\n'
+        f'marker = "{marker}"\n\n'
+        "[packages.sdist]\n"
+        f'name = "foo-{version}.tar.gz"\n'
+        f'url = "https://example.com/foo-{version}.tar.gz"\n'
+        "[packages.sdist.hashes]\n"
+        f'sha256 = "{"b" * 64}"\n\n'
+        "[[packages.wheels]]\n"
+        f'name = "foo-{version}-py3-none-any.whl"\n'
+        f'url = "https://example.com/foo-{version}-py3-none-any.whl"\n'
+        "[packages.wheels.hashes]\n"
+        f'sha256 = "{"a" * 64}"\n\n'
+    )
+
+
+def test_conflict_fork_duplicate_pins_fall_through(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The lock holds two foo pins under disjoint conflict-fork markers, so no
+    # single version stands for foo and the tier falls through.
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'
+        "[project.optional-dependencies]\n"
+        'old = ["foo<2"]\n'
+        'new = ["foo>=2"]\n'
+        "[tool.nab]\n"
+        'conflicts = [[{extra = "old"}, {extra = "new"}]]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    out.write_text(
+        'lock-version = "1.0"\n'
+        "extras = [\n"
+        '    "new",\n'
+        '    "old",\n'
+        "]\n"
+        'created-by = "nab"\n\n'
+        + _foo_package("1.5", "'old' in extras")
+        + _foo_package("2.5", "'new' in extras"),
+        encoding="utf-8",
+    )
+
+    mock = _locked_mock(_result({"foo": "1.5"}))
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--extras", "old", "new")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "the lock pins foo" not in err
+    mock.assert_called_once()
+
+
 # --- precondition cases: no resolve runs ---
 
 

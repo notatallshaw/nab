@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.pylock import (
     Package,
     PackageDirectory,
@@ -229,6 +230,14 @@ def index_pin(name: str, version: str) -> Package:
     return Package(name=canonicalize_name(name), version=Version(version))
 
 
+def marked_pin(name: str, version: str, marker: str) -> Package:
+    return Package(
+        name=canonicalize_name(name),
+        version=Version(version),
+        marker=Marker(marker),
+    )
+
+
 def directory_pin(name: str, version: str | None = None) -> Package:
     return Package(
         name=canonicalize_name(name),
@@ -314,6 +323,21 @@ def test_direct_pin_with_version_skips_version_check() -> None:
     committed = pylock_of(directory_pin("foo", "1.0"))
     assert (
         check_direct_requirements(committed, [root("foo>=2.0")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_direct_duplicate_versioned_pins_skipped() -> None:
+    committed = pylock_of(
+        marked_pin("foo", "1.5", "'old' in extras"),
+        marked_pin("foo", "2.5", "'new' in extras"),
+    )
+    assert (
+        check_direct_requirements(committed, [root("foo<2")], marker_env=LINUX_ENV)
+        is None
+    )
+    assert (
+        check_direct_requirements(committed, [root("foo>=2")], marker_env=LINUX_ENV)
         is None
     )
 
@@ -407,6 +431,17 @@ def test_constraint_absent_package_noop() -> None:
 
 def test_constraint_versionless_pin_skipped() -> None:
     committed = pylock_of(directory_pin("baz"))
+    assert (
+        check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_constraint_duplicate_versioned_pins_skipped() -> None:
+    committed = pylock_of(
+        marked_pin("baz", "1.5", "'old' in extras"),
+        marked_pin("baz", "3.1", "'new' in extras"),
+    )
     assert (
         check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
         is None

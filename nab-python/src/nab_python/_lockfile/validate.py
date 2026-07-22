@@ -133,20 +133,14 @@ def check_direct_requirements(
 ) -> LockDisqualification | None:
     """Check every active direct requirement against the committed lock.
 
-    A requirement is active when its marker holds for ``marker_env``, the
-    single target's marker environment. Each active requirement must have
-    a pin somewhere in the full ``Pylock.packages`` name set, and when the
-    matching pin records a concrete version the requirement's specifier
-    must contain it.
-
-    The check skips, never fires, on anything it cannot prove: a
-    requirement whose marker is false or cannot be evaluated, a direct
-    reference (a URL requirement has no specifier to test), and a pin that
-    records no concrete version or is a URL, VCS or directory pin. Every
-    skip falls through to the full re-resolve.
-
-    Returns the first violation as a :class:`LockDisqualification`, or
-    ``None`` when every active requirement is present and satisfied.
+    A requirement is active when its marker holds for ``marker_env``. Each
+    active requirement must be pinned somewhere in ``committed.packages``, and
+    when the matching pin records a concrete version the specifier must
+    contain it. Anything that cannot be reduced to a name and specifier
+    against a concrete version is skipped: an inactive or indeterminate
+    marker, a URL requirement, a version-less or direct (URL, VCS, directory)
+    pin, and a name carrying more than one versioned pin. Returns the first
+    violation, or ``None``.
     """
     package_names = {package.name for package in committed.packages}
     versioned = _versioned_pins(committed)
@@ -185,14 +179,11 @@ def check_constraints(
 ) -> LockDisqualification | None:
     """Check every active constraint against the committed lock.
 
-    A constraint is active when its marker holds for ``marker_env``. When a
-    constraint names a pin that records a concrete version, that version
-    must satisfy the constraint. A constraint whose marker is false or
-    cannot be evaluated is skipped, and a constraint that matches no
-    versioned pin (an absent package or a version-less pin) is a no-op.
-
-    Returns the first violation as a :class:`LockDisqualification`, or
-    ``None`` when every active constraint is satisfied.
+    A constraint is active when its marker holds for ``marker_env``. When it
+    names a single versioned pin, that version must satisfy the constraint. An
+    inactive or indeterminate marker, and a name with no single versioned pin
+    (absent, version-less, or multiple under a conflict fork), are skipped.
+    Returns the first violation, or ``None``.
     """
     versioned = _versioned_pins(committed)
     for constraint in constraints:
@@ -212,17 +203,24 @@ def check_constraints(
 
 
 def _versioned_pins(committed: Pylock) -> dict[str, Version]:
-    """Map canonical name to version for pins that record a concrete version.
+    """Map canonical name to version for names with a single concrete pin.
 
     URL, VCS and directory pins are excluded: they have no index version to
-    compare a specifier against, so a requirement or constraint that matches
-    one is left to the full re-resolve.
+    test a specifier against. A name carrying more than one versioned pin is
+    excluded too: a conflict fork records the same package once per member
+    under a disjoint marker, so no single version stands for the name.
     """
-    return {
-        package.name: package.version
-        for package in committed.packages
-        if package.version is not None and not _is_direct_pin(package)
-    }
+    versions: dict[str, Version] = {}
+    duplicated: set[str] = set()
+    for package in committed.packages:
+        if package.version is None or _is_direct_pin(package):
+            continue
+        if package.name in versions:
+            duplicated.add(package.name)
+        versions[package.name] = package.version
+    for name in duplicated:
+        del versions[name]
+    return versions
 
 
 def _is_direct_pin(package: Package) -> bool:
