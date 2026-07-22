@@ -10,6 +10,7 @@ as immutable (cached forever; never revalidated).
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from typing import TYPE_CHECKING
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
 __all__ = [
     "CachedAsyncSimpleClient",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 _JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
@@ -128,19 +131,63 @@ class CachedAsyncSimpleClient:
         Cache hit + offline: cached body is returned regardless of age.
         Cache miss + offline: raises :class:`OfflineError`.
         Cache miss + online: fetches, caches, returns.
-        A 404 from the index yields an empty listing and is not cached.
+
+        A positive entry beats the negative sentinel, so the sentinel is
+        consulted only on a positive miss. A fresh sentinel, or any sentinel
+        offline, answers an absent name empty with no transport call; a
+        stale sentinel online falls through to a fetch. A 404 records a
+        sentinel.
+
+        A cached body that will not decode as JSON is a corrupt positive:
+        re-fetched online, raising :class:`OfflineError` offline. The
+        sentinel is not consulted then, so a corrupt body never answers the
+        name absent.
         """
         cached = self._cache.get_simple(package)
+        corrupt_positive = False
         if cached is not None:
             body, policy = cached
-            if policy.is_fresh() or self._offline:
-                return self._parse_listing(body, package)
-            return await self._revalidate_simple(package, body, policy)
+            data = self._decode_cached_listing(body, package)
+            if data is not None:
+                if policy.is_fresh() or self._offline:
+                    return _parse_files(data, self._index_url, package)
+                return await self._revalidate_simple(package, body, policy)
+            corrupt_positive = True
+
+        if not corrupt_positive:
+            negative = self._cache.get_negative(package)
+            if negative is not None and (negative.is_fresh() or self._offline):
+                return []
 
         if self._offline:
             msg = f"No cached listing for {package} (offline mode)"
             raise OfflineError(msg)
         return await self._fetch_simple(package)
+
+    def _negative_policy(self, response: HttpResponse) -> CachePolicy:
+        """Freshness policy for a name-level 404, clamped to the 600s cap."""
+        max_age = min(
+            _parse_max_age(_header(response, "cache-control")), _DEFAULT_MAX_AGE
+        )
+        return CachePolicy(fetched_at=int(time.time()), max_age=max_age, etag=None)
+
+    def _decode_cached_listing(self, body: bytes, package: str) -> object | None:
+        """Return the parsed JSON of a cached Simple body, or ``None``.
+
+        A body that will not decode as JSON is logged and treated as a miss.
+        A body that decodes but is the wrong shape is not caught here:
+        :func:`_parse_files` raises on it, the same as on the wire path.
+        """
+        try:
+            return json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logger.warning(
+                "Corrupt cached Simple-API body for %r from %s: not valid JSON; "
+                "treating as a miss and re-fetching",
+                package,
+                self._index_url,
+            )
+            return None
 
     def _parse_listing(self, body: bytes, package: str) -> list[WheelFile | SdistFile]:
         """Parse a Simple-API listing body.
@@ -185,6 +232,7 @@ class CachedAsyncSimpleClient:
             return self._parse_listing(body, package)
 
         if response.status_code == _HTTP_NOT_FOUND:
+            self._cache.put_negative(package, self._negative_policy(response))
             return []
         response.raise_for_status()
         new_body = response.content
@@ -204,6 +252,7 @@ class CachedAsyncSimpleClient:
         url = f"{self._index_url}{package}/"
         response = await self._transport.get(url, headers={"Accept": _JSON_ACCEPT})
         if response.status_code == _HTTP_NOT_FOUND:
+            self._cache.put_negative(package, self._negative_policy(response))
             return []
         response.raise_for_status()
         body = response.content
@@ -217,6 +266,7 @@ class CachedAsyncSimpleClient:
             etag=_header(response, "etag"),
         )
         self._cache.put_simple(package, body, policy)
+        self._cache.drop_negative(package)
         return files
 
     async def get_metadata_text(

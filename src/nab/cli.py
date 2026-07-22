@@ -705,6 +705,7 @@ def _normalize_layered_bool_flags(argv: list[str]) -> list[str]:
 # Side-effect imports: each module's @app.command decorators register the
 # subcommand.  Placed at the bottom so helpers above bind before
 # nab._lock / nab._download import back from this module.
+from . import _cache_cmd as _cache_module  # noqa: E402, F401 - side-effect
 from . import _config_cmd as _config_module  # noqa: E402, F401 - side-effect
 from . import _download as _download_module  # noqa: E402, F401 - side-effect
 from . import _lock as _lock_module  # noqa: E402, F401 - side-effect

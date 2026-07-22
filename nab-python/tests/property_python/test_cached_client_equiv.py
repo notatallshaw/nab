@@ -92,6 +92,7 @@ class DictCache:
         self.simple: dict[str, tuple[bytes, CachePolicy]] = {}
         self.metadata: dict[tuple[str, str], str] = {}
         self.sdist: dict[tuple[str, str], tuple[str | None, str | None]] = {}
+        self.negative: dict[str, CachePolicy] = {}
 
     def get_simple(self, package: str) -> tuple[bytes, CachePolicy] | None:
         return self.simple.get(package)
@@ -122,6 +123,15 @@ class DictCache:
         pyproject_toml: str | None,
     ) -> None:
         self.sdist[(package, version)] = (pkg_info, pyproject_toml)
+
+    def get_negative(self, package: str) -> CachePolicy | None:
+        return self.negative.get(package)
+
+    def put_negative(self, package: str, policy: CachePolicy) -> None:
+        self.negative[package] = policy
+
+    def drop_negative(self, package: str) -> None:
+        self.negative.pop(package, None)
 
 
 def run(coro: Coroutine[Any, Any, _T]) -> _T:

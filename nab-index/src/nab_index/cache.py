@@ -9,6 +9,7 @@ Layout under ``root``:
 
     simple-v0/<index>/<package>.json       <- raw PyPI JSON body
     simple-v0/<index>/<package>.policy     <- {fetched_at, max_age, etag}
+    simple-neg-v0/<index>/<package>.neg    <- {fetched_at, max_age, etag}
     metadata-v1/<index>/<package>/<url digest>.metadata
     sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
 
@@ -21,12 +22,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .atomic import atomic_write
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CacheBackend",
@@ -34,12 +43,18 @@ __all__ = [
     "NullCache",
     "OfflineError",
     "OnDiskCache",
+    "is_recognized_bucket",
 ]
 
 
 CACHE_VERSION_SIMPLE = "v0"
+CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v1"
+
+# Bucket directories nab owns under a cache root. simple-neg-* is covered
+# by the simple- prefix.
+RECOGNIZED_BUCKET_PREFIXES = ("simple-", "metadata-", "sdist-")
 
 DEFAULT_PYPI_URLS = frozenset(
     [
@@ -67,6 +82,11 @@ class CachePolicy:
         return current - self.fetched_at < self.max_age
 
 
+def is_recognized_bucket(name: str) -> bool:
+    """Whether ``name`` is a bucket directory nab owns under a cache root."""
+    return any(name.startswith(prefix) for prefix in RECOGNIZED_BUCKET_PREFIXES)
+
+
 def _index_dirname(index_url: str) -> str:
     """Return a stable, filesystem-safe directory name for an index URL."""
     if index_url.rstrip("/") in DEFAULT_PYPI_URLS:
@@ -78,14 +98,6 @@ def _atomic_write(path: Path, data: bytes) -> None:
     """Create the cache bucket for ``path``, then write ``data`` into it."""
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, data)
-
-
-def _read_text(path: Path) -> str | None:
-    """Return ``path``'s UTF-8 contents, or ``None`` if the file is absent."""
-    try:
-        return path.read_text(encoding="utf-8")
-    except OSError:
-        return None
 
 
 def _require_single_segment(component: str) -> str:
@@ -111,6 +123,7 @@ class OnDiskCache:
         self._root = root
         self._index = _index_dirname(index_url)
         self._simple_dir = root / f"simple-{CACHE_VERSION_SIMPLE}" / self._index
+        self._neg_dir = root / f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}" / self._index
         self._metadata_dir = root / f"metadata-{CACHE_VERSION_METADATA}" / self._index
         self._sdist_dir = root / f"sdist-{CACHE_VERSION_SDIST}" / self._index
 
@@ -119,6 +132,10 @@ class OnDiskCache:
         body = self._simple_dir / f"{segment}.json"
         policy = self._simple_dir / f"{segment}.policy"
         return (body, policy)
+
+    def _neg_path(self, package: str) -> Path:
+        segment = _require_single_segment(package)
+        return self._neg_dir / f"{segment}.neg"
 
     def _sdist_path(self, package: str, version: str) -> Path:
         package_segment = _require_single_segment(package)
@@ -144,14 +161,12 @@ class OnDiskCache:
             body = body_path.read_bytes()
         except OSError:
             return None
-        try:
-            policy_doc = json.loads(policy_bytes)
-            policy = CachePolicy(
-                fetched_at=int(policy_doc["fetched_at"]),
-                max_age=int(policy_doc["max_age"]),
-                etag=policy_doc.get("etag"),
+        policy = _decode_policy(policy_bytes)
+        if policy is None:
+            logger.warning(
+                "Corrupt cache policy %s: not decodable; treating as a miss",
+                policy_path,
             )
-        except (ValueError, KeyError, TypeError):
             return None
         return (body, policy)
 
@@ -171,8 +186,24 @@ class OnDiskCache:
         _atomic_write(policy_path, _encode_policy(policy))
 
     def get_metadata(self, package: str, metadata_url: str) -> str | None:
-        """Return the cached sidecar text for ``metadata_url``, or ``None``."""
-        return _read_text(self._metadata_path(package, metadata_url))
+        """Return the cached sidecar text for ``metadata_url``, or ``None``.
+
+        A present file that is not valid UTF-8 is a corrupt entry: logged
+        and treated as a miss. An absent file is a silent miss.
+        """
+        path = self._metadata_path(package, metadata_url)
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return None
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.warning(
+                "Corrupt cached metadata %s: not valid UTF-8; treating as a miss",
+                path,
+            )
+            return None
 
     def put_metadata(self, package: str, metadata_url: str, text: str) -> None:
         """Write the sidecar text served at ``metadata_url``. Immutable."""
@@ -187,13 +218,19 @@ class OnDiskCache:
         whose ``pyproject_toml`` is ``None`` means the sdist ships no
         pyproject.toml, which is not the same as a miss.
         """
-        text = _read_text(self._sdist_path(package, version))
-        if text is None:
+        path = self._sdist_path(package, version)
+        try:
+            raw = path.read_bytes()
+        except OSError:
             return None
         try:
-            doc = json.loads(text)
+            doc = json.loads(raw)
             return (doc["pkg_info"], doc["pyproject"])
         except (ValueError, KeyError, TypeError):
+            logger.warning(
+                "Corrupt sdist cache record %s: not parseable; treating as a miss",
+                path,
+            )
             return None
 
     def put_sdist_files(
@@ -211,6 +248,119 @@ class OnDiskCache:
             ),
         )
 
+    def get_negative(self, package: str) -> CachePolicy | None:
+        """Return the freshness policy of a cached name-level 404, or ``None``."""
+        neg_path = self._neg_path(package)
+        try:
+            neg_bytes = neg_path.read_bytes()
+        except OSError:
+            return None
+        policy = _decode_policy(neg_bytes)
+        if policy is None:
+            logger.warning(
+                "Corrupt negative cache entry %s: not decodable; treating as a miss",
+                neg_path,
+            )
+        return policy
+
+    def put_negative(self, package: str, policy: CachePolicy) -> None:
+        """Record that ``package`` returned a name-level 404 from this index."""
+        _atomic_write(self._neg_path(package), _encode_policy(policy))
+
+    def drop_negative(self, package: str) -> None:
+        """Remove any negative entry for ``package``. A miss is not an error."""
+        self._neg_path(package).unlink(missing_ok=True)
+
+    def _bucket_dirs(self) -> list[Path]:
+        """Return the recognized bucket entries directly under the root.
+
+        Symlinks are included so the caller can decide how to handle one
+        rather than following it out of the root.
+        """
+        try:
+            children = list(self._root.iterdir())
+        except OSError:
+            return []
+        return [child for child in children if is_recognized_bucket(child.name)]
+
+    def iter_cache_entries(self) -> Iterator[Path]:
+        """Yield each entry file inside the recognized buckets.
+
+        A symlinked bucket or a symlinked file is skipped, never followed
+        out of the tree.
+        """
+        for bucket in self._bucket_dirs():
+            if bucket.is_symlink() or not bucket.is_dir():
+                continue
+            for dirpath, _dirnames, filenames in os.walk(bucket, followlinks=False):
+                base = Path(dirpath)
+                for name in filenames:
+                    entry = base / name
+                    if not entry.is_symlink():
+                        yield entry
+
+    def read_cache_entry(self, path: Path) -> str | None:
+        """Return a corruption reason for a cache entry, or ``None`` if it parses.
+
+        Parses by suffix, matching each kind's read path: ``.policy`` and
+        ``.neg`` decode as a policy, ``.metadata`` as UTF-8, ``.json`` as
+        JSON (an sdist record also carries its two fields). Any other suffix
+        is not a nab entry and is reported clean.
+        """
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            return f"unreadable: {exc.strerror or exc}"
+        suffix = path.suffix
+        if suffix in (".policy", ".neg"):
+            return None if _decode_policy(raw) is not None else "policy not decodable"
+        if suffix == ".metadata":
+            try:
+                raw.decode("utf-8")
+            except UnicodeDecodeError:
+                return "not valid UTF-8"
+            return None
+        if suffix == ".json":
+            return self._read_json_reason(path, raw)
+        return None
+
+    def _read_json_reason(self, path: Path, raw: bytes) -> str | None:
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            return "not valid JSON"
+        bucket = self._bucket_of(path)
+        if bucket.startswith("sdist-") and not (
+            isinstance(doc, dict) and "pkg_info" in doc and "pyproject" in doc
+        ):
+            return "sdist record missing fields"
+        return None
+
+    def _bucket_of(self, path: Path) -> str:
+        try:
+            rel = path.relative_to(self._root)
+        except ValueError:  # pragma: no cover - entries always sit under the root
+            return ""
+        return rel.parts[0] if rel.parts else ""
+
+    def clear_cache(self) -> list[str]:
+        """Remove the recognized bucket directories in full, returning their names.
+
+        A symlinked bucket has its link removed, never followed, so a
+        target outside the root survives. A recognized-named plain file is
+        left in place and not counted.
+        """
+        removed: list[str] = []
+        for bucket in self._bucket_dirs():
+            if bucket.is_symlink():
+                bucket.unlink()
+            elif bucket.is_dir():
+                shutil.rmtree(bucket)
+            else:
+                continue
+            removed.append(bucket.name)
+        return removed
+
 
 def _encode_policy(policy: CachePolicy) -> bytes:
     return json.dumps(
@@ -220,6 +370,18 @@ def _encode_policy(policy: CachePolicy) -> bytes:
             "etag": policy.etag,
         }
     ).encode("utf-8")
+
+
+def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
+    try:
+        doc = json.loads(policy_bytes)
+        return CachePolicy(
+            fetched_at=int(doc["fetched_at"]),
+            max_age=int(doc["max_age"]),
+            etag=doc.get("etag"),
+        )
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 class CacheBackend(Protocol):
@@ -261,6 +423,30 @@ class CacheBackend(Protocol):
         """Store the ``(pkg_info, pyproject_toml)`` pair as one record."""
         ...
 
+    def get_negative(self, package: str) -> CachePolicy | None:
+        """Return the freshness policy of a cached name-level 404, or ``None``."""
+        ...
+
+    def put_negative(self, package: str, policy: CachePolicy) -> None:
+        """Record that ``package`` returned a name-level 404 from this index."""
+        ...
+
+    def drop_negative(self, package: str) -> None:
+        """Remove any negative entry for ``package``."""
+        ...
+
+    def iter_cache_entries(self) -> Iterator[Path]:
+        """Yield each entry file inside the recognized buckets."""
+        ...
+
+    def read_cache_entry(self, path: Path) -> str | None:
+        """Return a corruption reason for a cache entry, or ``None`` if it parses."""
+        ...
+
+    def clear_cache(self) -> list[str]:
+        """Remove the recognized bucket directories, returning the names removed."""
+        ...
+
 
 class NullCache:
     """No-op cache backend used when persistence is disabled.
@@ -300,3 +486,23 @@ class NullCache:
         pyproject_toml: str | None,
     ) -> None:
         """Discard the entry."""
+
+    def get_negative(self, package: str) -> CachePolicy | None:
+        """Return ``None`` (always a miss)."""
+
+    def put_negative(self, package: str, policy: CachePolicy) -> None:
+        """Discard the entry."""
+
+    def drop_negative(self, package: str) -> None:
+        """Do nothing."""
+
+    def iter_cache_entries(self) -> Iterator[Path]:
+        """Yield nothing (no persistent entries)."""
+        return iter(())
+
+    def read_cache_entry(self, path: Path) -> str | None:
+        """Return ``None`` (a disabled cache never holds a corrupt entry)."""
+
+    def clear_cache(self) -> list[str]:
+        """Return an empty list (nothing to remove)."""
+        return []

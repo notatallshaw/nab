@@ -1,10 +1,11 @@
 # CLI
 
-`nab` exposes three subcommands: `lock`, `download`, and `config`. The
-first two read project shape from `[tool.nab]` in the project's
-`pyproject.toml` or a project-directory `nab.toml`; the CLI carries
-runtime knobs and can override a project key for one run with a
-`--project-<key>` flag. `config` inspects the layered configuration.
+`nab` exposes four subcommands: `lock`, `download`, `config`, and
+`cache`. The first two read project shape from `[tool.nab]` in the
+project's `pyproject.toml` or a project-directory `nab.toml`; the CLI
+carries runtime knobs and can override a project key for one run with a
+`--project-<key>` flag. `config` inspects the layered configuration, and
+`cache` inspects and clears the on-disk cache.
 
 ## Synopsis
 
@@ -13,6 +14,7 @@ nab [--version | -V]
 nab [OUTPUT FLAGS] lock     [PATH] [RUNTIME OPTIONS] [--output PATH] [--format pylock|requirements|requirements-without-hashes]
 nab [OUTPUT FLAGS] download [PATH] [RUNTIME OPTIONS] [--output DIR] [--max-concurrency N]
 nab [OUTPUT FLAGS] config   {list | get <key> | explain <key>} [--path PATH]
+nab [OUTPUT FLAGS] cache     {dir | verify | clear} [--cache-dir PATH]
 ```
 
 `OUTPUT FLAGS` are the global verbosity, colour, and progress knobs listed
@@ -207,6 +209,19 @@ inspector reflects the same effective values a run would see.
 See [Configuration](configuration.md) for the source ladder and the
 `NAB_*` environment variables.
 
+## `nab cache`
+
+Inspect and clear the on-disk cache. It takes one location selector,
+`--cache-dir PATH`, defaulting to the same root a run uses. Three
+actions:
+
+* `nab cache dir` prints the resolved cache root to stdout, whether or
+  not it exists yet.
+* `nab cache verify` walks the cache read-only and reports any corrupt
+  entry by path and reason.
+* `nab cache clear` removes every recognized bucket under the root,
+  returning the cache to cold.
+
 ## Runtime flags
 
 Both subcommands accept the same runtime knobs:
@@ -217,6 +232,9 @@ Both subcommands accept the same runtime knobs:
 | `--no-cache` | off | Disable cache for this run. Combine with `--offline` only if the cache already has every file. |
 | `--offline {True,False}` | unset | Use cache only, never hit the network. Layered: `--offline True` forces offline, `--offline False` forces network even over a lower `offline = true`. Bare `--offline` / `--no-offline` are shorthands for `True` / `False`. |
 | `--http-backend {urllib3,httpx}` | `urllib3` | Pick the async transport for fetches. Layered, so it can also be set in an `nab.toml` or `NAB_HTTP_BACKEND`. `httpx` needs its extra (see [Install nab](../how-to/install.md)). |
+
+A name absent from the index is remembered for a short window, so a
+repeated lookup is answered from cache, offline included.
 
 `urllib3` is the only backend pulled in by the base install. The
 others surface a helpful `ImportError` if selected without the
