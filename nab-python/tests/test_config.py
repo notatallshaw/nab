@@ -30,6 +30,7 @@ from nab_python.config import (
     _check_requires_python_admits_target,
     conflict_exclusion_groups,
     conflict_forks,
+    index_cache_floors_from_config,
     index_routes_from_config,
     plan_targets,
     read_pyproject_config,
@@ -3485,6 +3486,102 @@ class TestIndexOverrides:
         with pytest.raises(ConfigError, match="are not supported") as excinfo:
             read_pyproject_config(path, discover_workspace=False)
         assert "flat body keys" not in str(excinfo.value)
+
+    def test_assume_fresh_seconds(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._two_indexes()
+            + "[tool.nab.index.internal]\nassume-fresh-seconds = 3600\n",
+        )
+        override = read_pyproject_config(
+            path, discover_workspace=False
+        ).index_overrides["internal"]
+        assert override.assume_fresh_seconds == 3600
+
+    def test_assume_fresh_seconds_zero_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._two_indexes()
+            + "[tool.nab.index.internal]\nassume-fresh-seconds = 0\n",
+        )
+        with pytest.raises(ConfigError, match=r"index\.internal\.assume-fresh-seconds"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_assume_fresh_seconds_negative_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._two_indexes()
+            + "[tool.nab.index.internal]\nassume-fresh-seconds = -5\n",
+        )
+        with pytest.raises(ConfigError, match=r"index\.internal\.assume-fresh-seconds"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_assume_fresh_seconds_string_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._two_indexes()
+            + '[tool.nab.index.internal]\nassume-fresh-seconds = "soon"\n',
+        )
+        with pytest.raises(ConfigError, match=r"index\.internal\.assume-fresh-seconds"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_assume_fresh_seconds_float_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._two_indexes()
+            + "[tool.nab.index.internal]\nassume-fresh-seconds = 3.5\n",
+        )
+        with pytest.raises(ConfigError, match=r"index\.internal\.assume-fresh-seconds"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_assume_fresh_seconds_boolean_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._two_indexes()
+            + "[tool.nab.index.internal]\nassume-fresh-seconds = true\n",
+        )
+        with pytest.raises(ConfigError, match=r"index\.internal\.assume-fresh-seconds"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_assume_fresh_seconds_rejected_on_package_surface(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.packages.numpy]\nassume-fresh-seconds = 60\n",
+        )
+        with pytest.raises(ConfigError, match="unknown override key"):
+            read_pyproject_config(path, discover_workspace=False)
+
+
+class TestIndexCacheFloorsProjection:
+    def _two_indexes(self) -> str:
+        return (
+            "[[tool.nab.indexes]]\n"
+            'name = "pypi"\n'
+            'url = "https://pypi.org/simple/"\n'
+            "[[tool.nab.indexes]]\n"
+            'name = "internal"\n'
+            'url = "https://pkgs.example.com/simple/"\n'
+        )
+
+    def test_projects_only_setters(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._two_indexes()
+            + "[tool.nab.index.internal]\nassume-fresh-seconds = 120\n"
+            + '[tool.nab.index.pypi]\ndist-policy = "wheel-only"\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert index_cache_floors_from_config(config) == {"internal": 120}
+
+    def test_empty_when_none_set(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            self._two_indexes() + '[tool.nab.index.pypi]\ndist-policy = "wheel-only"\n',
+        )
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert index_cache_floors_from_config(config) == {}
 
 
 class TestMatrixReferenceDocs:

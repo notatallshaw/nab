@@ -2228,6 +2228,20 @@ class TestOverrideTables:
         eff = _resolve(SourceRoots(project_dir=tmp_path))
         assert set(eff["index"].value) == {"pypi", "internal"}
 
+    def test_index_assume_fresh_seconds_merges(self, tmp_path: Path) -> None:
+        _project(
+            tmp_path,
+            "[tool.nab.index.pypi]\nassume-fresh-seconds = 3600\n",
+        )
+        _write(
+            tmp_path / "nab.toml",
+            "[index.internal]\nassume-fresh-seconds = 30\n",
+        )
+        eff = _resolve(SourceRoots(project_dir=tmp_path))
+        overrides = eff["index"].value
+        assert overrides["pypi"].assume_fresh_seconds == 3600
+        assert overrides["internal"].assume_fresh_seconds == 30
+
     def test_index_identical_duration_across_files_ok(self, tmp_path: Path) -> None:
         # An identical relative P<n>D in an index override body across both
         # project files must not read as conflicting: the inspector pins one
