@@ -160,7 +160,12 @@ def decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | No
         or body_digest != policy.body_digest
     ):
         return None
-    return _decode_body(body)
+    # A blob whose header matches this build but whose body is the wrong shape
+    # must rebuild, not crash the resolve; the body decode is untrusted too.
+    try:
+        return _decode_body(body)
+    except (ValueError, TypeError, StopIteration):
+        return None
 
 
 def corruption_reason(blob: bytes) -> str | None:
@@ -181,9 +186,16 @@ def corruption_reason(blob: bytes) -> str | None:
         return "not valid marshal data"
     if not (isinstance(loaded, tuple) and len(loaded) == _TOP_LEN):
         return "unexpected top-level shape"
-    header = loaded[0]
+    header, body = loaded
     if not (isinstance(header, tuple) and len(header) == _HEADER_LEN):
         return "unexpected header shape"
+    # A well-formed header over a wrong-shape body is genuine on-disk corruption,
+    # not a build/digest mismatch, so it warrants the same warning; the decode
+    # here is header-value-agnostic and never runs on a served hit.
+    try:
+        _decode_body(body)
+    except (ValueError, TypeError, StopIteration):
+        return "unexpected body shape"
     return None
 
 

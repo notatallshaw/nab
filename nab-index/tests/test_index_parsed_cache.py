@@ -362,6 +362,11 @@ def _tamper_header(blob: bytes, index: int, value: object) -> bytes:
     return marshal.dumps((tuple(header), body))
 
 
+def _tamper_body(blob: bytes, value: object) -> bytes:
+    header, _body = marshal.loads(blob)  # noqa: S302
+    return marshal.dumps((header, value))
+
+
 class TestReadPathParsedHit:
     def test_hit_returns_without_reading_body_or_network(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
@@ -502,6 +507,31 @@ class TestReadPathRebuild:
 
         assert got == files
         assert "Corrupt parsed-listing" in caplog.text
+
+    @pytest.mark.parametrize(
+        "body",
+        [(), ([], [], [0]), ([("short",)], [], [0])],
+    )
+    def test_body_corrupt_blob_warns_and_reparses(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, body: object
+    ) -> None:
+        # A blob whose header matches this build and digest but whose body was
+        # mangled on disk self-heals to a logged rebuild, never crashing.
+        cache = _cache(tmp_path)
+        files, digest = _warm_bound(cache)
+        cache.put_simple_parsed("pkg", _tamper_body(encode(files, digest), body))
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        with caplog.at_level(logging.WARNING):
+            got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert "Corrupt parsed-listing" in caplog.text
+        result = cache.get_simple("pkg")
+        assert result is not None
+        _, policy = result
+        assert decode(cache.get_simple_parsed("pkg"), policy) == files
 
     def test_pre_c1_policy_without_digest_self_heals(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
@@ -676,6 +706,14 @@ class TestParsedCorruptionReason:
 
     def test_wrong_header_shape_is_corrupt(self) -> None:
         assert corruption_reason(marshal.dumps(("bad", "body"))) is not None
+
+    @pytest.mark.parametrize(
+        "body",
+        [(), ([], [], [0]), ([("short",)], [], [0])],
+    )
+    def test_wrong_body_shape_is_corrupt(self, body: object) -> None:
+        tampered = _tamper_body(encode(_PARSED, "a" * 64), body)
+        assert corruption_reason(tampered) is not None
 
     def test_well_formed_blob_is_clean(self) -> None:
         assert corruption_reason(encode(_PARSED, "a" * 64)) is None

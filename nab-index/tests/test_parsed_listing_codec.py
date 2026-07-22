@@ -19,6 +19,8 @@ import pytest
 from nab_index.cache import CachePolicy
 from nab_index.client import SdistFile, WheelFile
 from nab_index.parsed_listing import (
+    _TAG_SDIST,
+    _TAG_WHEEL,
     CODEC,
     FORMAT_VERSION,
     KEY_SCHEME,
@@ -129,6 +131,11 @@ def _tamper(index: int, value: object) -> bytes:
     return marshal.dumps((tuple(header), body))
 
 
+def _tamper_body(value: object) -> bytes:
+    header, _body = marshal.loads(encode(SAMPLE, DIGEST))  # noqa: S302
+    return marshal.dumps((header, value))
+
+
 def test_valid_blob_decodes() -> None:
     assert decode(encode(SAMPLE, DIGEST), _policy()) is not None
 
@@ -175,3 +182,21 @@ def test_malformed_blob_is_miss(blob: bytes) -> None:
 def test_truncated_blob_is_miss() -> None:
     blob = encode(SAMPLE, DIGEST)
     assert decode(blob[: len(blob) // 2], _policy()) is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        (),
+        ([], []),
+        ([], [], [], []),
+        "not-a-tuple",
+        ([], [], [_TAG_WHEEL]),
+        ([("short", "row")], [], [_TAG_WHEEL]),
+        ([], [], [_TAG_SDIST]),
+    ],
+)
+def test_body_corrupt_but_header_valid_is_miss(body: object) -> None:
+    # A blob that survives marshal.loads and matches the current build/digest
+    # header but carries a wrong-shape body must self-heal to a miss, not crash.
+    assert decode(_tamper_body(body), _policy()) is None
