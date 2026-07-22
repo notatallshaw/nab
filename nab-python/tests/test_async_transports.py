@@ -1434,9 +1434,15 @@ class TestAsyncSimpleClient:
     """Tests for nab-index's AsyncSimpleClient via a faked transport."""
 
     class _FakeResponse:
-        def __init__(self, body: bytes, status: int = 200) -> None:
+        def __init__(
+            self,
+            body: bytes,
+            status: int = 200,
+            headers: Mapping[str, str] | None = None,
+        ) -> None:
             self._content = body
             self._status = status
+            self._headers = headers or {}
 
         @property
         def status_code(self) -> int:
@@ -1444,7 +1450,7 @@ class TestAsyncSimpleClient:
 
         @property
         def headers(self) -> Mapping[str, str]:
-            return {}
+            return self._headers
 
         @property
         def content(self) -> bytes:
@@ -1463,16 +1469,24 @@ class TestAsyncSimpleClient:
                 raise RuntimeError(msg)
 
     class _FakeTransport:
-        def __init__(self, body: bytes, status: int = 200) -> None:
+        def __init__(
+            self,
+            body: bytes,
+            status: int = 200,
+            headers: Mapping[str, str] | None = None,
+        ) -> None:
             self._body = body
             self._status = status
+            self._headers = headers
             self.calls: list[tuple[str, dict[str, str] | None]] = []
 
         async def get(
             self, url: str, *, headers: dict[str, str] | None = None
         ) -> TestAsyncSimpleClient._FakeResponse:
             self.calls.append((url, headers))
-            return TestAsyncSimpleClient._FakeResponse(self._body, self._status)
+            return TestAsyncSimpleClient._FakeResponse(
+                self._body, self._status, self._headers
+            )
 
         async def aclose(self) -> None:
             return None
@@ -1489,8 +1503,29 @@ class TestAsyncSimpleClient:
         assert len(files) == 1
         assert transport.calls[0][0] == "https://pypi.org/simple/pkg/"
         assert transport.calls[0][1] == {
-            "Accept": "application/vnd.pypi.simple.v1+json"
+            "Accept": (
+                "application/vnd.pypi.simple.v1+json, "
+                "application/vnd.pypi.simple.v1+html;q=0.2, "
+                "text/html;q=0.01"
+            )
         }
+
+    def test_get_files_reads_html_listing(self) -> None:
+        body = (
+            b"<!DOCTYPE html>\n<html>\n  <body>\n"
+            b'    <a href="pkg-1.0-py3-none-any.whl">pkg-1.0-py3-none-any.whl</a>\n'
+            b"  </body>\n</html>\n"
+        )
+        transport = self._FakeTransport(body, headers={"Content-Type": "text/html"})
+
+        async def go() -> list:
+            async with AsyncSimpleClient(transport, "https://pypi.org/simple/") as c:
+                return await c.get_files("pkg")
+
+        files = asyncio.run(go())
+        assert [f.url for f in files] == [
+            "https://pypi.org/simple/pkg/pkg-1.0-py3-none-any.whl"
+        ]
 
     def test_get_files_404_returns_empty(self) -> None:
         transport = self._FakeTransport(b"not found", status=404)

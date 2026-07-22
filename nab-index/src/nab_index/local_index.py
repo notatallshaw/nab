@@ -26,13 +26,13 @@ import sys
 import zipfile
 import zlib
 from email.parser import BytesParser, Parser
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import url2pathname
 
 from ._naming import canonical as _canonical
+from ._pep503 import hash_fragment, metadata_declaration, read_page
 from .client import (
     SdistFile,
     WheelFile,
@@ -144,90 +144,6 @@ def _read_served_bytes(path: Path, kind: str) -> bytes:
         raise MalformedLocalListingError(msg) from exc
 
 
-_REQUIRES_PYTHON_ATTR = "data-requires-python"
-_YANKED_ATTR = "data-yanked"
-_CORE_METADATA_ATTR = "data-core-metadata"
-_LEGACY_METADATA_ATTR = "data-dist-info-metadata"
-
-
-def _html_advertises_metadata(value: str | None) -> bool:
-    """Return True when a metadata-sidecar attribute value advertises a sidecar.
-
-    PEP 658/714 set the value to ``true`` (sidecar exists, no hash) or
-    ``<algo>=<hexdigest>``.  Mirrors the JSON path's ``true``/digest
-    semantics in :func:`nab_index.client._has_metadata`.
-    """
-    if value is None:
-        return False
-    if value == "true":
-        return True
-    algo, sep, digest = value.partition("=")
-    return bool(sep and algo and digest)
-
-
-def _parse_anchor(
-    attrs: list[tuple[str, str | None]],
-) -> tuple[str, str | None, bool] | None:
-    """Turn an anchor's attributes into ``(href, requires_python, has_metadata)``.
-
-    Returns ``None`` for an anchor with no ``href`` or one carrying
-    ``data-yanked`` (PEP 592), so a yanked link never reaches the listing.
-    The PEP 714 ``data-core-metadata`` attribute (or legacy
-    ``data-dist-info-metadata``) is read so a wheel's advertised sidecar is
-    honoured, matching the PEP 691 JSON behaviour in
-    :func:`nab_index.client._parse_files`.
-    """
-    href: str | None = None
-    requires_python: str | None = None
-    yanked = False
-    core_metadata: str | None = None
-    legacy_metadata: str | None = None
-    for name, value in attrs:
-        if name == "href":
-            href = value
-        elif name == _REQUIRES_PYTHON_ATTR:
-            requires_python = value
-        elif name == _YANKED_ATTR:
-            yanked = True
-        elif name == _CORE_METADATA_ATTR:
-            core_metadata = value
-        elif name == _LEGACY_METADATA_ATTR:
-            legacy_metadata = value
-    if href is None or yanked:
-        return None
-    advertised = core_metadata if core_metadata is not None else legacy_metadata
-    return (href, requires_python, _html_advertises_metadata(advertised))
-
-
-class _Pep503Parser(HTMLParser):
-    """Collect ``<a href="..." data-requires-python="...">`` entries.
-
-    The first ``<base href>`` is kept so relative anchors resolve against
-    it rather than the page directory, matching how pip and uv read a
-    Simple-repository page.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.links: list[tuple[str, str | None, bool]] = []
-        self.base_href: str | None = None
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "base":
-            if self.base_href is None:
-                for name, value in attrs:
-                    if name == "href":
-                        self.base_href = value
-                        break
-            return
-
-        if tag != "a":
-            return
-        link = _parse_anchor(attrs)
-        if link is not None:
-            self.links.append(link)
-
-
 _FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
 
 
@@ -246,24 +162,27 @@ def _scan_pep503_directory(
         msg = f"{index_html} is not valid UTF-8: {exc}"
         raise MalformedLocalListingError(msg) from exc
 
-    parser = _Pep503Parser()
-    parser.feed(text)
+    anchors, base_href = read_page(text)
     base_url: str | None = None
-    if parser.base_href is not None:
+    if base_href is not None:
         # A base href every relative anchor resolves against, so one that
         # cannot be parsed leaves the whole page's targets unknown. Fail
         # loudly rather than fall back to the package directory, which
         # would resolve each link to a different file than the page names.
         try:
-            base_url = urljoin(index_html.as_uri(), parser.base_href)
+            base_url = urljoin(index_html.as_uri(), base_href)
         except ValueError as exc:
             msg = f"{index_html} has an unparseable <base href>: {exc}"
             raise MalformedLocalListingError(msg) from exc
 
     files: list[WheelFile | SdistFile] = []
-    for href, requires_python, has_metadata in parser.links:
+    for anchor in anchors:
+        # PEP 592: a yanked link never reaches the listing.
+        if anchor.yanked:
+            continue
+
         filename, file_url, local_path, hashes = _resolve_local_link(
-            href, package_dir, base_url
+            anchor.href, package_dir, base_url
         )
         if filename is None:
             continue
@@ -271,10 +190,10 @@ def _scan_pep503_directory(
             filename,
             file_url,
             local_path,
-            requires_python,
+            anchor.requires_python,
             hashes,
             canonical,
-            has_metadata=has_metadata,
+            has_metadata=metadata_declaration(anchor.metadata) is not None,
         )
         if record is not None:
             files.append(record)
@@ -292,18 +211,15 @@ def _resolve_local_link(
     ``None``.  A relative href joins against it; an absolute href ignores
     it per RFC 3986.
 
-    PEP 503 carries the artefact's hash in the URL fragment as
-    ``#<algo>=<hexdigest>``; this is the only place the hash appears
-    when the index has not opted into PEP 691 JSON.  The fragment is
-    parsed here and surfaced as the file record's ``hashes`` tuple so
-    the lockfile writer has something to round-trip.
+    The href's hash fragment is surfaced as the file record's ``hashes``
+    tuple so the lockfile writer has something to round-trip.
 
     ``local_path`` is the artefact's on-disk path when the href names
     a local file, and ``None`` for an ``http``/``https`` href.  It is
     carried so downstream code never has to reverse the ``file:`` URL.
     """
     href_no_frag, _, fragment = href.partition("#")
-    hashes = _parse_pep503_hash_fragment(fragment)
+    hashes = hash_fragment(fragment)
 
     # A malformed authority (an unterminated IPv6 bracket) makes both of
     # these raise, so the drop guard has to start here rather than at the
@@ -332,16 +248,6 @@ def _resolve_local_link(
     except ValueError:
         return (None, href_no_frag, None, hashes)
     return (target.name, target.as_uri(), target, hashes)
-
-
-def _parse_pep503_hash_fragment(fragment: str) -> tuple[tuple[str, str], ...]:
-    """Parse one ``algo=digest`` fragment into the WheelFile.hashes shape."""
-    if not fragment:
-        return ()
-    algo, sep, digest = fragment.partition("=")
-    if not sep or not algo or not digest:
-        return ()
-    return ((algo.lower(), digest.lower()),)
 
 
 def _scan_flat_wheelhouse(

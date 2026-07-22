@@ -14,6 +14,7 @@ import pytest
 
 from nab_index.atomic import atomic_write_text
 from nab_index.cache import (
+    CACHE_VERSION_SIMPLE,
     VCS_BUCKET,
     CachePolicy,
     NullCache,
@@ -25,6 +26,9 @@ from nab_index.cache import (
     _index_dirname,
 )
 from nab_index.vcs import VcsRequest, prepare_clone
+
+# Derived so a bucket-version bump does not need every path updated.
+SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
 
 # Two wheels of one version, each with its own PEP 658 sidecar.
 METADATA_URLS = (
@@ -207,8 +211,8 @@ class TestOnDiskCache:
             b"{}",
             CachePolicy(fetched_at=1, max_age=1, etag=None),
         )
-        assert (tmp_path / "simple-v0" / "pypi" / "foo.json").exists()
-        assert (tmp_path / "simple-v0" / "pypi" / "foo.policy").exists()
+        assert (tmp_path / SIMPLE_BUCKET / "pypi" / "foo.json").exists()
+        assert (tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy").exists()
 
     def test_simple_alt_index_uses_hash_dirname(self, tmp_path: Path) -> None:
         cache = OnDiskCache(tmp_path, "https://alt.example/simple/")
@@ -217,7 +221,7 @@ class TestOnDiskCache:
             b"{}",
             CachePolicy(fetched_at=1, max_age=1, etag=None),
         )
-        sub = tmp_path / "simple-v0"
+        sub = tmp_path / SIMPLE_BUCKET
         children = list(sub.iterdir())
         assert len(children) == 1
         assert children[0].name != "pypi"
@@ -537,7 +541,7 @@ class TestReadCacheEntry:
 
     def test_corrupt_policy(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
-        path = tmp_path / "simple-v0" / "pypi" / "foo.policy"
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
         path.parent.mkdir(parents=True)
         path.write_bytes(b"not json")
         assert cache.read_cache_entry(path) is not None
@@ -545,7 +549,7 @@ class TestReadCacheEntry:
     def test_valid_policy(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
         cache.put_simple("foo", b"{}", _FRESH)
-        path = tmp_path / "simple-v0" / "pypi" / "foo.policy"
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
         assert cache.read_cache_entry(path) is None
 
     def test_corrupt_negative(self, tmp_path: Path) -> None:
@@ -570,7 +574,7 @@ class TestReadCacheEntry:
 
     def test_invalid_simple_json(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
-        path = tmp_path / "simple-v0" / "pypi" / "foo.json"
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.json"
         path.parent.mkdir(parents=True)
         path.write_bytes(b"{not json")
         assert cache.read_cache_entry(path) == "not valid JSON"
@@ -578,7 +582,7 @@ class TestReadCacheEntry:
     def test_valid_simple_json_is_clean(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
         cache.put_simple("foo", b'{"files": []}', _FRESH)
-        path = tmp_path / "simple-v0" / "pypi" / "foo.json"
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.json"
         assert cache.read_cache_entry(path) is None
 
     def test_sdist_record_missing_fields(self, tmp_path: Path) -> None:
@@ -597,14 +601,14 @@ class TestReadCacheEntry:
     def test_unknown_suffix_is_clean(self, tmp_path: Path) -> None:
         # A leftover atomic-write temp file is not a nab entry and is ignored.
         cache = self._cache(tmp_path)
-        path = tmp_path / "simple-v0" / "pypi" / "foo.json.abc.tmp"
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.json.abc.tmp"
         path.parent.mkdir(parents=True)
         path.write_bytes(b"partial")
         assert cache.read_cache_entry(path) is None
 
     def test_unreadable_entry(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
-        path = tmp_path / "simple-v0" / "pypi" / "adir.policy"
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "adir.policy"
         path.mkdir(parents=True)
         assert cache.read_cache_entry(path) is not None
 
@@ -624,7 +628,7 @@ class TestIterCacheEntries:
         )
         (tmp_path / "sdist-v1-file").write_text("junk")
         _symlink_or_skip(
-            tmp_path / "simple-v0" / "pypi" / "link.json", outside / "x.json"
+            tmp_path / SIMPLE_BUCKET / "pypi" / "link.json", outside / "x.json"
         )
         names = {e.name for e in cache.iter_cache_entries()}
         assert "foo.json" in names
@@ -639,7 +643,7 @@ class TestIterCacheEntries:
         (outside / "leak.json").write_text("{}")
         root = tmp_path / "cache"
         root.mkdir()
-        _symlink_or_skip(root / "simple-v0", outside, target_is_directory=True)
+        _symlink_or_skip(root / SIMPLE_BUCKET, outside, target_is_directory=True)
         cache = OnDiskCache(root, "https://pypi.org/simple")
         assert list(cache.iter_cache_entries()) == []
 
@@ -653,12 +657,12 @@ class TestClearCache:
         cache = _populate(tmp_path)
         removed = cache.clear_cache()
         assert set(removed) == {
-            "simple-v0",
+            SIMPLE_BUCKET,
             "simple-neg-v0",
             "metadata-v1",
             "sdist-v1",
         }
-        assert not (tmp_path / "simple-v0").exists()
+        assert not (tmp_path / SIMPLE_BUCKET).exists()
         assert not (tmp_path / "sdist-v1").exists()
 
     def test_unlinks_symlinked_bucket_without_following(self, tmp_path: Path) -> None:
@@ -667,11 +671,11 @@ class TestClearCache:
         (outside / "keep.txt").write_text("precious")
         root = tmp_path / "cache"
         root.mkdir()
-        _symlink_or_skip(root / "simple-v0", outside, target_is_directory=True)
+        _symlink_or_skip(root / SIMPLE_BUCKET, outside, target_is_directory=True)
         cache = OnDiskCache(root, "https://pypi.org/simple")
-        assert cache.clear_cache() == ["simple-v0"]
+        assert cache.clear_cache() == [SIMPLE_BUCKET]
         assert (outside / "keep.txt").read_text() == "precious"
-        assert not (root / "simple-v0").exists()
+        assert not (root / SIMPLE_BUCKET).exists()
 
     def test_leaves_bucket_named_file(self, tmp_path: Path) -> None:
         root = tmp_path / "cache"

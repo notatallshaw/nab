@@ -1,21 +1,25 @@
 """On-disk cache for nab-index.
 
-Stores PEP 691 Simple API responses (raw JSON body plus a sidecar
-cache policy file) and PEP 658 wheel metadata (raw text, treated as
+Stores PEP 691 Simple API responses (JSON body plus a sidecar cache
+policy file) and PEP 658 wheel metadata (raw text, treated as
 immutable). The cache is consulted by :class:`CachedAsyncSimpleClient`
 before any HTTP transport call.
 
 Layout under ``root``:
 
-    simple-v0/<index>/<package>.json       <- raw PyPI JSON body
-    simple-v0/<index>/<package>.policy     <- {fetched_at, max_age, etag}
+    simple-v1/<index>/<package>.json       <- PEP 691 JSON body
+    simple-v1/<index>/<package>.policy     <- {fetched_at, max_age, etag}
     simple-neg-v0/<index>/<package>.neg    <- {fetched_at, max_age, etag}
     metadata-v1/<index>/<package>/<url digest>.metadata
     sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
 
-A versioned bucket name (``simple-v0``) gives zero-cost schema
+A versioned bucket name (``simple-v1``) gives zero-cost schema
 migration: when the on-disk format changes, bump the suffix and the
 old directory is harmless.
+
+When the index serves PEP 503 HTML the stored body is nab's own rendering
+of the page. A 304 revalidation keeps the old body, so changing that
+rendering also needs the suffix bumped to reach warm caches.
 
 A resolve writes two more buckets under the same root, holding upstream
 source trees:
@@ -56,7 +60,7 @@ __all__ = [
 ]
 
 
-CACHE_VERSION_SIMPLE = "v0"
+CACHE_VERSION_SIMPLE = "v1"
 CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v1"
