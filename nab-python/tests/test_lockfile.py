@@ -5332,6 +5332,24 @@ class TestMarkerCoverage:
         gpu = base.with_selection((("extra", "gpu"),))
         validate_marker_coverage([cpu, gpu], environments=[self._row(base)])
 
+    def test_cpython_iv_mirror_split_minor_passes(self) -> None:
+        target = self._minor("3.13")
+        slices, rows = self._split(target, 'implementation_version >= "3.13.2"')
+        assert len(slices) == 2
+        assert any("implementation_version" in str(row) for row in rows)
+        validate_marker_coverage(slices, environments=rows)
+
+    def test_cpython_iv_mirror_genuine_gap_fires(self) -> None:
+        target = self._minor("3.13")
+        slices = slices_from_points(target, [Version("3.13.2"), Version("3.13.5")])
+        consulted = [Marker('implementation_version >= "3.13.0"')]
+        rows = [Marker(environment_declaration(s, consulted)) for s in slices]
+        del rows[1]
+        with pytest.raises(CoverageError) as excinfo:
+            validate_marker_coverage(slices, environments=rows)
+        found = self._full_version(excinfo.value)
+        assert Version("3.13.2") <= found < Version("3.13.5")
+
     def test_micro_narrowing_reconstruction_fires(self) -> None:
         target = self._minor("3.13")
         row = Marker(

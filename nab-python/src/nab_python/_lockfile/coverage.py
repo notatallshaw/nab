@@ -21,7 +21,7 @@ from __future__ import annotations
 from functools import reduce
 from typing import TYPE_CHECKING
 
-from .._vendor.packaging.markersets import MarkerSet
+from .._vendor.packaging.markersets import MarkerSet, variable_names
 from ..target import UNBOUNDABLE_MARKER_VARIABLES, declared_range_marker
 
 if TYPE_CHECKING:
@@ -68,6 +68,7 @@ def validate_marker_coverage(
         (MarkerSet.from_marker(marker) for marker in environments),
         MarkerSet.empty(),
     )
+    covered = _project_implementation_version(covered, environments, targets)
 
     seen: set[str] = set()
     for target in targets:
@@ -79,6 +80,35 @@ def validate_marker_coverage(
         witness = residual.witness()
         if witness is not None:
             raise CoverageError(_coverage_message(witness))
+
+
+def _project_implementation_version(
+    covered: MarkerSet,
+    environments: Sequence[Marker],
+    targets: Sequence[ResolveTarget],
+) -> MarkerSet:
+    """Drop ``implementation_version`` from ``covered`` when a row mirrors it.
+
+    On CPython the resolve mirrors each slice's ``python_full_version`` bounds
+    onto ``implementation_version``, and the algebra treats the two as
+    independent.  A cross term (``python_full_version`` from one slice,
+    ``implementation_version`` from another) then survives the plain union and
+    manufactures a false hole on a covering lock, since the reference leaves
+    ``implementation_version`` open.
+
+    With no existential primitive the projection is reproduced by ``restrict``:
+    binding ``implementation_version`` to one representative per slice drops the
+    axis, and the union over the targets' ``python_full_version`` reassembles
+    the minor.  Runs only when a row names ``implementation_version``.
+    """
+    if not any("implementation_version" in variable_names(row) for row in environments):
+        return covered
+    reps = {target.python_full_version for target in targets}
+    return reduce(
+        MarkerSet.union,
+        (covered.restrict({"implementation_version": rep}) for rep in reps),
+        MarkerSet.empty(),
+    )
 
 
 def _coverage_message(witness: dict[str, str | frozenset[str]]) -> str:
