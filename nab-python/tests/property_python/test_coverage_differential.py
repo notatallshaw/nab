@@ -202,6 +202,77 @@ class TestCoverageDifferential:
         _assert_witness_sound(excinfo.value, targets, environments)
 
 
+# The nab CI-lock matrix that overran the witness cell budget: 5 minors x 5
+# platforms, 3.10 split at micro 2, giving 30 targets and 30 rows.
+BLOWUP_MINORS = ("3.10", "3.11", "3.12", "3.13", "3.14")
+BLOWUP_PLATFORMS = (
+    "linux_x86_64",
+    "linux_aarch64",
+    "macos_arm64",
+    "macos_x86_64",
+    "windows_amd64",
+)
+
+
+def _blowup_matrix() -> tuple[list[ResolveTarget], list[Marker]]:
+    """Build the 30-target / 30-row CI-lock fixture that overran the budget.
+
+    Every minor stays whole (one row) except 3.10, which a consulted
+    ``python_full_version >= "3.10.2"`` splits into two micro slices.
+    """
+    targets: list[ResolveTarget] = []
+    environments: list[Marker] = []
+    for minor in BLOWUP_MINORS:
+        consulted = (
+            [Marker('python_full_version >= "3.10.2"')] if minor == "3.10" else []
+        )
+        for platform in BLOWUP_PLATFORMS:
+            base = ResolveTarget.for_declared(
+                python_version=minor, spec=PlatformSpec(platform)
+            )
+            slices = slices_from_points(base, micro_boundary_points(base, consulted))
+            for piece in slices:
+                targets.append(piece)
+                environments.append(Marker(environment_declaration(piece, consulted)))
+    return targets, environments
+
+
+class TestCoverageGateBlowupRegression:
+    """The CI-lock fixture that crashed the gate with ``IntractableMarkerSet``.
+
+    Complementing the 30-row union carried every axis every row named at once,
+    overrunning the witness cell budget. The fix restricts the union to each
+    reference's pinned axes first.
+    """
+
+    def test_full_ci_lock_matrix_is_decidable(self) -> None:
+        """The covering 30x30 matrix validates without raising."""
+        targets, environments = _blowup_matrix()
+        assert len(targets) == 30
+        assert len(environments) == 30
+        validate_marker_coverage(targets, environments=environments)
+
+    def test_dropping_a_matrix_row_fires_with_exact_witness(self) -> None:
+        """Dropping 3.12 / linux_x86_64 fires naming that exact interpreter."""
+        targets, environments = _blowup_matrix()
+        drop = next(
+            index
+            for index, target in enumerate(targets)
+            if target.python_version == "3.12"
+            and target.marker_env["sys_platform"] == "linux"
+            and target.marker_env["platform_machine"] == "x86_64"
+        )
+        remaining = [row for index, row in enumerate(environments) if index != drop]
+        assert len(remaining) == len(environments) - 1
+        with pytest.raises(CoverageError) as excinfo:
+            validate_marker_coverage(targets, environments=remaining)
+        message = str(excinfo.value)
+        assert 'python_full_version == "3.12"' in message
+        assert 'sys_platform == "linux"' in message
+        assert 'platform_machine == "x86_64"' in message
+        _assert_witness_sound(excinfo.value, targets, remaining)
+
+
 def _random_points(rng: random.Random) -> list[tuple[str, str]]:
     """Draw 1-4 distinct ``(minor, platform)`` points."""
     grid = [(minor, platform) for minor in MINORS for platform in PLATFORMS]
