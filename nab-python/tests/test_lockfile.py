@@ -5261,10 +5261,34 @@ class TestConflictForkNegatedEmission:
         )
         pylock = Pylock.from_dict(tomllib.loads(text))
 
-        torch_versions = {
-            str(p.version) for p in pylock.packages if str(p.name) == "torch"
+        torch_markers = {
+            str(p.version): str(p.marker)
+            for p in pylock.packages
+            if str(p.name) == "torch"
         }
-        assert torch_versions == {"2.5.0", "2.6.0"}
+        assert set(torch_markers) == {"2.5.0", "2.6.0"}
+
+        # simplify overruns the cell budget on this fork, so the emitter
+        # passes the raw marker through unchanged: base env, the fork's three
+        # drawn members, then the 12 negated co-members by set in declaration
+        # order.
+        base = (
+            'python_version == "3.12" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64"'
+        )
+
+        def raw_marker(drawn: tuple[str, str, str]) -> str:
+            positives = " and ".join(f'"{name}" in extras' for name in drawn)
+            negatives = " and ".join(
+                f'"{name}" not in extras'
+                for members in sets
+                for name in members
+                if name not in drawn
+            )
+            return f"{base} and {positives} and {negatives}"
+
+        assert torch_markers["2.5.0"] == raw_marker(("a0", "b0", "c0"))
+        assert torch_markers["2.6.0"] == raw_marker(("a1", "b1", "c1"))
 
 
 class TestMarkerCoverage:
