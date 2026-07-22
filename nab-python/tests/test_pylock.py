@@ -26,7 +26,7 @@ from nab_python._lockfile.pylock import (
     render_lock,
 )
 from nab_python._vendor.packaging.markers import Marker
-from nab_python._vendor.packaging.markersets import MarkerSet
+from nab_python._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 from nab_python._vendor.packaging.pylock import Package, PackageWheel
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
@@ -234,6 +234,17 @@ class TestFailClosed:
         with pytest.raises(UnsoundSimplificationError, match="foo"):
             build_pylock(_span_lock())
 
+    def test_collapse_to_full_off_universe_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def collapse(self: MarkerSet, *, within: MarkerSet) -> MarkerSet:
+            return MarkerSet.full()
+
+        monkeypatch.setattr(MarkerSet, "simplify", collapse)
+        raw = Marker('sys_platform == "linux"')
+        with pytest.raises(UnsoundSimplificationError, match="foo"):
+            _finalize_marker(raw, _union(_ENVS), "foo")
+
 
 class TestFinalizeMarker:
     def test_none_marker_passes_through(self) -> None:
@@ -242,6 +253,18 @@ class TestFinalizeMarker:
     def test_full_over_universe_emits_none(self) -> None:
         tautology = Marker('python_version == "3.11" or python_version != "3.11"')
         assert _finalize_marker(tautology, MarkerSet.full()) is None
+
+    def test_intractable_emits_raw_byte_identical(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def intractable(self: MarkerSet, *, within: MarkerSet) -> MarkerSet:
+            raise IntractableMarkerSet("over budget")
+
+        monkeypatch.setattr(MarkerSet, "simplify", intractable)
+        raw = Marker('sys_platform == "linux" and "gpu" not in extras')
+        result = _finalize_marker(raw, _union(_ENVS), "torch")
+        assert result is not None
+        assert str(result) == str(raw)
 
 
 class TestDeterminism:

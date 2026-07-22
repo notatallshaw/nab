@@ -385,23 +385,29 @@ def _finalize_marker(
         simplified = MarkerSet.from_marker(raw).simplify(within=within)
         text = simplified.to_marker_string()
         if text is None:
+            _verify_within_universe(raw, MarkerSet.full(), "no marker", within, name)
             return None
         rebuilt = Marker(text)
-        _verify_within_universe(raw, rebuilt, within, name)
+        _verify_within_universe(
+            raw, MarkerSet.from_marker(rebuilt), str(rebuilt), within, name
+        )
     except IntractableMarkerSet:
         return raw
     return rebuilt
 
 
 def _verify_within_universe(
-    raw: Marker, rebuilt: Marker, within: MarkerSet, name: str
+    raw: Marker, emitted: MarkerSet, shown: str, within: MarkerSet, name: str
 ) -> None:
-    """Raise if ``rebuilt`` and ``raw`` differ on any environment in ``within``."""
+    """Raise if ``emitted`` and ``raw`` differ on any environment in ``within``.
+
+    ``emitted`` is what the lock ships: the reparsed marker bytes, or
+    :meth:`MarkerSet.full` when no marker field is emitted.
+    """
     raw_set = MarkerSet.from_marker(raw)
-    rebuilt_set = MarkerSet.from_marker(rebuilt)
-    if not (raw_set & within).equivalent(rebuilt_set & within):
+    if not (raw_set & within).equivalent(emitted & within):
         msg = (
-            f"{name}: simplified marker {str(rebuilt)!r} is not equivalent to"
+            f"{name}: emitted marker {shown!r} is not equivalent to"
             f" {str(raw)!r} over the declared environments"
         )
         raise UnsoundSimplificationError(msg)
