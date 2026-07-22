@@ -17,6 +17,10 @@ Relative `path` entries resolve against the directory holding
 `pyproject.toml`, not the process's current working directory.
 Absolute paths are recorded as-is.
 
+The `[project].name` in the target directory must canonicalise to
+the declared `name`.  A `path` that lands on a different project
+fails the resolve.
+
 The directory is read once.  nab reads the version from
 `[project].version` in the local pyproject.toml.  When the pyproject
 declares `dynamic = ["version"]`, nab computes it through the build
