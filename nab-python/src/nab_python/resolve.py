@@ -52,6 +52,7 @@ from .config import (
     ConflictSet,
     NabProjectConfig,
     conflict_forks,
+    index_cache_floors_from_config,
     index_routes_from_config,
     plan_targets,
     read_pyproject_config,
@@ -342,6 +343,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
         cache_dir=cache_dir,
         offline=offline,
         index_routes=index_routes_from_config(config),
+        index_cache_floors=index_cache_floors_from_config(config),
         on_fetch=progress.on_fetch if progress is not None else None,
     ) as coordinator:
         return resolve_with_coordinator(

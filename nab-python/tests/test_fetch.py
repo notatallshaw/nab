@@ -2322,6 +2322,93 @@ class TestMultiIndexCoordinator:
         finally:
             coord.shutdown()
 
+    def test_cache_floor_single_index(self, tmp_path: Path) -> None:
+        """A floor keyed by the single index sets the client's window."""
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path,
+            indexes=[IndexConfig("custom", "https://custom.example/")],
+            index_cache_floors={"custom": 42},
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, CachedAsyncSimpleClient)
+            assert client._min_fresh_seconds == 42
+        finally:
+            coord.shutdown()
+
+    def test_cache_floor_single_index_absent(self, tmp_path: Path) -> None:
+        """A floor keyed by another index leaves this client's window None."""
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path,
+            indexes=[IndexConfig("custom", "https://custom.example/")],
+            index_cache_floors={"other": 42},
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, CachedAsyncSimpleClient)
+            assert client._min_fresh_seconds is None
+        finally:
+            coord.shutdown()
+
+    def test_cache_floor_multi_index(self, tmp_path: Path) -> None:
+        """Each index's client gets its own floor by name; absent means None."""
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path,
+            indexes=[
+                IndexConfig("pypi", "https://pypi.org/simple/"),
+                IndexConfig("torch-cpu", "https://torch.example/cpu/"),
+            ],
+            index_cache_floors={"pypi": 99},
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, MultiIndexClient)
+            pypi = client._clients["pypi"]
+            torch = client._clients["torch-cpu"]
+            assert isinstance(pypi, CachedAsyncSimpleClient)
+            assert isinstance(torch, CachedAsyncSimpleClient)
+            assert pypi._min_fresh_seconds == 99
+            assert torch._min_fresh_seconds is None
+        finally:
+            coord.shutdown()
+
+    def test_cache_floor_default_none(self, tmp_path: Path) -> None:
+        """Without index_cache_floors the client's window is None."""
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path,
+            indexes=[IndexConfig("custom", "https://custom.example/")],
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, CachedAsyncSimpleClient)
+            assert client._min_fresh_seconds is None
+        finally:
+            coord.shutdown()
+
+    def test_cache_floor_local_index_inert(self, tmp_path: Path) -> None:
+        """A floor on a file:// index builds a LocalIndexClient unaffected."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            indexes=[
+                IndexConfig("pypi", "https://pypi.org/simple/"),
+                IndexConfig("local", wheelhouse.as_uri()),
+            ],
+            index_cache_floors={"local": 3600},
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, MultiIndexClient)
+            assert isinstance(client._clients["local"], LocalIndexClient)
+        finally:
+            coord.shutdown()
+
 
 _SIBLING_LINUX = "foo-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"
 _SIBLING_WIN = "foo-1.0-cp311-cp311-win_amd64.whl"
