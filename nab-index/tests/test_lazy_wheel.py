@@ -189,6 +189,15 @@ class FakeRangeTransport:
             if kind == "suffix":
                 return _FakeResponse(416, {}, b"")
             return self._full()
+        if self.mode.startswith("reject_"):
+            return _FakeResponse(int(self.mode.removeprefix("reject_")), {}, b"")
+        if self.mode == "miss_200_then_206":
+            ranged = sum(1 for rng, _ in self.requests if rng is not None)
+            if ranged == 1:
+                return self._full()
+            if kind == "suffix":
+                return self._partial(max(0, self.total - a), self.total - 1)
+            return self._partial(a, b)
         if self.mode == "gzip_range":
             if kind == "suffix":
                 return self._partial(max(0, self.total - a), self.total - 1, gzip=True)
@@ -217,21 +226,30 @@ def _read(transport: object, url: str = _URL, **kwargs: object) -> RangeMetadata
 
 
 @pytest.mark.parametrize(
-    ("mode", "outcome"),
+    ("mode", "outcome", "expected_requests"),
     [
-        ("well_behaved", RangeOutcome.PARTIAL),
-        ("suffix_501", RangeOutcome.PARTIAL),
-        ("ignore_range_200", RangeOutcome.FULL_BODY),
-        ("no_ranges", RangeOutcome.FULL_BODY),
+        ("well_behaved", RangeOutcome.PARTIAL, 1),
+        ("suffix_501", RangeOutcome.PARTIAL, 3),
+        ("ignore_range_200", RangeOutcome.FULL_BODY, 1),
+        ("no_ranges", RangeOutcome.FULL_BODY, 2),
+        ("reject_400", RangeOutcome.FULL_BODY, 3),
+        ("reject_403", RangeOutcome.FULL_BODY, 3),
+        ("reject_416", RangeOutcome.FULL_BODY, 3),
+        ("reject_501", RangeOutcome.FULL_BODY, 3),
     ],
 )
-def test_recovers_metadata_per_mode(mode: str, outcome: RangeOutcome) -> None:
+def test_recovers_metadata_per_mode(
+    mode: str, outcome: RangeOutcome, expected_requests: int
+) -> None:
     wheel = build_wheel()
     transport = FakeRangeTransport(mode, wheel)
     result = _read(transport)
     assert result.outcome is outcome
     assert result.text == _META.decode("utf-8")
     assert all(enc == "identity" for _, enc in transport.requests)
+    # Exact counts: creeping per-wheel requests are the amplification failure
+    # mode this reader exists to avoid.
+    assert len(transport.requests) == expected_requests
 
 
 def test_misread_suffix_downgrades_to_absolute() -> None:
@@ -247,6 +265,42 @@ def test_gzip_range_is_unsupported() -> None:
     result = _read(transport)
     assert result.outcome is RangeOutcome.UNSUPPORTED
     assert result.text is None
+
+
+def test_range_rejecting_host_memoizes_full_body() -> None:
+    async def run() -> tuple[RangeMetadataResult, int]:
+        memo = RangeCapabilityMemo()
+        transport = FakeRangeTransport("reject_403", build_wheel())
+        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        capability = memo.capability("files.example.org")
+        assert capability is RangeCapability.FULL_BODY_ONLY
+        before = len(transport.requests)
+        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        return result, len(transport.requests) - before
+
+    result, second_requests = asyncio.run(run())
+    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.text == _META.decode("utf-8")
+    # The refused probes are not repeated: later wheels go straight to the GET.
+    assert second_requests == 1
+
+
+def test_cdn_miss_200_then_206_returns_to_ranges() -> None:
+    async def run() -> tuple[RangeMetadataResult, RangeMetadataResult, int]:
+        memo = RangeCapabilityMemo()
+        transport = FakeRangeTransport("miss_200_then_206", build_wheel_member_front())
+        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        assert first.text == _META.decode("utf-8")
+        assert memo.capability("files.example.org") is RangeCapability.SUFFIX_OK
+        after_first = len(transport.requests)
+        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        return first, second, len(transport.requests) - after_first
+
+    first, second, second_requests = asyncio.run(run())
+    assert first.outcome is RangeOutcome.FULL_BODY
+    assert second.outcome is RangeOutcome.PARTIAL
+    assert second.text == _META.decode("utf-8")
+    assert second_requests == 2
 
 
 @pytest.mark.parametrize("mode", ["error_404", "error_500"])
@@ -385,7 +439,10 @@ class _ScriptedTransport:
 
 
 def _run_scripted(
-    script: object, wheel: bytes | None = None, **kwargs: object
+    script: object,
+    wheel: bytes | None = None,
+    memo: RangeCapabilityMemo | None = None,
+    **kwargs: object,
 ) -> RangeMetadataResult:
     transport = _ScriptedTransport(
         wheel if wheel is not None else build_wheel(), script
@@ -395,7 +452,7 @@ def _run_scripted(
             transport,  # type: ignore[arg-type]
             _URL,
             _NAME,
-            RangeCapabilityMemo(),
+            memo if memo is not None else RangeCapabilityMemo(),
             **kwargs,  # type: ignore[arg-type]
         )
     )
@@ -412,12 +469,33 @@ def test_suffix_200_gzip_downgrades_to_absolute() -> None:
     assert result.text == _META.decode("utf-8")
 
 
-def test_suffix_206_without_content_range_is_full_body() -> None:
+def test_suffix_206_without_content_range_downgrades() -> None:
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
-        return _FakeResponse(206, {}, t.wheel)
+        if kind == "suffix":
+            return _FakeResponse(206, {}, t.wheel)
+        return t.partial(a, b)
 
     result = _run_scripted(script)
-    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.outcome is RangeOutcome.PARTIAL
+    assert result.text == _META.decode("utf-8")
+
+
+def test_suffix_206_star_total_downgrades() -> None:
+    """An honoured suffix with ``bytes a-b/*`` is unanchored, not a full body.
+
+    The tail slice mistaken for a whole wheel used to leak a ValueError out
+    of the zip machinery once METADATA sat in front of the window.
+    """
+
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            start = max(0, t.total - a)
+            headers = {"content-range": f"bytes {start}-{t.total - 1}/*"}
+            return _FakeResponse(206, headers, t.wheel[start:])
+        return t.partial(a, b)
+
+    result = _run_scripted(script, wheel=build_wheel_member_front())
+    assert result.outcome is RangeOutcome.PARTIAL
     assert result.text == _META.decode("utf-8")
 
 
@@ -461,6 +539,70 @@ def test_absolute_probe_error_raises() -> None:
         _run_scripted(script)
 
 
+def test_range_rejected_plain_get_error_raises() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "full":
+            return _FakeResponse(404, {}, b"")
+        return _FakeResponse(416, {}, b"")
+
+    with pytest.raises(HttpError):
+        _run_scripted(script)
+
+
+def test_range_rejected_gzip_plain_get_is_unsupported() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "full":
+            return t.full(gzip=True)
+        return _FakeResponse(416, {}, b"")
+
+    result = _run_scripted(script)
+    assert result.outcome is RangeOutcome.UNSUPPORTED
+    assert result.text is None
+
+
+def test_absolute_probe_weird_success_is_unsupported() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return _FakeResponse(501, {}, b"")
+        return _FakeResponse(204, {}, b"")
+
+    result = _run_scripted(script)
+    assert result.outcome is RangeOutcome.UNSUPPORTED
+
+
+@pytest.mark.parametrize("status", [400, 403, 416, 501])
+def test_absolute_tail_rejected_recovers_full_body(status: int) -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return _FakeResponse(501, {}, b"")
+        if kind == "full":
+            return t.full()
+        if a == 0 and b == 0:
+            return t.partial(0, 0)
+        return _FakeResponse(status, {}, b"")
+
+    memo = RangeCapabilityMemo()
+    result = _run_scripted(script, memo=memo)
+    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.text == _META.decode("utf-8")
+    expected = (
+        RangeCapability.UNKNOWN if status == 416 else RangeCapability.FULL_BODY_ONLY
+    )
+    assert memo.capability("files.example.org") is expected
+
+
+def test_absolute_tail_weird_success_is_unsupported() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return _FakeResponse(501, {}, b"")
+        if a == 0 and b == 0:
+            return t.partial(0, 0)
+        return _FakeResponse(204, {}, b"")
+
+    result = _run_scripted(script)
+    assert result.outcome is RangeOutcome.UNSUPPORTED
+
+
 def test_absolute_tail_200_full_body() -> None:
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
         if kind == "suffix":
@@ -469,8 +611,10 @@ def test_absolute_tail_200_full_body() -> None:
             return t.partial(0, 0)
         return t.full()
 
-    result = _run_scripted(script)
+    memo = RangeCapabilityMemo()
+    result = _run_scripted(script, memo=memo)
     assert result.outcome is RangeOutcome.FULL_BODY
+    assert memo.capability("files.example.org") is RangeCapability.FULL_BODY_ONLY
 
 
 def test_absolute_tail_200_gzip_is_unsupported() -> None:
@@ -539,6 +683,27 @@ def test_growth_gzip_full_body_is_missing() -> None:
     assert result.outcome is RangeOutcome.MISSING
 
 
+@pytest.mark.parametrize("status", [403, 416])
+def test_growth_rejection_recovers_full_body(status: int) -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        if kind == "full":
+            return t.full()
+        return _FakeResponse(status, {}, b"")
+
+    memo = RangeCapabilityMemo()
+    result = _run_scripted(
+        script, wheel=build_wheel(padding=4000), memo=memo, tail_size=64
+    )
+    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.text == _META.decode("utf-8")
+    expected = (
+        RangeCapability.SUFFIX_OK if status == 416 else RangeCapability.FULL_BODY_ONLY
+    )
+    assert memo.capability("files.example.org") is expected
+
+
 def test_member_fetch_success() -> None:
     transport = FakeRangeTransport("well_behaved", build_wheel_member_front())
     result = _read(transport)
@@ -576,6 +741,60 @@ def test_member_fetch_gzip_is_missing() -> None:
     assert result.outcome is RangeOutcome.MISSING
 
 
+@pytest.mark.parametrize("status", [400, 501])
+def test_member_fetch_rejection_recovers_full_body(status: int) -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        if kind == "full":
+            return t.full()
+        return _FakeResponse(status, {}, b"")
+
+    memo = RangeCapabilityMemo()
+    result = _run_scripted(script, wheel=build_wheel_member_front(), memo=memo)
+    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.text == _META.decode("utf-8")
+    assert memo.capability("files.example.org") is RangeCapability.FULL_BODY_ONLY
+
+
+def test_member_fetch_rejected_plain_get_error_raises() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        if kind == "full":
+            return _FakeResponse(404, {}, b"")
+        return _FakeResponse(416, {}, b"")
+
+    with pytest.raises(HttpError):
+        _run_scripted(script, wheel=build_wheel_member_front())
+
+
+def test_member_fetch_rejected_gzip_plain_get_is_missing() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        if kind == "full":
+            return t.full(gzip=True)
+        return _FakeResponse(416, {}, b"")
+
+    result = _run_scripted(script, wheel=build_wheel_member_front())
+    assert result.outcome is RangeOutcome.MISSING
+    assert result.text is None
+
+
+@pytest.mark.parametrize(
+    "build", [build_wheel_member_front, lambda: build_wheel(padding=4000)]
+)
+def test_mid_read_404_raises(build: object) -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        return _FakeResponse(404, {}, b"")
+
+    with pytest.raises(HttpError):
+        _run_scripted(script, wheel=build(), tail_size=64)  # type: ignore[operator]
+
+
 def test_member_last_uses_directory_upper_bound() -> None:
     big_meta = (
         b"Metadata-Version: 2.1\nName: widget\nVersion: 1.0\n\n"
@@ -595,13 +814,26 @@ def test_member_last_uses_directory_upper_bound() -> None:
     )
 
 
-def test_suffix_206_unparseable_content_range_is_full_body() -> None:
+def test_suffix_206_unparseable_content_range_downgrades() -> None:
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
-        return _FakeResponse(206, {"content-range": "bogus"}, t.wheel)
+        if kind == "suffix":
+            return _FakeResponse(206, {"content-range": "bogus"}, t.wheel)
+        return t.partial(a, b)
 
     result = _run_scripted(script)
-    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.outcome is RangeOutcome.PARTIAL
     assert result.text == _META.decode("utf-8")
+
+
+def test_absolute_probe_zero_total_is_unsupported() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return _FakeResponse(501, {}, b"")
+        return _FakeResponse(206, {"content-range": "bytes 0-0/0"}, b"")
+
+    result = _run_scripted(script)
+    assert result.outcome is RangeOutcome.UNSUPPORTED
+    assert result.text is None
 
 
 def test_memo_suffix_ok_no_reprobe() -> None:
@@ -630,21 +862,25 @@ def test_memo_absolute_only_skips_reprobe() -> None:
     assert negatives == 1
 
 
-def test_memo_full_body_only_refetches() -> None:
-    async def run() -> RangeMetadataResult:
+def test_memo_range_ignoring_host_stays_suffix_ok() -> None:
+    async def run() -> tuple[RangeMetadataResult, int]:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("ignore_range_200", build_wheel())
         first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
         assert first.text == _META.decode("utf-8")
-        assert memo.capability("files.example.org") is RangeCapability.FULL_BODY_ONLY
-        # A second sidecar-less wheel on the same range-ignoring host still
-        # recovers its METADATA from a full-body GET, so resolvability does not
-        # depend on which wheel is fetched first.
-        return await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        # A volunteered 200 answers the suffix request with the whole body, so
+        # leading with the suffix form again costs the same single request on a
+        # host that keeps ignoring ranges, while a proxy that only ignored them
+        # on a cache miss gets to serve cheap partial reads again.
+        assert memo.capability("files.example.org") is RangeCapability.SUFFIX_OK
+        before = len(transport.requests)
+        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        return second, len(transport.requests) - before
 
-    result = asyncio.run(run())
+    result, second_requests = asyncio.run(run())
     assert result.text == _META.decode("utf-8")
     assert result.outcome is RangeOutcome.FULL_BODY
+    assert second_requests == 1
 
 
 def test_memo_gzip_stays_unsupported() -> None:
@@ -700,6 +936,221 @@ def test_memo_concurrent_single_flight() -> None:
         return transport.negative_requests
 
     assert asyncio.run(run()) == 1
+
+
+def test_memo_ignored_absolute_latches_full_body() -> None:
+    async def run() -> tuple[RangeMetadataResult, int]:
+        memo = RangeCapabilityMemo()
+        transport = FakeRangeTransport("no_ranges", build_wheel())
+        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        capability = memo.capability("files.example.org")
+        assert capability is RangeCapability.FULL_BODY_ONLY
+        before = len(transport.requests)
+        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        return result, len(transport.requests) - before
+
+    result, second_requests = asyncio.run(run())
+    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.text == _META.decode("utf-8")
+    assert second_requests == 1
+
+
+def test_reject_416_does_not_latch_netloc() -> None:
+    async def run() -> tuple[RangeMetadataResult, int]:
+        memo = RangeCapabilityMemo()
+        transport = FakeRangeTransport("reject_416", build_wheel())
+        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        assert first.outcome is RangeOutcome.FULL_BODY
+        # A 416 speaks for the one file, so the host is probed afresh.
+        assert memo.capability("files.example.org") is RangeCapability.UNKNOWN
+        before = len(transport.requests)
+        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        return second, len(transport.requests) - before
+
+    result, second_requests = asyncio.run(run())
+    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.text == _META.decode("utf-8")
+    assert second_requests == 3
+
+
+def test_reject_statuses_disjoint_from_transport_retries() -> None:
+    """A refused range must come back on the first answer, never retried."""
+    from nab_index.lazy_wheel import _RANGE_REJECT_STATUSES
+    from nab_index.retry import RETRY_STATUSES
+
+    assert _RANGE_REJECT_STATUSES.isdisjoint(RETRY_STATUSES)
+
+
+def _patch_member(
+    wheel: bytes, member: str, *, flag_or: int | None = None, method: int | None = None
+) -> bytes:
+    """Rewrite one member's local and central headers in place."""
+    import struct
+
+    data = bytearray(wheel)
+    with zipfile.ZipFile(io.BytesIO(wheel)) as zf:
+        local_off = zf.getinfo(member).header_offset
+    name_bytes = member.encode()
+    if flag_or is not None:
+        flags = struct.unpack_from("<H", data, local_off + 6)[0] | flag_or
+        struct.pack_into("<H", data, local_off + 6, flags)
+    if method is not None:
+        struct.pack_into("<H", data, local_off + 8, method)
+    pos = 0
+    while (pos := data.find(b"PK\x01\x02", pos)) != -1:
+        name_len = struct.unpack_from("<H", data, pos + 28)[0]
+        if bytes(data[pos + 46 : pos + 46 + name_len]) == name_bytes:
+            if flag_or is not None:
+                flags = struct.unpack_from("<H", data, pos + 8)[0] | flag_or
+                struct.pack_into("<H", data, pos + 8, flags)
+            if method is not None:
+                struct.pack_into("<H", data, pos + 10, method)
+        pos += 4
+    return bytes(data)
+
+
+def _wheel_bad_utf8_name() -> bytes:
+    """A wheel whose UTF-8-flagged member name does not decode."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr("widget-1.0.dist-info/METADATA", _META)
+        zf.writestr("widget/pÄd.py", b"x")
+    needle = "widget/pÄd.py".encode()
+    wheel = buf.getvalue()
+    assert wheel.count(needle) == 2
+    return wheel.replace(needle, b"widget/p\xff\xffd.py")
+
+
+def _wheel_encrypted_metadata() -> bytes:
+    return _patch_member(
+        build_wheel(compression=zipfile.ZIP_STORED),
+        "widget-1.0.dist-info/METADATA",
+        flag_or=0x1,
+    )
+
+
+def _wheel_method_99() -> bytes:
+    return _patch_member(
+        build_wheel(compression=zipfile.ZIP_STORED),
+        "widget-1.0.dist-info/METADATA",
+        method=99,
+    )
+
+
+@pytest.mark.parametrize("mode", ["well_behaved", "ignore_range_200"])
+@pytest.mark.parametrize(
+    "shape", [_wheel_bad_utf8_name, _wheel_encrypted_metadata, _wheel_method_99]
+)
+def test_unreadable_wheel_is_missing(mode: str, shape: object) -> None:
+    """Zip shapes the machinery cannot read step the ladder on, never raise."""
+    transport = FakeRangeTransport(mode, shape())  # type: ignore[operator]
+    result = _read(transport)
+    assert result.outcome is RangeOutcome.MISSING
+    assert result.text is None
+
+
+def test_probe_releases_when_owner_acquisition_fails() -> None:
+    """A failed owner still releases parked waiters, who probe for themselves."""
+    wheel = build_wheel()
+    url_b = "https://files.example.org/packages/other/widget-1.0-py3-none-any.whl"
+
+    async def run() -> RangeMetadataResult:
+        memo = RangeCapabilityMemo()
+        total = len(wheel)
+        owner_started = asyncio.Event()
+        release_owner = asyncio.Event()
+
+        class GatedTransport:
+            async def get(
+                self, url: str, *, headers: dict[str, str] | None = None
+            ) -> _FakeResponse:
+                kind, a, b = _parse_range((headers or {})["Range"])
+                if url == _URL:
+                    owner_started.set()
+                    await release_owner.wait()
+                    return _FakeResponse(404, {}, b"")
+                if kind == "suffix":
+                    start, end = max(0, total - a), total - 1
+                else:
+                    start, end = a, min(b, total - 1)
+                headers_out = {"content-range": f"bytes {start}-{end}/{total}"}
+                return _FakeResponse(206, headers_out, wheel[start : end + 1])
+
+            async def aclose(self) -> None:
+                return None
+
+        transport = GatedTransport()
+        owner = asyncio.create_task(
+            read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        )
+        await owner_started.wait()
+        waiter = asyncio.create_task(
+            read_wheel_metadata_over_range(transport, url_b, _NAME, memo)  # type: ignore[arg-type]
+        )
+        await asyncio.sleep(0)
+        release_owner.set()
+        with pytest.raises(HttpError):
+            await owner
+        return await waiter
+
+    waiter_result = asyncio.run(asyncio.wait_for(run(), timeout=5))
+    assert waiter_result.text == _META.decode("utf-8")
+
+
+def test_probe_releases_once_capability_settles() -> None:
+    """A waiter proceeds as soon as the owner's capability is settled.
+
+    The owner's member read is gated on the waiter finishing first, so the
+    test deadlocks (and times out) if the probe were held for the owner's
+    whole read rather than released after acquisition.
+    """
+    wheel = build_wheel_member_front()
+    url_b = "https://files.example.org/packages/other/widget-1.0-py3-none-any.whl"
+
+    async def run() -> tuple[RangeMetadataResult, RangeMetadataResult]:
+        memo = RangeCapabilityMemo()
+        total = len(wheel)
+        owner_suffix_started = asyncio.Event()
+        release_owner_suffix = asyncio.Event()
+        waiter_done = asyncio.Event()
+
+        class GatedTransport:
+            async def get(
+                self, url: str, *, headers: dict[str, str] | None = None
+            ) -> _FakeResponse:
+                kind, a, b = _parse_range((headers or {})["Range"])
+                if kind == "suffix":
+                    if url == _URL:
+                        owner_suffix_started.set()
+                        await release_owner_suffix.wait()
+                    start, end = max(0, total - a), total - 1
+                else:
+                    if url == _URL:
+                        await waiter_done.wait()
+                    start, end = a, min(b, total - 1)
+                headers_out = {"content-range": f"bytes {start}-{end}/{total}"}
+                return _FakeResponse(206, headers_out, wheel[start : end + 1])
+
+            async def aclose(self) -> None:
+                return None
+
+        transport = GatedTransport()
+        owner = asyncio.create_task(
+            read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        )
+        await owner_suffix_started.wait()
+        waiter = asyncio.create_task(
+            read_wheel_metadata_over_range(transport, url_b, _NAME, memo)  # type: ignore[arg-type]
+        )
+        await asyncio.sleep(0)
+        release_owner_suffix.set()
+        waiter_result = await waiter
+        waiter_done.set()
+        return await owner, waiter_result
+
+    owner_result, waiter_result = asyncio.run(asyncio.wait_for(run(), timeout=5))
+    assert owner_result.text == _META.decode("utf-8")
+    assert waiter_result.text == _META.decode("utf-8")
 
 
 def test_sparse_file_seek_and_read() -> None:

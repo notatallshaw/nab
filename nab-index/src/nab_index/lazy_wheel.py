@@ -7,10 +7,13 @@ capability once per run through a shared :class:`RangeCapabilityMemo`, and
 navigates the ZIP with the standard library's :class:`zipfile.ZipFile` over a
 sparse buffer so no EOCD scan, deflate, or CRC logic is hand-rolled.
 
-The one exception raised outward is
-:class:`~nab_index.client.MalformedSimpleResponseError`, and only for METADATA
-bytes that are not valid UTF-8. Every other failure to obtain metadata returns
-a result whose ``text`` is ``None``.
+Two kinds of exception travel outward: a
+:class:`~nab_index.client.MalformedSimpleResponseError` for METADATA bytes
+that are not valid UTF-8, and the transport's error when the wheel URL itself
+cannot be served (a 404 on the file, a failing plain GET).  A server that
+merely refuses the Range mechanism is stepped down instead, from a suffix
+range to absolute ranges to a plain full-body GET.  Every other failure to
+obtain metadata returns a result whose ``text`` is ``None``.
 """
 
 from __future__ import annotations
@@ -22,7 +25,6 @@ import io
 import os
 import re
 import zipfile
-import zlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -51,8 +53,12 @@ _MAX_TAIL = 1024 * 1024
 
 _HTTP_OK = 200
 _HTTP_PARTIAL = 206
-# The suffix form is unusable on these; downgrade to absolute ranges.
-_SUFFIX_REJECT_STATUSES = frozenset({400, 416, 501})
+_HTTP_RANGE_NOT_SATISFIABLE = 416
+# Statuses a server uses to refuse the Range mechanism itself (416 for an
+# unsatisfiable range, 501 for an unimplemented one, 400 from strict parsers,
+# 403 from request filters).  None of them proves the file is unserveable, so
+# a refusal steps down to the next request shape rather than failing the read.
+_RANGE_REJECT_STATUSES = frozenset({400, 403, _HTTP_RANGE_NOT_SATISFIABLE, 501})
 
 _CONTENT_RANGE_RE = re.compile(r"bytes\s+(\d+)-(\d+)/(\d+)")
 
@@ -75,7 +81,17 @@ class RangeMetadataResult:
 
 
 class RangeCapability(enum.Enum):
-    """A netloc's learned range behaviour, monotonic toward more restrictive."""
+    """The request shape to lead with on a netloc, monotonic toward more restrictive.
+
+    ``SUFFIX_OK`` is optimistic: a host that volunteers a 200 full body for a
+    suffix range stays ``SUFFIX_OK``, since leading with the suffix form again
+    costs the same single request while a proxy that only ignores ranges while
+    filling its cache gets to serve cheap partial reads again.
+    ``FULL_BODY_ONLY`` is for hosts that refused or ignored ranges once the
+    suffix form was already unusable; their wheels are fetched whole.  A 416
+    never latches it: an unsatisfiable range speaks for the one file, not the
+    netloc.
+    """
 
     UNKNOWN = "unknown"
     SUFFIX_OK = "suffix-ok"
@@ -91,6 +107,10 @@ class RangeCapabilityMemo:
     needs no lock. Discovery of an ``UNKNOWN`` host is kept to one probe
     under a burst by an :class:`asyncio.Event` per netloc: the first task
     probes while later tasks await the event, then read the settled state.
+    The owner releases the probe as soon as the capability settles, so
+    waiters overlap with its remaining growth and member reads.  An owner
+    whose acquisition fails settles nothing; its released waiters then probe
+    for themselves.
     """
 
     def __init__(self) -> None:
@@ -235,6 +255,18 @@ _UNSUPPORTED_NONE: tuple[RangeCapability, _AcqKind, object] = (
 )
 
 
+class _RangeRefusedError(Exception):
+    """A growth or member range was refused after the tail had been honoured."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__(f"range refused with HTTP {status}")
+        self.status = status
+
+
+class _UnreadableWheelError(Exception):
+    """The zip machinery cannot read the fetched bytes as an archive at all."""
+
+
 def _non_identity(response: HttpResponse) -> bool:
     """Return whether the response carries a non-identity Content-Encoding."""
     encoding = response.headers.get("content-encoding")
@@ -263,7 +295,12 @@ async def _range_get(
 async def _suffix_attempt(
     transport: AsyncHttpTransport, url: str, tail_size: int
 ) -> _SuffixOutcome:
-    """Try a suffix range, classifying the server's answer."""
+    """Try a suffix range, classifying the server's answer.
+
+    A 206 whose Content-Range is absent, unparseable, or of unknown length
+    (``bytes a-b/*``) gives no offset to anchor the returned bytes, so it
+    steps down to absolute ranges rather than guessing what the body is.
+    """
     response = await _range_get(transport, url, f"bytes=-{tail_size}")
     status = response.status_code
     if status == _HTTP_OK and not _non_identity(response):
@@ -272,12 +309,12 @@ async def _suffix_attempt(
         body = response.content
         parsed = _parse_content_range(response.headers.get("content-range"))
         if parsed is None:
-            return _SuffixOutcome("full", body=body)
+            return _SuffixOutcome("downgrade")
         start, end, total = parsed
         if end == total - 1 and end - start + 1 == len(body):
             return _SuffixOutcome("suffix", total=total, low=start, body=body)
         return _SuffixOutcome("downgrade")
-    if status not in _SUFFIX_REJECT_STATUSES and status not in (
+    if status not in _RANGE_REJECT_STATUSES and status not in (
         _HTTP_OK,
         _HTTP_PARTIAL,
     ):
@@ -288,17 +325,26 @@ async def _suffix_attempt(
 async def _absolute_attempt(
     transport: AsyncHttpTransport, url: str, tail_size: int
 ) -> tuple[RangeCapability, _AcqKind, object]:
-    """Learn the length with ``bytes=0-0``, then read the tail absolutely."""
+    """Learn the length with ``bytes=0-0``, then read the tail absolutely.
+
+    A refused probe steps down to the plain GET: the refusal is aimed at the
+    Range header, not the file, so only the plain GET's answer is
+    authoritative for whether the wheel can be served at all.
+    """
     probe = await _range_get(transport, url, "bytes=0-0")
+    if probe.status_code in _RANGE_REJECT_STATUSES:
+        return await _fallback_full_body(transport, url, probe.status_code)
     if _non_identity(probe):
         return _UNSUPPORTED_NONE
     if probe.status_code == _HTTP_OK:
         return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, probe.content)
     if probe.status_code != _HTTP_PARTIAL:
         probe.raise_for_status()
-        return _UNSUPPORTED_NONE  # pragma: no cover
+        return _UNSUPPORTED_NONE
     parsed = _parse_content_range(probe.headers.get("content-range"))
-    if parsed is None:
+    if parsed is None or parsed[2] == 0:
+        # A zero total has no tail to ask for, and would put the malformed
+        # range "bytes=0--1" on the wire.
         return _UNSUPPORTED_NONE
     return await _absolute_tail(transport, url, parsed[2], tail_size)
 
@@ -306,38 +352,60 @@ async def _absolute_attempt(
 async def _absolute_tail(
     transport: AsyncHttpTransport, url: str, total: int, tail_size: int
 ) -> tuple[RangeCapability, _AcqKind, object]:
-    """Read the tail window with an absolute range once the length is known."""
+    """Read the tail window with an absolute range once the length is known.
+
+    A tail refused after an honoured probe still steps down to the plain GET,
+    since a shrunk file or a flaky proxy can 416 a range the probe implied.
+    """
     low = max(0, total - tail_size)
     tail = await _range_get(transport, url, f"bytes={low}-{total - 1}")
+    if tail.status_code in _RANGE_REJECT_STATUSES:
+        return await _fallback_full_body(transport, url, tail.status_code)
     if _non_identity(tail):
         return _UNSUPPORTED_NONE
     if tail.status_code == _HTTP_OK:
         return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, tail.content)
     if tail.status_code != _HTTP_PARTIAL:
         tail.raise_for_status()
-        return _UNSUPPORTED_NONE  # pragma: no cover
+        return _UNSUPPORTED_NONE
     sparse = _SparseFile(total)
     sparse.add_span(low, tail.content)
     return (RangeCapability.ABSOLUTE_ONLY, _AcqKind.SPARSE, (sparse, low))
 
 
-async def _full_body_fetch(
-    transport: AsyncHttpTransport, url: str
-) -> tuple[RangeCapability, _AcqKind, object]:
-    """Fetch the whole wheel from a host known to ignore ranges.
+async def _full_body_fetch(transport: AsyncHttpTransport, url: str) -> bytes | None:
+    """Fetch the whole wheel with a plain GET, leaving the Range mechanism out.
 
-    A range-ignoring host answered an earlier probe with the full body, so it
-    is memoed ``FULL_BODY_ONLY``.  Later wheels on that host skip the wasted
-    range probe and fetch the body directly with a plain GET, so every
-    sidecar-less wheel there recovers its METADATA rather than only the first.
-    A 4xx/5xx (the file went missing) raises through and drops the candidate; a
-    non-identity encoding yields no usable bytes.
+    Reached for a netloc memoed ``FULL_BODY_ONLY`` and as the last step down
+    after a refused range: the file may still be served without the Range
+    header, and this GET is the authoritative check.  A 4xx/5xx here raises
+    through and fails the resolve, since the listing advertised a file the
+    index cannot serve; a non-identity encoding returns ``None``, no usable
+    bytes.
     """
     response = await transport.get(url, headers={"Accept-Encoding": "identity"})
     if response.status_code == _HTTP_OK and not _non_identity(response):
-        return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, response.content)
+        return response.content
     response.raise_for_status()
-    return _UNSUPPORTED_NONE
+    return None
+
+
+async def _fallback_full_body(
+    transport: AsyncHttpTransport, url: str, status: int
+) -> tuple[RangeCapability, _AcqKind, object]:
+    """Step a refused range down to the plain GET, choosing what it teaches.
+
+    A refusal aimed at the Range mechanism latches the netloc
+    ``FULL_BODY_ONLY``, so later wheels on the host skip the refused probes.
+    A 416 speaks for the one file (empty, or shrunk since the listing), so it
+    teaches the memo nothing and later wheels probe ranges again.
+    """
+    body = await _full_body_fetch(transport, url)
+    if body is None:
+        return _UNSUPPORTED_NONE
+    if status == _HTTP_RANGE_NOT_SATISFIABLE:
+        return (RangeCapability.UNKNOWN, _AcqKind.FULL_BODY, body)
+    return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, body)
 
 
 async def _acquire(
@@ -350,7 +418,10 @@ async def _acquire(
     if capability is RangeCapability.UNSUPPORTED:
         return _UNSUPPORTED_NONE
     if capability is RangeCapability.FULL_BODY_ONLY:
-        return await _full_body_fetch(transport, url)
+        body = await _full_body_fetch(transport, url)
+        if body is None:
+            return _UNSUPPORTED_NONE
+        return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, body)
     if capability in (RangeCapability.UNKNOWN, RangeCapability.SUFFIX_OK):
         suffix = await _suffix_attempt(transport, url, tail_size)
         if suffix.kind == "suffix":
@@ -358,7 +429,8 @@ async def _acquire(
             sparse.add_span(suffix.low, suffix.body)
             return (RangeCapability.SUFFIX_OK, _AcqKind.SPARSE, (sparse, suffix.low))
         if suffix.kind == "full":
-            return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, suffix.body)
+            # Not latched to FULL_BODY_ONLY: see RangeCapability.
+            return (RangeCapability.SUFFIX_OK, _AcqKind.FULL_BODY, suffix.body)
     return await _absolute_attempt(transport, url, tail_size)
 
 
@@ -368,14 +440,18 @@ def _absorb_range(
     """Absorb a growth or member range response into ``sparse``.
 
     Returns the low offset at which bytes were populated, or ``None`` when the
-    response yielded no usable bytes.  A volunteered 200 full body populates the
-    whole file from offset 0 and is used rather than discarded.  A 4xx/5xx on
-    the wheel URL raises through so the candidate drops, matching the first
-    round trip; a non-identity encoding yields no usable bytes.
+    response yielded no usable bytes.  A volunteered 200 full body populates
+    the whole file from offset 0 and is used rather than discarded.  A range
+    refused mid-read raises :class:`_RangeRefusedError` so the reader can step
+    down to the plain GET.  Any other 4xx/5xx on the wheel URL raises through
+    and fails the resolve, matching the first round trip; a non-identity
+    encoding yields no usable bytes.
     """
     if response.status_code == _HTTP_OK and not _non_identity(response):
         sparse.add_span(0, response.content)
         return 0
+    if response.status_code in _RANGE_REJECT_STATUSES:
+        raise _RangeRefusedError(response.status_code)
     if response.status_code != _HTTP_PARTIAL or _non_identity(response):
         response.raise_for_status()
         return None
@@ -384,11 +460,20 @@ def _absorb_range(
 
 
 def _try_open(sparse: _SparseFile) -> zipfile.ZipFile | None:
-    """Open a ZipFile over the current spans, or ``None`` if more bytes are needed."""
+    """Open a ZipFile over the current spans, or ``None`` if more bytes are needed.
+
+    A window with a gap always reads as a truncated directory, which is
+    :class:`zipfile.BadZipFile`, the grow signal.  Anything else the zip
+    machinery raises comes from the archive's own bytes (an undecodable
+    member name, offsets outside the file), so it marks the wheel unreadable
+    rather than the window short.
+    """
     try:
         return zipfile.ZipFile(sparse)
     except zipfile.BadZipFile:
         return None
+    except Exception as exc:
+        raise _UnreadableWheelError from exc
 
 
 async def _open_zip(
@@ -435,15 +520,22 @@ async def _read_sparse(
     tail_low: int,
     canonical_name: NormalizedName,
 ) -> bytes | None:
-    """Read the METADATA member out of the sparse buffer, or ``None``."""
-    zip_file = await _open_zip(transport, url, sparse, tail_low)
-    if zip_file is None:
-        return None
+    """Read the METADATA member out of the sparse buffer, or ``None``.
+
+    Only :class:`_RangeRefusedError` and the transport's errors travel out of
+    the growth and member requests; every way the zip machinery can choke on
+    the fetched bytes reads back as ``None``.
+    """
     try:
-        member = wheel_metadata_member(zip_file.namelist(), canonical_name)
-    except UnsupportedWheelError:
+        zip_file = await _open_zip(transport, url, sparse, tail_low)
+        member = (
+            None
+            if zip_file is None
+            else wheel_metadata_member(zip_file.namelist(), canonical_name)
+        )
+    except (_UnreadableWheelError, UnsupportedWheelError):
         return None
-    if member is None:
+    if zip_file is None or member is None:
         return None
     start, end = _member_span(zip_file, member)
     if not sparse.populated(start, end):
@@ -452,7 +544,10 @@ async def _read_sparse(
             return None
     try:
         return zip_file.read(member)
-    except (zipfile.BadZipFile, zlib.error, OSError):
+    except Exception:  # noqa: BLE001 - untrusted archive bytes
+        # Encrypted members, unknown compression methods, and corrupt streams
+        # surface as several exception types; all mean the member is
+        # unrecoverable from this artifact, never that the resolver is broken.
         return None
 
 
@@ -464,7 +559,11 @@ def _read_full_body(body: bytes, canonical_name: NormalizedName) -> bytes | None
         if member is None:
             return None
         return zip_file.read(member)
-    except (zipfile.BadZipFile, zlib.error, OSError, UnsupportedWheelError):
+    except Exception:  # noqa: BLE001 - untrusted archive bytes
+        # The zip machinery raises several exception types over bytes that are
+        # not a readable wheel (including the resolver's own
+        # UnsupportedWheelError); all of them mean this artifact has no
+        # recoverable METADATA.
         return None
 
 
@@ -489,8 +588,9 @@ async def read_wheel_metadata_over_range(
 
     Raises :class:`~nab_index.client.MalformedSimpleResponseError` only when
     the recovered METADATA is not valid UTF-8, and re-raises a transport
-    error for a 4xx/5xx on the wheel URL. Every other failure to obtain
-    metadata returns a result with ``text=None``.
+    error when the wheel URL itself cannot be served (a 404, a failing plain
+    GET).  A refused Range mechanism is stepped down, not raised.  Every
+    other failure to obtain metadata returns a result with ``text=None``.
     """
     netloc = urlsplit(wheel_url).netloc
     owns_probe = False
@@ -501,23 +601,40 @@ async def read_wheel_metadata_over_range(
         new_capability, kind, payload = await _acquire(
             transport, wheel_url, capability, tail_size
         )
-        memo.record(netloc, new_capability)
-        if kind is _AcqKind.NONE:
-            return RangeMetadataResult(None, RangeOutcome.UNSUPPORTED)
-        if kind is _AcqKind.FULL_BODY:
-            assert isinstance(payload, bytes)
-            raw = _read_full_body(payload, canonical_name)
-            outcome = RangeOutcome.FULL_BODY
-        else:
-            assert isinstance(payload, tuple)
-            sparse, tail_low = payload
+        if new_capability is not RangeCapability.UNKNOWN:
+            # A 416-driven fallback returns UNKNOWN: it taught nothing about
+            # the netloc and must not erase a learned capability.
+            memo.record(netloc, new_capability)
+    finally:
+        # Settled (or failed): waiters re-read the memo, so the growth and
+        # member reads below need not keep them parked.
+        if owns_probe:
+            memo.finish_probe(netloc)
+    if kind is _AcqKind.NONE:
+        return RangeMetadataResult(None, RangeOutcome.UNSUPPORTED)
+    if kind is _AcqKind.FULL_BODY:
+        assert isinstance(payload, bytes)
+        raw = _read_full_body(payload, canonical_name)
+        outcome = RangeOutcome.FULL_BODY
+    else:
+        assert isinstance(payload, tuple)
+        sparse, tail_low = payload
+        try:
             raw = await _read_sparse(
                 transport, wheel_url, sparse, tail_low, canonical_name
             )
             outcome = RangeOutcome.PARTIAL
-        if raw is None:
-            return RangeMetadataResult(None, RangeOutcome.MISSING)
-        return RangeMetadataResult(_decode(raw), outcome)
-    finally:
-        if owns_probe:
-            memo.finish_probe(netloc)
+        except _RangeRefusedError as refusal:
+            # A growth or member range refused after an honoured tail: step
+            # down to the plain GET like the acquisition path, teaching the
+            # memo only when the refusal was aimed at the mechanism.
+            body = await _full_body_fetch(transport, wheel_url)
+            if body is None:
+                return RangeMetadataResult(None, RangeOutcome.MISSING)
+            if refusal.status != _HTTP_RANGE_NOT_SATISFIABLE:
+                memo.record(netloc, RangeCapability.FULL_BODY_ONLY)
+            raw = _read_full_body(body, canonical_name)
+            outcome = RangeOutcome.FULL_BODY
+    if raw is None:
+        return RangeMetadataResult(None, RangeOutcome.MISSING)
+    return RangeMetadataResult(_decode(raw), outcome)
