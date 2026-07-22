@@ -1294,6 +1294,13 @@ class Provider:
         their pre-probe values.  A failed-resolve attribution probe therefore
         cannot alter a later decision.
 
+        The one exception is ``package``'s own no-versions reason.  When the
+        un-narrowed range yields no version because a transitive conflict
+        rejected every candidate, this probe is the only pass that names the
+        blocker, so its reason is kept rather than rolled back to the generic
+        no-match the constraint-narrowed pass recorded.  The reason map only
+        labels a ``NO_VERSIONS`` clause, so keeping it cannot alter a decision.
+
         The probe also suppresses both look-ahead shortcuts, which could
         otherwise report a version the decided blocker rejects: it hides the
         abort markers (so neither a fresh abort nor a recorded skip fires) and
@@ -1332,7 +1339,12 @@ class Provider:
             self.consume_force_backtrack_targets()
             self._lookahead_aborted = saved_aborted
             self._force_backtrack_counts = saved_counts
+
+            # Restore the snapshot but keep the probe's own blocker reason.
+            probed_reason = self._no_versions_reasons.get(package)
             self._no_versions_reasons = saved_reasons
+            if probed_reason is not None:
+                self._no_versions_reasons[package] = probed_reason
 
     def _try_abort_skip(self, normalized: str, first: Version) -> Version | None:
         """Return the first candidate when a prior abort is still valid.
