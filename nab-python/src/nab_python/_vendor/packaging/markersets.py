@@ -286,6 +286,28 @@ class MarkerSet:
         """
         return _markersets.witness(self._tree, _MAX_CELLS)
 
+    # ---- simplification
+
+    @_bounded
+    def simplify(self, *, within: MarkerSet) -> MarkerSet:
+        """Return the smallest set equivalent to this one on every point of ``within``.
+
+        ``within`` is the universe the result must agree with this set over: pass
+        the union of a lock's declared environments for universe-aware
+        simplification, or :meth:`full` for a context-free factoring.
+
+        :raises ValueError: if ``within`` is the empty set, which makes every set
+            vacuously equivalent.
+        :raises IntractableMarkerSet: if deciding a removal exceeds the internal
+            cell budget, or the marker nests past the stack.
+        """
+        if within.is_empty():
+            msg = "within must not be the empty set"
+            raise ValueError(msg)
+        return self._wrap(
+            _markersets.simplify_within(self._tree, within._tree, _MAX_CELLS)
+        )
+
     # ---- serialisation
 
     @_bounded

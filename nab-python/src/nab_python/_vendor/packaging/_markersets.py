@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 import sys
 from itertools import pairwise, product
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from ._parser import Op, Variable, parse_marker
 from ._tokenizer import ParserSyntaxError
@@ -1390,3 +1390,134 @@ def describe(node: Formula) -> str:
         return serialize(to_nnf(node))
     except UnserializableMarkerSet:
         return "unrepresentable"
+
+
+# ------------------------------------------------------------------- simplify
+
+
+def _atom_key(atom: Atom) -> tuple[str, str, str, bool, bool, str, str, bool]:
+    """A total order over atoms, for a deterministic factored serialisation."""
+    return (
+        atom.origin,
+        atom.op,
+        atom.literal,
+        atom.swapped,
+        atom.positive,
+        atom.kind,
+        atom.variable,
+        atom.derive_mm,
+    )
+
+
+def _clause_key(clause: frozenset[Atom]) -> tuple:
+    return tuple(_atom_key(atom) for atom in sorted(clause, key=_atom_key))
+
+
+def _to_clauses(node: Formula) -> list[frozenset[Atom]]:
+    """Distribute an NNF tree into a disjunction of atom-set clauses (DNF)."""
+    if isinstance(node, BoolConst):
+        return [frozenset()] if node.value else []
+    if isinstance(node, AtomLeaf):
+        return [frozenset((node.atom,))]
+    if isinstance(node, OrNode):
+        clauses: list[frozenset[Atom]] = []
+        for child in node.children:
+            clauses.extend(_to_clauses(child))
+        return clauses
+    and_node = cast("AndNode", node)
+    product: list[frozenset[Atom]] = [frozenset()]
+    for child in and_node.children:
+        child_clauses = _to_clauses(child)
+        product = [left | right for left in product for right in child_clauses]
+    return product
+
+
+def _clause_formula(clause: Iterable[Atom]) -> Formula:
+    return make_and(AtomLeaf(atom) for atom in clause)
+
+
+def _disjunction(clauses: Iterable[frozenset[Atom]]) -> Formula:
+    return make_or(_clause_formula(clause) for clause in clauses)
+
+
+def _equivalent_within(
+    left: Formula, right: Formula, universe: Formula, max_cells: int
+) -> bool:
+    """Whether two trees denote the same set on every point of ``universe``."""
+    return is_empty(
+        make_and((left, universe, make_not(right))), max_cells
+    ) and is_empty(make_and((right, universe, make_not(left))), max_cells)
+
+
+def _dedupe(clauses: list[frozenset[Atom]]) -> list[frozenset[Atom]]:
+    seen: set[frozenset[Atom]] = set()
+    out: list[frozenset[Atom]] = []
+    for clause in clauses:
+        if clause not in seen:
+            seen.add(clause)
+            out.append(clause)
+    return out
+
+
+def _drop_clauses(
+    clauses: list[frozenset[Atom]],
+    original: Formula,
+    universe: Formula,
+    max_cells: int,
+) -> list[frozenset[Atom]]:
+    kept = list(clauses)
+    for clause in sorted(clauses, key=_clause_key):
+        trial = [other for other in kept if other != clause]
+        if _equivalent_within(_disjunction(trial), original, universe, max_cells):
+            kept = trial
+    return kept
+
+
+def _drop_atoms(
+    clauses: list[frozenset[Atom]],
+    original: Formula,
+    universe: Formula,
+    max_cells: int,
+) -> list[frozenset[Atom]]:
+    working = [set(clause) for clause in clauses]
+    for clause in working:
+        for atom in sorted(clause, key=_atom_key):
+            clause.discard(atom)
+            trial = _disjunction(frozenset(current) for current in working)
+            if not _equivalent_within(trial, original, universe, max_cells):
+                clause.add(atom)
+    return [frozenset(clause) for clause in working]
+
+
+def _canonical(clauses: list[frozenset[Atom]]) -> tuple:
+    return tuple(sorted(_clause_key(clause) for clause in clauses))
+
+
+def simplify_within(node: Formula, universe: Formula, max_cells: int) -> Formula:
+    """Return the smallest tree equivalent to ``node`` on every point of ``universe``.
+
+    Greedy: drop each clause, then each atom, whose removal preserves
+    within-universe equivalence, to a fixpoint, then factor the atoms common to
+    every surviving clause into a leading conjunction. A universe of ``TRUE``
+    reduces it to a context-free factoring, and a total atom order fixes the
+    output.
+    """
+    nnf = node if isinstance(node, BoolConst) else to_nnf(node)
+    clauses = _dedupe(_to_clauses(nnf))
+    original = _disjunction(clauses)
+    while True:
+        before = _canonical(clauses)
+        clauses = _drop_clauses(clauses, original, universe, max_cells)
+        clauses = _dedupe(_drop_atoms(clauses, original, universe, max_cells))
+        if _canonical(clauses) == before:
+            break
+    if not clauses:
+        return FALSE
+    clauses = sorted(clauses, key=_clause_key)
+    common = frozenset.intersection(*clauses)
+    residual = sorted((clause - common for clause in clauses), key=_clause_key)
+    lead = [AtomLeaf(atom) for atom in sorted(common, key=_atom_key)]
+    inner = make_or(
+        _clause_formula(sorted(clause, key=_atom_key)) for clause in residual
+    )
+    return make_and([*lead, inner])
