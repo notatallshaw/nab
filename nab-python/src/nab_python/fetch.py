@@ -1219,14 +1219,16 @@ class FetchCoordinator:
         # Auto-prefetch metadata for the newest candidates (files are
         # oldest-first). One wheel per version: the first with a sidecar is the
         # one the provider picks for that version's metadata.
-        first_wheel: dict[str, tuple[WheelFile, str]] = {}
+        first_wheel: dict[str, WheelFile] = {}
         for f in files:
-            if isinstance(f, WheelFile) and (url := f.metadata_url) is not None:
-                first_wheel.setdefault(f.version, (f, url))
+            if isinstance(f, WheelFile) and f.has_metadata:
+                first_wheel.setdefault(f.version, f)
 
         newest = list(first_wheel.values())[-self.PREFETCH_METADATA_COUNT :]
-        for w, metadata_url in newest:
-            self.request_metadata(req.package, w.version, metadata_url, w.metadata_hash)
+        for w in newest:
+            url = w.metadata_url
+            assert url is not None
+            self.request_metadata(req.package, w.version, url, w.metadata_hash)
 
     def _record_serving_index(
         self,
