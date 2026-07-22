@@ -37,7 +37,7 @@ from nab_python._build.env import (
 )
 from nab_python._build.runner import BuildBackendError, run_build_backend
 from nab_python.config import NabProjectConfig
-from nab_python.download import DownloadResult
+from nab_python.download import DownloadError, DownloadResult
 from nab_python.lockfile import LockInput
 from nab_resolver.resolver import ResolutionError
 
@@ -1039,6 +1039,47 @@ class TestResolveAndDownload:
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
         with pytest.raises(BuildEnvError, match="build env resolve"):
+            env._resolve_and_download(wheel_dir)
+
+    def test_download_error_wrapped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A DownloadError fetching a build-dep wheel is wrapped as
+        BuildEnvError, so the outer resolve skips the unbuildable sdist
+        instead of aborting on the raw DownloadError.
+        """
+        from nab_python.lockfile import TargetLock
+        from nab_python.resolve import ResolveResult, TargetResult
+        from nab_python.target import ResolveTarget
+
+        env = NabBuildEnv(requires=["foo"], config=NabProjectConfig())
+        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
+        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
+        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        target = ResolveTarget.for_host()
+        fake_result = ResolveResult(
+            targets=(target,),
+            target_results=[
+                TargetResult(
+                    target=target,
+                    success=True,
+                    pins={},
+                    lock=TargetLock(target=target, pins={}),
+                )
+            ],
+        )
+        monkeypatch.setattr(
+            "nab_python.resolve.resolve_for_targets", lambda *_a, **_k: fake_result
+        )
+
+        def _boom(*_a: object, **_k: object) -> DownloadResult:
+            msg = "foo==1.0: failed to fetch foo-1.0-py3-none-any.whl: GET x 404"
+            raise DownloadError(msg)
+
+        monkeypatch.setattr("nab_python._build.env.download_lock", _boom)
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        with pytest.raises(BuildEnvError, match="build env download"):
             env._resolve_and_download(wheel_dir)
 
 
