@@ -234,7 +234,9 @@ whose pinned version is identical across every target appear once with
 no marker; packages that diverge appear as multiple `Package` entries
 with PEP 508 markers built from each target's `python_version`,
 `sys_platform` and `platform_machine`, plus `implementation_name` on
-the same terms as the `environments` declarations above.
+the same terms as the `environments` declarations above. Each such
+marker is emitted in its shortest form equivalent over the lock's
+declared environments.
 
 `environments` carries a declaration per target, built the same way a
 single-environment lock builds its one: from the markers that target's
