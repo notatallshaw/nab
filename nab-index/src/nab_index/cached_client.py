@@ -39,6 +39,7 @@ from .lazy_wheel import (
     RangeOutcome,
     read_wheel_metadata_over_range,
 )
+from .parsed_listing import encode as _encode_parsed
 from .serialization import SimpleSerialization, simple_accept_header
 from .transport import IDENTITY_HEADERS, raise_unless_ok
 
@@ -386,6 +387,9 @@ class CachedAsyncSimpleClient:
                 ),
                 etag=_header(response, "etag") or policy.etag,
                 page_url=response.url,
+                # Body unchanged, so its digest carries forward and any parsed
+                # blob written for the old policy still binds; no reparse.
+                body_digest=policy.body_digest,
             )
             self._cache.refresh_simple_policy(package, new_policy)
             return self._parse_listing(body, package, response.url)
@@ -407,7 +411,8 @@ class CachedAsyncSimpleClient:
             etag=_header(response, "etag"),
             page_url=response.url,
         )
-        self._cache.put_simple(package, new_body, new_policy)
+        digest = self._cache.put_simple(package, new_body, new_policy)
+        self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
         return files
 
     async def _fetch_simple(self, package: str) -> list[WheelFile | SdistFile]:
@@ -429,7 +434,8 @@ class CachedAsyncSimpleClient:
             etag=_header(response, "etag"),
             page_url=response.url,
         )
-        self._cache.put_simple(package, body, policy)
+        digest = self._cache.put_simple(package, body, policy)
+        self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
         self._cache.drop_negative(package)
         return files
 

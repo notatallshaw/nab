@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import stat
 import subprocess
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -204,13 +206,17 @@ class TestOnDiskCache:
 
     def test_simple_round_trip(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
+        body = b'{"files": []}'
         policy = CachePolicy(fetched_at=1000, max_age=600, etag="abc")
-        cache.put_simple("foo", b'{"files": []}', policy)
+        cache.put_simple("foo", body, policy)
         result = cache.get_simple("foo")
         assert result is not None
-        body, got_policy = result
-        assert body == b'{"files": []}'
-        assert got_policy == policy
+        got_body, got_policy = result
+        assert got_body == body
+        # put_simple stamps the body digest into the stored policy.
+        assert got_policy == replace(
+            policy, body_digest=hashlib.sha256(body).hexdigest()
+        )
 
     def test_simple_layout_uses_pypi_dirname(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
@@ -471,7 +477,7 @@ class TestUnwritableRoot:
         """
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
         old_policy = CachePolicy(fetched_at=0, max_age=600, etag="E1")
-        cache.put_simple("foo", b"OLD-LISTING", old_policy)
+        old_digest = cache.put_simple("foo", b"OLD-LISTING", old_policy)
 
         def fail_body(path: Path, data: bytes) -> None:
             if path.suffix == ".json":
@@ -485,7 +491,8 @@ class TestUnwritableRoot:
             CachePolicy(fetched_at=int(time.time()), max_age=600, etag="E2"),
         )
 
-        assert cache.get_simple("foo") == (b"OLD-LISTING", old_policy)
+        stored = replace(old_policy, body_digest=old_digest)
+        assert cache.get_simple("foo") == (b"OLD-LISTING", stored)
 
     def test_bad_key_still_raises(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
@@ -499,9 +506,10 @@ class TestNullCache:
         assert cache.get_simple("foo") is None
         assert cache.get_metadata("foo", METADATA_URLS[0]) is None
         assert cache.get_sdist_files("foo", "1.0") is None
-        # Puts must be no-ops with no return value.
+        # Puts store nothing; put_simple still returns the body digest so a
+        # caller building a parsed blob gets the same key a real backend gives.
         policy = CachePolicy(fetched_at=0, max_age=0, etag=None)
-        assert cache.put_simple("foo", b"", policy) is None
+        assert cache.put_simple("foo", b"", policy) == hashlib.sha256(b"").hexdigest()
         assert cache.refresh_simple_policy("foo", policy) is None
         assert cache.put_metadata("foo", METADATA_URLS[0], "x") is None
         assert cache.put_sdist_files("foo", "1.0", "x", None) is None
