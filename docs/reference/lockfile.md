@@ -83,9 +83,13 @@ size = 286433
 ### Supported keys
 
 * The top-level keys (`lock-version`, `created-by`,
-  `requires-python`, `environments`, `extras`, `packages`).
-* The `[[packages]]` shape: `name`, `version`, optional `index`,
-  `sdist`, and `wheels`.
+  `requires-python`, `environments`, `extras`,
+  `dependency-groups`, `default-groups`, `packages`), plus a
+  `[tool.nab]` table of informational provenance.
+* The `[[packages]]` shape: `name`, `version`, and optional
+  `marker`, `requires-python`, `dependencies`, one source key
+  (`index`, `directory`, `vcs`, or `archive`), and for an index
+  source `sdist` and `wheels`.
 * `sha256`, `sha384`, and `sha512` digests on every recorded
   artefact. Whatever the index publishes is forwarded; nab
   requires at least one of the three so the lockfile is
