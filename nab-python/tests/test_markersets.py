@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import importlib.util
 from collections import defaultdict
+from functools import reduce
 from pathlib import Path
 
 import pytest
 
-from nab_python._vendor.packaging.markersets import MarkerSet
+from nab_python._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 
 _spec = importlib.util.spec_from_file_location(
     "simplify_corpus_fixtures",
@@ -144,6 +145,13 @@ def test_determinism_under_shuffled_input() -> None:
 def test_within_empty_raises() -> None:
     with pytest.raises(ValueError, match="empty set"):
         ms(SPAN).simplify(within=MarkerSet.empty())
+
+
+def test_non_dnf_product_overrun_raises() -> None:
+    terms = [ms(f'extra == "a{i}"') | ms(f'extra == "b{i}"') for i in range(25)]
+    conjunction = reduce(MarkerSet.intersection, terms)
+    with pytest.raises(IntractableMarkerSet):
+        conjunction.simplify(within=MarkerSet.full())
 
 
 def test_within_full_equals_context_free() -> None:

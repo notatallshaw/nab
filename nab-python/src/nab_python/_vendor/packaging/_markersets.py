@@ -1413,8 +1413,13 @@ def _clause_key(clause: frozenset[Atom]) -> tuple:
     return tuple(_atom_key(atom) for atom in sorted(clause, key=_atom_key))
 
 
-def _to_clauses(node: Formula) -> list[frozenset[Atom]]:
-    """Distribute an NNF tree into a disjunction of atom-set clauses (DNF)."""
+def _to_clauses(node: Formula, max_cells: int) -> list[frozenset[Atom]]:
+    """Distribute an NNF tree into a disjunction of atom-set clauses (DNF).
+
+    An AND of ORs expands multiplicatively, so the running clause count is
+    checked against ``max_cells`` and a pathological non-DNF input fails as
+    :class:`IntractableMarkerSet` rather than expanding unbounded.
+    """
     if isinstance(node, BoolConst):
         return [frozenset()] if node.value else []
     if isinstance(node, AtomLeaf):
@@ -1422,13 +1427,16 @@ def _to_clauses(node: Formula) -> list[frozenset[Atom]]:
     if isinstance(node, OrNode):
         clauses: list[frozenset[Atom]] = []
         for child in node.children:
-            clauses.extend(_to_clauses(child))
+            clauses.extend(_to_clauses(child, max_cells))
         return clauses
     and_node = cast("AndNode", node)
     product: list[frozenset[Atom]] = [frozenset()]
     for child in and_node.children:
-        child_clauses = _to_clauses(child)
+        child_clauses = _to_clauses(child, max_cells)
         product = [left | right for left in product for right in child_clauses]
+        if len(product) > max_cells:
+            msg = f"DNF clause count exceeds max_cells={max_cells}"
+            raise IntractableMarkerSet(msg)
     return product
 
 
@@ -1503,7 +1511,7 @@ def simplify_within(node: Formula, universe: Formula, max_cells: int) -> Formula
     context-free factoring. Determinism is fixed by a total atom order.
     """
     nnf = node if isinstance(node, BoolConst) else to_nnf(node)
-    clauses = _dedupe(_to_clauses(nnf))
+    clauses = _dedupe(_to_clauses(nnf, max_cells))
     original = _disjunction(clauses)
     while True:
         before = _canonical(clauses)
