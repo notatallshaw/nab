@@ -1,0 +1,376 @@
+"""Flow tests for the fast-fail tier in ``nab lock --locked``.
+
+Each case drives the real CLI with ``nab.cli.resolve_for_targets`` mocked
+and a committed pylock on disk.  Whether the resolver was called shows
+whether the tier fired: a disqualifier never calls it, a fall-through does.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from nab.cli import app
+from nab_python._vendor.packaging.version import Version
+from nab_python.lockfile import (
+    IndexPin,
+    SdistArtifact,
+    TargetLock,
+    WheelArtifact,
+)
+from nab_python.resolve import ResolveResult, TargetResult
+from nab_python.target import ResolveTarget
+
+V = Version
+
+
+def _index_pin(name: str, version: str) -> IndexPin:
+    return IndexPin(
+        name=name,
+        version=version,
+        index="pypi",
+        sdist=SdistArtifact(
+            filename=f"{name}-{version}.tar.gz",
+            url=f"https://example.com/{name}-{version}.tar.gz",
+            hashes=(("sha256", "b" * 64),),
+        ),
+        wheels=(
+            WheelArtifact(
+                filename=f"{name}-{version}-py3-none-any.whl",
+                url=f"https://example.com/{name}-{version}-py3-none-any.whl",
+                hashes=(("sha256", "a" * 64),),
+            ),
+        ),
+    )
+
+
+def _result(pins: dict[str, str]) -> ResolveResult:
+    target = ResolveTarget.for_host()
+    lock = TargetLock(
+        target=target,
+        pins={name: _index_pin(name, version) for name, version in pins.items()},
+    )
+    return ResolveResult(
+        targets=(target,),
+        target_results=[
+            TargetResult(
+                target=target,
+                success=True,
+                pins={name: V(version) for name, version in pins.items()},
+                lock=lock,
+            )
+        ],
+    )
+
+
+def _write_pyproject(tmp_path: Path, body: str) -> Path:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(body, encoding="utf-8")
+    return pyproject
+
+
+def _write_lock(pyproject: Path, out: Path, result: ResolveResult, *extra: str) -> None:
+    with patch("nab.cli.resolve_for_targets", return_value=result):
+        app.cli(args=["lock", str(pyproject), "--output", str(out), *extra], prog="nab")
+
+
+def _locked_mock(result: ResolveResult | None = None) -> MagicMock:
+    return MagicMock(
+        return_value=result if result is not None else _result({"foo": "1.0"})
+    )
+
+
+def _run_locked(pyproject: Path, out: Path, mock: MagicMock, *extra: str) -> None:
+    with patch("nab.cli.resolve_for_targets", mock):
+        app.cli(
+            args=["lock", str(pyproject), "--output", str(out), "--locked", *extra],
+            prog="nab",
+        )
+
+
+# --- fire cases: the resolver is never called ---
+
+
+def test_tightened_direct_specifier_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.5"}))
+    capsys.readouterr()
+    before = out.read_bytes()
+    pyproject.write_text('[project]\ndependencies = ["foo>=2.0"]\n', encoding="utf-8")
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "[project].dependencies requires foo>=2.0 but the lock pins foo 1.5" in err
+    assert "is out of date" in err
+    mock.assert_not_called()
+    assert out.read_bytes() == before
+
+
+def test_tightened_constraint_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "3.1"}))
+    capsys.readouterr()
+    pyproject.write_text(
+        '[project]\ndependencies = ["foo"]\n[tool.nab]\nconstraints = ["foo<3"]\n',
+        encoding="utf-8",
+    )
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert (
+        "the constraint foo<3 is violated by the pinned foo 3.1"
+        in capsys.readouterr().err
+    )
+    mock.assert_not_called()
+
+
+def test_changed_requires_python_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = ">=3.8"\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    pyproject.write_text(
+        '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = ">=3.9"\n',
+        encoding="utf-8",
+    )
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert (
+        "the lockfile requires-python >=3.8 does not match this run's >=3.9"
+        in capsys.readouterr().err
+    )
+    mock.assert_not_called()
+
+
+def test_selected_extra_specifier_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+        "[project.optional-dependencies]\n"
+        'dev = ["bar>=2"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(
+        pyproject, out, _result({"foo": "1.0", "bar": "1.0"}), "--extras", "dev"
+    )
+    capsys.readouterr()
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--extras", "dev")
+
+    assert exc.value.code == 1
+    assert "the 'dev' extra requires bar>=2 but the lock pins bar 1.0" in (
+        capsys.readouterr().err
+    )
+    mock.assert_not_called()
+
+
+def test_selected_group_specifier_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\ndependencies = ["foo"]\n[dependency-groups]\ntest = ["bar>=2"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(
+        pyproject, out, _result({"foo": "1.0", "bar": "1.0"}), "--groups", "test"
+    )
+    capsys.readouterr()
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--groups", "test")
+
+    assert exc.value.code == 1
+    assert "the 'test' dependency group requires bar>=2 but the lock pins bar 1.0" in (
+        capsys.readouterr().err
+    )
+    mock.assert_not_called()
+
+
+def test_missing_direct_requirement_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    pyproject.write_text('[project]\ndependencies = ["foo", "bar"]\n', encoding="utf-8")
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert (
+        "[project].dependencies requires bar and its marker applies here, but the"
+        " lock has no bar pin" in capsys.readouterr().err
+    )
+    mock.assert_not_called()
+
+
+# --- fall-through cases: the resolver is always called ---
+
+
+def test_satisfiable_and_reproducible_falls_through_up_to_date(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo>=1.0"]\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    before = out.read_bytes()
+
+    mock = _locked_mock(_result({"foo": "1.0"}))
+    _run_locked(pyproject, out, mock)
+
+    assert "is up to date" in capsys.readouterr().err
+    mock.assert_called_once()
+    assert out.read_bytes() == before
+
+
+def test_non_sticky_stale_falls_through_out_of_date(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo>=1.0"]\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+
+    mock = _locked_mock(_result({"foo": "2.0"}))
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert "out of date" in capsys.readouterr().err
+    mock.assert_called_once()
+
+
+def test_marker_inactive_absent_requirement_falls_through(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\ndependencies = ["foo", "bar; python_version < \\"2.0\\""]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+
+    mock = _locked_mock(_result({"foo": "1.0"}))
+    _run_locked(pyproject, out, mock)
+
+    assert "is up to date" in capsys.readouterr().err
+    mock.assert_called_once()
+
+
+def test_unreadable_requirement_falls_through(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    pyproject.write_text('[project]\ndependencies = ["foo (=="]\n', encoding="utf-8")
+
+    mock = _locked_mock(_result({"foo": "1.0"}))
+    _run_locked(pyproject, out, mock)
+
+    mock.assert_called_once()
+
+
+def test_requires_python_excludes_host_falls_through(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # requires-python that excludes the host cannot build a target, so
+    # validity is skipped and the resolve runs.
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = ">=99"\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+
+    mock = _locked_mock(_result({"foo": "1.0"}))
+    _run_locked(pyproject, out, mock)
+
+    mock.assert_called_once()
+
+
+# --- precondition cases: no resolve runs ---
+
+
+def test_missing_lock_precondition(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert "no lockfile" in capsys.readouterr().err
+    mock.assert_not_called()
+
+
+def test_invalid_toml_precondition(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+    out.write_text('lock-version = "1.0"\n<<<<<<< HEAD\n', encoding="utf-8")
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert "is not valid TOML" in capsys.readouterr().err
+    mock.assert_not_called()
+
+
+def test_non_pep751_precondition(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+    out.write_text('title = "not a pylock"\n', encoding="utf-8")
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert "not a valid PEP 751 lockfile" in capsys.readouterr().err
+    mock.assert_not_called()

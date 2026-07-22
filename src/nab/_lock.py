@@ -29,26 +29,42 @@ import tomli_w
 import tyro
 
 from nab._version import __version__
+from nab_python._vendor.packaging.pylock import Pylock, PylockValidationError
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
+    ConfigError,
     NabProjectConfig,
     ResolveMode,
+    plan_targets,
+    with_python_override,
 )
 from nab_python.lockfile import (
     ArchivePin,
     IndexPin,
+    LockDisqualification,
     LockInput,
     Provenance,
+    RootRequirement,
     TargetLock,
+    check_constraints,
+    check_direct_requirements,
+    check_envelope,
     is_valid_pylock_path,
     package_metadata_override_records,
     read_lockfile_anchor,
     read_lockfile_packages,
 )
 from nab_python.requirements_file import (
+    InvalidProjectRequirementError,
+    InvalidProjectTableError,
+    expand_extra_requirements,
+    read_pyproject_dependencies,
     read_pyproject_groups,
+    read_pyproject_name,
     read_pyproject_optional_dependencies,
+    resolve_groups_to_requirements,
 )
 
 from . import cli as _cli
@@ -212,6 +228,16 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
             " experimental and may change without notice"
         )
 
+    if locked:
+        _fast_fail_locked(
+            path,
+            config=config,
+            output=output,
+            python=python,
+            extras=selected_extras,
+            groups=selected_groups,
+        )
+
     transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
     result = _cli._resolve(  # noqa: SLF001
         path,
@@ -304,6 +330,153 @@ def _packages_only(text: str) -> str:
     return tomli_w.dumps(data)
 
 
+def _locked_target_path(output: Path | None) -> Path:
+    """Return the file ``--locked`` reads and re-renders against."""
+    return output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
+
+
+def _read_committed_pylock(target: Path) -> Pylock:
+    """Read and parse the committed pylock, exiting on a precondition failure.
+
+    A missing lock, a non-TOML file, and a file that parses as TOML but not
+    as a PEP 751 lock each exit non-zero here, before any resolve runs.
+    """
+    if not target.exists():
+        _cli.printer().error(
+            f"--locked: no lockfile at {target} to check; run `nab lock` first."
+        )
+        sys.exit(1)
+    try:
+        data = tomli.loads(target.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
+        _cli.printer().error(
+            f"--locked: lockfile {target} is not valid TOML: {e};"
+            " re-run `nab lock` to regenerate it."
+        )
+        sys.exit(1)
+    try:
+        return Pylock.from_dict(data)
+    except PylockValidationError as e:
+        _cli.printer().error(
+            f"--locked: lockfile {target} is not a valid PEP 751 lockfile: {e};"
+            " re-run `nab lock` to regenerate it."
+        )
+        sys.exit(1)
+
+
+def _fast_fail_locked(
+    path: Path,
+    *,
+    config: NabProjectConfig,
+    output: Path | None,
+    python: str | None,
+    extras: tuple[str, ...],
+    groups: tuple[str, ...],
+) -> None:
+    """Fast-fail ``nab lock --locked`` before any resolve when a mismatch is proven.
+
+    Reads and parses the committed lock (reporting a missing or malformed
+    lock), then runs the resolver-free envelope and validity checks.  On the
+    first disqualification it prints the reason and exits non-zero; otherwise
+    it returns and the full resolve runs.  The tier is a disqualifier only,
+    so a return never means "up to date": only the full re-resolve says that.
+    """
+    target = _locked_target_path(output)
+    committed = _read_committed_pylock(target)
+    disqualification = check_envelope(
+        committed,
+        requires_python=config.requires_python,
+        extras=extras,
+        dependency_groups=groups,
+        default_groups=config.default_groups,
+    )
+    if disqualification is None:
+        disqualification = _check_locked_validity(
+            path, config, committed, python=python, extras=extras, groups=groups
+        )
+    if disqualification is None:
+        return
+    _cli.printer().error(
+        f"--locked: lockfile {target} is out of date: {disqualification.reason};"
+        " re-run `nab lock` to update it."
+    )
+    sys.exit(1)
+
+
+def _check_locked_validity(
+    path: Path,
+    config: NabProjectConfig,
+    committed: Pylock,
+    *,
+    python: str | None,
+    extras: tuple[str, ...],
+    groups: tuple[str, ...],
+) -> LockDisqualification | None:
+    """Run the Family V validity checks against the committed lock.
+
+    Returns a disqualification for the first violated direct requirement or
+    constraint, or ``None`` to fall through.  Anything the tier cannot
+    assemble with certainty falls through rather than firing: a target the
+    declaration excludes (so a fresh resolve would fail for its own reason),
+    and a project whose requirements cannot be read (left for the full
+    resolve to report).
+    """
+    try:
+        target = plan_targets(with_python_override(config, python))[0]
+    except ConfigError:
+        return None
+    try:
+        roots = _active_root_requirements(path, extras=extras, groups=groups)
+    except (
+        KeyError,
+        InvalidProjectTableError,
+        InvalidProjectRequirementError,
+        LookupError,
+    ):
+        return None
+    direct = check_direct_requirements(committed, roots, marker_env=target.marker_env)
+    if direct is not None:
+        return direct
+    constraints = [Requirement(text) for text in config.constraints]
+    return check_constraints(committed, constraints, marker_env=target.marker_env)
+
+
+def _active_root_requirements(
+    path: Path,
+    *,
+    extras: tuple[str, ...],
+    groups: tuple[str, ...],
+) -> list[RootRequirement]:
+    """Collect this run's active direct requirements with their source clause.
+
+    Covers ``[project].dependencies`` plus the requirements each selected extra
+    and group contributes, each carrying the clause it came from so a
+    disqualification can name it.  Default groups are left to the full resolve.
+    """
+    roots = [
+        RootRequirement(requirement=req, source="[project].dependencies")
+        for req in read_pyproject_dependencies(path)
+    ]
+    if extras:
+        optional = read_pyproject_optional_dependencies(path)
+        project_name = read_pyproject_name(path)
+        for extra in extras:
+            roots.extend(
+                RootRequirement(requirement=req, source=f"the {extra!r} extra")
+                for req in expand_extra_requirements(optional, project_name, [extra])
+            )
+    if groups:
+        table = read_pyproject_groups(path)
+        for group in groups:
+            roots.extend(
+                RootRequirement(
+                    requirement=req, source=f"the {group!r} dependency group"
+                )
+                for req in resolve_groups_to_requirements(table, [group])
+            )
+    return roots
+
+
 def _check_locked(lock_input: LockInput, *, output: Path | None) -> None:
     """Verify the committed pylock matches a fresh resolve, writing nothing.
 
@@ -312,25 +485,13 @@ def _check_locked(lock_input: LockInput, *, output: Path | None) -> None:
     both, so only a real change to the locked packages fails.  The committed
     lock is never read back into the resolve.
     """
-    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
-    if not target.exists():
-        _cli.printer().error(
-            f"--locked: no lockfile at {target} to check; run `nab lock` first."
-        )
-        sys.exit(1)
+    target = _locked_target_path(output)
     try:
         new_text = _cli.render_lock(lock_input, lock_dir=target.parent)
     except _cli.MissingHashError as e:
         _cli.printer().error(f"cannot lock: {e}")
         sys.exit(1)
-    try:
-        committed = _packages_only(target.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
-        _cli.printer().error(
-            f"--locked: lockfile {target} is not valid TOML: {e};"
-            " re-run `nab lock` to regenerate it."
-        )
-        sys.exit(1)
+    committed = _packages_only(target.read_text(encoding="utf-8"))
     if _packages_only(new_text) == committed:
         _cli.printer().done(f"Lockfile {target} is up to date.")
         return
