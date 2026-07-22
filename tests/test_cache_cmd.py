@@ -92,6 +92,18 @@ class TestCacheVerify:
         assert captured.err == ""
         assert captured.out == ""
 
+    def test_does_not_read_through_symlinked_bucket(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "foo.policy").write_bytes(b"not json")
+        root = tmp_path / "cache"
+        root.mkdir()
+        (root / "simple-v0").symlink_to(outside, target_is_directory=True)
+        _run_cache(["verify", "--cache-dir", str(root)])
+        assert capsys.readouterr().err == ""
+
     def test_refuses_file_root(self, tmp_path: Path) -> None:
         target = tmp_path / "file"
         target.write_text("x")
@@ -280,6 +292,16 @@ class TestIterCacheEntries:
         assert "bar.neg" in names
         assert "x.json" not in names
         assert "link.json" not in names
+
+    def test_skips_recognized_symlinked_bucket(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "leak.json").write_text("{}")
+        root = tmp_path / "cache"
+        root.mkdir()
+        (root / "simple-v0").symlink_to(outside, target_is_directory=True)
+        cache = OnDiskCache(root, "https://pypi.org/simple")
+        assert list(cache.iter_cache_entries()) == []
 
     def test_empty_root_yields_nothing(self, tmp_path: Path) -> None:
         cache = OnDiskCache(tmp_path / "gone", "https://pypi.org/simple")
