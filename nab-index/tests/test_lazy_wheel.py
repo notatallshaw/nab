@@ -129,7 +129,8 @@ class FakeRangeTransport:
         rng = headers.get("Range")
         enc = headers.get("Accept-Encoding")
         self.requests.append((rng, enc))
-        assert rng is not None
+        if rng is None:
+            return self._full()
         return self._respond(rng)
 
     async def aclose(self) -> None:
@@ -345,7 +346,10 @@ class _ScriptedTransport:
     ) -> _FakeResponse:
         await asyncio.sleep(0)
         headers = headers or {}
-        rng = headers["Range"]
+        rng = headers.get("Range")
+        if rng is None:
+            self.requests.append("full")
+            return self.script(self, "full", 0, 0)  # type: ignore[operator]
         self.requests.append(rng)
         kind, a, b = _parse_range(rng)
         return self.script(self, kind, a, b)  # type: ignore[operator]
@@ -490,11 +494,31 @@ def test_absolute_tail_error_raises() -> None:
         _run_scripted(script)
 
 
-def test_growth_non_206_is_missing() -> None:
+def test_growth_200_full_body_recovers() -> None:
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
         if kind == "suffix":
             return t.partial(max(0, t.total - a), t.total - 1)
         return t.full()
+
+    result = _run_scripted(script, wheel=build_wheel(padding=4000), tail_size=64)
+    assert result.text == _META.decode("utf-8")
+
+
+def test_growth_5xx_raises() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        return _FakeResponse(500, {}, b"")
+
+    with pytest.raises(HttpError):
+        _run_scripted(script, wheel=build_wheel(padding=4000), tail_size=64)
+
+
+def test_growth_gzip_full_body_is_missing() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        return t.full(gzip=True)
 
     result = _run_scripted(script, wheel=build_wheel(padding=4000), tail_size=64)
     assert result.outcome is RangeOutcome.MISSING
@@ -507,11 +531,31 @@ def test_member_fetch_success() -> None:
     assert result.text == _META.decode("utf-8")
 
 
-def test_member_fetch_non_206_is_missing() -> None:
+def test_member_fetch_5xx_raises() -> None:
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
         if kind == "suffix":
             return t.partial(max(0, t.total - a), t.total - 1)
         return _FakeResponse(500, {}, b"")
+
+    with pytest.raises(HttpError):
+        _run_scripted(script, wheel=build_wheel_member_front())
+
+
+def test_member_fetch_200_full_body_recovers() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        return t.full()
+
+    result = _run_scripted(script, wheel=build_wheel_member_front())
+    assert result.text == _META.decode("utf-8")
+
+
+def test_member_fetch_gzip_is_missing() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        return t.partial(a, b, gzip=True)
 
     result = _run_scripted(script, wheel=build_wheel_member_front())
     assert result.outcome is RangeOutcome.MISSING
@@ -552,18 +596,63 @@ def test_memo_absolute_only_skips_reprobe() -> None:
     assert negatives == 1
 
 
-def test_memo_unsupported_skips_all_requests() -> None:
-    async def run() -> int:
+def test_memo_full_body_only_refetches() -> None:
+    async def run() -> RangeMetadataResult:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("ignore_range_200", build_wheel())
-        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
-        assert memo.capability("files.example.org") is RangeCapability.UNSUPPORTED
-        first = len(transport.requests)
+        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        assert first.text == _META.decode("utf-8")
+        assert memo.capability("files.example.org") is RangeCapability.FULL_BODY_ONLY
+        # A second sidecar-less wheel on the same range-ignoring host still
+        # recovers its METADATA from a full-body GET, so resolvability does not
+        # depend on which wheel is fetched first.
+        return await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+
+    result = asyncio.run(run())
+    assert result.text == _META.decode("utf-8")
+    assert result.outcome is RangeOutcome.FULL_BODY
+
+
+def test_memo_gzip_stays_unsupported() -> None:
+    async def run() -> int:
+        memo = RangeCapabilityMemo()
+        transport = FakeRangeTransport("gzip_range", build_wheel())
         result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
         assert result.outcome is RangeOutcome.UNSUPPORTED
+        assert memo.capability("files.example.org") is RangeCapability.UNSUPPORTED
+        first = len(transport.requests)
+        again = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        assert again.outcome is RangeOutcome.UNSUPPORTED
         return len(transport.requests) - first
 
     assert asyncio.run(run()) == 0
+
+
+def _read_full_body_only(script: object) -> RangeMetadataResult:
+    """Read against a host already memoed ``FULL_BODY_ONLY`` (a plain GET)."""
+    memo = RangeCapabilityMemo()
+    memo.record("files.example.org", RangeCapability.FULL_BODY_ONLY)
+    transport = _ScriptedTransport(build_wheel(), script)
+    return asyncio.run(
+        read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+    )
+
+
+def test_full_body_only_gzip_is_unsupported() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        return t.full(gzip=True)
+
+    result = _read_full_body_only(script)
+    assert result.text is None
+    assert result.outcome is RangeOutcome.UNSUPPORTED
+
+
+def test_full_body_only_error_raises() -> None:
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        return _FakeResponse(500, {}, b"")
+
+    with pytest.raises(HttpError):
+        _read_full_body_only(script)
 
 
 def test_memo_concurrent_single_flight() -> None:

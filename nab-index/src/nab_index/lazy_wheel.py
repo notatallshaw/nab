@@ -80,6 +80,7 @@ class RangeCapability(enum.Enum):
     UNKNOWN = "unknown"
     SUFFIX_OK = "suffix-ok"
     ABSOLUTE_ONLY = "absolute-only"
+    FULL_BODY_ONLY = "full-body-only"
     UNSUPPORTED = "unsupported"
 
 
@@ -292,7 +293,7 @@ async def _absolute_attempt(
     if _non_identity(probe):
         return _UNSUPPORTED_NONE
     if probe.status_code == _HTTP_OK:
-        return (RangeCapability.UNSUPPORTED, _AcqKind.FULL_BODY, probe.content)
+        return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, probe.content)
     if probe.status_code != _HTTP_PARTIAL:
         probe.raise_for_status()
         return _UNSUPPORTED_NONE  # pragma: no cover
@@ -311,13 +312,32 @@ async def _absolute_tail(
     if _non_identity(tail):
         return _UNSUPPORTED_NONE
     if tail.status_code == _HTTP_OK:
-        return (RangeCapability.UNSUPPORTED, _AcqKind.FULL_BODY, tail.content)
+        return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, tail.content)
     if tail.status_code != _HTTP_PARTIAL:
         tail.raise_for_status()
         return _UNSUPPORTED_NONE  # pragma: no cover
     sparse = _SparseFile(total)
     sparse.add_span(low, tail.content)
     return (RangeCapability.ABSOLUTE_ONLY, _AcqKind.SPARSE, (sparse, low))
+
+
+async def _full_body_fetch(
+    transport: AsyncHttpTransport, url: str
+) -> tuple[RangeCapability, _AcqKind, object]:
+    """Fetch the whole wheel from a host known to ignore ranges.
+
+    A range-ignoring host answered an earlier probe with the full body, so it
+    is memoed ``FULL_BODY_ONLY``.  Later wheels on that host skip the wasted
+    range probe and fetch the body directly with a plain GET, so every
+    sidecar-less wheel there recovers its METADATA rather than only the first.
+    A 4xx/5xx (the file went missing) raises through and drops the candidate; a
+    non-identity encoding yields no usable bytes.
+    """
+    response = await transport.get(url, headers={"Accept-Encoding": "identity"})
+    if response.status_code == _HTTP_OK and not _non_identity(response):
+        return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, response.content)
+    response.raise_for_status()
+    return _UNSUPPORTED_NONE
 
 
 async def _acquire(
@@ -329,6 +349,8 @@ async def _acquire(
     """Fetch bytes per the netloc's known capability, learning it if unknown."""
     if capability is RangeCapability.UNSUPPORTED:
         return _UNSUPPORTED_NONE
+    if capability is RangeCapability.FULL_BODY_ONLY:
+        return await _full_body_fetch(transport, url)
     if capability in (RangeCapability.UNKNOWN, RangeCapability.SUFFIX_OK):
         suffix = await _suffix_attempt(transport, url, tail_size)
         if suffix.kind == "suffix":
@@ -336,8 +358,29 @@ async def _acquire(
             sparse.add_span(suffix.low, suffix.body)
             return (RangeCapability.SUFFIX_OK, _AcqKind.SPARSE, (sparse, suffix.low))
         if suffix.kind == "full":
-            return (RangeCapability.UNSUPPORTED, _AcqKind.FULL_BODY, suffix.body)
+            return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, suffix.body)
     return await _absolute_attempt(transport, url, tail_size)
+
+
+def _absorb_range(
+    response: HttpResponse, sparse: _SparseFile, partial_low: int
+) -> int | None:
+    """Absorb a growth or member range response into ``sparse``.
+
+    Returns the low offset at which bytes were populated, or ``None`` when the
+    response yielded no usable bytes.  A volunteered 200 full body populates the
+    whole file from offset 0 and is used rather than discarded.  A 4xx/5xx on
+    the wheel URL raises through so the candidate drops, matching the first
+    round trip; a non-identity encoding yields no usable bytes.
+    """
+    if response.status_code == _HTTP_OK and not _non_identity(response):
+        sparse.add_span(0, response.content)
+        return 0
+    if response.status_code != _HTTP_PARTIAL or _non_identity(response):
+        response.raise_for_status()
+        return None
+    sparse.add_span(partial_low, response.content)
+    return partial_low
 
 
 def _try_open(sparse: _SparseFile) -> zipfile.ZipFile | None:
@@ -363,10 +406,10 @@ async def _open_zip(
         new_size = min(have * 2, total, _MAX_TAIL)
         new_low = total - new_size
         response = await _range_get(transport, url, f"bytes={new_low}-{tail_low - 1}")
-        if response.status_code != _HTTP_PARTIAL or _non_identity(response):
+        low = _absorb_range(response, sparse, new_low)
+        if low is None:
             return None
-        sparse.add_span(new_low, response.content)
-        tail_low = new_low
+        tail_low = low
 
 
 def _member_span(zip_file: zipfile.ZipFile, member: str) -> tuple[int, int]:
@@ -405,9 +448,8 @@ async def _read_sparse(
     start, end = _member_span(zip_file, member)
     if not sparse.populated(start, end):
         response = await _range_get(transport, url, f"bytes={start}-{end - 1}")
-        if response.status_code != _HTTP_PARTIAL or _non_identity(response):
+        if _absorb_range(response, sparse, start) is None:
             return None
-        sparse.add_span(start, response.content)
     try:
         return zip_file.read(member)
     except (zipfile.BadZipFile, zlib.error, OSError):
