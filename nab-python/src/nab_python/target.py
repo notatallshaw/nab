@@ -55,6 +55,7 @@ __all__ = [
     "apply_python_axis_overlay",
     "check_free_threaded",
     "declared_environment",
+    "declared_range_marker",
     "environment_declaration",
     "host_environment",
     "marker_variables",
@@ -327,6 +328,25 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
             clause.replace("python_full_version", "implementation_version")
             for clause in target.micro_clauses
         )
+    return " and ".join(clauses)
+
+
+def declared_range_marker(target: ResolveTarget) -> str:
+    """Render the environment a target resolved for, on its whole declared range.
+
+    Pins every boundable environment axis to the target's value. A minor
+    interval leaves the micro release open, so python_version pins the whole
+    minor; a whole target (host, or a python-patches micro pin) adds the
+    concrete python_full_version it resolved at.
+    """
+    skip = UNBOUNDABLE_MARKER_VARIABLES | set(_BY_CONSTRAINT)
+    clauses = [
+        f'{name} == "{value}"'
+        for name, value in sorted(target.marker_env.items())
+        if name not in skip
+    ]
+    if not target.is_minor_interval:
+        clauses.append(f'python_full_version == "{target.python_full_version}"')
     return " and ".join(clauses)
 
 
