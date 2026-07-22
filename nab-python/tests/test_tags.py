@@ -940,6 +940,52 @@ class TestSelectWheel:
         assert chosen is build5
 
 
+class TestWheelRank:
+    """wheel_rank exposes pick's ordering as a comparable key.
+
+    Two wheels the target's own rules cannot order return an equal,
+    non-None key; a more-specific wheel returns a strictly lower key; a
+    rejected or non-wheel filename returns None.
+    """
+
+    def test_tie_wheels_share_rank(self) -> None:
+        """py2.py3-none-any and py3-none-any tie for a py3 target."""
+        tags = TagSet.for_spec(python_version="3.11", spec=PlatformSpec("linux_x86_64"))
+        both = tags.wheel_rank("pkg-1.0-py2.py3-none-any.whl")
+        py3 = tags.wheel_rank("pkg-1.0-py3-none-any.whl")
+        assert both is not None
+        assert both == py3
+
+    def test_specific_outranks_generic(self) -> None:
+        """A manylinux wheel ranks strictly below the py3-none-any fallback."""
+        tags = TagSet.for_spec(python_version="3.11", spec=PlatformSpec("linux_x86_64"))
+        specific = tags.wheel_rank("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        generic = tags.wheel_rank("pkg-1.0-py3-none-any.whl")
+        assert specific is not None
+        assert generic is not None
+        assert specific < generic
+
+    def test_rejected_wheel_has_no_rank(self) -> None:
+        """A wheel the target cannot install ranks None."""
+        tags = TagSet.for_spec(python_version="3.11", spec=PlatformSpec("linux_x86_64"))
+        assert tags.wheel_rank("pkg-1.0-cp311-cp311-win_amd64.whl") is None
+
+    def test_non_wheel_has_no_rank(self) -> None:
+        """An unparseable filename ranks None."""
+        tags = TagSet.for_spec(python_version="3.11", spec=PlatformSpec("linux_x86_64"))
+        assert tags.wheel_rank("garbage.whl") is None
+
+    def test_rank_carries_build_key(self) -> None:
+        """Same-tag wheels order by build key, higher build sorting later."""
+        tags = TagSet.for_spec(python_version="3.11", spec=PlatformSpec("linux_x86_64"))
+        untagged = tags.wheel_rank("pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        build5 = tags.wheel_rank("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
+        assert untagged is not None
+        assert build5 is not None
+        assert untagged[0] == build5[0]
+        assert untagged[1] < build5[1]
+
+
 class TestUnknownPlatformKindGuard:
     """A platform kind with no tag rule raises rather than tagging as Windows."""
 

@@ -30,6 +30,7 @@ from nab_python._provider.metadata_resolver import (
     cache_deps_from_metadata,
     classify_requirement,
     pick_dist_for_metadata,
+    target_dep_signature,
 )
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._testing.overrides import pkg_override
@@ -58,6 +59,7 @@ from nab_python.provider import (
     MissingExtraError,
     Provider,
     ResolutionStrategy,
+    SiblingMetadataDivergenceError,
     SourceNameMismatchError,
     UnsupportedSdistError,
     UnsupportedVcsError,
@@ -65,7 +67,11 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
-from nab_python.resolve import _build_resolver_inputs, _raise_for_source_python
+from nab_python.resolve import (
+    _build_resolver_inputs,
+    _raise_for_source_python,
+    resolve_with_coordinator,
+)
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
 from nab_resolver.resolver import ResolutionError, Resolver
@@ -77,6 +83,11 @@ V = Version
 # CPython 3.12.0.  Shared because it is frozen and building one walks the
 # host's whole tag set.
 _PY312 = ResolveTarget.for_host_python("3.12.0")
+
+# A declared linux/3.11 target: host-independent tags for the tie tests.
+_LINUX311 = ResolveTarget.for_declared(
+    python_version="3.11", spec=PlatformSpec("linux_x86_64")
+)
 
 
 def make_wheel(
@@ -2074,6 +2085,155 @@ class TestAddClassifiedDep:
         extra_map: dict[str, dict[str, VersionRange]] = {"g": {}}
         add_classified_dep(req, {"g"}, {}, extra_map)
         assert list(extra_map["g"]) == ["bar", "bar[x]", "bar[y]", "bar[z]"]
+
+
+class TestTargetDepSignature:
+    """``target_dep_signature`` projects metadata to a comparable signature."""
+
+    def _provider(self) -> Provider:
+        coordinator = make_coordinator([make_wheel("1.0")], package="pkg")
+        return Provider(coordinator, target=_PY312)
+
+    @staticmethod
+    def _md(
+        requires_dist: list[str],
+        *,
+        provides_extra: tuple[str, ...] = (),
+        requires_python: str | None = None,
+    ) -> WheelMetadata:
+        return WheelMetadata(
+            name="pkg",
+            version=V("1.0"),
+            requires_python=(
+                SpecifierSet(requires_python) if requires_python is not None else None
+            ),
+            requires_dist=[Requirement(r) for r in requires_dist],
+            provides_extra=list(provides_extra),
+        )
+
+    def test_permuted_lines_equal(self) -> None:
+        """Line order does not change the signature."""
+        provider = self._provider()
+        a = self._md(["foo>=1", "bar<2"])
+        b = self._md(["bar<2", "foo>=1"])
+        assert target_dep_signature(provider, a) == target_dep_signature(provider, b)
+
+    def test_specifier_spelling_equal(self) -> None:
+        """Whitespace and specifier spelling normalize equal."""
+        provider = self._provider()
+        a = self._md(["foo>=1,<2"])
+        b = self._md(["foo >= 1, < 2"])
+        assert target_dep_signature(provider, a) == target_dep_signature(provider, b)
+
+    def test_target_equal_marker_equal(self) -> None:
+        """Markers that evaluate the same for the target project equal."""
+        provider = self._provider()
+        a = self._md(['foo; python_version >= "3.0"'])
+        b = self._md(['foo; python_version >= "3.5"'])
+        assert target_dep_signature(provider, a) == target_dep_signature(provider, b)
+
+    def test_genuine_dep_difference_unequal(self) -> None:
+        """A real base-dep range difference is unequal."""
+        provider = self._provider()
+        a = self._md(["foo>=1"])
+        b = self._md(["foo>=2"])
+        assert target_dep_signature(provider, a) != target_dep_signature(provider, b)
+
+    def test_extra_only_difference_unequal(self) -> None:
+        """A difference confined to an extra-gated dep is unequal."""
+        provider = self._provider()
+        a = self._md(['foo; extra == "e"'], provides_extra=("e",))
+        b = self._md(['foo>=2; extra == "e"'], provides_extra=("e",))
+        assert target_dep_signature(provider, a) != target_dep_signature(provider, b)
+
+    def test_url_dep_only_difference_unequal(self) -> None:
+        """A difference confined to a URL dep is unequal."""
+        provider = self._provider()
+        a = self._md(["foo @ https://example.com/a.whl"])
+        b = self._md(["foo @ https://example.com/b.whl"])
+        assert target_dep_signature(provider, a) != target_dep_signature(provider, b)
+
+    def test_requires_python_difference_folds(self) -> None:
+        """A Requires-Python difference alone does not change the signature.
+
+        Requires-Python gates admission, not the dependency edges a lock
+        records, so two wheels with the same deps but different Python floors
+        project equal.
+        """
+        provider = self._provider()
+        a = self._md(["foo"], requires_python=">=3.8")
+        b = self._md(["foo"], requires_python=">=3.9")
+        assert target_dep_signature(provider, a) == target_dep_signature(provider, b)
+
+    def test_marker_dropped_dep_absent(self) -> None:
+        """A dep whose marker fails for the target is not projected."""
+        provider = self._provider()
+        base_deps = target_dep_signature(
+            provider, self._md(['foo; python_version < "3.0"'])
+        )[0]
+        assert base_deps == {}
+
+    def test_duplicate_name_intersected(self) -> None:
+        """A name on two base lines folds to the range intersection."""
+        provider = self._provider()
+        base_deps = target_dep_signature(provider, self._md(["foo>=1", "foo<5"]))[0]
+        assert V("3") in base_deps["foo"]
+        assert V("6") not in base_deps["foo"]
+
+    def test_extra_gated_url_dep_bucketed_by_extra(self) -> None:
+        """An extra-gated URL dep buckets under its extra name."""
+        provider = self._provider()
+        url_buckets = target_dep_signature(
+            provider,
+            self._md(
+                ['foo @ https://example.com/a.whl ; extra == "e"'],
+                provides_extra=("e",),
+            ),
+        )[2]
+        assert "e" in url_buckets
+
+    def test_base_url_dep_bucketed(self) -> None:
+        """A base URL dep buckets under the base key, not an extra."""
+        provider = self._provider()
+        url_buckets = target_dep_signature(
+            provider, self._md(["foo @ https://example.com/a.whl"])
+        )[2]
+        assert list(url_buckets) == [None]
+
+    def test_per_extra_dep_projected(self) -> None:
+        """An extra-gated non-URL dep lands in the per-extra map."""
+        provider = self._provider()
+        extra_map = target_dep_signature(
+            provider, self._md(['foo>=2; extra == "e"'], provides_extra=("e",))
+        )[1]
+        assert V("3") in extra_map["e"]["foo"]
+        assert V("1") not in extra_map["e"]["foo"]
+
+    def test_extra_marker_matches_only_named_extra(self) -> None:
+        """An extra-gated dep lands only under the extras its marker matches."""
+        provider = self._provider()
+        extra_map = target_dep_signature(
+            provider, self._md(['foo; extra == "e"'], provides_extra=("e", "f"))
+        )[1]
+        assert "foo" in extra_map["e"]
+        assert extra_map["f"] == {}
+
+    def test_provides_extra_override_applied(self) -> None:
+        """A provides-extra override reshapes the projection before comparison.
+
+        Two wheels declaring different raw extras project apart on their raw
+        extras, but a provides-extra override normalizes both to the same
+        declared set, so the overridden view they resolve from agrees.
+        """
+        coordinator = make_coordinator([make_wheel("1.0")], package="pkg")
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            package_overrides=(pkg_override("pkg", provides_extra=("e",)),),
+        )
+        a = self._md(['foo; extra == "e"'], provides_extra=("e",))
+        b = self._md(['foo; extra == "e"'], provides_extra=("e", "f"))
+        assert target_dep_signature(provider, a) == target_dep_signature(provider, b)
 
 
 class TestLocalSources:
@@ -8363,3 +8523,521 @@ class TestPrereleaseHostTarget:
         )
         assert provider.python_version == "3.15.0rc1"
         assert [v for v, _ in provider.fetch_versions("foo")] == [V("1.0")]
+
+
+def _sib_wheel(
+    tag: str, *, has_metadata: bool = True, local_path: Path | None = None
+) -> WheelFile:
+    """A pkg 1.0 wheel carrying an explicit tag, one url per filename."""
+    filename = f"pkg-1.0-{tag}.whl"
+    return WheelFile(
+        filename=filename,
+        url=f"https://example.com/{filename}",
+        version="1.0",
+        requires_python=None,
+        has_metadata=has_metadata,
+        upload_time=None,
+        local_path=local_path,
+    )
+
+
+def _sib_meta(*requires_dist: str, provides_extra: tuple[str, ...] = ()) -> str:
+    """A METADATA blob for pkg 1.0 with the given Requires-Dist lines."""
+    head = "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+    extras = "".join(f"Provides-Extra: {name}\n" for name in provides_extra)
+    body = "".join(f"Requires-Dist: {line}\n" for line in requires_dist)
+    return f"{head}{extras}{body}\n"
+
+
+class TestSiblingMetadataDivergence:
+    """A version whose tie-ranked wheels declare different target deps crashes.
+
+    nab reads one wheel's deps per version and treats it as authoritative.
+    Two wheels an installer's own rules cannot rank against each other can
+    still declare different dependencies, so pinning from one silently
+    disagrees with an install of the other.  The check compares only siblings
+    already resident in the shared index and never fetches.
+    """
+
+    _V = V("1.0")
+
+    def test_divergent_tie_siblings_crash(self) -> None:
+        """Two resident tie siblings with different deps crash naming both."""
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("common>=1", "alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("common>=1", "beta>=1"), wheel_b.metadata_url
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            provider.get_dependencies("pkg", self._V)
+        message = str(exc.value)
+        assert "pkg-1.0-py2.py3-none-any.whl" in message
+        assert "pkg-1.0-py3-none-any.whl" in message
+        assert "alpha" in message
+        assert "beta" in message
+        # A hard crash, not an invalid-metadata candidate drop.
+        assert ("pkg", self._V) not in provider._invalid_metadata
+
+    def test_check_issues_no_fetch(self) -> None:
+        """The check reads stored text only; it never requests a fetch."""
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("beta>=1"), wheel_b.metadata_url
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        with pytest.raises(SiblingMetadataDivergenceError):
+            metadata_resolver.check_sibling_metadata_divergence(
+                provider,
+                [(self._V, wheel_a), (self._V, wheel_b)],
+                "pkg",
+                self._V,
+            )
+        coordinator.request_metadata.assert_not_called()
+        coordinator.request_range_metadata.assert_not_called()
+
+    def test_agreeing_tie_siblings_no_crash(self) -> None:
+        """Reordered, whitespace-different siblings project equal, so no crash.
+
+        Three tie wheels (no tag axis) exercise the pick-signature reuse across
+        more than one resident sibling.
+        """
+        wheel_a = _sib_wheel("py3-none-any")
+        wheel_b = _sib_wheel("py2.py3-none-any")
+        wheel_c = _sib_wheel("cp311-cp311-manylinux_2_17_x86_64")
+        coordinator = make_coordinator([wheel_a, wheel_b, wheel_c], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("common>=1", "alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1", "common>=1"), wheel_b.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("common >= 1", "alpha >= 1"), wheel_c.metadata_url
+        )
+        provider = Provider(coordinator, target=None)
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "alpha" in deps
+        assert "common" in deps
+
+    def test_benign_marker_variation_no_crash(self) -> None:
+        """Markers that both evaluate the same for the target do not diverge."""
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            _sib_meta('alpha; python_version >= "3"'),
+            wheel_a.metadata_url,
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            _sib_meta('alpha; python_version >= "2"'),
+            wheel_b.metadata_url,
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "alpha" in deps
+
+    def test_non_tie_multiwheel_no_crash(self) -> None:
+        """A specific wheel outranks the generic sibling, so divergence is fine."""
+        specific = _sib_wheel("cp311-cp311-manylinux_2_17_x86_64")
+        generic = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([specific, generic], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("mldep>=1"), specific.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("gendep>=1"), generic.metadata_url
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "mldep" in deps
+        assert "gendep" not in deps
+
+    def test_one_wheel_version_returns_early(self) -> None:
+        """A version with a single wheel never reaches the sibling compare."""
+        wheel = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), wheel.metadata_url
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "alpha" in deps
+
+    def test_sdist_pick_returns_early(self) -> None:
+        """An sdist pick is not a wheel, so the check returns without reading."""
+        provider = Provider(make_coordinator(package="pkg"), target=_LINUX311)
+        metadata_resolver.check_sibling_metadata_divergence(
+            provider, [(self._V, make_sdist("1.0"))], "pkg", self._V
+        )
+
+    def test_local_wheel_pick_returns_early(self) -> None:
+        """A local wheel keeps no index text, so the pick reads as not resident."""
+        local = _sib_wheel(
+            "py3-none-any", has_metadata=False, local_path=Path("/w/pkg.whl")
+        )
+        provider = Provider(make_coordinator([local], package="pkg"), target=_LINUX311)
+        metadata_resolver.check_sibling_metadata_divergence(
+            provider, [(self._V, local)], "pkg", self._V
+        )
+
+    def test_no_tag_axis_divergent_siblings_crash(self) -> None:
+        """With no tag axis every resident sibling wheel is a real ambiguity."""
+        wheel_a = _sib_wheel("cp311-cp311-manylinux_2_17_x86_64")
+        wheel_b = _sib_wheel("cp311-cp311-macosx_11_0_arm64")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("beta>=1"), wheel_b.metadata_url
+        )
+        provider = Provider(coordinator, target=None)
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            provider.get_dependencies("pkg", self._V)
+        message = str(exc.value)
+        assert "alpha" in message
+        assert "beta" in message
+
+    def test_absent_sibling_text_skipped(self) -> None:
+        """A tie sibling with no resident text is skipped, not fetched."""
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        metadata_resolver.check_sibling_metadata_divergence(
+            provider, [(self._V, wheel_a), (self._V, wheel_b)], "pkg", self._V
+        )
+
+    def test_sibling_sdist_origin_skipped(self) -> None:
+        """Sdist PKG-INFO never stands in for a tie sibling wheel's own text."""
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata("pkg", "1.0", None, wheel_b.metadata_url)
+        coordinator.index.store_sdist_metadata("pkg", "1.0", _sib_meta("sdistdep>=1"))
+        provider = Provider(coordinator, target=_LINUX311)
+        metadata_resolver.check_sibling_metadata_divergence(
+            provider, [(self._V, wheel_a), (self._V, wheel_b)], "pkg", self._V
+        )
+
+    def test_incompatible_tag_sibling_skipped(self) -> None:
+        """A sibling the target cannot install has no rank, so it never ties."""
+        pick = _sib_wheel("py3-none-any")
+        incompatible = _sib_wheel("cp311-cp311-win_amd64")
+        coordinator = make_coordinator([pick, incompatible], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), pick.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("beta>=1"), incompatible.metadata_url
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        metadata_resolver.check_sibling_metadata_divergence(
+            provider, [(self._V, pick), (self._V, incompatible)], "pkg", self._V
+        )
+
+    def test_python_incompatible_sibling_skipped(self) -> None:
+        """A sibling the target's Python excludes never ties, so no false crash.
+
+        Two pure-python wheels tie on tags, but the py3 sibling's own METADATA
+        Requires-Python excludes the 3.9 target, so an installer would reject
+        it.  Comparing it would crash on a version an installer resolves fine.
+        """
+        target = ResolveTarget.for_declared(
+            python_version="3.9", spec=PlatformSpec("linux_x86_64")
+        )
+        pick = _sib_wheel("py2.py3-none-any")
+        incompatible = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([pick, incompatible], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Python: >=3.8\nRequires-Dist: alpha>=1\n\n",
+            pick.metadata_url,
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Python: >=3.11\nRequires-Dist: alpha>=1\n"
+            "Requires-Dist: beta>=1\n\n",
+            incompatible.metadata_url,
+        )
+        provider = Provider(coordinator, target=target)
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "alpha" in deps
+        assert "beta" not in deps
+
+    def test_agreeing_siblings_record_no_markers(self) -> None:
+        """Projecting tie siblings touches no provider marker state."""
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        md = _sib_meta(
+            'alpha; python_version >= "3"',
+            'gamma; extra == "x"',
+            provides_extra=("x",),
+        )
+        coordinator.index.store_metadata("pkg", "1.0", md, wheel_a.metadata_url)
+        coordinator.index.store_metadata("pkg", "1.0", md, wheel_b.metadata_url)
+        provider = Provider(coordinator, target=_LINUX311)
+        metadata_resolver.check_sibling_metadata_divergence(
+            provider, [(self._V, wheel_a), (self._V, wheel_b)], "pkg", self._V
+        )
+        assert provider.consulted_markers == set()
+        assert provider.marker_base_cache == {}
+        assert provider.marker_text_cache == {}
+        assert provider.marker_extra_cache == {}
+
+    def test_sidecar_vs_range_recovered_sibling_crash(self) -> None:
+        """A sidecar pick and a bare rung-4 sibling are compared as equals."""
+        sidecar = _sib_wheel("py2.py3-none-any")
+        bare = _sib_wheel("py3-none-any", has_metadata=False)
+        coordinator = make_coordinator([sidecar, bare], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), sidecar.metadata_url
+        )
+        coordinator.index.store_metadata("pkg", "1.0", _sib_meta("beta>=1"), bare.url)
+        provider = Provider(coordinator, target=_LINUX311)
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            metadata_resolver.check_sibling_metadata_divergence(
+                provider, [(self._V, sidecar), (self._V, bare)], "pkg", self._V
+            )
+        message = str(exc.value)
+        assert "alpha" in message
+        assert "beta" in message
+
+    def test_extra_dep_divergence_crash(self) -> None:
+        """Divergence confined to an extra's deps still crashes."""
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            _sib_meta('alpha; extra == "x"', provides_extra=("x",)),
+            wheel_a.metadata_url,
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            _sib_meta('beta; extra == "x"', provides_extra=("x",)),
+            wheel_b.metadata_url,
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            metadata_resolver.check_sibling_metadata_divergence(
+                provider, [(self._V, wheel_a), (self._V, wheel_b)], "pkg", self._V
+            )
+        assert "extra:x" in str(exc.value)
+
+    def test_url_dep_divergence_crash(self) -> None:
+        """A sibling's direct-URL dep is a divergence, bucketed not refused."""
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("dep>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            _sib_meta("dep @ https://example.com/dep-1.0-py3-none-any.whl"),
+            wheel_b.metadata_url,
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            metadata_resolver.check_sibling_metadata_divergence(
+                provider, [(self._V, wheel_a), (self._V, wheel_b)], "pkg", self._V
+            )
+        assert "dep" in str(exc.value)
+
+    def test_requires_python_floor_variation_no_crash(self) -> None:
+        """Siblings differing only on the Python floor do not diverge.
+
+        A universal py2.py3 wheel and a py3 wheel routinely ship different
+        Requires-Python floors while imposing the same dependencies.  Both
+        install identically on the target, so the version stays resolvable.
+        """
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Python: >=2.7\nRequires-Dist: common>=1\n\n",
+            wheel_a.metadata_url,
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Python: >=3.6\nRequires-Dist: common>=1\n\n",
+            wheel_b.metadata_url,
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "common" in deps
+
+    def test_unparseable_sibling_skipped(self) -> None:
+        """A tie sibling whose own METADATA does not parse is dropped, not raised.
+
+        A malformed sibling is an invalid candidate, so it is skipped like any
+        other; it must not escape as an uncaught parse error, nor stand in as a
+        divergence.
+        """
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", "Metadata-Version: 2.1\nName: pkg\n\n", wheel_b.metadata_url
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "alpha" in deps
+
+    def test_provides_extra_override_folds_divergence(self) -> None:
+        """A provides-extra override is applied to both siblings before compare.
+
+        Two tie wheels share a base dep but declare different Provides-Extra.
+        Raw, the extra maps differ and the version crashes; an override that
+        normalizes both to the same declared extras reconciles them, matching
+        the overridden view the resolver actually pins from.
+        """
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            _sib_meta("alpha>=1", provides_extra=("x",)),
+            wheel_a.metadata_url,
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            _sib_meta("alpha>=1", provides_extra=("y",)),
+            wheel_b.metadata_url,
+        )
+        provider = Provider(
+            coordinator,
+            target=_LINUX311,
+            package_overrides=(pkg_override("pkg", provides_extra=()),),
+        )
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "alpha" in deps
+
+    def test_requires_python_override_admits_sibling(self) -> None:
+        """The sibling admission check uses the effective Requires-Python.
+
+        A sibling whose parsed Requires-Python excludes the target would be
+        skipped, missing its divergence; a Requires-Python override that admits
+        the target puts it back in play, so the divergence crashes.
+        """
+        target = ResolveTarget.for_declared(
+            python_version="3.9", spec=PlatformSpec("linux_x86_64")
+        )
+        pick = _sib_wheel("py2.py3-none-any")
+        sibling = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([pick, sibling], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Python: >=3.8\nRequires-Dist: alpha>=1\n\n",
+            pick.metadata_url,
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            "Requires-Python: >=3.11\nRequires-Dist: alpha>=1\n"
+            "Requires-Dist: beta>=1\n\n",
+            sibling.metadata_url,
+        )
+        provider = Provider(
+            coordinator,
+            target=target,
+            package_overrides=(pkg_override("pkg", requires_python=">=3.8"),),
+        )
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            provider.get_dependencies("pkg", self._V)
+        assert "beta" in str(exc.value)
+
+    def test_resolve_aborts_on_lone_divergent_version(self) -> None:
+        """A full resolve over a diverging version aborts, never silently fails.
+
+        The divergence must not read as a MetadataError candidate drop: that
+        would turn the version into a soft "no versions available" rejection
+        rather than the loud crash the ambiguity demands.
+        """
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("beta>=1"), wheel_b.metadata_url
+        )
+        with pytest.raises(SiblingMetadataDivergenceError):
+            resolve_with_coordinator(
+                coordinator,
+                [_LINUX311],
+                [Requirement("pkg")],
+                config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+            )
+
+    def test_resolve_aborts_not_downgrades_past_divergent(self) -> None:
+        """A diverging version aborts rather than silently pinning a clean one."""
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        clean = WheelFile(
+            filename="pkg-0.9-py3-none-any.whl",
+            url="https://example.com/pkg-0.9-py3-none-any.whl",
+            version="0.9",
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+            local_path=None,
+        )
+        coordinator = make_coordinator([wheel_a, wheel_b, clean], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("beta>=1"), wheel_b.metadata_url
+        )
+        coordinator.index.store_metadata("pkg", "0.9", _sib_meta(), clean.metadata_url)
+        with pytest.raises(SiblingMetadataDivergenceError):
+            resolve_with_coordinator(
+                coordinator,
+                [_LINUX311],
+                [Requirement("pkg")],
+                config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+            )

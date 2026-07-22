@@ -70,6 +70,7 @@ __all__ = [
     "Provider",
     "ProviderStats",
     "ResolutionStrategy",
+    "SiblingMetadataDivergenceError",
     "SourceNameMismatchError",
     "UnsupportedSdistError",
     "UnsupportedVcsError",
@@ -310,6 +311,18 @@ class IncompatiblePythonError(MetadataError):
 # and would silently reject the version; a naive upload-time is a hard error.
 class InvalidUploadTimeError(Exception):
     """Raised when an index upload-time is not the timezone-aware UTC PEP 700 needs."""
+
+
+# Deliberately not a MetadataError: _look_ahead_ok catches those and skips the
+# version, but tie-ranked wheels that disagree on a target's dependencies are an
+# ambiguity nab cannot resolve, so it must abort rather than drop the version.
+class SiblingMetadataDivergenceError(Exception):
+    """Raised when a version's tie-ranked wheels declare different target deps.
+
+    nab reads one wheel's dependencies per version and treats it as
+    authoritative, so a tie whose wheels declare different dependencies is an
+    ambiguity: pinning from one silently disagrees with an install of the other.
+    """
 
 
 # Deliberately not a MetadataError: _look_ahead_ok catches those and skips the
@@ -1309,9 +1322,10 @@ class Provider:
 
         The un-narrowed range spans versions the constraint clipped away, so
         look-ahead can reach one whose metadata raises a hard error the narrowed
-        resolve never touched.  The probe catches those and returns ``False``
-        rather than letting them abort the resolve; the ``finally`` restores the
-        snapshot either way.
+        resolve never touched (a failed integrity check, or a tie-ranked-wheel
+        divergence).  The probe catches those and returns ``False`` rather than
+        aborting; the crash still fires when the version is pinned for real.  The
+        ``finally`` restores the snapshot either way.
         """
         # Late import: config imports provider at module load.
         from .config import OverrideConflictError  # noqa: PLC0415
@@ -1330,6 +1344,7 @@ class Provider:
             UnsupportedVcsError,
             InvalidUploadTimeError,
             OverrideConflictError,
+            SiblingMetadataDivergenceError,
             NotImplementedError,
         ):
             return False
@@ -1913,6 +1928,7 @@ class Provider:
         self._parse_and_cache_metadata_guarded(
             cache_key, metadata_text, from_sdist=from_sdist
         )
+        self._check_sibling_metadata_divergence(versions, package, version)
 
         self.stats.metadata_fetched += 1
         self.prefetch_new_deps(self.deps_cache[cache_key])
@@ -1978,6 +1994,20 @@ class Provider:
     ) -> tuple[str, bool]:
         """See :func:`nab_python._provider.metadata_resolver.resolve_metadata`."""
         return _metadata_resolver.resolve_metadata(self, versions, package, version)
+
+    def _check_sibling_metadata_divergence(
+        self,
+        versions: list[tuple[Version, DistFile]],
+        package: str,
+        version: Version,
+    ) -> None:
+        """Check the version's tie-ranked wheels for divergent target deps.
+
+        See :func:`._provider.metadata_resolver.check_sibling_metadata_divergence`.
+        """
+        _metadata_resolver.check_sibling_metadata_divergence(
+            self, versions, package, version
+        )
 
     def parse_and_cache_metadata(
         self,

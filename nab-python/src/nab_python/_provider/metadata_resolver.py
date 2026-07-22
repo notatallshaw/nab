@@ -39,8 +39,15 @@ if TYPE_CHECKING:
     from .._vendor.packaging.markers import Marker
     from .._vendor.packaging.requirements import Requirement
     from .._vendor.packaging.version import Version
+    from ..fetch import InMemoryIndex
     from ..provider import DistFile, Provider
     from ..tags import TagSet
+
+TargetDepSignature = tuple[
+    dict[str, VersionRange],
+    dict[str, dict[str, VersionRange]],
+    dict[str | None, set[tuple[str, frozenset[str], str]]],
+]
 
 
 def resolve_metadata(
@@ -598,6 +605,53 @@ def _reject_incompatible_python(
     raise IncompatiblePythonError(msg)
 
 
+def effective_metadata(
+    provider: Provider,
+    cache_key: tuple[str, Version],
+    metadata: WheelMetadata,
+) -> WheelMetadata:
+    """Apply the per-package metadata override, or return ``metadata`` as is.
+
+    A fresh record rather than a mutation: the raw parse is shared across
+    tuples via ``store_parsed_metadata``, so mutating would leak one tuple's
+    override into another.  A replaced dep list strips extra-gated lines, so an
+    unset provides-extra declares none rather than keep now-incoherent extras.
+    """
+    package, version = cache_key
+    override_deps, override_rp, override_pe = provider.effective_metadata_override(
+        package, version
+    )
+    if override_deps is None and override_rp is None and override_pe is None:
+        return metadata
+
+    requires_python = (
+        SpecifierSet(override_rp)
+        if override_rp is not None
+        else metadata.requires_python
+    )
+    requires_dist = (
+        list(override_deps)
+        if override_deps is not None
+        else list(metadata.requires_dist)
+    )
+    if override_pe is not None:
+        provides_extra = list(override_pe)
+    elif override_deps is not None:
+        provides_extra = []
+    else:
+        provides_extra = list(metadata.provides_extra)
+
+    return WheelMetadata(
+        name=metadata.name,
+        version=metadata.version,
+        requires_python=requires_python,
+        requires_dist=requires_dist,
+        provides_extra=provides_extra,
+        metadata_version=metadata.metadata_version,
+        dynamic=metadata.dynamic,
+    )
+
+
 def cache_deps_from_metadata(
     provider: Provider,
     cache_key: tuple[str, Version],
@@ -616,48 +670,11 @@ def cache_deps_from_metadata(
     # Late import: ``provider`` imports this module at module load.
     from ..provider import _normalize_extra
 
-    package, version = cache_key
-    override_deps, override_rp, override_pe = provider.effective_metadata_override(
-        package, version
-    )
-    if override_deps is not None or override_rp is not None or override_pe is not None:
-        # Build a fresh record rather than mutate the input: the raw parse is
-        # shared across tuples via ``store_parsed_metadata``, so mutating it
-        # would leak one tuple's override into another.  Each field falls back
-        # to the parsed value when the override leaves it unset.
-        requires_python = (
-            SpecifierSet(override_rp)
-            if override_rp is not None
-            else metadata.requires_python
-        )
-        requires_dist = (
-            list(override_deps)
-            if override_deps is not None
-            else list(metadata.requires_dist)
-        )
-
-        # An explicit provides-extra wins; else keep the parsed extras, unless
-        # the dep list was replaced, which strips their extra-gated lines and
-        # leaves them incoherent, so declare none.
-        if override_pe is not None:
-            provides_extra = list(override_pe)
-        elif override_deps is not None:
-            provides_extra = []
-        else:
-            provides_extra = list(metadata.provides_extra)
-
-        metadata = WheelMetadata(
-            name=metadata.name,
-            version=metadata.version,
-            requires_python=requires_python,
-            requires_dist=requires_dist,
-            provides_extra=provides_extra,
-            metadata_version=metadata.metadata_version,
-            dynamic=metadata.dynamic,
-        )
+    metadata = effective_metadata(provider, cache_key, metadata)
 
     # Split the (possibly overridden) requirements into base deps and
     # per-extra deps, deferring any direct-URL deps that aren't yet active.
+    package = cache_key[0]
     provider.metadata_cache[cache_key] = metadata
     provided_extras = {_normalize_extra(e) for e in metadata.provides_extra}
     base_deps: dict[str, VersionRange] = {}
@@ -704,6 +721,259 @@ def refuse_url_dep(provider: Provider, req: Requirement, url: str) -> None:
         f" implemented: {req.name} @ {url}"
     )
     raise NotImplementedError(msg)
+
+
+def _classify_requirement_uncached(
+    provider: Provider,
+    req: Requirement,
+    provided_extras: set[str],
+) -> set[str] | None:
+    """Classify like :func:`classify_requirement`, recording nothing.
+
+    These markers come from wheels :func:`target_dep_signature` parses but
+    never keeps in ``metadata_cache``.  The id-keyed marker caches would be
+    unsound here: a collected marker's ``id`` can alias a later live marker.
+    ``consulted_markers`` would leak a never-installed sibling's clauses into
+    the lock's ``environments``.  So each marker is evaluated directly.
+    """
+    marker = req.marker
+    if marker is None:
+        return set()
+    if marker.evaluate({**provider.environment, **EMPTY_MEMBERSHIP_SETS}):
+        return set()
+    if "extra" not in str(marker):
+        return None
+    env = dict(provider.env_with_extra)
+    matched: set[str] = set()
+    for extra_name in provided_extras:
+        env["extra"] = extra_name
+        if marker.evaluate(env):
+            matched.add(extra_name)
+    return matched or None
+
+
+def target_dep_signature(
+    provider: Provider,
+    metadata: WheelMetadata,
+) -> TargetDepSignature:
+    """Project ``metadata`` to a target-effective dependency signature.
+
+    Returns ``(base_deps, extra_deps_map, url_buckets)``, compared with ``!=``
+    to tell two wheels of one version apart by the dependencies they impose on
+    this target rather than by raw text.  Each requirement is classified the way
+    the resolver classifies deps, so a marker both wheels evaluate the same
+    folds away, and ranges go through :func:`add_classified_dep`, so ordering,
+    whitespace, and specifier spelling normalize equal.  It records nothing into
+    the marker caches or ``consulted_markers``: see
+    :func:`_classify_requirement_uncached`.
+
+    The per-package override is applied first, so a ``provides-extra`` override
+    is compared in the same view the resolver pins from.  A complete
+    ``dependencies`` override takes the skip-fetch path in
+    :meth:`nab_python.provider.Provider.get_dependencies` and never reaches
+    here.  ``Requires-Python`` is left out: it gates admission, not the
+    dependency edges a lock records.
+
+    Unlike :func:`cache_deps_from_metadata` this never raises: a direct-URL dep
+    is bucketed instead of routed through :func:`refuse_url_dep`, since the pick
+    already refused its own URL deps, so a sibling's URL dep is a divergence to
+    report.
+    """
+    # Late import: ``provider`` imports this module at module load.
+    from ..provider import _normalize_extra
+
+    cache_key = (canonicalize_name(metadata.name), metadata.version)
+    metadata = effective_metadata(provider, cache_key, metadata)
+    provided_extras = {_normalize_extra(e) for e in metadata.provides_extra}
+    base_deps: dict[str, VersionRange] = {}
+    extra_deps_map: dict[str, dict[str, VersionRange]] = {
+        e: {} for e in provided_extras
+    }
+    url_buckets: dict[str | None, set[tuple[str, frozenset[str], str]]] = {}
+    for req in metadata.requires_dist:
+        req_extras = _classify_requirement_uncached(provider, req, provided_extras)
+        if req_extras is None:
+            continue
+        if req.url is not None:
+            entry = (canonicalize_name(req.name), frozenset(req.extras), req.url)
+            for key in req_extras or {None}:
+                url_buckets.setdefault(key, set()).add(entry)
+            continue
+        add_classified_dep(req, req_extras, base_deps, extra_deps_map)
+    return (base_deps, extra_deps_map, url_buckets)
+
+
+def check_sibling_metadata_divergence(
+    provider: Provider,
+    versions: Sequence[tuple[Version, DistFile]],
+    package: str,
+    version: Version,
+) -> None:
+    """Crash when a resident tie sibling's target deps diverge from the pick's.
+
+    nab reads one version's dependencies from the wheel the target's tags rank
+    most preferred and treats it as authoritative.  Two wheels the target's own
+    rules cannot rank against each other (a tie) can still declare different
+    target-effective dependencies, so pinning from one silently disagrees with
+    an install of the other.
+
+    Only siblings already resident in the shared index are compared; this never
+    fetches.  On the first tie sibling whose projection differs from the pick's,
+    a :class:`~nab_python.provider.SiblingMetadataDivergenceError` is raised.  It
+    is deliberately not a :class:`~nab_python.provider.MetadataError`, which
+    :meth:`~nab_python.provider.Provider._look_ahead_ok` would turn into a
+    dropped candidate: dropping would silently remove a version an installer can
+    legitimately install.
+    """
+    # Late import: ``provider`` imports this module at module load.
+    from ..provider import SiblingMetadataDivergenceError
+
+    tags = provider.wheel_tags
+    pick = pick_dist_for_metadata(versions, version, tags)
+    if not isinstance(pick, WheelFile):
+        return
+
+    _, _, normalized = provider.split_and_normalize(package)
+    ver_str = str(version)
+    index = provider.coordinator.index
+
+    pick_text = _resident_wheel_text(index, normalized, ver_str, pick)
+    if pick_text is None:
+        return
+
+    wheels = [d for v, d in versions if v == version and isinstance(d, WheelFile)]
+    if len(wheels) <= 1:
+        return
+
+    pick_key = None if tags is None else tags.wheel_rank(pick.filename)
+    pick_sig: TargetDepSignature | None = None
+    for sibling in wheels:
+        if sibling is pick or not _wheels_tie(tags, pick_key, sibling.filename):
+            continue
+        sibling_metadata = _tie_sibling_metadata(
+            provider, index, normalized, version, sibling
+        )
+        if sibling_metadata is None:
+            continue
+        if pick_sig is None:
+            pick_sig = target_dep_signature(provider, parse_metadata(pick_text))
+        sibling_sig = target_dep_signature(provider, sibling_metadata)
+        if sibling_sig == pick_sig:
+            continue
+        labels = _divergent_dep_labels(pick_sig, sibling_sig)
+        msg = (
+            f"{package} {version} has tie-ranked wheels {pick.filename} and"
+            f" {sibling.filename} that declare different dependencies for this"
+            f" target ({', '.join(labels)}). Pin the dependencies with a"
+            f" per-package dependencies override to resolve this version."
+        )
+        raise SiblingMetadataDivergenceError(msg)
+
+
+def _tie_sibling_metadata(
+    provider: Provider,
+    index: InMemoryIndex,
+    package: str,
+    version: Version,
+    sibling: WheelFile,
+) -> WheelMetadata | None:
+    """Parse a resident tie sibling's own METADATA, or None to skip it.
+
+    Skipped when the text is not resident, does not parse, or its effective
+    Requires-Python excludes the target.  Tags rank by :pep:`425` and say
+    nothing about the Python floor, so a tie sibling can still declare a
+    Requires-Python an installer would reject for this target; comparing it
+    would false-crash a version an installer resolves fine.  A per-package
+    override wins over the parsed floor.
+    """
+    text = _resident_wheel_text(index, package, str(version), sibling)
+    if text is None:
+        return None
+    try:
+        metadata = parse_metadata(text)
+    except ValueError:
+        return None
+    target = provider.target
+    override_rp = provider.effective_requires_python(package, version)
+    spec = (
+        SpecifierSet(override_rp)
+        if override_rp is not None
+        else metadata.requires_python
+    )
+    if (
+        target is not None
+        and spec is not None
+        and not target.admits_requires_python(spec)
+    ):
+        return None
+    return metadata
+
+
+def _resident_wheel_text(
+    index: InMemoryIndex, package: str, version: str, wheel: WheelFile
+) -> str | None:
+    """Return a wheel's own resident METADATA text, or None if not in hand.
+
+    Reads only the slot the wheel's text would occupy: a bare remote wheel's
+    own URL (rung 4), else its sidecar URL.  A local wheel keeps no text in the
+    index and reads back None.  Sdist-origin text never stands in for a wheel.
+    """
+    if _is_bare_remote_wheel(wheel):
+        url = wheel.url
+    elif wheel.metadata_url is not None:
+        url = wheel.metadata_url
+    else:
+        return None
+    text, from_sdist = index.get_metadata_with_origin(package, version, url)
+    return None if from_sdist else text
+
+
+def _wheels_tie(
+    tags: TagSet | None,
+    pick_key: tuple[int, tuple[int, str]] | None,
+    sibling_filename: str,
+) -> bool:
+    """Whether a sibling wheel ties the pick under the target's install rules.
+
+    With no tag axis every resident sibling wheel is a real ambiguity, so any
+    sibling ties.  Otherwise a sibling ties only when its
+    :meth:`~nab_python.tags.TagSet.wheel_rank` key equals the pick's and is not
+    None; a sibling the pick ranks strictly below is never installed and is
+    exempt.
+    """
+    if tags is None:
+        return True
+    sibling_key = tags.wheel_rank(sibling_filename)
+    return sibling_key is not None and sibling_key == pick_key
+
+
+def _divergent_dep_labels(
+    pick_sig: TargetDepSignature, sibling_sig: TargetDepSignature
+) -> list[str]:
+    """Return sorted labels for the signature entries that differ."""
+    pick_flat = _flatten_signature(pick_sig)
+    sibling_flat = _flatten_signature(sibling_sig)
+    return sorted(
+        label
+        for label in pick_flat.keys() | sibling_flat.keys()
+        if pick_flat.get(label) != sibling_flat.get(label)
+    )
+
+
+def _flatten_signature(signature: TargetDepSignature) -> dict[str, object]:
+    """Flatten a target-dep signature to labelled values for a diff.
+
+    Base deps, per-extra dep maps, and URL buckets each become one entry.
+    """
+    base_deps, extra_deps_map, url_buckets = signature
+    flat: dict[str, object] = {}
+    for name, rng in base_deps.items():
+        flat[f"base:{name}"] = rng
+    for extra, deps in extra_deps_map.items():
+        flat[f"extra:{extra}"] = deps
+    for key, entries in url_buckets.items():
+        flat[f"url:{key}"] = entries
+    return flat
 
 
 def add_classified_dep(
