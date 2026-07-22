@@ -236,7 +236,8 @@ with PEP 508 markers built from each target's `python_version`,
 `sys_platform` and `platform_machine`, plus `implementation_name` on
 the same terms as the `environments` declarations above. Each such
 marker is emitted in its shortest form equivalent over the lock's
-declared environments.
+declared environments. A marker too large to simplify within budget is
+emitted unsimplified.
 
 `environments` carries a declaration per target, built the same way a
 single-environment lock builds its one: from the markers that target's
