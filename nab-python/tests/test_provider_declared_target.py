@@ -30,6 +30,7 @@ from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
     ListingFilterCache,
+    MetadataError,
     Provider,
     VcsConfig,
     VcsPolicy,
@@ -1133,3 +1134,142 @@ class TestSiblingWheelDependencies:
         )
         assert set(macos.get_dependencies("pkg", Version("1.0"))) == {"sdistdep"}
         assert set(windows.get_dependencies("pkg", Version("1.0"))) == {"windep"}
+
+
+_PURE_WHEEL = _platform_wheel("1.0", "py3-none-any")
+
+_PURE_WHEEL_METADATA = (
+    "Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\nRequires-Dist: puredep\n\n"
+)
+
+_LINUX_WHEEL_EXTRA_METADATA = (
+    "Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\n"
+    'Provides-Extra: speed\nRequires-Dist: fastdep; extra == "speed"\n\n'
+)
+
+
+def _both_installable(
+    files: Sequence[WheelFile | SdistFile],
+    *,
+    linux_metadata: str = _LINUX_WHEEL_METADATA,
+) -> Provider:
+    """A linux provider over a version published as a pure and a linux wheel."""
+    coordinator = make_coordinator(
+        files,
+        package="pkg",
+        metadata_by_url={
+            _sidecar(_PURE_WHEEL): _PURE_WHEEL_METADATA,
+            _sidecar(_LINUX_WHEEL): linux_metadata,
+        },
+    )
+    return Provider(coordinator, _LINUX_TARGET)
+
+
+class TestTwoInstallableSiblingWheels:
+    """One target installing two of a version's wheels reads the specific one.
+
+    The target installs the manylinux wheel, so its ``Requires-Dist`` is the
+    one the pin has to satisfy; the pure-Python wheel beside it is there for
+    targets with no compiled build.
+    """
+
+    def test_the_pure_wheel_listed_first_does_not_supply_the_deps(self) -> None:
+        provider = _both_installable([_PURE_WHEEL, _LINUX_WHEEL])
+        assert set(provider.get_dependencies("pkg", Version("1.0"))) == {"linuxdep"}
+
+    def test_the_listing_order_does_not_change_the_deps(self) -> None:
+        provider = _both_installable([_LINUX_WHEEL, _PURE_WHEEL])
+        assert set(provider.get_dependencies("pkg", Version("1.0"))) == {"linuxdep"}
+
+    def test_the_batch_prefetch_caches_the_same_wheels_deps(self) -> None:
+        """The batch prefetch fills ``deps_cache`` from the same wheel.
+
+        Caching the pure wheel's deps for the version would leave
+        ``get_dependencies`` answering from that cache.
+        """
+        provider = _both_installable([_PURE_WHEEL, _LINUX_WHEEL])
+        version_list = provider.fetch_versions("pkg")
+        mapping = provider._wheel_by_version("pkg", version_list)
+
+        submitted = provider._prefetch_batch("pkg", [Version("1.0")], mapping)
+        provider._await_metadata_batch("pkg", submitted)
+
+        assert set(provider.deps_cache[("pkg", Version("1.0"))]) == {"linuxdep"}
+
+    def test_an_extra_only_the_installed_wheel_declares_is_provided(self) -> None:
+        """Sibling wheels can differ in ``Provides-Extra`` too."""
+        provider = _both_installable(
+            [_PURE_WHEEL, _LINUX_WHEEL], linux_metadata=_LINUX_WHEEL_EXTRA_METADATA
+        )
+        assert set(provider.get_dependencies("pkg[speed]", Version("1.0"))) == {
+            "fastdep",
+            "pkg",
+        }
+
+    def test_the_listing_prefetch_warms_the_wheel_the_read_uses(self) -> None:
+        """The speculative prefetch fetches the sidecar the read then uses.
+
+        A prefetch keyed on the pure wheel would cost a round trip nothing
+        reads and still leave the read blocking on a fetch.
+        """
+        provider = _both_installable([_PURE_WHEEL, _LINUX_WHEEL])
+        provider.fetch_versions("pkg")
+
+        requested = provider.coordinator.request_metadata
+        assert [call.args[2] for call in requested.call_args_list] == [
+            _sidecar(_LINUX_WHEEL)
+        ]
+
+        assert set(provider.get_dependencies("pkg", Version("1.0"))) == {"linuxdep"}
+        assert requested.call_count == 1
+
+    def test_the_walk_ahead_prefetch_warms_the_same_wheels_sidecar(self) -> None:
+        """The deep prefetch keys on the same pick as the read.
+
+        2.0 publishes only a pure wheel and the listing prefetch already
+        warmed it, so 1.0 is the version the walk-ahead batch carries.
+        """
+        pure_two = _platform_wheel("2.0", "py3-none-any")
+        coordinator = make_coordinator(
+            [pure_two, _PURE_WHEEL, _LINUX_WHEEL],
+            package="pkg",
+            metadata_by_url={
+                _sidecar(pure_two): (
+                    "Metadata-Version: 2.4\nName: pkg\nVersion: 2.0\n\n"
+                ),
+                _sidecar(_PURE_WHEEL): _PURE_WHEEL_METADATA,
+                _sidecar(_LINUX_WHEEL): _LINUX_WHEEL_METADATA,
+            },
+        )
+        provider = Provider(coordinator, _LINUX_TARGET)
+        provider.fetch_versions("pkg")
+        coordinator.reset_mock()
+
+        provider.prefetch_walk_ahead("pkg")
+
+        items = coordinator.request_metadata_batch.call_args[0][0]
+        assert [url for _pkg, _ver, url, _hash in items] == [_sidecar(_LINUX_WHEEL)]
+
+    def test_a_cheaper_sibling_does_not_answer_for_the_installed_wheel(self) -> None:
+        """Metadata-fetch cost never overrides the PEP 425 pick.
+
+        The installed wheel publishes no sidecar and the version ships no
+        sdist, so nab has nothing it can read; the pure wheel's sidecar is
+        not a stand-in for it.
+        """
+        linux_no_sidecar = WheelFile(
+            filename=_LINUX_WHEEL.filename,
+            url=_LINUX_WHEEL.url,
+            version="1.0",
+            requires_python=None,
+            has_metadata=False,
+            upload_time=None,
+        )
+        coordinator = make_coordinator(
+            [_PURE_WHEEL, linux_no_sidecar],
+            package="pkg",
+            metadata_by_url={_sidecar(_PURE_WHEEL): _PURE_WHEEL_METADATA},
+        )
+        provider = Provider(coordinator, _LINUX_TARGET)
+        with pytest.raises(MetadataError, match="No metadata for pkg==1.0"):
+            provider.get_dependencies("pkg", Version("1.0"))

@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from .._vendor.packaging.requirements import Requirement
     from .._vendor.packaging.version import Version
     from ..provider import DistFile, Provider
+    from ..tags import TagSet
 
 
 def resolve_metadata(
@@ -69,7 +70,7 @@ def resolve_metadata(
     # sidecar wheel keys on its sidecar URL; a bare remote wheel (rung 4) keys
     # on its own wheel URL, so its range-recovered text stays independent of a
     # sibling wheel's.
-    dist = pick_dist_for_metadata(versions, version)
+    dist = pick_dist_for_metadata(versions, version, provider.wheel_tags)
     if _is_bare_remote_wheel(dist):
         metadata_url = dist.url
     elif isinstance(dist, WheelFile):
@@ -206,37 +207,47 @@ def _record_range_outcome(
 
 
 def pick_dist_for_metadata(
-    versions: Sequence[tuple[Version, DistFile]], version: Version
+    versions: Sequence[tuple[Version, DistFile]],
+    version: Version,
+    tags: TagSet | None,
 ) -> DistFile | None:
-    """Pick the cheapest dist source for ``version``'s metadata.
+    """Pick the dist whose metadata answers for ``version``. See :func:`pick_dist`."""
+    dists = [d for v, d in versions if v == version]
+    return pick_dist(dists, tags) if dists else None
 
-    Preference order at the same version:
 
-    1. A wheel with a PEP 658 ``metadata_url`` (smallest fetch).
-    2. Any wheel (range-fetch / stream still beats an sdist build).
-    3. The sdist (PKG-INFO; may require a build if Dynamic).
+def pick_dist(dists: Sequence[DistFile], tags: TagSet | None) -> DistFile:
+    """Pick the dist of one version whose metadata answers for the target.
 
-    The picker is policy-agnostic and applies whatever ``versions``
-    holds.  :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` works
-    by keeping both kinds of dists in the listing so this preference
-    order naturally chooses the wheel when one exists, falling back
-    to the sdist when only the sdist is published.
+    ``dists`` are the artifacts of a single version, and must be non-empty.
+
+    Sibling wheels of one version can declare different dependencies, so
+    the wheel the ``tags`` rank most specific wins: :pep:`425` is what an
+    installer picks by, so that wheel's METADATA is the one the pin has to
+    satisfy.  ``tags`` is ``None`` when there is no tag axis to rank by,
+    either because nothing said which machine the resolve is for or because
+    a marker overlay moved the target off its tags.
+
+    Without tags, and between wheels the tags rank equally, the cheapest
+    metadata source wins: a wheel with a :pep:`658` ``metadata_url``, then
+    any wheel.  Only a version publishing no wheel is read from its sdist,
+    which lets :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` keep
+    wheels in the listing purely as a metadata source.
     """
-    wheel_with_meta: DistFile | None = None
-    wheel_without_meta: DistFile | None = None
-    sdist: DistFile | None = None
-    for v, d in versions:
-        if v != version:
-            continue
-        if isinstance(d, WheelFile):
-            if d.has_metadata:
-                if wheel_with_meta is None:
-                    wheel_with_meta = d
-            elif wheel_without_meta is None:
-                wheel_without_meta = d
-        elif sdist is None:
-            sdist = d
-    return wheel_with_meta or wheel_without_meta or sdist
+    if len(dists) == 1:
+        return dists[0]
+
+    wheels = [d for d in dists if isinstance(d, WheelFile)]
+    if not wheels:
+        return dists[0]
+
+    # Sidecars first: ``pick`` keeps input order among wheels it ranks equally.
+    installed = (
+        tags.pick(sorted(wheels, key=lambda w: not w.has_metadata))
+        if tags is not None
+        else None
+    )
+    return installed or next((w for w in wheels if w.has_metadata), wheels[0])
 
 
 def _sdist_deps_need_dynamic(
