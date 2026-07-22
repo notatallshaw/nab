@@ -197,6 +197,29 @@ def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
     return pyproject
 
 
+def _mismatched_local_source_project(tmp_path: Path) -> str:
+    """Write a sibling tree named ``bar`` and declare it as local source ``foo``."""
+    member = tmp_path / "bar"
+    member.mkdir()
+    (member / "pyproject.toml").write_text('[project]\nname = "bar"\nversion = "1.0"\n')
+    return (
+        '[project]\nname = "root"\nversion = "0"\n'
+        'dependencies = ["foo"]\n'
+        "[[tool.nab.local-sources]]\n"
+        'name = "foo"\n'
+        'path = "bar"\n'
+    )
+
+
+def _source_name_mismatch_message(tmp_path: Path, prefix: str) -> str:
+    target = (tmp_path / "bar").resolve()
+    return (
+        f"error: {prefix}: local source 'foo' declares package 'foo' but its"
+        f" [project].name is 'bar' (at {target}); a source declared for one name"
+        " must not provide a different project"
+    )
+
+
 class _SidecarResponse:
     """Minimal HttpResponse for the fake index transport."""
 
@@ -824,6 +847,20 @@ class TestLockCommandSpecific:
         assert "cannot lock" in err
         assert "has dynamic metadata" in err
         assert "Traceback" not in err
+
+    def test_local_source_naming_another_project_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A local source whose tree is a different project exits 1, not a traceback."""
+        pyproject = _make_pyproject(
+            tmp_path, _mismatched_local_source_project(tmp_path)
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, offline=True, output=Path("-"), cache=False)
+        err = capsys.readouterr().err
+        assert err.splitlines() == [
+            _source_name_mismatch_message(tmp_path, "cannot lock")
+        ]
 
     def test_missing_file_exits(self, tmp_path: Path) -> None:
         """Exit 1 when pyproject.toml doesn't exist."""
@@ -3948,6 +3985,20 @@ class TestDownloadCommand:
         assert "the values below reflect that override" in err
         assert "the lock they produce" not in err
         assert "--project-resolution -> lowest" in err
+
+    def test_local_source_naming_another_project_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A local source whose tree is a different project exits 1, not a traceback."""
+        pyproject = _make_pyproject(
+            tmp_path, _mismatched_local_source_project(tmp_path)
+        )
+        with pytest.raises(SystemExit, match="1"):
+            download(pyproject, offline=True, output=tmp_path / "vendor", cache=False)
+        err = capsys.readouterr().err
+        assert err.splitlines() == [
+            _source_name_mismatch_message(tmp_path, "cannot download")
+        ]
 
     def test_universal_mode_downloads_all_tuples(self, tmp_path: Path) -> None:
         """Universal mode re-resolves the matrix and downloads the union."""
