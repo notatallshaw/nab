@@ -1161,7 +1161,7 @@ def reject_user_keys_in_pyproject(raw: Mapping[str, Any]) -> None:
     does not own are left for the pyproject parser to handle.
 
     The message carries no ``[tool.nab]:`` prefix: the only caller is the
-    pyproject parser, whose ``Error in [tool.nab]:`` wrapper already
+    pyproject parser, whose ``error: in [tool.nab]:`` wrapper already
     supplies it, so prefixing here would double it.
     """
     for key in raw:
