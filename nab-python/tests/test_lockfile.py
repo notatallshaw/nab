@@ -5965,3 +5965,32 @@ class TestMarkerCoverage:
         target = self._minor("3.13")
         with pytest.raises(IntractableMarkerSet, match="patched"):
             validate_marker_coverage([target], environments=[self._row(target)])
+
+    def test_build_pylock_non_covering_raises(self) -> None:
+        target = self._minor("3.13")
+        lock_input = LockInput(
+            targets={
+                target.label: TargetLock(target=target, pins={"foo": _index_pin()})
+            },
+            environments=[
+                Marker(
+                    'python_version == "3.13" and sys_platform == "linux"'
+                    ' and platform_machine == "x86_64"'
+                    ' and python_full_version >= "3.13.2"'
+                )
+            ],
+        )
+        with pytest.raises(CoverageError) as excinfo:
+            build_pylock(lock_input)
+        assert self._full_version(excinfo.value) < Version("3.13.2")
+
+    def test_build_pylock_covering_emits_cleanly(self) -> None:
+        target = self._minor("3.11")
+        lock_input = LockInput(
+            targets={
+                target.label: TargetLock(target=target, pins={"foo": _index_pin()})
+            },
+            environments=[self._row(target)],
+        )
+        pylock = build_pylock(lock_input)
+        assert pylock.environments is not None
