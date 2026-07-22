@@ -8,7 +8,8 @@ before any HTTP transport call.
 Layout under ``root``:
 
     simple-v0/<index>/<package>.json       <- raw PyPI JSON body
-    simple-v0/<index>/<package>.policy     <- {fetched_at, max_age, etag}
+    simple-v0/<index>/<package>.policy     <- {fetched_at, max_age, etag, body_digest}
+    simple-parsed-v0/<index>/<package>.parsed  <- opaque parsed-listing blob
     simple-neg-v0/<index>/<package>.neg    <- {fetched_at, max_age, etag}
     metadata-v1/<index>/<package>/<url digest>.metadata
     sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
@@ -29,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import marshal
 import os
 import shutil
 import stat
@@ -57,6 +59,7 @@ __all__ = [
 
 
 CACHE_VERSION_SIMPLE = "v0"
+CACHE_VERSION_SIMPLE_PARSED = "v0"
 CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v1"
@@ -89,6 +92,9 @@ class CachePolicy:
     fetched_at: int
     max_age: int
     etag: str | None
+    # sha256 hex of the raw body this policy governs; binds a parsed-listing
+    # blob to that body. None for an older policy or a bodyless negative entry.
+    body_digest: str | None = None
 
     def is_fresh(self, now: int | None = None) -> bool:
         """Return True if the entry is still within its freshness window."""
@@ -166,6 +172,9 @@ class OnDiskCache:
         self._root = root
         self._index = _index_dirname(index_url)
         self._simple_dir = root / f"simple-{CACHE_VERSION_SIMPLE}" / self._index
+        self._parsed_dir = (
+            root / f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}" / self._index
+        )
         self._neg_dir = root / f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}" / self._index
         self._metadata_dir = root / f"metadata-{CACHE_VERSION_METADATA}" / self._index
         self._sdist_dir = root / f"sdist-{CACHE_VERSION_SDIST}" / self._index
@@ -175,6 +184,10 @@ class OnDiskCache:
         body = self._simple_dir / f"{segment}.json"
         policy = self._simple_dir / f"{segment}.policy"
         return (body, policy)
+
+    def _parsed_path(self, package: str) -> Path:
+        segment = _require_single_segment(package)
+        return self._parsed_dir / f"{segment}.parsed"
 
     def _neg_path(self, package: str) -> Path:
         segment = _require_single_segment(package)
@@ -227,6 +240,41 @@ class OnDiskCache:
         """
         _, policy_path = self._simple_paths(package)
         _atomic_write(policy_path, _encode_policy(policy))
+
+    def get_simple_policy(self, package: str) -> CachePolicy | None:
+        """Return the freshness policy for a cached Simple entry, without its body.
+
+        The parsed-cache read path needs only the policy on a hit, so this reads
+        the small sidecar without the body. A corrupt policy logs and misses,
+        matching :meth:`get_simple`.
+        """
+        _, policy_path = self._simple_paths(package)
+        try:
+            policy_bytes = policy_path.read_bytes()
+        except OSError:
+            return None
+        policy = _decode_policy(policy_bytes)
+        if policy is None:
+            logger.warning(
+                "Corrupt cache policy %s: not decodable; treating as a miss",
+                policy_path,
+            )
+        return policy
+
+    def get_simple_parsed(self, package: str) -> bytes | None:
+        """Return the opaque parsed-listing blob for ``package``, or ``None``.
+
+        The blob is bytes to this layer; the record codec lives in
+        ``parsed_listing``. An absent blob is a silent miss.
+        """
+        try:
+            return self._parsed_path(package).read_bytes()
+        except OSError:
+            return None
+
+    def put_simple_parsed(self, package: str, blob: bytes) -> None:
+        """Write the opaque parsed-listing blob for ``package`` atomically."""
+        _atomic_write(self._parsed_path(package), blob)
 
     def get_metadata(self, package: str, metadata_url: str) -> str | None:
         """Return the cached sidecar text for ``metadata_url``, or ``None``.
@@ -361,8 +409,9 @@ class OnDiskCache:
 
         Parses by suffix, matching each kind's read path: ``.policy`` and
         ``.neg`` decode as a policy, ``.metadata`` as UTF-8, ``.json`` as
-        JSON (an sdist record also carries its two fields). Any other suffix
-        is not a nab entry and is reported clean.
+        JSON (an sdist record also carries its two fields), ``.parsed`` as a
+        marshal blob. Any other suffix is not a nab entry and is reported
+        clean.
         """
         try:
             raw = path.read_bytes()
@@ -371,12 +420,10 @@ class OnDiskCache:
         suffix = path.suffix
         if suffix in (".policy", ".neg"):
             return None if _decode_policy(raw) is not None else "policy not decodable"
+        if suffix == ".parsed":
+            return _read_parsed_reason(raw)
         if suffix == ".metadata":
-            try:
-                raw.decode("utf-8")
-            except UnicodeDecodeError:
-                return "not valid UTF-8"
-            return None
+            return _read_metadata_reason(raw)
         if suffix == ".json":
             return self._read_json_reason(path, raw)
         return None
@@ -423,14 +470,36 @@ class OnDiskCache:
         return removed
 
 
+def _read_metadata_reason(raw: bytes) -> str | None:
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return "not valid UTF-8"
+    return None
+
+
+def _read_parsed_reason(raw: bytes) -> str | None:
+    # Structural decodability only; the digest binding retires a stale-but-valid
+    # blob at read time, so verify does not check it. marshal builds only
+    # builtins, so a garbage blob raises rather than running anything.
+    try:
+        marshal.loads(raw)  # noqa: S302
+    except (ValueError, EOFError, TypeError):
+        return "not valid marshal data"
+    return None
+
+
 def _encode_policy(policy: CachePolicy) -> bytes:
-    return json.dumps(
-        {
-            "fetched_at": policy.fetched_at,
-            "max_age": policy.max_age,
-            "etag": policy.etag,
-        }
-    ).encode("utf-8")
+    doc: dict[str, object] = {
+        "fetched_at": policy.fetched_at,
+        "max_age": policy.max_age,
+        "etag": policy.etag,
+    }
+    # Emit only when set so an older policy or a bodyless negative entry keeps
+    # its previous form; absence decodes back to None.
+    if policy.body_digest is not None:
+        doc["body_digest"] = policy.body_digest
+    return json.dumps(doc).encode("utf-8")
 
 
 def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
@@ -440,6 +509,7 @@ def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
             fetched_at=int(doc["fetched_at"]),
             max_age=int(doc["max_age"]),
             etag=doc.get("etag"),
+            body_digest=doc.get("body_digest"),
         )
     except (ValueError, KeyError, TypeError):
         return None
@@ -458,6 +528,18 @@ class CacheBackend(Protocol):
 
     def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Update the policy for an existing entry without rewriting the body."""
+        ...
+
+    def get_simple_policy(self, package: str) -> CachePolicy | None:
+        """Return a Simple entry's freshness policy without its body, or ``None``."""
+        ...
+
+    def get_simple_parsed(self, package: str) -> bytes | None:
+        """Return the opaque parsed-listing blob for ``package``, or ``None``."""
+        ...
+
+    def put_simple_parsed(self, package: str, blob: bytes) -> None:
+        """Store the opaque parsed-listing blob for ``package``."""
         ...
 
     def get_metadata(self, package: str, metadata_url: str) -> str | None:
@@ -527,6 +609,15 @@ class NullCache:
 
     def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Discard the policy refresh."""
+
+    def get_simple_policy(self, package: str) -> CachePolicy | None:
+        """Return ``None`` (always a miss)."""
+
+    def get_simple_parsed(self, package: str) -> bytes | None:
+        """Return ``None`` (always a miss)."""
+
+    def put_simple_parsed(self, package: str, blob: bytes) -> None:
+        """Discard the entry."""
 
     def get_metadata(self, package: str, metadata_url: str) -> str | None:
         """Return ``None`` (always a miss)."""
