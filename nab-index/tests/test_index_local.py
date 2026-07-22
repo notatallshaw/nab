@@ -65,3 +65,18 @@ def test_get_sdist_archive_returns_file_bytes(tmp_path: Path) -> None:
     client = LocalIndexClient(tmp_path.as_uri())
     data = run(client.get_sdist_archive("foo", "1.0", sdist.as_uri()))
     assert data == b"SDIST-BYTES"
+
+
+def test_get_range_metadata_returns_no_source_result(tmp_path: Path) -> None:
+    from packaging.utils import canonicalize_name
+
+    from nab_index.lazy_wheel import RangeOutcome
+
+    client = LocalIndexClient(tmp_path.as_uri())
+    result = run(
+        client.get_range_metadata(
+            "foo", "1.0", "https://x/foo-1.0-py3-none-any.whl", canonicalize_name("foo")
+        )
+    )
+    assert result.text is None
+    assert result.outcome is RangeOutcome.UNSUPPORTED

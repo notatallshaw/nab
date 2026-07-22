@@ -30,9 +30,11 @@ from .cache import OfflineError
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from packaging.utils import NormalizedName
     from typing_extensions import Self
 
     from .client import SdistFile, WheelFile
+    from .lazy_wheel import RangeMetadataResult
 
 __all__ = [
     "IndexClient",
@@ -82,6 +84,16 @@ class IndexClient(Protocol):
         sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> bytes:
         """Return the raw sdist archive bytes."""
+        ...
+
+    async def get_range_metadata(
+        self,
+        package: str,
+        version: str,
+        wheel_url: str,
+        canonical_name: NormalizedName,
+    ) -> RangeMetadataResult:
+        """Recover a sidecar-less wheel's METADATA by HTTP range reads."""
         ...
 
     async def aclose(self) -> None:
@@ -247,6 +259,18 @@ class MultiIndexClient:
         """Forward to the routed client; presupposes ``get_files`` was called."""
         return await self._client_for(package).get_sdist_archive(
             package, version, sdist_url, sdist_hashes
+        )
+
+    async def get_range_metadata(
+        self,
+        package: str,
+        version: str,
+        wheel_url: str,
+        canonical_name: NormalizedName,
+    ) -> RangeMetadataResult:
+        """Forward to the routed client; presupposes ``get_files`` was called."""
+        return await self._client_for(package).get_range_metadata(
+            package, version, wheel_url, canonical_name
         )
 
     def _client_for(self, package: str) -> IndexClient:

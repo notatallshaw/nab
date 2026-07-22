@@ -42,7 +42,10 @@ from .client import (
 from .transport import HttpError
 
 if TYPE_CHECKING:
+    from packaging.utils import NormalizedName
     from typing_extensions import Self
+
+    from .lazy_wheel import RangeMetadataResult
 
 __all__ = [
     "LocalIndexClient",
@@ -564,3 +567,21 @@ class LocalIndexClient:
         """
         path = parse_file_url(sdist_url)
         return path.read_bytes()
+
+    async def get_range_metadata(
+        self,
+        package: str,  # noqa: ARG002 - matches CachedAsyncSimpleClient signature
+        version: str,  # noqa: ARG002
+        wheel_url: str,  # noqa: ARG002
+        canonical_name: NormalizedName,  # noqa: ARG002
+    ) -> RangeMetadataResult:
+        """Return the no-source result.
+
+        A local wheel is read through the resolver's ``local_path`` branch, not
+        over HTTP, so there is no range read to perform here.
+        """
+        # Imported inside the method to break the lazy_wheel <-> local_index
+        # import cycle: lazy_wheel imports this module's shared member selector.
+        from .lazy_wheel import RangeMetadataResult, RangeOutcome  # noqa: PLC0415
+
+        return RangeMetadataResult(None, RangeOutcome.UNSUPPORTED)

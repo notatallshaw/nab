@@ -27,8 +27,15 @@ from .client import (
     _verify_metadata_hash,
     _verify_sdist_hash,
 )
+from .lazy_wheel import (
+    RangeCapabilityMemo,
+    RangeMetadataResult,
+    RangeOutcome,
+    read_wheel_metadata_over_range,
+)
 
 if TYPE_CHECKING:
+    from packaging.utils import NormalizedName
     from typing_extensions import Self
 
     from .transport import AsyncHttpTransport, HttpResponse
@@ -83,12 +90,22 @@ class CachedAsyncSimpleClient:
         index_url: str = DEFAULT_INDEX,
         *,
         offline: bool = False,
+        range_memo: RangeCapabilityMemo | None = None,
     ) -> None:
-        """Create a cached client wrapping ``transport``."""
+        """Create a cached client wrapping ``transport``.
+
+        ``range_memo`` is the per-run range-capability memo shared across the
+        indexes' clients; the coordinator owns the shared instance and injects
+        it. A fresh memo is built when none is passed, so a stand-alone client
+        still learns each host's range behaviour within its own lifetime.
+        """
         self._transport = transport
         self._cache = cache
         self._index_url = index_url.rstrip("/") + "/"
         self._offline = offline
+        self._range_memo = (
+            range_memo if range_memo is not None else RangeCapabilityMemo()
+        )
 
     async def aclose(self) -> None:
         """Close the underlying transport."""
@@ -251,6 +268,39 @@ class CachedAsyncSimpleClient:
             raise MalformedSimpleResponseError(msg) from exc
         self._cache.put_metadata(package, metadata_url, text)
         return text
+
+    async def get_range_metadata(
+        self,
+        package: str,
+        version: str,
+        wheel_url: str,
+        canonical_name: NormalizedName,
+    ) -> RangeMetadataResult:
+        """Recover a sidecar-less wheel's METADATA by HTTP range reads.
+
+        The recovered text is cached under the same immutable ``metadata-v1``
+        store the PEP 658 sidecar uses, keyed by the wheel URL. A cache hit is
+        returned without any transport call, so a warm or previously-warmed
+        offline resolve never re-ranges. A cold miss in offline mode raises
+        :class:`OfflineError`; otherwise the reader drives the transport with
+        the shared range-capability memo. Only a successful read is cached; an
+        ``UNSUPPORTED`` or ``MISSING`` result writes nothing so the caller can
+        step to the sdist rung.
+        """
+        cached = self._cache.get_metadata(package, wheel_url)
+        if cached is not None:
+            return RangeMetadataResult(cached, RangeOutcome.PARTIAL)
+
+        if self._offline:
+            msg = f"No cached range metadata for {package}=={version} (offline mode)"
+            raise OfflineError(msg)
+
+        result = await read_wheel_metadata_over_range(
+            self._transport, wheel_url, canonical_name, self._range_memo
+        )
+        if result.text is not None:
+            self._cache.put_metadata(package, wheel_url, result.text)
+        return result
 
     async def get_sdist_files(
         self,
