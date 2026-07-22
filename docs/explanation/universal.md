@@ -33,6 +33,20 @@ with more environments in it: the same shape, the same
 dependency edges. A target whose minor a marker splits contributes
 one declaration per slice (see Patch-release markers below).
 
+## Where a version's metadata comes from
+
+nab reads a version's dependency metadata from the one wheel its
+target's tags rank most preferred (most specific tag, then highest
+build tag) and treats it as authoritative for that version on that
+target. Per-target tag filtering already keeps cross-platform wheels
+apart, so this is exact wherever the installer's own rules can rank a
+version's wheels.
+
+When a version's wheels tie for a target and the siblings already
+fetched declare different dependencies, nab reports an error rather
+than pick one by guessing. It compares only the siblings in hand, so
+it does not promise to catch every such case.
+
 ## Declaring the matrix
 
 ```toml
