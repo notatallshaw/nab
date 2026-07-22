@@ -160,9 +160,11 @@ class InMemoryIndex:
         self._sdist_pyproject: dict[tuple[str, str], str | None] = {}
         self._sdist_archives: dict[tuple[str, str], bytes | None] = {}
         self._sdist_archive_errors: dict[tuple[str, str], BaseException] = {}
-        # The mechanical outcome of a rung-4 range read, per version, for the
-        # provider's tier accounting.  Discovered in nab-index, recorded here.
-        self._range_outcomes: dict[tuple[str, str], RangeOutcome] = {}
+        # The mechanical outcome of a rung-4 range read, per wheel URL, for
+        # the provider's tier accounting.  Discovered in nab-index, recorded
+        # here; keyed like the read itself so sibling wheels of one version
+        # do not overwrite each other's outcome.
+        self._range_outcomes: dict[tuple[str, str, str], RangeOutcome] = {}
         self._pending: dict[str, _Pending] = {}
 
         # Parsed metadata is a pure function of the underlying text, so it
@@ -469,12 +471,11 @@ class InMemoryIndex:
         """Record a failed range read as a per-wheel error and unblock rung 4.
 
         Distinct from :meth:`store_range_absent`: a malformed-UTF-8 METADATA
-        blob or a transport failure fetching the advertised wheel must drop the
-        candidate, not fall through to the sdist.  The error lands in the
-        ``(package, version, wheel_url)`` slot the provider reads for that wheel,
-        so a per-artifact failure drops only that wheel and not an
-        independently-resolvable sibling, mirroring the sidecar's per-URL error.
-        The ``range:`` pending fires so the waiter unblocks.
+        blob, or a wheel URL the index advertised and then could not serve,
+        fails the resolve rather than falling through to the sdist, mirroring
+        :meth:`store_metadata_error` for an advertised sidecar.  The error
+        lands in the ``(package, version, wheel_url)`` slot the provider reads
+        for that wheel.  The ``range:`` pending fires so the waiter unblocks.
         """
         key = _range_key(package, version, wheel_url)
         with self._lock:
@@ -484,16 +485,18 @@ class InMemoryIndex:
             pending.event.set()
 
     def store_range_outcome(
-        self, package: str, version: str, outcome: RangeOutcome
+        self, package: str, version: str, wheel_url: str, outcome: RangeOutcome
     ) -> None:
         """Record the mechanical outcome of a range read for tier accounting."""
         with self._lock:
-            self._range_outcomes[(package, version)] = outcome
+            self._range_outcomes[(package, version, wheel_url)] = outcome
 
-    def get_range_outcome(self, package: str, version: str) -> RangeOutcome | None:
+    def get_range_outcome(
+        self, package: str, version: str, wheel_url: str
+    ) -> RangeOutcome | None:
         """Return the recorded range-read outcome, or ``None`` if none ran."""
         with self._lock:
-            return self._range_outcomes.get((package, version))
+            return self._range_outcomes.get((package, version, wheel_url))
 
     def store_sdist_pyproject(self, package: str, version: str, data: str) -> None:
         """Store sdist-derived pyproject.toml text for static-metadata fallback.
@@ -1184,8 +1187,8 @@ class FetchCoordinator:
                 # A cold offline miss is a rung miss: fall through to the sdist.
                 self.index.store_range_absent(req.package, req.version, req.url)
             else:
-                # A malformed blob or a transport failure on the advertised
-                # wheel drops the candidate; record the per-wheel error.
+                # A malformed blob or an unserveable advertised wheel fails
+                # the resolve; record the per-wheel error.
                 self.index.store_range_error(req.package, req.version, req.url, exc)
         elif req.kind is FetchKind.SDIST:
             if offline:
@@ -1268,18 +1271,20 @@ class FetchCoordinator:
     ) -> None:
         """Recover a sidecar-less wheel's METADATA over an HTTP range read.
 
-        A read that returns text stores it in the version-level slot; a read
+        A read that returns text stores it in the wheel's own slot; a read
         that returns none (ranges unsupported, no METADATA member) records the
         outcome and fires the waiter with no slot, so the provider steps to the
-        sdist rung.  A malformed blob or transport failure raises out of the
-        client and is caught by :meth:`_handle` as a fetch failure.
+        sdist rung.  A malformed blob or an unserveable wheel URL raises out of
+        the client and is caught by :meth:`_handle` as a fetch failure.
         """
         assert req.version is not None
         assert req.url is not None
         result = await client.get_range_metadata(
             req.package, req.version, req.url, canonicalize_name_boundary(req.package)
         )
-        self.index.store_range_outcome(req.package, req.version, result.outcome)
+        self.index.store_range_outcome(
+            req.package, req.version, req.url, result.outcome
+        )
         if result.text is None:
             self.index.store_range_absent(req.package, req.version, req.url)
         else:

@@ -2192,9 +2192,13 @@ class TestRangeMetadataIndex:
 
     def test_range_outcome_roundtrip(self) -> None:
         idx = InMemoryIndex()
-        assert idx.get_range_outcome("widget", "1.0") is None
-        idx.store_range_outcome("widget", "1.0", RangeOutcome.PARTIAL)
-        assert idx.get_range_outcome("widget", "1.0") is RangeOutcome.PARTIAL
+        assert idx.get_range_outcome("widget", "1.0", _RANGE_URL_A) is None
+        idx.store_range_outcome("widget", "1.0", _RANGE_URL_A, RangeOutcome.PARTIAL)
+        assert (
+            idx.get_range_outcome("widget", "1.0", _RANGE_URL_A) is RangeOutcome.PARTIAL
+        )
+        # Keyed like the read itself: a sibling wheel's slot stays empty.
+        assert idx.get_range_outcome("widget", "1.0", _RANGE_URL_B) is None
 
 
 def _crashed_range_coord() -> FetchCoordinator:
@@ -2266,7 +2270,7 @@ class TestRangeMetadataCoordinator:
                 == _RANGE_META.decode()
             )
             assert not coord.index.metadata_from_sdist("widget", "1.0")
-            assert coord.index.get_range_outcome("widget", "1.0") in (
+            assert coord.index.get_range_outcome("widget", "1.0", _RANGE_URL) in (
                 RangeOutcome.PARTIAL,
                 RangeOutcome.FULL_BODY,
             )
@@ -2281,7 +2285,8 @@ class TestRangeMetadataCoordinator:
             assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
             assert coord.index.get_metadata_error("widget", "1.0", _RANGE_URL) is None
             assert (
-                coord.index.get_range_outcome("widget", "1.0") is RangeOutcome.MISSING
+                coord.index.get_range_outcome("widget", "1.0", _RANGE_URL)
+                is RangeOutcome.MISSING
             )
 
     def test_handler_stores_absent_on_unsupported(self) -> None:
@@ -2291,7 +2296,7 @@ class TestRangeMetadataCoordinator:
             assert event.wait(timeout=5)
             assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
             assert (
-                coord.index.get_range_outcome("widget", "1.0")
+                coord.index.get_range_outcome("widget", "1.0", _RANGE_URL)
                 is RangeOutcome.UNSUPPORTED
             )
 

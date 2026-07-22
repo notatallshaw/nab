@@ -91,8 +91,9 @@ def resolve_metadata(
 
     # Rung 4: a sidecar-less remote wheel recovers its METADATA over ranged
     # HTTP reads.  Fires only for a bare http/https wheel (no PEP 658 URL, no
-    # local path); a malformed-UTF-8 blob or a transport failure fetching the
-    # advertised wheel is re-raised so the candidate drops, while a plain miss
+    # local path); a malformed-UTF-8 blob or an advertised wheel the index
+    # cannot serve is re-raised and fails the resolve, like an unserveable
+    # sidecar, while a plain miss (including a host without usable ranges)
     # leaves ``metadata_text`` None and the ladder steps to the sdist rung.
     if metadata_text is None and _is_bare_remote_wheel(dist):
         metadata_text, from_sdist = _read_range_metadata(
@@ -124,7 +125,7 @@ def _read_direct_wheel_metadata(
 
     Returns ``(metadata_text, from_sdist)``; ``from_sdist`` is always ``False``
     since both sources are wheel METADATA.  A recorded sidecar integrity error
-    is re-raised so the candidate drops; a contradictory local ``.dist-info``
+    is re-raised and fails the resolve; a contradictory local ``.dist-info``
     reads back as ``None`` and the ladder steps on.
     """
     index = provider.coordinator.index
@@ -166,10 +167,11 @@ def _read_range_metadata(
 ) -> tuple[str | None, bool]:
     """Run rung 4 for one bare wheel and return ``(metadata_text, from_sdist)``.
 
-    Blocks on the coordinator's range read, re-raises a recorded metadata error
-    (a malformed-UTF-8 blob or a transport failure) so the candidate drops, and
-    otherwise records the outcome counter and returns the version-level slot.
-    ``from_sdist`` is ``False``: recovered wheel METADATA is authoritative.
+    Blocks on the coordinator's range read, re-raises a recorded metadata
+    error (a malformed-UTF-8 blob, an unserveable wheel URL) so the resolve
+    fails, and otherwise records the outcome counter and reads the wheel's
+    slot.  ``from_sdist`` is ``False``: recovered wheel METADATA is
+    authoritative.
     """
     event = provider.coordinator.request_range_metadata(package, version, wheel_url)
     event.wait()
@@ -177,18 +179,20 @@ def _read_range_metadata(
     integrity_error = index.get_metadata_error(package, version, wheel_url)
     if integrity_error is not None:
         raise integrity_error
-    _record_range_outcome(provider, package, version)
+    _record_range_outcome(provider, package, version, wheel_url)
     return index.get_metadata_with_origin(package, version, wheel_url)
 
 
-def _record_range_outcome(provider: Provider, package: str, version: str) -> None:
+def _record_range_outcome(
+    provider: Provider, package: str, version: str, wheel_url: str
+) -> None:
     """Bump the :class:`ProviderStats` counter for a range read's outcome.
 
     The mechanical outcome is discovered in nab-index and recorded on the
     index; the provider owns tier accounting.  A read that recorded no outcome
     (a refused or offline-missed request) leaves every counter untouched.
     """
-    outcome = provider.coordinator.index.get_range_outcome(package, version)
+    outcome = provider.coordinator.index.get_range_outcome(package, version, wheel_url)
     if outcome is None:
         return
     if outcome is RangeOutcome.PARTIAL:

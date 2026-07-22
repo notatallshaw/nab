@@ -1708,8 +1708,8 @@ class TestRangeMetadataRung:
         assert provider.stats.wheel_metadata_range_missing == 1
         assert provider.stats.sdist_pkg_info_fetched == 1
 
-    def test_range_utf8_error_drops_candidate(self) -> None:
-        """Malformed-UTF-8 METADATA from a range read drops the candidate."""
+    def test_range_utf8_error_fails_resolve(self) -> None:
+        """Malformed-UTF-8 METADATA from a range read fails the resolve."""
         coordinator = make_coordinator(
             [make_wheel("1.0", has_metadata=False), make_sdist("1.0")],
             package="foo",

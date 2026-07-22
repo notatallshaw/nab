@@ -157,12 +157,13 @@ def _wire_range_side_effects(
 
     Mirrors the coordinator's ``_fetch_range_metadata`` handler: a recorded
     ``range_error`` lands a per-wheel metadata error (the malformed-UTF-8
-    or transport drop), otherwise the read stores the recovered METADATA or
-    marks the read absent.  ``range_by_url`` selects a result per wheel URL,
-    which is how sibling sidecar-less wheels of one version are given different
-    dependencies; ``range_result`` is the single-result shortcut.  With none set
-    the request is a no-op that still returns a done event, so a rung-4 read
-    finds nothing and the ladder steps to the sdist rung.
+    blob, the unserveable wheel URL), otherwise the read stores the recovered
+    METADATA or marks the read absent.  ``range_by_url`` selects a result per
+    wheel URL, which is how sibling sidecar-less wheels of one version are
+    given different dependencies; ``range_result`` is the single-result
+    shortcut.  With none set the request is a no-op that still returns a done
+    event, so a rung-4 read finds nothing and the ladder steps to the sdist
+    rung.
     """
 
     def _request_range_metadata(pkg: str, ver: str, url: str) -> threading.Event:
@@ -171,7 +172,7 @@ def _wire_range_side_effects(
             return _done_event()
         result = range_by_url.get(url) if range_by_url is not None else range_result
         if result is not None:
-            index.store_range_outcome(pkg, ver, result.outcome)
+            index.store_range_outcome(pkg, ver, url, result.outcome)
             if result.text is None:
                 index.store_range_absent(pkg, ver, url)
             else:

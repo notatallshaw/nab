@@ -16,7 +16,10 @@ import json
 import zipfile
 from typing import TYPE_CHECKING
 
+import pytest
+
 from nab_index.lazy_wheel import RangeOutcome
+from nab_index.transport import HttpError
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
@@ -95,21 +98,27 @@ class _FakeResponse:
         return json.loads(self._content)
 
     def raise_for_status(self) -> None:
-        return None
+        if self._status >= 400:
+            msg = f"HTTP {self._status}"
+            raise HttpError(msg)
 
 
 class FakeRangeTransport:
     """Serve a Simple listing on a plain GET and wheel bytes over ranges.
 
-    A request carrying a ``Range`` header is a wheel range read; every other
-    GET is the listing fetch. Both are counted so a test can assert a warm
-    offline replay touched the network zero times.
+    A request for the wheel URL is a wheel read; every other GET is the
+    listing fetch. Both are counted so a test can assert a warm offline
+    replay touched the network zero times. ``wheel_status`` makes every
+    wheel request answer that status instead, for failure-path tests.
     """
 
-    def __init__(self, wheel: bytes, listing: bytes) -> None:
+    def __init__(
+        self, wheel: bytes, listing: bytes, *, wheel_status: int | None = None
+    ) -> None:
         self.wheel = wheel
         self.total = len(wheel)
         self.listing = listing
+        self.wheel_status = wheel_status
         self.requests: list[tuple[str, str | None]] = []
 
     async def get(
@@ -119,8 +128,12 @@ class FakeRangeTransport:
         headers = headers or {}
         rng = headers.get("Range")
         self.requests.append((url, rng))
-        if rng is None:
+        if url != _WHEEL_URL:
             return _FakeResponse(200, {"content-type": _JSON_MEDIA}, self.listing)
+        if self.wheel_status is not None:
+            return _FakeResponse(self.wheel_status, {}, b"")
+        if rng is None:
+            return _FakeResponse(200, {}, self.wheel)
         return self._range(rng)
 
     async def aclose(self) -> None:
@@ -168,14 +181,25 @@ def test_cold_resolve_recovers_metadata_over_range(tmp_path: Path) -> None:
         result = _resolve(coordinator)
         assert result.success
         assert result.target_results[0].pins == {"widget": Version("1.0")}
-        assert coordinator.index.get_range_outcome("widget", "1.0") is (
+        assert coordinator.index.get_range_outcome("widget", "1.0", _WHEEL_URL) is (
             RangeOutcome.PARTIAL
         )
 
-    # The listing was fetched once and the wheel was ranged for its METADATA.
+    # The listing was fetched once, and the small wheel's whole METADATA came
+    # back in the single suffix read: any extra request here is a regression
+    # toward the request amplification pip's fast-deps suffers.
     assert transport.listing_requests == [_SIMPLE_URL]
-    assert all(url == _WHEEL_URL for url in transport.range_requests)
-    assert transport.range_requests
+    assert transport.range_requests == [_WHEEL_URL]
+
+
+def test_resolve_fails_when_wheel_url_unserved(tmp_path: Path) -> None:
+    """An advertised wheel the index cannot serve fails the resolve loudly."""
+    transport = FakeRangeTransport(_wheel_bytes(), _listing_body(), wheel_status=404)
+    with (
+        FetchCoordinator(transport, cache_dir=tmp_path) as coordinator,  # type: ignore[arg-type]
+        pytest.raises(HttpError),
+    ):
+        _resolve(coordinator)
 
 
 def test_warm_offline_replay_serves_cache_without_ranging(tmp_path: Path) -> None:
@@ -192,7 +216,7 @@ def test_warm_offline_replay_serves_cache_without_ranging(tmp_path: Path) -> Non
         result = _resolve(coordinator)
         assert result.success
         assert result.target_results[0].pins == {"widget": Version("1.0")}
-        assert coordinator.index.get_range_outcome("widget", "1.0") is (
+        assert coordinator.index.get_range_outcome("widget", "1.0", _WHEEL_URL) is (
             RangeOutcome.PARTIAL
         )
 
