@@ -35,6 +35,22 @@ def _wheel(name: str, version: str) -> WheelFile:
     )
 
 
+def _tie_wheel(tag: str) -> WheelFile:
+    filename = f"pkg-1.0-{tag}.whl"
+    return WheelFile(
+        filename=filename,
+        url=f"https://example.com/{filename}",
+        version="1.0",
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+    )
+
+
+def _tie_meta(requires_dist: str) -> str:
+    return f"Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: {requires_dist}\n\n"
+
+
 class TestConstraintProbeContainsHardError:
     def test_excluded_version_hard_error_does_not_abort_resolve(self) -> None:
         """A broken sidecar on a constraint-excluded version stays out of play.
@@ -84,3 +100,28 @@ class TestConstraintProbeContainsHardError:
 
         assert found is False
         assert provider._lookahead_aborted == sentinel
+
+    def test_tie_divergence_on_probed_version_returns_false(self) -> None:
+        """A tie divergence reached only by the probe returns False, not crash.
+
+        The probe re-runs ``choose_version`` to attribute an already-failing
+        resolve.  A version whose tie-ranked wheels declare divergent deps is a
+        hard error like a failed integrity check, so it must stay out of play
+        rather than abort the resolve.  The genuine crash still fires when the
+        version is actually pinned outside a probe.
+        """
+        wheel_a = _tie_wheel("py2.py3-none-any")
+        wheel_b = _tie_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _tie_meta("alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _tie_meta("beta>=1"), wheel_b.metadata_url
+        )
+        root_reqs = {"pkg": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+
+        found = provider.has_satisfying_version("pkg", VersionRange.full())
+
+        assert found is False

@@ -805,6 +805,77 @@ class TestLowestDirectAcrossTargets:
         }
 
 
+class TestMatrixPerTargetWheelDivergence:
+    """A version whose wheels differ per platform resolves per target.
+
+    Each target's tag-filtered listing holds only its own wheel, so the
+    sibling divergence check never fires across the matrix boundary and every
+    target reads the dependencies of the wheel it installs.
+    """
+
+    def _coordinator(self) -> MagicMock:
+        linux_wheel = WheelFile(
+            filename="pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl",
+            url="https://example.com/pkg-1.0-linux.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+        )
+        win_wheel = WheelFile(
+            filename="pkg-1.0-cp311-cp311-win_amd64.whl",
+            url="https://example.com/pkg-1.0-win.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+        )
+        coordinator = make_coordinator(
+            listings={
+                "pkg": [linux_wheel, win_wheel],
+                "linuxdep": [_make_wheel("1.0", package="linuxdep")],
+                "windep": [_make_wheel("1.0", package="windep")],
+            },
+            auto_metadata=True,
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: linuxdep\n\n",
+            linux_wheel.metadata_url,
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: windep\n\n",
+            win_wheel.metadata_url,
+        )
+        return coordinator
+
+    def test_each_target_reads_its_own_wheel(self) -> None:
+        targets = Matrix(
+            python="==3.11",
+            platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
+        ).expand()
+        result = resolve_with_coordinator(
+            self._coordinator(), targets, _reqs("pkg"), config=_no_build()
+        )
+        assert result.success
+        pins = {
+            tr.target.platform_spec.platform_id: tr.pins
+            for tr in result.target_results
+            if tr.target.platform_spec is not None
+        }
+        assert pins["linux_x86_64"] == {
+            "pkg": Version("1.0"),
+            "linuxdep": Version("1.0"),
+        }
+        assert pins["windows_amd64"] == {
+            "pkg": Version("1.0"),
+            "windep": Version("1.0"),
+        }
+
+
 _FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
