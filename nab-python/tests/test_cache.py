@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -378,6 +379,118 @@ class TestNullCache:
         assert cache.put_negative("foo", policy) is None
         assert cache.drop_negative("foo") is None
         assert cache.get_negative("foo") is None
+
+
+def _warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+class TestCorruptEntryLogging:
+    """A present-but-unparseable entry is a miss named in one WARNING line.
+
+    An absent file is a silent miss.
+    """
+
+    def _make(self, tmp_path: Path) -> OnDiskCache:
+        return OnDiskCache(tmp_path, "https://pypi.org/simple/")
+
+    def test_corrupt_policy_logs_one_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        body_path, policy_path = cache._simple_paths("foo")
+        body_path.parent.mkdir(parents=True, exist_ok=True)
+        body_path.write_bytes(b"{}")
+        policy_path.write_bytes(b"not-json")
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_simple("foo") is None
+        warnings = _warnings(caplog)
+        assert len(warnings) == 1
+        assert str(policy_path) in warnings[0].getMessage()
+
+    def test_corrupt_neg_logs_one_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        path = cache._neg_path("foo")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"not-json")
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_negative("foo") is None
+        warnings = _warnings(caplog)
+        assert len(warnings) == 1
+        assert str(path) in warnings[0].getMessage()
+
+    def test_corrupt_sdist_record_logs_one_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        path = cache._sdist_path("foo", "1.0")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("not-json", encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_sdist_files("foo", "1.0") is None
+        warnings = _warnings(caplog)
+        assert len(warnings) == 1
+        assert str(path) in warnings[0].getMessage()
+
+    def test_non_utf8_sdist_record_is_logged_miss(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        path = cache._sdist_path("foo", "1.0")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\xff\xfe not utf-8")
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_sdist_files("foo", "1.0") is None
+        warnings = _warnings(caplog)
+        assert len(warnings) == 1
+        assert str(path) in warnings[0].getMessage()
+
+    def test_non_utf8_metadata_is_logged_miss(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        path = cache._metadata_path("foo", METADATA_URLS[0])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\xff\xfe not utf-8")
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_metadata("foo", METADATA_URLS[0]) is None
+        warnings = _warnings(caplog)
+        assert len(warnings) == 1
+        assert str(path) in warnings[0].getMessage()
+
+    def test_absent_policy_is_silent(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_simple("none") is None
+        assert _warnings(caplog) == []
+
+    def test_absent_neg_is_silent(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_negative("none") is None
+        assert _warnings(caplog) == []
+
+    def test_absent_sdist_is_silent(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_sdist_files("foo", "1.0") is None
+        assert _warnings(caplog) == []
+
+    def test_absent_metadata_is_silent(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_metadata("foo", METADATA_URLS[0]) is None
+        assert _warnings(caplog) == []
 
 
 class TestEncodePolicy:

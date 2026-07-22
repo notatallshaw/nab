@@ -10,6 +10,7 @@ as immutable (cached forever; never revalidated).
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from typing import TYPE_CHECKING
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
 __all__ = [
     "CachedAsyncSimpleClient",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 _JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
@@ -135,13 +138,20 @@ class CachedAsyncSimpleClient:
         listing and no transport call; a stale sentinel online falls
         through to an unconditional fetch. A 404 records a sentinel and
         yields an empty listing.
+
+        A cached body that will not decode as JSON is structural corruption
+        of derived data, so the entry is treated as a positive miss and the
+        name is re-fetched (online) or raises :class:`OfflineError`
+        (offline), the same as a cold miss.
         """
         cached = self._cache.get_simple(package)
         if cached is not None:
             body, policy = cached
-            if policy.is_fresh() or self._offline:
-                return self._parse_listing(body, package)
-            return await self._revalidate_simple(package, body, policy)
+            data = self._decode_cached_listing(body, package)
+            if data is not None:
+                if policy.is_fresh() or self._offline:
+                    return _parse_files(data, self._index_url, package)
+                return await self._revalidate_simple(package, body, policy)
 
         negative = self._cache.get_negative(package)
         if negative is not None and (negative.is_fresh() or self._offline):
@@ -158,6 +168,24 @@ class CachedAsyncSimpleClient:
             _parse_max_age(_header(response, "cache-control")), _DEFAULT_MAX_AGE
         )
         return CachePolicy(fetched_at=int(time.time()), max_age=max_age, etag=None)
+
+    def _decode_cached_listing(self, body: bytes, package: str) -> object | None:
+        """Return the parsed JSON of a cached Simple body, or ``None``.
+
+        A body that will not decode as JSON is logged and treated as a miss.
+        A body that decodes but is the wrong shape is not caught here:
+        :func:`_parse_files` raises on it, the same as on the wire path.
+        """
+        try:
+            return json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logger.warning(
+                "Corrupt cached Simple-API body for %r from %s: not valid JSON; "
+                "treating as a miss and re-fetching",
+                package,
+                self._index_url,
+            )
+            return None
 
     def _parse_listing(self, body: bytes, package: str) -> list[WheelFile | SdistFile]:
         """Parse a Simple-API listing body.

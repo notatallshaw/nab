@@ -22,12 +22,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from .atomic import atomic_write
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CacheBackend",
@@ -80,14 +83,6 @@ def _atomic_write(path: Path, data: bytes) -> None:
     """Create the cache bucket for ``path``, then write ``data`` into it."""
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, data)
-
-
-def _read_text(path: Path) -> str | None:
-    """Return ``path``'s UTF-8 contents, or ``None`` if the file is absent."""
-    try:
-        return path.read_text(encoding="utf-8")
-    except OSError:
-        return None
 
 
 def _require_single_segment(component: str) -> str:
@@ -153,6 +148,10 @@ class OnDiskCache:
             return None
         policy = _decode_policy(policy_bytes)
         if policy is None:
+            logger.warning(
+                "Corrupt cache policy %s: not decodable; treating as a miss",
+                policy_path,
+            )
             return None
         return (body, policy)
 
@@ -172,8 +171,24 @@ class OnDiskCache:
         _atomic_write(policy_path, _encode_policy(policy))
 
     def get_metadata(self, package: str, metadata_url: str) -> str | None:
-        """Return the cached sidecar text for ``metadata_url``, or ``None``."""
-        return _read_text(self._metadata_path(package, metadata_url))
+        """Return the cached sidecar text for ``metadata_url``, or ``None``.
+
+        A present file that is not valid UTF-8 is a corrupt entry: logged
+        and treated as a miss. An absent file is a silent miss.
+        """
+        path = self._metadata_path(package, metadata_url)
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return None
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.warning(
+                "Corrupt cached metadata %s: not valid UTF-8; treating as a miss",
+                path,
+            )
+            return None
 
     def put_metadata(self, package: str, metadata_url: str, text: str) -> None:
         """Write the sidecar text served at ``metadata_url``. Immutable."""
@@ -188,13 +203,19 @@ class OnDiskCache:
         whose ``pyproject_toml`` is ``None`` means the sdist ships no
         pyproject.toml, which is not the same as a miss.
         """
-        text = _read_text(self._sdist_path(package, version))
-        if text is None:
+        path = self._sdist_path(package, version)
+        try:
+            raw = path.read_bytes()
+        except OSError:
             return None
         try:
-            doc = json.loads(text)
+            doc = json.loads(raw)
             return (doc["pkg_info"], doc["pyproject"])
         except (ValueError, KeyError, TypeError):
+            logger.warning(
+                "Corrupt sdist cache record %s: not parseable; treating as a miss",
+                path,
+            )
             return None
 
     def put_sdist_files(
@@ -214,11 +235,18 @@ class OnDiskCache:
 
     def get_negative(self, package: str) -> CachePolicy | None:
         """Return the freshness policy of a cached name-level 404, or ``None``."""
+        neg_path = self._neg_path(package)
         try:
-            neg_bytes = self._neg_path(package).read_bytes()
+            neg_bytes = neg_path.read_bytes()
         except OSError:
             return None
-        return _decode_policy(neg_bytes)
+        policy = _decode_policy(neg_bytes)
+        if policy is None:
+            logger.warning(
+                "Corrupt negative cache entry %s: not decodable; treating as a miss",
+                neg_path,
+            )
+        return policy
 
     def put_negative(self, package: str, policy: CachePolicy) -> None:
         """Record that ``package`` returned a name-level 404 from this index."""

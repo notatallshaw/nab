@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
 import tarfile
 import time
 import zipfile
@@ -2204,3 +2205,103 @@ class TestNegativeCaching:
         files = _run_get_files(transport, cache, "pkg")
         assert len(files) == 1
         assert transport.calls == []
+
+
+def _cached_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and r.name == "nab_index.cached_client"
+    ]
+
+
+class TestCorruptCachedListing:
+    """A structurally corrupt cached Simple body self-heals, loudly.
+
+    A body that will not decode as JSON is treated as a miss: online it
+    re-fetches, offline it raises ``OfflineError``. A body that decodes but
+    is the wrong shape raises the same error as the wire path.
+    """
+
+    _TRUNCATED = b'{"files": ['
+    _NON_UTF8 = b'\xff\xfe{"files": []}'
+    _WRONG_SHAPE = b'{"files": 123}'
+
+    def _fresh(self) -> CachePolicy:
+        return CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None)
+
+    def test_truncated_cached_body_self_heals_online(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
+
+        with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
+            files = _run_get_files(transport, cache, "pkg")
+
+        cold_cache = _make_cache(tmp_path / "cold")
+        cold_transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
+        cold_files = _run_get_files(cold_transport, cold_cache, "pkg")
+
+        assert [f.filename for f in files] == [f.filename for f in cold_files]
+        assert len(transport.calls) == 1
+        healed = cache.get_simple("pkg")
+        assert healed is not None
+        assert healed[0] == LISTING_BYTES
+        assert len(_cached_warnings(caplog)) == 1
+
+    def test_non_utf8_cached_body_self_heals_online(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", self._NON_UTF8, self._fresh())
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
+
+        with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
+            files = _run_get_files(transport, cache, "pkg")
+
+        assert len(files) == 1
+        assert len(transport.calls) == 1
+        healed = cache.get_simple("pkg")
+        assert healed is not None
+        assert healed[0] == LISTING_BYTES
+        assert len(_cached_warnings(caplog)) == 1
+
+    def test_corrupt_cached_body_offline_raises(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        transport = _FakeTransport()
+
+        with (
+            caplog.at_level(logging.WARNING, logger="nab_index.cached_client"),
+            pytest.raises(OfflineError, match="pkg"),
+        ):
+            _run_get_files(transport, cache, "pkg", offline=True)
+
+        assert transport.calls == []
+        assert len(_cached_warnings(caplog)) == 1
+
+    def test_parseable_wrong_shape_does_not_self_heal(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", self._WRONG_SHAPE, self._fresh())
+        transport = _FakeTransport()
+
+        with (
+            caplog.at_level(logging.WARNING, logger="nab_index.cached_client"),
+            pytest.raises(MalformedSimpleResponseError) as caught,
+        ):
+            _run_get_files(transport, cache, "pkg")
+
+        assert transport.calls == []
+        assert _cached_warnings(caplog) == []
+
+        with pytest.raises(MalformedSimpleResponseError) as wire:
+            _parse_files(
+                json.loads(self._WRONG_SHAPE), "https://pypi.org/simple/", "pkg"
+            )
+        assert str(caught.value) == str(wire.value)
