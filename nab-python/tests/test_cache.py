@@ -27,6 +27,27 @@ METADATA_URLS = (
     "https://f.example/foo-1.0-cp311-win_amd64.whl.metadata",
 )
 
+_FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
+
+
+def _symlink_or_skip(
+    link: Path, target: Path, *, target_is_directory: bool = False
+) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported on this platform")
+
+
+def _populate(root: Path) -> OnDiskCache:
+    """Write one valid entry of each kind under ``root`` and return the cache."""
+    cache = OnDiskCache(root, "https://pypi.org/simple")
+    cache.put_simple("foo", b'{"files": []}', _FRESH)
+    cache.put_negative("bar", _FRESH)
+    cache.put_metadata("foo", "https://example.com/foo.whl", "Name: foo\n")
+    cache.put_sdist_files("foo", "1.0", "Name: foo\n", None)
+    return cache
+
 
 class TestCachePolicy:
     def test_is_fresh_within_window(self) -> None:
@@ -503,3 +524,163 @@ class TestEncodePolicy:
         policy = CachePolicy(fetched_at=10, max_age=20, etag=None)
         decoded = json.loads(_encode_policy(policy))
         assert decoded == {"fetched_at": 10, "max_age": 20, "etag": None}
+
+
+class TestReadCacheEntry:
+    def _cache(self, tmp_path: Path) -> OnDiskCache:
+        return OnDiskCache(tmp_path, "https://pypi.org/simple")
+
+    def test_corrupt_policy(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        path = tmp_path / "simple-v0" / "pypi" / "foo.policy"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"not json")
+        assert cache.read_cache_entry(path) is not None
+
+    def test_valid_policy(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        cache.put_simple("foo", b"{}", _FRESH)
+        path = tmp_path / "simple-v0" / "pypi" / "foo.policy"
+        assert cache.read_cache_entry(path) is None
+
+    def test_corrupt_negative(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        path = tmp_path / "simple-neg-v0" / "pypi" / "bar.neg"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"nope")
+        assert cache.read_cache_entry(path) is not None
+
+    def test_non_utf8_metadata(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        path = tmp_path / "metadata-v1" / "pypi" / "foo" / "abc.metadata"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"\xff\xfe")
+        assert cache.read_cache_entry(path) == "not valid UTF-8"
+
+    def test_valid_metadata(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        cache.put_metadata("foo", "https://example.com/f.whl", "ok")
+        path = next((tmp_path / "metadata-v1").rglob("*.metadata"))
+        assert cache.read_cache_entry(path) is None
+
+    def test_invalid_simple_json(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        path = tmp_path / "simple-v0" / "pypi" / "foo.json"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"{not json")
+        assert cache.read_cache_entry(path) == "not valid JSON"
+
+    def test_valid_simple_json_is_clean(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        cache.put_simple("foo", b'{"files": []}', _FRESH)
+        path = tmp_path / "simple-v0" / "pypi" / "foo.json"
+        assert cache.read_cache_entry(path) is None
+
+    def test_sdist_record_missing_fields(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        path = tmp_path / "sdist-v1" / "pypi" / "foo" / "1.0.json"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'{"pkg_info": "x"}')
+        assert cache.read_cache_entry(path) is not None
+
+    def test_valid_sdist_record(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        cache.put_sdist_files("foo", "1.0", "info", None)
+        path = tmp_path / "sdist-v1" / "pypi" / "foo" / "1.0.json"
+        assert cache.read_cache_entry(path) is None
+
+    def test_unknown_suffix_is_clean(self, tmp_path: Path) -> None:
+        # A leftover atomic-write temp file is not a nab entry and is ignored.
+        cache = self._cache(tmp_path)
+        path = tmp_path / "simple-v0" / "pypi" / "foo.json.abc.tmp"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"partial")
+        assert cache.read_cache_entry(path) is None
+
+    def test_unreadable_entry(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        path = tmp_path / "simple-v0" / "pypi" / "adir.policy"
+        path.mkdir(parents=True)
+        assert cache.read_cache_entry(path) is not None
+
+    def test_root_itself_has_no_bucket(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        assert cache._bucket_of(tmp_path) == ""
+
+
+class TestIterCacheEntries:
+    def test_yields_files_and_skips_symlinks(self, tmp_path: Path) -> None:
+        cache = _populate(tmp_path)
+        outside = tmp_path.parent / "iter-out"
+        outside.mkdir(exist_ok=True)
+        (outside / "x.json").write_text("{}")
+        _symlink_or_skip(
+            tmp_path / "linked-simple-v0", outside, target_is_directory=True
+        )
+        (tmp_path / "sdist-v1-file").write_text("junk")
+        _symlink_or_skip(
+            tmp_path / "simple-v0" / "pypi" / "link.json", outside / "x.json"
+        )
+        names = {e.name for e in cache.iter_cache_entries()}
+        assert "foo.json" in names
+        assert "foo.policy" in names
+        assert "bar.neg" in names
+        assert "x.json" not in names
+        assert "link.json" not in names
+
+    def test_skips_recognized_symlinked_bucket(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "leak.json").write_text("{}")
+        root = tmp_path / "cache"
+        root.mkdir()
+        _symlink_or_skip(root / "simple-v0", outside, target_is_directory=True)
+        cache = OnDiskCache(root, "https://pypi.org/simple")
+        assert list(cache.iter_cache_entries()) == []
+
+    def test_empty_root_yields_nothing(self, tmp_path: Path) -> None:
+        cache = OnDiskCache(tmp_path / "gone", "https://pypi.org/simple")
+        assert list(cache.iter_cache_entries()) == []
+
+
+class TestClearCache:
+    def test_removes_dir_buckets_and_returns_names(self, tmp_path: Path) -> None:
+        cache = _populate(tmp_path)
+        removed = cache.clear_cache()
+        assert set(removed) == {
+            "simple-v0",
+            "simple-neg-v0",
+            "metadata-v1",
+            "sdist-v1",
+        }
+        assert not (tmp_path / "simple-v0").exists()
+        assert not (tmp_path / "sdist-v1").exists()
+
+    def test_unlinks_symlinked_bucket_without_following(self, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("precious")
+        root = tmp_path / "cache"
+        root.mkdir()
+        _symlink_or_skip(root / "simple-v0", outside, target_is_directory=True)
+        cache = OnDiskCache(root, "https://pypi.org/simple")
+        assert cache.clear_cache() == ["simple-v0"]
+        assert (outside / "keep.txt").read_text() == "precious"
+        assert not (root / "simple-v0").exists()
+
+    def test_leaves_bucket_named_file(self, tmp_path: Path) -> None:
+        root = tmp_path / "cache"
+        root.mkdir()
+        foreign = root / "metadata-notes.txt"
+        foreign.write_text("mine")
+        cache = OnDiskCache(root, "https://pypi.org/simple")
+        assert cache.clear_cache() == []
+        assert foreign.read_text() == "mine"
+
+
+class TestNullCacheEnumeration:
+    def test_helpers_are_trivial(self) -> None:
+        nc = NullCache()
+        assert list(nc.iter_cache_entries()) == []
+        assert nc.read_cache_entry(Path("x")) is None
+        assert nc.clear_cache() == []
