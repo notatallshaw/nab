@@ -35,6 +35,7 @@ from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import Version
 from ..config import conflict_exclusion_groups, conflict_member_groups
 from .builder import require_artifact_hashes
+from .coverage import validate_marker_coverage
 from .disjointness import validate_marker_disjointness
 
 if TYPE_CHECKING:
@@ -136,6 +137,10 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
         groups=lock_input.active_groups,
         exclusive_groups=exclusion_groups,
         declared_groups=conflict_member_groups(lock_input.conflicts),
+    )
+    validate_marker_coverage(
+        [lock.target for lock in lock_input.targets.values()],
+        environments=lock_input.environments,
     )
     tool: dict[str, Any] | None = (
         {"nab": lock_input.provenance.to_block()}

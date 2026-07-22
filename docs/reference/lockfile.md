@@ -159,7 +159,9 @@ was dropped there, so the pins are not a package set another
 environment can install. The lock says so in the top-level
 `environments`, one entry per environment resolved, and a PEP 751
 consumer refuses a lock whose declared environments none of its own
-satisfies.
+satisfies. nab refuses to emit such a lock in the first place: when the
+`environments` declaration would not cover a target the resolve ran for,
+it raises and names the uncovered interpreter.
 
 Each declaration always pins `python_version`, `sys_platform` and
 `platform_machine`, plus `implementation_name` when the target runs
