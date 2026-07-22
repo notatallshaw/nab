@@ -1,0 +1,1765 @@
+{
+"name": "boto3",
+"files": [
+{
+"core-metadata": {
+"sha256": "48eb79db1347a18d053181ff03df86ab17c58d4e7ef6e6453e6a67cd4d35a17b"
+},
+"data-dist-info-metadata": {
+"sha256": "48eb79db1347a18d053181ff03df86ab17c58d4e7ef6e6453e6a67cd4d35a17b"
+},
+"filename": "boto3-0.0.1-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "bc9b3ce78d3863e45b43a33d076c7b0561f6590205c94f0f8a23a4738e79a13f"
+},
+"provenance": null,
+"requires-python": null,
+"size": 45469,
+"upload-time": "2014-11-11T20:30:49.562183Z",
+"url": "https://files.pythonhosted.org/packages/3f/95/a24847c245befa8c50a9516cbdca309880bd21b5879e7c895e953217e947/boto3-0.0.1-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.1.tar.gz",
+"hashes": {
+"sha256": "bc018a3aedc5cf7329dcdeb435ece8a296b605c19fb09842c1821935f1b14cfd"
+},
+"provenance": null,
+"requires-python": null,
+"size": 33415,
+"upload-time": "2014-11-11T20:30:40.057636Z",
+"url": "https://files.pythonhosted.org/packages/df/18/4e36b93f6afb79b5f67b38f7d235773a21831b193602848c590f8a008608/boto3-0.0.1.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "30f4479f3b727578dce6b207e03319c174d52e8751d19f379a1bbadba34b1eba"
+},
+"data-dist-info-metadata": {
+"sha256": "30f4479f3b727578dce6b207e03319c174d52e8751d19f379a1bbadba34b1eba"
+},
+"filename": "boto3-0.0.2-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "ecdd774735784d1a0f6ba7f497aad9427be06a3ad8c4746bbfb2a884ddfaff45"
+},
+"provenance": null,
+"requires-python": null,
+"size": 51577,
+"upload-time": "2014-11-21T05:36:48.165152Z",
+"url": "https://files.pythonhosted.org/packages/cc/86/7385c5f7563246597d5599282dd9a247915be7d1b1be7ac4dadf68c984d5/boto3-0.0.2-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.2.tar.gz",
+"hashes": {
+"sha256": "aa556e2eab08396ff69b7fee9b7e09b1b08be58fb8e475d1433dce762c573c0d"
+},
+"provenance": null,
+"requires-python": null,
+"size": 34735,
+"upload-time": "2014-11-21T05:36:40.070156Z",
+"url": "https://files.pythonhosted.org/packages/9a/f0/4c5c70f28b7b5d27160d6a9bce7c37a950f5adb2c67b29fadd2c5c59e4de/boto3-0.0.2.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "e826d73f5226c720e5d76508b19af29af63f752a2e51273864da434c281a8084"
+},
+"data-dist-info-metadata": {
+"sha256": "e826d73f5226c720e5d76508b19af29af63f752a2e51273864da434c281a8084"
+},
+"filename": "boto3-0.0.3-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "9fba369b4b7deba5dd69d67de498001bb7168b68df82a3c4f4fe4a3292beeac0"
+},
+"provenance": null,
+"requires-python": null,
+"size": 51573,
+"upload-time": "2014-11-26T20:09:25.698322Z",
+"url": "https://files.pythonhosted.org/packages/da/21/10f08ee49acad691abe71b881e11ae11494ff792f2ac13580136c27c2a99/boto3-0.0.3-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.3.tar.gz",
+"hashes": {
+"sha256": "a833768858a2a72fcc2795f4a568f7b456591925a1fe38d74276431dc9791ffd"
+},
+"provenance": null,
+"requires-python": null,
+"size": 34831,
+"upload-time": "2014-11-26T20:09:13.916901Z",
+"url": "https://files.pythonhosted.org/packages/47/12/131337549c1dfd6ad07cc513ff2eb971e489b9d2478d2e4e0e2e7de93425/boto3-0.0.3.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "a5220a9fbc87800a7ab1270a0fec65d6de985226be7790121316818046fe887a"
+},
+"data-dist-info-metadata": {
+"sha256": "a5220a9fbc87800a7ab1270a0fec65d6de985226be7790121316818046fe887a"
+},
+"filename": "boto3-0.0.4-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "ffbc286f56171594f772ab10489e8e5471845b2eee949b5a2f5d750654990dac"
+},
+"provenance": null,
+"requires-python": null,
+"size": 51918,
+"upload-time": "2014-12-04T22:42:55.267231Z",
+"url": "https://files.pythonhosted.org/packages/87/10/63dfdca0c2fa2a3aa2c463888724b69fc7a3171c2fdeb11728a21f01f780/boto3-0.0.4-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.4.tar.gz",
+"hashes": {
+"sha256": "d472745368869a75db3015d3d0ab635843ffe108186d81440c9cb2793694ea50"
+},
+"provenance": null,
+"requires-python": null,
+"size": 35041,
+"upload-time": "2014-12-04T22:42:43.940465Z",
+"url": "https://files.pythonhosted.org/packages/6a/ea/f4b3699a82e2f45357d024eb4391047ee763fe1aca24765bac73aedfca52/boto3-0.0.4.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "f7c9d18999d418c89f24745d6f202c282f13327c5223ee35ed361d2909ada109"
+},
+"data-dist-info-metadata": {
+"sha256": "f7c9d18999d418c89f24745d6f202c282f13327c5223ee35ed361d2909ada109"
+},
+"filename": "boto3-0.0.5-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "1cf6d356f7b0ae3d21a3ac32606ca243bb870add3d6ae19e343afa28d5ff1ed6"
+},
+"provenance": null,
+"requires-python": null,
+"size": 55055,
+"upload-time": "2014-12-09T18:46:47.082107Z",
+"url": "https://files.pythonhosted.org/packages/69/84/a898e7cd2417a12f1f021f16ebb13fbf03c25ded0a7c44b81cba0b769794/boto3-0.0.5-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.5.tar.gz",
+"hashes": {
+"sha256": "bfd48a72fad0a02438553d35f9aead747515a16b10cd96fa02707f62c80437a7"
+},
+"provenance": null,
+"requires-python": null,
+"size": 37650,
+"upload-time": "2014-12-09T18:46:43.159580Z",
+"url": "https://files.pythonhosted.org/packages/96/b5/34cc1899b356c1e7fabfc0f113487709c9805a12fb1fe714aeebfc5cdb4d/boto3-0.0.5.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "8db7f6788c997f64c60e28bc16e8402f2c99f000d0387a91f9b7875f5d0f4c76"
+},
+"data-dist-info-metadata": {
+"sha256": "8db7f6788c997f64c60e28bc16e8402f2c99f000d0387a91f9b7875f5d0f4c76"
+},
+"filename": "boto3-0.0.6-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "3b58d1523fae946c06df0d2c5dff4315ea5e2b704999ee383516aeaaf3c3871b"
+},
+"provenance": null,
+"requires-python": null,
+"size": 56154,
+"upload-time": "2014-12-18T19:20:47.389533Z",
+"url": "https://files.pythonhosted.org/packages/fa/63/254fd100f2e79f3c128837091a0ef5d45f595271afcbab6952552a0e3516/boto3-0.0.6-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.6.tar.gz",
+"hashes": {
+"sha256": "fca420b48d082351d3e0f26c1628c335e8aa324ff46273cef4acfc70249a6173"
+},
+"provenance": null,
+"requires-python": null,
+"size": 38723,
+"upload-time": "2014-12-18T19:20:42.676493Z",
+"url": "https://files.pythonhosted.org/packages/e2/a1/9a21b6ac4610805298613ffc9d4ff92b86da88fe0dbb3a716803e8eaa9c7/boto3-0.0.6.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "e2bcbd12a2ad9d33a2f4f68a51adb949745593558cac76f5295a32ef07320b16"
+},
+"data-dist-info-metadata": {
+"sha256": "e2bcbd12a2ad9d33a2f4f68a51adb949745593558cac76f5295a32ef07320b16"
+},
+"filename": "boto3-0.0.7-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "7e89f9d2fe9e1e6693317e84e1a6f8e8359d1aaa600b6dc63b6c61c8cfa4fb90"
+},
+"provenance": null,
+"requires-python": null,
+"size": 52893,
+"upload-time": "2015-02-05T23:01:28.203382Z",
+"url": "https://files.pythonhosted.org/packages/97/9c/d1e7880848d90da61af85ff592e1b6a0c0aa982c265e895b8a7154ec0511/boto3-0.0.7-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.7.tar.gz",
+"hashes": {
+"sha256": "45da5b27c5d880e5b9a7560292ac05c5e584ad24473cb11229eb6a00a9df2833"
+},
+"provenance": null,
+"requires-python": null,
+"size": 39779,
+"upload-time": "2015-02-05T23:01:24.472831Z",
+"url": "https://files.pythonhosted.org/packages/d3/3f/c687420199b6775320646274fc1918a2c1c86d13713f51124131682cf9ae/boto3-0.0.7.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "2660bdf4d43c3c6d5ffdb425b7f35c0726bb176e1036433929a458a02d351058"
+},
+"data-dist-info-metadata": {
+"sha256": "2660bdf4d43c3c6d5ffdb425b7f35c0726bb176e1036433929a458a02d351058"
+},
+"filename": "boto3-0.0.8-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "0afbf4c0477b7c74f805ece58e24cd91ab08ae56c6bed99b9c191ad97b546215"
+},
+"provenance": null,
+"requires-python": null,
+"size": 53602,
+"upload-time": "2015-02-11T02:15:11.137445Z",
+"url": "https://files.pythonhosted.org/packages/07/ff/f72ee34b43186a3eaadfab7d469b634dd75f4320da8f1abdbedd65f6431b/boto3-0.0.8-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.8.tar.gz",
+"hashes": {
+"sha256": "5356b84981509c56840c8933c5c2035a81c9825911c51a7aedfcfa9e7f41363f"
+},
+"provenance": null,
+"requires-python": null,
+"size": 40518,
+"upload-time": "2015-02-11T02:15:06.718033Z",
+"url": "https://files.pythonhosted.org/packages/4c/a9/67559f99600fa9899d93d49df859adad7c26b30cbc2fa637f944c09ff17f/boto3-0.0.8.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "33c36f46f39a187ab90f1d1e887d61ed0dffd30b1c3b26c25921572cc4d0ee82"
+},
+"data-dist-info-metadata": {
+"sha256": "33c36f46f39a187ab90f1d1e887d61ed0dffd30b1c3b26c25921572cc4d0ee82"
+},
+"filename": "boto3-0.0.9-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "b4878b08208ad102e3cdc1afdf0466509545057dfd0a8982e3d8ea55bda94c0c"
+},
+"provenance": null,
+"requires-python": null,
+"size": 53603,
+"upload-time": "2015-02-20T00:06:59.416610Z",
+"url": "https://files.pythonhosted.org/packages/75/b2/50e130baea3a243ab5ae2cc714f0e52ff8c8a8efc5560aeffed3530f9f6b/boto3-0.0.9-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.9.tar.gz",
+"hashes": {
+"sha256": "9cdb05676f5272292fda068229b5e058c004f5ec41548e4c9d26be01aba6e254"
+},
+"provenance": null,
+"requires-python": null,
+"size": 40514,
+"upload-time": "2015-02-20T00:06:55.360023Z",
+"url": "https://files.pythonhosted.org/packages/9d/60/3dcba3f497cf950c516585963de368f735c0c8b68d658f4b7a179c6345ff/boto3-0.0.9.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "d360ef43ffb042661e87daa64fcd28287f623abbe732ececdfcc804ede661448"
+},
+"data-dist-info-metadata": {
+"sha256": "d360ef43ffb042661e87daa64fcd28287f623abbe732ececdfcc804ede661448"
+},
+"filename": "boto3-0.0.10-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "82aa5bdb385ee456fc70c4d35eda33c6da4326c4ca793dc136250adb020e1e9a"
+},
+"provenance": null,
+"requires-python": null,
+"size": 54655,
+"upload-time": "2015-03-05T20:36:28.491296Z",
+"url": "https://files.pythonhosted.org/packages/5e/37/dcb4f2d6abd8a4a2ef837adbb266af688a9526b8da270de6e2c13159a982/boto3-0.0.10-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.10.tar.gz",
+"hashes": {
+"sha256": "c23519097b4c651aaa2e63c7143578005d0da3ff1bc0e9952974f95f8f0ee733"
+},
+"provenance": null,
+"requires-python": null,
+"size": 41475,
+"upload-time": "2015-03-05T20:36:11.187607Z",
+"url": "https://files.pythonhosted.org/packages/cf/12/7091cc9da0275b6d29235c91bffc857e5b371debf9236f03ca9fba036bd4/boto3-0.0.10.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "6be320350930d985a509c6963e39a53f5a86f2ecd83972bdeab8c83c838f19bc"
+},
+"data-dist-info-metadata": {
+"sha256": "6be320350930d985a509c6963e39a53f5a86f2ecd83972bdeab8c83c838f19bc"
+},
+"filename": "boto3-0.0.11-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "70c9be8ec9ff6d0b5dc82cd790128af492f5017ba58477abaccaea5540c0d58e"
+},
+"provenance": null,
+"requires-python": null,
+"size": 55348,
+"upload-time": "2015-03-24T22:11:08.536706Z",
+"url": "https://files.pythonhosted.org/packages/a1/2b/2c4cc86c889d94a06dcd2b0bb166dbed034631c5e88b08ea732776c799be/boto3-0.0.11-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.11.tar.gz",
+"hashes": {
+"sha256": "6c323dffab501b92beaca6ecf879fb2540e661e53f5a561d302bb049885fcf5a"
+},
+"provenance": null,
+"requires-python": null,
+"size": 42238,
+"upload-time": "2015-03-24T22:11:03.822021Z",
+"url": "https://files.pythonhosted.org/packages/84/de/c0748f65c297826108810a33b7f3d27fc61e4706f2a5b207734ca0bfb9b5/boto3-0.0.11.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "528a210764f55e9b12e7e6a9630269587c771e689ccf285eec5b12dbdbbaeaf9"
+},
+"data-dist-info-metadata": {
+"sha256": "528a210764f55e9b12e7e6a9630269587c771e689ccf285eec5b12dbdbbaeaf9"
+},
+"filename": "boto3-0.0.12-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "684ded2109baebd1c6bbbf614a96d1fde58d1c2e33b552a85d28f139635f4d78"
+},
+"provenance": null,
+"requires-python": null,
+"size": 56463,
+"upload-time": "2015-03-27T00:52:20.778318Z",
+"url": "https://files.pythonhosted.org/packages/3d/b5/2a1a333384a4fd9c66666e0cea4975460d8f3b73b412f590ad155a4c3e6a/boto3-0.0.12-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.12.tar.gz",
+"hashes": {
+"sha256": "87b42b295139c1784f80293f99a3abeee4346a6f17624cd7823a1b1e17890706"
+},
+"provenance": null,
+"requires-python": null,
+"size": 43263,
+"upload-time": "2015-03-27T00:51:17.229087Z",
+"url": "https://files.pythonhosted.org/packages/26/1c/0275c609e38c7b6dff0efa5bce632af61ad066cb72d64395ae682395a15e/boto3-0.0.12.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "536ab7c00bccf24b2fe08e5bd2fdc28ce1f0a3fd3d84ed7dada8fd75548bc0c6"
+},
+"data-dist-info-metadata": {
+"sha256": "536ab7c00bccf24b2fe08e5bd2fdc28ce1f0a3fd3d84ed7dada8fd75548bc0c6"
+},
+"filename": "boto3-0.0.13-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "a2ffa5fe3682ba47b0620d670694fdf2a6d445611d9557e3cd720b3ab931fbbd"
+},
+"provenance": null,
+"requires-python": null,
+"size": 56458,
+"upload-time": "2015-04-02T22:01:31.520794Z",
+"url": "https://files.pythonhosted.org/packages/91/23/8acab26284cb6e42ed1a7619201f7bd5a7d24f19953a3e1d82052e63a8d9/boto3-0.0.13-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.13.tar.gz",
+"hashes": {
+"sha256": "321ebae6262d2cf744c152c58232138237ef1c6157e81fa02aa0e43c78e55d9a"
+},
+"provenance": null,
+"requires-python": null,
+"size": 43278,
+"upload-time": "2015-04-02T22:01:27.460877Z",
+"url": "https://files.pythonhosted.org/packages/95/76/c0f78436907b280a8e742336de1b2b3843b5f86d115b6aa18c9cab23a2c8/boto3-0.0.13.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "e0a7082aadf26482ca05b9f82aa88043318252f4e445356c4a0ffe2f9350bd20"
+},
+"data-dist-info-metadata": {
+"sha256": "e0a7082aadf26482ca05b9f82aa88043318252f4e445356c4a0ffe2f9350bd20"
+},
+"filename": "boto3-0.0.14-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "1a0762f1b2eeacc066f85ddccd1fa0e855a5f4d64c98d78e8c0897c491a02dac"
+},
+"provenance": null,
+"requires-python": null,
+"size": 58777,
+"upload-time": "2015-04-09T19:26:48.329447Z",
+"url": "https://files.pythonhosted.org/packages/7f/09/f8090015980e36ed4d20d3d6841d1ec4ba82e6093be0be84458009dcf425/boto3-0.0.14-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.14.tar.gz",
+"hashes": {
+"sha256": "197de0b1da1635b36b55c1c89a17df6750e2fcbf927d98f5763ac213357ee048"
+},
+"provenance": null,
+"requires-python": null,
+"size": 44634,
+"upload-time": "2015-04-09T19:26:43.649730Z",
+"url": "https://files.pythonhosted.org/packages/6c/74/164158d4f12743518b8b64566cc4833415c94d058aeb4b9a99be52b20f35/boto3-0.0.14.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "269b9a9187949c2be1b8162b075f8df53f052200094ec8aef3bee988ce198150"
+},
+"data-dist-info-metadata": {
+"sha256": "269b9a9187949c2be1b8162b075f8df53f052200094ec8aef3bee988ce198150"
+},
+"filename": "boto3-0.0.16-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "9c745ff8071ef5f8377f9f44277669292efee58cb8790a05c81c7d9ca1915280"
+},
+"provenance": null,
+"requires-python": null,
+"size": 67572,
+"upload-time": "2015-04-20T21:02:48.909847Z",
+"url": "https://files.pythonhosted.org/packages/5e/47/cc3fc3a8f23750ae99b2796695e4a0f1f7f744aae8ed2c8b1655ea9591f1/boto3-0.0.16-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.16.tar.gz",
+"hashes": {
+"sha256": "1c9fd845c38b6e23ffaf25bc64ca5d60f350d8cca2d49bfa57a94f659db70dd4"
+},
+"provenance": null,
+"requires-python": null,
+"size": 51303,
+"upload-time": "2015-04-20T21:02:52.559161Z",
+"url": "https://files.pythonhosted.org/packages/91/45/c912bd9b5624ec73a095912f82a81980168609506e09806c820f372b0c98/boto3-0.0.16.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "071aea7f88e2ccfceca628e6287bedb8129477bac06a55381f6b17cbe87ed459"
+},
+"data-dist-info-metadata": {
+"sha256": "071aea7f88e2ccfceca628e6287bedb8129477bac06a55381f6b17cbe87ed459"
+},
+"filename": "boto3-0.0.17-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "0f8aac320fff50c1c515f783d04975504e6f1e7f2ef465eae57b4d7e05369676"
+},
+"provenance": null,
+"requires-python": null,
+"size": 83892,
+"upload-time": "2015-05-07T22:33:47.541915Z",
+"url": "https://files.pythonhosted.org/packages/0d/18/869f4b1dcec89ce9968aece5acdc231ee63f8eb9a310f3101859ee888118/boto3-0.0.17-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.17.tar.gz",
+"hashes": {
+"sha256": "12466e342522e8beae720006c36f89909b27f5b95081e5e99c4984eb7b0b724c"
+},
+"provenance": null,
+"requires-python": null,
+"size": 56913,
+"upload-time": "2015-05-07T22:31:38.467560Z",
+"url": "https://files.pythonhosted.org/packages/08/ba/f251cb411435c0d218fd2e2e46224e1a0b61a173707593984d69745a3b22/boto3-0.0.17.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "6e2c5b4b78b32328c7244a3c10842852f162d1e3cc61de2e7b810aa1610e059d"
+},
+"data-dist-info-metadata": {
+"sha256": "6e2c5b4b78b32328c7244a3c10842852f162d1e3cc61de2e7b810aa1610e059d"
+},
+"filename": "boto3-0.0.18-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "6f4da8722025120c89480826a862711c6100a5fdd1b883ccc50aa450ca44cde8"
+},
+"provenance": null,
+"requires-python": null,
+"size": 84819,
+"upload-time": "2015-06-01T19:33:09.263222Z",
+"url": "https://files.pythonhosted.org/packages/f7/ff/059f9dadacb02b07349e34b3e6f35e5f6e7ad7e0ae76814a532ac17eea19/boto3-0.0.18-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.18.tar.gz",
+"hashes": {
+"sha256": "3d58758bb4993d33b5a738546705971f49696386b924d681f70ffe763b64032b"
+},
+"provenance": null,
+"requires-python": null,
+"size": 61744,
+"upload-time": "2015-06-01T19:32:45.424288Z",
+"url": "https://files.pythonhosted.org/packages/79/5d/52d77eab833e6a98287b9397c53c72b8f578247ff6803cfe5319e5832631/boto3-0.0.18.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "bc3d32670af756f715cbdd5417a23649429a1c2fc4af3ed502b52dd04191754d"
+},
+"data-dist-info-metadata": {
+"sha256": "bc3d32670af756f715cbdd5417a23649429a1c2fc4af3ed502b52dd04191754d"
+},
+"filename": "boto3-0.0.19-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "3b959762be538068c026d912f56e891d6ea0b433c2b29c3ef9a3fb46a6cc8e28"
+},
+"provenance": null,
+"requires-python": null,
+"size": 81898,
+"upload-time": "2015-06-04T22:05:43.102985Z",
+"url": "https://files.pythonhosted.org/packages/8c/c0/e1b019163eb3617e52bb551c29605b3513a327e9e5cca238565b1550a85e/boto3-0.0.19-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.19.tar.gz",
+"hashes": {
+"sha256": "284a0f1bdf5d95d0700e95579f5fdf14d8d7022889509499b8f3a541307cef01"
+},
+"provenance": null,
+"requires-python": null,
+"size": 62827,
+"upload-time": "2015-06-04T22:05:38.768030Z",
+"url": "https://files.pythonhosted.org/packages/1b/9b/b6cdde37203bb89e78aa02f5483a44e906406ff64d860d15a95dbba05cfb/boto3-0.0.19.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "9f7fe107a511c81dfe7b0f010d3f847163328c0d82d853ac705768524b4ef653"
+},
+"data-dist-info-metadata": {
+"sha256": "9f7fe107a511c81dfe7b0f010d3f847163328c0d82d853ac705768524b4ef653"
+},
+"filename": "boto3-0.0.20-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "76c855f3a329397c85740796c93be3f3721d3433cc3683141525b66d5ce43dbf"
+},
+"provenance": null,
+"requires-python": null,
+"size": 86144,
+"upload-time": "2015-06-12T00:46:56.164859Z",
+"url": "https://files.pythonhosted.org/packages/87/e4/a74c32ee53edbe833f51edd4a8f24632a6d417ff6763dd81cb021836370a/boto3-0.0.20-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.20.tar.gz",
+"hashes": {
+"sha256": "f97dd0ae2e73c1b5809887fee3aa2f7409603603a91d44a9ceea52ab8af65cce"
+},
+"provenance": null,
+"requires-python": null,
+"size": 66519,
+"upload-time": "2015-06-12T00:46:52.216651Z",
+"url": "https://files.pythonhosted.org/packages/a7/13/98d86cebfbafb2b766eba0b3d69bee1d1de12d6977aa2bcdd0c0f1043def/boto3-0.0.20.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "a0e00bf33f75fbece600dd4057f4ab4c7681117e7b0700226584384cd01cd9b5"
+},
+"data-dist-info-metadata": {
+"sha256": "a0e00bf33f75fbece600dd4057f4ab4c7681117e7b0700226584384cd01cd9b5"
+},
+"filename": "boto3-0.0.21-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "96b1eb3b16e9a60676c3bc932d02c7700d26395244a849884fb49fed4637a522"
+},
+"provenance": null,
+"requires-python": null,
+"size": 86147,
+"upload-time": "2015-06-12T17:54:06.897905Z",
+"url": "https://files.pythonhosted.org/packages/0e/09/2f0966e3607e62c62f3ab4e9052071ecd15510d98993fc52dcb91a964b60/boto3-0.0.21-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.21.tar.gz",
+"hashes": {
+"sha256": "43a972cc95066ccb8bb4e1b303c318717b1496bb8920a77bd3e3da6d068138b0"
+},
+"provenance": null,
+"requires-python": null,
+"size": 66597,
+"upload-time": "2015-06-12T17:54:02.909890Z",
+"url": "https://files.pythonhosted.org/packages/91/c4/07cc3a8436428bf586bffe0cc91569a9c806f1878e50533b9f89f2be54d3/boto3-0.0.21.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "717d2df3c40a98644989f45ccf47c628f35dd5c4aa9f5fe26974c732f4e1f5a7"
+},
+"data-dist-info-metadata": {
+"sha256": "717d2df3c40a98644989f45ccf47c628f35dd5c4aa9f5fe26974c732f4e1f5a7"
+},
+"filename": "boto3-0.0.22-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "bb62ca600c3c33b6ab8f2ad25c3a0052dcdba26aad8572712a05e97a43459a24"
+},
+"provenance": null,
+"requires-python": null,
+"size": 86775,
+"upload-time": "2015-06-18T22:42:18.292845Z",
+"url": "https://files.pythonhosted.org/packages/82/c9/b4294eda5c0ee56219c67a2a2f24413b82eacc821cf10c51c9347daf8ffa/boto3-0.0.22-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-0.0.22.tar.gz",
+"hashes": {
+"sha256": "a4e816235023adf58552efe6ec209c53cec16ca6fb169a24b2bb33cb3c990b03"
+},
+"provenance": null,
+"requires-python": null,
+"size": 66784,
+"upload-time": "2015-06-18T22:42:13.814440Z",
+"url": "https://files.pythonhosted.org/packages/8e/62/fd31a42d8024d85ee64a73cde9e23e806a64a5b4c536c82ad29da433f974/boto3-0.0.22.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "f5b6ec425f5e754c76b7e850db395948e72b3b788f7d8673da61a7586d709f2b"
+},
+"data-dist-info-metadata": {
+"sha256": "f5b6ec425f5e754c76b7e850db395948e72b3b788f7d8673da61a7586d709f2b"
+},
+"filename": "boto3-1.0.0-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "6d443ba76b229a8adbee4d1f3427c40f7afe98f55cf50b240f6f5a34ee8497b9"
+},
+"provenance": null,
+"requires-python": null,
+"size": 94421,
+"upload-time": "2015-06-22T20:24:09.685543Z",
+"url": "https://files.pythonhosted.org/packages/7a/02/f7309eed186e87d1c5a8674c90107ff90fdf2e94761e3e8e7bc9827ceec7/boto3-1.0.0-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.0.0.tar.gz",
+"hashes": {
+"sha256": "687516f22ce31c09bed079db791720c549618d021bcb9047c218b5c7a72b1fb2"
+},
+"provenance": null,
+"requires-python": null,
+"size": 67679,
+"upload-time": "2015-06-22T20:24:05.551799Z",
+"url": "https://files.pythonhosted.org/packages/b3/dc/4be7041d213ec34d12e756953367c4a244510d0cc43d6a9e0402cd48ed57/boto3-1.0.0.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "2e5fee9c68b9b929f3d467586e89049e046556cad88f23559ae5be442e6c45fc"
+},
+"data-dist-info-metadata": {
+"sha256": "2e5fee9c68b9b929f3d467586e89049e046556cad88f23559ae5be442e6c45fc"
+},
+"filename": "boto3-1.0.1-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "9fd436ba8dde099266e037388b61d23e873589452de38cb02431f1afb658dc60"
+},
+"provenance": null,
+"requires-python": null,
+"size": 94386,
+"upload-time": "2015-06-24T22:56:20.795632Z",
+"url": "https://files.pythonhosted.org/packages/2c/56/2c50f722f5fc8ad92f98f7523a80a1099b5be6c91d350519c21a7882879f/boto3-1.0.1-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.0.1.tar.gz",
+"hashes": {
+"sha256": "47f08d9032e599040f0b140a4f5a33e1469ec2ac88ac2a29af02b49bdb3e44ff"
+},
+"provenance": null,
+"requires-python": null,
+"size": 67685,
+"upload-time": "2015-06-24T22:56:16.091713Z",
+"url": "https://files.pythonhosted.org/packages/6e/3d/a19b7c32970e959c5764494e38ed6a092aaac7cc83682a29ccd920b176f3/boto3-1.0.1.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "8ab7ba36b3b429db5f229a7a1a90eb6caf83b6631c1d398991f46e1b0520f99d"
+},
+"data-dist-info-metadata": {
+"sha256": "8ab7ba36b3b429db5f229a7a1a90eb6caf83b6631c1d398991f46e1b0520f99d"
+},
+"filename": "boto3-1.1.0-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "bbb02638c63d257caf06cce957a130ca8db82e561c23cabce60baea45034dca6"
+},
+"provenance": null,
+"requires-python": null,
+"size": 94417,
+"upload-time": "2015-07-07T20:38:07.256994Z",
+"url": "https://files.pythonhosted.org/packages/59/38/7cc77f3230411cd8102dffc8d320905ff8b7b32070271a86a4d964061e59/boto3-1.1.0-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.1.0.tar.gz",
+"hashes": {
+"sha256": "4de7b9216bc9b02ab9b3841be60f9cd7469d750d3886f1b162ebf9344a60dad0"
+},
+"provenance": null,
+"requires-python": null,
+"size": 67646,
+"upload-time": "2015-07-07T20:38:02.755051Z",
+"url": "https://files.pythonhosted.org/packages/05/be/54a392c4d27b258e1b7e1c275fd897dd9c04bd90b54056ef656f26eeb112/boto3-1.1.0.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "c9012222fb38940d946a1b28902f69e6e46b74fb6fc116e24a3a1c97e236cc4a"
+},
+"data-dist-info-metadata": {
+"sha256": "c9012222fb38940d946a1b28902f69e6e46b74fb6fc116e24a3a1c97e236cc4a"
+},
+"filename": "boto3-1.1.1-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "5d8afd683b683589114c4f6064b87a12d6890f01ac480da8e89020ccdde04b24"
+},
+"provenance": null,
+"requires-python": null,
+"size": 95883,
+"upload-time": "2015-07-24T00:51:52.446781Z",
+"url": "https://files.pythonhosted.org/packages/2a/b0/1e9e1c81ccbfb43eb0443123fbe0bd391d4299fde6bdc0b45cb75d1d2bc6/boto3-1.1.1-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.1.1.tar.gz",
+"hashes": {
+"sha256": "7d19d05222489f9f6629ca608881ee12e43d1e9e70f40dedb5884cfa34b879fe"
+},
+"provenance": null,
+"requires-python": null,
+"size": 68097,
+"upload-time": "2015-07-24T00:51:48.379876Z",
+"url": "https://files.pythonhosted.org/packages/d3/be/cf4503fe0ff27d60abe30ef490739172d3f18e9e677456ac062b074f75b8/boto3-1.1.1.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "98622d6089e1a87b754dd7e3a9c1c7196a0d1236eec92ebb91ca6f7361b5aa74"
+},
+"data-dist-info-metadata": {
+"sha256": "98622d6089e1a87b754dd7e3a9c1c7196a0d1236eec92ebb91ca6f7361b5aa74"
+},
+"filename": "boto3-1.1.2-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "360f2454ec270c87a95b36133672625dfb6e926ed2a12f4127d592353d907e3c"
+},
+"provenance": null,
+"requires-python": null,
+"size": 96247,
+"upload-time": "2015-08-25T22:56:44.532242Z",
+"url": "https://files.pythonhosted.org/packages/06/cf/6660a5f74cc5e0fe8d9330b5282d82db9e48b7378d0be47a213edad83fc3/boto3-1.1.2-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.1.2.tar.gz",
+"hashes": {
+"sha256": "f276a3fb8bb588f4d4dfe6e24642aff3bb8055fe97b28b894a39e3eb6278b613"
+},
+"provenance": null,
+"requires-python": null,
+"size": 68480,
+"upload-time": "2015-08-25T22:56:39.860763Z",
+"url": "https://files.pythonhosted.org/packages/c3/4d/943e92a7be85cdad6dd4a92c19b48a08fcc1589fb69087fa5fe36d4cbe7f/boto3-1.1.2.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "fd79a2a81e8435f4170f606ef376f9c7a854d3c769c592fe6b6fc6110231a951"
+},
+"data-dist-info-metadata": {
+"sha256": "fd79a2a81e8435f4170f606ef376f9c7a854d3c769c592fe6b6fc6110231a951"
+},
+"filename": "boto3-1.1.3-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "5ef0528cfd2bebeb72a8251ab6ac040749301c8d281eff3db6983f83cf275a08"
+},
+"provenance": null,
+"requires-python": null,
+"size": 96407,
+"upload-time": "2015-09-03T23:17:09.007587Z",
+"url": "https://files.pythonhosted.org/packages/bc/0c/6f3e976c03b2311c71b991e5ac730d95ef5b600815c67065e44c3504888f/boto3-1.1.3-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.1.3.tar.gz",
+"hashes": {
+"sha256": "10b5d92ce79366425e35af0b79b001b8ebc38c5fca6c7742885f6b8f87d06665"
+},
+"provenance": null,
+"requires-python": null,
+"size": 68567,
+"upload-time": "2015-09-03T23:17:03.689708Z",
+"url": "https://files.pythonhosted.org/packages/ca/f3/2e9bd828ff0b07b8aca4073559888cc6353bdac553a16912f799e754137c/boto3-1.1.3.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "63e5f4007f4f53283c49214f73dad91a037fb51599bc00d405b2e69ba0aae0f5"
+},
+"data-dist-info-metadata": {
+"sha256": "63e5f4007f4f53283c49214f73dad91a037fb51599bc00d405b2e69ba0aae0f5"
+},
+"filename": "boto3-1.1.4-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "cba95518d29257d26506bf5d35658d3d28b54c8433d802366307771e385e89b1"
+},
+"provenance": null,
+"requires-python": null,
+"size": 97183,
+"upload-time": "2015-09-24T23:17:14.876397Z",
+"url": "https://files.pythonhosted.org/packages/79/00/9fd23a4e0ec5cbbd22efb941f4e9b8cb78961dde1f36915ba4a36ea89a1e/boto3-1.1.4-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.1.4.tar.gz",
+"hashes": {
+"sha256": "07fb067d749f07cbda3943d2d7da6b064c1a52a94e63a788991dd4feb79a4829"
+},
+"provenance": null,
+"requires-python": null,
+"size": 69283,
+"upload-time": "2015-09-24T23:17:10.396856Z",
+"url": "https://files.pythonhosted.org/packages/66/87/64a3741a53b36eb8105dc87c1f07618477ba365ec339b449a8e739a84cc9/boto3-1.1.4.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "c9fe5c613ffca49a598a896cb4aaf53c1bb9190891d0df68cfaaef0c65d07e68"
+},
+"data-dist-info-metadata": {
+"sha256": "c9fe5c613ffca49a598a896cb4aaf53c1bb9190891d0df68cfaaef0c65d07e68"
+},
+"filename": "boto3-1.2.0-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "5b1dbf9b0319a276602a904360b21c22da8a22006a4e89a02f568ee549e18a66"
+},
+"provenance": null,
+"requires-python": null,
+"size": 104016,
+"upload-time": "2015-10-23T00:22:33.734925Z",
+"url": "https://files.pythonhosted.org/packages/74/49/7349527cea7f708e7d3253ab6b32c9b5bdf84a57dde8fc265a33e6a4e662/boto3-1.2.0-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.2.0.tar.gz",
+"hashes": {
+"sha256": "893dbd60f8c5a5d9d67011d445cf9925e82727e63865adf9ead551179250b98e"
+},
+"provenance": null,
+"requires-python": null,
+"size": 74562,
+"upload-time": "2015-10-23T00:22:28.605167Z",
+"url": "https://files.pythonhosted.org/packages/dd/b2/79bf5ec07c6c8e9a51b7bbedb6e6f2c952092340e9b82fad9911c89a4a95/boto3-1.2.0.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "9c3e9e70a6bb1296a27035f32e25c90a1d3be2b0539171567ac6b16633d57684"
+},
+"data-dist-info-metadata": {
+"sha256": "9c3e9e70a6bb1296a27035f32e25c90a1d3be2b0539171567ac6b16633d57684"
+},
+"filename": "boto3-1.2.1-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "3d760f1e3a37fe007bfb1e83ad191ae6a331b46c1b4607f2dc6918963c01474e"
+},
+"provenance": null,
+"requires-python": null,
+"size": 116590,
+"upload-time": "2015-10-23T00:59:02.181641Z",
+"url": "https://files.pythonhosted.org/packages/e6/2d/23056cf17de9681ebf174fa8304970ecfd36c383a5d55b57baf9025b68d8/boto3-1.2.1-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.2.1.tar.gz",
+"hashes": {
+"sha256": "6a642af0a5cce1bfee4b1a829bdfbb3a7e9feffb8175426c8726465b8d2e4fae"
+},
+"provenance": null,
+"requires-python": null,
+"size": 74915,
+"upload-time": "2015-10-23T00:58:34.270737Z",
+"url": "https://files.pythonhosted.org/packages/8d/0b/b98e1e7635e5c36df1908006cb21ecb58b23c7e94416d5d300c44cbe6b32/boto3-1.2.1.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "4517e93d80aaf254bb09e1ecda7c6be68a8c32eae3909f63b96b7e23e7ce267e"
+},
+"data-dist-info-metadata": {
+"sha256": "4517e93d80aaf254bb09e1ecda7c6be68a8c32eae3909f63b96b7e23e7ce267e"
+},
+"filename": "boto3-1.2.2-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "84dd03899367b6c2ae560d891ec7f6e1ccde1e09812cfcee46db899ea2030096"
+},
+"provenance": null,
+"requires-python": null,
+"size": 106293,
+"upload-time": "2015-11-19T23:45:22.704443Z",
+"url": "https://files.pythonhosted.org/packages/5e/ef/edccbc85bad4a4efe5035a37a2ffa9d9a997439dbe7edd865a46e5dba67e/boto3-1.2.2-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.2.2.tar.gz",
+"hashes": {
+"sha256": "02de821222c1c90d437b4653cf787d403cb49c4e649d6ecd5d79aa8eace4c1a5"
+},
+"provenance": null,
+"requires-python": null,
+"size": 76350,
+"upload-time": "2015-11-19T23:45:17.457988Z",
+"url": "https://files.pythonhosted.org/packages/1d/4a/c3f13b8b3ea8ecac36f96b262d2eb95b97b50d749fa66e9c879171397712/boto3-1.2.2.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "db0692f6f084315770a5e6ded1369e5d29599ac91d0450568516d93692b1687a"
+},
+"data-dist-info-metadata": {
+"sha256": "db0692f6f084315770a5e6ded1369e5d29599ac91d0450568516d93692b1687a"
+},
+"filename": "boto3-1.2.3-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "7d0870af3448596aea5a6ff2d6f93b67f2edcabca092e263ad645a60443a8d84"
+},
+"provenance": null,
+"requires-python": null,
+"size": 108387,
+"upload-time": "2015-12-18T01:16:28.367876Z",
+"url": "https://files.pythonhosted.org/packages/4c/b3/141816b5c8ae32e537037fedb6dff028ef7ee83527fcb0f0e967f9b35f57/boto3-1.2.3-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.2.3.tar.gz",
+"hashes": {
+"sha256": "091206847d296520e5ec57706a5e4b428d017352eb3168c6bcb9a1ac9feab224"
+},
+"provenance": null,
+"requires-python": null,
+"size": 77433,
+"upload-time": "2015-12-18T01:15:59.477755Z",
+"url": "https://files.pythonhosted.org/packages/9f/7d/b4e788062af0daeefa0e9cdb3bcaeb66cf0a02882e83a86bde347ff6260d/boto3-1.2.3.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "33ad34b4c79c0927322e97c10b37eb0e67cd7e5c7d992f4ef64f629ce6e904e8"
+},
+"data-dist-info-metadata": {
+"sha256": "33ad34b4c79c0927322e97c10b37eb0e67cd7e5c7d992f4ef64f629ce6e904e8"
+},
+"filename": "boto3-1.2.4-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "4d40a881d936919b15f896643bf6a14390183fb7ee2ef9d26ae37c67d2508ae7"
+},
+"provenance": null,
+"requires-python": null,
+"size": 110567,
+"upload-time": "2016-02-19T00:45:34.539873Z",
+"url": "https://files.pythonhosted.org/packages/d7/03/ebd99b8240bd3a75c466522ab96a105362511541e2e5d16645c80bdc88ce/boto3-1.2.4-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.2.4.tar.gz",
+"hashes": {
+"sha256": "5540e53323e84845551f0d82f40c7b9e7a83b0c1c4c27464fcce6e265772bb34"
+},
+"provenance": null,
+"requires-python": null,
+"size": 78117,
+"upload-time": "2016-02-19T00:45:28.079930Z",
+"url": "https://files.pythonhosted.org/packages/fa/0a/fa1ee446910d90fecfd46e22eac7dbf6b076267587748dee3b253b336de9/boto3-1.2.4.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "1e304332ed1fc4413af9cbe782969703f70b415fd97c637ba907a036b231e0c2"
+},
+"data-dist-info-metadata": {
+"sha256": "1e304332ed1fc4413af9cbe782969703f70b415fd97c637ba907a036b231e0c2"
+},
+"filename": "boto3-1.2.5-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "159d0b018e69c6e988e73234354c73ba6afe17a673c908ee75cd35486ee92663"
+},
+"provenance": null,
+"requires-python": null,
+"size": 110575,
+"upload-time": "2016-02-26T00:57:53.123691Z",
+"url": "https://files.pythonhosted.org/packages/b0/69/0d90810aadc8169ff4d1d3f251b188bee5a881aa578b4c7ecef056fd4c2f/boto3-1.2.5-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.2.5.tar.gz",
+"hashes": {
+"sha256": "30e2875adee76ca2d4a5b1b97375ae10eb9aed16487db5db20ef204663c1a197"
+},
+"provenance": null,
+"requires-python": null,
+"size": 78280,
+"upload-time": "2016-02-26T00:57:46.663599Z",
+"url": "https://files.pythonhosted.org/packages/7e/d0/235026402c86db98056327aff3251ffc52f2f346931f296a8c0d887e7b95/boto3-1.2.5.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "2589d6adb4e7547785d40bf555cf5306fc360d382d09a32ac128985bb041f832"
+},
+"data-dist-info-metadata": {
+"sha256": "2589d6adb4e7547785d40bf555cf5306fc360d382d09a32ac128985bb041f832"
+},
+"filename": "boto3-1.2.6-py2.py3-none-any.whl",
+"hashes": {
+"sha256": "7dfe5a0f58bf07e881432b6b0f8c48c62913658f29f888754398ff451349bf12"
+},
+"provenance": null,
+"requires-python": null,
+"size": 110744,
+"upload-time": "2016-03-02T00:56:25.750019Z",
+"url": "https://files.pythonhosted.org/packages/7c/b0/ebec0950a492c30d03068a8a35fcb7847e8741668fa08e36d5fbdd7518a2/boto3-1.2.6-py2.py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.2.6.tar.gz",
+"hashes": {
+"sha256": "bdfb52711a6467d82332be2f821f9d535243c7391b041f87f73e89c920e7e45f"
+},
+"provenance": null,
+"requires-python": null,
+"size": 78267,
+"upload-time": "2016-03-02T00:56:19.449443Z",
+"url": "https://files.pythonhosted.org/packages/50/59/5df3de86b1f7ae782c50a584bdd6d549b494a1af63cee143b1ffed404618/boto3-1.2.6.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "0a94d099816520d065e39d610d388d2e3eb6c1a8e12a8c2ba9dd876b727f8178"
+},
+"data-dist-info-metadata": {
+"sha256": "0a94d099816520d065e39d610d388d2e3eb6c1a8e12a8c2ba9dd876b727f8178"
+},
+"filename": "boto3-1.43.34-py3-none-any.whl",
+"hashes": {
+"sha256": "42595057324606928c6e2432b3093978e4d722e0d432bce942f2a385702c0a43"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140029,
+"upload-time": "2026-06-19T19:33:37.807980Z",
+"url": "https://files.pythonhosted.org/packages/4c/5f/ac0872df61c3cea3539252f867cf8d76c226e4952f52a981b3fa54381060/boto3-1.43.34-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.34.tar.gz",
+"hashes": {
+"sha256": "444207c6c883d4df3ea3b2c36df43ad492b86e0b889eebd2fc1d5ea8db0a8a1a"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112656,
+"upload-time": "2026-06-19T19:33:39.366108Z",
+"url": "https://files.pythonhosted.org/packages/01/ac/178eb7f96bb6d5771105fe998b8b34512ef3f7ce9e2f1ab8d018df935bee/boto3-1.43.34.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "90bc2b7994ecbc43f7772493bceb73f24cb27484ecdc4e50f1117698d2c21f4e"
+},
+"data-dist-info-metadata": {
+"sha256": "90bc2b7994ecbc43f7772493bceb73f24cb27484ecdc4e50f1117698d2c21f4e"
+},
+"filename": "boto3-1.43.35-py3-none-any.whl",
+"hashes": {
+"sha256": "461d5fb1ee1422d4a0a439666cebb29e0d5b4bf4308d3c2564449c77a1f4ae52"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140032,
+"upload-time": "2026-06-22T20:26:36.638125Z",
+"url": "https://files.pythonhosted.org/packages/6a/72/a92face6b5284d1283f2cccae224d6a10ebc5735c5d6fa93837109ebb6a1/boto3-1.43.35-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.35.tar.gz",
+"hashes": {
+"sha256": "392ba41e82629a77ad70de38c43f8fc0f5f453c965e381e4e87d6fcedc80d6c4"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112638,
+"upload-time": "2026-06-22T20:26:39.039195Z",
+"url": "https://files.pythonhosted.org/packages/b7/f7/9ba34c655158a9827d0fdd8c6211a3836d9fbf29d48b82783995927b3907/boto3-1.43.35.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "131dfadb891d5b1fa9f240000f98f39664e7c177aa69c5964fc94586ebb0667b"
+},
+"data-dist-info-metadata": {
+"sha256": "131dfadb891d5b1fa9f240000f98f39664e7c177aa69c5964fc94586ebb0667b"
+},
+"filename": "boto3-1.43.36-py3-none-any.whl",
+"hashes": {
+"sha256": "42942dde254673abcbc9e6e60017c88341a4f49d99d24e1f2e290fb38138c26f"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140031,
+"upload-time": "2026-06-23T02:47:13.178006Z",
+"url": "https://files.pythonhosted.org/packages/9f/f1/274303f52483ecf199eae6f8d9b6f5951670397ee4d72c06cfd4eb644612/boto3-1.43.36-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.36.tar.gz",
+"hashes": {
+"sha256": "587d7ee92a12e440ad12b0e7f11f3358f0c4d65b19f64726efc94aaf194aff28"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112690,
+"upload-time": "2026-06-23T02:47:14.561675Z",
+"url": "https://files.pythonhosted.org/packages/ff/9f/897287e955db0f50b12fd69ef45956e4fd2c7ddb48c736872f7ea2314443/boto3-1.43.36.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "b7c08f55bc9668204eeb06cbd675582a840eb8b7678c03f690c8c20271d39487"
+},
+"data-dist-info-metadata": {
+"sha256": "b7c08f55bc9668204eeb06cbd675582a840eb8b7678c03f690c8c20271d39487"
+},
+"filename": "boto3-1.43.37-py3-none-any.whl",
+"hashes": {
+"sha256": "f409f931e836f2f24e168e8f93901010cb8055c7f2ddcfcfbd72b25f8c4e306c"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140032,
+"upload-time": "2026-06-29T20:29:36.409838Z",
+"url": "https://files.pythonhosted.org/packages/e2/48/c740abb7ba90d89ef63cf766c8e07d72e6422b3cf68aa4dccf0a83efed93/boto3-1.43.37-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.37.tar.gz",
+"hashes": {
+"sha256": "cf7e75963229b337d1b0e37c46de6f3c2c2290d186157729c8e7afb12909bfc0"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112674,
+"upload-time": "2026-06-29T20:29:39.273720Z",
+"url": "https://files.pythonhosted.org/packages/fa/8b/281ca08c796322a36a639b76c714dc4c4323cab4563a492e6a923aa5f15d/boto3-1.43.37.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "ca187dbc7db08484c32e06f80454ade5cc345a702ded0c386c0b4728120e8aac"
+},
+"data-dist-info-metadata": {
+"sha256": "ca187dbc7db08484c32e06f80454ade5cc345a702ded0c386c0b4728120e8aac"
+},
+"filename": "boto3-1.43.38-py3-none-any.whl",
+"hashes": {
+"sha256": "edffb4a8f49c0a61e8f4aa4104cc2da3c362de8042fc0819216d5e5ce5d38380"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140030,
+"upload-time": "2026-06-30T19:55:29.494562Z",
+"url": "https://files.pythonhosted.org/packages/0a/60/e0e3baeb394e084c5136a46b8e944ba87a26bb1f67f7b3064eb035bb7e77/boto3-1.43.38-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.38.tar.gz",
+"hashes": {
+"sha256": "a8d1e175a87a743e755237d884d7e5f4606e61e5602e9823469a1a630e379b3c"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112691,
+"upload-time": "2026-06-30T19:55:31.789761Z",
+"url": "https://files.pythonhosted.org/packages/eb/ee/97798453d8e9dba0c60458870b07c78ac685fc21cdddd8eb3e20190249c6/boto3-1.43.38.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "f7b798c018fed687cb0d57a55df75c5a34218c6db5d4ae5dbc8b11934a6de003"
+},
+"data-dist-info-metadata": {
+"sha256": "f7b798c018fed687cb0d57a55df75c5a34218c6db5d4ae5dbc8b11934a6de003"
+},
+"filename": "boto3-1.43.39-py3-none-any.whl",
+"hashes": {
+"sha256": "f4eef8bf98559342466a9a1a063b7efcf3e337e98a819479bc2f7a603b8b8ba7"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140030,
+"upload-time": "2026-07-01T19:37:24.756028Z",
+"url": "https://files.pythonhosted.org/packages/1b/b4/2a105025fa85e27022d55b0dae02b490c74acd20e904e81003d3b622fbbe/boto3-1.43.39-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.39.tar.gz",
+"hashes": {
+"sha256": "ca5701ddf1215ba25b9d973d18505bb4def3a75d3daa9b263c6d8c713b601cb3"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112679,
+"upload-time": "2026-07-01T19:37:26.165696Z",
+"url": "https://files.pythonhosted.org/packages/eb/35/d936d1f77098a84365ab57798cbf41cf935c07a6c397a4892dc95046a277/boto3-1.43.39.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "54f247b868323945a8366912274294f9b0ab1d04cbc8764ac4491a528f0ca1b4"
+},
+"data-dist-info-metadata": {
+"sha256": "54f247b868323945a8366912274294f9b0ab1d04cbc8764ac4491a528f0ca1b4"
+},
+"filename": "boto3-1.43.40-py3-none-any.whl",
+"hashes": {
+"sha256": "5fa80de4b4b7bab383dd8c563e235d51fcc7df4502662af56f0a2472c3c15651"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140029,
+"upload-time": "2026-07-03T00:28:25.028354Z",
+"url": "https://files.pythonhosted.org/packages/d7/3b/2abcc7f47e955a8cb45a6378ec69cd8ed2dcb3d14ceb67717dea020a794a/boto3-1.43.40-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.40.tar.gz",
+"hashes": {
+"sha256": "a7108b9ce25b8f92d1ce96b9e35090794d5c58b219ff2f6a7a65c8986a4ed6f4"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112655,
+"upload-time": "2026-07-03T00:28:26.776250Z",
+"url": "https://files.pythonhosted.org/packages/3b/43/38cdaf9c7bb50f0922ef87e6b6696c6aa589d978e4311a8287537e84ecf7/boto3-1.43.40.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "30a7926959c5a16e18679d498b33fa1fbf78d77d07467a46e5489e0a2005ab10"
+},
+"data-dist-info-metadata": {
+"sha256": "30a7926959c5a16e18679d498b33fa1fbf78d77d07467a46e5489e0a2005ab10"
+},
+"filename": "boto3-1.43.41-py3-none-any.whl",
+"hashes": {
+"sha256": "f48f862d2720ea9203ed2d842d436b8eb2d459ea31654a7ad7c0756fdf36c6b2"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140029,
+"upload-time": "2026-07-06T19:39:37.125712Z",
+"url": "https://files.pythonhosted.org/packages/f9/4a/babb2de16f6ff0688697d2eac7d95566151c255f6b08f547306f57dabfc2/boto3-1.43.41-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.41.tar.gz",
+"hashes": {
+"sha256": "0f56811f13677bfb4542daa0cce8532c95d9afd27b4ba7b681af36a0568624ad"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112677,
+"upload-time": "2026-07-06T19:39:38.788131Z",
+"url": "https://files.pythonhosted.org/packages/79/5b/e91af651bf4e902f86b9e2f8bc09ca20dbd1ad3c1e21b70bf34651cf3cee/boto3-1.43.41.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "c6c9c7bf06acb23e5f129b947b5c190bdd992d4d4a4458f12517187c8b403fcb"
+},
+"data-dist-info-metadata": {
+"sha256": "c6c9c7bf06acb23e5f129b947b5c190bdd992d4d4a4458f12517187c8b403fcb"
+},
+"filename": "boto3-1.43.42-py3-none-any.whl",
+"hashes": {
+"sha256": "c34a36c9181998dd9b663095b0b0f5f5bc97f3b6846d6a63b31529462091047a"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140032,
+"upload-time": "2026-07-07T19:35:51.513055Z",
+"url": "https://files.pythonhosted.org/packages/85/53/ccb197ae4659300370b2538fa8a73bde1dcb4118319f0e9a865a975ea2a7/boto3-1.43.42-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.42.tar.gz",
+"hashes": {
+"sha256": "f5a7fa503fd902dbd305d52a4571971149acb2c19f02508188f283e244e121e4"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112671,
+"upload-time": "2026-07-07T19:35:53.709498Z",
+"url": "https://files.pythonhosted.org/packages/21/1e/4b6b2bd7ad9173e72fd5aef5ec1187847e06ff5497b66c2051b387827d56/boto3-1.43.42.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "ec4c069aff0ee5b8ac79663bdc8f03086079611a69a1ba03e62ddc0307951dea"
+},
+"data-dist-info-metadata": {
+"sha256": "ec4c069aff0ee5b8ac79663bdc8f03086079611a69a1ba03e62ddc0307951dea"
+},
+"filename": "boto3-1.43.43-py3-none-any.whl",
+"hashes": {
+"sha256": "7ad1208ead8ac5b07cdef66c0ce1579eda2f550a0ca2f88f6cbd35da44212284"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140027,
+"upload-time": "2026-07-08T19:36:25.821559Z",
+"url": "https://files.pythonhosted.org/packages/d7/f9/e4ea46e75277f91a1b6e163c0f2ebf1476f27ade8472d88466a676ec1447/boto3-1.43.43-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.43.tar.gz",
+"hashes": {
+"sha256": "ff66a8a6a2728a703f2c63136b8a9b5aeb9c2a902c4e57d79462221b1fd2dd86"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112653,
+"upload-time": "2026-07-08T19:36:27.287325Z",
+"url": "https://files.pythonhosted.org/packages/19/ca/1f7a53d0b7cae9c5df78992e5e6078dedb63d29c043717ff9dd50f8c3e4a/boto3-1.43.43.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "21e3dd275177401e45a41efa1e0a486a27c00053f89a0dd1fec1df533c71a765"
+},
+"data-dist-info-metadata": {
+"sha256": "21e3dd275177401e45a41efa1e0a486a27c00053f89a0dd1fec1df533c71a765"
+},
+"filename": "boto3-1.43.44-py3-none-any.whl",
+"hashes": {
+"sha256": "621113f7850caec7c8405a07baa26075f700f78844a7f2fdf4d1f879bd3cc3c1"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140029,
+"upload-time": "2026-07-09T00:38:45.630780Z",
+"url": "https://files.pythonhosted.org/packages/44/f2/48081d32e813b14ec03495737984208f193d9a102820b25844c61c94d827/boto3-1.43.44-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.44.tar.gz",
+"hashes": {
+"sha256": "035d73afe3e29bf271a5b27b30476ff8eefa5ae36f6702eada8e412d5c1420aa"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112697,
+"upload-time": "2026-07-09T00:38:47.382833Z",
+"url": "https://files.pythonhosted.org/packages/1f/bd/4d27e9002536dcf85cf97126d4fe93cc01f3a73000f14408ec51554231ca/boto3-1.43.44.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "7ec499c4ec07fb577d342162cd95c7849eeaedec887a025ef7251f930c52938c"
+},
+"data-dist-info-metadata": {
+"sha256": "7ec499c4ec07fb577d342162cd95c7849eeaedec887a025ef7251f930c52938c"
+},
+"filename": "boto3-1.43.45-py3-none-any.whl",
+"hashes": {
+"sha256": "bb076647526c491ce75cab896543afcda5b81c97d3f8e8da08a033fc1ddb7429"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140031,
+"upload-time": "2026-07-09T19:30:04.870058Z",
+"url": "https://files.pythonhosted.org/packages/d0/cf/0d7d1e537d301cf0d079fa4a0765c9febf0eb74d65c115cababa6368c1b3/boto3-1.43.45-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.45.tar.gz",
+"hashes": {
+"sha256": "65e0ae541a9948ac41b706d5c7165d96ebf155812562b6518b862be027ee7347"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112666,
+"upload-time": "2026-07-09T19:30:06.944946Z",
+"url": "https://files.pythonhosted.org/packages/cb/c0/bcbe0a924ed89f8982a87727cd0f88a73397fa423a60df17ae76aa013514/boto3-1.43.45.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "59ef45a7847e7b888eaff8fa080c02d98a7996650cef4f25018ca8ac6b038785"
+},
+"data-dist-info-metadata": {
+"sha256": "59ef45a7847e7b888eaff8fa080c02d98a7996650cef4f25018ca8ac6b038785"
+},
+"filename": "boto3-1.43.46-py3-none-any.whl",
+"hashes": {
+"sha256": "69453e2c1bcb9fd9806527ab99950cacfc2826cb0dce9a3a0414d19270c06c3c"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140031,
+"upload-time": "2026-07-10T19:32:11.129179Z",
+"url": "https://files.pythonhosted.org/packages/ef/1d/c52e66ff32ba7911664e6c4c2ac62e1c6d2d1e7550c7ac185d3f4b70a8a4/boto3-1.43.46-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.46.tar.gz",
+"hashes": {
+"sha256": "66c0d943b049a46a492ec4ec2ebe73c930b1842c7137bee83aad6d93e95d4d96"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112654,
+"upload-time": "2026-07-10T19:32:12.498448Z",
+"url": "https://files.pythonhosted.org/packages/f2/e7/976bf3dfe0aa5d7f31bec2f2cf57c79641620c910a39bc843a237aa9592d/boto3-1.43.46.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "401cc9397ea3e9be346217ec971bad06c4a65148abaa012e9ad59bc9e38930ef"
+},
+"data-dist-info-metadata": {
+"sha256": "401cc9397ea3e9be346217ec971bad06c4a65148abaa012e9ad59bc9e38930ef"
+},
+"filename": "boto3-1.43.47-py3-none-any.whl",
+"hashes": {
+"sha256": "aef0cccd5bc4a443fb3e64fada023f7b5b9da36864cb4255b68cf93067476676"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140031,
+"upload-time": "2026-07-13T19:32:11.072613Z",
+"url": "https://files.pythonhosted.org/packages/27/86/4aaa23e1433a6f4021258b1d8e4ec129bf691e419339454806807595a93d/boto3-1.43.47-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.47.tar.gz",
+"hashes": {
+"sha256": "09a8ce4abab4391bf08315e2dcc449b4b33e97ce7654ee9398d9fe4ef73a33da"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112681,
+"upload-time": "2026-07-13T19:32:13.511110Z",
+"url": "https://files.pythonhosted.org/packages/eb/76/8c2b062b9a9f27db8d78c3183213efd2cb31493b9a81853025da5254652e/boto3-1.43.47.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "dbd98b65bf3c55827c12c9d542dca5b2b7de775a3f802475f73b505b31293f1a"
+},
+"data-dist-info-metadata": {
+"sha256": "dbd98b65bf3c55827c12c9d542dca5b2b7de775a3f802475f73b505b31293f1a"
+},
+"filename": "boto3-1.43.48-py3-none-any.whl",
+"hashes": {
+"sha256": "5866f8a99877342db130e7236a8048b63d3d8e74c46d4ef101771350019bd3df"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140032,
+"upload-time": "2026-07-14T19:29:55.819766Z",
+"url": "https://files.pythonhosted.org/packages/47/ec/3e4bff3d696121631174471505a7669d9d22c183991b4dcc245101603cec/boto3-1.43.48-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.48.tar.gz",
+"hashes": {
+"sha256": "0077b3f38d47034f53ec68f3976f9d9beeabcc0faee7b1d6fa6b666e0852eca7"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112674,
+"upload-time": "2026-07-14T19:29:57.742353Z",
+"url": "https://files.pythonhosted.org/packages/4a/bc/6b285efc5a7ebb27762f20d3fa2d78b8ff86d069d8eef343876d03466273/boto3-1.43.48.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "ee5923c5c3f36f407bc3b245f053a3b2099e29fd07e1706ea56dc3b483817f13"
+},
+"data-dist-info-metadata": {
+"sha256": "ee5923c5c3f36f407bc3b245f053a3b2099e29fd07e1706ea56dc3b483817f13"
+},
+"filename": "boto3-1.43.49-py3-none-any.whl",
+"hashes": {
+"sha256": "2b31ab1a0eb1cee01d0363b8ee5e68b45dff2c8f99e7b53aca11c9f7b591a794"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140033,
+"upload-time": "2026-07-15T19:32:16.483871Z",
+"url": "https://files.pythonhosted.org/packages/a3/08/73efb432f9da880deb91eded8ed41d23f03ec7ac47af9b8ecf884f276876/boto3-1.43.49-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.49.tar.gz",
+"hashes": {
+"sha256": "e58e0704805f720b94e40a56588eadd6da05d3693bde78b573116b11ae56710f"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112755,
+"upload-time": "2026-07-15T19:32:17.777190Z",
+"url": "https://files.pythonhosted.org/packages/2d/2c/e9a853d4ca66f7ce1bf820674bcd9e6dd1934c27a4c545c67d3b69338d9b/boto3-1.43.49.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "4d144e6583fe2259b1a2b1ec61179bd06d6b07a83b8c1c547250c0a10af02577"
+},
+"data-dist-info-metadata": {
+"sha256": "4d144e6583fe2259b1a2b1ec61179bd06d6b07a83b8c1c547250c0a10af02577"
+},
+"filename": "boto3-1.43.50-py3-none-any.whl",
+"hashes": {
+"sha256": "779eb5cfa8bd1d615f36051465f8182860219eef78b4ab8ca2c666bb56702325"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140030,
+"upload-time": "2026-07-16T19:33:14.233756Z",
+"url": "https://files.pythonhosted.org/packages/5c/db/603de8ccaac4ffa7ddc2cea6cdeb9f8f7d997d892af73edd5191e99d0ead/boto3-1.43.50-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.50.tar.gz",
+"hashes": {
+"sha256": "a6865b9cd1d15511f6aad89cef964105acecff2160a3e29ae53c10d9821416af"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112731,
+"upload-time": "2026-07-16T19:33:15.719425Z",
+"url": "https://files.pythonhosted.org/packages/bb/2c/e7f668f2d022b5c7dca881c7a9530aa7200445566c06f0f23daf4bf78084/boto3-1.43.50.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "aa0ed98e15c9c82d33d449ed47b497939049439219aff6bc7c2ec717136ee7a7"
+},
+"data-dist-info-metadata": {
+"sha256": "aa0ed98e15c9c82d33d449ed47b497939049439219aff6bc7c2ec717136ee7a7"
+},
+"filename": "boto3-1.43.51-py3-none-any.whl",
+"hashes": {
+"sha256": "a97057bb609fd38c80448db6a93db770786775dabd651401debf09816d4553d7"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140030,
+"upload-time": "2026-07-17T19:33:21.381491Z",
+"url": "https://files.pythonhosted.org/packages/85/7e/86204db9235f08e051a83e039ec5af209211e3ac51ed3644c4350c150b72/boto3-1.43.51-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.51.tar.gz",
+"hashes": {
+"sha256": "b5a416cc703db73b69b22bef563c89c1fb14a4b10a93628d3c7abc4dd1aaf979"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112649,
+"upload-time": "2026-07-17T19:33:23.358295Z",
+"url": "https://files.pythonhosted.org/packages/a2/4f/b93620c09e81b8dd28558e73862d7b61f938c5a9db9366fab4b0bb53512f/boto3-1.43.51.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "ec3fc7352d08cec363fc6fc519fa46f382f3a99d6bc082479417cf0333f061e7"
+},
+"data-dist-info-metadata": {
+"sha256": "ec3fc7352d08cec363fc6fc519fa46f382f3a99d6bc082479417cf0333f061e7"
+},
+"filename": "boto3-1.43.52-py3-none-any.whl",
+"hashes": {
+"sha256": "1af1950c2b2400267c93d971d588367fc73554e02b4f435a50a5e930a7c93526"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140026,
+"upload-time": "2026-07-20T19:31:26.247717Z",
+"url": "https://files.pythonhosted.org/packages/a7/57/31e6f45c3e236273f9f83f047ae579a90c4be8c6dc1b8366d63a6dcd9841/boto3-1.43.52-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.52.tar.gz",
+"hashes": {
+"sha256": "3da09a393c050906d407023bee5fb5b5fb333378513af1a1a51159db870b572f"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112680,
+"upload-time": "2026-07-20T19:31:28.396335Z",
+"url": "https://files.pythonhosted.org/packages/d8/93/5f98e422ced57a359e3b7827ab79b359d67456abb9c5840b0c5eb7b90e6b/boto3-1.43.52.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "48a4989de4ad4b315e64491ed70ce30a9192775c3d485b80d54ac2eb42257230"
+},
+"data-dist-info-metadata": {
+"sha256": "48a4989de4ad4b315e64491ed70ce30a9192775c3d485b80d54ac2eb42257230"
+},
+"filename": "boto3-1.43.53-py3-none-any.whl",
+"hashes": {
+"sha256": "5383e705d8a976a14f23bb8c113c07a396931a019db98fce4cdc68650ec6e4d8"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 140025,
+"upload-time": "2026-07-21T19:28:50.957893Z",
+"url": "https://files.pythonhosted.org/packages/45/27/7e72d25fdde77668b7bd4fa47381192dd2aa64fb77265e4bab786fd9fe2a/boto3-1.43.53-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "boto3-1.43.53.tar.gz",
+"hashes": {
+"sha256": "c80425acab314d7af09609562053f565139e1fe49108eacfcc1601ebfaee235b"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 112678,
+"upload-time": "2026-07-21T19:28:53.002603Z",
+"url": "https://files.pythonhosted.org/packages/6c/da/0e90eab875f2eb4b8708fef2c198f2559ed1e451a1016f1cd4fcdcfbfbe3/boto3-1.43.53.tar.gz",
+"yanked": false
+}
+]
+}
