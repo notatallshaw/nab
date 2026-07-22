@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+from importlib.util import cache_from_source
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -126,11 +127,13 @@ def _make_installable_wheel(
     name: str,
     version: str,
     data_files: dict[str, bytes] | None = None,
+    package_files: dict[str, bytes] | None = None,
 ) -> None:
     """Write a minimal but installer-valid pure-Python wheel.
 
     ``data_files`` are placed under the PEP 427 ``<dist>.data``
     directory, keyed by their path within it (``headers/foo.h``).
+    ``package_files`` are placed inside the ``<name>/`` package.
     """
     dist = f"{name}-{version}"
     files = {
@@ -143,6 +146,8 @@ def _make_installable_wheel(
             b"Root-Is-Purelib: true\nTag: py3-none-any\n"
         ),
     }
+    for module, data in (package_files or {}).items():
+        files[f"{name}/{module}"] = data
     for data_path, data in (data_files or {}).items():
         files[f"{dist}.data/{data_path}"] = data
     record = "".join(
@@ -1434,6 +1439,125 @@ class TestBuildEnvHeaderScheme:
         assert header.read_bytes() == b"#define GREENLET_H\n"
         site = venv_path / "lib" / f"python{py_version}" / "site-packages"
         assert (site / "greenlet" / "__init__.py").is_file()
+
+
+class TestBuildEnvFollowUpInstall:
+    """A follow-up ``install`` leaves the venv holding what its resolve pinned.
+
+    The second resolve covers the whole build env, so it can pin a
+    different version of a package the first phase installed, or stop
+    needing it at all.
+    """
+
+    def _env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[NabBuildEnv, dict[str, str], Path]:
+        from nab_python._build import env as env_mod
+
+        env = NabBuildEnv(requires=["probefoo"], config=NabProjectConfig())
+        venv_path = tmp_path / "venv"
+        venv_path.mkdir()
+        (tmp_path / "wheels").mkdir()
+        env._venv_path = venv_path  # type: ignore[attr-defined]
+        env._python_executable = venv_path / "bin" / "python"  # type: ignore[attr-defined]
+        site = venv_path / "site-packages"
+        scheme = {
+            "purelib": str(site),
+            "platlib": str(site),
+            "scripts": str(venv_path / "bin"),
+            "data": str(venv_path),
+            "headers": str(venv_path / "include"),
+        }
+        monkeypatch.setattr(env_mod, "_venv_scheme_paths", lambda _python: scheme)
+        return env, scheme, site
+
+    def test_lower_pin_replaces_the_installed_version(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env, scheme, site = self._env(tmp_path, monkeypatch)
+
+        first = tmp_path / "probefoo-2.0-py3-none-any.whl"
+        _make_installable_wheel(
+            first, "probefoo", "2.0", package_files={"only_in_v2.py": b"VALUE = 2\n"}
+        )
+        env._install_wheels([first], scheme)
+        assert (site / "probefoo" / "only_in_v2.py").is_file()
+
+        second = tmp_path / "probefoo-1.0-py3-none-any.whl"
+        _make_installable_wheel(second, "probefoo", "1.0")
+        monkeypatch.setattr(env, "_resolve_and_download", lambda *_a, **_k: [second])
+
+        env.install(["probefoo<2"])
+
+        assert sorted(p.name for p in site.iterdir()) == [
+            "probefoo",
+            "probefoo-1.0.dist-info",
+        ]
+        assert sorted(p.name for p in (site / "probefoo").iterdir()) == ["__init__.py"]
+
+    def test_package_dropped_by_the_new_resolve_is_removed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env, scheme, site = self._env(tmp_path, monkeypatch)
+
+        kept = tmp_path / "probefoo-1.0-py3-none-any.whl"
+        _make_installable_wheel(kept, "probefoo", "1.0")
+        dropped = tmp_path / "probebar-1.0-py3-none-any.whl"
+        _make_installable_wheel(dropped, "probebar", "1.0")
+        env._install_wheels([kept, dropped], scheme)
+        assert (site / "probebar" / "__init__.py").is_file()
+
+        monkeypatch.setattr(env, "_resolve_and_download", lambda *_a, **_k: [kept])
+
+        env.install(["probefoo<2"])
+
+        assert sorted(p.name for p in site.iterdir()) == [
+            "probefoo",
+            "probefoo-1.0.dist-info",
+        ]
+
+    def test_dropped_package_does_not_take_a_shared_data_file_with_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two distributions can ship the same path within a scheme."""
+        env, scheme, _site = self._env(tmp_path, monkeypatch)
+        shared = "data/share/probe.txt"
+
+        dropped = tmp_path / "probeold-1.0-py3-none-any.whl"
+        _make_installable_wheel(
+            dropped, "probeold", "1.0", data_files={shared: b"old\n"}
+        )
+        env._install_wheels([dropped], scheme)
+
+        added = tmp_path / "probenew-1.0-py3-none-any.whl"
+        _make_installable_wheel(added, "probenew", "1.0", data_files={shared: b"new\n"})
+        monkeypatch.setattr(env, "_resolve_and_download", lambda *_a, **_k: [added])
+
+        env.install(["probenew"])
+
+        assert (Path(scheme["data"]) / "share" / "probe.txt").read_bytes() == b"new\n"
+
+    def test_bytecode_of_a_dropped_package_goes_with_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A leftover ``__pycache__`` would keep the package importable."""
+        env, scheme, site = self._env(tmp_path, monkeypatch)
+
+        kept = tmp_path / "probefoo-1.0-py3-none-any.whl"
+        _make_installable_wheel(kept, "probefoo", "1.0")
+        dropped = tmp_path / "probebar-1.0-py3-none-any.whl"
+        _make_installable_wheel(dropped, "probebar", "1.0")
+        env._install_wheels([kept, dropped], scheme)
+
+        compiled = Path(cache_from_source(str(site / "probebar" / "__init__.py")))
+        compiled.parent.mkdir()
+        compiled.write_bytes(b"")
+
+        monkeypatch.setattr(env, "_resolve_and_download", lambda *_a, **_k: [kept])
+
+        env.install(["probefoo<2"])
+
+        assert not (site / "probebar").exists()
 
 
 class TestVenvSchemeProbeErrors:
