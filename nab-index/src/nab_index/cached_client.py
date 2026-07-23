@@ -62,6 +62,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CachedAsyncSimpleClient",
     "ParsedCacheStats",
+    "read_fresh_parsed_listing",
 ]
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,36 @@ def _freshness_lifetime(response: HttpResponse) -> int:
     if expires is None:
         return _DEFAULT_MAX_AGE
     return _expires_lifetime(expires, _header(response, "date"))
+
+
+def read_fresh_parsed_listing(
+    cache: CacheBackend, package: str, *, offline: bool
+) -> list[WheelFile | SdistFile] | None:
+    """Read a clean fresh (or offline) parsed listing for ``package``, or ``None``.
+
+    The synchronous, write-free subset of :meth:`CachedAsyncSimpleClient.get_files`'
+    fresh-hit branch: it consults the same ``get_simple_policy``, the same
+    ``policy.is_fresh() or offline`` freshness expression, the same
+    ``get_simple_parsed`` blob, and the same :func:`parsed_listing.decode`, so on a
+    hit it returns the identical records ``get_files`` would. It declines to
+    ``None`` on every other reason (no policy, stale-online, no blob, a
+    non-binding digest, or a corrupt blob) and, unlike ``get_files``, never reads
+    the raw body, revalidates, rebuilds, writes, or logs: a decline routes the
+    caller to the unchanged async path, which owns every write and self-heal.
+
+    Total by construction (never raises): each cache read swallows ``OSError`` to
+    ``None``, ``is_fresh`` is pure arithmetic, and ``decode`` returns ``None`` on
+    any marshal/shape/build/digest failure.
+    """
+    policy = cache.get_simple_policy(package)
+    if policy is None:
+        return None
+    if not (policy.is_fresh() or offline):
+        return None
+    blob = cache.get_simple_parsed(package)
+    if blob is None:
+        return None
+    return _decode_parsed(blob, policy)
 
 
 class CachedAsyncSimpleClient:
