@@ -119,10 +119,14 @@ def resolve_metadata(
     if metadata_text is not None:
         return (metadata_text, from_sdist)
 
-    msg = (
-        f"No metadata for {package}=={version}: "
-        f"no PEP 658 metadata and no sdist available"
+    # A fetched sdist with no PKG-INFO is a distinct failure from no sdist at all.
+    reason = (
+        "the sdist has no readable PKG-INFO"
+        if sdist is not None
+        else "no sdist available"
     )
+
+    msg = f"No metadata for {package}=={version}: no PEP 658 metadata and {reason}"
     raise MetadataError(msg)
 
 
