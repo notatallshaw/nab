@@ -93,6 +93,10 @@ DOMAIN_REGISTRY: dict[str, str] = {
 _MEMBERSHIP = frozenset({"in", "not in"})
 _ORDERED_UNDEFINED = frozenset({"~=", "==="})
 
+# The python-version axis stays open in every row: pinning it would drop the
+# PEP 440 range reasoning the residual bound needs.
+_PYTHON_AXIS = frozenset({"python_full_version", "implementation_version"})
+
 
 def _domain(variable: str) -> str:
     """Return the effective domain of a variable under packaging typing."""
@@ -1451,10 +1455,98 @@ def _disjunction(clauses: Iterable[frozenset[Atom]]) -> Formula:
 def _equivalent_within(
     left: Formula, right: Formula, universe: Formula, max_cells: int
 ) -> bool:
-    """Whether two trees denote the same set on every point of ``universe``."""
+    """Whether two trees denote the same set on every point of ``universe``.
+
+    The whole-matrix reference oracle: it complements ``universe`` in one shot,
+    so it overruns ``max_cells`` on a wide multi-platform universe.
+    :func:`equivalent_within_rows` decides the same verdict per row instead.
+    """
     return is_empty(
         make_and((left, universe, make_not(right))), max_cells
     ) and is_empty(make_and((right, universe, make_not(left))), max_cells)
+
+
+class _Row(NamedTuple):
+    """One universe row: its entailed non-python pins and residual bound."""
+
+    pins: dict[str, str]
+    bound: Formula
+
+
+def _row_pins(disjunct: Formula) -> dict[str, str]:
+    """The non-python equality pins a universe row entails.
+
+    Only top-level ``==`` value conjuncts are entailed; a nested or negated atom
+    never pins.
+    """
+    if isinstance(disjunct, AtomLeaf):
+        conjuncts: tuple[Formula, ...] = (disjunct,)
+    elif isinstance(disjunct, AndNode):
+        conjuncts = disjunct.children
+    else:
+        conjuncts = ()
+    pins: dict[str, str] = {}
+    for child in conjuncts:
+        if not isinstance(child, AtomLeaf):
+            continue
+        atom = child.atom
+        if (
+            atom.kind == AXIS_VALUE
+            and atom.op == "=="
+            and not atom.swapped
+            and atom.variable not in _PYTHON_AXIS
+        ):
+            pins[atom.variable] = atom.literal
+    return pins
+
+
+def _decompose_rows(universe: Formula) -> list[_Row]:
+    """Split a universe into rows: the top-level disjuncts of its NNF.
+
+    Each row keeps its entailed non-python pins and the residual bound left after
+    restricting the disjunct by them. Purely structural, no algebra.
+    """
+    nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
+    disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
+    rows: list[_Row] = []
+    for disjunct in disjuncts:
+        pins = _row_pins(disjunct)
+        rows.append(_Row(pins, restrict_tree(disjunct, pins)))
+    return rows
+
+
+def _rows_equivalent(
+    left: Formula,
+    rows: Sequence[_Row],
+    right_by_row: Sequence[Formula],
+    max_cells: int,
+) -> bool:
+    """Whether ``left`` agrees with the per-row restriction of the constant right.
+
+    Restricting each operand to a row's pins complements over that row's residual
+    rather than the whole-matrix product.
+    """
+    for row, right in zip(rows, right_by_row, strict=True):
+        left_r = restrict_tree(left, row.pins)
+        if not is_empty(make_and((left_r, row.bound, make_not(right))), max_cells):
+            return False
+        if not is_empty(make_and((right, row.bound, make_not(left_r))), max_cells):
+            return False
+    return True
+
+
+def equivalent_within_rows(
+    left: Formula, right: Formula, universe: Formula, max_cells: int
+) -> bool:
+    """Whether two trees agree on every point of ``universe``, decided per row.
+
+    The row-restricted dual of :func:`_equivalent_within`, deciding the same
+    verdict but staying decidable on wide multi-platform universes. A universe of
+    ``TRUE`` reduces it to plain global equivalence.
+    """
+    rows = _decompose_rows(universe)
+    right_by_row = [restrict_tree(right, row.pins) for row in rows]
+    return _rows_equivalent(left, rows, right_by_row, max_cells)
 
 
 def _dedupe(clauses: list[frozenset[Atom]]) -> list[frozenset[Atom]]:
@@ -1469,22 +1561,22 @@ def _dedupe(clauses: list[frozenset[Atom]]) -> list[frozenset[Atom]]:
 
 def _drop_clauses(
     clauses: list[frozenset[Atom]],
-    original: Formula,
-    universe: Formula,
+    rows: Sequence[_Row],
+    original_by_row: Sequence[Formula],
     max_cells: int,
 ) -> list[frozenset[Atom]]:
     kept = list(clauses)
     for clause in sorted(clauses, key=_clause_key):
         trial = [other for other in kept if other != clause]
-        if _equivalent_within(_disjunction(trial), original, universe, max_cells):
+        if _rows_equivalent(_disjunction(trial), rows, original_by_row, max_cells):
             kept = trial
     return kept
 
 
 def _drop_atoms(
     clauses: list[frozenset[Atom]],
-    original: Formula,
-    universe: Formula,
+    rows: Sequence[_Row],
+    original_by_row: Sequence[Formula],
     max_cells: int,
 ) -> list[frozenset[Atom]]:
     working = [set(clause) for clause in clauses]
@@ -1492,7 +1584,7 @@ def _drop_atoms(
         for atom in sorted(clause, key=_atom_key):
             clause.discard(atom)
             trial = _disjunction(frozenset(current) for current in working)
-            if not _equivalent_within(trial, original, universe, max_cells):
+            if not _rows_equivalent(trial, rows, original_by_row, max_cells):
                 clause.add(atom)
     return [frozenset(clause) for clause in working]
 
@@ -1506,17 +1598,20 @@ def simplify_within(node: Formula, universe: Formula, max_cells: int) -> Formula
 
     Greedy: drop each clause, then each atom, whose removal preserves
     within-universe equivalence, to a fixpoint, then factor the atoms common to
-    every surviving clause into a leading conjunction. Every removal is verified,
-    so the result is sound; on a universe of ``TRUE`` it reduces to a
-    context-free factoring. Determinism is fixed by a total atom order.
+    every surviving clause into a leading conjunction. Every removal is verified
+    per row, so a wide multi-platform universe stays decidable. On a universe of
+    ``TRUE`` it reduces to a context-free factoring. Determinism is fixed by a
+    total atom order.
     """
     nnf = node if isinstance(node, BoolConst) else to_nnf(node)
     clauses = _dedupe(_to_clauses(nnf, max_cells))
     original = _disjunction(clauses)
+    rows = _decompose_rows(universe)
+    original_by_row = [restrict_tree(original, row.pins) for row in rows]
     while True:
         before = _canonical(clauses)
-        clauses = _drop_clauses(clauses, original, universe, max_cells)
-        clauses = _dedupe(_drop_atoms(clauses, original, universe, max_cells))
+        clauses = _drop_clauses(clauses, rows, original_by_row, max_cells)
+        clauses = _dedupe(_drop_atoms(clauses, rows, original_by_row, max_cells))
         if _canonical(clauses) == before:
             break
     if not clauses:
