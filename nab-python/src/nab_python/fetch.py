@@ -22,7 +22,11 @@ from urllib.parse import urlsplit
 from packaging.utils import canonicalize_name as canonicalize_name_boundary
 
 from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
-from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
+from nab_index.cached_client import (
+    CachedAsyncSimpleClient,
+    ParsedCacheStats,
+    read_fresh_parsed_listing,
+)
 from nab_index.client import SdistFile, WheelFile
 from nab_index.lazy_wheel import RangeCapabilityMemo, RangeOutcome
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
@@ -45,6 +49,7 @@ __all__ = [
     "FetchRequest",
     "InMemoryIndex",
     "IndexRoute",
+    "WarmSyncStats",
 ]
 
 
@@ -110,6 +115,26 @@ class FetchRequest:
     metadata_hash: tuple[str, str] | None = None
     sdist_hashes: tuple[tuple[str, str], ...] = ()
     wheel_hashes: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass
+class WarmSyncStats:
+    """Counters for the synchronous warm-hit listing path.
+
+    Complementary to ``ParsedCacheStats``: a sync hit bypasses ``get_files``, so
+    it bumps ``listing_hits`` and no parsed counter; a decline runs the async
+    ``get_files`` and bumps the parsed counters as usual. The decline
+    sub-counters (their sum is ``listing_declines``) attribute each decline to a
+    reason for A/B diagnosis. Written only from the main resolver thread, so the
+    reads and writes need no lock.
+    """
+
+    listing_hits: int = 0
+    listing_declines: int = 0
+    declined_ineligible: int = 0
+    declined_no_policy: int = 0
+    declined_stale_online: int = 0
+    declined_no_blob: int = 0
 
 
 @dataclass
@@ -776,6 +801,17 @@ class FetchCoordinator:
         self._cache_dir = cache_dir
         self._index_routes = list(index_routes or [])
         self._index_cache_floors = dict(index_cache_floors or {})
+        # The synchronous warm-hit listing path serves exactly one shape: a
+        # single non-file index over an OnDiskCache, unrouted, so the serving
+        # index is always ``self.indexes[0].name`` and the probe reads
+        # ``self._cache`` (the same backend the fetcher's client reads).
+        # Everything else declines to the untouched async path.
+        self._sync_listing_enabled = (
+            len(self.indexes) == 1
+            and not self._index_routes
+            and not self.indexes[0].url.startswith("file://")
+            and isinstance(self._cache, OnDiskCache)
+        )
         # Progress hook: fired once per successful listing fetch, from the
         # fetcher thread.  ``None`` when nothing is watching (the common case).
         self._on_fetch = on_fetch
@@ -788,6 +824,8 @@ class FetchCoordinator:
         # index client the same way; rebuilt on the fetcher loop so each run
         # starts at zero.
         self._parsed_cache_stats = ParsedCacheStats()
+        # Warm-hit listing counters, reset on each start() (main thread only).
+        self._warm_sync_stats = WarmSyncStats()
         self._thread: threading.Thread | None = None
         self._started = False
         self._crashed = False
@@ -820,11 +858,22 @@ class FetchCoordinator:
         """
         return self._parsed_cache_stats
 
+    @property
+    def warm_sync_stats(self) -> WarmSyncStats:
+        """Synchronous warm-hit listing counters for this run.
+
+        Reset at the start of each run (main thread), so the counts reflect the
+        most recent run. A warm resolve should show ``listing_hits`` dominate and
+        no LISTING request submitted; a cold run shows all declines.
+        """
+        return self._warm_sync_stats
+
     def start(self) -> None:
         """Start the fetcher thread (idempotent)."""
         if self._started:
             return
         self._started = True
+        self._warm_sync_stats = WarmSyncStats()
         self._thread = threading.Thread(
             target=self._run_loop,
             daemon=True,
@@ -902,8 +951,41 @@ class FetchCoordinator:
         msg = f"Fetcher thread crashed: {self._crash_error}"
         raise RuntimeError(msg)
 
+    def _try_listing_sync(self, package: str) -> list[WheelFile | SdistFile] | None:
+        """Read a fresh parsed listing on the caller's thread, or ``None``.
+
+        Total by construction (``read_fresh_parsed_listing`` never raises), which
+        the single-flight claim relies on: the caller has already created the
+        pending, so a raise would strand it. Declines bump a reason sub-counter
+        for A/B diagnosis; on a decline the policy is re-read (a cheap sidecar
+        read) to attribute the reason rather than threading it out of the pure
+        helper.
+        """
+        stats = self._warm_sync_stats
+        if not self._sync_listing_enabled:
+            stats.declined_ineligible += 1
+            return None
+        records = read_fresh_parsed_listing(self._cache, package, offline=self._offline)
+        if records is not None:
+            return records
+        policy = self._cache.get_simple_policy(package)
+        if policy is None:
+            stats.declined_no_policy += 1
+        elif not (policy.is_fresh() or self._offline):
+            stats.declined_stale_online += 1
+        else:
+            stats.declined_no_blob += 1
+        return None
+
     def request_listing(self, package: str) -> threading.Event:
-        """Request a listing fetch; return an event set when the result lands."""
+        """Request a listing fetch; return an event set when the result lands.
+
+        Claim the single-flight pending first: an existing pending means another
+        party owns fulfillment, so join its event and never probe. Only the
+        pending's creator probes the warm cache on this thread; a fresh parsed
+        hit is served inline (no round trip), and every other outcome declines to
+        the unchanged async fetch, which owns every cache write and self-heal.
+        """
         self._check_alive()
         if self.index.get_listing(package) is not None:
             done = threading.Event()
@@ -911,8 +993,23 @@ class FetchCoordinator:
             return done
         key = f"listing:{package}"
         pending, existed = self.index.get_or_create_pending(key)
-        if not existed:
-            self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
+        if existed:
+            return pending.event
+        records = self._try_listing_sync(package)
+        if records is not None:
+            # Reproduce every observable effect of a successful async
+            # _fetch_listing: serving index before store_listing (which fires
+            # the pending), the progress tick, and the prefetch batch. Only the
+            # round trip is removed.
+            self.index.store_listing_index(package, self.indexes[0].name)
+            self.index.store_listing(package, records)
+            if self._on_fetch is not None:
+                self._on_fetch()
+            self._prefetch_metadata_after_listing(package, records)
+            self._warm_sync_stats.listing_hits += 1
+            return pending.event
+        self._warm_sync_stats.listing_declines += 1
+        self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
         return pending.event
 
     def request_metadata(

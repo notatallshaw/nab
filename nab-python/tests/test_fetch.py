@@ -21,7 +21,7 @@ import httpx
 import pytest
 import respx
 
-from nab_index.cache import NullCache, OfflineError, OnDiskCache
+from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import (
     MalformedSimpleResponseError,
@@ -34,14 +34,16 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.lazy_wheel import RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
+from nab_index.parsed_listing import encode as encode_parsed
 from nab_index.serialization import SimpleSerialization
-from nab_index.transport import HttpError
+from nab_index.transport import HttpError, HttpResponse
 from nab_python.fetch import (
     FetchCoordinator,
     FetchKind,
     FetchRequest,
     IndexRoute,
     InMemoryIndex,
+    WarmSyncStats,
     _resolve_routes,
 )
 
@@ -2962,3 +2964,407 @@ class TestRangeMetadataCoordinator:
         assert event.is_set()
         assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
         assert coord.index.get_metadata_error("widget", "1.0", _RANGE_URL) is None
+
+
+_PYPI = "https://pypi.org/simple/"
+
+
+class _RaiseOnGetTransport:
+    """A transport whose ``get`` raises: proves a warm hit touches no network."""
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> HttpResponse:
+        msg = f"unexpected network fetch: {url}"
+        raise HttpError(msg)
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _sync_sdist(version: str = "1.0", name: str = "pkg") -> SdistFile:
+    """A minimal SdistFile for warm parsed-listing round trips."""
+    return SdistFile(
+        filename=f"{name}-{version}.tar.gz",
+        url=f"https://f.example/{name}-{version}.tar.gz",
+        version=version,
+        requires_python=None,
+        upload_time=None,
+    )
+
+
+def _warm_parsed(
+    cache: OnDiskCache,
+    package: str,
+    files: Sequence[WheelFile | SdistFile],
+    *,
+    body: bytes | None = None,
+    fresh: bool = True,
+    blob: bool = True,
+    digest_override: str | None = None,
+) -> None:
+    """Write a policy sidecar, raw body, and parsed blob for ``package``.
+
+    ``fresh`` controls the freshness window; ``blob`` omits the parsed blob;
+    ``digest_override`` binds the blob to a foreign body so ``decode`` misses.
+    """
+    if body is None:
+        body = json.dumps(LISTING_JSON).encode()
+    now = int(time.time())
+    if fresh:
+        policy = CachePolicy(fetched_at=now, max_age=3600, etag="x")
+    else:
+        policy = CachePolicy(fetched_at=now - 10_000, max_age=1, etag="x")
+    digest = cache.put_simple(package, body, policy)
+    if blob:
+        bound = digest_override if digest_override is not None else digest
+        cache.put_simple_parsed(package, encode_parsed(list(files), bound))
+
+
+def _spy_submit(coord: FetchCoordinator) -> list[object]:
+    """Record every ``_submit`` item, still delegating to the real submit."""
+    calls: list[object] = []
+    original = coord._submit
+
+    def wrapper(item: object) -> None:
+        calls.append(item)
+        original(item)  # type: ignore[arg-type]
+
+    coord._submit = wrapper  # type: ignore[method-assign]
+    return calls
+
+
+def _listing_submits(calls: Sequence[object]) -> list[object]:
+    """The recorded submits that are LISTING requests."""
+    return [
+        item
+        for item in calls
+        if isinstance(item, FetchRequest) and item.kind is FetchKind.LISTING
+    ]
+
+
+class TestWarmSyncListingPath:
+    """The synchronous warm-hit fast path for ``request_listing`` (C5, S-ALL)."""
+
+    def test_eligibility_gate_single_index_ondisk(self, tmp_path: Path) -> None:
+        """The gate is on for a single non-file index over an OnDiskCache."""
+        coord = _coord(cache_dir=tmp_path)
+        try:
+            assert coord._sync_listing_enabled is True
+        finally:
+            coord.shutdown()
+
+    def test_eligibility_off_for_null_cache(self) -> None:
+        coord = _coord()
+        try:
+            assert coord._sync_listing_enabled is False
+        finally:
+            coord.shutdown()
+
+    def test_eligibility_off_for_multi_index(self, tmp_path: Path) -> None:
+        coord = _coord(
+            cache_dir=tmp_path,
+            indexes=[
+                IndexConfig("pypi", _PYPI),
+                IndexConfig("alt", "https://alt.example/"),
+            ],
+        )
+        try:
+            assert coord._sync_listing_enabled is False
+        finally:
+            coord.shutdown()
+
+    def test_eligibility_off_for_file_index(self, tmp_path: Path) -> None:
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        coord = _coord(
+            cache_dir=tmp_path / "cache",
+            indexes=[IndexConfig("local", wheelhouse.as_uri())],
+        )
+        try:
+            assert coord._sync_listing_enabled is False
+        finally:
+            coord.shutdown()
+
+    def test_eligibility_off_for_routed(self, tmp_path: Path) -> None:
+        coord = _coord(
+            cache_dir=tmp_path,
+            index_routes=[IndexRoute(name="pkg", index="pypi")],
+        )
+        try:
+            assert coord._sync_listing_enabled is False
+        finally:
+            coord.shutdown()
+
+    @respx.mock
+    def test_warm_hit_serves_without_listing_fetch(self, tmp_path: Path) -> None:
+        """A fresh parsed hit is served inline: no LISTING submit, prefetch fired."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0"), _sync_sdist("2.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        prefetched: list[tuple[str, object]] = []
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._prefetch_metadata_after_listing = (  # type: ignore[method-assign]
+                lambda package, records: prefetched.append((package, list(records)))
+            )
+            calls = _spy_submit(coord)
+            event = coord.request_listing("pkg")
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert coord.index.get_listing_index("pkg") == "pypi"
+            assert prefetched == [("pkg", files)]
+            assert _listing_submits(calls) == []
+            assert coord.warm_sync_stats.listing_hits == 1
+            assert coord.warm_sync_stats.listing_declines == 0
+
+    @respx.mock
+    def test_warm_hit_fires_progress_hook(self, tmp_path: Path) -> None:
+        """A sync hit ticks ``on_fetch`` once, matching the async path's count."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
+
+        ticks: list[int] = []
+        with _coord(cache_dir=tmp_path, on_fetch=lambda: ticks.append(1)) as coord:
+            coord.request_listing("pkg")
+            assert ticks == [1]
+            assert coord.warm_sync_stats.listing_hits == 1
+
+    @respx.mock
+    def test_warm_hit_no_network(self, tmp_path: Path) -> None:
+        """A warm hit touches no transport at all."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        coord = FetchCoordinator(
+            transport=_RaiseOnGetTransport(),  # type: ignore[arg-type]
+            cache_dir=tmp_path,
+        )
+        with coord:
+            coord._prefetch_metadata_after_listing = (  # type: ignore[method-assign]
+                lambda package, records: None
+            )
+            event = coord.request_listing("pkg")
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert not coord._crashed
+
+    @respx.mock
+    def test_preexisting_pending_joins_without_probe(self, tmp_path: Path) -> None:
+        """A pending key joins the existing event: no probe, store, or submit."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
+
+        with _coord(cache_dir=tmp_path) as coord:
+            probed: list[str] = []
+
+            def _probe(package: str) -> None:
+                probed.append(package)
+
+            coord._try_listing_sync = _probe  # type: ignore[method-assign]
+            calls = _spy_submit(coord)
+            pending, _ = coord.index.get_or_create_pending("listing:pkg")
+
+            event = coord.request_listing("pkg")
+
+            assert event is pending.event
+            assert probed == []
+            assert _listing_submits(calls) == []
+            assert coord.index.get_listing("pkg") is None
+            assert coord.warm_sync_stats.listing_hits == 0
+            assert coord.warm_sync_stats.listing_declines == 0
+
+    @respx.mock
+    def test_decline_stale_online(self, tmp_path: Path) -> None:
+        """A stale entry online declines to async and revalidates."""
+        respx.get(f"{_PYPI}pkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON, headers={"etag": "v2"})
+        )
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")], fresh=False)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert coord.index.get_listing("pkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_stale_online == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+            assert coord.warm_sync_stats.listing_hits == 0
+
+    @respx.mock
+    def test_decline_no_policy_cold(self, tmp_path: Path) -> None:
+        """A cold cache has no policy: decline to async fetch."""
+        respx.get(f"{_PYPI}pkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+        with _coord(cache_dir=tmp_path) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert coord.index.get_listing("pkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_no_policy == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+
+    @respx.mock
+    def test_decline_no_blob(self, tmp_path: Path) -> None:
+        """A fresh policy with no parsed blob declines; async rebuilds from body."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "testpkg", [_sync_sdist("1.0")], blob=False)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("testpkg").wait(timeout=5)
+
+            assert coord.index.get_listing("testpkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_no_blob == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+
+    @respx.mock
+    def test_decline_digest_mismatch(self, tmp_path: Path) -> None:
+        """A blob bound to a foreign body declines; the sync path never rebuilds."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(
+            cache,
+            "testpkg",
+            [_sync_sdist("1.0")],
+            digest_override="0" * 64,
+        )
+
+        with _coord(cache_dir=tmp_path) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("testpkg").wait(timeout=5)
+
+            assert coord.index.get_listing("testpkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_no_blob == 1
+            assert not coord._crashed
+
+    @respx.mock
+    def test_decline_multi_index(self, tmp_path: Path) -> None:
+        """A multi-index config is ineligible; it declines to async."""
+        respx.get(f"{_PYPI}pkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
+
+        with _coord(
+            cache_dir=tmp_path,
+            indexes=[
+                IndexConfig("pypi", _PYPI),
+                IndexConfig("alt", "https://alt.example/"),
+            ],
+        ) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_ineligible == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+
+    @respx.mock
+    def test_decline_file_index(self, tmp_path: Path) -> None:
+        """A file:// index is ineligible; it declines to the local async path."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        with _coord(
+            cache_dir=tmp_path / "cache",
+            indexes=[IndexConfig("local", wheelhouse.as_uri())],
+        ) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_ineligible == 1
+
+    @respx.mock
+    def test_decline_null_cache(self) -> None:
+        """No cache dir means a NullCache: ineligible, declines to async."""
+        respx.get(f"{_PYPI}pkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+        with _coord() as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert coord.index.get_listing("pkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_ineligible == 1
+
+    @respx.mock
+    def test_decline_offline_cold_stores_empty(self, tmp_path: Path) -> None:
+        """Offline with a cold cache declines (no policy) and records empty."""
+        with _coord(cache_dir=tmp_path, offline=True) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("missing").wait(timeout=5)
+
+            assert coord.index.get_listing("missing") == []
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_no_policy == 1
+            assert not coord._crashed
+
+    def test_start_resets_stats(self, tmp_path: Path) -> None:
+        """``start`` zeroes the warm-sync counters for a reused coordinator."""
+        coord = _coord(cache_dir=tmp_path)
+        try:
+            coord.start()
+            coord._warm_sync_stats.listing_hits = 7
+            coord._warm_sync_stats.declined_no_blob = 3
+            coord.shutdown()
+            coord.start()
+            assert coord.warm_sync_stats == WarmSyncStats()
+        finally:
+            coord.shutdown()
+
+    def test_skew_reader_never_serves_torn_pair(self, tmp_path: Path) -> None:
+        """Interleaved writer/reader: every non-None probe is a bound pair."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files_a: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        files_b: list[WheelFile | SdistFile] = [_sync_sdist("2.0")]
+        _warm_parsed(cache, "pkg", files_a)
+
+        coord = _coord(cache_dir=tmp_path)
+        stop = threading.Event()
+        errors: list[BaseException] = []
+        results: list[object] = []
+
+        def writer() -> None:
+            toggle = False
+            while not stop.is_set():
+                if toggle:
+                    _warm_parsed(cache, "pkg", files_b)
+                    _warm_parsed(cache, "pkg", files_a, blob=False)
+                else:
+                    _warm_parsed(cache, "pkg", files_a)
+                    _warm_parsed(cache, "pkg", files_b, blob=False)
+                toggle = not toggle
+
+        def reader() -> None:
+            try:
+                for _ in range(3000):
+                    results.append(coord._try_listing_sync("pkg"))
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        try:
+            w = threading.Thread(target=writer)
+            r = threading.Thread(target=reader)
+            w.start()
+            r.start()
+            r.join(timeout=30)
+            stop.set()
+            w.join(timeout=5)
+
+            assert not errors
+            for value in results:
+                assert value is None or value in (files_a, files_b)
+        finally:
+            stop.set()
+            coord.shutdown()
