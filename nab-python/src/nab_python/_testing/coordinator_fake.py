@@ -87,7 +87,11 @@ def _wire_metadata_side_effects(
 ) -> None:
     """Attach ``request_listing``/``request_metadata``/batch side effects."""
 
-    def _request_listing(_pkg: str) -> threading.Event:
+    def _request_listing(
+        _pkg: str,
+        *,
+        speculative: bool = False,  # noqa: ARG001 (mirrors the real keyword)
+    ) -> threading.Event:
         return _done_event()
 
     def _fetch_metadata(pkg: str, ver: str, url: str) -> None:

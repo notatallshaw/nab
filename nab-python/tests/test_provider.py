@@ -189,6 +189,14 @@ class TestPrefetchListings:
         versions = [v for v, _ in provider.fetch_versions("foo")]
         assert versions == [V("1.0")]
 
+    def test_prefetch_new_deps_requests_listing_speculatively(self) -> None:
+        """The prefetch cascade marks its listing requests speculative (S-CRIT)."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(coordinator, target=_PY312)
+        coordinator.request_listing.reset_mock()
+        provider.prefetch_new_deps({"bar": SpecifierSet(">=1.0").to_range()})
+        coordinator.request_listing.assert_called_once_with("bar", speculative=True)
+
 
 class TestSpeculativePrefetch:
     def test_metadata_prefetched_after_listing(self) -> None:
@@ -2958,7 +2966,9 @@ class TestLookAhead:
 
         coordinator = MagicMock()
         coordinator.index = index
-        coordinator.request_listing.side_effect = lambda pkg: _done_event()
+        coordinator.request_listing.side_effect = lambda pkg, *, speculative=False: (
+            _done_event()
+        )
 
         call_count = [0]
 
@@ -4507,7 +4517,7 @@ class TestSkipFetch:
 
     def test_prefetches_override_dependencies(self) -> None:
         # The override introduces dep-a, so its listing is background-fetched
-        # even though foo itself skips the metadata fetch.
+        # speculatively even though foo itself skips the metadata fetch.
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(
             coordinator,
@@ -4517,7 +4527,7 @@ class TestSkipFetch:
             ),
         )
         provider.get_dependencies("foo", V("1.0"))
-        coordinator.request_listing.assert_any_call("dep-a")
+        coordinator.request_listing.assert_any_call("dep-a", speculative=True)
 
     def test_does_not_fire_for_requires_python_only(self) -> None:
         # A partial override (only requires-python) still needs the artifact
@@ -6370,7 +6380,7 @@ class TestFetchVersionsNotInIndex:
         coordinator = MagicMock()
         coordinator.index = index
 
-        def _request_listing(pkg: str) -> threading.Event:
+        def _request_listing(pkg: str, *, speculative: bool = False) -> threading.Event:
             # Simulate the coordinator populating the index after request.
             index.store_listing(pkg, wheels)
             return _done_event()
