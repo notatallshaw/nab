@@ -732,6 +732,63 @@ class TestFetchCoordinator:
         # The newest PREFETCH_METADATA_COUNT wheels, not all 15.
         assert derived == [f"pkg-{n}.0-py3-none-any.whl" for n in range(6, 16)]
 
+    def test_prefetch_after_listing_enqueues_newest_batch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The extracted tail picks the newest N, one wheel per version."""
+
+        def _wheel(version: str, *, has_meta: bool = True) -> WheelFile:
+            return WheelFile(
+                filename=f"pkg-{version}-py3-none-any.whl",
+                url=f"https://f.com/pkg-{version}-py3-none-any.whl",
+                version=version,
+                requires_python=None,
+                has_metadata=has_meta,
+                upload_time=None,
+                metadata_hash=("sha256", f"h{version}") if has_meta else None,
+            )
+
+        # Oldest-first, more versions than PREFETCH_METADATA_COUNT, plus a
+        # second wheel for one version (first-with-sidecar wins), a
+        # sidecar-less wheel, and an sdist that the tail must skip.
+        files: list[WheelFile | SdistFile] = []
+        for n in range(1, 16):
+            files.append(_wheel(f"{n}.0"))
+        files.append(_wheel("15.0"))  # duplicate version, must not re-enqueue
+        files.append(_wheel("16.0", has_meta=False))  # no sidecar, skipped
+        files.append(
+            SdistFile(
+                filename="pkg-17.0.tar.gz",
+                url="https://f.com/pkg-17.0.tar.gz",
+                version="17.0",
+                requires_python=None,
+                upload_time=None,
+            )
+        )
+
+        calls: list[tuple[object, ...]] = []
+
+        def _spy(*args: object, **kwargs: object) -> threading.Event:
+            calls.append(args)
+            done = threading.Event()
+            done.set()
+            return done
+
+        coord = _coord()
+        monkeypatch.setattr(coord, "request_metadata", _spy)
+        coord._prefetch_metadata_after_listing("pkg", files)
+
+        expected = [
+            (
+                "pkg",
+                f"{n}.0",
+                f"https://f.com/pkg-{n}.0-py3-none-any.whl.metadata",
+                ("sha256", f"h{n}.0"),
+            )
+            for n in range(6, 16)
+        ]
+        assert calls == expected
+
     @respx.mock
     def test_listing_entry_with_unsplittable_url_is_dropped(self) -> None:
         """Only the entry whose URL urllib cannot split is dropped."""
