@@ -1289,6 +1289,7 @@ class TestMicroBoundarySplitting:
             'python_full_version ~= "1!3.12.4"',
             'python_full_version == "1!3.12.*"',
             'python_full_version < "1!3.12.4rc1"',
+            'python_full_version >= "1!3.12.4.post1"',
             '"1!3.12.4" > python_full_version',
             'implementation_version >= "1!3.12.4"',
         ],
@@ -1329,6 +1330,35 @@ class TestMicroBoundarySplitting:
             == []
         )
 
+    def test_a_post_release_literal_of_the_floor_crashes(self) -> None:
+        """A post release sorts above its release, so ``>= "3.12.0.post1"``
+        splits 3.12.0 (False) off 3.12.1 (True) at a boundary no micro sits on.
+        Unlike the prerelease of the floor ``>= "3.12.0a1"``, which is uniform,
+        the post-release of the floor is a loud crash."""
+        with pytest.raises(NonIntervalMarkerError):
+            micro_boundary_points(
+                self._target(), [Marker('python_full_version >= "3.12.0.post1"')]
+            )
+
+    def test_a_post_release_literal_outside_the_minor_does_not_split(self) -> None:
+        """A post release of another minor is uniform across this one, so it
+        crashes nothing: ``>= "3.13.4.post1"`` is False for every 3.12 micro."""
+        assert (
+            micro_boundary_points(
+                self._target(), [Marker('python_full_version >= "3.13.4.post1"')]
+            )
+            == []
+        )
+
+    def test_a_before_literal_post_release_splits_at_the_next_micro(self) -> None:
+        """A post release sorts above its release, so the exclusive-upper
+        ``< "3.12.4.post1"`` pushes its boundary to the next real micro and
+        tiles cleanly, cutting at 3.12.5 like ``<= "3.12.4"``."""
+        found = micro_boundary_points(
+            self._target(), [Marker('python_full_version < "3.12.4.post1"')]
+        )
+        assert [str(point) for point in found] == ["3.12.5"]
+
     @pytest.mark.parametrize(
         "marker",
         [
@@ -1344,12 +1374,20 @@ class TestMicroBoundarySplitting:
             'python_full_version ~= "3.12.4b1"',
             '"3.12.4" ~= python_full_version',
             '"3.12.4rc1" == python_full_version',
+            'python_full_version >= "3.12.4.post1"',
+            'python_full_version ~= "3.12.4.post1"',
+            'python_full_version == "3.12.4.post1"',
+            'python_full_version != "3.12.4.post1"',
+            '"3.12.4.post1" == python_full_version',
         ],
     )
     def test_an_untileable_marker_crashes(self, marker: str) -> None:
         """A membership, verbatim ===, non-version, variable, or interior
-        prerelease comparison on a minor interval is a loud crash: the
-        whole-minor pin that once absorbed it is gone."""
+        pre- or post-release comparison on a minor interval is a loud crash:
+        the whole-minor pin that once absorbed it is gone. ``>= "3.12.4.post1"``
+        flips between the 3.12.4 and 3.12.5 micros just as ``>= "3.12.4rc1"``
+        flips between 3.12.3 and 3.12.4, so neither lands on a release the lock
+        can render."""
         with pytest.raises(NonIntervalMarkerError):
             micro_boundary_points(self._target(), [Marker(marker)])
 
