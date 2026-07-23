@@ -38,6 +38,7 @@ from nab_index.parsed_listing import encode as encode_parsed
 from nab_index.serialization import SimpleSerialization
 from nab_index.transport import HttpError, HttpResponse
 from nab_python.fetch import (
+    _WARM_SYNC_MIN_BLOB_BYTES,
     FetchCoordinator,
     FetchKind,
     FetchRequest,
@@ -55,8 +56,15 @@ def no_retries(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _coord(**kwargs: object) -> FetchCoordinator:
-    """Build a FetchCoordinator wired to httpx so respx can mock it."""
-    return FetchCoordinator(transport=HttpxAsyncTransport(), **kwargs)  # type: ignore[arg-type]
+    """Build a FetchCoordinator wired to httpx so respx can mock it.
+
+    The overlap gate defaults off (threshold 0) so the serve-mechanism tests
+    exercise the sync path independent of the blob-size gate, which has its own
+    dedicated tests.
+    """
+    coord = FetchCoordinator(transport=HttpxAsyncTransport(), **kwargs)  # type: ignore[arg-type]
+    coord._warm_sync_min_blob_bytes = 0
+    return coord
 
 
 class _FetcherDeath(BaseException):
@@ -3158,6 +3166,7 @@ class TestWarmSyncListingPath:
             transport=_RaiseOnGetTransport(),  # type: ignore[arg-type]
             cache_dir=tmp_path,
         )
+        coord._warm_sync_min_blob_bytes = 0
         with coord:
             coord._prefetch_metadata_after_listing = (  # type: ignore[method-assign]
                 lambda package, records: None
@@ -3238,6 +3247,78 @@ class TestWarmSyncListingPath:
 
             assert coord.index.get_listing("testpkg") is not None
             assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_no_blob == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+
+    def test_gate_default_threshold(self, tmp_path: Path) -> None:
+        """A fresh coordinator carries the module default blob-size threshold."""
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),  # type: ignore[arg-type]
+            cache_dir=tmp_path,
+        )
+        try:
+            assert coord._warm_sync_min_blob_bytes == _WARM_SYNC_MIN_BLOB_BYTES
+        finally:
+            coord.shutdown()
+
+    def test_gate_admits_when_sync_disabled(self) -> None:
+        """The gate admits (defers to the eligibility gate) when sync is off."""
+        coord = _coord()
+        try:
+            assert coord._sync_listing_enabled is False
+            assert coord._overlap_gate_admits("pkg") is True
+        finally:
+            coord.shutdown()
+
+    @respx.mock
+    def test_gate_declines_small_blob_to_async(self, tmp_path: Path) -> None:
+        """A parsed blob below the threshold declines to the async path."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._warm_sync_min_blob_bytes = 10**9
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert coord.index.get_listing("pkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.listing_hits == 0
+            assert coord.warm_sync_stats.declined_small_blob == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+
+    @respx.mock
+    def test_gate_admits_blob_at_threshold(self, tmp_path: Path) -> None:
+        """A parsed blob at or above the threshold serves inline."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files)
+        size = cache.get_simple_parsed_size("pkg")
+        assert size is not None
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._warm_sync_min_blob_bytes = size
+            calls = _spy_submit(coord)
+            event = coord.request_listing("pkg")
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert _listing_submits(calls) == []
+            assert coord.warm_sync_stats.listing_hits == 1
+            assert coord.warm_sync_stats.declined_small_blob == 0
+
+    @respx.mock
+    def test_gate_admits_when_blob_size_unknown(self, tmp_path: Path) -> None:
+        """A missing blob has no size, so the gate admits and _try declines."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")], blob=False)
+        assert cache.get_simple_parsed_size("pkg") is None
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._warm_sync_min_blob_bytes = 10**9
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert coord.warm_sync_stats.declined_small_blob == 0
             assert coord.warm_sync_stats.declined_no_blob == 1
             assert coord.warm_sync_stats.listing_declines == 1
 
@@ -3396,12 +3477,18 @@ class TestWarmSyncListingPath:
         def writer() -> None:
             toggle = False
             while not stop.is_set():
-                if toggle:
-                    _warm_parsed(cache, "pkg", files_b)
-                    _warm_parsed(cache, "pkg", files_a, blob=False)
-                else:
-                    _warm_parsed(cache, "pkg", files_a)
-                    _warm_parsed(cache, "pkg", files_b, blob=False)
+                try:
+                    if toggle:
+                        _warm_parsed(cache, "pkg", files_b)
+                        _warm_parsed(cache, "pkg", files_a, blob=False)
+                    else:
+                        _warm_parsed(cache, "pkg", files_a)
+                        _warm_parsed(cache, "pkg", files_b, blob=False)
+                except PermissionError:
+                    # Windows refuses os.replace onto a file the reader has open;
+                    # retry. Production single-flight keeps a sync read and a
+                    # fetcher write off the same file, so this race is harness-only.
+                    continue
                 toggle = not toggle
 
         def reader() -> None:

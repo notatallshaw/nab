@@ -114,6 +114,18 @@ def _warm_bound(
     return files, digest
 
 
+class TestParsedBlobSize:
+    def test_size_matches_written_blob(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache)
+        blob = cache.get_simple_parsed("pkg")
+        assert blob is not None
+        assert cache.get_simple_parsed_size("pkg") == len(blob)
+
+    def test_size_none_when_absent(self, tmp_path: Path) -> None:
+        assert _cache(tmp_path).get_simple_parsed_size("pkg") is None
+
+
 class TestReadFreshParsedListing:
     def test_fresh_hit_returns_records(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)

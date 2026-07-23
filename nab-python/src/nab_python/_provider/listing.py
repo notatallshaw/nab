@@ -842,10 +842,9 @@ def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> N
         ):
             continue
         if normalized not in provider.versions_cache:
-            # Listing not cached: request it speculatively. When it arrives,
-            # prioritize() will notice and fire metadata prefetch. Speculative
-            # so its read work overlaps resolver CPU on the fetcher thread
-            # rather than serializing onto the main thread (S-CRIT).
+            # Listing not cached: request it speculatively so its read work
+            # overlaps resolver CPU on the fetcher thread. When it arrives,
+            # prioritize() notices and fires metadata prefetch.
             provider.coordinator.request_listing(normalized, speculative=True)
         else:
             # Listing cached: fire speculative metadata prefetch.
