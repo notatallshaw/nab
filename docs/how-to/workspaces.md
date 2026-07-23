@@ -58,6 +58,15 @@ Each member of the matched workspace contributes a local source. The
 provider prefers those local sources over PyPI for any requirement
 whose canonical name matches.
 
+## Members lock as editable installs
+
+Each member is recorded as an editable install by default, matching
+uv. Its pin renders as a PEP 660 editable entry: `editable = true`
+in `pylock.toml`, and `-e file://...` in the two requirements
+formats. An explicit `[[tool.nab.local-sources]]` entry defaults the
+other way, non-editable, and becomes editable only when its
+`editable` key is set to `true`.
+
 ## Interaction with `[[tool.nab.local-sources]]`
 
 Explicit `[[tool.nab.local-sources]]` entries always win. When a
