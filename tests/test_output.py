@@ -430,9 +430,16 @@ def test_progress_clear_wipes_then_is_noop() -> None:
 
 _CLI_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
 
+_SUBCOMMANDS = ("lock", "download", "config", "cache")
+
 
 def _cli_reference_text() -> str:
     return _CLI_REFERENCE.read_text(encoding="utf-8")
+
+
+def _section_body(text: str, heading: str) -> str:
+    after = text.partition(f"\n{heading}\n")[2]
+    return after.partition("\n## ")[0]
 
 
 class TestCliReferenceDocumentsOutputPolicy:
@@ -471,4 +478,25 @@ class TestCliReferenceDocumentsOutputPolicy:
             name = level.name.lower()
             assert f"`{name}`" in text, (
                 f"CLI reference omits NAB_VERBOSITY value {name!r}"
+            )
+
+    def test_output_control_scope_covers_every_subcommand(self) -> None:
+        """The scope paragraph must name every subcommand the flags reach.
+
+        ``main`` extracts a global ``-q`` before dispatching to any
+        subcommand, so the doc's enumeration must include ``cache``.
+        """
+        for sub in _SUBCOMMANDS:
+            _opts, rest = parse_output_options(["-q", sub], {})
+            assert rest == [sub], f"global -q not extracted before {sub!r}"
+
+        text = _cli_reference_text()
+        scope = next(
+            para
+            for para in _section_body(text, "## Output control").split("\n\n")
+            if "before the subcommand" in para
+        )
+        for sub in _SUBCOMMANDS:
+            assert f"`{sub}`" in scope, (
+                f"Output control scope omits the {sub!r} subcommand"
             )
