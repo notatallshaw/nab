@@ -431,6 +431,48 @@ class TestRunBuildBackend:
         with pytest.raises(BuildBackendError, match="build env setup"):
             run_build_backend(tmp_path, config=config)
 
+    def test_non_string_build_requirement_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A non-string build requirement is wrapped as BuildBackendError."""
+        from nab_python._build import env as env_mod
+
+        class _Builder:
+            def __init__(self, **_kw: object) -> None:
+                pass
+
+            def create(self, path: Path) -> None:
+                path.mkdir(parents=True, exist_ok=True)
+                (path / "bin").mkdir(exist_ok=True)
+                (path / "bin" / "python").touch()
+
+        import venv as venv_mod
+
+        monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
+        monkeypatch.setattr(
+            env_mod, "_venv_scheme_paths", lambda _python: {"purelib": str(tmp_path)}
+        )
+
+        (tmp_path / "pyproject.toml").write_text(
+            '[build-system]\nrequires = []\nbuild-backend = "setuptools.build_meta"\n',
+            encoding="utf-8",
+        )
+
+        project = MagicMock()
+        project.get_requires_for_build.return_value = ["setuptools", None]
+
+        with (
+            patch(
+                "nab_python._build.runner.build.ProjectBuilder.from_isolated_env",
+                return_value=project,
+            ),
+            pytest.raises(BuildBackendError, match="non-string"),
+        ):
+            run_build_backend(tmp_path, config=config)
+
 
 class TestShouldSkipPrepare:
     """Unit tests for the hatchling+dynamic-deps detection predicate."""

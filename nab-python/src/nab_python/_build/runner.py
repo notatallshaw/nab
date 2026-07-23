@@ -107,6 +107,15 @@ def run_build_backend(
 
             extra = list(project.get_requires_for_build("wheel"))
             if extra:
+                # PEP 517 requires the hook to return a list of strings.
+                non_str = [item for item in extra if not isinstance(item, str)]
+                if non_str:
+                    msg = (
+                        f"build backend {backend!r} returned a non-string build"
+                        f" requirement from get_requires_for_build_wheel: {non_str!r}"
+                    )
+                    raise BuildBackendError(msg)
+
                 logger.debug("build backend asked for extras: %s", extra)
                 env.install(extra)
 
