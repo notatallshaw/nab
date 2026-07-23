@@ -24,6 +24,7 @@ from nab_index.client import (
 )
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
 from nab_index.local_index import LocalIndexClient
+from nab_index.transport import HttpError
 from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider import listing as listing_mod
 from nab_python._provider.metadata_resolver import (
@@ -7841,6 +7842,39 @@ class TestStaticSdistMetadata:
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
         with pytest.raises(SdistHashMismatchError):
+            provider.get_dependencies("pkg", V("1.0"))
+        assert ("pkg", V("1.0")) not in provider.deps_cache
+        assert ("pkg", V("1.0")) not in provider._invalid_metadata
+
+    def test_build_remote_archive_http_error_aborts_get_dependencies(
+        self,
+    ) -> None:
+        """A build-remote archive HTTP error aborts get_dependencies, not skips."""
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+        )
+
+        def _unserved_archive(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
+            coordinator.index.store_sdist_archive_error(
+                pkg, ver, HttpError("503 Server Error fetching sdist archive")
+            )
+            return _done_event()
+
+        coordinator.request_sdist_archive.side_effect = _unserved_archive
+
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.BUILD_REMOTE,
+        )
+        with pytest.raises(HttpError):
             provider.get_dependencies("pkg", V("1.0"))
         assert ("pkg", V("1.0")) not in provider.deps_cache
         assert ("pkg", V("1.0")) not in provider._invalid_metadata
