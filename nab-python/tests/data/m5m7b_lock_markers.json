@@ -1,0 +1,1324 @@
+{
+  "provenance": "Captured from .github/requirements/pylock.*.toml at commit 9abaeac83b851aa348f0d0b22e356fa1fd1bdacf before M5-M7b lock regeneration. Raw markers are the pre-change committed bytes; goldens are the row-restricted simplifier output. Regenerate with capture_fixture.py under work/analysis/poetry_uv_gap_survey/stage3/items/M5-M7b/.",
+  "locks": {
+    "crosshair": {
+      "environments": [
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\""
+      ],
+      "packages": [
+        {
+          "name": "anyio",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "attrs",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "cattrs",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "certifi",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "colorama",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\") or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")",
+          "golden": "sys_platform == \"win32\""
+        },
+        {
+          "name": "coverage",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "crosshair-tool",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "exceptiongroup",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups)",
+          "golden": "\"crosshair\" in dependency_groups and python_version == \"3.10\""
+        },
+        {
+          "name": "h11",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "h2",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "hpack",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "httpcore",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "httpx",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "hyperframe",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "hypothesis",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "hypothesis-crosshair",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "idna",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "importlib-metadata",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"crosshair\" in dependency_groups)",
+          "golden": "\"crosshair\" in dependency_groups or python_full_version < \"3.10.2\""
+        },
+        {
+          "name": "importlib-resources",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "iniconfig",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "lsprotocol",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "mypy-extensions",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "pluggy",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "pygls",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "pygments",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "pytest",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "pytest-timeout",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "respx",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "sortedcontainers",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "tomlkit",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "typeshed-client",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "typing-inspect",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "z3-solver",
+          "raw": "\"crosshair\" in dependency_groups",
+          "golden": "\"crosshair\" in dependency_groups"
+        },
+        {
+          "name": "zipp",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\" and \"crosshair\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"crosshair\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"crosshair\" in dependency_groups)",
+          "golden": "\"crosshair\" in dependency_groups or python_full_version < \"3.10.2\""
+        }
+      ]
+    },
+    "dists": {
+      "environments": [
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\""
+      ],
+      "packages": [
+        {
+          "name": "colorama",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\") or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")",
+          "golden": "sys_platform == \"win32\""
+        },
+        {
+          "name": "hatchling",
+          "raw": "\"dists\" in dependency_groups",
+          "golden": "\"dists\" in dependency_groups"
+        },
+        {
+          "name": "importlib-metadata",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")",
+          "golden": "python_full_version < \"3.10.2\""
+        },
+        {
+          "name": "pathspec",
+          "raw": "\"dists\" in dependency_groups",
+          "golden": "\"dists\" in dependency_groups"
+        },
+        {
+          "name": "pluggy",
+          "raw": "\"dists\" in dependency_groups",
+          "golden": "\"dists\" in dependency_groups"
+        },
+        {
+          "name": "trove-classifiers",
+          "raw": "\"dists\" in dependency_groups",
+          "golden": "\"dists\" in dependency_groups"
+        },
+        {
+          "name": "zipp",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")",
+          "golden": "python_full_version < \"3.10.2\""
+        }
+      ]
+    },
+    "docs": {
+      "environments": [
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\""
+      ],
+      "packages": [
+        {
+          "name": "accessible-pygments",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "alabaster",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "babel",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "beautifulsoup4",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "certifi",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "charset-normalizer",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "docutils",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "furo",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "idna",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "imagesize",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "jinja2",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "linkify-it-py",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "markdown-it-py",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "markupsafe",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "mdit-py-plugins",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "mdurl",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "myst-parser",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "pygments",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "pyyaml",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "requests",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "roman-numerals",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "snowballstemmer",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "soupsieve",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "sphinx",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "sphinx-basic-ng",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "sphinx-copybutton",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "sphinx-design",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "sphinxcontrib-applehelp",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "sphinxcontrib-devhelp",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "sphinxcontrib-htmlhelp",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "sphinxcontrib-jsmath",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "sphinxcontrib-qthelp",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "sphinxcontrib-serializinghtml",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        },
+        {
+          "name": "uc-micro-py",
+          "raw": "\"docs\" in dependency_groups",
+          "golden": "\"docs\" in dependency_groups"
+        }
+      ]
+    },
+    "nox": {
+      "environments": [
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\""
+      ],
+      "packages": [
+        {
+          "name": "argcomplete",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "attrs",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "colorama",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\") or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")",
+          "golden": "sys_platform == \"win32\""
+        },
+        {
+          "name": "colorlog",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "dependency-groups",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "distlib",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "filelock",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "humanize",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "importlib-metadata",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")",
+          "golden": "python_full_version < \"3.10.2\""
+        },
+        {
+          "name": "nox",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "platformdirs",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "python-discovery",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "virtualenv",
+          "raw": "\"nox\" in dependency_groups",
+          "golden": "\"nox\" in dependency_groups"
+        },
+        {
+          "name": "zipp",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")",
+          "golden": "python_full_version < \"3.10.2\""
+        }
+      ]
+    },
+    "pre-commit": {
+      "environments": [
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\""
+      ],
+      "packages": [
+        {
+          "name": "cfgv",
+          "raw": "\"pre-commit\" in dependency_groups",
+          "golden": "\"pre-commit\" in dependency_groups"
+        },
+        {
+          "name": "colorama",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\") or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")",
+          "golden": "sys_platform == \"win32\""
+        },
+        {
+          "name": "distlib",
+          "raw": "\"pre-commit\" in dependency_groups",
+          "golden": "\"pre-commit\" in dependency_groups"
+        },
+        {
+          "name": "filelock",
+          "raw": "\"pre-commit\" in dependency_groups",
+          "golden": "\"pre-commit\" in dependency_groups"
+        },
+        {
+          "name": "identify",
+          "raw": "\"pre-commit\" in dependency_groups",
+          "golden": "\"pre-commit\" in dependency_groups"
+        },
+        {
+          "name": "importlib-metadata",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")",
+          "golden": "python_full_version < \"3.10.2\""
+        },
+        {
+          "name": "nodeenv",
+          "raw": "\"pre-commit\" in dependency_groups",
+          "golden": "\"pre-commit\" in dependency_groups"
+        },
+        {
+          "name": "platformdirs",
+          "raw": "\"pre-commit\" in dependency_groups",
+          "golden": "\"pre-commit\" in dependency_groups"
+        },
+        {
+          "name": "pre-commit",
+          "raw": "\"pre-commit\" in dependency_groups",
+          "golden": "\"pre-commit\" in dependency_groups"
+        },
+        {
+          "name": "python-discovery",
+          "raw": "\"pre-commit\" in dependency_groups",
+          "golden": "\"pre-commit\" in dependency_groups"
+        },
+        {
+          "name": "pyyaml",
+          "raw": "\"pre-commit\" in dependency_groups",
+          "golden": "\"pre-commit\" in dependency_groups"
+        },
+        {
+          "name": "virtualenv",
+          "raw": "\"pre-commit\" in dependency_groups",
+          "golden": "\"pre-commit\" in dependency_groups"
+        },
+        {
+          "name": "zipp",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")",
+          "golden": "python_full_version < \"3.10.2\""
+        }
+      ]
+    },
+    "release": {
+      "environments": [
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+        "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+        "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+        "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+        "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version >= \"3.10.2.dev0\""
+      ],
+      "packages": [
+        {
+          "name": "annotated-types",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "backports-tarfile",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"release\" in dependency_groups)",
+          "golden": "\"release\" in dependency_groups and (python_version == \"3.10\" or python_version == \"3.11\")"
+        },
+        {
+          "name": "certifi",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "cffi",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "charset-normalizer",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "colorama",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\") or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")",
+          "golden": "sys_platform == \"win32\""
+        },
+        {
+          "name": "cryptography",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "dnspython",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "docutils",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "email-validator",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "hatchling",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "id",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "idna",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "importlib-metadata",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"release\" in dependency_groups)",
+          "golden": "(\"release\" in dependency_groups and python_version == \"3.10\") or (\"release\" in dependency_groups and python_version == \"3.11\") or python_full_version < \"3.10.2\""
+        },
+        {
+          "name": "importlib-resources",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups)",
+          "golden": "\"release\" in dependency_groups and python_version == \"3.10\""
+        },
+        {
+          "name": "jaraco-classes",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "jaraco-context",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "jaraco-functools",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "jeepney",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups)",
+          "golden": "\"release\" in dependency_groups and sys_platform == \"linux\""
+        },
+        {
+          "name": "keyring",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "markdown-it-py",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "mdurl",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "more-itertools",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "nh3",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pathspec",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "platformdirs",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pluggy",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pyasn1",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pycparser",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pydantic",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pydantic-core",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pygments",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pyjwt",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pyopenssl",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pypi-attestations",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "pywin32-ctypes",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"release\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"release\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"release\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"release\" in dependency_groups)",
+          "golden": "\"release\" in dependency_groups and sys_platform == \"win32\""
+        },
+        {
+          "name": "readme-renderer",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "requests",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "requests-toolbelt",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "rfc3161-client",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "rfc3986",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "rfc8785",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "rich",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "secretstorage",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups)",
+          "golden": "\"release\" in dependency_groups and sys_platform == \"linux\""
+        },
+        {
+          "name": "securesystemslib",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "sigstore",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "sigstore-models",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "sigstore-rekor-types",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "tomlkit",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "trove-classifiers",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "tuf",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "twine",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "typing-inspection",
+          "raw": "\"release\" in dependency_groups",
+          "golden": "\"release\" in dependency_groups"
+        },
+        {
+          "name": "zipp",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and \"release\" in dependency_groups) or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and \"release\" in dependency_groups)",
+          "golden": "(\"release\" in dependency_groups and python_version == \"3.10\") or (\"release\" in dependency_groups and python_version == \"3.11\") or python_full_version < \"3.10.2\""
+        }
+      ]
+    },
+    "tests": {
+      "environments": [
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\""
+      ],
+      "packages": [
+        {
+          "name": "anyio",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "certifi",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "colorama",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\") or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")",
+          "golden": "sys_platform == \"win32\""
+        },
+        {
+          "name": "coverage",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "exceptiongroup",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\" and \"tests\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version >= \"3.10.2.dev0\" and \"tests\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"tests\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"tests\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\" and \"tests\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"tests\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"tests\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"tests\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\" and \"tests\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\" and \"tests\" in dependency_groups)",
+          "golden": "\"tests\" in dependency_groups and python_version == \"3.10\""
+        },
+        {
+          "name": "h11",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "h2",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "hpack",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "httpcore",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "httpx",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "hyperframe",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "hypothesis",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "idna",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "importlib-metadata",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")",
+          "golden": "python_full_version < \"3.10.2\""
+        },
+        {
+          "name": "iniconfig",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "pluggy",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "pygments",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "pytest",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "pytest-timeout",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "respx",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "sortedcontainers",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "tomlkit",
+          "raw": "\"tests\" in dependency_groups",
+          "golden": "\"tests\" in dependency_groups"
+        },
+        {
+          "name": "zipp",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")",
+          "golden": "python_full_version < \"3.10.2\""
+        }
+      ]
+    },
+    "types": {
+      "environments": [
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version < \"3.10.2\"",
+        "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and python_full_version >= \"3.10.2.dev0\""
+      ],
+      "packages": [
+        {
+          "name": "anyio",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "ast-serialize",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "certifi",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "colorama",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\") or (python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\") or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\")",
+          "golden": "sys_platform == \"win32\""
+        },
+        {
+          "name": "coverage",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "exceptiongroup",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\" and \"types\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version >= \"3.10.2.dev0\" and \"types\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"types\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"types\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\" and \"types\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version >= \"3.10.2.dev0\" and \"types\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\" and \"types\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version >= \"3.10.2.dev0\" and \"types\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\" and \"types\" in dependency_groups) or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version >= \"3.10.2.dev0\" and \"types\" in dependency_groups)",
+          "golden": "\"types\" in dependency_groups and python_version == \"3.10\""
+        },
+        {
+          "name": "h11",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "h2",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "hpack",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "httpcore",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "httpx",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "hyperframe",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "hypothesis",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "idna",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "importlib-metadata",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")",
+          "golden": "python_full_version < \"3.10.2\""
+        },
+        {
+          "name": "iniconfig",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "librt",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "mypy",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "mypy-extensions",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "nodeenv",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "pathspec",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "pluggy",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "pygments",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "pyrefly",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "pyright",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "pytest",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "pytest-timeout",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "respx",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "sortedcontainers",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "tomlkit",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "ty",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        },
+        {
+          "name": "zipp",
+          "raw": "(python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_full_version < \"3.10.2\") or (python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and python_full_version < \"3.10.2\")",
+          "golden": "python_full_version < \"3.10.2\""
+        },
+        {
+          "name": "zuban",
+          "raw": "\"types\" in dependency_groups",
+          "golden": "\"types\" in dependency_groups"
+        }
+      ]
+    }
+  }
+}

@@ -8,6 +8,7 @@ gates, plus the fail-closed verify on the emitted bytes.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from functools import reduce
 from pathlib import Path
@@ -20,7 +21,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
-from nab_python._lockfile.coverage import CoverageError
+from nab_python._lockfile.coverage import CoverageError, validate_marker_coverage
 from nab_python._lockfile.disjointness import validate_marker_disjointness
 from nab_python._lockfile.pylock import (
     UnsoundSimplificationError,
@@ -420,3 +421,143 @@ class TestCorpusByteIdentity:
                 else None
             )
             assert (str(again) if again is not None else None) == shown
+
+
+_LOCK_MARKERS = json.loads(
+    (Path(__file__).parent / "data" / "m5m7b_lock_markers.json").read_text()
+)
+
+# (sys_platform, platform_machine) of a declared row to its PlatformSpec label.
+_PLATFORM_LABEL = {
+    ("linux", "x86_64"): "linux_x86_64",
+    ("linux", "aarch64"): "linux_aarch64",
+    ("darwin", "arm64"): "macos_arm64",
+    ("darwin", "x86_64"): "macos_x86_64",
+    ("win32", "AMD64"): "windows_amd64",
+}
+
+# The declared environments span 5 platforms x 5 minors (3.10 split at 3.10.2).
+# 178 markers across the 7 universal locks became tractable; the docs lock's 34
+# were already tractable and stay byte-identical.
+_WIDE_MARKER_COUNT = 178
+_DOCS_MARKER_COUNT = 34
+_SUBSET_RAW_BYTES = 40183
+_SUBSET_GOLD_BYTES = 5822
+
+
+def _fixture_universe(rows: Sequence[str]) -> MarkerSet:
+    return _union([Marker(r) for r in rows])
+
+
+def _row_env(row: str) -> dict[str, str]:
+    witness = MarkerSet.from_marker(Marker(row)).witness()
+    assert witness is not None
+    return {k: v for k, v in witness.items() if isinstance(v, str)}
+
+
+def _coverage_targets(rows: Sequence[str]) -> list[ResolveTarget]:
+    seen: set[tuple[str, str]] = set()
+    targets: list[ResolveTarget] = []
+    for row in rows:
+        env = _row_env(row)
+        key = (
+            env["python_version"],
+            _PLATFORM_LABEL[(env["sys_platform"], env["platform_machine"])],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        targets.append(_target(key[0], key[1]))
+    return targets
+
+
+class TestEightLockRegression:
+    """The captured 8-lock fixture: 178 raw markers finalise offline to the
+    committed goldens, and the emission gates still pass on the simplified
+    output."""
+
+    def test_wide_locks_become_tractable_and_byte_exact(self) -> None:
+        raw_total = gold_total = count = 0
+        for name, lock in _LOCK_MARKERS["locks"].items():
+            if name == "docs":
+                continue
+            within = _fixture_universe(lock["environments"])
+            for pkg in lock["packages"]:
+                raw = Marker(pkg["raw"])
+                simplified = MarkerSet.from_marker(raw).simplify(within=within)
+                assert simplified is not None
+                finalized = _finalize_marker(raw, within, pkg["name"])
+                shown = str(finalized) if finalized is not None else ""
+                assert shown == pkg["golden"]
+                raw_total += len(pkg["raw"])
+                gold_total += len(pkg["golden"])
+                count += 1
+        assert count == _WIDE_MARKER_COUNT
+        assert raw_total == _SUBSET_RAW_BYTES
+        assert gold_total == _SUBSET_GOLD_BYTES
+
+    def test_docs_lock_stays_byte_identical(self) -> None:
+        lock = _LOCK_MARKERS["locks"]["docs"]
+        within = _fixture_universe(lock["environments"])
+        count = 0
+        for pkg in lock["packages"]:
+            raw = Marker(pkg["raw"])
+            simplified = MarkerSet.from_marker(raw).simplify(within=within)
+            assert simplified is not None
+            finalized = _finalize_marker(raw, within, pkg["name"])
+            assert str(finalized) == pkg["raw"] == pkg["golden"]
+            count += 1
+        assert count == _DOCS_MARKER_COUNT
+
+    def test_named_landmarks(self) -> None:
+        golden = {
+            (name, pkg["name"]): (len(pkg["raw"]), len(pkg["golden"]))
+            for name, lock in _LOCK_MARKERS["locks"].items()
+            for pkg in lock["packages"]
+        }
+        assert golden[("crosshair", "zipp")] == (4037, 66)
+        assert golden[("release", "backports-tarfile")] == (2269, 89)
+        per_lock = {
+            name: (
+                sum(len(p["raw"]) for p in lock["packages"]),
+                sum(len(p["golden"]) for p in lock["packages"]),
+            )
+            for name, lock in _LOCK_MARKERS["locks"].items()
+        }
+        assert per_lock["release"] == (14241, 2045)
+        assert per_lock["crosshair"] == (11304, 1176)
+
+    def test_gates_pass_on_simplified_output(self) -> None:
+        for name, lock in _LOCK_MARKERS["locks"].items():
+            rows = lock["environments"]
+            packages = [
+                Package(
+                    name=canonicalize_name(pkg["name"]),
+                    marker=Marker(pkg["golden"]) if pkg["golden"] else None,
+                )
+                for pkg in lock["packages"]
+            ]
+            environments = {f"e{i}": _row_env(row) for i, row in enumerate(rows)}
+            validate_marker_disjointness(
+                packages, environments=environments, extras=(), groups=(name,)
+            )
+            validate_marker_coverage(
+                _coverage_targets(rows), environments=[Marker(r) for r in rows]
+            )
+
+
+class TestRegenLocksIdempotent:
+    """Re-finalising the committed (short) locks changes no marker, so a real
+    drift in any lock's markers is caught explicitly."""
+
+    def test_committed_locks_refinalize_identically(self) -> None:
+        lock_dir = Path(__file__).parents[2] / ".github" / "requirements"
+        for name in _LOCK_MARKERS["locks"]:
+            data = tomllib.loads((lock_dir / f"pylock.{name}.toml").read_text())
+            within = _fixture_universe(data.get("environments", []))
+            for pkg in data["packages"]:
+                marker = pkg.get("marker")
+                if marker is None:
+                    continue
+                again = _finalize_marker(Marker(marker), within, pkg["name"])
+                assert str(again) == marker
