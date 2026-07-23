@@ -183,7 +183,10 @@ class Urllib3AsyncTransport:
             request_headers.update(headers)
         try:
             return await asyncio.to_thread(self._request, url, request_headers)
-        except (urllib3.exceptions.HTTPError, ContentDecodingError) as exc:
+        except Exception as exc:
+            # A malformed IPv6 host in a redirect's Location makes urllib3's
+            # urljoin re-parse raise a bare ValueError, outside its HTTPError
+            # hierarchy.
             msg = f"GET {url} failed: {exc}"
             raise HttpError(msg) from exc
 
