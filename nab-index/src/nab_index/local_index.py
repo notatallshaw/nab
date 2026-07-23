@@ -289,14 +289,19 @@ def _resolve_local_link(
     if parsed.scheme in {"http", "https"}:
         filename = unquote(parsed.path.rsplit("/", 1)[-1]) or None
         return (filename, href_no_frag, None, hashes)
-    if parsed.scheme == "file":
-        path = parse_file_url(href_no_frag)
-        return (path.name, href_no_frag, path, hashes)
 
-    # Without a base href a relative link resolves against the package page;
-    # the standard mirror layout links to a shared ../../packages/ tree, so the
-    # target legitimately sits outside the package directory.
-    target = (package_dir.resolve() / unquote(href_no_frag)).resolve()
+    # Drop an anchor we cannot turn into a path (non-local file:// authority,
+    # or a percent-encoded null byte) rather than fail the whole listing.
+    try:
+        if parsed.scheme == "file":
+            path = parse_file_url(href_no_frag)
+            return (path.name, href_no_frag, path, hashes)
+        # Without a base href a relative link resolves against the package page;
+        # the standard mirror layout links to a shared ../../packages/ tree, so
+        # the target legitimately sits outside the package directory.
+        target = (package_dir.resolve() / unquote(href_no_frag)).resolve()
+    except ValueError:
+        return (None, href_no_frag, None, hashes)
     return (target.name, target.as_uri(), target, hashes)
 
 
