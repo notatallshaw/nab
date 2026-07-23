@@ -279,6 +279,18 @@ class OnDiskCache:
         except OSError:
             return None
 
+    def get_simple_parsed_size(self, package: str) -> int | None:
+        """Return the on-disk size of the parsed-listing blob in bytes, or ``None``.
+
+        A single ``stat`` on the same path :meth:`get_simple_parsed` reads, so a
+        caller can size the blob before deciding whether to read and decode it.
+        An absent blob is a silent miss.
+        """
+        try:
+            return self._parsed_path(package).stat().st_size
+        except OSError:
+            return None
+
     def put_simple_parsed(self, package: str, blob: bytes) -> None:
         """Write the opaque parsed-listing blob for ``package`` atomically."""
         _atomic_write(self._parsed_path(package), blob)
@@ -549,6 +561,10 @@ class CacheBackend(Protocol):
         """Return the opaque parsed-listing blob for ``package``, or ``None``."""
         ...
 
+    def get_simple_parsed_size(self, package: str) -> int | None:
+        """Return the parsed-listing blob's on-disk size in bytes, or ``None``."""
+        ...
+
     def put_simple_parsed(self, package: str, blob: bytes) -> None:
         """Store the opaque parsed-listing blob for ``package``."""
         ...
@@ -631,6 +647,9 @@ class NullCache:
         """Return ``None`` (always a miss)."""
 
     def get_simple_parsed(self, package: str) -> bytes | None:
+        """Return ``None`` (always a miss)."""
+
+    def get_simple_parsed_size(self, package: str) -> int | None:
         """Return ``None`` (always a miss)."""
 
     def put_simple_parsed(self, package: str, blob: bytes) -> None:

@@ -236,6 +236,9 @@ class TestNullCacheParsed:
     def test_get_simple_parsed(self) -> None:
         assert NullCache().get_simple_parsed("foo") is None
 
+    def test_get_simple_parsed_size(self) -> None:
+        assert NullCache().get_simple_parsed_size("foo") is None
+
     def test_put_simple_parsed_noop(self) -> None:
         assert NullCache().put_simple_parsed("foo", b"blob") is None
 
