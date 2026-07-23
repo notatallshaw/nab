@@ -3323,6 +3323,49 @@ class TestWarmSyncListingPath:
         finally:
             coord.shutdown()
 
+    @respx.mock
+    def test_speculative_skips_probe_and_routes_async(self, tmp_path: Path) -> None:
+        """A speculative call skips the sync probe and dispatches async.
+
+        S-CRIT keeps speculative listing reads on the fetcher thread so their
+        read+parse work overlaps resolver CPU; only blocking critical-path
+        callers serve the warm cache inline.
+        """
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
+
+        with _coord(cache_dir=tmp_path) as coord:
+            probed: list[str] = []
+            coord._try_listing_sync = probed.append  # type: ignore[method-assign]
+            calls = _spy_submit(coord)
+
+            coord.request_listing("pkg", speculative=True).wait(timeout=5)
+
+            assert probed == []
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.listing_hits == 0
+            assert coord.warm_sync_stats.listing_declines == 0
+
+    @respx.mock
+    def test_default_call_serves_synchronously(self, tmp_path: Path) -> None:
+        """The default (critical-path) call still serves the warm cache inline."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._prefetch_metadata_after_listing = (  # type: ignore[method-assign]
+                lambda package, records: None
+            )
+            calls = _spy_submit(coord)
+
+            event = coord.request_listing("pkg")
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert _listing_submits(calls) == []
+            assert coord.warm_sync_stats.listing_hits == 1
+
     def test_skew_reader_never_serves_torn_pair(self, tmp_path: Path) -> None:
         """Interleaved writer/reader: every non-None probe is a bound pair."""
         cache = OnDiskCache(tmp_path, _PYPI)

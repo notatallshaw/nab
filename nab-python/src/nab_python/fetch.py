@@ -977,7 +977,9 @@ class FetchCoordinator:
             stats.declined_no_blob += 1
         return None
 
-    def request_listing(self, package: str) -> threading.Event:
+    def request_listing(
+        self, package: str, *, speculative: bool = False
+    ) -> threading.Event:
         """Request a listing fetch; return an event set when the result lands.
 
         Claim the single-flight pending first: an existing pending means another
@@ -985,6 +987,11 @@ class FetchCoordinator:
         pending's creator probes the warm cache on this thread; a fresh parsed
         hit is served inline (no round trip), and every other outcome declines to
         the unchanged async fetch, which owns every cache write and self-heal.
+
+        ``speculative`` callers (the fire-and-forget prefetch cascade) skip the
+        sync probe and dispatch async, so their read+parse work overlaps
+        resolver CPU on the fetcher thread instead of serializing onto the main
+        thread; only blocking critical-path callers serve inline (S-CRIT).
         """
         self._check_alive()
         if self.index.get_listing(package) is not None:
@@ -995,20 +1002,21 @@ class FetchCoordinator:
         pending, existed = self.index.get_or_create_pending(key)
         if existed:
             return pending.event
-        records = self._try_listing_sync(package)
-        if records is not None:
-            # Reproduce every observable effect of a successful async
-            # _fetch_listing: serving index before store_listing (which fires
-            # the pending), the progress tick, and the prefetch batch. Only the
-            # round trip is removed.
-            self.index.store_listing_index(package, self.indexes[0].name)
-            self.index.store_listing(package, records)
-            if self._on_fetch is not None:
-                self._on_fetch()
-            self._prefetch_metadata_after_listing(package, records)
-            self._warm_sync_stats.listing_hits += 1
-            return pending.event
-        self._warm_sync_stats.listing_declines += 1
+        if not speculative:
+            records = self._try_listing_sync(package)
+            if records is not None:
+                # Reproduce every observable effect of a successful async
+                # _fetch_listing: serving index before store_listing (which
+                # fires the pending), the progress tick, and the prefetch batch.
+                # Only the round trip is removed.
+                self.index.store_listing_index(package, self.indexes[0].name)
+                self.index.store_listing(package, records)
+                if self._on_fetch is not None:
+                    self._on_fetch()
+                self._prefetch_metadata_after_listing(package, records)
+                self._warm_sync_stats.listing_hits += 1
+                return pending.event
+            self._warm_sync_stats.listing_declines += 1
         self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
         return pending.event
 
