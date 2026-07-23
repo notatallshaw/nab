@@ -527,6 +527,38 @@ class TestEightLockRegression:
         assert per_lock["release"] == (14241, 2045)
         assert per_lock["crosshair"] == (11304, 1176)
 
+    def test_raw_golden_agree_under_upstream_evaluate(self) -> None:
+        """Check every shipped golden against the upstream Marker evaluator.
+
+        The operator and the emission verify share one row oracle; an independent
+        evaluator catches a bug they would both miss. Evaluates raw and golden on
+        every declared row under an empty and the lock's own group selection.
+        """
+        checked = 0
+        for name, lock in _LOCK_MARKERS["locks"].items():
+            envs = [_row_env(row) for row in lock["environments"]]
+            selections = (frozenset[str](), frozenset({name}))
+            for pkg in lock["packages"]:
+                raw = Marker(pkg["raw"])
+                golden = Marker(pkg["golden"]) if pkg["golden"] else None
+                for base in envs:
+                    for groups in selections:
+                        env: dict[str, str | frozenset[str]] = {
+                            **base,
+                            "dependency_groups": groups,
+                        }
+                        gold_holds = (
+                            golden.evaluate(env, context="lock_file")
+                            if golden is not None
+                            else True
+                        )
+                        assert raw.evaluate(env, context="lock_file") == gold_holds, (
+                            f"{name}/{pkg['name']}: {pkg['raw']!r} and"
+                            f" {pkg['golden']!r} disagree at {env!r}"
+                        )
+                checked += 1
+        assert checked == _WIDE_MARKER_COUNT + _DOCS_MARKER_COUNT
+
     def test_gates_pass_on_simplified_output(self) -> None:
         for name, lock in _LOCK_MARKERS["locks"].items():
             rows = lock["environments"]
