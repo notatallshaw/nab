@@ -70,11 +70,23 @@ member at a checkout outside the tree without removing it from the
 ## Build policy floor
 
 Workspace members frequently declare `dynamic = ["version"]` or
-similar. nab promotes the active `[tool.nab].build-policy` to at
-least `build-local` whenever a workspace is in scope, so PEP 517
-metadata extraction runs even when the user-set policy is stricter.
-A policy that is already `build-local` or `build-remote` is left
-alone.
+similar, which needs a PEP 517 build to read the metadata. When the
+resolve runs on the host machine, nab promotes the active
+`[tool.nab].build-policy` to at least `build-local` so that build can
+run even when the user-set policy is stricter. A policy that is
+already `build-local` or `build-remote` is left alone.
+
+The floor holds only while the resolve stays on the host. A target
+that declares a machine forbids host builds, so `build-policy` is
+forced to `never` and the floor does not apply: `mode = "universal"`,
+or a `[tool.nab.environment]` naming a `platform` or `implementation`.
+A workspace member with dynamic metadata and no static fallback
+cannot be read there, so its only version is skipped and the lock
+fails rather than quietly dropping the member. Retargeting the
+Python axis alone
+(`[tool.nab.environment].python` or `--python`) stays on the host, so
+the floor still applies. See [Build policy](../reference/build-policy.md)
+for the full rule.
 
 ## Scope of `[tool.nab]` keys
 

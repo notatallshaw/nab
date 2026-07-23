@@ -590,11 +590,13 @@ def read_pyproject_config(
     additional :class:`LocalSource` (explicit
     ``[[tool.nab.local-sources]]`` entries win on collision) and the
     effective ``build-policy`` is floored at
-    :attr:`BuildPolicy.BUILD_LOCAL`, except under ``mode = "universal"``,
-    where ``build-policy`` stays at ``never`` (host builds are forbidden)
-    and the floor is not applied.  Pass ``discover_workspace=False``
-    to skip discovery; useful for tests or for callers that layer their
-    own workspace logic on top of a base config.
+    :attr:`BuildPolicy.BUILD_LOCAL`, except for a target that forbids
+    host builds (``mode = "universal"``, or a ``[tool.nab.environment]``
+    naming a ``platform`` or ``implementation``), where ``build-policy``
+    stays at ``never`` and the floor is not applied.  Pass
+    ``discover_workspace=False`` to skip discovery; useful for tests or
+    for callers that layer their own workspace logic on top of a base
+    config.
 
     The ``[tool.nab]``-config portion is sourced from the registry merged
     ladder (pyproject ``[tool.nab]`` plus a project-dir ``nab.toml``,
