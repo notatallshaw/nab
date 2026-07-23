@@ -1245,10 +1245,18 @@ class FetchCoordinator:
         logger.debug("fetched listing: %s (%d files)", req.package, len(files))
         if self._on_fetch is not None:
             self._on_fetch()
+        self._prefetch_metadata_after_listing(req.package, files)
 
-        # Auto-prefetch metadata for the newest candidates (files are
-        # oldest-first). One wheel per version: the first with a sidecar is the
-        # one the provider picks for that version's metadata.
+    def _prefetch_metadata_after_listing(
+        self, package: str, files: Sequence[WheelFile | SdistFile]
+    ) -> None:
+        """Enqueue metadata for the newest candidates of a stored listing.
+
+        Files are oldest-first. One wheel per version: the first with a sidecar
+        is the one the provider picks for that version's metadata. Fire-and-
+        forget through ``request_metadata`` so the reads warm concurrently with
+        resolver CPU.
+        """
         first_wheel: dict[str, WheelFile] = {}
         for f in files:
             if isinstance(f, WheelFile) and f.has_metadata:
@@ -1258,7 +1266,7 @@ class FetchCoordinator:
         for w in newest:
             url = w.metadata_url
             assert url is not None
-            self.request_metadata(req.package, w.version, url, w.metadata_hash)
+            self.request_metadata(package, w.version, url, w.metadata_hash)
 
     def _record_serving_index(
         self,
