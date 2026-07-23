@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import bisect
 import enum
+import hashlib
 import io
 import os
 import re
@@ -29,7 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from .client import MalformedSimpleResponseError
+from .client import MalformedSimpleResponseError, WheelHashMismatchError
 from .local_index import UnsupportedWheelError, wheel_metadata_member
 
 if TYPE_CHECKING:
@@ -442,19 +443,24 @@ async def _acquire(
 
 
 def _absorb_range(
-    response: HttpResponse, sparse: _SparseFile, partial_low: int
+    response: HttpResponse,
+    sparse: _SparseFile,
+    partial_low: int,
+    wheel_hash: tuple[str, str] | None,
 ) -> int | None:
     """Absorb a growth or member range response into ``sparse``.
 
     Returns the low offset at which bytes were populated, or ``None`` when the
-    response yielded no usable bytes.  A volunteered 200 full body populates
-    the whole file from offset 0 and is used rather than discarded.  A range
-    refused mid-read raises :class:`_RangeRefusedError` so the reader can step
-    down to the plain GET.  Any other 4xx/5xx on the wheel URL raises through
-    and fails the resolve, matching the first round trip; a non-identity
-    encoding yields no usable bytes.
+    response yielded no usable bytes.  A volunteered 200 full body is checked
+    against ``wheel_hash`` (raising :class:`WheelHashMismatchError` on a
+    mismatch) and then populates the whole file from offset 0, used rather than
+    discarded.  A range refused mid-read raises :class:`_RangeRefusedError` so
+    the reader can step down to the plain GET.  Any other 4xx/5xx on the wheel
+    URL raises through and fails the resolve, matching the first round trip; a
+    non-identity encoding yields no usable bytes.
     """
     if response.status_code == _HTTP_OK and not _non_identity(response):
+        _verify_full_body(response.content, wheel_hash)
         sparse.add_span(0, response.content)
         return 0
     if response.status_code in _RANGE_REJECT_STATUSES:
@@ -484,7 +490,11 @@ def _try_open(sparse: _SparseFile) -> zipfile.ZipFile | None:
 
 
 async def _open_zip(
-    transport: AsyncHttpTransport, url: str, sparse: _SparseFile, tail_low: int
+    transport: AsyncHttpTransport,
+    url: str,
+    sparse: _SparseFile,
+    tail_low: int,
+    wheel_hash: tuple[str, str] | None,
 ) -> zipfile.ZipFile | None:
     """Open a ZipFile over the sparse buffer, growing the window on demand."""
     total = sparse._length  # noqa: SLF001
@@ -498,7 +508,7 @@ async def _open_zip(
         new_size = min(have * 2, total, _MAX_TAIL)
         new_low = total - new_size
         response = await _range_get(transport, url, f"bytes={new_low}-{tail_low - 1}")
-        low = _absorb_range(response, sparse, new_low)
+        low = _absorb_range(response, sparse, new_low, wheel_hash)
         if low is None:
             return None
         tail_low = low
@@ -526,15 +536,16 @@ async def _read_sparse(
     sparse: _SparseFile,
     tail_low: int,
     canonical_name: NormalizedName,
+    wheel_hash: tuple[str, str] | None,
 ) -> bytes | None:
     """Read the METADATA member out of the sparse buffer, or ``None``.
 
-    Only :class:`_RangeRefusedError` and the transport's errors travel out of
-    the growth and member requests; every way the zip machinery can choke on
-    the fetched bytes reads back as ``None``.
+    Only :class:`_RangeRefusedError`, :class:`WheelHashMismatchError`, and the
+    transport's errors travel out of the growth and member requests; every way
+    the zip machinery can choke on the fetched bytes reads back as ``None``.
     """
     try:
-        zip_file = await _open_zip(transport, url, sparse, tail_low)
+        zip_file = await _open_zip(transport, url, sparse, tail_low, wheel_hash)
         member = (
             None
             if zip_file is None
@@ -547,7 +558,7 @@ async def _read_sparse(
     start, end = _member_span(zip_file, member)
     if not sparse.populated(start, end):
         response = await _range_get(transport, url, f"bytes={start}-{end - 1}")
-        if _absorb_range(response, sparse, start) is None:
+        if _absorb_range(response, sparse, start, wheel_hash) is None:
             return None
     try:
         return zip_file.read(member)
@@ -556,6 +567,23 @@ async def _read_sparse(
         # surface as several exception types; all mean the member is
         # unrecoverable from this artifact, never that the resolver is broken.
         return None
+
+
+def _verify_full_body(body: bytes, wheel_hash: tuple[str, str] | None) -> None:
+    """Raise :class:`WheelHashMismatchError` if a full body fails its published hash.
+
+    ``wheel_hash`` is ``None`` when the listing published no accepted digest, so
+    no check runs. Only a full body can be verified this way; a partial read
+    holds just a slice of the wheel.
+    """
+    if wheel_hash is None:
+        return
+
+    algo, expected = wheel_hash
+    actual = hashlib.new(algo, body).hexdigest()
+    if actual != expected:
+        msg = f"wheel {algo} mismatch: expected {expected}, got {actual}"
+        raise WheelHashMismatchError(msg)
 
 
 def _read_full_body(body: bytes, canonical_name: NormalizedName) -> bytes | None:
@@ -589,15 +617,26 @@ async def read_wheel_metadata_over_range(
     canonical_name: NormalizedName,
     memo: RangeCapabilityMemo,
     *,
+    wheel_hash: tuple[str, str] | None = None,
     tail_size: int = _DEFAULT_TAIL,
 ) -> RangeMetadataResult:
     """Recover a remote wheel's METADATA text by ranged reads of its ZIP.
 
-    Raises :class:`~nab_index.client.MalformedSimpleResponseError` only when
-    the recovered METADATA is not valid UTF-8, and re-raises a transport
-    error when the wheel URL itself cannot be served (a 404, a failing plain
-    GET).  A refused Range mechanism is stepped down, not raised.  Every
-    other failure to obtain metadata returns a result with ``text=None``.
+    ``wheel_hash`` is the wheel's published ``(algorithm, hex_digest)`` from the
+    Simple-API listing, or ``None`` when none was published.  Whenever the whole
+    wheel comes back, whether from a host that ignores or refuses ranges or from
+    a 200 volunteered while a partial read is growing its window, the bytes are
+    checked against ``wheel_hash`` before their METADATA is read, so bytes that
+    disagree with the published digest never drive the resolve.  A partial read
+    that holds only a slice of the wheel is left unverified.
+
+    Raises :class:`~nab_index.client.WheelHashMismatchError` when a full-body
+    wheel fails ``wheel_hash``, and
+    :class:`~nab_index.client.MalformedSimpleResponseError` when the recovered
+    METADATA is not valid UTF-8.  Re-raises a transport error when the wheel URL
+    itself cannot be served (a 404, a failing plain GET).  A refused Range
+    mechanism is stepped down, not raised.  Every other failure to obtain
+    metadata returns a result with ``text=None``.
     """
     netloc = urlsplit(wheel_url).netloc
     owns_probe = False
@@ -621,6 +660,7 @@ async def read_wheel_metadata_over_range(
         return RangeMetadataResult(None, RangeOutcome.UNSUPPORTED)
     if kind is _AcqKind.FULL_BODY:
         assert isinstance(payload, bytes)
+        _verify_full_body(payload, wheel_hash)
         raw = _read_full_body(payload, canonical_name)
         outcome = RangeOutcome.FULL_BODY
     else:
@@ -628,7 +668,7 @@ async def read_wheel_metadata_over_range(
         sparse, tail_low = payload
         try:
             raw = await _read_sparse(
-                transport, wheel_url, sparse, tail_low, canonical_name
+                transport, wheel_url, sparse, tail_low, canonical_name, wheel_hash
             )
             outcome = RangeOutcome.PARTIAL
         except _RangeRefusedError as refusal:
@@ -638,6 +678,7 @@ async def read_wheel_metadata_over_range(
             body = await _full_body_fetch(transport, wheel_url)
             if body is None:
                 return RangeMetadataResult(None, RangeOutcome.MISSING)
+            _verify_full_body(body, wheel_hash)
             if refusal.status != _HTTP_RANGE_NOT_SATISFIABLE:
                 memo.record(netloc, RangeCapability.FULL_BODY_ONLY)
             raw = _read_full_body(body, canonical_name)

@@ -105,7 +105,7 @@ def resolve_metadata(
     # leaves ``metadata_text`` None and the ladder steps to the sdist rung.
     if metadata_text is None and _is_bare_remote_wheel(dist):
         metadata_text, from_sdist = _read_range_metadata(
-            provider, normalized, ver_str, dist.url
+            provider, normalized, ver_str, dist.url, dist.hashes
         )
 
     if metadata_text is not None:
@@ -171,17 +171,24 @@ def _is_bare_remote_wheel(dist: DistFile | None) -> TypeGuard[WheelFile]:
 
 
 def _read_range_metadata(
-    provider: Provider, package: str, version: str, wheel_url: str
+    provider: Provider,
+    package: str,
+    version: str,
+    wheel_url: str,
+    wheel_hashes: tuple[tuple[str, str], ...],
 ) -> tuple[str | None, bool]:
     """Run rung 4 for one bare wheel and return ``(metadata_text, from_sdist)``.
 
     Blocks on the coordinator's range read, re-raises a recorded metadata
-    error (a malformed-UTF-8 blob, an unserveable wheel URL) so the resolve
-    fails, and otherwise records the outcome counter and reads the wheel's
-    slot.  ``from_sdist`` is ``False``: recovered wheel METADATA is
-    authoritative.
+    error (a malformed-UTF-8 blob, an unserveable wheel URL, a full-body wheel
+    failing its published hash) so the resolve fails, and otherwise records the
+    outcome counter and reads the wheel's slot.  ``wheel_hashes`` are the
+    wheel's published digests, verified against a full-body read.  ``from_sdist``
+    is ``False``: recovered wheel METADATA is authoritative.
     """
-    event = provider.coordinator.request_range_metadata(package, version, wheel_url)
+    event = provider.coordinator.request_range_metadata(
+        package, version, wheel_url, wheel_hashes
+    )
     event.wait()
     index = provider.coordinator.index
     integrity_error = index.get_metadata_error(package, version, wheel_url)

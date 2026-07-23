@@ -166,7 +166,12 @@ def _wire_range_side_effects(
     rung.
     """
 
-    def _request_range_metadata(pkg: str, ver: str, url: str) -> threading.Event:
+    def _request_range_metadata(
+        pkg: str,
+        ver: str,
+        url: str,
+        _hashes: tuple[tuple[str, str], ...] = (),
+    ) -> threading.Event:
         if range_error is not None:
             index.store_range_error(pkg, ver, url, range_error)
             return _done_event()

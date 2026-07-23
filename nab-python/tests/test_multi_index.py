@@ -89,6 +89,7 @@ class FakeClient:
         version: str,
         wheel_url: str,
         canonical_name: str,
+        wheel_hashes: tuple[tuple[str, str], ...] = (),
     ) -> RangeMetadataResult:
         self.range_calls.append((package, version, wheel_url))
         return RangeMetadataResult(f"range:{package}:{version}", RangeOutcome.PARTIAL)

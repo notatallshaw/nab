@@ -107,6 +107,7 @@ class FetchRequest:
     url: str | None = None
     metadata_hash: tuple[str, str] | None = None
     sdist_hashes: tuple[tuple[str, str], ...] = ()
+    wheel_hashes: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -835,7 +836,11 @@ class FetchCoordinator:
         return pending.event
 
     def request_range_metadata(
-        self, package: str, version: str, wheel_url: str
+        self,
+        package: str,
+        version: str,
+        wheel_url: str,
+        wheel_hashes: tuple[tuple[str, str], ...] = (),
     ) -> threading.Event:
         """Request a sidecar-less wheel's METADATA over an HTTP range read.
 
@@ -845,7 +850,8 @@ class FetchCoordinator:
         one version (which a matrix picks per target and which can declare
         different dependencies) each get their own read, matching the sidecar
         path.  A warm cache hit is served inside the client, so there is no early
-        cache check here.
+        cache check here.  ``wheel_hashes`` are the wheel's published digests; a
+        full-body read is verified against them before its METADATA is used.
         """
         self._check_alive()
         key = _range_key(package, version, wheel_url)
@@ -857,6 +863,7 @@ class FetchCoordinator:
                     package=package,
                     version=version,
                     url=wheel_url,
+                    wheel_hashes=wheel_hashes,
                 )
             )
         return pending.event
@@ -1282,7 +1289,11 @@ class FetchCoordinator:
         assert req.version is not None
         assert req.url is not None
         result = await client.get_range_metadata(
-            req.package, req.version, req.url, canonicalize_name_boundary(req.package)
+            req.package,
+            req.version,
+            req.url,
+            canonicalize_name_boundary(req.package),
+            req.wheel_hashes,
         )
         self.index.store_range_outcome(
             req.package, req.version, req.url, result.outcome

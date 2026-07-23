@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import zipfile
 from typing import TYPE_CHECKING
@@ -10,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 from packaging.utils import canonicalize_name
 
-from nab_index.client import MalformedSimpleResponseError
+from nab_index.client import MalformedSimpleResponseError, WheelHashMismatchError
 from nab_index.lazy_wheel import (
     RangeCapability,
     RangeCapabilityMemo,
@@ -250,6 +251,28 @@ def test_recovers_metadata_per_mode(
     # Exact counts: creeping per-wheel requests are the amplification failure
     # mode this reader exists to avoid.
     assert len(transport.requests) == expected_requests
+
+
+def test_full_body_matching_published_hash_is_consumed() -> None:
+    wheel = build_wheel()
+    published = ("sha256", hashlib.sha256(wheel).hexdigest())
+    transport = FakeRangeTransport("ignore_range_200", wheel)
+    result = _read(transport, wheel_hash=published)
+    assert result.outcome is RangeOutcome.FULL_BODY
+    assert result.text == _META.decode("utf-8")
+
+
+def test_full_body_failing_published_hash_is_rejected() -> None:
+    # The host ignores Range and returns the whole wheel, but its bytes disagree
+    # with the published digest (mirror skew, a stale hash after a rebuild).
+    served = build_wheel(
+        metadata=b"Metadata-Version: 2.1\nName: widget\nVersion: 1.0\n"
+        b"Requires-Dist: attacker-dep>=9\n\n"
+    )
+    published = ("sha256", hashlib.sha256(build_wheel()).hexdigest())
+    transport = FakeRangeTransport("ignore_range_200", served)
+    with pytest.raises(WheelHashMismatchError):
+        _read(transport, wheel_hash=published)
 
 
 def test_misread_suffix_downgrades_to_absolute() -> None:
@@ -679,6 +702,34 @@ def test_growth_200_full_body_recovers() -> None:
     assert result.text == _META.decode("utf-8")
 
 
+def test_growth_200_full_body_matching_hash_is_consumed() -> None:
+    served = build_wheel(padding=4000)
+    published = ("sha256", hashlib.sha256(served).hexdigest())
+
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        return t.full()
+
+    result = _run_scripted(script, wheel=served, tail_size=64, wheel_hash=published)
+    assert result.text == _META.decode("utf-8")
+
+
+def test_growth_200_full_body_failing_hash_is_rejected() -> None:
+    # A growth range comes back as the whole wheel but disagrees with the
+    # published digest.
+    served = build_wheel(padding=4000)
+    published = ("sha256", hashlib.sha256(build_wheel()).hexdigest())
+
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        return t.full()
+
+    with pytest.raises(WheelHashMismatchError):
+        _run_scripted(script, wheel=served, tail_size=64, wheel_hash=published)
+
+
 def test_growth_5xx_raises() -> None:
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
         if kind == "suffix":
@@ -745,6 +796,19 @@ def test_member_fetch_200_full_body_recovers() -> None:
 
     result = _run_scripted(script, wheel=build_wheel_member_front())
     assert result.text == _META.decode("utf-8")
+
+
+def test_member_fetch_200_full_body_failing_hash_is_rejected() -> None:
+    served = build_wheel_member_front()
+    published = ("sha256", hashlib.sha256(build_wheel()).hexdigest())
+
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        return t.full()
+
+    with pytest.raises(WheelHashMismatchError):
+        _run_scripted(script, wheel=served, wheel_hash=published)
 
 
 def test_member_fetch_gzip_is_missing() -> None:

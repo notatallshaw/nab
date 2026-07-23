@@ -31,6 +31,7 @@ from nab_index.client import (
     SdistFile,
     SdistHashMismatchError,
     WheelFile,
+    WheelHashMismatchError,
     _parse_files,
     _parse_sdist_filename,
     _select_artifact_hash,
@@ -1856,6 +1857,23 @@ class _FullBodyJunkTransport:
         return None
 
 
+class _FullBodyWheelTransport:
+    """Ignore the range and hand back the whole wheel with a 200."""
+
+    def __init__(self, wheel: bytes) -> None:
+        self.wheel = wheel
+        self.calls = 0
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> _FakeResponse:
+        self.calls += 1
+        return _FakeResponse(self.wheel, status=200)
+
+    async def aclose(self) -> None:
+        return None
+
+
 class TestGetRangeMetadata:
     _NAME = canonicalize_name("pkg")
 
@@ -1980,6 +1998,46 @@ class TestGetRangeMetadata:
 
         asyncio.run(go())
         assert memo.capability("files.example.com") is RangeCapability.SUFFIX_OK
+
+    def test_full_body_matching_published_hash_is_cached(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        wheel = _build_range_wheel()
+        transport = _FullBodyWheelTransport(wheel)
+        published = (("sha256", hashlib.sha256(wheel).hexdigest()),)
+
+        async def go() -> RangeMetadataResult:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_range_metadata(
+                    "pkg", "1.0", _WHEEL_URL, self._NAME, published
+                )
+            finally:
+                await client.aclose()
+
+        result = asyncio.run(go())
+        assert result.outcome is RangeOutcome.FULL_BODY
+        assert result.text == _RANGE_META.decode()
+        assert cache.get_metadata("pkg", _WHEEL_URL) == _RANGE_META.decode()
+
+    def test_full_body_failing_published_hash_raises_and_skips_cache(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FullBodyWheelTransport(_build_range_wheel())
+        wrong = (("sha256", "0" * 64),)
+
+        async def go() -> RangeMetadataResult:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_range_metadata(
+                    "pkg", "1.0", _WHEEL_URL, self._NAME, wrong
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(WheelHashMismatchError):
+            asyncio.run(go())
+        assert cache.get_metadata("pkg", _WHEEL_URL) is None
 
 
 def _run_get_files(
