@@ -2993,6 +2993,19 @@ def _sync_sdist(version: str = "1.0", name: str = "pkg") -> SdistFile:
     )
 
 
+def _sync_wheel(version: str = "1.0", name: str = "pkg") -> WheelFile:
+    """A minimal sidecar-bearing WheelFile for warm-hit prefetch round trips."""
+    return WheelFile(
+        filename=f"{name}-{version}-py3-none-any.whl",
+        url=f"https://f.example/{name}-{version}-py3-none-any.whl",
+        version=version,
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+        metadata_hash=None,
+    )
+
+
 def _warm_parsed(
     cache: OnDiskCache,
     package: str,
@@ -3115,10 +3128,11 @@ class TestWarmSyncListingPath:
             assert event.is_set()
             assert coord.index.get_listing("pkg") == files
             assert coord.index.get_listing_index("pkg") == "pypi"
-            assert prefetched == [("pkg", files)]
             assert _listing_submits(calls) == []
             assert coord.warm_sync_stats.listing_hits == 1
             assert coord.warm_sync_stats.listing_declines == 0
+            coord.shutdown()
+            assert prefetched == [("pkg", files)]
 
     @respx.mock
     def test_warm_hit_fires_progress_hook(self, tmp_path: Path) -> None:
@@ -3129,6 +3143,7 @@ class TestWarmSyncListingPath:
         ticks: list[int] = []
         with _coord(cache_dir=tmp_path, on_fetch=lambda: ticks.append(1)) as coord:
             coord.request_listing("pkg")
+            coord.shutdown()
             assert ticks == [1]
             assert coord.warm_sync_stats.listing_hits == 1
 
@@ -3411,3 +3426,163 @@ class TestWarmSyncListingPath:
         finally:
             stop.set()
             coord.shutdown()
+
+
+class TestWarmSyncTailOffload:
+    """The post-listing tail runs on the fetcher loop, not the caller thread."""
+
+    @respx.mock
+    def test_sync_hit_runs_tail_off_the_caller_thread(self, tmp_path: Path) -> None:
+        """The newest-N selection walk executes on the fetcher thread only."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_wheel("1.0"), _sync_wheel("2.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            fetcher_ident = coord._thread.ident
+            caller_ident = threading.get_ident()
+
+            tail_idents: list[int | None] = []
+            done = threading.Event()
+            original = coord._prefetch_metadata_after_listing
+
+            def _record(package: str, records: object) -> None:
+                tail_idents.append(threading.get_ident())
+                original(package, records)  # type: ignore[arg-type]
+                done.set()
+
+            coord._prefetch_metadata_after_listing = _record  # type: ignore[method-assign]
+
+            meta_idents: list[int] = []
+
+            def _spy_meta(*args: object, **kwargs: object) -> threading.Event:
+                meta_idents.append(threading.get_ident())
+                ev = threading.Event()
+                ev.set()
+                return ev
+
+            coord.request_metadata = _spy_meta  # type: ignore[method-assign]
+
+            calls = _spy_submit(coord)
+            event = coord.request_listing("pkg")
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert _listing_submits(calls) == []
+            assert done.wait(timeout=5)
+
+            assert tail_idents == [fetcher_ident]
+            assert fetcher_ident != caller_ident
+            assert meta_idents
+            assert all(ident == fetcher_ident for ident in meta_idents)
+            assert caller_ident not in meta_idents
+
+    @respx.mock
+    def test_offloaded_tail_prefetches_metadata(self, tmp_path: Path) -> None:
+        """The offloaded tail enqueues the newest-N metadata and it lands."""
+        respx.get(url__regex=r".*\.whl\.metadata$").mock(
+            return_value=httpx.Response(200, text="Metadata-Version: 2.1\n")
+        )
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_wheel("1.0"), _sync_wheel("2.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            done = threading.Event()
+            original = coord._prefetch_metadata_after_listing
+
+            def _wrap(package: str, records: object) -> None:
+                original(package, records)  # type: ignore[arg-type]
+                done.set()
+
+            coord._prefetch_metadata_after_listing = _wrap  # type: ignore[method-assign]
+            calls = _spy_submit(coord)
+
+            coord.request_listing("pkg")
+            assert done.wait(timeout=5)
+
+            meta_submits = {
+                (item.package, item.version, item.url)
+                for item in calls
+                if isinstance(item, FetchRequest) and item.kind is FetchKind.METADATA
+            }
+            assert meta_submits == {
+                ("pkg", "1.0", "https://f.example/pkg-1.0-py3-none-any.whl.metadata"),
+                ("pkg", "2.0", "https://f.example/pkg-2.0-py3-none-any.whl.metadata"),
+            }
+
+            for version in ("1.0", "2.0"):
+                sidecar = f"https://f.example/pkg-{version}-py3-none-any.whl.metadata"
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and not coord.index.has_metadata(
+                    "pkg", version, sidecar
+                ):
+                    time.sleep(0.01)
+                assert coord.index.has_metadata("pkg", version, sidecar)
+
+    @respx.mock
+    def test_dead_loop_runs_tail_inline(self, tmp_path: Path) -> None:
+        """No live loop: the tail is a last-resort inline run on the caller."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        # An unstarted coordinator has no loop, so _post_to_loop declines.
+        coord = _coord(cache_dir=tmp_path)
+        caller_ident = threading.get_ident()
+        idents: list[int] = []
+        coord._prefetch_metadata_after_listing = (  # type: ignore[method-assign]
+            lambda package, records: idents.append(threading.get_ident())
+        )
+        try:
+            event = coord.request_listing("pkg")
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert idents == [caller_ident]
+            assert coord.warm_sync_stats.listing_hits == 1
+            assert not coord._crashed
+        finally:
+            coord.shutdown()
+
+    def test_post_to_loop_false_on_closed_loop(self, tmp_path: Path) -> None:
+        """A closed loop makes call_soon_threadsafe raise; the post declines."""
+        coord = _coord(cache_dir=tmp_path)
+        loop = asyncio.new_event_loop()
+        loop.close()
+        coord._loop = loop
+        try:
+            assert coord._post_to_loop(lambda: None) is False
+        finally:
+            coord._loop = None
+            coord.shutdown()
+
+    @respx.mock
+    def test_offloaded_tail_exception_logged_and_listing_survives(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A raising tail logs WARNING and leaves the served listing intact."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        ran = threading.Event()
+
+        def _boom(package: str, records: object) -> None:
+            ran.set()
+            raise RuntimeError("boom")
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._prefetch_metadata_after_listing = _boom  # type: ignore[method-assign]
+            with caplog.at_level(logging.WARNING):
+                event = coord.request_listing("pkg")
+                assert ran.wait(timeout=5)
+                coord.shutdown()
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+
+        assert any(
+            "listing prefetch tail failed" in record.getMessage()
+            for record in caplog.records
+        )

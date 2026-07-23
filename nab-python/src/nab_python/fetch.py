@@ -913,6 +913,23 @@ class FetchCoordinator:
             # call_soon_threadsafe raises RuntimeError once the loop is closed.
             self._refuse(item)
 
+    def _post_to_loop(self, callback: Callable[..., object], *args: object) -> bool:
+        """Hand ``callback`` to the fetcher loop from any thread.
+
+        Shares ``_submit``'s guard so one place knows how to reach the loop.
+        Returns ``False`` when there is no live loop (never started, or closed
+        between the read and the post) so the caller can run the work inline.
+        """
+        loop = self._loop
+        if loop is None:
+            return False
+        try:
+            loop.call_soon_threadsafe(callback, *args)
+        except RuntimeError:
+            # call_soon_threadsafe raises RuntimeError once the loop is closed.
+            return False
+        return True
+
     def _refuse(self, item: _QueueItem) -> None:
         """Record a failure for each request in ``item``, unblocking waiters."""
         # None is the shutdown sentinel; it has no waiters.
@@ -1005,16 +1022,17 @@ class FetchCoordinator:
         if not speculative:
             records = self._try_listing_sync(package)
             if records is not None:
-                # Reproduce every observable effect of a successful async
-                # _fetch_listing: serving index before store_listing (which
-                # fires the pending), the progress tick, and the prefetch batch.
-                # Only the round trip is removed.
+                # Serve inline on the caller thread: the serving index then
+                # store_listing, which fires the pending with no round trip.
+                # The progress tick and the newest-N prefetch walk run on the
+                # fetcher loop, exactly where async _fetch_listing runs them, so
+                # the caller thread does no selection work beyond the read and
+                # the materialize.
                 self.index.store_listing_index(package, self.indexes[0].name)
                 self.index.store_listing(package, records)
-                if self._on_fetch is not None:
-                    self._on_fetch()
-                self._prefetch_metadata_after_listing(package, records)
                 self._warm_sync_stats.listing_hits += 1
+                if not self._post_to_loop(self._run_listing_tail, package, records):
+                    self._run_listing_tail(package, records)
                 return pending.event
             self._warm_sync_stats.listing_declines += 1
         self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
@@ -1503,6 +1521,23 @@ class FetchCoordinator:
             url = w.metadata_url
             assert url is not None
             self.request_metadata(package, w.version, url, w.metadata_hash)
+
+    def _run_listing_tail(
+        self, package: str, records: Sequence[WheelFile | SdistFile]
+    ) -> None:
+        """Run the post-listing tail on the fetcher loop: tick then prefetch.
+
+        Mirrors the tail of the async ``_fetch_listing``. A failure is logged at
+        WARNING and swallowed rather than turned into a listing error: the
+        listing pending has already fired on the caller thread, so the served
+        listing must not be overwritten.
+        """
+        try:
+            if self._on_fetch is not None:
+                self._on_fetch()
+            self._prefetch_metadata_after_listing(package, records)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("listing prefetch tail failed: %s: %s", package, exc)
 
     def _record_serving_index(
         self,
