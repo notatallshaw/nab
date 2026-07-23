@@ -220,6 +220,19 @@ class MarkerSet:
             _MAX_CELLS,
         )
 
+    @_bounded
+    def equivalent_within(self, other: MarkerSet, within: MarkerSet) -> bool:
+        """Whether the two sets denote the same environments on every point of ``within``.
+
+        The row-restricted counterpart of :meth:`equivalent`, deciding each of
+        ``within``'s rows under its pins so it stays decidable on wide
+        multi-platform universes. A universe of :meth:`full` reduces it to plain
+        :meth:`equivalent`.
+        """
+        return _markersets.equivalent_within_rows(
+            self._tree, other._tree, within._tree, _MAX_CELLS
+        )
+
     # ---- restriction and projection
 
     @_bounded

@@ -7,8 +7,10 @@ gates, plus the fail-closed verify on the emitted bytes.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from functools import reduce
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -44,6 +46,15 @@ from nab_python.target import ResolveTarget, environment_declaration
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+_spec = importlib.util.spec_from_file_location(
+    "simplify_corpus_fixtures",
+    Path(__file__).with_name("simplify_corpus_fixtures.py"),
+)
+assert _spec is not None
+assert _spec.loader is not None
+corpus = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(corpus)
 
 
 def _target(python_version: str, platform: str = "linux_x86_64") -> ResolveTarget:
@@ -294,3 +305,118 @@ class TestDeterminism:
         forward = render_lock(_span_lock((*_LINUX, *_WIN)))
         reversed_order = render_lock(_span_lock((*reversed(_WIN), *reversed(_LINUX))))
         assert forward == reversed_order
+
+
+# Six platforms across ten python minors: the whole-matrix complement of a
+# single-platform full span overruns the cell budget, so the short marker is
+# reachable only through the row-restricted verify.
+_WIDE_PLATS = (
+    "linux_x86_64",
+    "windows_amd64",
+    "macos_arm64",
+    "linux_aarch64",
+    "windows_arm64",
+    "macos_x86_64",
+)
+_WIDE_MINORS = tuple(f"3.{n}" for n in range(9, 19))
+_WIDE_SHORT = 'platform_machine == "x86_64" and sys_platform == "linux"'
+
+
+def _wide_targets() -> list[ResolveTarget]:
+    return [_target(v, p) for p in _WIDE_PLATS for v in _WIDE_MINORS]
+
+
+def _wide_rows(order: Sequence[ResolveTarget] | None = None) -> list[Marker]:
+    return [_row(t) for t in (order if order is not None else _wide_targets())]
+
+
+def _wide_linux_marker(minors: Sequence[str] | None = None) -> Marker:
+    return Marker(
+        " or ".join(
+            f"({_target(v, 'linux_x86_64').environment_marker_string})"
+            for v in (minors if minors is not None else _WIDE_MINORS)
+        )
+    )
+
+
+class TestWideMatrixEmission:
+    def test_wide_matrix_simplifies_to_short_marker(self) -> None:
+        raw = _wide_linux_marker()
+        result = _finalize_marker(raw, _union(_wide_rows()), "foo")
+        assert result is not None
+        assert str(result) == _WIDE_SHORT
+
+    def test_row_verify_decides_where_whole_matrix_overruns(self) -> None:
+        within = _union(_wide_rows())
+        raw_set = MarkerSet.from_marker(_wide_linux_marker())
+        emitted = MarkerSet.from_marker(_WIDE_SHORT)
+        with pytest.raises(IntractableMarkerSet):
+            (raw_set & within).equivalent(emitted & within)
+        assert raw_set.equivalent_within(emitted, within) is True
+
+    def test_determinism_under_shuffled_target_and_row_order(self) -> None:
+        forward = _finalize_marker(_wide_linux_marker(), _union(_wide_rows()), "foo")
+        back = _finalize_marker(
+            _wide_linux_marker(list(reversed(_WIDE_MINORS))),
+            _union(_wide_rows(list(reversed(_wide_targets())))),
+            "foo",
+        )
+        assert forward is not None
+        assert str(forward) == str(back) == _WIDE_SHORT
+
+
+class TestWideMatrixFailClosed:
+    def test_injected_bug_on_wide_matrix_raises_without_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def diverge(self: MarkerSet, *, within: MarkerSet) -> MarkerSet:
+            return MarkerSet.from_marker('sys_platform == "win32"')
+
+        monkeypatch.setattr(MarkerSet, "simplify", diverge)
+        with pytest.raises(UnsoundSimplificationError, match="foo"):
+            _finalize_marker(_wide_linux_marker(), _union(_wide_rows()), "foo")
+
+
+class TestFreeMembershipPassthrough:
+    def test_three_large_sets_write_lock_within_budget(self) -> None:
+        rows = [_row(_target(v)) for v in ("3.11", "3.12")]
+        within = _union(rows)
+        set_a = ("cpu", "cu118", "cu121", "rocm")
+        set_b = ("mkl", "openblas", "accelerate", "blis")
+        set_c = ("gpu", "nogpu")
+        reached = ("cu121", "mkl")
+        co_members = sorted(
+            {*set_a, *set_b, *set_c}.difference(reached),
+        )
+        gate = " or ".join(f'"{m}" in extras' for m in reached)
+        negations = " and ".join(f'"{m}" not in extras' for m in co_members)
+        raw = Marker(
+            " or ".join(
+                f"({r} and ({gate}) and {negations})"
+                for r in (_row(_target("3.11")), _row(_target("3.12")))
+            )
+        )
+        with pytest.raises(IntractableMarkerSet):
+            MarkerSet.from_marker(raw).simplify(within=within)
+        result = _finalize_marker(raw, within, "torch")
+        assert result is not None
+        assert str(result) == str(raw)
+
+
+class TestCorpusByteIdentity:
+    def test_tractable_corpus_markers_emit_byte_identical(self) -> None:
+        for fixture in corpus.FIXTURES:
+            within = _union([Marker(e) for e in fixture["environments"]])
+            raw = Marker(fixture["marker"])
+            finalized = _finalize_marker(raw, within, fixture["package"])
+            operator = (
+                MarkerSet.from_marker(raw).simplify(within=within).to_marker_string()
+            )
+            shown = str(finalized) if finalized is not None else None
+            assert shown == operator
+            again = (
+                _finalize_marker(finalized, within, fixture["package"])
+                if finalized is not None
+                else None
+            )
+            assert (str(again) if again is not None else None) == shown

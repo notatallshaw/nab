@@ -411,7 +411,7 @@ def _verify_within_universe(
     :meth:`MarkerSet.full` when no marker field is emitted.
     """
     raw_set = MarkerSet.from_marker(raw)
-    if not (raw_set & within).equivalent(emitted & within):
+    if not raw_set.equivalent_within(emitted, within):
         msg = (
             f"{name}: emitted marker {shown!r} is not equivalent to"
             f" {str(raw)!r} over the declared environments"
