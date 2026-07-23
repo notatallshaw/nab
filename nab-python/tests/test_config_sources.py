@@ -585,8 +585,8 @@ class TestLoadTomlLayerDirect:
 
     def test_pyproject_tool_nab_not_table(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "pyproject.toml", "[tool]\nnab = 3\n")
-        layer = _load_toml_layer(path, SourceKind.PYPROJECT)
-        assert layer.values == {}
+        with pytest.raises(SourceConfigError, match="must be a table, got int"):
+            _load_toml_layer(path, SourceKind.PYPROJECT)
 
 
 class TestDiscoverAndMissing:

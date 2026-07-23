@@ -395,6 +395,35 @@ class TestConfigErrors:
             config_command("list", path=hermetic_roots / "pyproject.toml")
         assert "project-scope only" in capsys.readouterr().err
 
+    @pytest.mark.parametrize(
+        ("body", "type_name"),
+        [
+            ('[tool]\nnab = "oops"\n', "str"),
+            ("[tool]\nnab = 5\n", "int"),
+            ("[[tool.nab]]\nx = 1\n", "list"),
+        ],
+    )
+    @pytest.mark.parametrize("action", ["list", "get"])
+    def test_non_table_tool_nab_exits(
+        self,
+        hermetic_roots: Path,
+        capsys: pytest.CaptureFixture[str],
+        action: str,
+        body: str,
+        type_name: str,
+    ) -> None:
+        _write(
+            hermetic_roots / "pyproject.toml",
+            '[project]\nname = "x"\nversion = "0"\ndependencies = []\n' + body,
+        )
+        args = (action, "mode") if action == "get" else (action,)
+        with pytest.raises(SystemExit) as exc:
+            config_command(*args, path=hermetic_roots / "pyproject.toml")
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "[tool.nab] must be a table" in err
+        assert type_name in err
+
     def test_cli_offline_override_layer(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
         buf = io.StringIO()

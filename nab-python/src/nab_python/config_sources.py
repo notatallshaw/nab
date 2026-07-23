@@ -40,6 +40,7 @@ import tomli
 
 from nab_index.multi_index import IndexConfig
 
+from ._toml import tool_nab_section
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from .provider import (
     ArchiveSource,
@@ -1342,9 +1343,12 @@ def _read_raw_table(path: Path, kind: SourceKind) -> Mapping[str, Any]:
         msg = f"{path} is not valid TOML: {exc}"
         raise SourceConfigError(msg) from exc
     if kind is SourceKind.PYPROJECT:
-        tool = data.get("tool", {})
-        section = tool.get("nab", {}) if isinstance(tool, dict) else {}
-        return section if isinstance(section, dict) else {}
+        section = tool_nab_section(data)
+        # A non-table [tool.nab] is malformed, not an empty config.
+        if not isinstance(section, dict):
+            msg = f"{path}: [tool.nab] must be a table, got {type(section).__name__}"
+            raise SourceConfigError(msg)
+        return section
     return data
 
 
