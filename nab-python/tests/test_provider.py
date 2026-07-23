@@ -3094,8 +3094,12 @@ class TestLocalSources:
             local_sources=[LocalSource("foo", str(tmp_path))],
             build_policy=BuildPolicy.NEVER,
         )
-        with pytest.raises(UnsupportedSdistError, match="BUILD_LOCAL"):
+        with pytest.raises(UnsupportedSdistError) as excinfo:
             provider.fetch_versions("foo")
+        msg = str(excinfo.value)
+        assert "building requires build-policy 'build-local'" in msg
+        assert "effective policy is 'never'" in msg
+        assert "BuildPolicy." not in msg
 
     def test_non_utf8_pyproject_raises_unsupported(self, tmp_path: Path) -> None:
         """A local source with a non-UTF-8 ``pyproject.toml`` is unbuildable.
@@ -8980,6 +8984,24 @@ class TestStaticSdistMetadata:
         # excluded_by_build_policy is incremented inside _resolve_dynamic_sdist;
         # the cache hit re-raises without going through that path.
         assert provider.stats.excluded_by_build_policy == 1
+
+    def test_dynamic_sdist_diagnostic_names_config_build_policy(self) -> None:
+        """The build-policy hint names the config token, not the enum symbol."""
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+        )
+        with pytest.raises(UnsupportedSdistError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+        msg = str(excinfo.value)
+        assert "build-policy 'build-remote'" in msg
+        assert "effective policy is 'build-local'" in msg
+        assert "BuildPolicy." not in msg
 
     def test_dynamic_pkg_info_with_static_pyproject(self) -> None:
         """Static pyproject.toml replaces dynamic Requires-Dist."""
