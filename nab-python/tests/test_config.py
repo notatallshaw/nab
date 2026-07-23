@@ -724,6 +724,45 @@ class TestConstraints:
         ):
             read_pyproject_config(path)
 
+    def test_constraints_entry_cannot_carry_extras(self, tmp_path: Path) -> None:
+        """Config load rejects extras, matching the resolve path."""
+        path = write(tmp_path, '[tool.nab]\nconstraints = ["httpx[http2]>=0.27"]\n')
+        with pytest.raises(
+            ConfigError,
+            match="constraints\\[0\\] cannot have extras: httpx\\[http2\\]>=0.27",
+        ):
+            read_pyproject_config(path)
+
+    def test_constraints_entry_cannot_be_direct_url(self, tmp_path: Path) -> None:
+        """Config load rejects a direct reference, matching the resolve path."""
+        path = write(
+            tmp_path, '[tool.nab]\nconstraints = ["torch @ https://ex.com/t.whl"]\n'
+        )
+        with pytest.raises(
+            ConfigError,
+            match="constraints\\[0\\] cannot be a direct reference",
+        ):
+            read_pyproject_config(path)
+
+    def test_constraints_entry_may_carry_a_marker(self, tmp_path: Path) -> None:
+        """A name with a specifier and a marker is still a valid constraint."""
+        path = write(
+            tmp_path,
+            "[tool.nab]\nconstraints = ['urllib3<2 ; python_version < \"3.12\"']\n",
+        )
+        config = read_pyproject_config(path)
+        assert config.constraints == ('urllib3<2 ; python_version < "3.12"',)
+
+    def test_constraints_entry_vcs_url_is_rejected(self, tmp_path: Path) -> None:
+        """A VCS reference is a direct reference, so it is rejected too."""
+        url = "foo @ git+https://github.com/foo/bar.git"
+        path = write(tmp_path, f'[tool.nab]\nconstraints = ["{url}"]\n')
+        with pytest.raises(
+            ConfigError,
+            match="constraints\\[0\\] cannot be a direct reference",
+        ):
+            read_pyproject_config(path)
+
 
 class TestDefaultGroups:
     def test_default_is_empty(self, tmp_path: Path) -> None:

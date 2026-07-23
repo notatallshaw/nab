@@ -14,8 +14,10 @@ single run with a `--project-<key>` flag.
 # lockfile format is experimental).
 mode = "specific"
 
-# PEP 508 constraint strings.  Bound versions but never pull packages
-# into the resolution.
+# Constraint strings: a package name with an optional version
+# specifier and optional marker.  Bound versions but never pull
+# packages into the resolution, so extras and direct-reference URLs
+# are rejected.
 constraints = ["urllib3<2"]
 
 # Dependency-group names recorded in the lockfile's

@@ -1778,17 +1778,6 @@ class TestResolvePyprojectVcs:
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-    def test_block_default_refuses_vcs_constraint(self, tmp_path: Path) -> None:
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            "[project]\ndependencies = []\n"
-            "[tool.nab]\nconstraints = "
-            f'["foo @ git+https://github.com/foo/bar.git@{_FORTY}"]\n',
-        )
-
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
-
     def test_admitted_vcs_dependency_raises_not_implemented(
         self, tmp_path: Path
     ) -> None:
@@ -1809,9 +1798,8 @@ class TestResolvePyprojectVcs:
                 python_version="3.12.0",
             )
 
-    def test_admitted_vcs_constraint_raises_not_implemented(
-        self, tmp_path: Path
-    ) -> None:
+    def test_vcs_constraint_refused_at_config_load(self, tmp_path: Path) -> None:
+        """An admitting VCS policy does not matter: config load refuses it first."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             "[project]\ndependencies = []\n"
@@ -1823,12 +1811,8 @@ class TestResolvePyprojectVcs:
             'allowed-repos = ["https://github.com/"]\n',
         )
 
-        with pytest.raises(NotImplementedError, match="not implemented"):
-            _resolved(
-                pyproject,
-                _FAKE_TRANSPORT,
-                python_version="3.12.0",
-            )
+        with pytest.raises(ConfigError, match="cannot be a direct reference"):
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
 
 class TestResolvePyprojectLockShape:
