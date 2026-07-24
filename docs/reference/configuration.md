@@ -18,8 +18,10 @@ mode = "specific"
 # into the resolution.
 constraints = ["urllib3<2"]
 
-# Dependency-group names recorded in the lockfile's
-# default-groups array.
+# PEP 735 dependency groups activated on every resolve, unioned
+# with any --groups selection: their dependencies are resolved
+# and pinned into the lock.  The names are also recorded in the
+# lockfile's default-groups array.
 default-groups = ["dev"]
 
 # The Python range this project supports.  A declaration: it is
