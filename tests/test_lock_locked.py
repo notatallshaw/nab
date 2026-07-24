@@ -462,3 +462,20 @@ def test_non_pep751_precondition(
     assert exc.value.code == 1
     assert "not a valid PEP 751 lockfile" in capsys.readouterr().err
     mock.assert_not_called()
+
+
+def test_unreadable_lock_precondition(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Reading a directory raises OSError, exercising the unreadable-lock branch.
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+    out.mkdir()
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert "cannot read lockfile" in capsys.readouterr().err
+    mock.assert_not_called()
