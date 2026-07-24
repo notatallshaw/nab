@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import io
 import json
 import logging
+import re
 import tarfile
 import time
 import zipfile
@@ -19,6 +21,7 @@ import pytest
 from packaging.utils import canonicalize_name
 
 import nab_index.cache as cache_mod
+import nab_index.cached_client as cached_client_mod
 from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
@@ -2341,3 +2344,69 @@ class TestCorruptCachedListing:
                 json.loads(self._WRONG_SHAPE), "https://pypi.org/simple/", "pkg"
             )
         assert str(caught.value) == str(wire.value)
+
+
+class TestModuleDocstring:
+    """Keep the module docstring in step with the client's constructor."""
+
+    @staticmethod
+    def _parse_module() -> tuple[str, ast.Module]:
+        source = Path(cached_client_mod.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        doc = ast.get_docstring(tree)
+        assert doc is not None
+        return doc, tree
+
+    @staticmethod
+    def _class_references(doc: str) -> set[str]:
+        return {
+            target.lstrip("~").split(".")[-1]
+            for target in re.findall(r":class:`([^`]+)`", doc)
+        }
+
+    @staticmethod
+    def _bound_names(tree: ast.Module) -> set[str]:
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                names.update(alias.asname or alias.name for alias in node.names)
+            elif isinstance(node, ast.Import):
+                names.update(
+                    (alias.asname or alias.name).split(".")[0] for alias in node.names
+                )
+        for node in tree.body:
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                names.add(node.name)
+        return names
+
+    @staticmethod
+    def _init_annotations(tree: ast.Module) -> dict[str, str]:
+        for cls in tree.body:
+            if isinstance(cls, ast.ClassDef) and cls.name == "CachedAsyncSimpleClient":
+                for item in cls.body:
+                    if isinstance(item, ast.FunctionDef) and item.name == "__init__":
+                        args = item.args
+                        return {
+                            arg.arg: ast.unparse(arg.annotation)
+                            for arg in (*args.args, *args.kwonlyargs)
+                            if arg.annotation is not None
+                        }
+        return {}
+
+    def test_cross_references_only_bound_symbols(self) -> None:
+        doc, tree = self._parse_module()
+        referenced = self._class_references(doc)
+        assert referenced, "module docstring should reference at least one class"
+        unbound = referenced - self._bound_names(tree)
+        assert not unbound, (
+            f"module docstring references unbound symbols: {sorted(unbound)}"
+        )
+
+    def test_names_constructor_types(self) -> None:
+        doc, tree = self._parse_module()
+        referenced = self._class_references(doc)
+        annotations = self._init_annotations(tree)
+        transport_type = annotations["transport"].split(".")[-1]
+        cache_type = annotations["cache"].split(".")[-1]
+        assert transport_type in referenced
+        assert cache_type in referenced

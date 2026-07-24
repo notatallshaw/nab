@@ -1,10 +1,10 @@
 """Disk-cached PyPI Simple API client.
 
-Wraps :class:`AsyncSimpleClient`. Consults an :class:`OnDiskCache`
-before any HTTP transport call. Honors a small subset of RFC 9111:
-fresh entries are served directly, stale entries are revalidated with
-``If-None-Match``, and PEP 658 metadata + sdist PKG-INFO are treated
-as immutable (cached forever; never revalidated).
+Drives an :class:`~nab_index.transport.AsyncHttpTransport` and consults a
+:class:`~nab_index.cache.CacheBackend` before any HTTP call. Honors a small
+subset of RFC 9111: fresh entries are served directly, stale entries are
+revalidated with ``If-None-Match``, and PEP 658 metadata + sdist PKG-INFO are
+treated as immutable (cached forever; never revalidated).
 """
 
 from __future__ import annotations
