@@ -45,7 +45,10 @@ Static metadata only, from any source:
 Picks the most reproducible posture: every input to the SAT
 problem is a file read, not a sandboxed subprocess.  Use `never`
 when you want a lockdown resolve with no backend invocations at
-all.
+all.  A workspace is the exception: it floors `build-policy` to
+`build-local` (see the workspace-floor section below), so under a
+workspace an explicit `never` still builds any member with dynamic
+metadata.
 
 ## `build-local` (default)
 
@@ -84,7 +87,8 @@ dependencies.
 The default `build-local` handles the common case (a local
 checkout with `dynamic = ["version"]` from hatch-vcs or similar)
 without opening the door to remote-sdist builds.  Lower to
-`never` when you want a fully hermetic resolve.
+`never` when you want a fully hermetic resolve (a workspace still
+floors it to `build-local`; see the workspace-floor section).
 
 For transitive dependencies that only publish a dynamic sdist
 (native or CUDA-heavy wheels are the usual offenders), prefer a
@@ -137,6 +141,31 @@ resolved, so a version-scoped per-package override (a quoted
 and per-index overrides do not apply to sources (a local source has no
 serving index).  Use a bare-name key to govern a source build.
 
+## A workspace floors `build-policy` to `build-local`
+
+Workspace members frequently declare `dynamic = ["version"]` or
+other dynamic fields that nab can read only by running the PEP 517
+local backend.  So whenever a workspace is in scope, nab raises the
+effective `build-policy` to at least `build-local`; a policy
+already at `build-local` or `build-remote` is left unchanged.
+
+The floor overrides an explicit `never`.  A workspace root, or a
+member locked against one, that sets `build-policy = "never"` still
+builds any member with `dynamic = ["dependencies"]`, so `never`
+alone does not give a zero-backend resolve once a workspace is in
+scope.  Give every member static metadata to keep a workspace
+resolve free of builds.
+
+The floor is skipped only when the resolve forbids host builds:
+`mode = "universal"`, or a `[tool.nab.environment]` that names a
+`platform` or `implementation` (next section).  There the effective
+policy stays `never`.  A python-axis-only retarget
+(`[tool.nab.environment].python` or `--python X.Y`) keeps running on
+the host, so it does not skip the floor.
+
+See [Lock a workspace](../how-to/workspaces.md) for how members are
+discovered and merged with explicit local sources.
+
 ## A declared platform forbids host builds
 
 A PEP 517 backend always runs on the host nab runs on, so it reports the
@@ -157,6 +186,8 @@ A retarget of the **python axis alone** (`[tool.nab.environment].python`,
 or `--python X.Y`) is different: the machine is still the host.  nab warns
 that a build would report the host interpreter's metadata, and permits it.
 This is a deliberate deviation from pip: the workspace `build-local` floor
-exists for members with dynamic metadata, and forbidding a build here would
-break every workspace that also pins a Python.  Set `build-policy = "never"`
-to forbid it.
+(above) exists for members with dynamic metadata, and forbidding a build
+here would break every workspace that also pins a Python.  Setting
+`build-policy = "never"` forbids the build only when no workspace is in
+scope; a workspace keeps the floor at `build-local`, so a member with
+dynamic metadata still builds.
