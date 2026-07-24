@@ -780,8 +780,8 @@ class Provider:
 
         # The dep range each rejected candidate declared for the blocker,
         # unioned per group.  Feeds the membership widening of the flushed
-        # blocker term; the range-keyed union also feeds the no-versions
-        # message.
+        # blocker term, and the no-versions message, which names the range the
+        # candidate declared rather than negating the blocker it hit.
         self.pending_decision_dep_ranges: defaultdict[
             tuple[str, str, Version], _lookahead.DepRangeUnion
         ] = defaultdict(_lookahead.DepRangeUnion.zero)
@@ -1791,7 +1791,15 @@ class Provider:
         for cand, blocker_pkg, blocker_version in self.pending_blocks:
             if cand != normalized:
                 continue
-            out.append(f"requires {blocker_pkg} != {blocker_version}")
+            dep_range = self.pending_decision_dep_ranges[
+                (cand, blocker_pkg, blocker_version)
+            ].union
+            # The blocker is decided, so the line names that version rather
+            # than a singleton range, which has no specifier spelling.
+            out.append(
+                f"requires {blocker_pkg} in {self.format_range(dep_range)}"
+                f" but solution has it at {blocker_version}"
+            )
 
         for cand, blocker_pkg, pos_range in self.pending_range_blocks:
             if cand != normalized:
