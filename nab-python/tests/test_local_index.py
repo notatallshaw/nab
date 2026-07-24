@@ -855,6 +855,16 @@ class TestMetadataAndSdist:
         assert isinstance(caught.value, HttpError)
         assert "not valid UTF-8" in str(caught.value)
 
+    def test_missing_metadata_sidecar_raises_http_error(self, tmp_path: Path) -> None:
+        # An advertised-but-absent sidecar must fail through HttpError, not a
+        # raw FileNotFoundError, matching a remote 404.
+        meta_path = tmp_path / "foo-1.0.metadata"
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(MalformedLocalListingError) as caught:
+            run(client.get_metadata_text("foo", "1.0", meta_path.as_uri()))
+        assert isinstance(caught.value, HttpError)
+        assert not isinstance(caught.value, OSError)
+
     def test_get_sdist_files(self, tmp_path: Path) -> None:
         sdist_path = tmp_path / "foo-1.0.tar.gz"
         buf = io.BytesIO()
@@ -876,6 +886,24 @@ class TestMetadataAndSdist:
         assert "foo" in pkg_info
         assert pyproject is not None
         assert 'name = "foo"' in pyproject
+
+    def test_missing_sdist_files_raises_http_error(self, tmp_path: Path) -> None:
+        # An advertised-but-absent sdist must fail through HttpError, not a
+        # raw FileNotFoundError, matching a remote 404.
+        sdist_path = tmp_path / "foo-1.0.tar.gz"
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(MalformedLocalListingError) as caught:
+            run(client.get_sdist_files("foo", "1.0", sdist_path.as_uri()))
+        assert isinstance(caught.value, HttpError)
+        assert not isinstance(caught.value, OSError)
+
+    def test_missing_sdist_archive_raises_http_error(self, tmp_path: Path) -> None:
+        sdist_path = tmp_path / "foo-1.0.tar.gz"
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(MalformedLocalListingError) as caught:
+            run(client.get_sdist_archive("foo", "1.0", sdist_path.as_uri()))
+        assert isinstance(caught.value, HttpError)
+        assert not isinstance(caught.value, OSError)
 
     def test_https_metadata_url_raises_http_error(self, tmp_path: Path) -> None:
         # An absolute-href record admitted by get_files must fetch through

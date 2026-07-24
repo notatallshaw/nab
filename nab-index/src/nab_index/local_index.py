@@ -129,6 +129,20 @@ def _resolve_served_path(url: str) -> Path:
         raise NonLocalArtifactError(msg) from exc
 
 
+def _read_served_bytes(path: Path, kind: str) -> bytes:
+    """Read a served local artifact's bytes, mapping a read failure.
+
+    A missing or unreadable file raises :class:`MalformedLocalListingError`
+    (an :class:`HttpError` subclass) so the fetch fails through the index-error
+    path, matching a remote index's 404 rather than a raw :class:`OSError`.
+    """
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        msg = f"cannot read local {kind} {path}: {exc}"
+        raise MalformedLocalListingError(msg) from exc
+
+
 _REQUIRES_PYTHON_ATTR = "data-requires-python"
 _YANKED_ATTR = "data-yanked"
 _CORE_METADATA_ATTR = "data-core-metadata"
@@ -552,14 +566,15 @@ class LocalIndexClient:
 
         The on-disk sidecar is trusted, so ``metadata_hash`` is accepted
         only to match the remote client signature and is not verified.  A
-        sidecar that is not valid UTF-8 raises
+        sidecar that is missing, unreadable, or not valid UTF-8 raises
         :class:`MalformedLocalListingError` (an :class:`HttpError` subclass)
-        rather than a raw :class:`UnicodeDecodeError`, matching the
-        ``index.html`` reader.
+        rather than a raw :class:`OSError` or :class:`UnicodeDecodeError`,
+        matching the ``index.html`` reader.
         """
         path = _resolve_served_path(metadata_url)
+        data = _read_served_bytes(path, "metadata sidecar")
         try:
-            return path.read_text(encoding="utf-8")
+            return data.decode("utf-8")
         except UnicodeDecodeError as exc:
             msg = f"{path} is not valid UTF-8: {exc}"
             raise MalformedLocalListingError(msg) from exc
@@ -577,7 +592,7 @@ class LocalIndexClient:
         client signature but is not verified.
         """
         path = _resolve_served_path(sdist_url)
-        return _extract_sdist_files(path.read_bytes())
+        return _extract_sdist_files(_read_served_bytes(path, "sdist"))
 
     async def get_sdist_archive(
         self,
@@ -592,7 +607,7 @@ class LocalIndexClient:
         client signature but is not verified.
         """
         path = _resolve_served_path(sdist_url)
-        return path.read_bytes()
+        return _read_served_bytes(path, "sdist")
 
     async def get_range_metadata(
         self,
