@@ -3266,10 +3266,13 @@ class TestAugmentResolutionError:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         diagnostics = str(info.value).split("Diagnostics:")[1]
+        assert "<VersionRange" not in diagnostics
         assert (
-            "foo: every version in range was rejected: requires lib != 9.0"
+            "foo: every version in range was rejected:"
+            " requires lib in [5.0, 5.0] but solution has it in [9.0, 9.0]"
             in diagnostics
         )
+        assert "requires lib != 9.0" not in diagnostics
         assert "foo: no version matches the requirement" not in diagnostics
 
     def test_blocker_diagnostics_render_readable_ranges(self, tmp_path: Path) -> None:
