@@ -3361,10 +3361,12 @@ class TestAugmentResolutionError:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         diagnostics = str(info.value).split("Diagnostics:")[1]
+        assert "<VersionRange" not in diagnostics
         assert (
-            "foo: every version in range was rejected: requires lib != 9.0"
-            in diagnostics
+            "foo: every version in range was rejected:"
+            " requires lib in ==5.0 but solution has it at 9.0" in diagnostics
         )
+        assert "requires lib != 9.0" not in diagnostics
         assert "foo: no version matches the requirement" not in diagnostics
 
     def test_cutoff_filtered_sdist_is_not_reported_as_never_published(
@@ -3450,7 +3452,7 @@ class TestAugmentResolutionError:
         assert "AFTER_LOCALS" not in diagnostics
         assert (
             "c: every version in range was rejected:"
-            " requires b in [1.0, 1.0] but root has it in [2, +inf)"
+            " requires b in ==1.0 but root has it in >=2"
         ) in diagnostics
 
 
