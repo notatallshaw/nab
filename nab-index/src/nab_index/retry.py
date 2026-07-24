@@ -27,8 +27,8 @@ MAX_RETRIES = 3
 MAX_REDIRECTS = 20
 """Redirects followed per GET, matching httpx's default."""
 
-# 520 and 527 are Cloudflare's transient origin errors, not the index's answer.
-RETRY_STATUSES = frozenset({429, 500, 502, 503, 504, 520, 527})
+# 520-524 and 527 are Cloudflare's transient origin errors, not the index's answer.
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 527})
 """Statuses that are retried; any other status is served to the caller."""
 
 _BACKOFF_FACTOR = 0.25
