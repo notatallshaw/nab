@@ -12,11 +12,11 @@ returns nothing usable.
 
 The default is `build-local`: local checkouts and workspace
 members may invoke a backend, but remote sources (PyPI sdists,
-VCS clones) are read statically only.  Lift a specific package
-to `build-remote` with a per-package override when you know it
-needs a real build (`[tool.nab.packages.<name>]`); keep
-the global default tight rather than enabling builds for the
-whole graph.
+VCS clones, archive sources) are read statically only.  Lift
+a specific package to `build-remote` with a per-package
+override when you know it needs a real build
+(`[tool.nab.packages.<name>]`); keep the global default tight
+rather than enabling builds for the whole graph.
 
 ## `never`
 
@@ -59,8 +59,8 @@ clones, and archive sources remain static-only.
 
 ## `build-remote`
 
-Builds extend to VCS clones and remote PyPI sdists.  On top of
-`build-local`:
+Builds extend to VCS clones, archive sources, and remote PyPI
+sdists.  On top of `build-local`:
 
 * VCS-cloned trees with dynamic deps have the backend invoked on
   the clone.
