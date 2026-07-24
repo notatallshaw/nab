@@ -1382,10 +1382,11 @@ class Provider:
 
         The un-narrowed range spans versions the constraint clipped away, so
         look-ahead can reach one whose metadata raises a hard error the narrowed
-        resolve never touched (a failed integrity check, or a tie-ranked-wheel
-        divergence).  The probe catches those and returns ``False`` rather than
-        aborting; the crash still fires when the version is pinned for real.  The
-        ``finally`` restores the snapshot either way.
+        resolve never touched (a failed integrity check, a tie-ranked-wheel
+        divergence, or an advertised sidecar the index cannot serve).  The probe
+        catches those and returns ``False`` rather than aborting; the crash still
+        fires when the version is pinned for real.  The ``finally`` restores the
+        snapshot either way.
         """
         # Late import: config imports provider at module load.
         from .config import OverrideConflictError  # noqa: PLC0415
@@ -1407,6 +1408,7 @@ class Provider:
             OverrideConflictError,
             SiblingMetadataDivergenceError,
             NotImplementedError,
+            HttpError,
         ):
             return False
         finally:

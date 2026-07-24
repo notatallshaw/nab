@@ -11,11 +11,15 @@ resolve, and the snapshot the probe restores must survive the failure path.
 
 from __future__ import annotations
 
+import pytest
+
 from nab_index.client import (
+    MalformedSimpleResponseError,
     MetadataHashMismatchError,
     WheelFile,
     WheelHashMismatchError,
 )
+from nab_index.transport import HttpError
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.specifiers import SpecifierSet
@@ -129,6 +133,35 @@ class TestConstraintProbeContainsHardError:
         coordinator.index.store_metadata_error(
             "foo", "3.0", MetadataHashMismatchError("metadata sha256 mismatch")
         )
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        sentinel = {"sentinel-blocker": ("x", V("1.0"))}
+        provider._lookahead_aborted = dict(sentinel)
+
+        found = provider.has_satisfying_version("foo", VersionRange.full())
+
+        assert found is False
+        assert provider._lookahead_aborted == sentinel
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            HttpError("advertised sidecar returned 404"),
+            MalformedSimpleResponseError("sidecar body is not valid UTF-8"),
+        ],
+    )
+    def test_unserveable_sidecar_probe_returns_false(self, error: HttpError) -> None:
+        """An advertised sidecar that fails to serve is absorbed by the probe.
+
+        Fetching an advertised PEP 658 sidecar that 404s or 5xxs (or hands back
+        a non-UTF-8 body) raises an ``HttpError`` out of ``get_dependencies``.
+        Over the un-narrowed probe range this is a version the constraint
+        clipped away, so ``has_satisfying_version`` must return ``False`` rather
+        than abort the resolve, and the snapshot must survive.
+        """
+        listings = {"foo": [_wheel("foo", "3.0")]}
+        coordinator = make_coordinator(listings=listings)
+        coordinator.index.store_metadata_error("foo", "3.0", error)
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         sentinel = {"sentinel-blocker": ("x", V("1.0"))}
