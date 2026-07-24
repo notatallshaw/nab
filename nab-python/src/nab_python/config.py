@@ -754,6 +754,8 @@ def _config_from_effective(
     vcs_sources = effective["vcs-sources"].value
     archive_sources = effective["archive-sources"].value
     _reject_duplicate_source_names(local_sources, vcs_sources, archive_sources)
+    vcs_config = effective["vcs"].value
+    _reject_vcs_sources_under_block(vcs_sources, vcs_config)
 
     del pyproject_dir  # paths were resolved per-layer by the registry.
     return NabProjectConfig(
@@ -768,7 +770,7 @@ def _config_from_effective(
         trust_unverified_sdist_deps=trust_unverified,
         environment=environment,
         indexes=indexes,
-        vcs=effective["vcs"].value,
+        vcs=vcs_config,
         local_sources=local_sources,
         vcs_sources=vcs_sources,
         archive_sources=archive_sources,
@@ -2582,6 +2584,32 @@ def _reject_duplicate_source_names(
             )
             raise ConfigError(msg)
         seen[canonical] = source.name
+
+
+def _reject_vcs_sources_under_block(
+    vcs_sources: tuple[VcsSource, ...],
+    vcs_config: VcsConfig,
+) -> None:
+    """Reject vcs-sources declared while the VCS policy blocks cloning.
+
+    Cloning is opt-in, so a ``[[tool.nab.vcs-sources]]`` entry under the
+    default ``policy = "block"`` is contradictory. Raising ConfigError here
+    fails at parse time and names the token to set.
+
+    ``policy = "allow"`` opens the gate but does not on its own admit a
+    URL: ``allowed-schemes`` and ``allowed-repos`` are empty by default
+    and each denies every URL until an entry is added, so the message
+    points at the whole gate rather than promising that one key is enough.
+    """
+    if vcs_sources and vcs_config.policy is VcsPolicy.BLOCK:
+        msg = (
+            "[[tool.nab.vcs-sources]] is declared but [tool.nab.vcs].policy is"
+            f" {vcs_config.policy.value!r}, which refuses every clone; remove"
+            ' the sources, or set [tool.nab.vcs].policy = "allow" and open the'
+            " rest of the gate (vcs.allowed-schemes and vcs.allowed-repos are"
+            " empty by default and each denies every URL)"
+        )
+        raise ConfigError(msg)
 
 
 def _parse_python_patches(value: object) -> dict[str, str] | None:
