@@ -934,9 +934,13 @@ def _read_selection_table_or_exit(
     """
     try:
         return reader(path)
-    except OSError:
-        reason = "is a directory" if path.is_dir() else "not found"
-        _cli.printer().error(f"{path} {reason}")
+    except OSError as e:
+        if e.errno == errno.ENOENT:
+            _cli.printer().error(f"{path} not found")
+        elif path.is_dir():
+            _cli.printer().error(f"{path} is a directory")
+        else:
+            _cli.printer().error(f"cannot read {path}: {e}")
         sys.exit(1)
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
         _cli.printer().error(f"{path} is not valid TOML: {e}")
