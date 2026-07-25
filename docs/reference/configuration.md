@@ -404,11 +404,11 @@ for all of them is meaningless.  Writing any of them under
 
 A metadata override annotates versions the resolve already reaches; it
 never introduces a version.  An override scoped to a version no candidate
-has, or a package the resolve never visits, does nothing.  Local-path and
-VCS sources have no listing and their version is not known until the
-source is materialised, so a metadata override governs a source only when
-it uses a bare-name selector (full range); a version-scoped override does
-not match a source.
+has, or a package the resolve never visits, does nothing.  Local-path,
+VCS, and archive sources have no listing and their version is not known
+until the source is materialised, so a metadata override governs a source
+only when it uses a bare-name selector (full range); a version-scoped
+override does not match a source.
 
 ### Per-index overrides
 

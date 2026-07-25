@@ -4817,6 +4817,25 @@ class TestEffectiveFieldResolution:
         )
         assert provider.effective_build_policy_for_source("foo") is BuildPolicy.NEVER
 
+    def test_overrides_doc_names_every_source_kind(self) -> None:
+        # The bare-name-only override rule covers local, VCS, and archive
+        # sources alike, so the doc must name every kind.
+        build_policy_doc = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "reference"
+            / "build-policy.md"
+        )
+        text = build_policy_doc.read_text()
+        section = text[text.index("## Overrides") :].split("\n## ", 1)[0]
+        paragraph = next(
+            block for block in section.split("\n\n") if "bare name" in block
+        ).lower()
+
+        assert "local" in paragraph
+        assert "vcs" in paragraph
+        assert "archive" in paragraph
+
 
 def _make_sdist(version: str, package: str = "foo") -> SdistFile:
     """Build a minimal :class:`SdistFile`."""
