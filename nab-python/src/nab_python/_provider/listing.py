@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from nab_index.client import SdistFile, WheelFile
 
 from .._iso8601 import parse_iso_datetime
+from .._vcs_admission import UnsupportedVcsError
 from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from .._vendor.packaging.version import InvalidVersion, Version
 from ..metadata import intern_version as _intern_version
@@ -759,10 +760,13 @@ def await_metadata_batch(
             InvalidVersion,
             InvalidSpecifier,
             IncompatiblePythonError,
+            UnsupportedVcsError,
+            NotImplementedError,
         ):
-            # Malformed metadata or a Python-incompatible METADATA
-            # Requires-Python: same reason, refuse via get_dependencies
-            # (_invalid_metadata) instead of caching empty deps.
+            # Malformed metadata, a Python-incompatible Requires-Python, or a
+            # refused base direct-URL/VCS dep: leave the version un-cached so
+            # get_dependencies re-raises at selection time instead of aborting
+            # the speculative prefetch of a candidate the scan may never pick.
             continue
 
 

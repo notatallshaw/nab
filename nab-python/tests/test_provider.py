@@ -316,6 +316,71 @@ class TestSpeculativePrefetch:
         assert "bar" in deps
 
 
+class TestBatchPrefetchUrlDepRefusal:
+    """A refused direct-URL dep on a non-selected candidate must not abort the scan.
+
+    The speculative batch prefetch parses metadata for every candidate in a
+    look-ahead batch. A base direct-URL/VCS ``Requires-Dist`` is refused only at
+    selection time, so a refusal raised while prefetching a candidate the scan
+    never picks must be swallowed, not propagated out of ``choose_version``.
+    """
+
+    def _provider(
+        self, url_line: str, *, vcs_config: VcsConfig | None = None
+    ) -> Provider:
+        meta = {
+            # 3.0 has no Name, so it is look-ahead-rejected and the scan enters
+            # the pipelined batch over 2.0 (the clean winner) and 1.0.
+            "3.0": "Metadata-Version: 2.1\nVersion: 3.0\n\n",
+            "2.0": "Metadata-Version: 2.1\nName: pkg\nVersion: 2.0\n\n",
+            "1.0": (
+                "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+                f"Requires-Dist: {url_line}\n\n"
+            ),
+        }
+        coordinator = make_coordinator(
+            [make_wheel(v) for v in ("3.0", "2.0", "1.0")],
+            metadata_by_version=meta,
+            package="pkg",
+        )
+        return Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"pkg": VersionRange.full(admit_arbitrary=False)},
+            vcs_config=vcs_config,
+        )
+
+    def test_plain_url_dep_on_lower_candidate(self) -> None:
+        """A plain https archive URL dep refusal on 1.0 leaves 2.0 selectable."""
+        provider = self._provider("foo @ https://example.com/foo-1.0.whl")
+        assert provider.choose_version("pkg", VersionRange.full()) == V("2.0")
+        assert ("pkg", V("1.0")) not in provider.deps_cache
+
+    def test_blocked_vcs_dep_on_lower_candidate(self) -> None:
+        """A git+https URL dep refused under the default block policy."""
+        provider = self._provider("foo @ git+https://example.com/foo.git")
+        assert provider.choose_version("pkg", VersionRange.full()) == V("2.0")
+
+    def test_admitted_vcs_dep_on_lower_candidate(self) -> None:
+        """An admitted git URL raises NotImplementedError, still not an abort."""
+        provider = self._provider(
+            "foo @ git+https://example.com/foo.git",
+            vcs_config=VcsConfig(
+                policy=VcsPolicy.ALLOW,
+                allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/foo",),
+                require_pin=False,
+            ),
+        )
+        assert provider.choose_version("pkg", VersionRange.full()) == V("2.0")
+
+    def test_selecting_the_url_dep_candidate_still_refuses(self) -> None:
+        """Pinning to 1.0 re-raises the refusal the prefetch swallowed."""
+        provider = self._provider("foo @ https://example.com/foo-1.0.whl")
+        with pytest.raises(UnsupportedVcsError):
+            provider.get_dependencies("pkg", V("1.0"))
+
+
 class TestMembershipSetMarkerInMetadata:
     """A Requires-Dist marker testing extras/dependency_groups drops only the dep.
 
