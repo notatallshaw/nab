@@ -269,7 +269,9 @@ match what pip-compile emits.
 
 Local and VCS pins are rendered without hashes, mirroring pip's
 behaviour. An editable local pin becomes a `-e` line and a
-`subdirectory` a `#subdirectory=` fragment. An archive pin is a
+`subdirectory` a `#subdirectory=` fragment. Workspace members are
+editable by default, so they render as `-e`; a `[[tool.nab.local-sources]]`
+pin is non-editable unless its `editable` key is set. An archive pin is a
 third form, `name @ <url>#sha256=...`, carrying its hash in the
 URL fragment so the line stays hash-checkable. Any
 `subdirectory` is appended to that fragment with `&`. Local,

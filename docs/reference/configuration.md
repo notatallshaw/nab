@@ -521,7 +521,10 @@ path = "../my-fork"
 ```
 
 Two optional keys are accepted.  `editable` (boolean, default
-`false`) records a PEP 660 editable install in the lockfile.
+`false`) records a PEP 660 editable install in the lockfile.  This
+default is specific to `[[tool.nab.local-sources]]`; workspace
+members discovered from `[tool.nab.workspace]` are recorded as
+editable by default (see [Lock a workspace](../how-to/workspaces.md)).
 `subdirectory` locates the package below `path`, for monorepo
 layouts.
 
