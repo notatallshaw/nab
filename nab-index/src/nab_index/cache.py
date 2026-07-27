@@ -16,6 +16,12 @@ Layout under ``root``:
 A versioned bucket name (``simple-v0``) gives zero-cost schema
 migration: when the on-disk format changes, bump the suffix and the
 old directory is harmless.
+
+A resolve writes two more buckets under the same root, holding upstream
+source trees:
+
+    vcs/vcs/<repo key>/<commit sha>/   <- shallow clone
+    archive/<archive digest>/          <- extracted archive
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +45,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ARCHIVE_BUCKET",
+    "VCS_BUCKET",
     "CacheBackend",
     "CachePolicy",
     "NullCache",
@@ -52,9 +61,14 @@ CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v1"
 
-# Bucket directories nab owns under a cache root. simple-neg-* is covered
-# by the simple- prefix.
-RECOGNIZED_BUCKET_PREFIXES = ("simple-", "metadata-", "sdist-")
+# Buckets of nab-written records. simple-neg-* is covered by the simple- prefix.
+ENTRY_BUCKET_PREFIXES = ("simple-", "metadata-", "sdist-")
+
+# Buckets a resolve fills with upstream source trees. nab owns the directories,
+# not the files inside them.
+VCS_BUCKET = "vcs"
+ARCHIVE_BUCKET = "archive"
+SOURCE_BUCKETS = (VCS_BUCKET, ARCHIVE_BUCKET)
 
 DEFAULT_PYPI_URLS = frozenset(
     [
@@ -82,9 +96,14 @@ class CachePolicy:
         return current - self.fetched_at < self.max_age
 
 
+def _is_entry_bucket(name: str) -> bool:
+    """Whether ``name`` is a bucket of records nab writes and parses."""
+    return any(name.startswith(prefix) for prefix in ENTRY_BUCKET_PREFIXES)
+
+
 def is_recognized_bucket(name: str) -> bool:
     """Whether ``name`` is a bucket directory nab owns under a cache root."""
-    return any(name.startswith(prefix) for prefix in RECOGNIZED_BUCKET_PREFIXES)
+    return _is_entry_bucket(name) or name in SOURCE_BUCKETS
 
 
 def _index_dirname(index_url: str) -> str:
@@ -113,6 +132,30 @@ def _require_single_segment(component: str) -> str:
         msg = f"cache key component is not a single path segment: {component!r}"
         raise ValueError(msg)
     return component
+
+
+def _add_owner_mode(path: Path, bits: int) -> None:
+    """Add ``bits`` to ``path``'s mode, leaving a symlink untouched."""
+    if path.is_symlink():
+        return
+    path.chmod(path.stat().st_mode | bits)
+
+
+def _make_removable(root: Path) -> None:
+    """Give the owner write on ``root`` and everything under it.
+
+    A clone carries read-only packfiles and an extracted archive keeps
+    the mode bits the archive declared, so either can leave a tree
+    ``rmtree`` cannot take apart. Symlinks are skipped so no chmod lands
+    outside the root.
+    """
+    _add_owner_mode(root, stat.S_IRWXU)
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        for name in dirnames:
+            _add_owner_mode(Path(dirpath, name), stat.S_IRWXU)
+        for name in filenames:
+            _add_owner_mode(Path(dirpath, name), stat.S_IWUSR)
 
 
 class OnDiskCache:
@@ -271,25 +314,39 @@ class OnDiskCache:
         """Remove any negative entry for ``package``. A miss is not an error."""
         self._neg_path(package).unlink(missing_ok=True)
 
+    def _root_children(self) -> list[Path]:
+        try:
+            return list(self._root.iterdir())
+        except OSError:
+            return []
+
     def _bucket_dirs(self) -> list[Path]:
         """Return the recognized bucket entries directly under the root.
 
         Symlinks are included so the caller can decide how to handle one
         rather than following it out of the root.
         """
-        try:
-            children = list(self._root.iterdir())
-        except OSError:
-            return []
-        return [child for child in children if is_recognized_bucket(child.name)]
+        return [
+            child for child in self._root_children() if is_recognized_bucket(child.name)
+        ]
+
+    def _entry_bucket_dirs(self) -> list[Path]:
+        """Return the bucket entries holding records nab wrote.
+
+        The source buckets are excluded: they hold upstream files, not
+        nab records.
+        """
+        return [
+            child for child in self._root_children() if _is_entry_bucket(child.name)
+        ]
 
     def iter_cache_entries(self) -> Iterator[Path]:
-        """Yield each entry file inside the recognized buckets.
+        """Yield each entry file inside the record buckets.
 
         A symlinked bucket or a symlinked file is skipped, never followed
         out of the tree.
         """
-        for bucket in self._bucket_dirs():
+        for bucket in self._entry_bucket_dirs():
             if bucket.is_symlink() or not bucket.is_dir():
                 continue
             for dirpath, _dirnames, filenames in os.walk(bucket, followlinks=False):
@@ -355,7 +412,11 @@ class OnDiskCache:
             if bucket.is_symlink():
                 bucket.unlink()
             elif bucket.is_dir():
-                shutil.rmtree(bucket)
+                try:
+                    shutil.rmtree(bucket)
+                except PermissionError:
+                    _make_removable(bucket)
+                    shutil.rmtree(bucket)
             else:
                 continue
             removed.append(bucket.name)
@@ -436,7 +497,7 @@ class CacheBackend(Protocol):
         ...
 
     def iter_cache_entries(self) -> Iterator[Path]:
-        """Yield each entry file inside the recognized buckets."""
+        """Yield each entry file inside the record buckets."""
         ...
 
     def read_cache_entry(self, path: Path) -> str | None:

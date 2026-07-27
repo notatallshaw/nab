@@ -218,10 +218,12 @@ directory uses: `cache-dir` is read off the config source ladder, so a
 
 * `nab cache dir` prints the resolved cache root to stdout, whether or
   not it exists yet.
-* `nab cache verify` walks the cache read-only and reports any corrupt
-  entry by path and reason.
-* `nab cache clear` removes every recognized bucket under the root,
-  returning the cache to cold.
+* `nab cache verify` walks the cached index records read-only and
+  reports any corrupt entry by path and reason. Cloned repositories and
+  extracted archives hold upstream files, so they are not parsed.
+* `nab cache clear` removes every bucket under the root, including the
+  cloned repositories and extracted archives, returning the cache to
+  cold.
 
 ## Runtime flags
 

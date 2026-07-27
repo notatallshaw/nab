@@ -368,6 +368,41 @@ class TestCacheClear:
         assert (root / "metadata-notes.txt").read_text() == "data"
 
 
+class TestCacheSourceTrees:
+    """The vcs and archive trees a resolve writes under the same root."""
+
+    @staticmethod
+    def _populate_source_trees(root: Path) -> None:
+        clone = root / "vcs" / "vcs" / "0123456789abcdef" / ("a" * 40)
+        clone.mkdir(parents=True)
+        (clone / "pyproject.toml").write_text("[project]\n")
+        extracted = root / "archive" / ("b" * 64)
+        extracted.mkdir(parents=True)
+        (extracted / "pyproject.toml").write_text("[project]\n")
+
+    def test_clear_returns_the_cache_to_cold(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "cache"
+        _populate(root)
+        self._populate_source_trees(root)
+        _run_cache(["clear", "--cache-dir", str(root)])
+        assert list(root.iterdir()) == []
+        assert str(root) in capsys.readouterr().err
+
+    def test_verify_and_clear_accept_a_source_only_root(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "cache"
+        self._populate_source_trees(root)
+        _run_cache(["verify", "--cache-dir", str(root)])
+        assert capsys.readouterr().err == ""
+        _run_cache(["clear", "--cache-dir", str(root)])
+        assert list(root.iterdir()) == []
+        _run_cache(["clear", "--cache-dir", str(root)])
+        assert str(root) in capsys.readouterr().err
+
+
 class TestCacheUnknownAction:
     def test_unknown_action_exits_one(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
