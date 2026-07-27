@@ -2145,6 +2145,7 @@ class TestVcsSources:
     def test_round_trip(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
+            '[tool.nab.vcs]\npolicy = "allow"\n'
             "[[tool.nab.vcs-sources]]\n"
             'name = "my-fork"\n'
             'url = "git+https://github.com/me/x.git@abc"\n',
@@ -2153,6 +2154,15 @@ class TestVcsSources:
         assert srcs == (
             VcsSource(name="my-fork", url="git+https://github.com/me/x.git@abc"),
         )
+
+    def test_declared_under_block_policy_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.vcs-sources]]\nname = "pkg"\n'
+            'url = "git+https://github.com/org/pkg.git@abc"\n',
+        )
+        with pytest.raises(ConfigError, match=r'\[tool\.nab\.vcs\]\.policy = "allow"'):
+            read_pyproject_config(path)
 
     def test_must_be_array(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nvcs-sources = "x"\n')
@@ -3958,6 +3968,7 @@ class TestWorkspaceDiscoveryIntegration:
             '[project]\nname = "ws"\nversion = "0"\n'
             "[tool.nab.workspace]\n"
             'members = ["pkg"]\n'
+            '[tool.nab.vcs]\npolicy = "allow"\n'
             "[[tool.nab.vcs-sources]]\n"
             'name = "Alpha"\n'
             'url = "git+https://github.com/me/alpha.git@abc"\n',

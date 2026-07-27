@@ -536,8 +536,10 @@ every `build-policy` level.  Dynamic dependencies require
 
 ## Pinned VCS sources
 
-`[[tool.nab.vcs-sources]]` pins a package to a VCS URL.  Each URL
-passes the same `[tool.nab.vcs]` gate as a direct-URL requirement:
+`[[tool.nab.vcs-sources]]` pins a package to a VCS URL.  Declaring one
+while `vcs.policy` is left at its default `block` is a contradiction and
+is rejected when the config is read, before any resolve starts.  Each URL
+then passes the same `[tool.nab.vcs]` gate as a direct-URL requirement:
 beyond `vcs.policy = "allow"`, the URL's scheme must be listed in
 `vcs.allowed-schemes` and its repository in `vcs.allowed-repos`, both
 empty by default so each denies every URL until an entry is added, and
