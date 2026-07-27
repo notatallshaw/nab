@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import contextlib
+import errno
 import importlib
 import io
 import json
@@ -3363,6 +3364,40 @@ class TestGroupAndExtraSelection:
                 tmp_path / "missing.toml", extras=(), all_extras=True
             )
         assert "not found" in capsys.readouterr().err
+
+    def test_all_groups_unreadable_file_surfaces_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A regular file that still raises OSError reports the real error.
+
+        Neither ``not found`` nor ``is a directory`` applies, so the errno
+        must reach the message rather than default to ``not found``.
+        """
+        pyproject = _make_pyproject(tmp_path)
+        denied = PermissionError(errno.EACCES, "Permission denied", str(pyproject))
+        with (
+            patch("nab._lock.read_pyproject_groups", side_effect=denied),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            resolve_group_selection(pyproject, groups=(), all_groups=True)
+        err = capsys.readouterr().err
+        assert "not found" not in err
+        assert "Permission denied" in err
+
+    def test_all_extras_unreadable_file_surfaces_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Symmetric guard for ``--all-extras`` on an unreadable pyproject."""
+        pyproject = _make_pyproject(tmp_path)
+        denied = PermissionError(errno.EACCES, "Permission denied", str(pyproject))
+        with (
+            patch("nab._lock.read_pyproject_optional_dependencies", side_effect=denied),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            resolve_extra_selection(pyproject, extras=(), all_extras=True)
+        err = capsys.readouterr().err
+        assert "not found" not in err
+        assert "Permission denied" in err
 
     def test_all_groups_reads_defined_groups(self, tmp_path: Path) -> None:
         """Selection equals the keys of ``[dependency-groups]``.
