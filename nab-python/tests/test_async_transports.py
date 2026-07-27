@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
 import io
 import json
 import ssl
 import tarfile
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -22,6 +23,8 @@ import respx
 import truststore
 import urllib3
 
+from nab_index.cache import NullCache
+from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import AsyncSimpleClient, _extract_sdist_files
 from nab_index.httpx_async_transport import HttpxAsyncTransport, _HttpxResponse
 from nab_index.retry import (
@@ -31,7 +34,13 @@ from nab_index.retry import (
     RETRY_STATUSES,
     next_delay,
 )
-from nab_index.transport import ContentDecodingError, HttpError, decode_body
+from nab_index.transport import (
+    AsyncHttpTransport,
+    ContentDecodingError,
+    HttpError,
+    accepts_gzip,
+    decode_body,
+)
 from nab_index.urllib3_async_transport import (
     Urllib3AsyncTransport,
     _SSLContext,
@@ -130,6 +139,50 @@ def _gzip_stub_index(bodies: list[bytes]) -> Iterator[_GzipStubIndex]:
     server = _GzipStubIndex(("127.0.0.1", 0), _GzipStubIndexHandler)
     server.bodies = list(bodies)
     server.seen = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+class _ArtifactStubIndex(ThreadingHTTPServer):
+    """Loopback index that labels a body from its filename.
+
+    ``mimetypes.guess_type("demo-1.0.tar.gz")`` reports a gzip encoding, so a
+    static file server sends the archive's own bytes under
+    ``Content-Encoding: gzip`` whatever the request asked for.
+    """
+
+    body: bytes
+    accept_encoding: list[str | None]
+
+
+class _ArtifactStubIndexHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        assert isinstance(self.server, _ArtifactStubIndex)
+        self.server.accept_encoding.append(self.headers.get("Accept-Encoding"))
+        body = self.server.body
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-tar")
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        """Drop the handler's stderr access log."""
+
+
+@contextmanager
+def _artifact_stub_index(body: bytes) -> Iterator[_ArtifactStubIndex]:
+    server = _ArtifactStubIndex(("127.0.0.1", 0), _ArtifactStubIndexHandler)
+    server.body = body
+    server.accept_encoding = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -286,6 +339,42 @@ class TestDecodeBody:
     def test_corrupt_gzip_raises(self) -> None:
         with pytest.raises(ContentDecodingError, match="truncated or corrupt"):
             decode_body(b"not gzip at all", "gzip")
+
+
+class TestAcceptsGzip:
+    """The Accept-Encoding parsing that decides whether a body is decoded."""
+
+    def test_requested_gzip(self) -> None:
+        assert accepts_gzip({"Accept-Encoding": "gzip"})
+
+    def test_requested_identity(self) -> None:
+        assert not accepts_gzip({"Accept-Encoding": "identity"})
+
+    def test_value_is_case_insensitive(self) -> None:
+        assert accepts_gzip({"Accept-Encoding": "GZip"})
+
+    def test_name_is_case_insensitive(self) -> None:
+        assert accepts_gzip({"accept-encoding": "gzip"})
+        assert not accepts_gzip({"ACCEPT-ENCODING": "identity"})
+
+    def test_caller_override_replaces_the_transport_default(self) -> None:
+        """A transport merges the caller's headers over its own ``Accept-Encoding``."""
+        assert not accepts_gzip(
+            {"Accept-Encoding": "gzip", "accept-encoding": "identity"}
+        )
+
+    def test_zero_quality_is_a_refusal(self) -> None:
+        """``q=0`` says the coding is not acceptable."""
+        assert not accepts_gzip({"Accept-Encoding": "identity, gzip;q=0"})
+
+    def test_quality_above_zero_is_a_request(self) -> None:
+        assert accepts_gzip({"Accept-Encoding": "gzip; q=0.5, identity"})
+
+    def test_unparseable_quality_is_a_refusal(self) -> None:
+        assert not accepts_gzip({"Accept-Encoding": "gzip;q=high"})
+
+    def test_absent_header(self) -> None:
+        assert not accepts_gzip({"Accept": "application/json"})
 
 
 class TestFetchCoordinatorTransport:
@@ -1309,6 +1398,97 @@ def _build_tarball(members: list[tuple[str, bytes | None]]) -> bytes:
                 info.size = len(data)
                 tar.addfile(info, io.BytesIO(data))
     return buf.getvalue()
+
+
+SDIST_BODY = _build_tarball(
+    [
+        ("demo-1.0/PKG-INFO", b"Metadata-Version: 2.2\nName: demo\nVersion: 1.0\n"),
+        ("demo-1.0/pyproject.toml", b"[project]\nname = 'demo'\n"),
+    ]
+)
+SDIST_SHA256 = hashlib.sha256(SDIST_BODY).hexdigest()
+
+TRANSPORTS = [
+    pytest.param(Urllib3AsyncTransport, id="urllib3"),
+    pytest.param(lambda: HttpxAsyncTransport(http2=False), id="httpx"),
+]
+
+
+class TestArtifactContentEncoding:
+    """An artifact body is hashed as served, so it is never content-decoded."""
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_download_returns_the_served_bytes(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _artifact_stub_index(SDIST_BODY) as server:
+            url = f"http://127.0.0.1:{server.server_port}/demo-1.0.tar.gz"
+
+            async def go() -> bytes:
+                async with AsyncSimpleClient(make_transport()) as client:
+                    return await client.download(url)
+
+            data = asyncio.run(go())
+
+        assert data == SDIST_BODY
+        assert hashlib.sha256(data).hexdigest() == SDIST_SHA256
+        assert server.accept_encoding == ["identity"]
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_sdist_files_clear_the_published_hash(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _artifact_stub_index(SDIST_BODY) as server:
+            url = f"http://127.0.0.1:{server.server_port}/demo-1.0.tar.gz"
+
+            async def go() -> tuple[str | None, str | None]:
+                async with CachedAsyncSimpleClient(
+                    make_transport(), NullCache()
+                ) as client:
+                    return await client.get_sdist_files(
+                        "demo", "1.0", url, (("sha256", SDIST_SHA256),)
+                    )
+
+            pkg_info, pyproject = asyncio.run(go())
+
+        assert pkg_info is not None
+        assert "Name: demo" in pkg_info
+        assert pyproject == "[project]\nname = 'demo'\n"
+        assert server.accept_encoding == ["identity"]
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_sdist_archive_clears_the_published_hash(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _artifact_stub_index(SDIST_BODY) as server:
+            url = f"http://127.0.0.1:{server.server_port}/demo-1.0.tar.gz"
+
+            async def go() -> bytes:
+                async with CachedAsyncSimpleClient(
+                    make_transport(), NullCache()
+                ) as client:
+                    return await client.get_sdist_archive(
+                        "demo", "1.0", url, (("sha256", SDIST_SHA256),)
+                    )
+
+            assert asyncio.run(go()) == SDIST_BODY
+
+        assert server.accept_encoding == ["identity"]
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_direct_archive_keeps_the_served_bytes(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        """The ``archive-sources`` path, whose caller checks the declared hash."""
+        with (
+            _artifact_stub_index(SDIST_BODY) as server,
+            FetchCoordinator(transport=make_transport()) as coord,
+        ):
+            url = f"http://127.0.0.1:{server.server_port}/demo-1.0.tar.gz"
+            coord.request_direct_archive("demo", SDIST_SHA256, url).wait(timeout=10)
+            assert coord.index.get_sdist_archive("demo", SDIST_SHA256) == SDIST_BODY
+
+        assert server.accept_encoding == ["identity"]
 
 
 class TestExtractSdistFiles:

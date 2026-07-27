@@ -19,7 +19,7 @@ import truststore
 import urllib3
 
 from .retry import GET_RETRY, MAX_RETRIES, next_delay
-from .transport import ContentDecodingError, HttpError, decode_body
+from .transport import ContentDecodingError, HttpError, accepts_gzip, decode_body
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -57,9 +57,9 @@ class _SSLContext(truststore.SSLContext):
 class _Urllib3Response:
     """Adapter that gives a urllib3 response the HttpResponse shape.
 
-    The body is fetched undecoded and decoded by the transport (see
-    :func:`~nab_index.transport.decode_body`), so it is carried here
-    rather than read from the urllib3 response.
+    The body is fetched undecoded, and decoded by the transport when the
+    request asked for gzip (see :func:`~nab_index.transport.decode_body`),
+    so it is carried here rather than read from the urllib3 response.
     """
 
     __slots__ = ("_content", "_response")
@@ -140,11 +140,13 @@ class Urllib3AsyncTransport:
     def _request(self, url: str, headers: dict[str, str]) -> _Urllib3Response:
         """Issue the GET on this worker thread, retrying a truncated body.
 
-        The body is fetched raw and decoded with ``decode_body``. urllib3's
-        retries cover connection errors and statuses, not a body that decodes
-        short, so that case is retried here on the same schedule.
+        The body is fetched raw, and decoded with ``decode_body`` when the
+        request asked for gzip. urllib3's retries cover connection errors and
+        statuses, not a body that decodes short, so that case is retried here
+        on the same schedule.
         """
         pool = self._pool()
+        decode = accepts_gzip(headers)
         failures = 0
 
         while True:
@@ -156,6 +158,9 @@ class Urllib3AsyncTransport:
                 retries=GET_RETRY,
                 decode_content=False,
             )
+
+            if not decode:
+                return _Urllib3Response(response, response.data)
 
             try:
                 content = decode_body(
@@ -176,7 +181,9 @@ class Urllib3AsyncTransport:
         """Send a GET request, off-loaded to a worker thread.
 
         Requests gzip; without it urllib3's stdlib base sends
-        ``Accept-Encoding: identity``, which disables compression.
+        ``Accept-Encoding: identity``, which disables compression. A caller
+        can override that with :data:`~nab_index.transport.IDENTITY_HEADERS`
+        to get the body undecoded.
         """
         request_headers = {"Accept-Encoding": "gzip"}
         if headers is not None:
