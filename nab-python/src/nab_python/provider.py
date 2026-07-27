@@ -2,7 +2,8 @@
 
 Fetches package metadata from package indexes on demand using
 nab-index, converting PEP 440/508 types into nab-resolver Range
-types.  Uses a thread pool with a shared HTTP session to overlap I/O.
+types.  A FetchCoordinator overlaps index I/O on a background
+asyncio loop.
 """
 
 from __future__ import annotations
@@ -455,9 +456,9 @@ class Provider:
     """Lazy index-backed provider for nab-resolver.
 
     Fetches version lists and .metadata from PyPI via nab-index.
-    A thread pool submits listing fetches in the background so
-    transitive deps are fetched concurrently with resolution.
-    The HTTP connection pool is shared across threads for reuse.
+    A FetchCoordinator submits listing fetches to a background
+    asyncio loop, so transitive deps are fetched concurrently with
+    resolution.
 
     ``target`` is the environment the resolve is for: its markers gate
     every dependency, its Python filters candidates by Requires-Python,
