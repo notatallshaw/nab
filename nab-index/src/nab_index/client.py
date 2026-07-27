@@ -43,6 +43,7 @@ __all__ = [
     "SdistFile",
     "SdistHashMismatchError",
     "WheelFile",
+    "WheelHashMismatchError",
     "extract_sdist_archive",
 ]
 
@@ -70,6 +71,10 @@ class MetadataHashMismatchError(Exception):
 
 class SdistHashMismatchError(Exception):
     """A fetched sdist archive did not match its published hash."""
+
+
+class WheelHashMismatchError(Exception):
+    """A range-recovered wheel's bytes did not match its published hash."""
 
 
 # Mirrors packaging.utils._build_tag_regex: PEP 427 build numbers start with a digit.

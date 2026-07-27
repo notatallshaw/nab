@@ -11,6 +11,7 @@ request at all.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import zipfile
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from nab_index.client import WheelHashMismatchError
 from nab_index.lazy_wheel import RangeOutcome
 from nab_index.transport import HttpError
 from nab_python._vendor.packaging.requirements import Requirement
@@ -38,28 +40,29 @@ _SIMPLE_URL = "https://pypi.org/simple/widget/"
 _JSON_MEDIA = "application/vnd.pypi.simple.v1+json"
 
 
-def _wheel_bytes() -> bytes:
+def _wheel_bytes(metadata: bytes = _META) -> bytes:
     """A small sidecar-less wheel holding widget's METADATA."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("widget/__init__.py", b"value = 1\n")
-        zf.writestr("widget-1.0.dist-info/METADATA", _META)
+        zf.writestr("widget-1.0.dist-info/METADATA", metadata)
         zf.writestr("widget-1.0.dist-info/WHEEL", b"Wheel-Version: 1.0\n")
     return buf.getvalue()
 
 
-def _listing_body() -> bytes:
+def _listing_body(hashes: dict[str, str] | None = None) -> bytes:
     """A Simple-API listing whose one wheel publishes no PEP 658 sidecar."""
+    entry: dict[str, object] = {
+        "filename": "widget-1.0-py3-none-any.whl",
+        "url": _WHEEL_URL,
+    }
+    if hashes is not None:
+        entry["hashes"] = hashes
     return json.dumps(
         {
             "meta": {"api-version": "1.0"},
             "name": "widget",
-            "files": [
-                {
-                    "filename": "widget-1.0-py3-none-any.whl",
-                    "url": _WHEEL_URL,
-                }
-            ],
+            "files": [entry],
         }
     ).encode("utf-8")
 
@@ -113,12 +116,18 @@ class FakeRangeTransport:
     """
 
     def __init__(
-        self, wheel: bytes, listing: bytes, *, wheel_status: int | None = None
+        self,
+        wheel: bytes,
+        listing: bytes,
+        *,
+        wheel_status: int | None = None,
+        ignore_range: bool = False,
     ) -> None:
         self.wheel = wheel
         self.total = len(wheel)
         self.listing = listing
         self.wheel_status = wheel_status
+        self.ignore_range = ignore_range
         self.requests: list[tuple[str, str | None]] = []
 
     async def get(
@@ -132,7 +141,7 @@ class FakeRangeTransport:
             return _FakeResponse(200, {"content-type": _JSON_MEDIA}, self.listing)
         if self.wheel_status is not None:
             return _FakeResponse(self.wheel_status, {}, b"")
-        if rng is None:
+        if rng is None or self.ignore_range:
             return _FakeResponse(200, {}, self.wheel)
         return self._range(rng)
 
@@ -198,6 +207,41 @@ def test_resolve_fails_when_wheel_url_unserved(tmp_path: Path) -> None:
     with (
         FetchCoordinator(transport, cache_dir=tmp_path) as coordinator,  # type: ignore[arg-type]
         pytest.raises(HttpError),
+    ):
+        _resolve(coordinator)
+
+
+def test_full_body_wheel_matching_published_hash_resolves(tmp_path: Path) -> None:
+    """A full-body wheel matching its published hash locks over rung 4."""
+    served = _wheel_bytes()
+    published = hashlib.sha256(served).hexdigest()
+    transport = FakeRangeTransport(
+        served, _listing_body({"sha256": published}), ignore_range=True
+    )
+    with FetchCoordinator(transport, cache_dir=tmp_path) as coordinator:  # type: ignore[arg-type]
+        result = _resolve(coordinator)
+        assert result.success
+        assert result.target_results[0].pins == {"widget": Version("1.0")}
+        assert coordinator.index.get_range_outcome("widget", "1.0", _WHEEL_URL) is (
+            RangeOutcome.FULL_BODY
+        )
+
+
+def test_full_body_wheel_failing_published_hash_aborts(tmp_path: Path) -> None:
+    """A full-body wheel whose bytes disagree with the published hash aborts.
+
+    The host ignores Range and returns the whole wheel; its bytes fail the
+    listing's sha256 (mirror skew, a stale hash after a rebuild), so its
+    METADATA never drives the resolve.
+    """
+    served = _wheel_bytes()
+    published = hashlib.sha256(_wheel_bytes(_META + b"skew\n")).hexdigest()
+    transport = FakeRangeTransport(
+        served, _listing_body({"sha256": published}), ignore_range=True
+    )
+    with (
+        FetchCoordinator(transport, cache_dir=tmp_path) as coordinator,  # type: ignore[arg-type]
+        pytest.raises(WheelHashMismatchError),
     ):
         _resolve(coordinator)
 

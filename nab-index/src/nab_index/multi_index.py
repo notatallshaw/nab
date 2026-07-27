@@ -92,6 +92,7 @@ class IndexClient(Protocol):
         version: str,
         wheel_url: str,
         canonical_name: NormalizedName,
+        wheel_hashes: tuple[tuple[str, str], ...] = (),
     ) -> RangeMetadataResult:
         """Recover a sidecar-less wheel's METADATA by HTTP range reads."""
         ...
@@ -267,10 +268,11 @@ class MultiIndexClient:
         version: str,
         wheel_url: str,
         canonical_name: NormalizedName,
+        wheel_hashes: tuple[tuple[str, str], ...] = (),
     ) -> RangeMetadataResult:
         """Forward to the routed client; presupposes ``get_files`` was called."""
         return await self._client_for(package).get_range_metadata(
-            package, version, wheel_url, canonical_name
+            package, version, wheel_url, canonical_name, wheel_hashes
         )
 
     def _client_for(self, package: str) -> IndexClient:

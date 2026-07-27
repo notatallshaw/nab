@@ -326,6 +326,7 @@ class CachedAsyncSimpleClient:
         version: str,
         wheel_url: str,
         canonical_name: NormalizedName,
+        wheel_hashes: tuple[tuple[str, str], ...] = (),
     ) -> RangeMetadataResult:
         """Recover a sidecar-less wheel's METADATA by HTTP range reads.
 
@@ -337,6 +338,11 @@ class CachedAsyncSimpleClient:
         the shared range-capability memo. Only a successful read is cached; an
         ``UNSUPPORTED`` or ``MISSING`` result writes nothing so the caller can
         step to the sdist rung.
+
+        When ``wheel_hashes`` carries an acceptable published digest, a
+        full-body acquisition is verified against it before its METADATA is
+        read, mirroring the sdist path. A mismatch raises
+        :class:`WheelHashMismatchError` and nothing is cached.
         """
         cached = self._cache.get_metadata(package, wheel_url)
         if cached is not None:
@@ -347,7 +353,11 @@ class CachedAsyncSimpleClient:
             raise OfflineError(msg)
 
         result = await read_wheel_metadata_over_range(
-            self._transport, wheel_url, canonical_name, self._range_memo
+            self._transport,
+            wheel_url,
+            canonical_name,
+            self._range_memo,
+            wheel_hash=_select_artifact_hash(wheel_hashes),
         )
         if result.text is not None:
             self._cache.put_metadata(package, wheel_url, result.text)

@@ -643,6 +643,7 @@ class LocalIndexClient:
         version: str,  # noqa: ARG002
         wheel_url: str,  # noqa: ARG002
         canonical_name: NormalizedName,  # noqa: ARG002
+        wheel_hashes: tuple[tuple[str, str], ...] = (),  # noqa: ARG002
     ) -> RangeMetadataResult:
         """Return the no-source result.
 
