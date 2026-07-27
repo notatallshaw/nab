@@ -19,6 +19,7 @@ from nab_index.cache import (
     NullCache,
     OfflineError,
     OnDiskCache,
+    _add_owner_mode,
     _atomic_write,
     _encode_policy,
     _index_dirname,
@@ -760,6 +761,33 @@ class TestSourceBuckets:
         assert "fixture.json" not in names
         assert "data.json" not in names
         assert "foo.json" in names
+
+
+class TestAddOwnerMode:
+    """``_add_owner_mode`` grants the owner bit but never through a symlink."""
+
+    def test_grants_the_bit_on_a_real_file(self, tmp_path: Path) -> None:
+        target = tmp_path / "packfile"
+        target.write_bytes(b"PACK")
+        target.chmod(0o444)
+        _add_owner_mode(target, stat.S_IWUSR)
+        assert target.stat().st_mode & stat.S_IWUSR
+
+    def test_leaves_a_symlink_alone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A symlink is skipped so no chmod lands outside the cache root.
+
+        ``is_symlink`` is faked rather than making a real link: creating
+        one needs a privilege Windows CI does not have, and the guard
+        must be covered on every platform.
+        """
+        target = tmp_path / "looks-like-a-link"
+        target.write_bytes(b"x")
+        target.chmod(0o444)
+        monkeypatch.setattr(Path, "is_symlink", lambda _self: True)
+        _add_owner_mode(target, stat.S_IWUSR)
+        assert not target.stat().st_mode & stat.S_IWUSR
 
 
 class TestNullCacheEnumeration:
