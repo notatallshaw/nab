@@ -339,8 +339,9 @@ def _locked_target_path(output: Path | None) -> Path:
 def _read_committed_pylock(target: Path) -> Pylock:
     """Read and parse the committed pylock, exiting on a precondition failure.
 
-    A missing lock, a non-TOML file, and a file that parses as TOML but not
-    as a PEP 751 lock each exit non-zero here, before any resolve runs.
+    A missing lock, an unreadable lock (a directory or a permission-denied
+    file), a non-TOML file, and a file that parses as TOML but not as a PEP 751
+    lock each exit non-zero here, before any resolve runs.
     """
     if not target.exists():
         _cli.printer().error(
@@ -349,6 +350,9 @@ def _read_committed_pylock(target: Path) -> Pylock:
         sys.exit(1)
     try:
         data = tomli.loads(target.read_text(encoding="utf-8"))
+    except OSError as e:
+        _cli.printer().error(f"--locked: cannot read lockfile {target}: {e}.")
+        sys.exit(1)
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
         _cli.printer().error(
             f"--locked: lockfile {target} is not valid TOML: {e};"
