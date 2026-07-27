@@ -233,10 +233,17 @@ def _scan_pep503_directory(
 
     parser = _Pep503Parser()
     parser.feed(text)
+    base_url: str | None = None
     if parser.base_href is not None:
-        base_url: str | None = urljoin(index_html.as_uri(), parser.base_href)
-    else:
-        base_url = None
+        # A base href every relative anchor resolves against, so one that
+        # cannot be parsed leaves the whole page's targets unknown. Fail
+        # loudly rather than fall back to the package directory, which
+        # would resolve each link to a different file than the page names.
+        try:
+            base_url = urljoin(index_html.as_uri(), parser.base_href)
+        except ValueError as exc:
+            msg = f"{index_html} has an unparseable <base href>: {exc}"
+            raise MalformedLocalListingError(msg) from exc
 
     files: list[WheelFile | SdistFile] = []
     for href, requires_python, has_metadata in parser.links:
@@ -282,9 +289,16 @@ def _resolve_local_link(
     """
     href_no_frag, _, fragment = href.partition("#")
     hashes = _parse_pep503_hash_fragment(fragment)
-    if base_url is not None:
-        href_no_frag = urljoin(base_url, href_no_frag)
-    parsed = urlparse(href_no_frag)
+
+    # A malformed authority (an unterminated IPv6 bracket) makes both of
+    # these raise, so the drop guard has to start here rather than at the
+    # path resolution below.
+    try:
+        if base_url is not None:
+            href_no_frag = urljoin(base_url, href_no_frag)
+        parsed = urlparse(href_no_frag)
+    except ValueError:
+        return (None, href_no_frag, None, hashes)
 
     if parsed.scheme in {"http", "https"}:
         filename = unquote(parsed.path.rsplit("/", 1)[-1]) or None
