@@ -66,6 +66,7 @@ from nab_python.provider import (
     InvalidUploadTimeError,
     MetadataError,
     MissingExtraError,
+    SiblingMetadataDivergenceError,
     SourceNameMismatchError,
     UnsupportedVcsError,
 )
@@ -571,7 +572,12 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     except ResolutionError as e:
         printer().error(f"resolution failed: {e}")
         sys.exit(1)
-    except (UnsupportedVcsError, MissingExtraError, SourceNameMismatchError) as e:
+    except (
+        UnsupportedVcsError,
+        MissingExtraError,
+        SiblingMetadataDivergenceError,
+        SourceNameMismatchError,
+    ) as e:
         printer().error(f"{failure_prefix}: {e}")
         sys.exit(1)
     except InvalidUploadTimeError as e:

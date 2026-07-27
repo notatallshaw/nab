@@ -67,6 +67,7 @@ from nab_python.provider import (
     InvalidUploadTimeError,
     MissingExtraError,
     ResolutionStrategy,
+    SiblingMetadataDivergenceError,
     UnsupportedVcsError,
 )
 from nab_python.requirements_file import InvalidProjectRequirementError
@@ -747,6 +748,33 @@ class TestLockCommandSpecific:
         err = capsys.readouterr().err
         assert "cannot lock" in err
         assert "does not provide extra 'nonexistent'" in err
+        assert "Traceback" not in err
+
+    def test_sibling_metadata_divergence_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A version whose tie-ranked wheels disagree on deps exits 1, not a traceback.
+
+        ``SiblingMetadataDivergenceError`` is not a ``MetadataError``, so the CLI
+        must name it in the exit handlers rather than rely on the ``MetadataError``
+        branch.
+        """
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                side_effect=SiblingMetadataDivergenceError(
+                    "foo 1.0 has tie-ranked wheels foo-1.0-cp311.cp312-none-any.whl "
+                    "and foo-1.0-cp312.cp313-none-any.whl that declare different "
+                    "dependencies for this target"
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+        err = capsys.readouterr().err
+        assert "cannot lock" in err
+        assert "tie-ranked wheels" in err
         assert "Traceback" not in err
 
     def test_metadata_hash_mismatch_exits(
