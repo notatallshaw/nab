@@ -130,12 +130,13 @@ per-index override instead:
 build-policy = "build-remote"
 ```
 
-A build-policy override for a local checkout or VCS clone is matched by
-bare name only.  A source build is decided before any version is
-resolved, so a version-scoped per-package override (a quoted
-`"name <specifier>"` key) does not govern a local or VCS source build,
-and per-index overrides do not apply to sources (a local source has no
-serving index).  Use a bare-name key to govern a source build.
+A build-policy override for a local checkout, VCS clone, or archive
+source is matched by bare name only.  A source build is decided before
+any version is resolved, so a version-scoped per-package override (a
+quoted `"name <specifier>"` key) does not govern a local, VCS, or
+archive source build, and per-index overrides do not apply to sources
+(a local source has no serving index).  Use a bare-name key to govern
+a source build.
 
 ## A declared platform forbids host builds
 
