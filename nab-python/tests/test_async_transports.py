@@ -166,6 +166,14 @@ def thread_slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return delays
 
 
+def _assert_jittered_backoff_schedule(delays: list[float]) -> None:
+    """The full three-retry schedule: immediate, then 0.5 and 1.0 plus jitter."""
+    assert len(delays) == MAX_RETRIES
+    assert delays[0] == 0.0
+    assert 0.5 <= delays[1] < 0.5 + GET_RETRY.backoff_jitter
+    assert 1.0 <= delays[2] < 1.0 + GET_RETRY.backoff_jitter
+
+
 class TestRetryPolicy:
     """The retry policy both transports share."""
 
@@ -204,8 +212,17 @@ class TestRetryPolicy:
         assert GET_RETRY.raise_on_status is False
 
     def test_backoff_grows_between_attempts(self) -> None:
-        """The first retry is immediate, then urllib3's exponential schedule."""
-        assert [next_delay(n) for n in (1, 2, 3)] == [0.0, 0.5, 1.0]
+        """The first retry is immediate, then urllib3's exponential schedule plus jitter."""
+        assert next_delay(1) == 0.0
+        assert 0.5 <= next_delay(2) < 0.5 + GET_RETRY.backoff_jitter
+        assert 1.0 <= next_delay(3) < 1.0 + GET_RETRY.backoff_jitter
+
+    def test_backoff_carries_jitter_to_desynchronize_retries(self) -> None:
+        """Repeated backoff for one failure count spreads across the jitter window."""
+        assert GET_RETRY.backoff_jitter > 0.0
+        delays = {next_delay(2) for _ in range(200)}
+        assert len(delays) > 1
+        assert all(0.5 <= d < 0.5 + GET_RETRY.backoff_jitter for d in delays)
 
     def test_retry_after_overrides_backoff(self) -> None:
         assert next_delay(1, "2") == 2.0
@@ -216,7 +233,7 @@ class TestRetryPolicy:
         assert GET_RETRY.get_retry_after(_urllib3_response(503, "3600")) == 10.0
 
     def test_unparseable_retry_after_falls_back_to_backoff(self) -> None:
-        assert next_delay(2, "soon") == 0.5
+        assert 0.5 <= next_delay(2, "soon") < 0.5 + GET_RETRY.backoff_jitter
         assert GET_RETRY.get_retry_after(_urllib3_response(503, "soon")) is None
 
     def test_absent_retry_after_falls_back_to_backoff(self) -> None:
@@ -559,7 +576,7 @@ class TestHttpxAsyncTransport:
 
         resp = asyncio.run(go())
         assert route.call_count == MAX_RETRIES + 1
-        assert slept == [0.0, 0.5, 1.0]
+        _assert_jittered_backoff_schedule(slept)
         with pytest.raises(HttpError, match="503"):
             resp.raise_for_status()
 
@@ -581,7 +598,7 @@ class TestHttpxAsyncTransport:
         with pytest.raises(HttpError, match="GET https://example.com/pkg failed"):
             asyncio.run(go())
         assert route.call_count == MAX_RETRIES + 1
-        assert slept == [0.0, 0.5, 1.0]
+        _assert_jittered_backoff_schedule(slept)
 
     @pytest.mark.parametrize(
         "url",
@@ -711,7 +728,7 @@ class TestHttpxAsyncTransport:
         with pytest.raises(HttpError, match="GET https://example.com/pkg failed"):
             asyncio.run(go())
         assert route.call_count == MAX_RETRIES + 1
-        assert slept == [0.0, 0.5, 1.0]
+        _assert_jittered_backoff_schedule(slept)
 
     @respx.mock
     def test_get_requests_gzip_without_caller_headers(self) -> None:
@@ -1116,7 +1133,7 @@ class TestUrllib3AsyncTransport:
             with pytest.raises(HttpError, match=f"GET {url} failed"):
                 asyncio.run(go())
             assert len(index.seen) == MAX_RETRIES + 1
-            assert thread_slept == [0.0, 0.5, 1.0]
+            _assert_jittered_backoff_schedule(thread_slept)
 
     def test_response_json(self) -> None:
         fake = MagicMock(spec=urllib3.BaseHTTPResponse)

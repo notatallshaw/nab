@@ -10,6 +10,8 @@ transports take the policy here instead of their library's default.
 
 from __future__ import annotations
 
+import random
+
 import urllib3
 from urllib3.exceptions import InvalidHeader
 
@@ -32,6 +34,10 @@ RETRY_STATUSES = frozenset({429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 52
 """Statuses that are retried; any other status is served to the caller."""
 
 _BACKOFF_FACTOR = 0.25
+
+# Without a random spread, requests throttled together retry in lockstep and
+# re-trigger the throttle.
+_BACKOFF_JITTER = 0.25
 
 # Unbounded, a "Retry-After: 3600" would park the resolve for an hour.
 _RETRY_AFTER_MAX_SECONDS = 10.0
@@ -66,6 +72,7 @@ GET_RETRY = _BoundedRetry(
     redirect=MAX_REDIRECTS,
     status_forcelist=RETRY_STATUSES,
     backoff_factor=_BACKOFF_FACTOR,
+    backoff_jitter=_BACKOFF_JITTER,
     # Once the budget is spent, hand the response back so the caller sees the
     # status the index served rather than a retry error.
     raise_on_status=False,
@@ -80,4 +87,5 @@ def next_delay(failures: int, retry_after: str | None = None) -> float:
             return seconds
     if failures <= 1:
         return 0.0
-    return _BACKOFF_FACTOR * 2 ** (failures - 1)
+    backoff = _BACKOFF_FACTOR * 2 ** (failures - 1)
+    return backoff + random.random() * _BACKOFF_JITTER  # noqa: S311
