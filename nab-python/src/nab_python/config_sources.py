@@ -1472,6 +1472,7 @@ def discover_layers(
     roots: SourceRoots,
     *,
     rejections: list[RejectedLayer] | None = None,
+    read_pyproject: bool = True,
 ) -> list[Layer]:
     """Read every present TOML source into ordered layers (low -> high).
 
@@ -1480,8 +1481,12 @@ def discover_layers(
     absent.  Hermetic: the caller supplies the roots, so nothing touches
     the real ``~/.config``.  There is no walk-up: the project source is
     the pyproject directory only.
+
+    ``read_pyproject=False`` drops the pyproject layer while keeping the
+    project-dir ``nab.toml``, for a caller reading a USER-scope option
+    the category gate bars pyproject from setting.
     """
-    if roots.project_dir is None:
+    if roots.project_dir is None or not read_pyproject:
         pyproject_path = None
     elif roots.pyproject is not None:
         pyproject_path = roots.pyproject

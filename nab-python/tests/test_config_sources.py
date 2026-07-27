@@ -612,6 +612,15 @@ class TestDiscoverAndMissing:
         with pytest.raises(SourceConfigError, match="not a regular file"):
             discover_layers(SourceRoots(project_dir=tmp_path))
 
+    def test_read_pyproject_false_keeps_project_nab_toml(self, tmp_path: Path) -> None:
+        _write(tmp_path / "pyproject.toml", "[project\n")
+        _write(tmp_path / "nab.toml", 'resolution = "lowest"\n')
+        layers = discover_layers(
+            SourceRoots(project_dir=tmp_path), read_pyproject=False
+        )
+        assert [layer.origin.kind for layer in layers] == [SourceKind.PROJECT_TOML]
+        assert layers[0].values["resolution"] is ResolutionStrategy.LOWEST
+
 
 class TestRenderers:
     def test_render_list(self, tmp_path: Path) -> None:

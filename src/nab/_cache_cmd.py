@@ -12,14 +12,21 @@ files.
 from __future__ import annotations
 
 import sys
-from pathlib import Path  # noqa: TC003 - tyro evaluates the flag annotations at runtime
+from pathlib import Path
 from typing import Annotated
 
 import tyro
 
 from nab_index.cache import OnDiskCache, is_recognized_bucket
+from nab_python.config_sources import SourceConfigError
 
-from .cli import _default_cache_dir, app, printer
+from .cli import (
+    _default_cache_dir,
+    _fail_config,
+    app,
+    effective_config,
+    printer,
+)
 
 ActionArg = Annotated[str, tyro.conf.Positional]
 
@@ -36,7 +43,7 @@ def cache_command(
     walks the cache read-only and reports corrupt entries. ``nab cache
     clear`` removes every recognized bucket.
     """
-    root = cache_dir if cache_dir is not None else _default_cache_dir()
+    root = _cache_root(cache_dir)
     if action == "dir":
         sys.stdout.write(f"{root}\n")
         return
@@ -50,6 +57,27 @@ def cache_command(
         f"unknown cache action {action!r}; expected one of 'dir', 'verify', 'clear'"
     )
     sys.exit(1)
+
+
+def _cache_root(cache_dir: Path | None) -> Path:
+    """Resolve the cache root a run in this directory would use.
+
+    ``--cache-dir`` is answered without reading any config, so the
+    maintenance verbs still work when a project file is broken.
+    Otherwise ``cache-dir`` comes off the ladder rooted at the current
+    directory, minus the pyproject layer: the key is USER scope, which
+    the category gate bars pyproject from setting.
+    """
+    if cache_dir is not None:
+        return cache_dir
+
+    try:
+        effective = effective_config(Path("pyproject.toml"), read_pyproject=False)
+    except SourceConfigError as exc:
+        _fail_config(exc)
+
+    configured = effective["cache-dir"].value
+    return _default_cache_dir() if configured is None else configured
 
 
 def _verify(root: Path) -> None:

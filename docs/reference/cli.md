@@ -211,8 +211,10 @@ See [Configuration](configuration.md) for the source ladder and the
 ## `nab cache`
 
 Inspect and clear the on-disk cache. It takes one location selector,
-`--cache-dir PATH`, defaulting to the same root a run uses. Three
-actions:
+`--cache-dir PATH`. Without it the root is the one a run in the same
+directory uses: `cache-dir` is read off the config source ladder, so a
+`nab.toml` or `NAB_CACHE_DIR` sets it too (see
+[Configuration](configuration.md)). Three actions:
 
 * `nab cache dir` prints the resolved cache root to stdout, whether or
   not it exists yet.
