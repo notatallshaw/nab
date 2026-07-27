@@ -1149,6 +1149,10 @@ class FetchCoordinator:
         holds. Any other failure is recorded as an error, because a file the
         listing advertised and the index then failed to serve is not the same as
         a file that does not exist.
+
+        A listing that is already stored keeps it: the fetch succeeded, and the
+        work that raised ran after the waiter woke, so recording an error would
+        make the outcome depend on which thread reads the index first.
         """
         offline = isinstance(exc, OfflineError)
 
@@ -1158,7 +1162,7 @@ class FetchCoordinator:
                 # pending event (see _fetch_listing).
                 self._record_serving_index(client, req.package)
                 self.index.store_listing(req.package, [])
-            else:
+            elif self.index.get_listing(req.package) is None:
                 self.index.store_listing_error(req.package, exc)
             return
 

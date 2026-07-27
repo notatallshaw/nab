@@ -452,6 +452,23 @@ class TestFetchCoordinator:
         assert calls == [1]
 
     @respx.mock
+    def test_listing_survives_a_failure_raised_after_it_is_stored(self) -> None:
+        """A failure raised after the listing is stored records no error."""
+        respx.get("https://pypi.org/simple/testpkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+
+        def on_fetch() -> None:
+            msg = "progress sink closed"
+            raise RuntimeError(msg)
+
+        with _coord(on_fetch=on_fetch) as coord:
+            assert coord.request_listing("testpkg").wait(timeout=5)
+
+        assert coord.index.get_listing("testpkg") is not None
+        assert coord.index.get_listing_error("testpkg") is None
+
+    @respx.mock
     def test_request_listing_cached(self) -> None:
         with _coord() as coord:
             coord.index.store_listing("cached", ["data"])
@@ -647,6 +664,53 @@ class TestFetchCoordinator:
 
         # The newest PREFETCH_METADATA_COUNT wheels, not all 15.
         assert derived == [f"pkg-{n}.0-py3-none-any.whl" for n in range(6, 16)]
+
+    @respx.mock
+    def test_listing_entry_with_unsplittable_url_is_dropped(self) -> None:
+        """Only the entry whose URL urllib cannot split is dropped."""
+        listing = {
+            "meta": {"api-version": "1.0"},
+            "name": "pkg",
+            "files": [
+                {
+                    "filename": "pkg-1.0-py3-none-any.whl",
+                    "url": "https://[2001:db8::1/pkg-1.0-py3-none-any.whl",
+                    "core-metadata": True,
+                },
+                *(
+                    {
+                        "filename": f"pkg-{n}.0-py3-none-any.whl",
+                        "url": f"https://f.com/pkg-{n}.0-py3-none-any.whl",
+                        "core-metadata": True,
+                    }
+                    for n in (2, 3)
+                ),
+            ],
+        }
+
+        respx.get("https://pypi.org/simple/pkg/").mock(
+            return_value=httpx.Response(200, json=listing)
+        )
+        respx.get(url__regex=r".*\.whl\.metadata$").mock(
+            return_value=httpx.Response(200, text="Metadata-Version: 2.1\n")
+        )
+
+        with _coord() as coord:
+            assert coord.request_listing("pkg").wait(timeout=5)
+
+        # Read after the fetcher thread joins, so the prefetch that follows
+        # store_listing has finished.
+        files = coord.index.get_listing("pkg")
+        assert files is not None
+        assert [f.version for f in files] == ["2.0", "3.0"]
+        assert coord.index.get_listing_error("pkg") is None
+
+        for version in ("2.0", "3.0"):
+            sidecar = f"https://f.com/pkg-{version}-py3-none-any.whl.metadata"
+            _, prefetched = coord.index.get_or_create_pending(
+                f"metadata:pkg:{version}:{sidecar}"
+            )
+            assert prefetched
 
     @respx.mock
     def test_fetch_error_logged_not_raised(self) -> None:
