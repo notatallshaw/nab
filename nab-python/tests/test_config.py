@@ -88,6 +88,20 @@ def universal_mode_section() -> str:
     return match.group(0)
 
 
+def default_groups_doc_comment() -> str:
+    """Return the comment above ``default-groups`` in the config reference."""
+    lines = first_tool_nab_example().splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("default-groups"):
+            comment: list[str] = []
+            j = i - 1
+            while j >= 0 and lines[j].lstrip().startswith("#"):
+                comment.insert(0, lines[j].lstrip("# ").rstrip())
+                j -= 1
+            return " ".join(comment)
+    raise AssertionError("no default-groups key in the config reference example")
+
+
 class TestCliOverridesFold:
     """``--project-*`` overrides fold into the resolved config."""
 
@@ -743,6 +757,12 @@ class TestDefaultGroups:
         path = write(tmp_path, "[tool.nab]\ndefault-groups = [1]\n")
         with pytest.raises(ConfigError, match="default-groups\\[0\\] must be a string"):
             read_pyproject_config(path)
+
+    def test_doc_describes_resolve_activation(self) -> None:
+        # default-groups activates the groups for the resolve, not just records
+        # them in the lockfile, so the reference has to say so.
+        comment = default_groups_doc_comment().lower()
+        assert any(word in comment for word in ("resolve", "activat")), comment
 
 
 class TestRequiresPython:
