@@ -111,6 +111,36 @@ def _write_corrupt_wheel(path: Path, name: str, version: str) -> None:
     path.write_bytes(bytes(raw))
 
 
+def _write_corrupt_lzma_wheel(path: Path, name: str, version: str) -> None:
+    """Write a wheel whose LZMA-compressed METADATA holds a corrupt stream.
+
+    The central directory and the member's LZMA header stay intact, so the archive
+    opens and lists its members; only the raw stream after the header is overwritten,
+    which lzma rejects when it decodes METADATA.
+    """
+    member = f"{name}-{version}.dist-info/METADATA"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_LZMA) as zf:
+        zf.writestr(
+            member,
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            "Requires-Python: >=3.12\n",
+        )
+    with zipfile.ZipFile(path) as zf:
+        info = zf.getinfo(member)
+
+    # Local file header is 30 fixed bytes plus name and extra fields; the ZIP LZMA
+    # member then has a 4-byte header and props before the raw stream.
+    raw = bytearray(path.read_bytes())
+    name_len, extra_len = struct.unpack_from("<HH", raw, info.header_offset + 26)
+    start = info.header_offset + 30 + name_len + extra_len
+    props_size = struct.unpack_from("<H", raw, start + 2)[0]
+    payload = start + 4 + props_size
+    raw[payload : start + info.compress_size] = b"\xff" * (
+        start + info.compress_size - payload
+    )
+    path.write_bytes(bytes(raw))
+
+
 def _write_corrupt_sdist(path: Path, name: str, version: str) -> None:
     """Write an sdist whose PKG-INFO body is behind a corrupt deflate block.
 
@@ -388,6 +418,13 @@ class TestFlatWheelhouse:
         _write_encrypted_metadata_wheel(
             tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0"
         )
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
+    def test_requires_python_none_for_corrupt_lzma(self, tmp_path: Path) -> None:
+        _write_corrupt_lzma_wheel(tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0")
         client = LocalIndexClient(tmp_path.as_uri())
         files = run(client.get_files("foo"))
         assert len(files) == 1
@@ -969,6 +1006,11 @@ class TestReadWheelMetadata:
     def test_returns_none_for_encrypted_member(self, tmp_path: Path) -> None:
         wheel = tmp_path / "foo-1.0-py3-none-any.whl"
         _write_encrypted_metadata_wheel(wheel, "foo", "1.0")
+        assert read_wheel_metadata(wheel) is None
+
+    def test_returns_none_for_corrupt_lzma(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_corrupt_lzma_wheel(wheel, "foo", "1.0")
         assert read_wheel_metadata(wheel) is None
 
     def test_returns_none_for_non_wheel_filename(self, tmp_path: Path) -> None:

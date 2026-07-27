@@ -20,6 +20,7 @@ multi-index router can treat local and remote indexes uniformly.
 
 from __future__ import annotations
 
+import lzma
 import re
 import sys
 import zipfile
@@ -382,6 +383,7 @@ def _read_wheel_requires_python(wheel_path: Path, expected: str) -> str | None:
         OSError,
         UnsupportedWheelError,
         zlib.error,
+        lzma.LZMAError,
         RuntimeError,
     ):
         return None
@@ -457,7 +459,14 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
             if member is None:
                 return None
             return zf.read(member).decode("utf-8")
-    except (zipfile.BadZipFile, OSError, UnicodeDecodeError, zlib.error, RuntimeError):
+    except (
+        zipfile.BadZipFile,
+        OSError,
+        UnicodeDecodeError,
+        zlib.error,
+        lzma.LZMAError,
+        RuntimeError,
+    ):
         return None
 
 
