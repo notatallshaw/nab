@@ -138,8 +138,7 @@ flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
 `--project-default-group`. Each changes the resolved set, so passing one
 prints a reproducibility notice on stderr and records the override in the
 lockfile's `[tool.nab]` block, since the lock no longer derives from the
-committed files alone. `--project-resolution` was previously named
-`--resolution`.
+committed files alone.
 
 `--locked` re-resolves and checks that the committed `pylock.toml` is
 already up to date, writing nothing. It exits non-zero if the lock would
