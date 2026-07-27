@@ -22,6 +22,7 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelFile,
 )
+from nab_index.transport import HttpError
 
 from ._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from ._provider import extras as _extras
@@ -1979,13 +1980,15 @@ class Provider:
         except (
             SdistHashMismatchError,
             MetadataHashMismatchError,
+            HttpError,
             UnsupportedVcsError,
             NotImplementedError,
             InvalidUploadTimeError,
             OverrideConflictError,
         ):
-            # A hash mismatch, refused direct-URL dep, naive upload-time hit, or
-            # a contradictory config override while building an sdist is a hard
+            # A hash mismatch, a build-remote archive the index failed to serve,
+            # a refused direct-URL dep, a naive upload-time hit, or a
+            # contradictory config override while building an sdist is a hard
             # error, not a skip.
             raise
         except Exception as exc:
