@@ -1231,18 +1231,32 @@ def _parse_string_list(key: str, value: object) -> tuple[str, ...]:
     return tuple(out)
 
 
-def _require_pep508(key: str, item: str) -> None:
+def _require_constraint(key: str, item: str) -> None:
+    """Validate one ``constraints`` entry's shape.
+
+    A constraint is a name with an optional specifier and marker; it bounds
+    versions but never pulls a package in, so extras and direct-reference
+    URLs are rejected here rather than only at resolve.
+    """
     try:
-        Requirement(item)
+        req = Requirement(item)
     except InvalidRequirement as exc:
         msg = f"{key} is not a valid requirement: {exc}"
         raise ConfigError(msg) from exc
+
+    if req.extras:
+        msg = f"{key} cannot have extras: {item}"
+        raise ConfigError(msg)
+
+    if req.url is not None:
+        msg = f"{key} cannot be a direct reference (URL): {item}"
+        raise ConfigError(msg)
 
 
 def _parse_constraints(value: object) -> tuple[str, ...]:
     items = _parse_string_list("constraints", value)
     for i, item in enumerate(items):
-        _require_pep508(f"constraints[{i}]", item)
+        _require_constraint(f"constraints[{i}]", item)
     return items
 
 
