@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from unittest.mock import MagicMock
+from urllib.parse import urljoin
 
 import httpx
 import pytest
@@ -803,6 +804,34 @@ class TestUrllib3AsyncTransport:
 
         with pytest.raises(HttpError, match="GET https://x/ failed"):
             asyncio.run(go())
+
+    def test_get_wraps_malformed_ipv6_redirect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A redirect to a malformed-IPv6 Location maps to HttpError."""
+        pool = MagicMock(spec=urllib3.PoolManager)
+
+        def follow_redirect(method: str, url: str, **kwargs: object) -> object:
+            return urljoin(url, "https://[::1/pkg/")
+
+        pool.request.side_effect = follow_redirect
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager",
+            lambda **kw: pool,
+        )
+
+        async def go() -> None:
+            transport = Urllib3AsyncTransport()
+            try:
+                await transport.get("https://example.com/simple/pkg/")
+            finally:
+                await transport.aclose()
+
+        with pytest.raises(
+            HttpError, match="GET https://example.com/simple/pkg/ failed"
+        ) as excinfo:
+            asyncio.run(go())
+        assert isinstance(excinfo.value.__cause__, ValueError)
 
     def test_get_requests_gzip_without_caller_headers(
         self, monkeypatch: pytest.MonkeyPatch
