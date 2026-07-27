@@ -6210,7 +6210,7 @@ class TestDistPolicy:
         assert not provider.has_invalid_metadata("pkg", V("1.0"))
 
     def test_sdist_no_pkg_info_raises(self) -> None:
-        """Raise MetadataError when PKG-INFO cannot be extracted."""
+        """Report an unreadable sdist PKG-INFO, not a missing sdist."""
         coordinator = make_coordinator(
             [make_sdist("1.0")],
             sdist_pkg_info=None,
@@ -6220,8 +6220,11 @@ class TestDistPolicy:
             target=_PY312,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
         )
-        with pytest.raises(MetadataError):
+        with pytest.raises(
+            MetadataError, match="the sdist has no readable PKG-INFO"
+        ) as excinfo:
             provider.get_dependencies("pkg", V("1.0"))
+        assert "no sdist available" not in str(excinfo.value)
 
     def test_no_pep658_with_no_dist_policy_raises(self) -> None:
         """Raise MetadataError when no PEP 658 and sdists disabled."""
