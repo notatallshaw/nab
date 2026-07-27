@@ -7996,12 +7996,13 @@ class TestBuildRemoteFailureModes:
         *,
         with_sdist: bool,
         overrides: tuple[PackageOverride, ...] = (),
+        target: ResolveTarget = _PY312,
     ) -> Provider:
         files = [make_sdist("1.0")] if with_sdist else [make_wheel("1.0")]
         coordinator = make_coordinator(files, package="pkg")
         return Provider(
             coordinator,
-            target=_PY312,
+            target=target,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_REMOTE,
             package_overrides=overrides,
@@ -8149,8 +8150,9 @@ class TestBuildRemoteFailureModes:
         built: object,
         *,
         overrides: tuple[PackageOverride, ...] = (),
+        target: ResolveTarget = _PY312,
     ) -> Provider:
-        provider = self._provider(with_sdist=True, overrides=overrides)
+        provider = self._provider(with_sdist=True, overrides=overrides, target=target)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
         def _ok_fetch(
@@ -8212,7 +8214,39 @@ class TestBuildRemoteFailureModes:
             provides_extra=[],
         )
         provider = self._build_into(monkeypatch, built)
-        provider.python_version = None
+        provider.target = None
+        result = build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+        assert result is built
+
+    def test_prerelease_target_admits_matching_requires_python(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built = WheelMetadata(
+            name="pkg",
+            version=V("1.0"),
+            requires_python=SpecifierSet(">=3.14"),
+            requires_dist=[Requirement("dep-a>=1")],
+            provides_extra=[],
+        )
+        provider = self._build_into(
+            monkeypatch, built, target=ResolveTarget.for_host_python("3.14.0rc1")
+        )
+        result = build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+        assert result is built
+
+    def test_bare_minor_target_admits_micro_floor_requires_python(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built = WheelMetadata(
+            name="pkg",
+            version=V("1.0"),
+            requires_python=SpecifierSet(">=3.9.2"),
+            requires_dist=[Requirement("dep-a>=1")],
+            provides_extra=[],
+        )
+        provider = self._build_into(
+            monkeypatch, built, target=ResolveTarget.for_host_python("3.9")
+        )
         result = build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
         assert result is built
 

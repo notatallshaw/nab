@@ -24,11 +24,11 @@ from nab_index.client import SdistFile, WheelFile, extract_sdist_archive
 
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
-from .._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
     from ..provider import Provider
 
@@ -98,15 +98,19 @@ def build_remote_sdist(
             msg = f"{package}=={version} build-remote backend failed: {exc}"
             raise UnsupportedSdistError(msg) from exc
 
-    target = provider.python_version
+    target = provider.target
     override_rp = provider.effective_requires_python(canonical, version)
     spec = (
         SpecifierSet(override_rp) if override_rp is not None else built.requires_python
     )
-    if spec is not None and target and Version(target) not in spec:
+    if (
+        spec is not None
+        and target is not None
+        and not target.admits_requires_python(spec)
+    ):
         msg = (
             f"{package}=={version} built sdist requires Python {spec} but the"
-            f" resolve targets Python {target}"
+            f" resolve targets Python {target.python_full_version}"
         )
         raise UnsupportedSdistError(msg)
     if canonicalize_name(built.name) != canonical or built.version != version:
