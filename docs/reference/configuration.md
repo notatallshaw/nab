@@ -831,11 +831,10 @@ only; there is no walk-up.
 
 `nab config` reports the *configured* value for each key. Two keys take
 a value derived from other config at resolve time, so the resolved
-value can differ from what `nab config` shows: `build-policy` floors to
-`never` under `mode = "universal"` (and promotes workspace members to
-`build-local`), and `local-sources` gains the workspace members found
-by discovery. `nab config` shows the value as written, like
-`git config` reporting configured rather than derived state.
+value can differ from what `nab config` shows: `build-policy` is forced
+to `never` under `mode = "universal"`, and `local-sources` gains the
+workspace members found by discovery. `nab config` shows the value as
+written, like `git config` reporting configured rather than derived state.
 
 ### Environment variables
 
