@@ -688,6 +688,74 @@ class TestPep503Directory:
         assert isinstance(caught.value, HttpError)
         assert "not valid UTF-8" in str(caught.value)
 
+    def test_pep503_non_local_file_href_dropped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A file:// href a local client cannot serve (non-local authority)
+        # drops just that anchor; the rest of the listing is kept.
+        monkeypatch.setattr(sys, "platform", "linux")
+        body = (
+            '<a href="file://otherhost/foo-1.0-py3-none-any.whl">foo-1.0</a>'
+            '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert [r.version for r in result] == ["2.0"]
+
+    def test_pep503_null_byte_href_dropped(self, tmp_path: Path) -> None:
+        # A percent-encoded null byte makes path resolution raise ValueError;
+        # drop that anchor and keep the good sibling wheel.
+        body = (
+            '<a href="foo%001.0.whl">foo-bad</a>'
+            '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert [r.version for r in result] == ["2.0"]
+
+    def test_pep503_malformed_ipv6_href_dropped(self, tmp_path: Path) -> None:
+        # An unterminated IPv6 bracket makes urlparse raise ValueError before
+        # the scheme is even known; drop that anchor and keep the sibling.
+        body = (
+            '<a href="http://[bad">foo-bad</a>'
+            '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert [r.version for r in result] == ["2.0"]
+
+    def test_pep503_malformed_ipv6_href_under_valid_base_dropped(
+        self, tmp_path: Path
+    ) -> None:
+        # Under a usable <base href> the join is what raises, one call earlier
+        # than urlparse. Both sit under the same guard, so the anchor is dropped
+        # and its good sibling is kept.
+        body = (
+            '<base href="https://mirror.example/simple/foo/">'
+            '<a href="http://[bad">foo-bad</a>'
+            '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'
+        )
+        self._make_index(tmp_path, body)
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert [r.version for r in result] == ["2.0"]
+
+    def test_pep503_malformed_base_href_raises(self, tmp_path: Path) -> None:
+        # A <base href> that cannot be parsed leaves every relative anchor's
+        # target unknown, so the page fails rather than silently resolving
+        # links against the package directory instead.
+        body = '<base href="http://[bad"><a href="foo-1.0-py3-none-any.whl">foo-1.0</a>'
+        self._make_index(tmp_path, body)
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(MalformedLocalListingError, match="base href"):
+            run(client.get_files("foo"))
+
     def test_file_scheme_href(self, tmp_path: Path) -> None:
         # Uncommon but legal: a file:// scheme on the anchor
         wheel_path = tmp_path / "foo" / "foo-1.0-py3-none-any.whl"
