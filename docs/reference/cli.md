@@ -252,9 +252,10 @@ The verbosity, colour, and progress flags below are also global.
 
 These flags set how much `nab` writes to stderr, whether it colours it,
 and whether it animates a progress line. They are global: `nab` reads them
-before the subcommand, so they work with `lock`, `download`, and `config`.
-stdout carries only the requested output (the lockfile, the requirements
-list, the `config` dump), so it stays pipeable at every verbosity.
+before the subcommand, so they work with `lock`, `download`, `config`, and
+`cache`. stdout carries only the requested output (the lockfile, the
+requirements list, the `config` dump), so it stays pipeable at every
+verbosity.
 
 | Flag | Effect |
 | ---- | ------ |
