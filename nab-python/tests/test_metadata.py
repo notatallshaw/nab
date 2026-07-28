@@ -29,6 +29,12 @@ def test_accepts_bytes_input() -> None:
     assert md.version == Version("1.0")
 
 
+def test_name_surrounding_whitespace_stripped() -> None:
+    """RFC 822 whitespace around ``Name`` is insignificant."""
+    md = parse_metadata("Metadata-Version: 2.1\nName:  foo \nVersion: 1.0\n")
+    assert md.name == "foo"
+
+
 def test_missing_name_raises() -> None:
     """Absent ``Name`` is a parser error, not a silent default."""
     text = "Metadata-Version: 2.1\nVersion: 1.0\n"

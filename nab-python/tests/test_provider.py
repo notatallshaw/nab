@@ -28,6 +28,7 @@ from nab_index.transport import HttpError
 from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider import listing as listing_mod
 from nab_python._provider.metadata_resolver import (
+    TargetDepSignature,
     add_classified_dep,
     cache_deps_from_metadata,
     classify_requirement,
@@ -54,6 +55,7 @@ from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
     ExtrasMode,
+    ForeignMetadataError,
     IncompatiblePythonError,
     InvalidUploadTimeError,
     LocalSource,
@@ -1334,7 +1336,10 @@ class TestNoVersionsReasons:
         """
         coordinator = make_coordinator(
             [make_sdist("1.0"), make_sdist("2.0")],
-            sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+            sdist_pkg_info_by_version={
+                "1.0": PKG_INFO_DYNAMIC_DEPS,
+                "2.0": PKG_INFO_DYNAMIC_DEPS.replace("Version: 1.0", "Version: 2.0"),
+            },
             package="pkg",
         )
         provider = Provider(
@@ -2245,47 +2250,51 @@ class TestTargetDepSignature:
             provides_extra=list(provides_extra),
         )
 
+    def _sig(self, provider: Provider, metadata: WheelMetadata) -> TargetDepSignature:
+        """Project ``metadata`` under the release the wheel was served as."""
+        return target_dep_signature(provider, ("pkg", V("1.0")), metadata)
+
     def test_permuted_lines_equal(self) -> None:
         """Line order does not change the signature."""
         provider = self._provider()
         a = self._md(["foo>=1", "bar<2"])
         b = self._md(["bar<2", "foo>=1"])
-        assert target_dep_signature(provider, a) == target_dep_signature(provider, b)
+        assert self._sig(provider, a) == self._sig(provider, b)
 
     def test_specifier_spelling_equal(self) -> None:
         """Whitespace and specifier spelling normalize equal."""
         provider = self._provider()
         a = self._md(["foo>=1,<2"])
         b = self._md(["foo >= 1, < 2"])
-        assert target_dep_signature(provider, a) == target_dep_signature(provider, b)
+        assert self._sig(provider, a) == self._sig(provider, b)
 
     def test_target_equal_marker_equal(self) -> None:
         """Markers that evaluate the same for the target project equal."""
         provider = self._provider()
         a = self._md(['foo; python_version >= "3.0"'])
         b = self._md(['foo; python_version >= "3.5"'])
-        assert target_dep_signature(provider, a) == target_dep_signature(provider, b)
+        assert self._sig(provider, a) == self._sig(provider, b)
 
     def test_genuine_dep_difference_unequal(self) -> None:
         """A real base-dep range difference is unequal."""
         provider = self._provider()
         a = self._md(["foo>=1"])
         b = self._md(["foo>=2"])
-        assert target_dep_signature(provider, a) != target_dep_signature(provider, b)
+        assert self._sig(provider, a) != self._sig(provider, b)
 
     def test_extra_only_difference_unequal(self) -> None:
         """A difference confined to an extra-gated dep is unequal."""
         provider = self._provider()
         a = self._md(['foo; extra == "e"'], provides_extra=("e",))
         b = self._md(['foo>=2; extra == "e"'], provides_extra=("e",))
-        assert target_dep_signature(provider, a) != target_dep_signature(provider, b)
+        assert self._sig(provider, a) != self._sig(provider, b)
 
     def test_url_dep_only_difference_unequal(self) -> None:
         """A difference confined to a URL dep is unequal."""
         provider = self._provider()
         a = self._md(["foo @ https://example.com/a.whl"])
         b = self._md(["foo @ https://example.com/b.whl"])
-        assert target_dep_signature(provider, a) != target_dep_signature(provider, b)
+        assert self._sig(provider, a) != self._sig(provider, b)
 
     def test_requires_python_difference_folds(self) -> None:
         """A Requires-Python difference alone does not change the signature.
@@ -2297,27 +2306,25 @@ class TestTargetDepSignature:
         provider = self._provider()
         a = self._md(["foo"], requires_python=">=3.8")
         b = self._md(["foo"], requires_python=">=3.9")
-        assert target_dep_signature(provider, a) == target_dep_signature(provider, b)
+        assert self._sig(provider, a) == self._sig(provider, b)
 
     def test_marker_dropped_dep_absent(self) -> None:
         """A dep whose marker fails for the target is not projected."""
         provider = self._provider()
-        base_deps = target_dep_signature(
-            provider, self._md(['foo; python_version < "3.0"'])
-        )[0]
+        base_deps = self._sig(provider, self._md(['foo; python_version < "3.0"']))[0]
         assert base_deps == {}
 
     def test_duplicate_name_intersected(self) -> None:
         """A name on two base lines folds to the range intersection."""
         provider = self._provider()
-        base_deps = target_dep_signature(provider, self._md(["foo>=1", "foo<5"]))[0]
+        base_deps = self._sig(provider, self._md(["foo>=1", "foo<5"]))[0]
         assert V("3") in base_deps["foo"]
         assert V("6") not in base_deps["foo"]
 
     def test_extra_gated_url_dep_bucketed_by_extra(self) -> None:
         """An extra-gated URL dep buckets under its extra name."""
         provider = self._provider()
-        url_buckets = target_dep_signature(
+        url_buckets = self._sig(
             provider,
             self._md(
                 ['foo @ https://example.com/a.whl ; extra == "e"'],
@@ -2329,7 +2336,7 @@ class TestTargetDepSignature:
     def test_base_url_dep_bucketed(self) -> None:
         """A base URL dep buckets under the base key, not an extra."""
         provider = self._provider()
-        url_buckets = target_dep_signature(
+        url_buckets = self._sig(
             provider, self._md(["foo @ https://example.com/a.whl"])
         )[2]
         assert list(url_buckets) == [None]
@@ -2337,7 +2344,7 @@ class TestTargetDepSignature:
     def test_per_extra_dep_projected(self) -> None:
         """An extra-gated non-URL dep lands in the per-extra map."""
         provider = self._provider()
-        extra_map = target_dep_signature(
+        extra_map = self._sig(
             provider, self._md(['foo>=2; extra == "e"'], provides_extra=("e",))
         )[1]
         assert V("3") in extra_map["e"]["foo"]
@@ -2346,7 +2353,7 @@ class TestTargetDepSignature:
     def test_extra_marker_matches_only_named_extra(self) -> None:
         """An extra-gated dep lands only under the extras its marker matches."""
         provider = self._provider()
-        extra_map = target_dep_signature(
+        extra_map = self._sig(
             provider, self._md(['foo; extra == "e"'], provides_extra=("e", "f"))
         )[1]
         assert "foo" in extra_map["e"]
@@ -2367,7 +2374,7 @@ class TestTargetDepSignature:
         )
         a = self._md(['foo; extra == "e"'], provides_extra=("e",))
         b = self._md(['foo; extra == "e"'], provides_extra=("e", "f"))
-        assert target_dep_signature(provider, a) == target_dep_signature(provider, b)
+        assert self._sig(provider, a) == self._sig(provider, b)
 
 
 class TestLocalSources:
@@ -4479,6 +4486,95 @@ class TestRequiresPythonMetadataGate:
         assert provider.has_invalid_metadata("foo", V("2.0"))
 
 
+class TestForeignMetadataGate:
+    """An index candidate's METADATA must declare the release it was served as.
+
+    Otherwise a wheel (or its :pep:`658` sidecar) naming another release
+    supplies that release's dependencies as the served candidate's.
+    """
+
+    @staticmethod
+    def _coordinator(name: str, version: str = "1.0") -> MagicMock:
+        return make_coordinator(
+            [make_wheel("1.0")],
+            package="foo",
+            metadata_text=(
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+                "Requires-Dist: leftpad\n\n"
+            ),
+        )
+
+    def test_rejects_foreign_name(self) -> None:
+        provider = Provider(self._coordinator("bar"), target=_PY312)
+        with pytest.raises(ForeignMetadataError, match="declares bar==1.0"):
+            provider.get_dependencies("foo", V("1.0"))
+
+    def test_rejects_foreign_version(self) -> None:
+        provider = Provider(self._coordinator("foo", "99.0"), target=_PY312)
+        with pytest.raises(ForeignMetadataError, match="declares foo==99.0"):
+            provider.get_dependencies("foo", V("1.0"))
+
+    def test_foreign_name_deps_never_cached(self) -> None:
+        provider = Provider(self._coordinator("bar"), target=_PY312)
+        with pytest.raises(ForeignMetadataError):
+            provider.get_dependencies("foo", V("1.0"))
+        assert ("foo", V("1.0")) not in provider.deps_cache
+        assert ("foo", V("1.0")) not in provider.metadata_cache
+        assert provider.has_invalid_metadata("foo", V("1.0"))
+        with pytest.raises(MetadataError, match="declares bar==1.0"):
+            provider.get_dependencies("foo", V("1.0"))
+
+    def test_admits_equivalent_spelling(self) -> None:
+        """Case, separator, whitespace, and zero-padding differences still match."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            package="foo-bar",
+            metadata_text=(
+                "Metadata-Version: 2.1\nName:  Foo_Bar \nVersion: 1.0.0\n"
+                "Requires-Dist: leftpad\n\n"
+            ),
+        )
+        provider = Provider(coordinator, target=_PY312)
+        assert "leftpad" in provider.get_dependencies("foo-bar", V("1.0"))
+
+    def test_rejects_foreign_name_from_sdist_pkg_info(self) -> None:
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            package="foo",
+            sdist_pkg_info=(
+                "Metadata-Version: 2.2\nName: bar\nVersion: 1.0\n"
+                "Requires-Dist: leftpad\n"
+            ),
+        )
+        provider = Provider(coordinator, target=_PY312, build_policy=BuildPolicy.NEVER)
+        with pytest.raises(ForeignMetadataError, match="declares bar==1.0"):
+            provider.get_dependencies("foo", V("1.0"))
+
+    def test_prefetch_batch_continues_past_foreign_metadata(self) -> None:
+        """A rejected candidate the scan may never pick does not abort the batch."""
+
+        def _meta(name: str, version: str) -> str:
+            return f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\n"
+
+        coordinator = make_coordinator(
+            [make_wheel("3.0"), make_wheel("2.0"), make_wheel("1.0")],
+            metadata_by_version={
+                "3.0": _meta("bar", "3.0"),
+                "2.0": _meta("foo", "9.0"),
+                "1.0": _meta("foo", "1.0"),
+            },
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": VersionRange.full()},
+        )
+        assert provider.choose_version("foo", VersionRange.full()) == V("1.0")
+        assert ("foo", V("3.0")) not in provider.deps_cache
+        assert ("foo", V("2.0")) not in provider.deps_cache
+
+
 class TestSkipFetch:
     """A complete ``dependencies`` override skips the metadata fetch/build."""
 
@@ -5097,7 +5193,12 @@ class TestExtras:
         """choose_version for extras returns the base's best version."""
         wheels = [make_wheel("2.0"), make_wheel("1.0")]
         coordinator = make_coordinator(
-            wheels, metadata_text=EXTRA_METADATA, package="foo"
+            wheels,
+            metadata_by_version={
+                "2.0": EXTRA_METADATA.replace("Version: 1.0", "Version: 2.0"),
+                "1.0": EXTRA_METADATA,
+            },
+            package="foo",
         )
         provider = Provider(coordinator)
         spec = SpecifierSet("")
@@ -8031,7 +8132,11 @@ class TestStaticSdistMetadata:
             url: str,
             hashes: tuple[tuple[str, str], ...] = (),
         ) -> threading.Event:
-            coordinator.index.store_sdist_metadata(pkg, ver, PKG_INFO_DYNAMIC_DEPS)
+            coordinator.index.store_sdist_metadata(
+                pkg,
+                ver,
+                PKG_INFO_DYNAMIC_DEPS.replace("Version: 1.0", f"Version: {ver}"),
+            )
             coordinator.index.store_sdist_pyproject(pkg, ver, None)
             return _done_event()
 
@@ -8525,7 +8630,9 @@ class TestExtrasInvalidMetadata:
         coordinator = make_coordinator(
             dists,
             metadata_by_version={"1.0": EXTRA_METADATA},
-            sdist_pkg_info=PRE_22_SDIST_PKG_INFO,
+            sdist_pkg_info=PRE_22_SDIST_PKG_INFO.replace(
+                "Name: pkg\nVersion: 1.0", "Name: foo\nVersion: 2.0"
+            ),
             package="foo",
         )
         provider = Provider(
@@ -8934,6 +9041,29 @@ class TestSiblingMetadataDivergence:
         message = str(exc.value)
         assert "alpha" in message
         assert "beta" in message
+
+    def test_foreign_named_sibling_skipped(self) -> None:
+        """A tie sibling declaring another project is not compared at all.
+
+        Its deps differ, but it is not a candidate for pkg 1.0, so the pick's
+        deps stand instead of aborting the resolve.
+        """
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            _sib_meta("beta>=1").replace("Name: pkg", "Name: other"),
+            wheel_b.metadata_url,
+        )
+        provider = Provider(coordinator, target=_LINUX311)
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "alpha" in deps
+        assert "beta" not in deps
 
     def test_absent_sibling_text_skipped(self) -> None:
         """A tie sibling with no resident text is skipped, not fetched."""

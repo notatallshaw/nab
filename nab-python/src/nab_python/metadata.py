@@ -159,6 +159,8 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
     if name is None:
         err = "METADATA missing required Name field"
         raise ValueError(err)
+    # RFC 822 makes the whitespace around a header value insignificant.
+    name = name.strip()
 
     version_str = msg.get("Version")
     if version_str is None:

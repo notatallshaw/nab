@@ -568,6 +568,8 @@ def parse_and_cache_metadata(
             package, version_str, metadata, metadata_text
         )
 
+    _reject_foreign_metadata(cache_key, metadata)
+
     if from_sdist and _sdist_deps_need_dynamic(
         metadata,
         trust_unverified=provider.effective_trust_unverified(
@@ -578,6 +580,37 @@ def parse_and_cache_metadata(
 
     _reject_incompatible_python(provider, cache_key, metadata)
     cache_deps_from_metadata(provider, cache_key, metadata)
+
+
+def _declares_served_release(
+    cache_key: tuple[str, Version], metadata: WheelMetadata
+) -> bool:
+    """Whether ``metadata`` claims the release the artifact was served as."""
+    package, version = cache_key
+    return canonicalize_name(metadata.name) == package and metadata.version == version
+
+
+def _reject_foreign_metadata(
+    cache_key: tuple[str, Version], metadata: WheelMetadata
+) -> None:
+    """Reject an index candidate whose METADATA declares a different release.
+
+    Nothing binds a :pep:`658` sidecar or an artifact's own METADATA fields
+    to the project and version it was served under.  Checked ahead of the
+    sdist reconciliation so a contradicting sdist is never built.
+    """
+    # Late import: ``provider`` imports this module at module load.
+    from ..provider import ForeignMetadataError
+
+    if _declares_served_release(cache_key, metadata):
+        return
+
+    package, version = cache_key
+    msg = (
+        f"{package} {version} metadata declares"
+        f" {metadata.name}=={metadata.version}, not {package}=={version}"
+    )
+    raise ForeignMetadataError(msg)
 
 
 def _reject_incompatible_python(
@@ -765,6 +798,7 @@ def _classify_requirement_uncached(
 
 def target_dep_signature(
     provider: Provider,
+    cache_key: tuple[str, Version],
     metadata: WheelMetadata,
 ) -> TargetDepSignature:
     """Project ``metadata`` to a target-effective dependency signature.
@@ -778,9 +812,10 @@ def target_dep_signature(
     the marker caches or ``consulted_markers``: see
     :func:`_classify_requirement_uncached`.
 
-    The per-package override is applied first, so a ``provides-extra`` override
-    is compared in the same view the resolver pins from.  A complete
-    ``dependencies`` override takes the skip-fetch path in
+    ``cache_key`` is the release the wheel was served as, not whatever the
+    wheel declares for itself.  The per-package override is applied first, so a
+    ``provides-extra`` override is compared in the same view the resolver pins
+    from.  A complete ``dependencies`` override takes the skip-fetch path in
     :meth:`nab_python.provider.Provider.get_dependencies` and never reaches
     here.  ``Requires-Python`` is left out: it gates admission, not the
     dependency edges a lock records.
@@ -793,7 +828,6 @@ def target_dep_signature(
     # Late import: ``provider`` imports this module at module load.
     from ..provider import _normalize_extra
 
-    cache_key = (canonicalize_name(metadata.name), metadata.version)
     metadata = effective_metadata(provider, cache_key, metadata)
     provided_extras = {_normalize_extra(e) for e in metadata.provides_extra}
     base_deps: dict[str, VersionRange] = {}
@@ -857,6 +891,7 @@ def check_sibling_metadata_divergence(
         return
 
     pick_key = None if tags is None else tags.wheel_rank(pick.filename)
+    sig_key = (normalized, version)
     pick_sig: TargetDepSignature | None = None
     for sibling in wheels:
         if sibling is pick or not _wheels_tie(tags, pick_key, sibling.filename):
@@ -867,8 +902,10 @@ def check_sibling_metadata_divergence(
         if sibling_metadata is None:
             continue
         if pick_sig is None:
-            pick_sig = target_dep_signature(provider, parse_metadata(pick_text))
-        sibling_sig = target_dep_signature(provider, sibling_metadata)
+            pick_sig = target_dep_signature(
+                provider, sig_key, parse_metadata(pick_text)
+            )
+        sibling_sig = target_dep_signature(provider, sig_key, sibling_metadata)
         if sibling_sig == pick_sig:
             continue
         labels = _divergent_dep_labels(pick_sig, sibling_sig)
@@ -890,12 +927,13 @@ def _tie_sibling_metadata(
 ) -> WheelMetadata | None:
     """Parse a resident tie sibling's own METADATA, or None to skip it.
 
-    Skipped when the text is not resident, does not parse, or its effective
-    Requires-Python excludes the target.  Tags rank by :pep:`425` and say
-    nothing about the Python floor, so a tie sibling can still declare a
-    Requires-Python an installer would reject for this target; comparing it
-    would false-crash a version an installer resolves fine.  A per-package
-    override wins over the parsed floor.
+    Skipped when the text is not resident, does not parse, declares a
+    different release, or its effective Requires-Python excludes the target.
+    Tags rank by :pep:`425` and say nothing about the Python floor, so a tie
+    sibling can still declare a Requires-Python an installer would reject for
+    this target, and a sibling declaring another release is no candidate for
+    this one at all; comparing either would false-crash a version an installer
+    resolves fine.  A per-package override wins over the parsed floor.
     """
     text = _resident_wheel_text(index, package, str(version), sibling)
     if text is None:
@@ -903,6 +941,8 @@ def _tie_sibling_metadata(
     try:
         metadata = parse_metadata(text)
     except ValueError:
+        return None
+    if not _declares_served_release((package, version), metadata):
         return None
     target = provider.target
     override_rp = provider.effective_requires_python(package, version)

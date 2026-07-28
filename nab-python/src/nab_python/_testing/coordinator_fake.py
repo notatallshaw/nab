@@ -124,6 +124,7 @@ def _wire_sdist_side_effects(
     index: InMemoryIndex,
     *,
     sdist_pkg_info: str | None,
+    sdist_pkg_info_by_version: Mapping[str, str | None] | None,
     sdist_pyproject_toml: str | None,
 ) -> None:
     """Attach the ``request_sdist`` side effect."""
@@ -134,10 +135,16 @@ def _wire_sdist_side_effects(
         _url: str,
         _hashes: tuple[tuple[str, str], ...] = (),
     ) -> threading.Event:
+        pkg_info = (
+            sdist_pkg_info
+            if sdist_pkg_info_by_version is None
+            else sdist_pkg_info_by_version.get(ver)
+        )
+
         # ``store_sdist_metadata`` is always called; passing ``None``
         # poisons the cache slot, matching the original test_provider
         # helper's contract for sdist-fetch failures.
-        index.store_sdist_metadata(pkg, ver, sdist_pkg_info)
+        index.store_sdist_metadata(pkg, ver, pkg_info)
         if sdist_pyproject_toml is not None:
             index.store_sdist_pyproject(pkg, ver, sdist_pyproject_toml)
         return _done_event()
@@ -197,6 +204,7 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     metadata_by_url: Mapping[str, str | None] | None = None,
     auto_metadata: bool = False,
     sdist_pkg_info: str | None = None,
+    sdist_pkg_info_by_version: Mapping[str, str | None] | None = None,
     sdist_pyproject_toml: str | None = None,
     range_result: RangeMetadataResult | None = None,
     range_error: BaseException | None = None,
@@ -223,8 +231,9 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
       slot, so the fetched-but-empty slot reads back the way it would in
       production.  ``metadata_by_url`` is how sibling wheels of one
       version are given different dependencies.
-    * ``request_sdist`` writes ``sdist_pkg_info`` and, if not ``None``,
-      ``sdist_pyproject_toml``.
+    * ``request_sdist`` writes ``sdist_pkg_info``, or the entry from
+      ``sdist_pkg_info_by_version`` when sdists of several versions each need
+      their own PKG-INFO, and, if not ``None``, ``sdist_pyproject_toml``.
     * ``request_range_metadata`` records the recovered METADATA (or an absent
       read when its text is ``None``), or lands ``range_error`` as a per-wheel
       metadata error.  ``range_by_url`` picks a result per wheel URL, so sibling
@@ -257,6 +266,7 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
         coordinator,
         index,
         sdist_pkg_info=sdist_pkg_info,
+        sdist_pkg_info_by_version=sdist_pkg_info_by_version,
         sdist_pyproject_toml=sdist_pyproject_toml,
     )
     _wire_range_side_effects(
