@@ -30,7 +30,7 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelHashMismatchError,
 )
-from nab_index.transport import HttpError
+from nab_index.errors import IndexAccessError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python.config import (
     ConfigError,
@@ -639,7 +639,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     except ConfigError as e:
         printer().error(f"in [tool.nab]: {e}")
         sys.exit(1)
-    except HttpError as e:
+    except IndexAccessError as e:
         printer().error(f"{failure_prefix}: {e}")
         sys.exit(1)
 
