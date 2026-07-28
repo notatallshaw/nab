@@ -2024,6 +2024,21 @@ class TestMultiIndexCoordinator:
         finally:
             coord.shutdown()
 
+    def test_local_index_without_authority(self, tmp_path: Path) -> None:
+        """An RFC 8089 file:/path index URL is local too, not a remote one."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        url = wheelhouse.as_uri().replace("file://", "file:", 1)
+        assert not url.startswith("file://")
+        with _coord(indexes=[IndexConfig("local", url)]) as coord:
+            assert isinstance(coord._build_client(), LocalIndexClient)
+            coord.request_listing("foo").wait(timeout=5)
+            listing = coord.index.get_listing("foo")
+            assert coord.index.get_listing_error("foo") is None
+        assert listing is not None
+        assert [f.filename for f in listing] == ["foo-1.0-py3-none-any.whl"]
+
     def test_single_index_short_circuit(self, tmp_path: Path) -> None:
         """Single index + no overrides returns a plain client."""
         coord = FetchCoordinator(

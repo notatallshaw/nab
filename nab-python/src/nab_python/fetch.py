@@ -1045,12 +1045,12 @@ class FetchCoordinator:
     ) -> CachedAsyncSimpleClient | LocalIndexClient:
         """Build a single index client for ``url``.
 
-        ``file://`` URLs go to :class:`LocalIndexClient` (no caching;
-        the filesystem is the cache).  Everything else goes to
-        :class:`CachedAsyncSimpleClient` with a per-URL
-        :class:`OnDiskCache` when ``cache_dir`` is set.
+        A ``file:`` URL goes to :class:`LocalIndexClient` (no caching;
+        the filesystem is the cache), whichever RFC 8089 spelling it uses.
+        Everything else goes to :class:`CachedAsyncSimpleClient` with a
+        per-URL :class:`OnDiskCache` when ``cache_dir`` is set.
         """
-        if url.startswith("file://"):
+        if urlsplit(url).scheme == "file":
             return LocalIndexClient(url)
         backend: CacheBackend
         if self._cache_dir is not None:
