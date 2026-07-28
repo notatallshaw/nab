@@ -26,7 +26,7 @@ from .client import (
     _parse_files,
     _select_artifact_hash,
     _verify_metadata_hash,
-    _verify_sdist_hash,
+    verify_sdist_hash,
 )
 from .lazy_wheel import (
     RangeCapabilityMemo,
@@ -394,7 +394,7 @@ class CachedAsyncSimpleClient:
         response.raise_for_status()
         selected = _select_artifact_hash(sdist_hashes)
         if selected is not None:
-            _verify_sdist_hash(response.content, selected)
+            verify_sdist_hash(response.content, selected)
         pkg_info, pyproject_toml = _extract_sdist_files(response.content)
 
         if pkg_info is not None or pyproject_toml is not None:
@@ -429,5 +429,5 @@ class CachedAsyncSimpleClient:
         response.raise_for_status()
         selected = _select_artifact_hash(sdist_hashes)
         if selected is not None:
-            _verify_sdist_hash(response.content, selected)
+            verify_sdist_hash(response.content, selected)
         return response.content

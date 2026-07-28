@@ -13,7 +13,7 @@ the marker when every target agrees.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from ._lockfile.builder import (
@@ -36,13 +36,15 @@ from ._lockfile.requirements import (
     write_requirements_without_hashes,
 )
 from ._lockfile.validate import (
+    InvalidLockfileError,
     LockDisqualification,
+    LockfileSyntaxError,
     RootRequirement,
-    check_constraints,
-    check_direct_requirements,
-    check_envelope,
+    check_locked,
 )
 from ._vendor.packaging.pylock import is_valid_pylock_path
+from ._vendor.packaging.utils import canonicalize_name
+from ._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -61,9 +63,11 @@ __all__ = [
     "DisjointnessError",
     "DivergentBaseDependencyError",
     "IndexPin",
+    "InvalidLockfileError",
     "LocalPin",
     "LockDisqualification",
     "LockInput",
+    "LockfileSyntaxError",
     "MissingHashError",
     "MissingSdistError",
     "MissingVcsCommitError",
@@ -76,14 +80,14 @@ __all__ = [
     "WheelArtifact",
     "build_pylock",
     "build_target_lock",
-    "check_constraints",
-    "check_direct_requirements",
-    "check_envelope",
+    "check_locked",
+    "drop_workspace_pins",
     "is_valid_pylock_path",
     "package_metadata_override_records",
     "read_lockfile_anchor",
     "read_lockfile_packages",
     "render_lock",
+    "summarize_lock",
     "write_lock",
     "write_requirements_with_hashes",
     "write_requirements_without_hashes",
@@ -452,3 +456,99 @@ class LockInput:
     def marker_envs(self) -> dict[str, Mapping[str, str]]:
         """The PEP 508 marker environment each target resolved under."""
         return {label: lock.target.marker_env for label, lock in self.targets.items()}
+
+
+def drop_workspace_pins(lock_input: LockInput, exclude: frozenset[str]) -> LockInput:
+    """Return a copy of ``lock_input`` with the ``exclude`` pins removed.
+
+    ``exclude`` holds canonical workspace member names; pin keys are already
+    canonical.  An empty set returns ``lock_input`` unchanged.  Each target's
+    pins are filtered, and its forward dependency graph and membership gates
+    with them, so no edge or gate names a dropped member with no
+    ``[[packages]]`` entry.
+    """
+    if not exclude:
+        return lock_input
+
+    def keep(name: str) -> bool:
+        return canonicalize_name(name) not in exclude
+
+    targets = {
+        label: TargetLock(
+            target=lock.target,
+            pins={name: pin for name, pin in lock.pins.items() if keep(name)},
+            dependencies={
+                name: kept
+                for name, deps in lock.dependencies.items()
+                if keep(name) and (kept := tuple(dep for dep in deps if keep(dep)))
+            },
+            package_gates={
+                name: gate for name, gate in lock.package_gates.items() if keep(name)
+            },
+        )
+        for label, lock in lock_input.targets.items()
+    }
+    return replace(lock_input, targets=targets)
+
+
+def summarize_lock(lock_input: LockInput, prior: Mapping[str, Version] | None) -> str:
+    """Summarise what was written: a package diff, or the tuple count.
+
+    A matrix pins a package once per tuple, and two tuples may disagree, so
+    there is no one version to diff against the prior lock; it reports the
+    tuples it covered instead.  ``prior`` comes from
+    :func:`read_lockfile_packages`.
+    """
+    if len(lock_input.targets) > 1:
+        return f"{len(lock_input.targets)} tuples"
+
+    pins = {
+        name: pin
+        for lock in lock_input.targets.values()
+        for name, pin in lock.pins.items()
+    }
+
+    # Index and archive pins record a version; local and VCS pins emit
+    # version=None, so read_lockfile_packages never returns them.
+    # Diff against the same set or they read as added every relock.
+    versioned = {
+        name: Version(pin.version)
+        for name, pin in pins.items()
+        if isinstance(pin, (IndexPin, ArchivePin))
+    }
+    return f"{len(pins)} packages{_diff_summary(prior, versioned)}"
+
+
+def _diff_summary(
+    prior: Mapping[str, Version] | None, current: Mapping[str, Version]
+) -> str:
+    """Return a ``: A added, B upgraded, ...`` suffix for a re-lock.
+
+    ``prior`` is the previous pylock's pins or ``None`` (first lock or an
+    unparseable prior file); both fall back to an empty suffix.  An unchanged
+    pin set also yields an empty suffix.
+    """
+    if prior is None:
+        return ""
+    added = sum(name not in prior for name in current)
+    removed = sum(name not in current for name in prior)
+    upgraded = downgraded = 0
+    for name, version in current.items():
+        old = prior.get(name)
+        if old is None or old == version:
+            continue
+        if version > old:
+            upgraded += 1
+        else:
+            downgraded += 1
+    parts = [
+        f"{count} {label}"
+        for count, label in (
+            (added, "added"),
+            (upgraded, "upgraded"),
+            (downgraded, "downgraded"),
+            (removed, "removed"),
+        )
+        if count
+    ]
+    return f": {', '.join(parts)}" if parts else ""

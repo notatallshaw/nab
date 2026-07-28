@@ -21,9 +21,9 @@ from urllib.parse import urlsplit
 import tomli
 from typing_extensions import override
 
-from nab_index._subdir import subdirectory_escapes
 from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.multi_index import IndexConfig
+from nab_index.subdir import subdirectory_escapes
 
 from ._conflict_kind import KIND_EXTRA, KIND_GROUP
 from ._iso8601 import parse_iso_datetime

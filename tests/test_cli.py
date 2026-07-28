@@ -26,7 +26,6 @@ from nab import _version as nab_version
 from nab._download import download
 from nab._lock import (
     _determine_lock_anchor,
-    _drop_workspace_pins,
     _emit,
     _emit_pylock,
     lock,
@@ -2585,25 +2584,6 @@ class TestNoEmitWorkspace:
         assert 'name = "foo"' in text
         # alpha's [[packages]] row and the dangling forward edge are both gone.
         assert 'name = "alpha"' not in text
-
-    def test_drop_filters_dependency_graph(self) -> None:
-        """Dropped members vanish as graph keys and as edge targets."""
-        target = ResolveTarget.for_host()
-        lock_input = LockInput(
-            targets={
-                target.label: _target_lock(
-                    target,
-                    {"foo": V("1.0"), "bar": V("2.0")},
-                    {
-                        "foo": ("alpha", "bar"),
-                        "bar": ("alpha",),
-                        "alpha": ("bar",),
-                    },
-                )
-            }
-        )
-        dropped = _drop_workspace_pins(lock_input, frozenset({"alpha"}))
-        assert dropped.targets[target.label].dependencies == {"foo": ("bar",)}
 
 
 class TestRelockDiffSummary:

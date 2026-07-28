@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ._subdir import subdirectory_escapes
 from .client import _ACCEPTED_HASH_ALGORITHMS
+from .subdir import subdirectory_escapes
 
 __all__ = [
     "ArchiveRequest",

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nab_index.archive import ArchiveRequest
-from nab_index.client import SdistFile, _verify_sdist_hash, extract_sdist_archive
+from nab_index.client import SdistFile, extract_sdist_archive, verify_sdist_hash
 from nab_index.vcs import VcsCloneError, VcsRequest
 
 from .._vendor.packaging.utils import canonicalize_name
@@ -315,7 +315,7 @@ def _fetch_archive_bytes(
         raise UnsupportedSdistError(msg)
 
     for pinned_hash in request.hashes:
-        _verify_sdist_hash(data, pinned_hash)
+        verify_sdist_hash(data, pinned_hash)
     return cache_dir, request, digest, data
 
 
