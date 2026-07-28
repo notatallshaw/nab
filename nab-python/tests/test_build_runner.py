@@ -17,6 +17,7 @@ import base64
 import hashlib
 import io
 import json
+import struct
 import subprocess
 import sys
 import tarfile
@@ -30,6 +31,7 @@ import pytest
 from installer.utils import SCHEME_NAMES, Scheme
 
 from nab_index.multi_index import IndexConfig
+from nab_python._build import runner as runner_mod
 from nab_python._build.env import (
     BuildEnvError,
     NabBuildEnv,
@@ -671,12 +673,66 @@ class TestBuildWheelExtraction:
             _build_wheel_and_extract(_Builder(), tmp_path)  # type: ignore[arg-type]
 
 
+_UNREADABLE_DIST_INFO = "foo-1.0.dist-info"
+
+
+def _wheel_zip(compression: int) -> bytes:
+    """A two-member wheel archive with METADATA written first."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression) as zf:
+        zf.writestr(
+            f"{_UNREADABLE_DIST_INFO}/METADATA",
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n" * 40,
+        )
+        zf.writestr(f"{_UNREADABLE_DIST_INFO}/WHEEL", "Wheel-Version: 1.0\n")
+    return buf.getvalue()
+
+
+def _blank_metadata_payload(data: bytes, keep: int) -> bytes:
+    """Overwrite METADATA's compressed bytes, keeping the first ``keep`` of them.
+
+    LZMA needs its 9-byte properties header kept, or the member fails as a bad
+    CRC before the decompressor sees the corruption.
+    """
+    out = bytearray(data)
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        info = zf.getinfo(f"{_UNREADABLE_DIST_INFO}/METADATA")
+
+    # the local header is 30 bytes plus its own name and extra fields
+    name_len, extra_len = struct.unpack_from("<HH", out, info.header_offset + 26)
+    start = info.header_offset + 30 + name_len + extra_len
+
+    out[start + keep : start + info.compress_size] = b"\xff" * (
+        info.compress_size - keep
+    )
+    return bytes(out)
+
+
+def _relabel_compression(data: bytes, method: int) -> bytes:
+    """Set the first member's compression method in both of its headers."""
+    out = bytearray(data)
+    struct.pack_into("<H", out, out.index(b"PK\x03\x04") + 8, method)
+    struct.pack_into("<H", out, out.index(b"PK\x01\x02") + 10, method)
+    return bytes(out)
+
+
+def _unreadable_metadata_wheel(kind: str) -> bytes:
+    """A valid zip whose METADATA member cannot be decompressed."""
+    if kind == "corrupt-deflate":
+        return _blank_metadata_payload(_wheel_zip(zipfile.ZIP_DEFLATED), 0)
+    if kind == "corrupt-lzma":
+        return _blank_metadata_payload(_wheel_zip(zipfile.ZIP_LZMA), 9)
+
+    # method 9 is deflate64, which zipfile has no decompressor for
+    return _relabel_compression(_wheel_zip(zipfile.ZIP_STORED), 9)
+
+
 class TestRunBuildBackendCorruptBuiltWheel:
     """A ``build_wheel`` hook that succeeds but emits an unreadable wheel must
-    normalize to ``BuildBackendError``, not leak the ``zipfile.BadZipFile`` from
-    reading the wheel back nor the bare ``ValueError`` ``build`` raises for an
-    unparseable wheel name. The read-back sits outside the hook-error wrapper on
-    both the ``build.metadata_path`` fallback and the runner's own skip path.
+    normalize to ``BuildBackendError``, whether the wheel is not a zip, its name
+    will not parse, or its dist-info member cannot be decompressed. The read-back
+    sits outside the hook-error wrapper on both the ``build.metadata_path``
+    fallback and the runner's own skip path.
     """
 
     def _pyproject(self, tmp_path: Path) -> None:
@@ -694,8 +750,10 @@ class TestRunBuildBackendCorruptBuiltWheel:
         env.__exit__ = MagicMock(return_value=None)
         return env
 
-    def _corrupt_building_project(self, wheel_name: str) -> MagicMock:
-        """A project whose ``build_wheel`` writes non-zip bytes and returns
+    def _corrupt_building_project(
+        self, wheel_name: str, data: bytes = b"not a zip"
+    ) -> MagicMock:
+        """A project whose ``build_wheel`` writes ``data`` and returns
         ``wheel_name``. ``prepare`` returns None so ``metadata_path`` runs
         ``build``'s real build_wheel fallback, whose read-back hits the real
         ``parse_wheel_filename`` and ``zipfile.ZipFile``.
@@ -706,7 +764,7 @@ class TestRunBuildBackendCorruptBuiltWheel:
 
         def fake_build(_dist: str, outdir: str, *_a: object, **_k: object) -> str:
             path = Path(outdir) / wheel_name
-            path.write_bytes(b"not a zip")
+            path.write_bytes(data)
             return str(path)
 
         project.build.side_effect = fake_build
@@ -761,12 +819,39 @@ class TestRunBuildBackendCorruptBuiltWheel:
         """On the skip-prepare path the runner's own ``_build_wheel_and_extract``
         reads the built wheel; a corrupt wheel there normalizes as well.
         """
-        from nab_python._build import runner as runner_mod
-
         self._pyproject(tmp_path)
         monkeypatch.setattr(runner_mod, "_should_skip_prepare", lambda *_a: True)
         self._run(
             tmp_path, config, self._corrupt_building_project("foo-1.0-py3-none-any.whl")
+        )
+
+    @pytest.mark.parametrize("skip_prepare", [False, True])
+    @pytest.mark.parametrize(
+        "kind", ["corrupt-deflate", "corrupt-lzma", "unsupported-method"]
+    )
+    def test_unreadable_dist_info_member_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+        kind: str,
+        skip_prepare: bool,
+    ) -> None:
+        """The wheel opens and lists cleanly, so the failure lands on the
+        dist-info member's own read: ``zlib.error`` for a corrupt deflate
+        payload, ``lzma.LZMAError`` for a corrupt LZMA one, and
+        ``NotImplementedError`` for a method zipfile cannot decompress.
+        """
+        self._pyproject(tmp_path)
+        monkeypatch.setattr(
+            runner_mod, "_should_skip_prepare", lambda *_a: skip_prepare
+        )
+        self._run(
+            tmp_path,
+            config,
+            self._corrupt_building_project(
+                "foo-1.0-py3-none-any.whl", _unreadable_metadata_wheel(kind)
+            ),
         )
 
 
