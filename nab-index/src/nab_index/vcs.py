@@ -28,7 +28,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._subdir import subdirectory_escapes
+from .subdir import subdirectory_escapes
 
 __all__ = [
     "FULL_GIT_SHA_RE",

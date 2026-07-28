@@ -45,6 +45,7 @@ __all__ = [
     "WheelFile",
     "WheelHashMismatchError",
     "extract_sdist_archive",
+    "verify_sdist_hash",
 ]
 
 # Verification order; sha256 is pip's hash-checking baseline.
@@ -552,7 +553,7 @@ def _select_artifact_hash(
     return None
 
 
-def _verify_sdist_hash(content: bytes, sdist_hash: tuple[str, str]) -> None:
+def verify_sdist_hash(content: bytes, sdist_hash: tuple[str, str]) -> None:
     """Raise :class:`SdistHashMismatchError` if ``content`` fails the hash."""
     algo, expected = sdist_hash
     actual = hashlib.new(algo, content).hexdigest()
