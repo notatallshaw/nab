@@ -751,12 +751,16 @@ class Provider:
             tuple[str, str, RangeProtocol[Version]], list[Version]
         ] = defaultdict(list)
 
-        # Diagnostic-only: the dep range each rejected candidate declared for the
-        # blocker, unioned per group, read only by the no-versions message. The
-        # flushed clause uses the blocker's positive range, not this.
+        # The dep range each rejected candidate declared for the blocker,
+        # unioned per group.  Feeds the membership widening of the flushed
+        # blocker term; the range-keyed union also feeds the no-versions
+        # message.
+        self.pending_decision_dep_ranges: defaultdict[
+            tuple[str, str, Version], _lookahead.DepRangeUnion
+        ] = defaultdict(_lookahead.DepRangeUnion.zero)
         self.pending_range_dep_ranges: defaultdict[
-            tuple[str, str, RangeProtocol[Version]], RangeProtocol[Version]
-        ] = defaultdict(VersionRange.empty)
+            tuple[str, str, RangeProtocol[Version]], _lookahead.DepRangeUnion
+        ] = defaultdict(_lookahead.DepRangeUnion.zero)
 
         # Diagnostic-only: root_requirements feed PubGrub directly, so these
         # blockers never need flushing as incompatibilities; they exist purely
@@ -1465,7 +1469,7 @@ class Provider:
         Abort semantics: when ``broad_rejections`` crosses
         ``_LOOKAHEAD_ABORT_THRESHOLD`` and every queued rejection for
         ``normalized`` shares one ``(blocker_pkg, blocker_version)``,
-        discard the misleading singleton-blocker pending blocks for
+        discard the misleading pending decision blocks for
         ``normalized`` and return ``first_candidate``.  The resolver then
         decides that candidate tentatively, ``get_dependencies`` emits the
         actual dep-range clause, and pubgrub back-jumps the offending
@@ -1594,16 +1598,26 @@ class Provider:
     def _discard_pending_decision_blocks(self, normalized: str) -> None:
         """Drop decision-block entries for ``normalized`` without emitting clauses.
 
-        Used by the look-ahead abort path: the singleton-blocker clauses
-        the queue would otherwise produce are exactly the ones that
-        mislead the resolver into picking a deep candidate.  Range / root
-        / metadata blocks are left in place because the abort path only
-        fires when none exist for this candidate; this helper still
-        scopes its delete to the matching candidate name for safety.
+        Used by the look-ahead abort path: the blocker clauses the queue
+        would otherwise produce are exactly the ones that mislead the
+        resolver into picking a deep candidate.  Range / root / metadata
+        blocks are left in place because the abort path only fires when none
+        exist for this candidate; this helper still scopes its delete to the
+        matching candidate name for safety.
         """
         self.pending_blocks = defaultdict(
             list,
             {k: v for k, v in self.pending_blocks.items() if k[0] != normalized},
+        )
+        # Drop the matching accumulators too: a stale one would over-count a
+        # later group under the same key and disable its widening.
+        self.pending_decision_dep_ranges = defaultdict(
+            _lookahead.DepRangeUnion.zero,
+            {
+                k: v
+                for k, v in self.pending_decision_dep_ranges.items()
+                if k[0] != normalized
+            },
         )
 
     def wants_lowest(self, normalized: str) -> bool:
@@ -1714,7 +1728,9 @@ class Provider:
         for cand, blocker_pkg, pos_range in self.pending_range_blocks:
             if cand != normalized:
                 continue
-            dep_range = self.pending_range_dep_ranges[(cand, blocker_pkg, pos_range)]
+            dep_range = self.pending_range_dep_ranges[
+                (cand, blocker_pkg, pos_range)
+            ].union
             out.append(
                 f"requires {blocker_pkg} in {dep_range}"
                 f" but solution has it in {pos_range}"

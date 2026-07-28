@@ -27,6 +27,7 @@ from nab_index.local_index import LocalIndexClient
 from nab_index.transport import HttpError
 from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider import listing as listing_mod
+from nab_python._provider.lookahead import DepRangeUnion
 from nab_python._provider.metadata_resolver import (
     add_classified_dep,
     cache_deps_from_metadata,
@@ -109,6 +110,13 @@ def make_wheel(
         upload_time=upload_time,
         local_path=local_path,
     )
+
+
+def make_metadata(name: str, version: str, *reqs: str) -> str:
+    """Minimal METADATA text carrying the given Requires-Dist lines."""
+    lines = ["Metadata-Version: 2.1", f"Name: {name}", f"Version: {version}"]
+    lines += [f"Requires-Dist: {r}" for r in reqs]
+    return "\n".join(lines) + "\n"
 
 
 def make_tagged_wheel(tag: str, *, has_metadata: bool = True) -> WheelFile:
@@ -3154,7 +3162,7 @@ class TestDecisionLookAhead:
 
     def test_flush_widens_terms_onto_listed_gaps(self) -> None:
         """Consecutive rejected candidates coalesce into one segment and the
-        blocker spans its neighbor gap, admitting no other listed version."""
+        blocker covers every version the scanned candidates exclude."""
         foo_wheels = [make_wheel(v) for v in ("3.0", "2.0", "1.0", "0.5")]
         bar_wheels = [make_wheel(v) for v in ("5.0", "3.0", "1.0")]
         meta_template = "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\nRequires-Dist: bar>=5.0\n"
@@ -3181,7 +3189,9 @@ class TestDecisionLookAhead:
         assert blocker.package == "bar"
         assert V("3.0") in blocker.constraint
         assert V("4.0") in blocker.constraint
-        assert V("1.0") not in blocker.constraint
+        # Every scanned candidate requires bar>=5.0, so bar 1.0 blocks them
+        # all just as bar 3.0 does; bar 5.0 satisfies them and stays out.
+        assert V("1.0") in blocker.constraint
         assert V("5.0") not in blocker.constraint
 
     def test_flush_widening_keeps_a_live_hole_version_out(self) -> None:
@@ -3248,6 +3258,246 @@ class TestDecisionLookAhead:
         )
         assert blocker.constraint == VersionRange.singleton(V("2.0"))
 
+    def test_blocker_widens_to_the_recorded_dep_range_complement(self) -> None:
+        """The blocker term becomes the complement of the scanned candidates'
+        dependency ranges, which reaches past the decided version's gap."""
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel(v) for v in ("11.0", "10.0")],
+                "bar": [make_wheel(v) for v in ("9.0", "4.0", "2.0", "0.1")],
+            },
+            metadata_by_version={
+                "10.0": make_metadata("foo", "10.0", "bar>=4.0"),
+                "11.0": make_metadata("foo", "11.0", "bar>=9.0"),
+            },
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("bar")
+        provider.receive_partial_solution_hint({}, {"bar": V("2.0")})
+        assert provider.choose_version("foo", SpecifierSet(">=1.0").to_range()) is None
+        clauses = provider.consume_pending_clauses()
+        assert len(clauses) == 1
+        blocker = clauses[0].terms[1]
+        assert blocker.package == "bar"
+        # The decided version, by construction outside every recorded range.
+        assert V("2.0") in blocker.constraint
+        # A listed version no candidate would have accepted either, and one
+        # the decided version's neighbor gap leaves out.
+        assert V("0.1") in blocker.constraint
+        gap = provider.widen_decision("bar", V("2.0"))
+        assert gap is not None
+        assert V("0.1") not in gap
+        # Versions some candidate accepts stay out.
+        assert V("4.0") not in blocker.constraint
+        assert V("9.0") not in blocker.constraint
+
+    def test_blocker_membership_keeps_out_versions_a_candidate_accepts(self) -> None:
+        """Candidates rejecting the blocker from opposite sides leave a bounded
+        blocker term: everything between their ranges, and nothing inside."""
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel(v) for v in ("11.0", "10.0")],
+                "bar": [make_wheel(v) for v in ("9.0", "4.0", "2.0", "0.1")],
+            },
+            metadata_by_version={
+                "10.0": make_metadata("foo", "10.0", "bar<1.0"),
+                "11.0": make_metadata("foo", "11.0", "bar>=9.0"),
+            },
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("bar")
+        provider.receive_partial_solution_hint({}, {"bar": V("2.0")})
+        assert provider.choose_version("foo", SpecifierSet(">=1.0").to_range()) is None
+        clauses = provider.consume_pending_clauses()
+        blocker = clauses[0].terms[1]
+        assert isinstance(blocker.constraint, VersionRange)
+        assert len(blocker.constraint._bounds) == 1
+        assert V("2.0") in blocker.constraint
+        assert V("4.0") in blocker.constraint
+        assert V("0.1") not in blocker.constraint
+        assert V("9.0") not in blocker.constraint
+
+    def test_blocker_membership_opens_no_admission_surface(self) -> None:
+        """The complement inherits no arbitrary-string admission and drops the
+        recorded ranges' pre-release opt-in region."""
+        assert SpecifierSet(">=9.0rc1").to_range()._pre_region != ()
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel(v) for v in ("11.0", "10.0")],
+                "bar": [make_wheel(v) for v in ("9.0", "2.0", "0.1")],
+            },
+            metadata_by_version={
+                "10.0": make_metadata("foo", "10.0", "bar>=9.0rc1"),
+                "11.0": make_metadata("foo", "11.0", "bar>=9.0rc1"),
+            },
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("bar")
+        provider.receive_partial_solution_hint({}, {"bar": V("2.0")})
+        assert provider.choose_version("foo", SpecifierSet(">=1.0").to_range()) is None
+        clauses = provider.consume_pending_clauses()
+        blocker = clauses[0].terms[1]
+        assert isinstance(blocker.constraint, VersionRange)
+        assert V("2.0") in blocker.constraint
+        assert blocker.constraint._pre_region == ()
+        assert blocker.constraint._admit_arbitrary is False
+        assert "wat" not in blocker.constraint
+
+    def test_blocker_keeps_the_gap_without_recorded_dep_ranges(self) -> None:
+        """A producer that queues versions without dependency ranges (the
+        extras block path) leaves the blocker on its neighbor gap."""
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel("10.0")],
+                "bar": [make_wheel(v) for v in ("4.0", "2.0", "0.1")],
+            },
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("foo")
+        provider.fetch_versions("bar")
+        provider.pending_blocks[("foo", "bar", V("2.0"))].append(V("10.0"))
+        provider._flush_pending_blocks()
+        blocker = provider.consume_pending_clauses()[0].terms[1]
+        assert V("2.0") in blocker.constraint
+        assert V("2.5") in blocker.constraint
+        assert V("0.1") not in blocker.constraint
+        assert V("4.0") not in blocker.constraint
+
+    def test_blocker_keeps_the_gap_when_one_rejection_lacks_a_range(self) -> None:
+        """Membership widening needs the whole group: one queued version
+        without a recorded range drops the group back to the gap."""
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel(v) for v in ("11.0", "10.0")],
+                "bar": [make_wheel(v) for v in ("4.0", "2.0", "0.1")],
+            },
+            metadata_by_version={"10.0": make_metadata("foo", "10.0", "bar>=4.0")},
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("bar")
+        provider.receive_partial_solution_hint({}, {"bar": V("2.0")})
+        assert provider._look_ahead_ok("foo", V("10.0")) is False
+        provider.pending_blocks[("foo", "bar", V("2.0"))].append(V("11.0"))
+        provider._flush_pending_blocks()
+        blocker = provider.consume_pending_clauses()[0].terms[1]
+        assert V("2.0") in blocker.constraint
+        assert V("0.1") not in blocker.constraint
+        assert V("4.0") not in blocker.constraint
+
+    def test_blocker_keeps_the_gap_when_the_union_swallows_the_decision(self) -> None:
+        """The containment fence: a recorded union that contains the blocker
+        version cannot have produced the rejections, so the gap stands."""
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel("10.0")],
+                "bar": [make_wheel(v) for v in ("4.0", "2.0", "0.1")],
+            },
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("foo")
+        provider.fetch_versions("bar")
+        key = ("foo", "bar", V("2.0"))
+        provider.pending_blocks[key].append(V("10.0"))
+        provider.pending_decision_dep_ranges[key] = DepRangeUnion(
+            1, SpecifierSet(">=0.1").to_range()
+        )
+        provider._flush_pending_blocks()
+        blocker = provider.consume_pending_clauses()[0].terms[1]
+        assert V("2.0") in blocker.constraint
+        assert V("0.1") not in blocker.constraint
+        assert V("4.0") not in blocker.constraint
+
+    def test_decision_blocker_term_is_satisfied_by_the_decision(self) -> None:
+        """The blocker term has to be satisfied by the decision's singleton;
+        containing the decided version is not enough.
+
+        A ``===`` dependency range separates the two: its complement rejects
+        the literal ``1.0.0`` by string, so ``V("1.0")`` reads as contained
+        while the singleton is not a subset.  Such a term leaves the clause
+        undetermined, which suppresses NO_VERSIONS and livelocks the resolve,
+        so the fence declines it and the gap stands.
+        """
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel("10.0")],
+                "bar": [make_wheel(v) for v in ("2.0", "1.0")],
+            },
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("foo")
+        provider.fetch_versions("bar")
+        key = ("foo", "bar", V("1.0"))
+        provider.pending_blocks[key].append(V("10.0"))
+        provider.pending_decision_dep_ranges[key] = DepRangeUnion(
+            1, SpecifierSet("===1.0.0").to_range()
+        )
+        provider._flush_pending_blocks()
+        blocker = provider.consume_pending_clauses()[0].terms[1]
+        assert blocker.satisfies(VersionRange.singleton(V("1.0")))
+
+    def test_range_block_widens_to_the_membership_complement(self) -> None:
+        """The range-keyed blocker term widens the same way, past the captured
+        positive range it started from."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=make_metadata("foo", "1.0", "bar>=5.0"),
+            package="foo",
+        )
+        root_reqs = {"baz": SpecifierSet(">=1.0").to_range()}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        pos_range = SpecifierSet("<2.0").to_range()
+        provider.receive_partial_solution_hint({"bar": pos_range}, {})
+        assert provider._look_ahead_ok("foo", V("1.0")) is False
+        provider._flush_pending_blocks()
+        blocker = provider.consume_pending_clauses()[0].terms[1]
+        assert blocker.constraint is not pos_range
+        assert V("1.0") in blocker.constraint
+        assert V("3.0") in blocker.constraint
+        assert V("5.0") not in blocker.constraint
+
+    def test_range_block_keeps_its_range_when_membership_misses_it(self) -> None:
+        """The containment fence on the range family: a recorded union that
+        overlaps the positive range leaves the captured object in place."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(coordinator, target=_PY312)
+        blocker_range = SpecifierSet("<2.0").to_range()
+        key = ("foo", "bar", blocker_range)
+        provider.pending_range_blocks[key].append(V("1.0"))
+        provider.pending_range_dep_ranges[key] = DepRangeUnion(
+            1, SpecifierSet(">=1.0").to_range()
+        )
+        provider._flush_pending_blocks()
+        blocker = provider.consume_pending_clauses()[0].terms[1]
+        assert blocker.constraint is blocker_range
+
+    def test_lookahead_clause_prunes_the_other_blocker_versions(self) -> None:
+        """End to end: the widened clause rules out every bar version at once,
+        so the scan of foo runs once instead of once per bar decision."""
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel(v) for v in ("12.0", "11.0", "10.0")],
+                "bar": [make_wheel(v) for v in ("2.0", "1.0")],
+            },
+            metadata_by_version={
+                "10.0": make_metadata("foo", "10.0", "bar>=9.0"),
+                "11.0": make_metadata("foo", "11.0", "bar>=9.0"),
+                "12.0": make_metadata("foo", "12.0", "bar>=9.0"),
+                "1.0": make_metadata("bar", "1.0"),
+                "2.0": make_metadata("bar", "2.0"),
+            },
+        )
+        root_reqs = {
+            "bar": VersionRange.full(admit_arbitrary=False),
+            "foo": VersionRange.full(admit_arbitrary=False),
+        }
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        with pytest.raises(ResolutionError):
+            resolver.resolve(dict(root_reqs))
+        # One scan of foo's three versions. A gap-widened blocker names only
+        # bar 2.0, so bar 1.0 gets decided next and foo is scanned again.
+        assert provider.stats.look_ahead_rejections == 3
+
     def test_full_resolve_reports_lookahead_clause_as_incompatible(self) -> None:
         """The look-ahead grouped clause renders as an incompatibility.
 
@@ -3269,11 +3519,6 @@ class TestDecisionLookAhead:
                 local_path=None,
             )
 
-        def meta(name: str, version: str, *reqs: str) -> str:
-            lines = ["Metadata-Version: 2.1", f"Name: {name}", f"Version: {version}"]
-            lines += [f"Requires-Dist: {r}" for r in reqs]
-            return "\n".join(lines) + "\n"
-
         coordinator = make_coordinator(
             listings={
                 "foo": [named_wheel("foo", "1.0")],
@@ -3281,10 +3526,10 @@ class TestDecisionLookAhead:
                 "lib": [named_wheel("lib", "5.0"), named_wheel("lib", "9.0")],
             },
             metadata_by_version={
-                "1.0": meta("foo", "1.0", "lib==9.0"),
-                "3.0": meta("app", "3.0", "lib==5.0"),
-                "5.0": meta("lib", "5.0"),
-                "9.0": meta("lib", "9.0"),
+                "1.0": make_metadata("foo", "1.0", "lib==9.0"),
+                "3.0": make_metadata("app", "3.0", "lib==5.0"),
+                "5.0": make_metadata("lib", "5.0"),
+                "9.0": make_metadata("lib", "9.0"),
             },
         )
         root_reqs = {
@@ -3303,6 +3548,38 @@ class TestDecisionLookAhead:
         assert any(
             "app" in ln and "lib" in ln and "incompatible with" in ln for ln in lines
         )
+
+    def test_full_resolve_terminates_on_an_arbitrary_equality_blocker(self) -> None:
+        """An unsatisfiable ``===`` dependency reports cleanly, not by
+        exhausting the iteration cap.
+
+        Both foo versions pin ``bar===1.0.0`` while root holds bar below 2.0,
+        so bar decides at 1.0 and the scan rejects both.  The widened blocker
+        term has to stay satisfiable by that decision, or the clause never
+        asserts and the resolver re-picks foo forever.
+        """
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel("10.0"), make_wheel("9.0")],
+                "bar": [make_wheel("2.0"), make_wheel("1.0")],
+            },
+            metadata_by_version={
+                "10.0": make_metadata("foo", "10.0", "bar===1.0.0"),
+                "9.0": make_metadata("foo", "9.0", "bar===1.0.0"),
+                "2.0": make_metadata("bar", "2.0"),
+                "1.0": make_metadata("bar", "1.0"),
+            },
+        )
+        root_reqs = {
+            "foo": VersionRange.full(admit_arbitrary=False),
+            "bar": SpecifierSet("<2.0").to_range(),
+        }
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(dict(root_reqs))
+
+        assert "exceeded" not in str(exc_info.value)
 
 
 class TestLookAheadAbort:

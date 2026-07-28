@@ -427,7 +427,8 @@ class TestSpanDirection:
 
 class TestGapSpanComposition:
     """``widen_decision`` spans equal-deps runs for decided parent terms
-    while look-ahead terms keep pure gaps via ``widen_decision_gap``."""
+    while look-ahead version terms keep pure gaps via
+    ``widen_decision_gap``."""
 
     def test_run_member_spans_parent_but_lookahead_keeps_gaps(self) -> None:
         graph = {
@@ -463,7 +464,10 @@ class TestGapSpanComposition:
         assert V("0.5") not in candidate.constraint
         assert blocker.package == "bar"
         assert V("3.0") in blocker.constraint
-        assert V("1.0") not in blocker.constraint
+        # Every scanned foo version requires bar>=5.0, so the widening reaches
+        # past the gap to bar 1.0, which blocks them all; bar 5.0 satisfies
+        # them and stays out.
+        assert V("1.0") in blocker.constraint
         assert V("5.0") not in blocker.constraint
 
     def test_gap_path_ignores_spans_for_base_packages(self) -> None:
