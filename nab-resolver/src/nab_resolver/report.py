@@ -37,8 +37,10 @@ def format_error(
 
     ``narrow`` maps ``(package, constraint)`` to a display constraint and is
     applied to originally-positive terms only; a negative dependency-side
-    term renders as requested even when displayed negated.  Narrowing
-    happens at render time only, never mutating the derivation tree.
+    term renders as requested even when displayed negated.  On a
+    ``NO_VERSIONS`` line a narrowing to the full range is ignored, since the
+    range is what keeps the sentence true.  Narrowing happens at render time
+    only, never mutating the derivation tree.
     """
     lines: list[str] = []
     explain_incompatibility(root_incompatibility, lines, set(), narrow)
@@ -48,6 +50,12 @@ def format_error(
 # DEPENDENCY/ROOT clauses always have two terms (parent + dependency);
 # synthetic single-term test clauses fall through to the prefix renderer.
 _ATTRIBUTION_CLAUSE_TERMS = 2
+
+# Prefixes that name the package themselves ("no versions of a"), so their
+# terms render as requirements.
+_REQUIREMENT_PREFIX_CAUSES = frozenset(
+    {IncompatibilityCause.ROOT, IncompatibilityCause.NO_VERSIONS}
+)
 
 
 def explain_incompatibility(
@@ -84,11 +92,20 @@ def explain_incompatibility(
                 stack.append((node.cause_left, False))
 
 
-def _narrow_positive(term: Term[Any, Any], narrow: _NarrowFn) -> Term[Any, Any]:
-    """Return ``term`` with a narrowed constraint when originally positive."""
+def _narrow_positive(
+    term: Term[Any, Any], narrow: _NarrowFn, *, allow_full: bool
+) -> Term[Any, Any]:
+    """Return ``term`` with a narrowed constraint when originally positive.
+
+    Unless ``allow_full``, a narrowing to the full range is refused and the
+    term renders as requested.
+    """
     if not term.is_positive():
         return term
-    return Term(term.package, narrow(term.package, term.constraint), positive=True)
+    shown = Term(term.package, narrow(term.package, term.constraint), positive=True)
+    if allow_full or not _is_full(shown):
+        return shown
+    return term
 
 
 def _render_line(
@@ -99,7 +116,12 @@ def _render_line(
     cause = incompatibility.cause
     terms = incompatibility.terms
     if narrow is not None:
-        terms = [_narrow_positive(term, narrow) for term in terms]
+        # Without its range the line would claim the package has no versions
+        # at all, not that the ones it has were rejected here.
+        allow_full = cause is not IncompatibilityCause.NO_VERSIONS
+        terms = [
+            _narrow_positive(term, narrow, allow_full=allow_full) for term in terms
+        ]
 
     # Attribution form for the two standard two-term clauses.
     if (
@@ -107,18 +129,23 @@ def _render_line(
         and len(terms) == _ATTRIBUTION_CLAUSE_TERMS
     ):
         parent, dep = terms
+        plural = _is_full(parent)
         # A negative dep term holds the parent's required range (negate to
         # show it); a positive dep term holds a version the parent forbids.
         if dep.is_positive():
+            verb = "are" if plural else "is"
             return (
-                f"because {format_term(parent)} is incompatible with {format_term(dep)}"
+                f"because {format_term(parent)} {verb} incompatible with "
+                f"{format_term(dep)}"
             )
-        return f"because {format_term(parent)} depends on {format_term(dep.negate())}"
+        verb = "depend on" if plural else "depends on"
+        requirement = _format_requirement(dep.negate())
+        return f"because {format_term(parent)} {verb} {requirement}"
 
     if cause is IncompatibilityCause.ROOT and len(terms) == _ATTRIBUTION_CLAUSE_TERMS:
         _, dep = terms
         positive_dep = dep if dep.is_positive() else dep.negate()
-        return f"because your project depends on {format_term(positive_dep)}"
+        return f"because your project depends on {_format_requirement(positive_dep)}"
 
     if cause is IncompatibilityCause.CONSTRAINT:
         (term,) = terms
@@ -133,15 +160,37 @@ def _render_line(
         IncompatibilityCause.NO_VERSIONS: "because no versions of",
         IncompatibilityCause.DERIVED: "so",
     }.get(cause, "")
-    body = " and ".join(format_term(term) for term in terms)
+    render = _format_requirement if cause in _REQUIREMENT_PREFIX_CAUSES else format_term
+    body = " and ".join(render(term) for term in terms)
 
     if cause is IncompatibilityCause.NO_VERSIONS:
         return f"{prefix} {body} are available"
     return f"{prefix} {body}"
 
 
+def _is_full(term: Term[Any, Any]) -> bool:
+    """Return whether ``term`` is positive over a range with an empty complement."""
+    return term.is_positive() and (~term.constraint).is_empty
+
+
+def _format_requirement(term: Term[Any, Any]) -> str:
+    """Render a term in object position ("depends on b").
+
+    A full term there is the package name alone.
+    """
+    if _is_full(term):
+        return str(term.package)
+    return format_term(term)
+
+
 def format_term(term: Term[Any, Any]) -> str:
-    """Render a single term as ``[not ]package range``."""
+    """Render a single term as ``[not ]package range``.
+
+    A full term reads as "all versions of package"; :func:`_format_requirement`
+    renders the object form.
+    """
+    if _is_full(term):
+        return f"all versions of {term.package}"
     sign = "" if term.is_positive() else "not "
     return f"{sign}{term.package} {term.constraint}"
 
