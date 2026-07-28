@@ -148,6 +148,8 @@ class InMemoryIndex:
         self._listings: dict[str, list[WheelFile | SdistFile]] = {}
         self._listing_errors: dict[str, BaseException] = {}
         self._listing_indexes: dict[str, str] = {}
+        # Packages whose empty listing stands for an index skipped offline.
+        self._offline_listing_misses: set[str] = set()
         # Metadata text is keyed by the artifact it came from: the sidecar URL
         # for a wheel's METADATA, or None for text that stands for the version
         # itself (sdist PKG-INFO, an injected override).  Two wheels of one
@@ -189,22 +191,36 @@ class InMemoryIndex:
             return self._listings.get(package)
 
     def store_listing(
-        self, package: str, data: Sequence[WheelFile | SdistFile]
+        self,
+        package: str,
+        data: Sequence[WheelFile | SdistFile],
+        *,
+        offline_miss: bool = False,
     ) -> None:
         """Cache the listing for ``package`` and unblock any waiter.
 
         ``data`` is accepted as a Sequence (covariant) so callers can pass
         homogeneous ``list[WheelFile]`` lists; it is materialised into the
         internal ``list[WheelFile | SdistFile]`` cache.
+
+        ``offline_miss`` marks the empty listing as an index skipped offline
+        rather than one that served no files.
         """
         key = f"listing:{package}"
         materialised = list(data)
         with self._lock:
             self._listings[package] = materialised
+            if offline_miss:
+                self._offline_listing_misses.add(package)
             pending = self._pending.get(key)
         if pending is not None:
             pending.result = materialised
             pending.event.set()
+
+    def is_offline_listing_miss(self, package: str) -> bool:
+        """Whether ``package``'s empty listing is an offline cold-cache miss."""
+        with self._lock:
+            return package in self._offline_listing_misses
 
     def store_listing_error(self, package: str, error: BaseException) -> None:
         """Record a failed listing fetch and unblock any waiter.
@@ -1169,7 +1185,7 @@ class FetchCoordinator:
                 # Record the serving index before the empty listing fires the
                 # pending event (see _fetch_listing).
                 self._record_serving_index(client, req.package)
-                self.index.store_listing(req.package, [])
+                self.index.store_listing(req.package, [], offline_miss=True)
             elif self.index.get_listing(req.package) is None:
                 self.index.store_listing_error(req.package, exc)
             return

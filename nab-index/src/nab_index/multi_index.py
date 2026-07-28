@@ -6,7 +6,9 @@ the router walks the list left-to-right and stops at the first index
 whose listing for the package is non-empty (presence-based first-index,
 matching uv's ``--index-strategy first-index``).  An index that raises
 :class:`~nab_index.cache.OfflineError` (offline mode, cold cache) is
-treated as having no listing, so later indexes are still consulted.
+skipped so later indexes are still consulted.  If no index then serves
+a listing, that error is re-raised, since an empty result would read as
+an absent package.
 
 Per-package overrides route a package to a *named* index regardless
 of order; when an override matches, *only* that index is consulted
@@ -196,7 +198,8 @@ class MultiIndexClient:
 
         See module docstring for routing.  The chosen index name is
         cached so subsequent metadata / sdist calls hit the same
-        client.
+        client.  Raises :class:`~nab_index.cache.OfflineError` when no
+        index served a listing and at least one was skipped offline.
         """
         override = self._override_index(package)
         if override is not None:
@@ -209,12 +212,13 @@ class MultiIndexClient:
         if cached is not None:
             return await self._clients[cached].get_files(package)
 
+        skipped_offline: OfflineError | None = None
         for index_name in self._order:
             client = self._clients[index_name]
             try:
                 files = await client.get_files(package)
-            except OfflineError:
-                # Offline with a cold cache: treat as no listing.
+            except OfflineError as exc:
+                skipped_offline = exc
                 continue
             if files:
                 self._record_route(package, index_name)
@@ -224,6 +228,9 @@ class MultiIndexClient:
         # subsequent metadata calls (which will also miss) hit a
         # stable client.
         self._record_route(package, self._order[0])
+
+        if skipped_offline is not None:
+            raise skipped_offline
         return []
 
     async def get_metadata_text(
