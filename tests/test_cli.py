@@ -337,6 +337,54 @@ def _two_libc_universal_result() -> ResolveResult:
     )
 
 
+def _two_implementation_universal_result() -> ResolveResult:
+    """Two Pythons on one platform, each in a CPython and a PyPy flavour.
+
+    ``python_version`` varies, so a template can name it, but the
+    implementation pairs still land on one path.
+    """
+    tuples = tuple(
+        ResolveTarget.for_declared(
+            python_version=py_minor,
+            spec=PlatformSpec("linux_x86_64"),
+            implementation=implementation,
+            multi_implementation=True,
+        )
+        for py_minor in ("3.11", "3.12")
+        for implementation in ("cpython", "pypy")
+    )
+    return ResolveResult(
+        targets=tuples,
+        target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
+    )
+
+
+def _mixed_implementation_universal_result() -> ResolveResult:
+    """A CPython 3.11 tuple, plus a CPython and a PyPy 3.12 tuple.
+
+    The first pair to collide under a ``{platform_id}`` template differs
+    in ``python_version``, but naming it leaves the two 3.12 tuples on
+    one path.
+    """
+    tuples = tuple(
+        ResolveTarget.for_declared(
+            python_version=py_minor,
+            spec=PlatformSpec("linux_x86_64"),
+            implementation=implementation,
+            multi_implementation=True,
+        )
+        for py_minor, implementation in (
+            ("3.11", "cpython"),
+            ("3.12", "cpython"),
+            ("3.12", "pypy"),
+        )
+    )
+    return ResolveResult(
+        targets=tuples,
+        target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
+    )
+
+
 def _late_hashless_universal_result() -> ResolveResult:
     """Two tuples, where only the second one pins a hashless artefact.
 
@@ -2203,6 +2251,48 @@ class TestLockCommandUniversal:
         err = capsys.readouterr().err
         assert "tells them apart" in err
         assert not out.exists()
+
+    def test_plain_output_offers_no_template_that_would_collide(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A variable that varies but leaves a collision is not offered as a fix."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "requirements.txt"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_two_implementation_universal_result(),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "4 tuples" in err
+        assert "tells them apart" in err
+        assert "Emit pylock output instead" in err
+        assert "{python_version}" not in err
+        assert not out.exists()
+
+    def test_collision_offers_no_template_that_would_collide(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A variable that separates the colliding pair only is not offered."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{platform_id}.txt"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_mixed_implementation_universal_result(),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "both map to" in err
+        assert "tells them apart" in err
+        assert "Emit pylock output instead" in err
+        assert "{python_version}" not in err
+        assert list(tmp_path.glob("req-*.txt")) == []
 
     def test_template_missing_hash_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

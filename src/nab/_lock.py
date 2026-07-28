@@ -619,19 +619,23 @@ def _template_values(target: ResolveTarget) -> dict[str, str]:
     }
 
 
-def _varying_vars(targets: Sequence[ResolveTarget]) -> list[str]:
-    """Return the template variables whose value differs across ``targets``.
+def _separating_vars(targets: Sequence[ResolveTarget]) -> list[str]:
+    """Return the template variables that give each tuple its own file.
 
-    These are the variables an ``--output`` template has to name to give
-    each tuple its own file.  The list can be empty: two tuples can
-    differ in a tag knob no variable names (a musl and a glibc target
-    share one ``platform_id``), and then no template separates them.
+    These are the variables whose value differs across ``targets``, but
+    only when naming all of them lands every tuple on its own path.  The
+    list is empty otherwise: tuples can differ in an axis no variable
+    names, so a musl and a glibc target share one ``platform_id``, and a
+    CPython and a PyPy target share all three.
     """
     values = [_template_values(target) for target in targets]
     first = values[0]
-    return [
+    varying = [
         name for name in first if any(other[name] != first[name] for other in values)
     ]
+
+    rendered = {tuple(value[name] for name in varying) for value in values}
+    return varying if len(rendered) == len(values) else []
 
 
 def _and_list(names: Sequence[str]) -> str:
@@ -750,23 +754,23 @@ def _emit_requirements(
 def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
     """Exit 1: several tuples, and one plain ``--output`` path for them all.
 
-    Names the variables that actually vary across the tuples, which for a
-    resolve forked by ``[tool.nab].conflicts`` is ``{selection}`` alone:
-    the fork is a dimension of its own, and the tuples it produces can
-    share every other axis.
+    Names the variables that separate the tuples, which for a resolve
+    forked by ``[tool.nab].conflicts`` is ``{selection}`` alone: the fork
+    is a dimension of its own, and the tuples it produces can share every
+    other axis.
     """
     targets = [lock.target for lock in lock_input.targets.values()]
     count = len(targets)
-    varying = _varying_vars(targets)
-    if not varying:
+    separating = _separating_vars(targets)
+    if not separating:
         _cli.printer().error(
             f"the resolve produced {count} tuples and no --output template"
             f" variable tells them apart, so {output} cannot hold them."
             "  Emit pylock output instead."
         )
         sys.exit(1)
-    placeholders = _and_list([f"{{{name}}}" for name in varying])
-    example = "constraints" + "".join(f"-{{{name}}}" for name in varying) + ".txt"
+    placeholders = _and_list([f"{{{name}}}" for name in separating])
+    example = "constraints" + "".join(f"-{{{name}}}" for name in separating) + ".txt"
     _cli.printer().error(
         f"the resolve produced {count} tuples but --output {output} has no"
         f" template variable to disambiguate.  Use {placeholders} in the path,"
@@ -776,14 +780,25 @@ def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
 
 
 def _refuse_collision(
-    first: TargetLock, second: TargetLock, *, output: Path, template: str, path: str
+    lock_input: LockInput,
+    first: TargetLock,
+    second: TargetLock,
+    *,
+    output: Path,
+    template: str,
+    path: str,
 ) -> NoReturn:
-    """Exit 1: two tuples render one path under this template."""
+    """Exit 1: two tuples render one path under this template.
+
+    The separating set covers every tuple in the lock, not just the
+    colliding pair: a variable that tells those two apart can still leave
+    another pair sharing a path, so offering it would only move the error.
+    """
+    targets = [lock.target for lock in lock_input.targets.values()]
     missing = [
-        name
-        for name in _varying_vars([first.target, second.target])
-        if f"{{{name}}}" not in template
+        name for name in _separating_vars(targets) if f"{{{name}}}" not in template
     ]
+
     head = (
         f"tuples {first.target.label!r} and {second.target.label!r}"
         f" both map to {path!r};"
@@ -812,6 +827,7 @@ def _substituted_paths(
         substituted = template.format(**_template_values(lock.target))
         if substituted in by_path:
             _refuse_collision(
+                lock_input,
                 by_path[substituted],
                 lock,
                 output=output,
