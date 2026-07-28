@@ -24,7 +24,8 @@ __all__ = [
 ]
 
 MAX_RETRIES = 3
-"""Retries after the first attempt, so at most four requests per URL."""
+"""Retries after the first attempt: ``GET_RETRY`` counts them per failure class;
+the transports' own retry loops count them across all failures."""
 
 MAX_REDIRECTS = 20
 """Redirects followed per GET, matching httpx's default."""
