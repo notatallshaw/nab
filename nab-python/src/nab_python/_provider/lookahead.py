@@ -105,9 +105,9 @@ def _widen_or_singleton(
 ) -> VersionRange:
     """Return ``version``'s widened neighbor gap, or its singleton without one.
 
-    Look-ahead needs the gap contract specifically: the gap contains
-    ``version`` and no other listed version, so unions and merge keys name
-    exactly the versions the scan rejected.
+    Look-ahead needs the gap rather than a ``widen_decision`` span: the gap
+    contains ``version`` and no other listed version, so unions and merge
+    keys name exactly the versions the scan rejected.
     """
     widened = provider.widen_decision_gap(package, version)
     return VersionRange.singleton(version) if widened is None else widened

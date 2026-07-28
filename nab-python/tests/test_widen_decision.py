@@ -2,15 +2,17 @@
 
 The widening universe is the post-filter listing for the normalized base
 package: ascending, including pre-release, dev, post, and local versions.
-``widen_decision`` and ``widen_decision_gap`` both widen a decided version
-to the open gap between its listed neighbors. Local, VCS, and archive
-sources (synthesized single-version listings) and packages with no cached
-listing are never widened, and display narrowing reads caches only.
+``widen_decision`` spans base packages across adjacent versions with equal
+cached deps before widening to the surrounding gap; extras proxies keep
+the pure neighbor gap, and ``widen_decision_gap`` keeps it for every
+package. Local, VCS, and archive sources (synthesized single-version
+listings) and packages with no cached listing are never widened, and
+display narrowing reads caches only.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from nab_index.client import WheelFile
 from nab_python._packaging_provider import PackagingProvider
@@ -78,6 +80,18 @@ def _listing_provider(package: str, versions: list[str]) -> Provider:
     return provider
 
 
+def _deps_provider(
+    graph: dict[str, dict[str, list[str]]], package: str, fetched: list[str]
+) -> Provider:
+    """Provider with ``package``'s listing and ``fetched`` versions' deps cached."""
+    coordinator = _graph_coordinator(graph)
+    provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
+    provider.fetch_versions(package)
+    for version in fetched:
+        provider.get_dependencies(package, V(version))
+    return provider
+
+
 class TestWidenDecision:
     def test_none_before_listing_is_cached(self) -> None:
         coordinator = _graph_coordinator({"p": {"1.0": []}})
@@ -108,7 +122,12 @@ class TestWidenDecision:
         base = provider.widen_decision("foo", V("2.0"))
         proxy = provider.widen_decision("foo[bar]", V("2.0"))
         assert base is not None
-        assert proxy is base
+        assert proxy is not None
+        assert proxy == base
+        assert V("2.0") in proxy
+        assert V("2.5") in proxy
+        assert V("1.0") not in proxy
+        assert V("3.0") not in proxy
 
     def test_memoized_per_package_version(self) -> None:
         provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
@@ -156,6 +175,200 @@ class TestWidenDecision:
         )
         provider.versions_cache["baz"] = [(V("1.0"), _wheel("baz", "1.0"))]
         assert provider.widen_decision("baz", V("1.0")) is None
+
+
+_RUN_GRAPH = {
+    "p": {
+        "4.0": [],
+        "3.0": ["d>=1"],
+        "2.0": ["d>=1"],
+        "1.0": ["d>=1"],
+        "0.5": [],
+    },
+    "d": {"1.0": []},
+}
+
+
+class TestSameDepsSpan:
+    """Base packages span adjacent versions with equal cached dependency
+    dicts before widening to the open gap around the span."""
+
+    def test_spans_cached_neighbors_with_equal_deps(self) -> None:
+        provider = _deps_provider(_RUN_GRAPH, "p", ["0.5", "1.0", "2.0", "3.0", "4.0"])
+        widened = provider.widen_decision("p", V("2.0"))
+        assert widened is not None
+        assert V("1.0") in widened
+        assert V("2.0") in widened
+        assert V("3.0") in widened
+        assert V("0.7") in widened
+        assert V("3.5") in widened
+        assert V("0.5") not in widened
+        assert V("4.0") not in widened
+
+    def test_differing_deps_neighbor_fences(self) -> None:
+        graph = {
+            "p": {"3.0": ["d>=2"], "2.0": ["d>=1"], "1.0": ["d>=1"]},
+            "d": {"2.0": [], "1.0": []},
+        }
+        provider = _deps_provider(graph, "p", ["1.0", "2.0", "3.0"])
+        widened = provider.widen_decision("p", V("2.0"))
+        assert widened is not None
+        assert V("1.0") in widened
+        assert V("2.0") in widened
+        assert V("0.1") in widened
+        assert V("2.5") in widened
+        assert V("3.0") not in widened
+
+    def test_uncached_neighbor_fences(self) -> None:
+        graph = {
+            "p": {"3.0": ["d>=1"], "2.0": ["d>=1"], "1.0": ["d>=1"]},
+            "d": {"1.0": []},
+        }
+        provider = _deps_provider(graph, "p", ["1.0", "2.0"])
+        widened = provider.widen_decision("p", V("2.0"))
+        assert widened is not None
+        assert V("1.0") in widened
+        assert V("2.0") in widened
+        assert V("3.0") not in widened
+
+    def test_uncached_decided_version_keeps_gap(self) -> None:
+        graph = {
+            "p": {"3.0": ["d>=1"], "2.0": ["d>=1"], "1.0": ["d>=1"]},
+            "d": {"1.0": []},
+        }
+        provider = _deps_provider(graph, "p", ["1.0", "3.0"])
+        widened = provider.widen_decision("p", V("2.0"))
+        assert widened is not None
+        assert V("2.0") in widened
+        assert V("1.0") not in widened
+        assert V("3.0") not in widened
+
+    def test_identical_run_covering_whole_listing_spans_fully(self) -> None:
+        graph = {
+            "p": {"3.0": ["d>=1"], "2.0": ["d>=1"], "1.0": ["d>=1"]},
+            "d": {"1.0": []},
+        }
+        provider = _deps_provider(graph, "p", ["1.0", "2.0", "3.0"])
+        widened = provider.widen_decision("p", V("2.0"))
+        assert widened is not None
+        assert V("0.1") in widened
+        assert V("99") in widened
+
+    def test_extras_proxy_keeps_gap_widening(self) -> None:
+        graph = {
+            "foo": {"3.0": ["d>=1"], "2.0": ["d>=1"], "1.0": ["d>=1"]},
+            "d": {"1.0": []},
+        }
+        provider = _deps_provider(graph, "foo", ["1.0", "2.0", "3.0"])
+        base = provider.widen_decision("foo", V("2.0"))
+        proxy = provider.widen_decision("foo[bar]", V("2.0"))
+        assert base is not None
+        assert proxy is not None
+        assert V("1.0") in base
+        assert V("3.0") in base
+        assert V("2.0") in proxy
+        assert V("2.5") in proxy
+        assert V("1.0") not in proxy
+        assert V("3.0") not in proxy
+        assert provider.widen_decision("foo[bar]", V("2.0")) is proxy
+
+    def test_span_memo_returns_identical_object(self) -> None:
+        provider = _deps_provider(_RUN_GRAPH, "p", ["0.5", "1.0", "2.0", "3.0", "4.0"])
+        first = provider.widen_decision("p", V("2.0"))
+        second = provider.widen_decision("p", V("2.0"))
+        assert first is not None
+        assert second is first
+
+    def test_span_is_fixed_at_first_computation(self) -> None:
+        graph = {
+            "p": {"3.0": ["d>=1"], "2.0": ["d>=1"], "1.0": ["d>=1"]},
+            "d": {"1.0": []},
+        }
+        provider = _deps_provider(graph, "p", ["1.0", "2.0"])
+        first = provider.widen_decision("p", V("2.0"))
+        assert first is not None
+        assert V("3.0") not in first
+        provider.get_dependencies("p", V("3.0"))
+        second = provider.widen_decision("p", V("2.0"))
+        assert second is not None
+        assert second is first
+        assert V("3.0") not in second
+
+    def test_span_never_fetches(self) -> None:
+        provider = _deps_provider(_RUN_GRAPH, "p", ["0.5", "1.0", "2.0", "3.0", "4.0"])
+        coordinator = cast("MagicMock", provider.coordinator)
+        for method in (
+            coordinator.request_listing,
+            coordinator.request_metadata,
+            coordinator.request_metadata_batch,
+        ):
+            method.side_effect = AssertionError("widen_decision fetched")
+        assert provider.widen_decision("p", V("2.0")) is not None
+
+
+class TestGapSpanComposition:
+    """``widen_decision`` spans equal-deps runs for decided parent terms
+    while look-ahead terms keep pure gaps via ``widen_decision_gap``."""
+
+    def test_run_member_spans_parent_but_lookahead_keeps_gaps(self) -> None:
+        graph = {
+            "foo": {
+                "3.0": ["bar>=5.0"],
+                "2.0": ["bar>=5.0"],
+                "1.0": ["bar>=5.0"],
+                "0.5": ["bar>=5.0"],
+            },
+            "bar": {"5.0": [], "3.0": [], "1.0": []},
+        }
+        coordinator = _graph_coordinator(graph)
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
+        provider.fetch_versions("foo")
+        provider.fetch_versions("bar")
+        for version in ("0.5", "1.0", "2.0", "3.0"):
+            provider.get_dependencies("foo", V(version))
+        for version in ("1.0", "3.0", "5.0"):
+            provider.get_dependencies("bar", V(version))
+        provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
+        assert provider.choose_version("foo", SpecifierSet(">=1.0").to_range()) is None
+        span = provider.widen_decision("foo", V("1.0"))
+        assert span is not None
+        assert V("0.5") in span
+        assert V("3.0") in span
+        clauses = provider.consume_pending_clauses()
+        assert len(clauses) == 1
+        candidate, blocker = clauses[0].terms
+        assert candidate.package == "foo"
+        assert V("1.0") in candidate.constraint
+        assert V("2.0") in candidate.constraint
+        assert V("3.0") in candidate.constraint
+        assert V("0.5") not in candidate.constraint
+        assert blocker.package == "bar"
+        assert V("3.0") in blocker.constraint
+        assert V("1.0") not in blocker.constraint
+        assert V("5.0") not in blocker.constraint
+
+    def test_gap_path_ignores_spans_for_base_packages(self) -> None:
+        provider = _deps_provider(_RUN_GRAPH, "p", ["0.5", "1.0", "2.0", "3.0", "4.0"])
+        span = provider.widen_decision("p", V("2.0"))
+        gap = provider.widen_decision_gap("p", V("2.0"))
+        assert span is not None
+        assert gap is not None
+        assert V("1.0") in span
+        assert V("3.0") in span
+        assert V("2.0") in gap
+        assert V("1.0") not in gap
+        assert V("3.0") not in gap
+
+    def test_extras_proxy_gets_gaps_in_both_paths(self) -> None:
+        provider = _deps_provider(_RUN_GRAPH, "p", ["0.5", "1.0", "2.0", "3.0", "4.0"])
+        proxy = provider.widen_decision("p[x]", V("2.0"))
+        gap = provider.widen_decision_gap("p[x]", V("2.0"))
+        assert proxy is not None
+        assert gap is proxy
+        assert V("2.0") in proxy
+        assert V("1.0") not in proxy
+        assert V("3.0") not in proxy
+        assert provider.widen_decision_gap("p", V("2.0")) is proxy
 
     def test_gap_path_none_before_listing_is_cached(self) -> None:
         coordinator = _graph_coordinator({"p": {"1.0": []}})
