@@ -131,6 +131,7 @@ class _GzipStubIndex(ThreadingHTTPServer):
     """Loopback index that serves each queued gzip body once, then GZIP_BODY."""
 
     bodies: list[bytes]
+    encoding: str
     seen: list[str]
 
 
@@ -141,7 +142,7 @@ class _GzipStubIndexHandler(BaseHTTPRequestHandler):
         body = self.server.bodies.pop(0) if self.server.bodies else GZIP_BODY
 
         self.send_response(200)
-        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Encoding", self.server.encoding)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -151,9 +152,12 @@ class _GzipStubIndexHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _gzip_stub_index(bodies: list[bytes]) -> Iterator[_GzipStubIndex]:
+def _gzip_stub_index(
+    bodies: list[bytes], encoding: str = "gzip"
+) -> Iterator[_GzipStubIndex]:
     server = _GzipStubIndex(("127.0.0.1", 0), _GzipStubIndexHandler)
     server.bodies = list(bodies)
+    server.encoding = encoding
     server.seen = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -369,6 +373,10 @@ class TestDecodeBody:
 
     def test_gzip_value_is_case_insensitive(self) -> None:
         assert decode_body(GZIP_BODY, " GZip ") == LISTING_BODY
+
+    def test_x_gzip_decodes(self) -> None:
+        assert decode_body(GZIP_BODY, "x-gzip") == LISTING_BODY
+        assert decode_body(GZIP_BODY, " X-GZip ") == LISTING_BODY
 
     def test_multi_member_gzip_decodes(self) -> None:
         body = GZIP_BODY + gzip.compress(b" and more")
@@ -833,6 +841,24 @@ class TestHttpxAsyncTransport:
         assert resp.json() == {"files": []}
 
     @respx.mock
+    def test_get_decodes_a_body_labelled_x_gzip(self) -> None:
+        """An index may label a gzip body with the coding's older name."""
+        respx.get("https://example.com/pkg").mock(
+            return_value=httpx.Response(
+                200, headers={"Content-Encoding": "x-gzip"}, content=GZIP_BODY
+            )
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        assert asyncio.run(go()).json() == {"files": []}
+
+    @respx.mock
     def test_get_retries_a_truncated_gzip_body(self, slept: list[float]) -> None:
         """A gzip body cut before its trailer is retried like a dropped connection."""
         route = respx.get("https://example.com/pkg").mock(
@@ -1274,6 +1300,20 @@ class TestUrllib3AsyncTransport:
             resp.raise_for_status()
             assert resp.content == LISTING_BODY
             assert len(index.seen) == 1
+
+    def test_get_decodes_a_body_labelled_x_gzip(self) -> None:
+        """An index may label a gzip body with the coding's older name."""
+        with _gzip_stub_index([], encoding="x-gzip") as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            assert asyncio.run(go()).content == LISTING_BODY
 
     def test_get_retries_a_truncated_gzip_body(self, thread_slept: list[float]) -> None:
         """A gzip body cut before its trailer is retried like a dropped connection."""
