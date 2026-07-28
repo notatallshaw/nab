@@ -11,12 +11,15 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import subprocess
 import tarfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nab_index import vcs as vcs_mod
 from nab_index.client import SdistFile, WheelFile
 from nab_python import resolve as resolve_mod
 from nab_python._provider import listing as listing_mod
@@ -81,7 +84,8 @@ from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
+
+    from nab_index.vcs import VcsClone, VcsRequest
 
 
 def _make_wheel(version: str, *, package: str) -> WheelFile:
@@ -132,14 +136,14 @@ def _settings(
     config: NabProjectConfig | None = None,
     *,
     align: bool = True,
-    cache_dir: Path | None = None,
+    source_root: Path | None = None,
 ) -> _EngineSettings:
     """The settings one bare ``_resolve_one_target`` or ``_run_pass`` needs."""
     effective = config if config is not None else NabProjectConfig()
     return _EngineSettings(
         coordinator=coordinator,
         config=effective,
-        cache_dir=cache_dir,
+        source_root=source_root,
         align=align,
         resolution=effective.resolution,
     )
@@ -1274,7 +1278,7 @@ class TestVcsConfigPlumbing:
 
         The resolver requests no VCS package so the materialise path is
         not exercised.  Reaching a non-error :class:`TargetResult` is
-        sufficient evidence that the VCS config and the cache dir both
+        sufficient evidence that the VCS config and the source root both
         reached the provider (the BLOCK fast-fail in
         ``index_vcs_sources`` would have raised at construction time).
         """
@@ -1284,18 +1288,18 @@ class TestVcsConfigPlumbing:
         settings = _settings(
             coordinator,
             _no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
-            cache_dir=tmp_path,
+            source_root=tmp_path,
         )
         tr = _resolve_one_target(_linux_311(), _reqs("other"), (), settings, {})
         assert tr.success
         assert tr.pins == {"other": Version("1.0")}
 
-    def test_cache_dir_required_for_vcs_materialize(self) -> None:
-        """Without a cache dir, vcs materialisation raises cleanly.
+    def test_source_root_required_for_vcs_materialize(self) -> None:
+        """Without a source root, vcs materialisation raises cleanly.
 
         When the resolver requests the VCS-backed package the provider
         raises ``UnsupportedSdistError`` mentioning ``vcs_cache_dir``.
-        Catching that diagnostic confirms the cache dir the engine
+        Catching that diagnostic confirms the directory the engine
         derives reaches the provider attribute the materialise path
         reads.  Without the plumbing the resolver would attribute-error
         on ``provider.vcs_cache_dir`` instead.
@@ -1303,7 +1307,7 @@ class TestVcsConfigPlumbing:
         settings = _settings(
             _make_coordinator({}),
             _no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
-            cache_dir=None,
+            source_root=None,
         )
         with pytest.raises(UnsupportedSdistError, match="vcs_cache_dir"):
             _resolve_one_target(_linux_311(), _reqs("pkg"), (), settings, {})
@@ -1324,6 +1328,51 @@ class TestVcsConfigPlumbing:
                     vcs_sources=(self._source(),),
                 ),
             )
+
+    def test_vcs_source_resolves_with_caching_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A resolve without a cache root clones into scratch space it then drops.
+
+        ``nab lock --no-cache`` arrives with ``cache_dir=None``.  Only
+        ``git`` is faked, so the real ``prepare_clone`` has to cope with a
+        root that does not exist yet.
+        """
+        roots: list[Path] = []
+        real_prepare_clone = vcs_mod.prepare_clone
+
+        def spy_prepare_clone(
+            cache_root: Path, request: VcsRequest, *, require_pin: bool
+        ) -> VcsClone:
+            roots.append(cache_root)
+            return real_prepare_clone(cache_root, request, require_pin=require_pin)
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            if cmd[:2] == ["git", "checkout"]:
+                (cwd / "pyproject.toml").write_text(
+                    '[project]\nname = "pkg"\nversion = "1.0"\n', encoding="utf-8"
+                )
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setattr(vcs_mod, "prepare_clone", spy_prepare_clone)
+
+        result = resolve_with_coordinator(
+            _make_coordinator({}),
+            _one_target(),
+            _reqs("pkg"),
+            config=_no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
+            cache_dir=None,
+        )
+
+        assert result.success
+        assert result.target_results[0].pins == {"pkg": Version("1.0")}
+
+        assert len(roots) == 1
+        assert not roots[0].exists()
 
 
 class TestRunPassSerial:
@@ -1745,6 +1794,28 @@ class TestArchiveSourceAcrossTargets:
         for target_result in result.target_results:
             assert str(target_result.pins["foo"]) == "1.0"
             assert str(target_result.pins["bar"]) == "2.0"
+
+    def test_resolves_with_caching_off(self) -> None:
+        """``nab lock --no-cache`` still extracts and pins the declared archive."""
+        pyproject = '[project]\nname = "foo"\nversion = "1.0"\n'
+        data = _archive_bytes("foo", "1.0", pyproject)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.tar.gz#sha256={digest}"
+        )
+        coord = make_coordinator([], package="foo")
+        coord.index.store_sdist_archive("foo", digest, data)
+
+        result = resolve_with_coordinator(
+            coord,
+            _one_target(),
+            _reqs("foo"),
+            config=NabProjectConfig(archive_sources=(source,)),
+            cache_dir=None,
+        )
+
+        assert result.success
+        assert str(result.target_results[0].pins["foo"]) == "1.0"
 
     def test_requires_python_excluding_target_fails(self, tmp_path: Path) -> None:
         # An archive skips the listing Requires-Python filter, so the source

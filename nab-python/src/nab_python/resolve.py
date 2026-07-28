@@ -21,9 +21,12 @@ from __future__ import annotations
 
 import itertools
 import logging
+import tempfile
 import time
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
@@ -86,8 +89,7 @@ from .target import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
-    from pathlib import Path
+    from collections.abc import Iterator, Mapping, Sequence
 
     from nab_index.transport import AsyncHttpTransport
 
@@ -387,31 +389,53 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bar
     conflict forks ran.
     """
     effective = config if config is not None else NabProjectConfig()
-    settings = _EngineSettings(
-        coordinator=coordinator,
-        config=effective,
-        cache_dir=cache_dir,
-        align=align_across_targets,
-        resolution=(
-            resolution_strategy
-            if resolution_strategy is not None
-            else effective.resolution
-        ),
-        progress=progress,
-    )
-    fork_list = (
-        list(forks) if forks is not None else [ResolveFork((), tuple(requirements))]
-    )
-    constraints = [Requirement(text) for text in effective.constraints]
+    with _source_root(cache_dir, effective) as source_root:
+        settings = _EngineSettings(
+            coordinator=coordinator,
+            config=effective,
+            source_root=source_root,
+            align=align_across_targets,
+            resolution=(
+                resolution_strategy
+                if resolution_strategy is not None
+                else effective.resolution
+            ),
+            progress=progress,
+        )
 
-    return _resolve_with_micro_narrowing(
-        list(targets),
-        fork_list,
-        constraints,
-        settings,
-        preferences,
-        base_requirements,
-    )
+        fork_list = (
+            list(forks) if forks is not None else [ResolveFork((), tuple(requirements))]
+        )
+        constraints = [Requirement(text) for text in effective.constraints]
+
+        return _resolve_with_micro_narrowing(
+            list(targets),
+            fork_list,
+            constraints,
+            settings,
+            preferences,
+            base_requirements,
+        )
+
+
+@contextmanager
+def _source_root(
+    cache_dir: Path | None, config: NabProjectConfig
+) -> Iterator[Path | None]:
+    """Yield the directory a declared VCS or archive source materialises under.
+
+    With caching off there is no cache root, but the source still has to
+    be materialised to read its version and dependencies, so the run gets
+    a temporary directory instead.
+    """
+    if cache_dir is not None or not (config.vcs_sources or config.archive_sources):
+        yield cache_dir
+        return
+
+    with tempfile.TemporaryDirectory(
+        prefix="nab-sources-", ignore_cleanup_errors=True
+    ) as scratch:
+        yield Path(scratch)
 
 
 # The number of split-and-resolve passes the micro-narrowing fixpoint runs
@@ -725,7 +749,9 @@ class _EngineSettings:
 
     coordinator: FetchCoordinator
     config: NabProjectConfig
-    cache_dir: Path | None
+    # Where a declared VCS clone or archive extraction lands, the cache root
+    # unless caching is off.
+    source_root: Path | None
     align: bool
     resolution: ResolutionStrategy
     progress: ProgressSink | None = None
@@ -819,7 +845,7 @@ def _resolve_one_target(
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
 
-    cache_dir = settings.cache_dir
+    source_root = settings.source_root
     provider = Provider(
         settings.coordinator,
         target=target,
@@ -834,9 +860,11 @@ def _resolve_one_target(
         vcs_config=config.vcs,
         local_sources=list(config.local_sources) or None,
         vcs_sources=list(config.vcs_sources) or None,
-        vcs_cache_dir=cache_dir / VCS_BUCKET if cache_dir is not None else None,
+        vcs_cache_dir=source_root / VCS_BUCKET if source_root is not None else None,
         archive_sources=list(config.archive_sources) or None,
-        archive_cache_dir=cache_dir / ARCHIVE_BUCKET if cache_dir is not None else None,
+        archive_cache_dir=(
+            source_root / ARCHIVE_BUCKET if source_root is not None else None
+        ),
         build_config=config,
         resolution_strategy=settings.resolution,
         direct_packages=frozenset(
