@@ -446,6 +446,9 @@ def _source_root(
 # a hang.
 _MAX_MICRO_SPLIT_PASSES = 10
 
+# Terms in a look-ahead grouped clause.
+_GROUPED_CLAUSE_TERMS = 2
+
 
 def _resolve_with_micro_narrowing(
     targets: Sequence[ResolveTarget],
@@ -1538,13 +1541,18 @@ def _raise_for_source_python(
 
 
 def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
-    """Append per-package NO_VERSIONS diagnostics to ``exc`` in-place.
+    """Append per-package no-versions diagnostics to ``exc`` in-place.
 
-    Walks the derivation tree carried on the exception, collects
-    every package that appears in a NO_VERSIONS clause, and looks up
-    the provider-side reason for each.  When at least one reason is
-    available, rewrites the exception's args so that ``str(exc)``
-    surfaces the diagnostics alongside the original derivation tree.
+    Walks the derivation tree carried on the exception, collects every
+    package a rejection clause names (see
+    :func:`_walk_no_versions_packages`), and looks up the provider-side
+    reason for each.  When at least one reason is available, rewrites the
+    exception's args so that ``str(exc)`` surfaces the diagnostics
+    alongside the original derivation tree.
+
+    Best-effort: reasons are keyed by package name and outlive the ask
+    that recorded them, so a package whose earlier ask found no version
+    keeps its hint even when the tree names it over a later range.
     """
     if exc.incompatibility is None:
         return
@@ -1570,7 +1578,13 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
 def _walk_no_versions_packages(
     incompatibility: Incompatibility[Any, Any],
 ) -> list[str]:
-    """Return package names from every NO_VERSIONS clause in the tree.
+    """Return the packages a no-versions diagnostic may name.
+
+    NO_VERSIONS clauses name every package they carry.  Look-ahead grouped
+    clauses (DEPENDENCY cause, two positive terms) name their candidate: a
+    widened union covering the whole listing conflicts by propagation, with
+    no second ``choose_version`` ask to raise a NO_VERSIONS clause.  The
+    caller drops packages with no recorded reason.
 
     The walk is iterative: the tree gains a level per conflict, so a deeply
     backtracked resolve overflows the recursion limit.
@@ -1590,6 +1604,15 @@ def _walk_no_versions_packages(
                 pkg = term.package
                 if isinstance(pkg, str):
                     out.append(pkg)
+        elif (
+            node.cause is IncompatibilityCause.DEPENDENCY
+            and len(node.terms) == _GROUPED_CLAUSE_TERMS
+            and node.terms[0].is_positive()
+            and node.terms[1].is_positive()
+        ):
+            pkg = node.terms[0].package
+            if isinstance(pkg, str):
+                out.append(pkg)
 
         # Right before left, so the left cause pops first and names keep their order.
         if node.cause_right is not None:

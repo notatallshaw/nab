@@ -3,8 +3,10 @@
 Owns ``_look_ahead_ok`` and the pending-block tables that record
 "this candidate is incompatible with this decision/positive range"
 rejections.  Each rejection becomes a grouped binary
-incompatibility (``{candidate range, decision==w}``) when
+incompatibility (``{candidate range, blocker range}``) when
 ``flush_pending_blocks`` runs at the end of ``choose_version``.
+Version-derived terms are widened onto the listing's gaps, which
+leaves the selectable versions they name unchanged.
 """
 
 from __future__ import annotations
@@ -98,15 +100,26 @@ def look_ahead_ok(
     return True
 
 
+def _widen_or_singleton(
+    provider: Provider, package: str, version: Version
+) -> VersionRange:
+    """Return ``version``'s widened gap, or its singleton without one."""
+    widened = provider.widen_decision(package, version)
+    return VersionRange.singleton(version) if widened is None else widened
+
+
 def flush_pending_blocks(provider: Provider) -> None:
     """Convert queued rejections into grouped binary incompatibilities.
 
     For each ``(candidate_pkg, blocker_pkg, blocker_version)`` group we add
-    ``{candidate_pkg in {v1,v2,...}, blocker_pkg==w}``.  Sound across
-    backjumps because the blocker term goes UNDETERMINED when the supporting
-    decision is reverted, so the candidate range can be reconsidered.
+    ``{candidate_pkg in {v1,v2,...}, blocker_pkg==w}``, with each version
+    widened through ``widen_decision``: a version's open neighbor gap holds
+    no other listed version, so adjacent gaps coalesce without changing which
+    versions the clause names.  Sound across backjumps because the blocker
+    term goes UNDETERMINED when the supporting decision is reverted, so the
+    candidate range can be reconsidered.
     """
-    # Decision-keyed rejections: pin the blocker to one exact version.
+    # Decision-keyed rejections: the blocker term names one selectable version.
     for (
         candidate_pkg,
         blocker_pkg,
@@ -114,14 +127,14 @@ def flush_pending_blocks(provider: Provider) -> None:
     ), versions in provider.pending_blocks.items():
         range_union = VersionRange.empty()
         for v in versions:
-            range_union = range_union | VersionRange.singleton(v)
+            range_union = range_union | _widen_or_singleton(provider, candidate_pkg, v)
         provider.pending_clauses.append(
             Incompatibility(
                 [
                     Term(candidate_pkg, range_union, positive=True),
                     Term(
                         blocker_pkg,
-                        VersionRange.singleton(blocker_version),
+                        _widen_or_singleton(provider, blocker_pkg, blocker_version),
                         positive=True,
                     ),
                 ],
@@ -138,7 +151,7 @@ def flush_pending_blocks(provider: Provider) -> None:
     ), versions in provider.pending_range_blocks.items():
         range_union = VersionRange.empty()
         for v in versions:
-            range_union = range_union | VersionRange.singleton(v)
+            range_union = range_union | _widen_or_singleton(provider, candidate_pkg, v)
         provider.pending_clauses.append(
             Incompatibility(
                 [
