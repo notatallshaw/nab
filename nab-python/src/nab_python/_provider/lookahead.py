@@ -103,8 +103,13 @@ def look_ahead_ok(
 def _widen_or_singleton(
     provider: Provider, package: str, version: Version
 ) -> VersionRange:
-    """Return ``version``'s widened gap, or its singleton without one."""
-    widened = provider.widen_decision(package, version)
+    """Return ``version``'s widened neighbor gap, or its singleton without one.
+
+    Look-ahead needs the gap contract specifically: the gap contains
+    ``version`` and no other listed version, so unions and merge keys name
+    exactly the versions the scan rejected.
+    """
+    widened = provider.widen_decision_gap(package, version)
     return VersionRange.singleton(version) if widened is None else widened
 
 
@@ -113,9 +118,9 @@ def flush_pending_blocks(provider: Provider) -> None:
 
     For each ``(candidate_pkg, blocker_pkg, blocker_version)`` group we add
     ``{candidate_pkg in {v1,v2,...}, blocker_pkg==w}``, with each version
-    widened through ``widen_decision``: a version's open neighbor gap holds
-    no other listed version, so adjacent gaps coalesce without changing which
-    versions the clause names.  Sound across backjumps because the blocker
+    widened through ``widen_decision_gap``: a version's open neighbor gap
+    holds no other listed version, so adjacent gaps coalesce without changing
+    which versions the clause names.  Sound across backjumps because the blocker
     term goes UNDETERMINED when the supporting decision is reverted, so the
     candidate range can be reconsidered.
     """

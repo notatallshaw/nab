@@ -1,10 +1,11 @@
-"""Tests for ``Provider.widen_decision`` and ``Provider.narrow_for_display``.
+"""Tests for the ``Provider`` widening hooks and ``narrow_for_display``.
 
 The widening universe is the post-filter listing for the normalized base
 package: ascending, including pre-release, dev, post, and local versions.
-Local, VCS, and archive sources (synthesized single-version listings) and
-packages with no cached listing are never widened, and display narrowing
-reads caches only.
+``widen_decision`` and ``widen_decision_gap`` both widen a decided version
+to the open gap between its listed neighbors. Local, VCS, and archive
+sources (synthesized single-version listings) and packages with no cached
+listing are never widened, and display narrowing reads caches only.
 """
 
 from __future__ import annotations
@@ -155,6 +156,11 @@ class TestWidenDecision:
         )
         provider.versions_cache["baz"] = [(V("1.0"), _wheel("baz", "1.0"))]
         assert provider.widen_decision("baz", V("1.0")) is None
+
+    def test_gap_path_none_before_listing_is_cached(self) -> None:
+        coordinator = _graph_coordinator({"p": {"1.0": []}})
+        provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
+        assert provider.widen_decision_gap("p", V("1.0")) is None
 
 
 class TestNarrowForDisplay:

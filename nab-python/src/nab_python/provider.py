@@ -1849,6 +1849,20 @@ class Provider:
         listing is not cached are not widened.
         """
         _, _, normalized = self.split_and_normalize(package)
+        return self._widen(normalized, version)
+
+    def widen_decision_gap(self, package: str, version: Version) -> VersionRange | None:
+        """Return ``version``'s pure neighbor-gap range, or None.
+
+        Contract: the gap contains ``version`` and no other listed version,
+        so a term built from it names exactly ``version``.  Look-ahead
+        terms widen through this path.  Gating matches ``widen_decision``.
+        """
+        _, _, normalized = self.split_and_normalize(package)
+        return self._widen(normalized, version)
+
+    def _widen(self, normalized: str, version: Version) -> VersionRange | None:
+        """Widen ``version`` to its open neighbor gap; memoized per package."""
         if (
             normalized in self.local_sources
             or normalized in self.vcs_sources
