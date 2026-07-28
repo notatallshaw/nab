@@ -14,6 +14,7 @@ import re
 import runpy
 import stat
 import sys
+import zipfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
@@ -195,6 +196,19 @@ def _hashless_resolve_result() -> ResolveResult:
     )
 
 
+def _sidecarless_wheel(name: str = "foo", version: str = "1.0") -> bytes:
+    """Build wheel bytes whose METADATA sits inside the archive."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{name}/__init__.py", b"value = 1\n")
+        zf.writestr(
+            f"{name}-{version}.dist-info/METADATA",
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\nBody.\n",
+        )
+        zf.writestr(f"{name}-{version}.dist-info/WHEEL", b"Wheel-Version: 1.0\n")
+    return buf.getvalue()
+
+
 def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(body or '[project]\ndependencies = ["foo"]\n')
@@ -247,7 +261,11 @@ class _SidecarResponse:
 
 
 class _SidecarTransport:
-    """Serves a Simple-API listing and its PEP 658 sidecar bytes, keyed by URL."""
+    """Serves Simple-API listing, sidecar, and wheel bytes keyed by URL.
+
+    Every request gets the whole body, ignoring ``Range`` like a host with no
+    range support.
+    """
 
     def __init__(self, bodies: dict[str, bytes]) -> None:
         self._bodies = bodies
@@ -873,6 +891,53 @@ class TestLockCommandSpecific:
         err = capsys.readouterr().err
         assert "cannot lock" in err
         assert "sha256 mismatch" in err
+        assert "0" * 64 in err
+        assert "Traceback" not in err
+
+    def test_wheel_hash_mismatch_exits(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A full-body wheel failing its published hash exits 1, not a traceback.
+
+        Drives a real resolve against a fake index that publishes a sha256 for
+        a sidecar-less wheel.  The transport ignores ``Range``, so the read
+        steps down to the whole body and checks it against that digest.
+        """
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        pyproject = _make_pyproject(tmp_path)
+
+        wheel_url = "https://files.example.com/foo-1.0-py3-none-any.whl"
+        listing = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": wheel_url,
+                    "hashes": {"sha256": "0" * 64},
+                }
+            ]
+        }
+        transport = _SidecarTransport(
+            {
+                "https://pypi.org/simple/foo/": json.dumps(listing).encode(),
+                wheel_url: _sidecarless_wheel(),
+            }
+        )
+
+        with (
+            patch("nab.cli._make_transport", return_value=transport),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
+
+        err = capsys.readouterr().err
+        assert "cannot lock" in err
+        assert "wheel sha256 mismatch" in err
         assert "0" * 64 in err
         assert "Traceback" not in err
 
