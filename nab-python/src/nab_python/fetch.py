@@ -27,7 +27,7 @@ from nab_index.client import SdistFile, WheelFile
 from nab_index.lazy_wheel import RangeCapabilityMemo, RangeOutcome
 from nab_index.local_index import LocalIndexClient, parse_file_url
 from nab_index.multi_index import IndexConfig, MultiIndexClient
-from nab_index.transport import IDENTITY_HEADERS
+from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
 
 from ._vendor.packaging.utils import canonicalize_name
 
@@ -1359,7 +1359,7 @@ class FetchCoordinator:
                 msg = f"archive fetch unavailable in offline mode ({req.url})"
                 raise OfflineError(msg)
             response = await self._transport.get(req.url, headers=IDENTITY_HEADERS)
-            response.raise_for_status()
+            raise_unless_ok(response, req.url)
             data = response.content
 
         self.index.store_sdist_archive(req.package, req.version, data)

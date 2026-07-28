@@ -38,6 +38,7 @@ from nab_index.transport import (
     AsyncHttpTransport,
     ContentDecodingError,
     HttpError,
+    HttpResponse,
     accepts_gzip,
     decode_body,
 )
@@ -1489,6 +1490,49 @@ class TestArtifactContentEncoding:
             assert coord.index.get_sdist_archive("demo", SDIST_SHA256) == SDIST_BODY
 
         assert server.accept_encoding == ["identity"]
+
+
+class TestUnfollowedRedirectAcrossBackends:
+    """Both backends treat a 300 they did not follow the same way.
+
+    ``raise_for_status`` is the 4xx/5xx line, so it clears the 300 on either
+    backend; the body-reading calls are what reject it.
+    """
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_raise_for_status_clears_a_300(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _stub_index([300]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> HttpResponse:
+                transport = make_transport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            response = asyncio.run(go())
+
+        assert response.status_code == 300
+        response.raise_for_status()
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_metadata_sidecar_300_raises(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _stub_index([300]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/demo-1.0.whl.metadata"
+
+            async def go() -> str:
+                async with CachedAsyncSimpleClient(
+                    make_transport(), NullCache()
+                ) as client:
+                    return await client.get_metadata_text("demo", "1.0", url)
+
+            with pytest.raises(HttpError, match="300"):
+                asyncio.run(go())
 
 
 class TestExtractSdistFiles:

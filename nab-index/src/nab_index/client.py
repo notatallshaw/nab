@@ -25,7 +25,7 @@ from packaging.utils import (
 )
 from packaging.version import InvalidVersion, Version
 
-from .transport import IDENTITY_HEADERS, HttpError
+from .transport import IDENTITY_HEADERS, HttpError, raise_unless_ok
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -273,19 +273,19 @@ class AsyncSimpleClient:
         response = await self._transport.get(url, headers={"Accept": _JSON_ACCEPT})
         if response.status_code == _HTTP_NOT_FOUND:
             return []
-        response.raise_for_status()
+        raise_unless_ok(response, url)
         return _parse_files(response.json(), self._index_url, package)
 
     async def get_metadata_text(self, metadata_url: str) -> str:
         """Fetch metadata text from a known PEP 658/714 metadata URL."""
         response = await self._transport.get(metadata_url)
-        response.raise_for_status()
+        raise_unless_ok(response, metadata_url)
         return response.text
 
     async def download(self, url: str) -> bytes:
         """Fetch a distribution artefact (wheel or sdist) as raw bytes."""
         response = await self._transport.get(url, headers=IDENTITY_HEADERS)
-        response.raise_for_status()
+        raise_unless_ok(response, url)
         return response.content
 
 
