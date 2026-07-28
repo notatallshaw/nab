@@ -49,7 +49,9 @@ def _retry_after_seconds(value: str) -> float | None:
     """Bounded Retry-After in seconds; None when the header does not parse."""
     try:
         seconds = _RETRY_AFTER_PARSER.parse_retry_after(value)
-    except InvalidHeader:
+    except (InvalidHeader, ValueError, OverflowError):
+        # urllib3 raises InvalidHeader for what it rejects up front; the rest
+        # raise out of its int or date conversion.
         return None
     return min(seconds, _RETRY_AFTER_MAX_SECONDS)
 
