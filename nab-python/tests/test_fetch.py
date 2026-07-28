@@ -74,6 +74,23 @@ class TestInMemoryIndex:
         idx.store_listing("foo", wheels)
         assert idx.get_listing("foo") == wheels
 
+    def test_offline_listing_miss_roundtrip(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_listing("foo", [], offline_miss=True)
+        assert idx.get_listing("foo") == []
+        assert idx.is_offline_listing_miss("foo")
+
+    def test_served_empty_listing_is_not_an_offline_miss(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_listing("foo", [])
+        assert not idx.is_offline_listing_miss("foo")
+
+    def test_offline_listing_miss_fires_listing_pending(self) -> None:
+        idx = InMemoryIndex()
+        pending, _ = idx.get_or_create_pending("listing:foo")
+        idx.store_listing("foo", [], offline_miss=True)
+        assert pending.event.is_set()
+
     def test_metadata_roundtrip(self) -> None:
         idx = InMemoryIndex()
         assert idx.get_metadata("foo", "1.0") is None
@@ -1593,6 +1610,7 @@ class TestFetchCoordinatorCache:
             # Empty list, not None: the handler caught OfflineError and
             # stored an empty listing so the resolver can proceed.
             assert listing == []
+            assert coord.index.is_offline_listing_miss("missing")
         assert not coord._crashed
 
     @respx.mock

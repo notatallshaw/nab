@@ -205,7 +205,7 @@ class TestOfflinePresenceWalk:
         assert [f.filename for f in files] == ["foo-1.0-py3-none-any.whl"]
         assert client.route_for("foo") == "local"
 
-    def test_cold_offline_all_indexes_returns_empty(self, tmp_path: Path) -> None:
+    def test_cold_offline_all_indexes_raises(self, tmp_path: Path) -> None:
         client = MultiIndexClient(
             {
                 "a": _offline_client(tmp_path, "a"),
@@ -215,8 +215,20 @@ class TestOfflinePresenceWalk:
             {},
         )
 
-        assert run(client.get_files("foo")) == []
+        with pytest.raises(OfflineError):
+            run(client.get_files("foo"))
         assert client.route_for("foo") == "a"
+
+    def test_answering_index_does_not_mask_a_cold_one(self, tmp_path: Path) -> None:
+        """One index answering absent does not settle it while another is cold."""
+        client = MultiIndexClient(
+            {"answers": FakeClient({}), "cold": _offline_client(tmp_path, "cold")},
+            ["answers", "cold"],
+            {},
+        )
+
+        with pytest.raises(OfflineError):
+            run(client.get_files("foo"))
 
     def test_override_pin_to_cold_offline_index_raises(self, tmp_path: Path) -> None:
         wheelhouse = tmp_path / "wheelhouse"

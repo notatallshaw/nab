@@ -1643,7 +1643,9 @@ class Provider:
         ``all_versions`` is post-filter, so an empty one means either the
         index served no files or every file it served was dropped by the
         wheel-tag filter, requires-python, dist-policy, or the upload-time
-        cutoff.  The raw listing tells absence from incompatibility apart.
+        cutoff.  The raw listing tells absence from incompatibility apart,
+        except that an index skipped offline also stores an empty listing,
+        so that case is reported as offline rather than absence.
         The wheel-tag case (a Windows-only package on a Linux target) is
         named only when the base pass dropped nothing, or when the file
         it dropped was an sdist: there the reason names both the rejected
@@ -1661,7 +1663,10 @@ class Provider:
             raw_listing = self.coordinator.index.get_listing(normalized)
             tag_excluded = self.tag_excluded_wheels.get(normalized, 0)
             if not raw_listing:
-                reason = "package not found on any configured index"
+                if self.coordinator.index.is_offline_listing_miss(normalized):
+                    reason = "offline mode skipped an index with no cached listing"
+                else:
+                    reason = "package not found on any configured index"
             elif tag_excluded and normalized not in self.base_filtered_packages:
                 reason = (
                     f"found on index but none of the wheel's tags are compatible"
