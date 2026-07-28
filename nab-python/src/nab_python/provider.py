@@ -1879,6 +1879,11 @@ class Provider:
     ) -> RangeProtocol[Version]:
         """Map a possibly-widened ``constraint`` back onto listed versions.
 
+        A constraint containing every listed version is promoted to the full
+        range rather than snapped, so it reads as "any version".  An empty
+        universe never promotes: that would widen a constraint no version
+        satisfies.
+
         Render-time only and cache-only: the ROOT sentinel (a non-str
         package) and packages whose listing is not cached return
         ``constraint`` unchanged, and nothing is ever fetched.
@@ -1890,9 +1895,14 @@ class Provider:
         if version_list is None:
             return constraint
         assert isinstance(constraint, VersionRange)
-        return constraint.snap_bounds(
-            self._ascending_versions(normalized, version_list)
-        )
+        universe = self._ascending_versions(normalized, version_list)
+        if (
+            universe
+            and universe[-1] in constraint
+            and all(version in constraint for version in universe)
+        ):
+            return VersionRange.full(admit_arbitrary=False)
+        return constraint.snap_bounds(universe)
 
     def get_dependencies(
         self, package: str, version: Version

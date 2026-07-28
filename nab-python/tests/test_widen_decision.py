@@ -177,6 +177,48 @@ class TestNarrowForDisplay:
         constraint = SpecifierSet(">=1,<2").to_range()
         assert provider.narrow_for_display("ghost", constraint) is constraint
 
+    def test_full_coverage_promotes_to_full_range(self) -> None:
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        constraint = SpecifierSet(">=0.5,<9").to_range()
+        assert provider.narrow_for_display("p", constraint) == VersionRange.full(
+            admit_arbitrary=False
+        )
+
+    def test_multi_segment_full_coverage_promotes(self) -> None:
+        """A hole between listed versions still covers the whole listing."""
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        constraint = SpecifierSet(">=0.5,<9,!=2.5").to_range()
+        assert provider.narrow_for_display("p", constraint) == VersionRange.full(
+            admit_arbitrary=False
+        )
+
+    def test_excluded_middle_version_does_not_promote(self) -> None:
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        constraint = SpecifierSet(">=0.5,<9,!=2.0").to_range()
+        narrowed = provider.narrow_for_display("p", constraint)
+        assert V("1.0") in narrowed
+        assert V("2.0") not in narrowed
+        assert V("3.0") in narrowed
+        assert V("9.5") not in narrowed
+
+    def test_excluded_top_version_does_not_promote(self) -> None:
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        narrowed = provider.narrow_for_display("p", SpecifierSet("<3.0").to_range())
+        assert V("2.0") in narrowed
+        assert V("3.0") not in narrowed
+
+    def test_excluded_bottom_version_does_not_promote(self) -> None:
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        narrowed = provider.narrow_for_display("p", SpecifierSet(">1.0").to_range())
+        assert V("1.0") not in narrowed
+        assert V("3.0") in narrowed
+
+    def test_empty_universe_does_not_promote(self) -> None:
+        provider = _listing_provider("p", ["1.0"])
+        provider.versions_cache["empty"] = []
+        constraint = SpecifierSet(">=1,<2").to_range()
+        assert provider.narrow_for_display("empty", constraint) == constraint
+
     def test_never_triggers_a_fetch(self) -> None:
         coordinator = _graph_coordinator({"p": {"3.0": [], "2.0": [], "1.0": []}})
         provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
