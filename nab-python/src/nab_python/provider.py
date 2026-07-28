@@ -21,6 +21,7 @@ from nab_index.client import (
     SdistFile,
     SdistHashMismatchError,
     WheelFile,
+    WheelHashMismatchError,
 )
 from nab_index.transport import HttpError
 
@@ -1361,6 +1362,7 @@ class Provider:
         except (
             MetadataHashMismatchError,
             SdistHashMismatchError,
+            WheelHashMismatchError,
             UnsupportedVcsError,
             InvalidUploadTimeError,
             OverrideConflictError,
