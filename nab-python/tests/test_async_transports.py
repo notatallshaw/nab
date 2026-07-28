@@ -6,11 +6,12 @@ import asyncio
 import gzip
 import hashlib
 import io
+import itertools
 import json
 import ssl
 import tarfile
 import threading
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -219,6 +220,27 @@ def thread_slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return delays
 
 
+def _requests_before_giving_up(classes: Sequence[str]) -> int:
+    """Requests urllib3 issues for one URL whose failures cycle through ``classes``."""
+    failures: dict[str, dict[str, Any]] = {
+        "status": {"response": urllib3.HTTPResponse(status=503)},
+        "connect": {"error": urllib3.exceptions.ConnectTimeoutError()},
+    }
+
+    retry = GET_RETRY
+    issued = 0
+
+    # Bounded so a policy that never exhausts fails the assertion instead of hanging.
+    for name in itertools.islice(itertools.cycle(classes), 50):
+        issued += 1
+        try:
+            retry = retry.increment("GET", "/pkg/", **failures[name])
+        except urllib3.exceptions.MaxRetryError:
+            break
+
+    return issued
+
+
 def _assert_jittered_backoff_schedule(delays: list[float]) -> None:
     """The full three-retry schedule: immediate, then 0.5 and 1.0 plus jitter."""
     assert len(delays) == MAX_RETRIES
@@ -255,6 +277,12 @@ class TestRetryPolicy:
         assert GET_RETRY.read == MAX_RETRIES
         assert GET_RETRY.status == MAX_RETRIES
         assert GET_RETRY.other == MAX_RETRIES
+
+    def test_each_failure_class_has_its_own_budget(self) -> None:
+        """Each class carries its own MAX_RETRIES, so mixed failures retry for longer."""
+        assert _requests_before_giving_up(["status"]) == MAX_RETRIES + 1
+        assert _requests_before_giving_up(["connect"]) == MAX_RETRIES + 1
+        assert _requests_before_giving_up(["status", "connect"]) == 2 * MAX_RETRIES + 1
 
     def test_redirects_have_their_own_budget(self) -> None:
         """A redirect is not a failure, so it never spends a transient retry."""
