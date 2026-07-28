@@ -7,8 +7,10 @@ import builtins
 import contextlib
 import errno
 import importlib
+import inspect
 import io
 import json
+import re
 import runpy
 import stat
 import sys
@@ -2783,6 +2785,45 @@ class TestConflictsDocTranscript:
         block = _console_block(_CONFLICTS_DOC.read_text(encoding="utf-8"))
         assert block[0] == "$ nab lock --extras all"
         assert printed in block[1:]
+
+
+_CLI_REFERENCE_DOC = (
+    Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
+)
+
+
+def _doc_section(text: str, heading: str) -> str:
+    return text.partition(f"\n{heading}\n")[2].partition("\n## ")[0]
+
+
+def _names_flag(text: str, flag: str) -> bool:
+    """Whether ``text`` names ``flag``, its ``--no-`` form, or a covering wildcard."""
+    forms = [flag, f"--no-{flag.removeprefix('--')}"]
+    if flag.startswith("--project-"):
+        forms.append("--project-*")
+    return any(re.search(rf"`{re.escape(form)}(?![\w-])", text) for form in forms)
+
+
+class TestCliReferenceFlagCoverage:
+    """Each run subcommand's reference section names every flag it accepts."""
+
+    @pytest.mark.parametrize(
+        ("heading", "command"),
+        [("## `nab lock`", lock), ("## `nab download`", download)],
+    )
+    def test_section_names_every_flag(
+        self, heading: str, command: Callable[..., None]
+    ) -> None:
+        text = _CLI_REFERENCE_DOC.read_text(encoding="utf-8")
+
+        # Flags shared by both commands are documented once, in their own section.
+        scope = _doc_section(text, heading) + _doc_section(text, "## Runtime flags")
+
+        for name, param in inspect.signature(command).parameters.items():
+            if param.kind is not inspect.Parameter.KEYWORD_ONLY:
+                continue
+            flag = "--" + name.replace("_", "-")
+            assert _names_flag(scope, flag), f"{heading} omits {flag}"
 
 
 class TestDetermineLockAnchor:

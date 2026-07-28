@@ -172,6 +172,12 @@ wheel shared across tuples is fetched once.
 * `--max-concurrency` controls parallel HTTP fetches (default `8`,
   minimum `1`). Layered, so it can also be set in an `nab.toml` or
   `NAB_MAX_CONCURRENCY`.
+* `--groups foo bar` / `--all-groups` and `--extras foo bar` /
+  `--all-extras` fold dependency groups and extras into the resolve as
+  they do on `nab lock`, so they decide which artefacts are downloaded.
+* `--python X.Y` resolves for that Python on this machine instead of
+  the running interpreter, as on `nab lock`. It is rejected in
+  universal mode, where the matrix declares the Python axis.
 * `--workspace-discovery` (default) mirrors `nab lock`: it finds a
   `[tool.nab.workspace]` root and resolves against the in-tree
   members. `--no-workspace-discovery` turns that off. See
