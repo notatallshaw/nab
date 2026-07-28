@@ -66,6 +66,14 @@ GZIP_BODY = gzip.compress(LISTING_BODY)
 # connection drop whose Content-Length matches the bytes that did arrive.
 TRUNCATED_GZIP_BODY = GZIP_BODY[: len(GZIP_BODY) // 2]
 
+# Only the first is rejected up front; the rest raise out of urllib3's conversions.
+UNPARSEABLE_RETRY_AFTERS = [
+    pytest.param("soon", id="not-a-date"),
+    pytest.param("Wed, 31 Dec 10000 23:59:59 GMT", id="year-past-datetime"),
+    pytest.param("9" * 4301, id="digits-past-int-limit"),
+    pytest.param(f"Wed, {'9' * 400} Dec 2020 00:00:00 GMT", id="day-past-float"),
+]
+
 
 class _StubIndex(ThreadingHTTPServer):
     """Loopback index that serves each queued status once, then 200.
@@ -76,6 +84,7 @@ class _StubIndex(ThreadingHTTPServer):
 
     statuses: list[int]
     seen: list[str]
+    retry_after: str | None
 
 
 class _StubIndexHandler(BaseHTTPRequestHandler):
@@ -88,6 +97,8 @@ class _StubIndexHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         if 300 <= status < 400:
             self.send_header("Location", "/redirected/")
+        if self.server.retry_after is not None:
+            self.send_header("Retry-After", self.server.retry_after)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -97,10 +108,13 @@ class _StubIndexHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _stub_index(statuses: list[int]) -> Iterator[_StubIndex]:
+def _stub_index(
+    statuses: list[int], retry_after: str | None = None
+) -> Iterator[_StubIndex]:
     server = _StubIndex(("127.0.0.1", 0), _StubIndexHandler)
     server.statuses = list(statuses)
     server.seen = []
+    server.retry_after = retry_after
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -285,9 +299,12 @@ class TestRetryPolicy:
         assert next_delay(1, "3600") == 10.0
         assert GET_RETRY.get_retry_after(_urllib3_response(503, "3600")) == 10.0
 
-    def test_unparseable_retry_after_falls_back_to_backoff(self) -> None:
-        assert 0.5 <= next_delay(2, "soon") < 0.5 + GET_RETRY.backoff_jitter
-        assert GET_RETRY.get_retry_after(_urllib3_response(503, "soon")) is None
+    @pytest.mark.parametrize("retry_after", UNPARSEABLE_RETRY_AFTERS)
+    def test_unparseable_retry_after_falls_back_to_backoff(
+        self, retry_after: str
+    ) -> None:
+        assert 0.5 <= next_delay(2, retry_after) < 0.5 + GET_RETRY.backoff_jitter
+        assert GET_RETRY.get_retry_after(_urllib3_response(503, retry_after)) is None
 
     def test_absent_retry_after_falls_back_to_backoff(self) -> None:
         assert GET_RETRY.get_retry_after(_urllib3_response(503, None)) is None
@@ -646,6 +663,30 @@ class TestHttpxAsyncTransport:
         assert asyncio.run(go()).status_code == 200
         assert route.call_count == 2
         assert slept == [10.0]
+
+    @pytest.mark.parametrize("retry_after", UNPARSEABLE_RETRY_AFTERS)
+    @respx.mock
+    def test_get_backs_off_when_retry_after_does_not_parse(
+        self, retry_after: str, slept: list[float]
+    ) -> None:
+        """An unparseable Retry-After must not cost the retry budget."""
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=[httpx.Response(429, headers={"Retry-After": retry_after})]
+            * (MAX_RETRIES + 1)
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        resp = asyncio.run(go())
+        assert route.call_count == MAX_RETRIES + 1
+        _assert_jittered_backoff_schedule(slept)
+        with pytest.raises(HttpError, match="429"):
+            resp.raise_for_status()
 
     @respx.mock
     def test_get_gives_up_on_a_persistent_transient_status(
@@ -1153,6 +1194,25 @@ class TestUrllib3AsyncTransport:
             resp = asyncio.run(go())
             assert len(index.seen) == MAX_RETRIES + 1
             with pytest.raises(HttpError, match="HTTP 503"):
+                resp.raise_for_status()
+
+    def test_get_backs_off_when_retry_after_does_not_parse(self) -> None:
+        """An unparseable Retry-After must not cost the retry budget."""
+        with _stub_index(
+            [429] * (MAX_RETRIES + 1), retry_after="Wed, 31 Dec 10000 23:59:59 GMT"
+        ) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            assert len(index.seen) == MAX_RETRIES + 1
+            with pytest.raises(HttpError, match="HTTP 429"):
                 resp.raise_for_status()
 
     def test_get_does_not_retry_a_client_error(self) -> None:
