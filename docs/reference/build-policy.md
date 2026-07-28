@@ -157,7 +157,6 @@ This matches pip, which requires `--only-binary=:all:` under `--platform`,
 A retarget of the **python axis alone** (`[tool.nab.environment].python`,
 or `--python X.Y`) is different: the machine is still the host.  nab warns
 that a build would report the host interpreter's metadata, and permits it.
-This is a deliberate deviation from pip: the workspace `build-local` floor
-exists for members with dynamic metadata, and forbidding a build here would
-break every workspace that also pins a Python.  Set `build-policy = "never"`
-to forbid it.
+This is a deliberate deviation from pip: the machine is still the host, so a
+build can run at all, and refusing every one of them would take the default
+case with it.  Set `build-policy = "never"` to forbid it.
