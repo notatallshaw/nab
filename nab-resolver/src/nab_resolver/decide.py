@@ -30,12 +30,17 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
     """Choose the next undecided package, or None if all decided.
 
     Prefers ``is_ready`` packages so resolution keeps making progress while
-    other listings/metadata are still in flight.
+    other listings/metadata are still in flight.  ``begin_decision_scan`` marks
+    the start of the scan so a provider fed by another thread can hold the
+    state behind its sort key still: ``min`` only picks correctly over a key
+    that does not move while it runs.
     """
     undecided = resolver.solution.undecided_packages()
     undecided.discard(ROOT)
     if not undecided:
         return None
+
+    resolver.provider.begin_decision_scan()
 
     conflict_counts = resolver.stats.package_conflict_counts
     culprit_counts = resolver.stats.package_culprit_counts

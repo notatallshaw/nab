@@ -56,6 +56,9 @@ class _BaseProvider:
     def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
         return self._packages.get(package, {}).get(version, {})
 
+    def begin_decision_scan(self) -> None:
+        """No-op: nothing in this stub moves under a scan."""
+
     def prioritize(
         self,
         package: str,

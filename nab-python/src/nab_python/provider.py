@@ -702,6 +702,9 @@ class Provider:
         # so the per-call (normalized, range) tuple alloc is worth avoiding.
         self.matching_cache: dict[str, dict[RangeProtocol[Version], int]] = {}
 
+        # Counts the decision scans the resolver has opened.
+        self._scan_generation = 0
+
         # Requires-Python compatibility, keyed by the raw specifier string.
         self.requires_python_cache: dict[str, bool] = {}
 
@@ -2176,6 +2179,10 @@ class Provider:
         result = (base, extra, normalized)
         self._package_parts[package] = result
         return result
+
+    def begin_decision_scan(self) -> None:
+        """Count the decision scan the resolver is about to run."""
+        self._scan_generation += 1
 
     def is_ready(self, package: str) -> bool:
         """Check if a package's listing is available without blocking.
