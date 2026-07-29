@@ -1847,16 +1847,22 @@ class Provider:
         cached dependency dicts equal the decided version's, then widens to
         the open gap around that span, so every selectable version inside
         has exactly the dependencies being recorded (see
-        ``ResolverProvider.widen_decision`` for the contract).  Extras
-        proxies keep the pure neighbor gap over the base package's
-        universe: their dependency sets are per-extra-context.  Local, VCS,
-        and archive sources (synthesized single-version listings) and
-        packages whose listing is not cached are not widened.
+        ``ResolverProvider.widen_decision`` for the contract).  Under a
+        lowest preference the upward half is capped and that side keeps
+        the plain neighbor gap (see ``_span_identical_deps``); otherwise
+        the span runs both ways.  Extras proxies keep the pure neighbor
+        gap over the base package's universe: their dependency sets are
+        per-extra-context.  Local, VCS, and archive sources (synthesized
+        single-version listings) and packages whose listing is not cached
+        are not widened.
 
         The span is computed once from ``deps_cache`` and memoized.  Later
         fetches cannot invalidate it: metadata is immutable and the
         universe never grows mid-resolve, so recomputing could only widen
-        the span.
+        the span.  The cap is not part of the memo key: the strategy and
+        the direct-package set are both fixed at construction, so
+        ``wants_lowest`` gives one answer per package for the provider's
+        whole life.
         """
         _, extra, normalized = self.split_and_normalize(package)
         return self._widen(normalized, version, span=extra is None)
@@ -1919,6 +1925,14 @@ class Provider:
         Reads ``deps_cache`` only, never fetches.  A neighbor whose cached
         dependency dict is missing or differs fences the span; so does a
         decided version whose own deps are not cached.
+
+        The upward half is capped when ``wants_lowest`` picks the minimum
+        for this package, the same per-package answer ``choose_version``
+        orders candidates by.  Under a lowest preference the answer sits
+        near the floor, so an upward span carries the search away from it
+        a whole run at a time; capping leaves the plain neighbor gap
+        there, and the search resumes at the adjacent listed version.
+        Every other package spans both ways.
         """
         cached = self.deps_cache
         deps = cached.get((normalized, version))
@@ -1926,6 +1940,8 @@ class Provider:
             return below, above
         while below and cached.get((normalized, universe[below - 1])) == deps:
             below -= 1
+        if self.wants_lowest(normalized):
+            return below, above
         top = len(universe)
         while above < top and cached.get((normalized, universe[above])) == deps:
             above += 1

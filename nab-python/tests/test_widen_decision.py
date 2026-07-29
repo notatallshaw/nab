@@ -3,11 +3,13 @@
 The widening universe is the post-filter listing for the normalized base
 package: ascending, including pre-release, dev, post, and local versions.
 ``widen_decision`` spans base packages across adjacent versions with equal
-cached deps before widening to the surrounding gap; extras proxies keep
-the pure neighbor gap, and ``widen_decision_gap`` keeps it for every
-package. Local, VCS, and archive sources (synthesized single-version
-listings) and packages with no cached listing are never widened, and
-display narrowing reads caches only.
+cached deps before widening to the surrounding gap; under a lowest
+preference the upward half of that span is capped and keeps the plain
+neighbor gap. Extras proxies keep the pure neighbor gap, and
+``widen_decision_gap`` keeps it for every package. Local, VCS, and
+archive sources (synthesized single-version listings) and packages with
+no cached listing are never widened, and display narrowing reads caches
+only.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from nab_python.provider import (
     BuildPolicy,
     LocalSource,
     Provider,
+    ResolutionStrategy,
     VcsSource,
 )
 from nab_python.target import ResolveTarget
@@ -81,11 +84,21 @@ def _listing_provider(package: str, versions: list[str]) -> Provider:
 
 
 def _deps_provider(
-    graph: dict[str, dict[str, list[str]]], package: str, fetched: list[str]
+    graph: dict[str, dict[str, list[str]]],
+    package: str,
+    fetched: list[str],
+    *,
+    strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
+    direct: frozenset[str] | None = None,
 ) -> Provider:
     """Provider with ``package``'s listing and ``fetched`` versions' deps cached."""
     coordinator = _graph_coordinator(graph)
-    provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
+    provider = Provider(
+        coordinator,
+        target=ResolveTarget.for_host_python("3.12.0"),
+        resolution_strategy=strategy,
+        direct_packages=direct,
+    )
     provider.fetch_versions(package)
     for version in fetched:
         provider.get_dependencies(package, V(version))
@@ -191,7 +204,8 @@ _RUN_GRAPH = {
 
 class TestSameDepsSpan:
     """Base packages span adjacent versions with equal cached dependency
-    dicts before widening to the open gap around the span."""
+    dicts before widening to the open gap around the span.  These fixtures
+    run the default HIGHEST strategy, which spans both ways."""
 
     def test_spans_cached_neighbors_with_equal_deps(self) -> None:
         provider = _deps_provider(_RUN_GRAPH, "p", ["0.5", "1.0", "2.0", "3.0", "4.0"])
@@ -304,6 +318,111 @@ class TestSameDepsSpan:
         ):
             method.side_effect = AssertionError("widen_decision fetched")
         assert provider.widen_decision("p", V("2.0")) is not None
+
+
+_SPLIT_GRAPH = {
+    "p": {"4.0": [], "3.0": ["d>=1"], "2.0": ["d>=1"], "1.0": ["d>=1"], "0.5": []},
+    "q": {"4.0": [], "3.0": ["d>=1"], "2.0": ["d>=1"], "1.0": ["d>=1"], "0.5": []},
+    "d": {"1.0": []},
+}
+
+
+class TestSpanDirection:
+    """A lowest preference caps the upward half of the span; every other
+    package spans both ways.  ``wants_lowest`` is the same per-package
+    answer ``choose_version`` orders candidates by."""
+
+    def test_lowest_caps_the_upward_half(self) -> None:
+        provider = _deps_provider(
+            _RUN_GRAPH,
+            "p",
+            ["0.5", "1.0", "2.0", "3.0", "4.0"],
+            strategy=ResolutionStrategy.LOWEST,
+        )
+        widened = provider.widen_decision("p", V("2.0"))
+        assert widened is not None
+        assert V("1.0") in widened
+        assert V("2.0") in widened
+        assert V("2.5") in widened
+        assert V("3.0") not in widened
+        assert V("0.5") not in widened
+
+    def test_highest_spans_both_ways(self) -> None:
+        provider = _deps_provider(
+            _RUN_GRAPH,
+            "p",
+            ["0.5", "1.0", "2.0", "3.0", "4.0"],
+            strategy=ResolutionStrategy.HIGHEST,
+        )
+        widened = provider.widen_decision("p", V("2.0"))
+        assert widened is not None
+        assert V("1.0") in widened
+        assert V("2.0") in widened
+        assert V("3.0") in widened
+        assert V("0.5") not in widened
+        assert V("4.0") not in widened
+
+    def test_lowest_span_reaching_the_floor_drops_the_lower_bound(self) -> None:
+        graph = {
+            "p": {"3.0": [], "2.0": ["d>=1"], "1.0": ["d>=1"]},
+            "d": {"1.0": []},
+        }
+        provider = _deps_provider(
+            graph, "p", ["1.0", "2.0", "3.0"], strategy=ResolutionStrategy.LOWEST
+        )
+        widened = provider.widen_decision("p", V("2.0"))
+        assert widened is not None
+        assert V("0.1") in widened
+        assert V("1.0") in widened
+        assert V("3.0") not in widened
+
+    def test_lowest_direct_caps_direct_packages_only(self) -> None:
+        provider = _deps_provider(
+            _SPLIT_GRAPH,
+            "p",
+            ["0.5", "1.0", "2.0", "3.0", "4.0"],
+            strategy=ResolutionStrategy.LOWEST_DIRECT,
+            direct=frozenset({"p"}),
+        )
+        provider.fetch_versions("q")
+        for version in ("0.5", "1.0", "2.0", "3.0", "4.0"):
+            provider.get_dependencies("q", V(version))
+
+        direct = provider.widen_decision("p", V("2.0"))
+        transitive = provider.widen_decision("q", V("2.0"))
+        assert direct is not None
+        assert transitive is not None
+        assert V("1.0") in direct
+        assert V("3.0") not in direct
+        assert V("1.0") in transitive
+        assert V("3.0") in transitive
+
+    def test_memo_holds_one_shape_per_provider(self) -> None:
+        fetched = ["0.5", "1.0", "2.0", "3.0", "4.0"]
+        lowest = _deps_provider(
+            _RUN_GRAPH, "p", fetched, strategy=ResolutionStrategy.LOWEST
+        )
+        highest = _deps_provider(_RUN_GRAPH, "p", fetched)
+        low = lowest.widen_decision("p", V("2.0"))
+        high = highest.widen_decision("p", V("2.0"))
+        assert low is not None
+        assert high is not None
+        assert low != high
+        assert lowest.widen_decision("p", V("2.0")) is low
+        assert highest.widen_decision("p", V("2.0")) is high
+
+    def test_gap_path_is_direction_free(self) -> None:
+        fetched = ["0.5", "1.0", "2.0", "3.0", "4.0"]
+        lowest = _deps_provider(
+            _RUN_GRAPH, "p", fetched, strategy=ResolutionStrategy.LOWEST
+        )
+        highest = _deps_provider(_RUN_GRAPH, "p", fetched)
+        gap = lowest.widen_decision_gap("p", V("2.0"))
+        assert gap is not None
+        assert gap == highest.widen_decision_gap("p", V("2.0"))
+        assert V("2.0") in gap
+        assert V("1.0") not in gap
+        assert V("3.0") not in gap
 
 
 class TestGapSpanComposition:
