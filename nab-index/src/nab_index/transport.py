@@ -32,6 +32,9 @@ IDENTITY_HEADERS: Final[dict[str, str]] = {"Accept-Encoding": "identity"}
 _HTTP_BAD_REQUEST: Final = 400
 _CONTENT_STATUSES: Final[frozenset[int]] = frozenset({200, 203})
 
+# RFC 9110 8.4.1.3: "x-gzip" is the same coding as "gzip".
+_GZIP_CODINGS: Final[frozenset[str]] = frozenset({"gzip", "x-gzip"})
+
 
 class HttpError(Exception):
     """A request failed, or answered with a status the caller cannot use.
@@ -93,7 +96,7 @@ def decode_body(body: bytes, content_encoding: str | None) -> bytes:
     """
     if not body or content_encoding is None:
         return body
-    if content_encoding.strip().lower() != "gzip":
+    if content_encoding.strip().lower() not in _GZIP_CODINGS:
         return body
     try:
         return gzip.decompress(body)
