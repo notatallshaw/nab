@@ -1,10 +1,12 @@
 """Tests for the decision-widening provider hooks.
 
 ``widen_decision`` lets a provider replace the exact singleton parent term
-of a cross-package dependency clause with a wider range containing no other
-selectable version, so adjacent clauses merge contiguously instead of
-accumulating one hole per rejected version. ``narrow_for_display`` maps
-possibly-widened constraints back onto known versions at error-render time.
+of a cross-package dependency clause with a wider range in which every
+selectable version has exactly the dependencies being recorded: adjacent
+clauses merge contiguously instead of one hole per rejected version, and
+one clause can reject a whole run of same-dependency versions.
+``narrow_for_display`` maps possibly-widened constraints back onto known
+versions at error-render time.
 """
 
 from __future__ import annotations
@@ -122,6 +124,29 @@ class _WideningProvider(_BaseProvider):
         return widened
 
 
+class _SpanWideningProvider(_BaseProvider):
+    """Widens a decided version across adjacent versions with equal deps."""
+
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        versions_map = self._packages.get(package, {})
+        universe = sorted(versions_map.keys())
+        if version not in universe:
+            return None
+        deps = versions_map[version]
+        low = universe.index(version)
+        high = low
+        while low > 0 and versions_map[universe[low - 1]] == deps:
+            low -= 1
+        while high < len(universe) - 1 and versions_map[universe[high + 1]] == deps:
+            high += 1
+        widened: Range[int] = Range.full()
+        if low > 0:
+            widened = widened & Range.greater_than(universe[low - 1])
+        if high < len(universe) - 1:
+            widened = widened & Range.less_than(universe[high + 1])
+        return widened
+
+
 class _NarrowingProvider(_BaseProvider):
     """Narrows displayed constraints for one package to a fixed range."""
 
@@ -219,6 +244,54 @@ class TestWideningMergesDependencyClauses:
             Resolver(_WideningProvider(packages)).resolve({"root": Range.singleton(1)})
 
 
+class TestSpanWideningContract:
+    """A range spanning several same-dependency versions is a valid
+    ``widen_decision`` result: one clause rejects the whole run."""
+
+    def test_span_rejects_identical_run_with_one_clause(self) -> None:
+        packages = {
+            "root": {1: {"a": Range.full()}},
+            "a": {
+                3: {"b": Range.singleton(5)},
+                2: {"b": Range.singleton(5)},
+                1: {"b": Range.singleton(5)},
+            },
+            "b": {1: {}},
+        }
+        resolver = Resolver(_SpanWideningProvider(packages))
+        with pytest.raises(ResolutionError):
+            resolver.resolve({"root": Range.singleton(1)})
+
+        dep_clauses = [
+            inc
+            for inc in resolver.incompatibilities
+            if inc.cause is IncompatibilityCause.DEPENDENCY
+            and len(inc.terms) == 2
+            and inc.terms[0].package == "a"
+            and inc.terms[1].package == "b"
+        ]
+        assert len(dep_clauses) == 1
+        constraint = dep_clauses[0].terms[0].constraint
+        assert 1 in constraint
+        assert 2 in constraint
+        assert 3 in constraint
+
+    def test_span_outcome_matches_unwidened(self) -> None:
+        packages = {
+            "root": {1: {"a": Range.full()}},
+            "a": {
+                3: {"b": Range.singleton(5)},
+                2: {"b": Range.singleton(5)},
+                1: {"b": Range.singleton(1)},
+            },
+            "b": {1: {}},
+        }
+        base = Resolver(_BaseProvider(packages)).resolve({"root": Range.singleton(1)})
+        span_resolver = Resolver(_SpanWideningProvider(packages))
+        span = span_resolver.resolve({"root": Range.singleton(1)})
+        assert span == base == {"root": 1, "a": 1, "b": 1}
+
+
 class TestSelfDependencyStaysExact:
     def test_self_dep_clause_keeps_singleton_term(self) -> None:
         """foo@2 depends on foo=={1}: the single-term clause asserts exactly
@@ -238,6 +311,36 @@ class TestSelfDependencyStaysExact:
         assert len(self_clauses) == 1
         assert self_clauses[0].terms[0].constraint == Range.singleton(2)
         assert self_clauses[0].terms[0].is_positive()
+
+    def test_self_dep_clause_keeps_singleton_with_span_provider(self) -> None:
+        """A same-deps run must not leak the spanned range into self-dep
+        clauses; they are built resolver-side from the exact singleton."""
+        provider = _SpanWideningProvider(
+            {
+                "foo": {
+                    3: {"foo": Range.singleton(1)},
+                    2: {"foo": Range.singleton(1)},
+                    1: {},
+                }
+            }
+        )
+        resolver = Resolver(provider, max_iterations=100)
+        result = resolver.resolve({"foo": Range.full()})
+        assert result == {"foo": 1}
+
+        self_clauses = [
+            inc
+            for inc in resolver.incompatibilities
+            if inc.cause is IncompatibilityCause.DEPENDENCY
+            and len(inc.terms) == 1
+            and inc.terms[0].package == "foo"
+        ]
+        assert {c.terms[0].constraint for c in self_clauses} <= {
+            Range.singleton(3),
+            Range.singleton(2),
+        }
+        assert self_clauses
+        assert all(c.terms[0].is_positive() for c in self_clauses)
 
 
 class TestRootIsNeverWidened:

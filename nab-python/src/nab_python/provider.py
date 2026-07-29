@@ -736,9 +736,11 @@ class Provider:
         self.wheel_by_version_cache: dict[str, dict[Version, DistFile]] = {}
 
         # Widening state: the ascending versions_only view per normalized
-        # name, and the widened parent range per decided (name, version).
+        # name, the span-widened parent range per decided (name, version),
+        # and the pure neighbor-gap range per (name, version).
         self._ascending_versions_cache: dict[str, list[Version]] = {}
         self._widened_ranges: dict[tuple[str, Version], VersionRange] = {}
+        self._gap_widened_ranges: dict[tuple[str, Version], VersionRange] = {}
 
         self.solution_ranges: Mapping[str, RangeProtocol[Version]] = {}
         self.solution_decisions: Mapping[str, Version] = {}
@@ -1848,14 +1850,45 @@ class Provider:
     def widen_decision(self, package: str, version: Version) -> VersionRange | None:
         """Return the widened parent range for a decided ``version``, or None.
 
-        The widened range spans the open gap between ``version``'s listed
-        neighbors, so it contains no other selectable version (see
-        ``ResolverProvider.widen_decision`` for the contract).  Extras
-        proxies share the base package's universe.  Local, VCS, and archive
-        sources (synthesized single-version listings) and packages whose
-        listing is not cached are not widened.
+        For a base package the range spans adjacent listed versions whose
+        cached dependency dicts equal the decided version's, then widens to
+        the open gap around that span, so every selectable version inside
+        has exactly the dependencies being recorded (see
+        ``ResolverProvider.widen_decision`` for the contract).  Under a
+        lowest preference the upward half is capped and that side keeps
+        the plain neighbor gap (see ``_span_identical_deps``); otherwise
+        the span runs both ways.  Extras proxies keep the pure neighbor
+        gap over the base package's universe: their dependency sets are
+        per-extra-context.  Local, VCS, and archive sources (synthesized
+        single-version listings) and packages whose listing is not cached
+        are not widened.
+
+        The span is computed once from ``deps_cache`` and memoized.  Later
+        fetches cannot invalidate it: metadata is immutable and the
+        universe never grows mid-resolve, so recomputing could only widen
+        the span.  The cap is not part of the memo key: the strategy and
+        the direct-package set are both fixed at construction, so
+        ``wants_lowest`` gives one answer per package for the provider's
+        whole life.
+        """
+        _, extra, normalized = self.split_and_normalize(package)
+        return self._widen(normalized, version, span=extra is None)
+
+    def widen_decision_gap(self, package: str, version: Version) -> VersionRange | None:
+        """Return ``version``'s pure neighbor-gap range, or None.
+
+        Contract: the gap contains ``version`` and no other listed version,
+        so a term built from it names exactly ``version``.  Look-ahead
+        terms widen through this path: a ``widen_decision`` span does not
+        meet that contract.  Gating matches ``widen_decision``.
         """
         _, _, normalized = self.split_and_normalize(package)
+        return self._widen(normalized, version, span=False)
+
+    def _widen(
+        self, normalized: str, version: Version, *, span: bool
+    ) -> VersionRange | None:
+        """Widen ``version`` over ``normalized``'s universe; memoized per shape."""
         if (
             normalized in self.local_sources
             or normalized in self.vcs_sources
@@ -1867,19 +1900,59 @@ class Provider:
             return None
 
         key = (normalized, version)
-        widened = self._widened_ranges.get(key)
+        memo = self._widened_ranges if span else self._gap_widened_ranges
+        widened = memo.get(key)
         if widened is None:
             universe = self._ascending_versions(normalized, version_list)
             below = bisect.bisect_left(universe, version)
             above = bisect.bisect_right(universe, version)
+            if span:
+                below, above = self._span_identical_deps(
+                    normalized, version, universe, below, above
+                )
             prev = universe[below - 1] if below else None
             nxt = universe[above] if above < len(universe) else None
 
             widened = VersionRange.from_bounds(
                 prev, nxt, include_lower=False, include_upper=False
             )
-            self._widened_ranges[key] = widened
+            memo[key] = widened
         return widened
+
+    def _span_identical_deps(
+        self,
+        normalized: str,
+        version: Version,
+        universe: list[Version],
+        below: int,
+        above: int,
+    ) -> tuple[int, int]:
+        """Extend ``[below, above)`` across neighbors with equal cached deps.
+
+        Reads ``deps_cache`` only, never fetches.  A neighbor whose cached
+        dependency dict is missing or differs fences the span; so does a
+        decided version whose own deps are not cached.
+
+        The upward half is capped when ``wants_lowest`` picks the minimum
+        for this package, the same per-package answer ``choose_version``
+        orders candidates by.  Under a lowest preference the answer sits
+        near the floor, so an upward span carries the search away from it
+        a whole run at a time; capping leaves the plain neighbor gap
+        there, and the search resumes at the adjacent listed version.
+        Every other package spans both ways.
+        """
+        cached = self.deps_cache
+        deps = cached.get((normalized, version))
+        if deps is None:
+            return below, above
+        while below and cached.get((normalized, universe[below - 1])) == deps:
+            below -= 1
+        if self.wants_lowest(normalized):
+            return below, above
+        top = len(universe)
+        while above < top and cached.get((normalized, universe[above])) == deps:
+            above += 1
+        return below, above
 
     def narrow_for_display(
         self, package: object, constraint: RangeProtocol[Version]

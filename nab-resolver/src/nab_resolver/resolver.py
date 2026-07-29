@@ -160,12 +160,18 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
     ) -> RangeProtocol[VersionType] | None:
         """Return a widened stand-in for ``version`` in dependency clauses, or None.
 
-        Soundness contract: the returned range must contain ``version`` and
-        no other version that could ever be chosen for ``package`` in this
-        resolution; versions inside it that can never be selected are
-        harmless.  ``None`` keeps the exact singleton.  Widening lets
-        dependency clauses for adjacent rejected versions merge into
-        contiguous ranges instead of accumulating one hole per version.
+        Called at most once per decision, after ``get_dependencies``
+        returned a non-empty mapping for ``version``, so a provider may
+        answer from what that call cached.
+
+        Soundness contract: the returned range must contain ``version``, and
+        every version inside it that could ever be chosen for ``package`` in
+        this resolution must have exactly the dependencies being recorded
+        for ``version``; versions inside it that can never be selected are
+        harmless.  ``None`` keeps the exact singleton.  Widening merges
+        dependency clauses for adjacent rejected versions into contiguous
+        ranges instead of one hole per version, and lets a single clause
+        reject a whole run of same-dependency versions.
         """
         ...
 
