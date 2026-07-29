@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nab_index.cache import CachePolicy, OnDiskCache
 from nab_index.client import (
     MalformedSimpleResponseError,
     MetadataHashMismatchError,
@@ -24,7 +25,9 @@ from nab_index.client import (
 )
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
 from nab_index.local_index import LocalIndexClient
+from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpError
+from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider import listing as listing_mod
 from nab_python._provider.lookahead import DepRangeUnion
@@ -49,7 +52,12 @@ from nab_python.config import (
     OverrideConflictError,
     PackageOverride,
 )
-from nab_python.fetch import InMemoryIndex
+from nab_python.fetch import (
+    DEFAULT_INDEX_URL,
+    FetchCoordinator,
+    IndexRoute,
+    InMemoryIndex,
+)
 from nab_python.metadata import WheelMetadata
 from nab_python.provider import (
     BuildPolicy,
@@ -1074,6 +1082,64 @@ class TestNoVersionsReasons:
         coordinator = make_coordinator([], package="foo")
         provider = Provider(coordinator)
         provider.choose_version("foo", SpecifierSet("").to_range())
+        assert (
+            provider.get_no_versions_reason("foo")
+            == "package not found on any configured index"
+        )
+
+    @pytest.mark.parametrize(
+        ("indexes", "routes"),
+        [
+            pytest.param(None, None, id="single-index"),
+            pytest.param(
+                [
+                    IndexConfig("pypi", DEFAULT_INDEX_URL),
+                    IndexConfig("extra", "https://extra.example/simple/"),
+                ],
+                None,
+                id="two-indexes",
+            ),
+            pytest.param(None, [IndexRoute("other", "pypi")], id="one-index-one-route"),
+        ],
+    )
+    def test_offline_cold_cache_miss_reports_offline_not_absence(
+        self,
+        tmp_path: Path,
+        indexes: list[IndexConfig] | None,
+        routes: list[IndexRoute] | None,
+    ) -> None:
+        """An offline miss is reported as offline rather than absence.
+
+        The parameters cover each client shape: a second index or any route
+        swaps the lone client for the multi-index router.
+        """
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            cache_dir=tmp_path,
+            offline=True,
+            indexes=indexes,
+            index_routes=routes,
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+        assert provider.get_no_versions_reason("foo") == (
+            "offline mode skipped an index with no cached listing"
+        )
+
+    def test_offline_with_cached_absence_still_reports_not_found(
+        self, tmp_path: Path
+    ) -> None:
+        """Offline over a cached 404 still names absence: an index did answer."""
+        OnDiskCache(tmp_path, DEFAULT_INDEX_URL).put_negative(
+            "foo", CachePolicy(fetched_at=0, max_age=1, etag=None)
+        )
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            cache_dir=tmp_path,
+            offline=True,
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
         assert (
             provider.get_no_versions_reason("foo")
             == "package not found on any configured index"

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from nab_python._lockfile.validate import (
+    check_constraints,
+    check_direct_requirements,
+    check_envelope,
+)
 from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.pylock import (
     Package,
@@ -12,13 +17,7 @@ from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
-from nab_python.lockfile import (
-    LockDisqualification,
-    RootRequirement,
-    check_constraints,
-    check_direct_requirements,
-    check_envelope,
-)
+from nab_python.lockfile import LockDisqualification, RootRequirement
 
 
 def make_pylock(

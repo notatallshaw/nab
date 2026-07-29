@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+import pytest
+
 from nab_index.client import WheelFile
 from nab_python._packaging_provider import PackagingProvider
 from nab_python._testing.coordinator_fake import make_coordinator
@@ -31,7 +33,7 @@ from nab_python.provider import (
     VcsSource,
 )
 from nab_python.target import ResolveTarget
-from nab_resolver.resolver import Resolver
+from nab_resolver.resolver import ResolutionError, Resolver
 from nab_resolver.root import ROOT
 
 if TYPE_CHECKING:
@@ -518,6 +520,94 @@ class TestNarrowForDisplay:
         provider = _listing_provider("p", ["1.0"])
         constraint = SpecifierSet(">=1,<2").to_range()
         assert provider.narrow_for_display("ghost", constraint) is constraint
+
+    def test_full_coverage_promotes_to_full_range(self) -> None:
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        constraint = SpecifierSet(">=0.5,<9").to_range()
+        assert provider.narrow_for_display("p", constraint) == VersionRange.full(
+            admit_arbitrary=False
+        )
+
+    def test_multi_segment_full_coverage_promotes(self) -> None:
+        """A hole between listed versions still covers the whole listing."""
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        constraint = SpecifierSet(">=0.5,<9,!=2.5").to_range()
+        assert provider.narrow_for_display("p", constraint) == VersionRange.full(
+            admit_arbitrary=False
+        )
+
+    def test_excluded_middle_version_does_not_promote(self) -> None:
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        constraint = SpecifierSet(">=0.5,<9,!=2.0").to_range()
+        narrowed = provider.narrow_for_display("p", constraint)
+        assert V("1.0") in narrowed
+        assert V("2.0") not in narrowed
+        assert V("3.0") in narrowed
+        assert V("9.5") not in narrowed
+
+    def test_excluded_top_version_does_not_promote(self) -> None:
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        narrowed = provider.narrow_for_display("p", SpecifierSet("<3.0").to_range())
+        assert V("2.0") in narrowed
+        assert V("3.0") not in narrowed
+
+    def test_excluded_bottom_version_does_not_promote(self) -> None:
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        narrowed = provider.narrow_for_display("p", SpecifierSet(">1.0").to_range())
+        assert V("1.0") not in narrowed
+        assert V("3.0") in narrowed
+
+    def test_empty_universe_does_not_promote(self) -> None:
+        provider = _listing_provider("p", ["1.0"])
+        provider.versions_cache["empty"] = []
+        constraint = SpecifierSet(">=1,<2").to_range()
+        assert provider.narrow_for_display("empty", constraint) == constraint
+
+    def test_availability_line_keeps_its_range(self) -> None:
+        """``a`` is rejected only against pinned ``c``, so the line keeps its range."""
+        coordinator = _graph_coordinator(
+            {
+                "a": {"2.0": ["c==1.0"], "1.0": ["c==1.0"]},
+                "c": {"5.0": [], "1.0": []},
+            }
+        )
+        root_reqs = {
+            "a": SpecifierSet(">=1,<9").to_range(),
+            "c": SpecifierSet("==5.0").to_range(),
+        }
+        provider = Provider(
+            coordinator,
+            target=ResolveTarget.for_host_python("3.12.0"),
+            root_requirements=root_reqs,
+        )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(dict(root_reqs))
+
+        expected = f"because no versions of a {root_reqs['a']} are available"
+        assert expected in str(exc_info.value).splitlines()
+
+    def test_promoted_parent_reads_as_all_versions(self) -> None:
+        """A promoted depending side takes the plural prose and verb."""
+        coordinator = _graph_coordinator(
+            {
+                "a": {"2.0": ["c>=2"], "1.0": ["c>=2"]},
+                "c": {"1.0": []},
+            }
+        )
+        root_reqs = {"a": SpecifierSet(">=1,<9").to_range()}
+        provider = Provider(
+            coordinator,
+            target=ResolveTarget.for_host_python("3.12.0"),
+            root_requirements=root_reqs,
+        )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(dict(root_reqs))
+
+        lines = str(exc_info.value).splitlines()
+        assert lines[0].startswith("because all versions of a depend on c ")
+        assert "so all versions of a" in lines
 
     def test_never_triggers_a_fetch(self) -> None:
         coordinator = _graph_coordinator({"p": {"3.0": [], "2.0": [], "1.0": []}})

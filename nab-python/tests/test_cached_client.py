@@ -1487,6 +1487,143 @@ class TestNonUtf8MetadataSidecar:
         assert cache.get_metadata("pkg", "https://x/pkg.metadata") is None
 
 
+class TestNonOkStatusIsNotContent:
+    """Only a 200 or a 203 carries content a body-reading call may use.
+
+    ``raise_for_status`` draws its line at 400, so a 204 and a 3xx the
+    transport did not follow reach the caller unflagged; neither is the
+    artifact. A 203 reads like a 200.
+    """
+
+    def test_metadata_sidecar_203_is_content(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(b"Name: pkg\n", status=203)])
+
+        async def go() -> str:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_metadata_text(
+                    "pkg", "1.0", "https://x/pkg.metadata"
+                )
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == "Name: pkg\n"
+        assert cache.get_metadata("pkg", "https://x/pkg.metadata") == "Name: pkg\n"
+
+    def test_metadata_sidecar_204_raises_and_caches_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(b"", status=204)])
+
+        async def go() -> str:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_metadata_text(
+                    "pkg", "1.0", "https://x/pkg.metadata"
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(HttpError, match="204"):
+            asyncio.run(go())
+        assert cache.get_metadata("pkg", "https://x/pkg.metadata") is None
+
+    def test_metadata_sidecar_300_raises_and_caches_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [_FakeResponse(b"<html>pick one</html>", status=300)]
+        )
+
+        async def go() -> str:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_metadata_text(
+                    "pkg", "1.0", "https://x/pkg.metadata"
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(HttpError, match="300"):
+            asyncio.run(go())
+        assert cache.get_metadata("pkg", "https://x/pkg.metadata") is None
+
+    def test_listing_300_raises_and_caches_nothing(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=300)])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        with pytest.raises(HttpError, match="300"):
+            asyncio.run(go())
+        assert cache.get_simple("pkg") is None
+
+    def test_revalidated_listing_300_raises_and_keeps_the_stored_body(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=1, etag="old-etag"),
+        )
+        transport = _FakeTransport([_FakeResponse(b"", status=300)])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        with pytest.raises(HttpError, match="300"):
+            asyncio.run(go())
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        assert cached[0] == LISTING_BYTES
+
+    def test_sdist_files_204_raises_and_caches_nothing(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(b"", status=204)])
+
+        async def go() -> tuple[str | None, str | None]:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_sdist_files(
+                    "pkg", "1.0", "https://x/pkg.tar.gz"
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(HttpError, match="204"):
+            asyncio.run(go())
+        assert cache.get_sdist_files("pkg", "1.0") is None
+
+    def test_sdist_archive_204_raises(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(b"", status=204)])
+
+        async def go() -> bytes:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_sdist_archive(
+                    "pkg", "1.0", "https://x/pkg.tar.gz"
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(HttpError, match="204"):
+            asyncio.run(go())
+
+
 class TestGetSdistFiles:
     def test_cold_cache_fetches_and_stores_both(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)

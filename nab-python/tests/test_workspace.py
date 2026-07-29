@@ -8,10 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from nab_python.provider import BuildPolicy, LocalSource
+from nab_python.provider import LocalSource
 from nab_python.workspace import (
     WorkspaceDiscoveryError,
-    auto_promote_build_policy_for_workspace,
     discover_workspace_root,
     merge_workspace_local_sources,
     read_workspace_members,
@@ -455,25 +454,3 @@ class TestMergeWorkspaceLocalSources:
         # The explicit entry survives; the canonically-equal discovered
         # entry is shadowed.
         assert out == explicit
-
-
-class TestAutoPromoteBuildPolicy:
-    def test_never_promotes_to_build_local(self) -> None:
-        assert (
-            auto_promote_build_policy_for_workspace(BuildPolicy.NEVER)
-            is BuildPolicy.BUILD_LOCAL
-        )
-
-    def test_build_local_unchanged(self) -> None:
-        assert (
-            auto_promote_build_policy_for_workspace(BuildPolicy.BUILD_LOCAL)
-            is BuildPolicy.BUILD_LOCAL
-        )
-
-    def test_build_remote_unchanged(self) -> None:
-        # User explicitly opted into the more permissive policy; do not
-        # downgrade.
-        assert (
-            auto_promote_build_policy_for_workspace(BuildPolicy.BUILD_REMOTE)
-            is BuildPolicy.BUILD_REMOTE
-        )

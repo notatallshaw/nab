@@ -2230,8 +2230,8 @@ class TestCrossFieldProjectOptions:
     its member-uniqueness check over the merged whole; ``matrix`` is a
     nested table that is scalar last-wins.  The cross-field rules they take
     part in (mode/matrix, default-groups-vs-conflicts,
-    marker-environment-under-universal, the build-policy floors) run as
-    whole-config transforms over the merged config, not registry rows.
+    marker-environment-under-universal, the build-policy host-build gate)
+    run as whole-config transforms over the merged config, not registry rows.
     """
 
     def test_conflicts_from_pyproject(self, tmp_path: Path) -> None:

@@ -11,7 +11,13 @@ import httpx
 import truststore
 
 from .retry import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES, next_delay
-from .transport import ContentDecodingError, HttpError, accepts_gzip, decode_body
+from .transport import (
+    ContentDecodingError,
+    HttpError,
+    accepts_gzip,
+    decode_body,
+    raise_for_error_status,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -27,7 +33,9 @@ class _HttpxResponse:
     The body is fetched undecoded, and decoded by the transport when the
     request asked for gzip (see :func:`~nab_index.transport.decode_body`),
     so it is carried here rather than read from the httpx response.
-    raise_for_status is translated so callers see one error type.
+
+    ``raise_for_status`` follows the shared 4xx/5xx rule; httpx's own raises
+    on every non-2xx.
     """
 
     __slots__ = ("_content", "_response")
@@ -56,10 +64,7 @@ class _HttpxResponse:
         return _json.loads(self._content)
 
     def raise_for_status(self) -> None:
-        try:
-            self._response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise HttpError(str(exc)) from exc
+        raise_for_error_status(self._response.status_code, str(self._response.url))
 
 
 class HttpxAsyncTransport:

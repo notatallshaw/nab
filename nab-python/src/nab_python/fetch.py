@@ -27,7 +27,7 @@ from nab_index.client import SdistFile, WheelFile
 from nab_index.lazy_wheel import RangeCapabilityMemo, RangeOutcome
 from nab_index.local_index import LocalIndexClient, parse_file_url
 from nab_index.multi_index import IndexConfig, MultiIndexClient
-from nab_index.transport import IDENTITY_HEADERS
+from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
 
 from ._vendor.packaging.utils import canonicalize_name
 
@@ -148,6 +148,8 @@ class InMemoryIndex:
         self._listings: dict[str, list[WheelFile | SdistFile]] = {}
         self._listing_errors: dict[str, BaseException] = {}
         self._listing_indexes: dict[str, str] = {}
+        # Packages whose empty listing stands for an index skipped offline.
+        self._offline_listing_misses: set[str] = set()
         # Metadata text is keyed by the artifact it came from: the sidecar URL
         # for a wheel's METADATA, or None for text that stands for the version
         # itself (sdist PKG-INFO, an injected override).  Two wheels of one
@@ -189,22 +191,36 @@ class InMemoryIndex:
             return self._listings.get(package)
 
     def store_listing(
-        self, package: str, data: Sequence[WheelFile | SdistFile]
+        self,
+        package: str,
+        data: Sequence[WheelFile | SdistFile],
+        *,
+        offline_miss: bool = False,
     ) -> None:
         """Cache the listing for ``package`` and unblock any waiter.
 
         ``data`` is accepted as a Sequence (covariant) so callers can pass
         homogeneous ``list[WheelFile]`` lists; it is materialised into the
         internal ``list[WheelFile | SdistFile]`` cache.
+
+        ``offline_miss`` marks the empty listing as an index skipped offline
+        rather than one that served no files.
         """
         key = f"listing:{package}"
         materialised = list(data)
         with self._lock:
             self._listings[package] = materialised
+            if offline_miss:
+                self._offline_listing_misses.add(package)
             pending = self._pending.get(key)
         if pending is not None:
             pending.result = materialised
             pending.event.set()
+
+    def is_offline_listing_miss(self, package: str) -> bool:
+        """Whether ``package``'s empty listing is an offline cold-cache miss."""
+        with self._lock:
+            return package in self._offline_listing_misses
 
     def store_listing_error(self, package: str, error: BaseException) -> None:
         """Record a failed listing fetch and unblock any waiter.
@@ -1005,7 +1021,7 @@ class FetchCoordinator:
 
         Single-index configurations return a plain
         :class:`CachedAsyncSimpleClient` (or a :class:`LocalIndexClient`
-        for ``file://``).  Multi-index configurations wire up a
+        for a ``file:`` URL).  Multi-index configurations wire up a
         :class:`MultiIndexClient` whose underlying clients share the
         coordinator's transport but get their own per-URL cache.
         """
@@ -1029,13 +1045,21 @@ class FetchCoordinator:
     ) -> CachedAsyncSimpleClient | LocalIndexClient:
         """Build a single index client for ``url``.
 
-        ``file://`` URLs go to :class:`LocalIndexClient` (no caching;
-        the filesystem is the cache).  Everything else goes to
-        :class:`CachedAsyncSimpleClient` with a per-URL
-        :class:`OnDiskCache` when ``cache_dir`` is set.
+        A ``file:`` URL in either RFC 8089 spelling goes to
+        :class:`LocalIndexClient` (no caching; the filesystem is the
+        cache).  Everything else goes to :class:`CachedAsyncSimpleClient`
+        with a per-URL :class:`OnDiskCache` when ``cache_dir`` is set.
         """
-        if url.startswith("file://"):
+        # urlsplit raises on an authority it cannot parse, such as an
+        # unterminated IPv6 bracket.
+        try:
+            is_file = urlsplit(url).scheme == "file"
+        except ValueError:
+            is_file = False
+
+        if is_file:
             return LocalIndexClient(url)
+
         backend: CacheBackend
         if self._cache_dir is not None:
             backend = OnDiskCache(self._cache_dir, url)
@@ -1169,7 +1193,7 @@ class FetchCoordinator:
                 # Record the serving index before the empty listing fires the
                 # pending event (see _fetch_listing).
                 self._record_serving_index(client, req.package)
-                self.index.store_listing(req.package, [])
+                self.index.store_listing(req.package, [], offline_miss=True)
             elif self.index.get_listing(req.package) is None:
                 self.index.store_listing_error(req.package, exc)
             return
@@ -1359,7 +1383,7 @@ class FetchCoordinator:
                 msg = f"archive fetch unavailable in offline mode ({req.url})"
                 raise OfflineError(msg)
             response = await self._transport.get(req.url, headers=IDENTITY_HEADERS)
-            response.raise_for_status()
+            raise_unless_ok(response, req.url)
             data = response.content
 
         self.index.store_sdist_archive(req.package, req.version, data)

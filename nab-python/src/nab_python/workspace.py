@@ -27,7 +27,7 @@ import tomli
 
 from ._toml import tool_nab_section
 from ._vendor.packaging.utils import canonicalize_name
-from .provider import BuildPolicy, LocalSource
+from .provider import LocalSource
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -37,7 +37,6 @@ if TYPE_CHECKING:
 __all__ = [
     "WorkspaceConfig",
     "WorkspaceDiscoveryError",
-    "auto_promote_build_policy_for_workspace",
     "discover_workspace_root",
     "merge_workspace_local_sources",
     "read_workspace_members",
@@ -46,13 +45,6 @@ __all__ = [
 
 
 logger = logging.getLogger(__name__)
-
-
-_PERMISSIVENESS = {
-    BuildPolicy.NEVER: 0,
-    BuildPolicy.BUILD_LOCAL: 1,
-    BuildPolicy.BUILD_REMOTE: 2,
-}
 
 
 class WorkspaceDiscoveryError(ValueError):
@@ -278,16 +270,3 @@ def merge_workspace_local_sources(
             continue
         out.append(src)
     return tuple(out)
-
-
-def auto_promote_build_policy_for_workspace(current: BuildPolicy) -> BuildPolicy:
-    """Floor ``current`` at :attr:`BuildPolicy.BUILD_LOCAL`.
-
-    Workspace members frequently use ``dynamic = ["version"]`` (hatch's
-    pattern) and other dynamic fields, which require the local backend
-    path.  The user's setting wins when it is already at least as
-    permissive as :attr:`BuildPolicy.BUILD_LOCAL`.
-    """
-    if _PERMISSIVENESS[current] < _PERMISSIVENESS[BuildPolicy.BUILD_LOCAL]:
-        return BuildPolicy.BUILD_LOCAL
-    return current

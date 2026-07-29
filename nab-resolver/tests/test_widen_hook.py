@@ -392,6 +392,23 @@ class TestFormatErrorNarrow:
         )
         assert message == "because no versions of qux 7 are available"
 
+    def test_no_versions_term_is_not_narrowed_to_full(self) -> None:
+        """Without the range the line would claim qux has no versions at all."""
+        clause = Incompatibility(
+            [Term("qux", Range.at_least(5), positive=True)],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+        message = format_error(clause, narrow=lambda package, constraint: Range.full())
+        assert message == "because no versions of qux [5, +inf) are available"
+
+    def test_other_causes_accept_a_narrowing_to_full(self) -> None:
+        clause = Incompatibility(
+            [Term("a", Range.between(1, 9), positive=True)],
+            cause=IncompatibilityCause.DERIVED,
+        )
+        message = format_error(clause, narrow=lambda package, constraint: Range.full())
+        assert message == "so all versions of a"
+
     def test_narrow_applies_to_derived_positive_terms(self) -> None:
         clause = Incompatibility(
             [
@@ -421,7 +438,8 @@ class TestFormatErrorNarrow:
             resolver.resolve({"root": Range.singleton(1)})
         message = str(exc_info.value)
         assert "because no versions of foo [5, 7) are available" in message
-        assert "depends on foo *" in message
+        # Pinned as a whole line: a narrowed dep side would print [5, 7).
+        assert "because root 1 depends on foo" in message.splitlines()
         assert provider.narrow_calls
 
     def test_identity_narrow_keeps_message_byte_identical(self) -> None:
@@ -432,8 +450,8 @@ class TestFormatErrorNarrow:
         with pytest.raises(ResolutionError) as exc_info:
             resolver.resolve({"root": Range.singleton(1)})
         assert str(exc_info.value) == (
-            "because no versions of foo * are available\n"
-            "because root 1 depends on foo *\n"
+            "because no versions of foo are available\n"
+            "because root 1 depends on foo\n"
             "so root 1\n"
             "because your project depends on root 1\n"
             "so <root> 1"

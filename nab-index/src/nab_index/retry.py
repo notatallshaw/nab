@@ -24,7 +24,8 @@ __all__ = [
 ]
 
 MAX_RETRIES = 3
-"""Retries after the first attempt, so at most four requests per URL."""
+"""Retries after the first attempt: ``GET_RETRY`` counts them per failure class;
+the transports' own retry loops count them across all failures."""
 
 MAX_REDIRECTS = 20
 """Redirects followed per GET, matching httpx's default."""
@@ -49,7 +50,9 @@ def _retry_after_seconds(value: str) -> float | None:
     """Bounded Retry-After in seconds; None when the header does not parse."""
     try:
         seconds = _RETRY_AFTER_PARSER.parse_retry_after(value)
-    except InvalidHeader:
+    except (InvalidHeader, ValueError, OverflowError):
+        # urllib3 raises InvalidHeader for what it rejects up front; the rest
+        # raise out of its int or date conversion.
         return None
     return min(seconds, _RETRY_AFTER_MAX_SECONDS)
 

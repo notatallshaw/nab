@@ -4,14 +4,18 @@
 un-narrowed range to decide whether a user constraint is what hid a version.
 That range includes the versions the constraint clipped away, so look-ahead can
 reach one whose metadata is a hard integrity error (a failed PEP 658 sidecar
-hash).  The probe only labels a ``NO_VERSIONS`` clause, so that error must not
-escape and abort the resolve, and the snapshot the probe restores must survive
-the failure path.
+hash, or a bare wheel whose full body fails its published hash).  The probe only
+labels a ``NO_VERSIONS`` clause, so that error must not escape and abort the
+resolve, and the snapshot the probe restores must survive the failure path.
 """
 
 from __future__ import annotations
 
-from nab_index.client import MetadataHashMismatchError, WheelFile
+from nab_index.client import (
+    MetadataHashMismatchError,
+    WheelFile,
+    WheelHashMismatchError,
+)
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.specifiers import SpecifierSet
@@ -24,13 +28,13 @@ V = Version
 _PY312 = ResolveTarget.for_host_python("3.12.0")
 
 
-def _wheel(name: str, version: str) -> WheelFile:
+def _wheel(name: str, version: str, *, has_metadata: bool = True) -> WheelFile:
     return WheelFile(
         filename=f"{name}-{version}-py3-none-any.whl",
         url=f"https://example.com/{name}-{version}-py3-none-any.whl",
         version=version,
         requires_python=None,
-        has_metadata=True,
+        has_metadata=has_metadata,
         upload_time=None,
     )
 
@@ -73,6 +77,40 @@ class TestConstraintProbeContainsHardError:
         coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
         coordinator.index.store_metadata_error(
             "foo", "3.0", MetadataHashMismatchError("metadata sha256 mismatch")
+        )
+        root_reqs = {"baz": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+
+        pins = resolver.resolve(
+            root_reqs, constraints={"foo": SpecifierSet("<3.0").to_range()}
+        )
+
+        assert pins == {"baz": V("1.0")}
+
+    def test_excluded_version_wheel_hash_error_does_not_abort_resolve(self) -> None:
+        """A bare wheel failing its published hash stays out of play too.
+
+        Same shape as the sidecar case, but ``foo==3.0`` publishes no
+        ``core-metadata``, so the probe reaches it through rung 4 and the
+        full-body read fails the listing's digest.
+        """
+        listings = {
+            "baz": [_wheel("baz", "2.0"), _wheel("baz", "1.0")],
+            "foo": [_wheel("foo", "3.0", has_metadata=False)],
+        }
+        metadata = {
+            "2.0": (
+                "Metadata-Version: 2.1\nName: baz\nVersion: 2.0\nRequires-Dist: foo\n\n"
+            ),
+            "1.0": "Metadata-Version: 2.1\nName: baz\nVersion: 1.0\n\n",
+        }
+        coordinator = make_coordinator(
+            listings=listings,
+            metadata_by_version=metadata,
+            range_error=WheelHashMismatchError(
+                "wheel sha256 mismatch: expected 0, got 1"
+            ),
         )
         root_reqs = {"baz": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)

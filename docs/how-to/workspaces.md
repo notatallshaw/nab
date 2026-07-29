@@ -1,8 +1,8 @@
 # Lock a workspace
 
 > [!WARNING]
-> Workspace support is experimental. Discovery rules, member
-> validation, and the auto-promoted build policy may change.
+> Workspace support is experimental. Discovery rules and member
+> validation may change.
 
 A workspace is a parent project that declares one or more in-tree
 members. When `nab lock` runs against a member (or the root itself),
@@ -76,21 +76,23 @@ logged at INFO so it can be audited. Use this to point a workspace
 member at a checkout outside the tree without removing it from the
 `members` list.
 
-## Build policy floor
+## Build policy
 
 Workspace members frequently declare `dynamic = ["version"]` or
-similar. nab promotes the active `[tool.nab].build-policy` to at
-least `build-local` whenever a workspace is in scope, so PEP 517
-metadata extraction runs even when the user-set policy is stricter.
-A policy that is already `build-local` or `build-remote` is left
-alone.
+similar, which nab can only read by running the PEP 517 local
+backend. The default `build-policy` is `build-local`, so that build
+runs without any extra configuration.
+
+A workspace does not raise the policy. Under `build-policy = "never"`
+a member with dynamic metadata and no static fallback cannot be read,
+and the lock fails naming it. Give every member static metadata to
+lock a workspace with no backend invocations.
 
 ## Scope of `[tool.nab]` keys
 
 Workspace discovery flows these from the root into the file being
-locked: the workspace `members` (merged into `local-sources`), and
-the build-policy floor described above. Everything else under
-`[tool.nab]` is scoped to the pyproject being locked: `conflicts`,
+locked: the workspace `members`, merged into `local-sources`. Everything
+else under `[tool.nab]` is scoped to the pyproject being locked: `conflicts`,
 `default-groups`, `constraints`, `matrix`, `mode`, `requires-python`,
 `uploaded-prior-to`, `build-policy` itself, `dist-policy`, `vcs`,
 `indexes`, and `environment`. Locking a member with `nab lock

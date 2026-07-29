@@ -26,7 +26,7 @@ from .client import (
     _parse_files,
     _select_artifact_hash,
     _verify_metadata_hash,
-    _verify_sdist_hash,
+    verify_sdist_hash,
 )
 from .lazy_wheel import (
     RangeCapabilityMemo,
@@ -34,7 +34,7 @@ from .lazy_wheel import (
     RangeOutcome,
     read_wheel_metadata_over_range,
 )
-from .transport import IDENTITY_HEADERS
+from .transport import IDENTITY_HEADERS, raise_unless_ok
 
 if TYPE_CHECKING:
     from packaging.utils import NormalizedName
@@ -235,7 +235,7 @@ class CachedAsyncSimpleClient:
         if response.status_code == _HTTP_NOT_FOUND:
             self._cache.put_negative(package, self._negative_policy(response))
             return []
-        response.raise_for_status()
+        raise_unless_ok(response, url)
         new_body = response.content
 
         # Parse before caching so a bad body never poisons the cache.
@@ -255,7 +255,7 @@ class CachedAsyncSimpleClient:
         if response.status_code == _HTTP_NOT_FOUND:
             self._cache.put_negative(package, self._negative_policy(response))
             return []
-        response.raise_for_status()
+        raise_unless_ok(response, url)
         body = response.content
 
         # Parse before caching so a bad body never poisons the cache.
@@ -305,7 +305,7 @@ class CachedAsyncSimpleClient:
             raise OfflineError(msg)
 
         response = await self._transport.get(metadata_url)
-        response.raise_for_status()
+        raise_unless_ok(response, metadata_url)
         content = response.content
         if metadata_hash is not None:
             _verify_metadata_hash(content, metadata_hash)
@@ -391,10 +391,10 @@ class CachedAsyncSimpleClient:
             raise OfflineError(msg)
 
         response = await self._transport.get(sdist_url, headers=IDENTITY_HEADERS)
-        response.raise_for_status()
+        raise_unless_ok(response, sdist_url)
         selected = _select_artifact_hash(sdist_hashes)
         if selected is not None:
-            _verify_sdist_hash(response.content, selected)
+            verify_sdist_hash(response.content, selected)
         pkg_info, pyproject_toml = _extract_sdist_files(response.content)
 
         if pkg_info is not None or pyproject_toml is not None:
@@ -426,8 +426,8 @@ class CachedAsyncSimpleClient:
             msg = f"sdist archive fetch unavailable in offline mode ({sdist_url})"
             raise OfflineError(msg)
         response = await self._transport.get(sdist_url, headers=IDENTITY_HEADERS)
-        response.raise_for_status()
+        raise_unless_ok(response, sdist_url)
         selected = _select_artifact_hash(sdist_hashes)
         if selected is not None:
-            _verify_sdist_hash(response.content, selected)
+            verify_sdist_hash(response.content, selected)
         return response.content

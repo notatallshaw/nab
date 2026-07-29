@@ -19,7 +19,13 @@ import truststore
 import urllib3
 
 from .retry import GET_RETRY, MAX_RETRIES, next_delay
-from .transport import ContentDecodingError, HttpError, accepts_gzip, decode_body
+from .transport import (
+    ContentDecodingError,
+    HttpError,
+    accepts_gzip,
+    decode_body,
+    raise_for_error_status,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -28,8 +34,6 @@ __all__ = [
     "Urllib3AsyncTransport",
 ]
 
-
-_HTTP_BAD_REQUEST = 400
 
 # urllib3's default read timeout is None, so bound it against a stalled index.
 _DEFAULT_TIMEOUT_SECONDS = 5.0
@@ -88,10 +92,9 @@ class _Urllib3Response:
         return _json.loads(self._content)
 
     def raise_for_status(self) -> None:
-        status = self._response.status
-        if status >= _HTTP_BAD_REQUEST:
-            msg = f"HTTP {status} for {self._response.geturl() or '<unknown>'}"
-            raise HttpError(msg)
+        raise_for_error_status(
+            self._response.status, self._response.geturl() or "<unknown>"
+        )
 
 
 class Urllib3AsyncTransport:

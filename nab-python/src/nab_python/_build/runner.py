@@ -24,8 +24,10 @@ covered by skipping the prepare step for that combination; see
 from __future__ import annotations
 
 import logging
+import lzma
 import tempfile
 import zipfile
+import zlib
 from email import message_from_string
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -126,8 +128,17 @@ def run_build_backend(
                         metadata_dir = _build_wheel_and_extract(project, output_dir)
                     else:
                         metadata_dir = Path(project.metadata_path(output_dir))
-                # build raises a bare ValueError for a wheel whose name will not parse
-                except (zipfile.BadZipFile, ValueError, OSError) as exc:
+                # build raises a bare ValueError for a wheel whose name will not
+                # parse; a member zipfile cannot decompress surfaces as zlib.error,
+                # lzma.LZMAError, or NotImplementedError (a RuntimeError subclass).
+                except (
+                    zipfile.BadZipFile,
+                    ValueError,
+                    OSError,
+                    zlib.error,
+                    lzma.LZMAError,
+                    RuntimeError,
+                ) as exc:
                     msg = (
                         f"build backend {backend!r} produced an unreadable wheel: {exc}"
                     )

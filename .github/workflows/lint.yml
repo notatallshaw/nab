@@ -59,6 +59,23 @@ jobs:
       - name: Check vendored packaging matches pin plus patch
         run: tasks/vendor-packaging.sh --check
 
+  boundaries:
+    name: import boundaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.13"
+
+      # Stdlib only, so there is nothing to install and no lock to pin.
+      - name: Check workspace import boundaries
+        run: python tasks/check_boundaries.py
+
   docs:
     name: docs
     runs-on: ubuntu-latest

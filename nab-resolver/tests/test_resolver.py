@@ -1855,6 +1855,109 @@ class TestErrorMessages:
         assert positive == "a [1, +inf)"
         assert negative == "not a [1, +inf)"
 
+
+class TestFullRangeWording:
+    """A term admitting every version reads as prose, not as an interval.
+
+    The wording depends on where in the sentence the term sits.
+    """
+
+    def test_format_term_renders_a_full_positive_term_as_all_versions(self) -> None:
+        assert (
+            format_term(Term("a", Range.full(), positive=True)) == "all versions of a"
+        )
+
+    def test_format_term_keeps_the_range_on_a_full_negative_term(self) -> None:
+        """A negated full term is not "all versions"; it excludes them all."""
+        assert format_term(Term("a", Range.full(), positive=False)) == "not a *"
+
+    def test_a_gapless_union_reads_as_full(self) -> None:
+        """A union whose parts meet admits every version."""
+        gapless = Range.less_than(3) | Range.at_least(3)
+        assert format_term(Term("a", gapless, positive=True)) == "all versions of a"
+
+    def test_no_versions_clause_drops_the_range(self) -> None:
+        clause = Incompatibility(
+            [Term("qux", Range.full(), positive=True)],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+        assert format_error(clause) == "because no versions of qux are available"
+
+    def test_root_requires_clause_drops_the_range(self) -> None:
+        """The prefix form, reached by a ROOT clause that is not the two-term one."""
+        clause = Incompatibility(
+            [Term("baz", Range.full(), positive=True)],
+            cause=IncompatibilityCause.ROOT,
+        )
+        assert format_error(clause) == "because root requires baz"
+
+    def test_project_dependency_clause_drops_the_range(self) -> None:
+        clause = Incompatibility(
+            [
+                Term("root", Range.singleton(0), positive=True),
+                Term("baz", Range.full(), positive=False),
+            ],
+            cause=IncompatibilityCause.ROOT,
+        )
+        assert format_error(clause) == "because your project depends on baz"
+
+    def test_dependency_side_drops_the_range(self) -> None:
+        clause = Incompatibility(
+            [
+                Term("foo", Range.singleton(2), positive=True),
+                Term("bar", Range.full(), positive=False),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert format_error(clause) == "because foo 2 depends on bar"
+
+    def test_full_parent_takes_a_plural_verb(self) -> None:
+        clause = Incompatibility(
+            [
+                Term("foo", Range.full(), positive=True),
+                Term("bar", Range.at_least(3), positive=False),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert format_error(clause) == (
+            "because all versions of foo depend on bar [3, +inf)"
+        )
+
+    def test_full_parent_takes_a_plural_verb_on_the_incompatible_form(self) -> None:
+        clause = Incompatibility(
+            [
+                Term("app", Range.full(), positive=True),
+                Term("lib", Range.singleton(9), positive=True),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert format_error(clause) == (
+            "because all versions of app are incompatible with lib 9"
+        )
+
+    def test_full_blocker_keeps_the_all_versions_form(self) -> None:
+        """The blocker is not a requirement, so it keeps the subject wording."""
+        clause = Incompatibility(
+            [
+                Term("app", Range.singleton(3), positive=True),
+                Term("lib", Range.full(), positive=True),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert format_error(clause) == (
+            "because app 3 is incompatible with all versions of lib"
+        )
+
+    def test_derived_clause_keeps_the_all_versions_form(self) -> None:
+        clause = Incompatibility(
+            [
+                Term("a", Range.full(), positive=True),
+                Term("b", Range.between(1, 9), positive=False),
+            ],
+            cause=IncompatibilityCause.DERIVED,
+        )
+        assert format_error(clause) == "so all versions of a and not b [1, 9)"
+
     def test_derivation_deeper_than_the_recursion_limit_renders(self) -> None:
         """A chain longer than the recursion limit renders instead of overflowing."""
         depth = sys.getrecursionlimit() + 100
@@ -2119,7 +2222,7 @@ class TestConstraints:
             )
         message = str(exc_info.value)
         assert "the user constrained" not in message
-        assert "no versions of foo * are available" in message
+        assert "no versions of foo are available" in message
 
     def test_out_of_range_version_not_blamed_on_constraint(self) -> None:
         """foo publishes only v5 but is required ``>= 10``. A ``!= 50``

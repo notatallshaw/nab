@@ -29,10 +29,6 @@ import tomli_w
 import tyro
 
 from nab._version import __version__
-from nab_python._vendor.packaging.pylock import Pylock, PylockValidationError
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.utils import canonicalize_name
-from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConfigError,
     NabProjectConfig,
@@ -41,20 +37,19 @@ from nab_python.config import (
     with_python_override,
 )
 from nab_python.lockfile import (
-    ArchivePin,
-    IndexPin,
-    LockDisqualification,
+    InvalidLockfileError,
+    LockfileSyntaxError,
     LockInput,
     Provenance,
     RootRequirement,
     TargetLock,
-    check_constraints,
-    check_direct_requirements,
-    check_envelope,
+    check_locked,
+    drop_workspace_pins,
     is_valid_pylock_path,
     package_metadata_override_records,
     read_lockfile_anchor,
     read_lockfile_packages,
+    summarize_lock,
 )
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
@@ -254,7 +249,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         progress=ProgressReporter(_cli.printer()),
     )
 
-    lock_input = _drop_workspace_pins(
+    lock_input = drop_workspace_pins(
         _cli.build_lock_input(
             result,
             config=config,
@@ -269,41 +264,6 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         _check_locked(lock_input, output=output)
         return
     _emit_or_exit(lambda: _emit(lock_input, format=format, output=output))
-
-
-def _drop_workspace_pins(
-    lock_input: LockInput, workspace_to_drop: frozenset[str]
-) -> LockInput:
-    """Return a copy of ``lock_input`` with workspace pins removed.
-
-    ``workspace_to_drop`` holds canonical workspace member names; pin
-    keys are already canonical.  An empty set returns ``lock_input``
-    unchanged.  Each target's pins are filtered, and its forward
-    dependency graph and membership gates with them, so no edge or gate
-    names a dropped member with no ``[[packages]]`` entry.
-    """
-    if not workspace_to_drop:
-        return lock_input
-
-    def keep(name: str) -> bool:
-        return canonicalize_name(name) not in workspace_to_drop
-
-    targets = {
-        label: TargetLock(
-            target=lock.target,
-            pins={name: pin for name, pin in lock.pins.items() if keep(name)},
-            dependencies={
-                name: kept
-                for name, deps in lock.dependencies.items()
-                if keep(name) and (kept := tuple(dep for dep in deps if keep(dep)))
-            },
-            package_gates={
-                name: gate for name, gate in lock.package_gates.items() if keep(name)
-            },
-        )
-        for label, lock in lock_input.targets.items()
-    }
-    return replace(lock_input, targets=targets)
 
 
 def _emit(
@@ -336,39 +296,6 @@ def _locked_target_path(output: Path | None) -> Path:
     return output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
 
 
-def _read_committed_pylock(target: Path) -> Pylock:
-    """Read and parse the committed pylock, exiting on a precondition failure.
-
-    A missing lock, an unreadable lock (a directory or a permission-denied
-    file), a non-TOML file, and a file that parses as TOML but not as a PEP 751
-    lock each exit non-zero here, before any resolve runs.
-    """
-    if not target.exists():
-        _cli.printer().error(
-            f"--locked: no lockfile at {target} to check; run `nab lock` first."
-        )
-        sys.exit(1)
-    try:
-        data = tomli.loads(target.read_text(encoding="utf-8"))
-    except OSError as e:
-        _cli.printer().error(f"--locked: cannot read lockfile {target}: {e}.")
-        sys.exit(1)
-    except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
-        _cli.printer().error(
-            f"--locked: lockfile {target} is not valid TOML: {e};"
-            " re-run `nab lock` to regenerate it."
-        )
-        sys.exit(1)
-    try:
-        return Pylock.from_dict(data)
-    except PylockValidationError as e:
-        _cli.printer().error(
-            f"--locked: lockfile {target} is not a valid PEP 751 lockfile: {e};"
-            " re-run `nab lock` to regenerate it."
-        )
-        sys.exit(1)
-
-
 def _fast_fail_locked(
     path: Path,
     *,
@@ -386,24 +313,41 @@ def _fast_fail_locked(
     non-zero; otherwise it returns and the full resolve runs.
     """
     target = _locked_target_path(output)
-    committed = _read_committed_pylock(target)
-    disqualification = check_envelope(
-        committed,
-        requires_python=config.requires_python,
-        extras=extras,
-        dependency_groups=groups,
-        default_groups=config.default_groups,
-    )
-    if disqualification is None:
-        disqualification = _check_locked_validity(
-            path,
-            config,
-            committed,
-            python=python,
-            extras=extras,
-            groups=groups,
-            workspace_to_drop=workspace_to_drop,
+    if not target.exists():
+        _cli.printer().error(
+            f"--locked: no lockfile at {target} to check; run `nab lock` first."
         )
+        sys.exit(1)
+    roots, marker_env = _locked_check_inputs(
+        path, config, python=python, extras=extras, groups=groups
+    )
+    try:
+        disqualification = check_locked(
+            target,
+            requires_python=config.requires_python,
+            extras=extras,
+            dependency_groups=groups,
+            default_groups=config.default_groups,
+            roots=roots,
+            constraints=config.constraints,
+            marker_env=marker_env,
+            exclude=workspace_to_drop,
+        )
+    except OSError as e:
+        _cli.printer().error(f"--locked: cannot read lockfile {target}: {e}.")
+        sys.exit(1)
+    except LockfileSyntaxError as e:
+        _cli.printer().error(
+            f"--locked: lockfile {target} is not valid TOML: {e};"
+            " re-run `nab lock` to regenerate it."
+        )
+        sys.exit(1)
+    except InvalidLockfileError as e:
+        _cli.printer().error(
+            f"--locked: lockfile {target} is not a valid PEP 751 lockfile: {e};"
+            " re-run `nab lock` to regenerate it."
+        )
+        sys.exit(1)
     if disqualification is None:
         return
     _cli.printer().error(
@@ -413,29 +357,24 @@ def _fast_fail_locked(
     sys.exit(1)
 
 
-def _check_locked_validity(
+def _locked_check_inputs(
     path: Path,
     config: NabProjectConfig,
-    committed: Pylock,
     *,
     python: str | None,
     extras: tuple[str, ...],
     groups: tuple[str, ...],
-    workspace_to_drop: frozenset[str],
-) -> LockDisqualification | None:
-    """Run the validity checks against the committed lock.
+) -> tuple[list[RootRequirement] | None, Mapping[str, str] | None]:
+    """Collect the validity-check inputs, or ``(None, None)`` to skip them.
 
-    Returns a disqualification for the first violated direct requirement or
-    constraint, or ``None`` to fall through.  A target the declaration excludes
-    or a project whose requirements cannot be read both fall through, left for
-    the full resolve.  A direct requirement naming a ``workspace_to_drop``
-    member is skipped, since ``--no-emit-workspace`` drops it from the lock on
-    both sides.
+    A target the declaration excludes and a project whose requirements cannot
+    be read both skip the validity checks, left for the full resolve.  The
+    envelope checks still run.
     """
     try:
         target = plan_targets(with_python_override(config, python))[0]
     except ConfigError:
-        return None
+        return None, None
     try:
         roots = _active_root_requirements(path, extras=extras, groups=groups)
     except (
@@ -444,17 +383,8 @@ def _check_locked_validity(
         InvalidProjectRequirementError,
         LookupError,
     ):
-        return None
-    roots = [
-        root
-        for root in roots
-        if canonicalize_name(root.requirement.name) not in workspace_to_drop
-    ]
-    direct = check_direct_requirements(committed, roots, marker_env=target.marker_env)
-    if direct is not None:
-        return direct
-    constraints = [Requirement(text) for text in config.constraints]
-    return check_constraints(committed, constraints, marker_env=target.marker_env)
+        return None, None
+    return roots, target.marker_env
 
 
 def _active_root_requirements(
@@ -529,7 +459,7 @@ def _emit_pylock(lock_input: LockInput, *, output: Path | None) -> None:
     # Pass the target so wheel/sdist/directory paths are written relative
     # to the lockfile's own directory, not the cwd.
     _render_lock_or_exit(lock_input, target=target)
-    _cli.printer().done(f"Wrote {target} ({_lock_summary(lock_input, prior)})")
+    _cli.printer().done(f"Wrote {target} ({summarize_lock(lock_input, prior)})")
 
 
 def _render_lock_or_exit(lock_input: LockInput, *, target: Path | None) -> str:
@@ -542,68 +472,6 @@ def _render_lock_or_exit(lock_input: LockInput, *, target: Path | None) -> str:
     except (_cli.DisjointnessError, _cli.DivergentBaseDependencyError) as e:
         _cli.printer().error(str(e))
         sys.exit(1)
-
-
-def _lock_summary(lock_input: LockInput, prior: Mapping[str, Version] | None) -> str:
-    """Summarise what was written: a package diff, or the tuple count.
-
-    A matrix pins a package once per tuple, and two tuples may disagree,
-    so there is no one version to diff against the prior lock; it reports
-    the tuples it covered instead.
-    """
-    if len(lock_input.targets) > 1:
-        return f"{len(lock_input.targets)} tuples"
-
-    pins = {
-        name: pin
-        for lock in lock_input.targets.values()
-        for name, pin in lock.pins.items()
-    }
-
-    # Index and archive pins record a version; local and VCS pins emit
-    # version=None, so read_lockfile_packages never returns them.
-    # Diff against the same set or they read as added every relock.
-    versioned = {
-        name: Version(pin.version)
-        for name, pin in pins.items()
-        if isinstance(pin, (IndexPin, ArchivePin))
-    }
-    return f"{len(pins)} packages{_diff_summary(prior, versioned)}"
-
-
-def _diff_summary(
-    prior: Mapping[str, Version] | None, current: Mapping[str, Version]
-) -> str:
-    """Return a ``: A added, B upgraded, ...`` suffix for a re-lock.
-
-    ``prior`` is the previous pylock's pins or ``None`` (first lock or
-    an unparseable prior file); both fall back to an empty suffix.  An
-    unchanged pin set also yields an empty suffix.
-    """
-    if prior is None:
-        return ""
-    added = sum(name not in prior for name in current)
-    removed = sum(name not in current for name in prior)
-    upgraded = downgraded = 0
-    for name, version in current.items():
-        old = prior.get(name)
-        if old is None or old == version:
-            continue
-        if version > old:
-            upgraded += 1
-        else:
-            downgraded += 1
-    parts = [
-        f"{count} {label}"
-        for count, label in (
-            (added, "added"),
-            (upgraded, "upgraded"),
-            (downgraded, "downgraded"),
-            (removed, "removed"),
-        )
-        if count
-    ]
-    return f": {', '.join(parts)}" if parts else ""
 
 
 def _template_values(target: ResolveTarget) -> dict[str, str]:
@@ -619,19 +487,23 @@ def _template_values(target: ResolveTarget) -> dict[str, str]:
     }
 
 
-def _varying_vars(targets: Sequence[ResolveTarget]) -> list[str]:
-    """Return the template variables whose value differs across ``targets``.
+def _separating_vars(targets: Sequence[ResolveTarget]) -> list[str]:
+    """Return the template variables that give each tuple its own file.
 
-    These are the variables an ``--output`` template has to name to give
-    each tuple its own file.  The list can be empty: two tuples can
-    differ in a tag knob no variable names (a musl and a glibc target
-    share one ``platform_id``), and then no template separates them.
+    These are the variables whose value differs across ``targets``, but
+    only when naming all of them lands every tuple on its own path.  The
+    list is empty otherwise: tuples can differ in an axis no variable
+    names, so a musl and a glibc target share one ``platform_id``, and a
+    CPython and a PyPy target share all three.
     """
     values = [_template_values(target) for target in targets]
     first = values[0]
-    return [
+    varying = [
         name for name in first if any(other[name] != first[name] for other in values)
     ]
+
+    rendered = {tuple(value[name] for name in varying) for value in values}
+    return varying if len(rendered) == len(values) else []
 
 
 def _and_list(names: Sequence[str]) -> str:
@@ -750,23 +622,23 @@ def _emit_requirements(
 def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
     """Exit 1: several tuples, and one plain ``--output`` path for them all.
 
-    Names the variables that actually vary across the tuples, which for a
-    resolve forked by ``[tool.nab].conflicts`` is ``{selection}`` alone:
-    the fork is a dimension of its own, and the tuples it produces can
-    share every other axis.
+    Names the variables that separate the tuples, which for a resolve
+    forked by ``[tool.nab].conflicts`` is ``{selection}`` alone: the fork
+    is a dimension of its own, and the tuples it produces can share every
+    other axis.
     """
     targets = [lock.target for lock in lock_input.targets.values()]
     count = len(targets)
-    varying = _varying_vars(targets)
-    if not varying:
+    separating = _separating_vars(targets)
+    if not separating:
         _cli.printer().error(
             f"the resolve produced {count} tuples and no --output template"
             f" variable tells them apart, so {output} cannot hold them."
             "  Emit pylock output instead."
         )
         sys.exit(1)
-    placeholders = _and_list([f"{{{name}}}" for name in varying])
-    example = "constraints" + "".join(f"-{{{name}}}" for name in varying) + ".txt"
+    placeholders = _and_list([f"{{{name}}}" for name in separating])
+    example = "constraints" + "".join(f"-{{{name}}}" for name in separating) + ".txt"
     _cli.printer().error(
         f"the resolve produced {count} tuples but --output {output} has no"
         f" template variable to disambiguate.  Use {placeholders} in the path,"
@@ -776,14 +648,25 @@ def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
 
 
 def _refuse_collision(
-    first: TargetLock, second: TargetLock, *, output: Path, template: str, path: str
+    lock_input: LockInput,
+    first: TargetLock,
+    second: TargetLock,
+    *,
+    output: Path,
+    template: str,
+    path: str,
 ) -> NoReturn:
-    """Exit 1: two tuples render one path under this template."""
+    """Exit 1: two tuples render one path under this template.
+
+    The separating set covers every tuple in the lock, not just the
+    colliding pair: a variable that tells those two apart can still leave
+    another pair sharing a path, so offering it would only move the error.
+    """
+    targets = [lock.target for lock in lock_input.targets.values()]
     missing = [
-        name
-        for name in _varying_vars([first.target, second.target])
-        if f"{{{name}}}" not in template
+        name for name in _separating_vars(targets) if f"{{{name}}}" not in template
     ]
+
     head = (
         f"tuples {first.target.label!r} and {second.target.label!r}"
         f" both map to {path!r};"
@@ -812,6 +695,7 @@ def _substituted_paths(
         substituted = template.format(**_template_values(lock.target))
         if substituted in by_path:
             _refuse_collision(
+                lock_input,
                 by_path[substituted],
                 lock,
                 output=output,
