@@ -3218,6 +3218,102 @@ class TestDecisionLookAhead:
         terms = clauses[0].terms
         assert {t.package for t in terms} == {"foo", "bar"}
 
+    def test_flush_widens_terms_onto_listed_gaps(self) -> None:
+        """Consecutive rejected candidates coalesce into one segment and the
+        blocker spans its neighbor gap, admitting no other listed version."""
+        foo_wheels = [make_wheel(v) for v in ("3.0", "2.0", "1.0", "0.5")]
+        bar_wheels = [make_wheel(v) for v in ("5.0", "3.0", "1.0")]
+        meta_template = "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\nRequires-Dist: bar>=5.0\n"
+        coordinator = make_coordinator(
+            listings={"foo": foo_wheels, "bar": bar_wheels},
+            metadata_by_version={
+                v: meta_template.format(ver=v) for v in ("3.0", "2.0", "1.0", "0.5")
+            },
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("bar")
+        provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
+        assert provider.choose_version("foo", SpecifierSet(">=1.0").to_range()) is None
+        clauses = provider.consume_pending_clauses()
+        assert len(clauses) == 1
+        candidate, blocker = clauses[0].terms
+        assert candidate.package == "foo"
+        assert isinstance(candidate.constraint, VersionRange)
+        assert len(candidate.constraint._bounds) == 1
+        assert V("1.0") in candidate.constraint
+        assert V("2.0") in candidate.constraint
+        assert V("3.0") in candidate.constraint
+        assert V("0.5") not in candidate.constraint
+        assert blocker.package == "bar"
+        assert V("3.0") in blocker.constraint
+        assert V("4.0") in blocker.constraint
+        assert V("1.0") not in blocker.constraint
+        assert V("5.0") not in blocker.constraint
+
+    def test_flush_widening_keeps_a_live_hole_version_out(self) -> None:
+        """A still-selectable version inside a hole of the asked range stays
+        out of the widened union, so the candidates keep separate segments."""
+        foo_wheels = [make_wheel(v) for v in ("3.0", "2.0", "1.0", "0.5")]
+        bar_wheels = [make_wheel(v) for v in ("5.0", "3.0", "1.0")]
+        meta_template = "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\nRequires-Dist: bar>=5.0\n"
+        coordinator = make_coordinator(
+            listings={"foo": foo_wheels, "bar": bar_wheels},
+            metadata_by_version={
+                v: meta_template.format(ver=v) for v in ("3.0", "2.0", "1.0", "0.5")
+            },
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("bar")
+        provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
+        asked = SpecifierSet(">=1.0,!=2.0").to_range()
+        assert provider.choose_version("foo", asked) is None
+        clauses = provider.consume_pending_clauses()
+        assert len(clauses) == 1
+        candidate = clauses[0].terms[0]
+        assert candidate.package == "foo"
+        assert isinstance(candidate.constraint, VersionRange)
+        assert len(candidate.constraint._bounds) == 2
+        assert V("1.0") in candidate.constraint
+        assert V("3.0") in candidate.constraint
+        assert V("2.0") not in candidate.constraint
+        assert V("0.5") not in candidate.constraint
+
+    def test_flush_widens_range_block_candidates_only(self) -> None:
+        """Range-keyed flush widens the candidate union; the blocker term
+        keeps the captured positive-range object."""
+        wheels = [make_wheel(v) for v in ("3.0", "2.0", "1.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("foo")
+        blocker_range = SpecifierSet("<2.0").to_range()
+        provider.pending_range_blocks[("foo", "bar", blocker_range)].extend(
+            [V("2.0"), V("3.0")]
+        )
+        provider._flush_pending_blocks()
+        clauses = provider.consume_pending_clauses()
+        assert len(clauses) == 1
+        candidate, blocker = clauses[0].terms
+        assert isinstance(candidate.constraint, VersionRange)
+        assert len(candidate.constraint._bounds) == 1
+        assert V("2.0") in candidate.constraint
+        assert V("3.0") in candidate.constraint
+        assert V("1.0") not in candidate.constraint
+        assert blocker.constraint is blocker_range
+
+    def test_flush_keeps_singletons_when_widening_unavailable(self) -> None:
+        """No cached listing: the flushed terms are exact singletons."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        provider.pending_blocks[("foo", "bar", V("2.0"))].extend([V("1.0"), V("3.0")])
+        provider._flush_pending_blocks()
+        clauses = provider.consume_pending_clauses()
+        assert len(clauses) == 1
+        candidate, blocker = clauses[0].terms
+        assert candidate.constraint == (
+            VersionRange.singleton(V("1.0")) | VersionRange.singleton(V("3.0"))
+        )
+        assert blocker.constraint == VersionRange.singleton(V("2.0"))
+
     def test_full_resolve_reports_lookahead_clause_as_incompatible(self) -> None:
         """The look-ahead grouped clause renders as an incompatibility.
 

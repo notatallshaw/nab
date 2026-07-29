@@ -2706,6 +2706,58 @@ class TestAugmentResolutionError:
         )
         assert _walk_no_versions_packages(clause) == []
 
+    def test_walk_names_lookahead_grouped_clause_candidate(self) -> None:
+        """A look-ahead grouped clause (two positive terms) names its
+        candidate package; the blocker package is not collected."""
+        clause = Incompatibility(
+            [
+                Term("cand", Range.full(), positive=True),
+                Term("blocker", Range.singleton(1), positive=True),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert _walk_no_versions_packages(clause) == ["cand"]
+
+    def test_grouped_clause_hint_survives_a_later_range(self) -> None:
+        """Accepted tolerance: reasons are keyed by package name, so a later
+        range still surfaces the reason an earlier ask recorded."""
+        clause = Incompatibility(
+            [
+                Term("cand", Range.full(), positive=True),
+                Term("blocker", Range.singleton(1), positive=True),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        exc = ResolutionError("base message", incompatibility=clause)
+        provider = MagicMock()
+        provider.get_no_versions_reason.side_effect = lambda pkg: (
+            "no version matches the requirement" if pkg == "cand" else None
+        )
+        _augment_resolution_error(exc, provider)
+        assert "cand: no version matches the requirement" in str(exc)
+
+    def test_walk_skips_real_dependency_clauses(self) -> None:
+        """A dependency clause with a negative dep term is not collected."""
+        clause = Incompatibility(
+            [
+                Term("parent", Range.singleton(1), positive=True),
+                Term("dep", Range.full(), positive=False),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert _walk_no_versions_packages(clause) == []
+
+    def test_walk_skips_non_string_grouped_candidate(self) -> None:
+        """Grouped clauses with a non-str candidate package are filtered."""
+        clause = Incompatibility(
+            [
+                Term(object(), Range.full(), positive=True),
+                Term("blocker", Range.singleton(1), positive=True),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert _walk_no_versions_packages(clause) == []
+
     def test_walk_visits_each_node_once(self) -> None:
         """A diamond-shaped derivation visits the shared leaf only once."""
         leaf = self._no_versions_clause("shared")

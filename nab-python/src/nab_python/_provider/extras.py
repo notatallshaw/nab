@@ -162,8 +162,8 @@ def _record_base_range_blocks(
 ) -> None:
     """Push binary clauses for proxy candidates filtered by base's range.
 
-    Each excluded version V records ``{proxy_pkg == V, base ==
-    base_decision}`` (or the range-block analogue) impossible.
+    Each excluded version V records ``proxy_pkg`` at V with ``base`` at
+    ``base_decision`` (or the range-block analogue) impossible.
     Without these, the resolver only sees a single-term NO_VERSIONS
     clause for the proxy and cannot connect the proxy's
     unsatisfiability to the base decision that caused it; with them,
@@ -173,7 +173,8 @@ def _record_base_range_blocks(
     populates it when ``base_range`` is set, so the range-block path
     always has a target to record against.  When the resolver has
     already decided the base, recording against the decision is
-    tighter (a singleton blocker) than recording against the range.
+    tighter (the blocker names one selectable version) than recording
+    against the range.
     """
     # Late import: ``lookahead`` shares state with this module
     # through ``provider`` and importing it at module load creates a cycle.
