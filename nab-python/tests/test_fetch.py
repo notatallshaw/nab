@@ -2024,6 +2024,46 @@ class TestMultiIndexCoordinator:
         finally:
             coord.shutdown()
 
+    def test_local_index_without_authority(self, tmp_path: Path) -> None:
+        """A file:/path index URL without an authority is still a local index."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        url = wheelhouse.as_uri().replace("file://", "file:", 1)
+        assert not url.startswith("file://")
+
+        coord = _coord(indexes=[IndexConfig("local", url)])
+        try:
+            assert isinstance(coord._build_client(), LocalIndexClient)
+        finally:
+            coord.shutdown()
+
+        with _coord(indexes=[IndexConfig("local", url)]) as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            listing = coord.index.get_listing("foo")
+            assert coord.index.get_listing_error("foo") is None
+            assert listing is not None
+            assert [f.filename for f in listing] == ["foo-1.0-py3-none-any.whl"]
+
+    def test_unparseable_index_url_is_not_local(self, tmp_path: Path) -> None:
+        """An index URL urlsplit cannot parse falls through to the remote client."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+
+        with _coord(
+            indexes=[
+                IndexConfig("local", wheelhouse.as_uri()),
+                # An unterminated IPv6 bracket has been a urlsplit ValueError
+                # for far longer than a bracketed IPv4 address, which only
+                # started raising after the oldest 3.10 nab supports.
+                IndexConfig("bad", "https://[::1/simple/"),
+            ],
+        ) as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            assert coord.index.get_listing_error("foo") is None
+            assert coord.index.get_listing_index("foo") == "local"
+
     def test_single_index_short_circuit(self, tmp_path: Path) -> None:
         """Single index + no overrides returns a plain client."""
         coord = FetchCoordinator(

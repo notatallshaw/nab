@@ -1021,7 +1021,7 @@ class FetchCoordinator:
 
         Single-index configurations return a plain
         :class:`CachedAsyncSimpleClient` (or a :class:`LocalIndexClient`
-        for ``file://``).  Multi-index configurations wire up a
+        for a ``file:`` URL).  Multi-index configurations wire up a
         :class:`MultiIndexClient` whose underlying clients share the
         coordinator's transport but get their own per-URL cache.
         """
@@ -1045,13 +1045,21 @@ class FetchCoordinator:
     ) -> CachedAsyncSimpleClient | LocalIndexClient:
         """Build a single index client for ``url``.
 
-        ``file://`` URLs go to :class:`LocalIndexClient` (no caching;
-        the filesystem is the cache).  Everything else goes to
-        :class:`CachedAsyncSimpleClient` with a per-URL
-        :class:`OnDiskCache` when ``cache_dir`` is set.
+        A ``file:`` URL in either RFC 8089 spelling goes to
+        :class:`LocalIndexClient` (no caching; the filesystem is the
+        cache).  Everything else goes to :class:`CachedAsyncSimpleClient`
+        with a per-URL :class:`OnDiskCache` when ``cache_dir`` is set.
         """
-        if url.startswith("file://"):
+        # urlsplit raises on an authority it cannot parse, such as an
+        # unterminated IPv6 bracket.
+        try:
+            is_file = urlsplit(url).scheme == "file"
+        except ValueError:
+            is_file = False
+
+        if is_file:
             return LocalIndexClient(url)
+
         backend: CacheBackend
         if self._cache_dir is not None:
             backend = OnDiskCache(self._cache_dir, url)
