@@ -32,6 +32,7 @@ from ..requirements_file import (
     _parse_requirements,
     _require_string_list,
 )
+from ..tags import python_axis_accepts
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     from ..fetch import InMemoryIndex
     from ..provider import DistFile, Provider
     from ..tags import TagSet
+    from ..target import ResolveTarget
 
 TargetDepSignature = tuple[
     dict[str, VersionRange],
@@ -859,7 +861,9 @@ def check_sibling_metadata_divergence(
     pick_key = None if tags is None else tags.wheel_rank(pick.filename)
     pick_sig: TargetDepSignature | None = None
     for sibling in wheels:
-        if sibling is pick or not _wheels_tie(tags, pick_key, sibling.filename):
+        if sibling is pick or not _wheels_tie(
+            tags, provider.target, pick_key, sibling.filename
+        ):
             continue
         sibling_metadata = _tie_sibling_metadata(
             provider, index, normalized, version, sibling
@@ -941,21 +945,42 @@ def _resident_wheel_text(
 
 def _wheels_tie(
     tags: TagSet | None,
+    target: ResolveTarget | None,
     pick_key: tuple[int, tuple[int, str]] | None,
     sibling_filename: str,
 ) -> bool:
     """Whether a sibling wheel ties the pick under the target's install rules.
 
-    With no tag axis every resident sibling wheel is a real ambiguity, so any
-    sibling ties.  Otherwise a sibling ties only when its
+    With no tag axis a sibling is a real ambiguity only when the target's
+    Python axis admits it.  A marker overlay disowns the platform tags but
+    keeps ``python_version`` and ``implementation_name``, so a wheel built for
+    another interpreter is a choice no installer on this target could make,
+    and comparing it would crash on an ambiguity that does not exist.  This is
+    the ``Requires-Python`` guard in :func:`_tie_sibling_metadata` read off the
+    tags the filename carries, which is where a release published one wheel
+    per interpreter needs it: such a release declares one Requires-Python
+    spanning them all, so the metadata guard admits every sibling.
+
+    Otherwise a sibling ties only when its
     :meth:`~nab_python.tags.TagSet.wheel_rank` key equals the pick's and is not
     None; a sibling the pick ranks strictly below is never installed and is
     exempt.
     """
     if tags is None:
-        return True
+        return _python_axis_admits(target, sibling_filename)
     sibling_key = tags.wheel_rank(sibling_filename)
     return sibling_key is not None and sibling_key == pick_key
+
+
+def _python_axis_admits(target: ResolveTarget | None, filename: str) -> bool:
+    """Whether a target's Python axis admits a wheel filename's tags.
+
+    Without a target nothing has said which Python the resolve is for, so
+    every wheel is admitted.
+    """
+    if target is None:
+        return True
+    return python_axis_accepts(target.python_version, target.implementation, filename)
 
 
 def _divergent_dep_labels(

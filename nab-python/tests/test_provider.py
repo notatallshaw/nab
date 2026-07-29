@@ -9330,3 +9330,113 @@ class TestSiblingMetadataDivergence:
                 [Requirement("pkg")],
                 config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
             )
+
+
+# A release published as one wheel per interpreter, one of which declares an
+# extra unmarked dependency: the torch 1.4.0 shape, whose Requires-Python
+# spans every interpreter it built for, so the Requires-Python guard admits
+# them all.
+_SPLIT_RP = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*"
+
+
+def _split_wheel(tag: str) -> WheelFile:
+    """A pkg 1.0 wheel for one interpreter, admitting every Python it built for."""
+    filename = f"pkg-1.0-{tag}.whl"
+    return WheelFile(
+        filename=filename,
+        url=f"https://example.com/{filename}",
+        version="1.0",
+        requires_python=_SPLIT_RP,
+        has_metadata=True,
+        upload_time=None,
+    )
+
+
+def _split_meta(*requires_dist: str) -> str:
+    """A METADATA blob carrying the split release's Requires-Python."""
+    return (
+        f"Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+        f"Requires-Python: {_SPLIT_RP}\n"
+        + "".join(f"Requires-Dist: {line}\n" for line in requires_dist)
+        + "\n"
+    )
+
+
+def _overlay_target(python_version: str = "3.7") -> ResolveTarget:
+    """A declared linux target moved off its tags by a marker overlay."""
+    target = ResolveTarget.for_declared(
+        python_version=python_version, spec=PlatformSpec("linux_x86_64")
+    ).with_marker_overrides({"platform_system": "Windows"})
+    assert not target.tags_faithful
+    return target
+
+
+class TestNoTagAxisPythonNarrowing:
+    """A disowned tag axis still narrows siblings by the target's Python.
+
+    A marker overlay cannot rebuild the platform tags, so the provider filters
+    no wheel by tag under one.  It does keep ``python_version`` and
+    ``implementation_name``, so a wheel built for another interpreter is still
+    a wheel this target can never install, and neither the tie set nor the pick
+    may treat it as a candidate.
+    """
+
+    _V = V("1.0")
+
+    def test_other_interpreter_siblings_never_tie(self) -> None:
+        """A release split across interpreters resolves under an overlay.
+
+        The divergent wheel is built for another interpreter, so it is no
+        ambiguity for this target and the version stays resolvable.
+        """
+        cp27 = _split_wheel("cp27-cp27m-manylinux1_x86_64")
+        cp35 = _split_wheel("cp35-cp35m-manylinux1_x86_64")
+        cp37 = _split_wheel("cp37-cp37m-manylinux1_x86_64")
+        coordinator = make_coordinator([cp27, cp35, cp37], package="pkg")
+        for wheel in (cp27, cp37):
+            coordinator.index.store_metadata(
+                "pkg", "1.0", _split_meta("common>=1"), wheel.metadata_url
+            )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1", "numpy"), cp35.metadata_url
+        )
+        provider = Provider(coordinator, target=_overlay_target())
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "common" in deps
+        assert "numpy" not in deps
+
+    def test_same_interpreter_divergence_still_crashes(self) -> None:
+        """Two wheels for the target's own interpreter remain a real ambiguity.
+
+        Only the platform separates them, and the platform is the axis the
+        overlay disowned, so nothing can rank them and the crash must stand.
+        """
+        linux = _split_wheel("cp37-cp37m-manylinux1_x86_64")
+        macos = _split_wheel("cp37-none-macosx_10_9_x86_64")
+        coordinator = make_coordinator([linux, macos], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1"), linux.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1", "numpy"), macos.metadata_url
+        )
+        provider = Provider(coordinator, target=_overlay_target())
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            provider.get_dependencies("pkg", self._V)
+        assert "numpy" in str(exc.value)
+
+    def test_abi3_sibling_of_an_older_interpreter_still_ties(self) -> None:
+        """An abi3 wheel below the target's interpreter is installable, so it ties."""
+        pick = _split_wheel("cp37-cp37m-manylinux1_x86_64")
+        abi3 = _split_wheel("cp35-abi3-manylinux1_x86_64")
+        coordinator = make_coordinator([pick, abi3], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1"), pick.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1", "numpy"), abi3.metadata_url
+        )
+        provider = Provider(coordinator, target=_overlay_target())
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            provider.get_dependencies("pkg", self._V)
+        assert "numpy" in str(exc.value)
