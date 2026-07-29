@@ -79,7 +79,9 @@ def resolve_metadata(
     # sidecar wheel keys on its sidecar URL; a bare remote wheel (rung 4) keys
     # on its own wheel URL, so its range-recovered text stays independent of a
     # sibling wheel's.
-    dist = pick_dist_for_metadata(versions, version, provider.wheel_tags)
+    dist = pick_dist_for_metadata(
+        versions, version, provider.wheel_tags, provider.target
+    )
     if _is_bare_remote_wheel(dist):
         metadata_url = dist.url
     elif isinstance(dist, WheelFile):
@@ -230,13 +232,18 @@ def pick_dist_for_metadata(
     versions: Sequence[tuple[Version, DistFile]],
     version: Version,
     tags: TagSet | None,
+    target: ResolveTarget | None = None,
 ) -> DistFile | None:
     """Pick the dist whose metadata answers for ``version``. See :func:`pick_dist`."""
     dists = [d for v, d in versions if v == version]
-    return pick_dist(dists, tags) if dists else None
+    return pick_dist(dists, tags, target) if dists else None
 
 
-def pick_dist(dists: Sequence[DistFile], tags: TagSet | None) -> DistFile:
+def pick_dist(
+    dists: Sequence[DistFile],
+    tags: TagSet | None,
+    target: ResolveTarget | None = None,
+) -> DistFile:
     """Pick the dist of one version whose metadata answers for the target.
 
     ``dists`` are the artifacts of a single version, and must be non-empty.
@@ -246,13 +253,17 @@ def pick_dist(dists: Sequence[DistFile], tags: TagSet | None) -> DistFile:
     installer picks by, so that wheel's METADATA is the one the pin has to
     satisfy.  ``tags`` is ``None`` when there is no tag axis to rank by,
     either because nothing said which machine the resolve is for or because
-    a marker overlay moved the target off its tags.
+    a marker overlay moved the target off its tags.  ``target`` still names
+    the Python, so wheels built for another interpreter drop out: reading a
+    release's dependencies out of a wheel the target could never install is
+    the unsoundness :func:`check_sibling_metadata_divergence` guards against,
+    one layer earlier.  When that leaves nothing, the whole listing stands.
 
-    Without tags, and between wheels the tags rank equally, the cheapest
-    metadata source wins: a wheel with a :pep:`658` ``metadata_url``, then
-    any wheel.  Only a version publishing no wheel is read from its sdist,
-    which lets :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` keep
-    wheels in the listing purely as a metadata source.
+    Among the wheels that remain the cheapest metadata source wins: a wheel
+    with a :pep:`658` ``metadata_url``, then any wheel.  Only a version
+    publishing no wheel is read from its sdist, which lets
+    :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` keep wheels in the
+    listing purely as a metadata source.
     """
     if len(dists) == 1:
         return dists[0]
@@ -261,12 +272,13 @@ def pick_dist(dists: Sequence[DistFile], tags: TagSet | None) -> DistFile:
     if not wheels:
         return dists[0]
 
-    # Sidecars first: ``pick`` keeps input order among wheels it ranks equally.
-    installed = (
-        tags.pick(sorted(wheels, key=lambda w: not w.has_metadata))
-        if tags is not None
-        else None
-    )
+    if tags is None:
+        admitted = [w for w in wheels if _python_axis_admits(target, w.filename)]
+        wheels = admitted or wheels
+        installed = None
+    else:
+        # Sidecars first: ``pick`` keeps input order among wheels it ranks equally.
+        installed = tags.pick(sorted(wheels, key=lambda w: not w.has_metadata))
     return installed or next((w for w in wheels if w.has_metadata), wheels[0])
 
 
@@ -842,7 +854,7 @@ def check_sibling_metadata_divergence(
     from ..provider import SiblingMetadataDivergenceError
 
     tags = provider.wheel_tags
-    pick = pick_dist_for_metadata(versions, version, tags)
+    pick = pick_dist_for_metadata(versions, version, tags, provider.target)
     if not isinstance(pick, WheelFile):
         return
 
@@ -955,11 +967,10 @@ def _wheels_tie(
     Python axis admits it.  A marker overlay disowns the platform tags but
     keeps ``python_version`` and ``implementation_name``, so a wheel built for
     another interpreter is a choice no installer on this target could make,
-    and comparing it would crash on an ambiguity that does not exist.  This is
-    the ``Requires-Python`` guard in :func:`_tie_sibling_metadata` read off the
-    tags the filename carries, which is where a release published one wheel
-    per interpreter needs it: such a release declares one Requires-Python
-    spanning them all, so the metadata guard admits every sibling.
+    and comparing it would crash on an ambiguity that does not exist.  The
+    ``Requires-Python`` guard in :func:`_tie_sibling_metadata` cannot catch
+    that: a release publishing one wheel per interpreter declares one
+    ``Requires-Python`` spanning them all, so that guard admits every sibling.
 
     Otherwise a sibling ties only when its
     :meth:`~nab_python.tags.TagSet.wheel_rank` key equals the pick's and is not

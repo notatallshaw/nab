@@ -127,7 +127,7 @@ def wheel_by_version(
             grouped.setdefault(version, []).append(dist)
 
         cached = {
-            version: pick_dist(dists, provider.wheel_tags)
+            version: pick_dist(dists, provider.wheel_tags, provider.target)
             for version, dists in grouped.items()
         }
         provider.wheel_by_version_cache[normalized] = cached
@@ -218,7 +218,9 @@ def prefetch_transitive_best(
         return
 
     # Prefetch the artifact the read picks, not the listing's first at that version.
-    dist = pick_dist_for_metadata(versions, version, provider.wheel_tags)
+    dist = pick_dist_for_metadata(
+        versions, version, provider.wheel_tags, provider.target
+    )
 
     cache_key = (normalized, version)
     if (

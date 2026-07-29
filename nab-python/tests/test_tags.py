@@ -1249,7 +1249,7 @@ class TestPythonAxisAccepts:
         )
 
     def test_an_unparseable_filename_is_accepted(self) -> None:
-        """Nothing was read off it to reject it by."""
+        """It carries no tags to reject it by."""
         assert python_axis_accepts("3.7", "cpython", "pkg-1.0.tar.gz")
 
 
