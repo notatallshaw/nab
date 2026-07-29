@@ -74,6 +74,23 @@ class TestInMemoryIndex:
         idx.store_listing("foo", wheels)
         assert idx.get_listing("foo") == wheels
 
+    def test_offline_listing_miss_roundtrip(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_listing("foo", [], offline_miss=True)
+        assert idx.get_listing("foo") == []
+        assert idx.is_offline_listing_miss("foo")
+
+    def test_served_empty_listing_is_not_an_offline_miss(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_listing("foo", [])
+        assert not idx.is_offline_listing_miss("foo")
+
+    def test_offline_listing_miss_fires_listing_pending(self) -> None:
+        idx = InMemoryIndex()
+        pending, _ = idx.get_or_create_pending("listing:foo")
+        idx.store_listing("foo", [], offline_miss=True)
+        assert pending.event.is_set()
+
     def test_metadata_roundtrip(self) -> None:
         idx = InMemoryIndex()
         assert idx.get_metadata("foo", "1.0") is None
@@ -1593,6 +1610,7 @@ class TestFetchCoordinatorCache:
             # Empty list, not None: the handler caught OfflineError and
             # stored an empty listing so the resolver can proceed.
             assert listing == []
+            assert coord.index.is_offline_listing_miss("missing")
         assert not coord._crashed
 
     @respx.mock
@@ -2005,6 +2023,46 @@ class TestMultiIndexCoordinator:
             assert isinstance(client._clients["local"], LocalIndexClient)
         finally:
             coord.shutdown()
+
+    def test_local_index_without_authority(self, tmp_path: Path) -> None:
+        """A file:/path index URL without an authority is still a local index."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        url = wheelhouse.as_uri().replace("file://", "file:", 1)
+        assert not url.startswith("file://")
+
+        coord = _coord(indexes=[IndexConfig("local", url)])
+        try:
+            assert isinstance(coord._build_client(), LocalIndexClient)
+        finally:
+            coord.shutdown()
+
+        with _coord(indexes=[IndexConfig("local", url)]) as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            listing = coord.index.get_listing("foo")
+            assert coord.index.get_listing_error("foo") is None
+            assert listing is not None
+            assert [f.filename for f in listing] == ["foo-1.0-py3-none-any.whl"]
+
+    def test_unparseable_index_url_is_not_local(self, tmp_path: Path) -> None:
+        """An index URL urlsplit cannot parse falls through to the remote client."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+
+        with _coord(
+            indexes=[
+                IndexConfig("local", wheelhouse.as_uri()),
+                # An unterminated IPv6 bracket has been a urlsplit ValueError
+                # for far longer than a bracketed IPv4 address, which only
+                # started raising after the oldest 3.10 nab supports.
+                IndexConfig("bad", "https://[::1/simple/"),
+            ],
+        ) as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            assert coord.index.get_listing_error("foo") is None
+            assert coord.index.get_listing_index("foo") == "local"
 
     def test_single_index_short_circuit(self, tmp_path: Path) -> None:
         """Single index + no overrides returns a plain client."""

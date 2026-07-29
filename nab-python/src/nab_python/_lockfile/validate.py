@@ -14,6 +14,9 @@ writer computes straight from the inputs: ``requires-python``, ``extras``,
 (:func:`check_direct_requirements`, :func:`check_constraints`) cover what
 every successful resolve renders: each active direct requirement is present
 and its specifier met, and each pin satisfies every active constraint.
+
+:func:`check_locked` is the entry point the CLI calls: it reads the committed
+lock and runs both stages, so a caller never handles a parsed lock itself.
 """
 
 from __future__ import annotations
@@ -21,21 +24,33 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import tomli
+
 from .._conflict_kind import dependency_marker_holds
 from .._vendor.packaging.markers import (
     UndefinedComparison,
     UndefinedEnvironmentName,
 )
+from .._vendor.packaging.pylock import Pylock, PylockValidationError
+from .._vendor.packaging.requirements import Requirement
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
+    from pathlib import Path
 
     from .._vendor.packaging.markers import Marker
-    from .._vendor.packaging.pylock import Package, Pylock
-    from .._vendor.packaging.requirements import Requirement
+    from .._vendor.packaging.pylock import Package
     from .._vendor.packaging.version import Version
+
+
+class LockfileSyntaxError(Exception):
+    """A committed lockfile that is not readable as TOML."""
+
+
+class InvalidLockfileError(Exception):
+    """A committed lockfile that parses as TOML but not as PEP 751."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,3 +267,65 @@ def _render_specifier(spec: SpecifierSet | None) -> str:
 
 def _render_name_set(names: Iterable[str]) -> str:
     return "{" + ", ".join(sorted(names)) + "}"
+
+
+def read_committed_pylock(path: Path) -> Pylock:
+    """Parse the committed lockfile at ``path``.
+
+    Raises :class:`OSError` when the file cannot be read,
+    :class:`LockfileSyntaxError` when it is not TOML, and
+    :class:`InvalidLockfileError` when it is TOML but not a PEP 751 lock.
+    """
+    try:
+        data = tomli.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
+        raise LockfileSyntaxError(str(e)) from e
+    try:
+        return Pylock.from_dict(data)
+    except PylockValidationError as e:
+        raise InvalidLockfileError(str(e)) from e
+
+
+def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs are each a separate check
+    lockfile: Path,
+    *,
+    requires_python: str | None,
+    extras: tuple[str, ...],
+    dependency_groups: tuple[str, ...],
+    default_groups: tuple[str, ...],
+    roots: Iterable[RootRequirement] | None = None,
+    constraints: Iterable[str] = (),
+    marker_env: Mapping[str, str] | None = None,
+    exclude: frozenset[str] = frozenset(),
+) -> LockDisqualification | None:
+    """Disqualify the committed lock at ``lockfile``, or return ``None``.
+
+    Runs the envelope checks, then the validity checks over the active
+    direct requirements and constraints. ``roots`` of ``None`` (the caller
+    could not read them) runs the envelope checks alone. ``exclude`` holds
+    canonical names to skip, for the workspace members ``--no-emit-workspace``
+    drops from both sides. Constraints arrive as text; the config loader has
+    already rejected any that do not parse.
+
+    Raises the errors :func:`read_committed_pylock` raises.
+    """
+    committed = read_committed_pylock(lockfile)
+    disqualification = check_envelope(
+        committed,
+        requires_python=requires_python,
+        extras=extras,
+        dependency_groups=dependency_groups,
+        default_groups=default_groups,
+    )
+    if disqualification is not None or roots is None or marker_env is None:
+        return disqualification
+    active = [
+        root
+        for root in roots
+        if canonicalize_name(root.requirement.name) not in exclude
+    ]
+    direct = check_direct_requirements(committed, active, marker_env=marker_env)
+    if direct is not None:
+        return direct
+    parsed = [Requirement(text) for text in constraints]
+    return check_constraints(committed, parsed, marker_env=marker_env)

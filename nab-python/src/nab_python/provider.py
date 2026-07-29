@@ -21,6 +21,7 @@ from nab_index.client import (
     SdistFile,
     SdistHashMismatchError,
     WheelFile,
+    WheelHashMismatchError,
 )
 from nab_index.transport import HttpError
 
@@ -1363,6 +1364,7 @@ class Provider:
         except (
             MetadataHashMismatchError,
             SdistHashMismatchError,
+            WheelHashMismatchError,
             UnsupportedVcsError,
             InvalidUploadTimeError,
             OverrideConflictError,
@@ -1643,7 +1645,9 @@ class Provider:
         ``all_versions`` is post-filter, so an empty one means either the
         index served no files or every file it served was dropped by the
         wheel-tag filter, requires-python, dist-policy, or the upload-time
-        cutoff.  The raw listing tells absence from incompatibility apart.
+        cutoff.  The raw listing tells absence from incompatibility apart,
+        except that an index skipped offline also stores an empty listing,
+        so that case is reported as offline rather than absence.
         The wheel-tag case (a Windows-only package on a Linux target) is
         named only when the base pass dropped nothing, or when the file
         it dropped was an sdist: there the reason names both the rejected
@@ -1661,7 +1665,10 @@ class Provider:
             raw_listing = self.coordinator.index.get_listing(normalized)
             tag_excluded = self.tag_excluded_wheels.get(normalized, 0)
             if not raw_listing:
-                reason = "package not found on any configured index"
+                if self.coordinator.index.is_offline_listing_miss(normalized):
+                    reason = "offline mode skipped an index with no cached listing"
+                else:
+                    reason = "package not found on any configured index"
             elif tag_excluded and normalized not in self.base_filtered_packages:
                 reason = (
                     f"found on index but none of the wheel's tags are compatible"
@@ -1952,6 +1959,11 @@ class Provider:
     ) -> RangeProtocol[Version]:
         """Map a possibly-widened ``constraint`` back onto listed versions.
 
+        A constraint containing every listed version is promoted to the full
+        range rather than snapped, so it reads as "any version".  An empty
+        universe never promotes: that would widen a constraint no version
+        satisfies.
+
         Render-time only and cache-only: the ROOT sentinel (a non-str
         package) and packages whose listing is not cached return
         ``constraint`` unchanged, and nothing is ever fetched.
@@ -1963,9 +1975,14 @@ class Provider:
         if version_list is None:
             return constraint
         assert isinstance(constraint, VersionRange)
-        return constraint.snap_bounds(
-            self._ascending_versions(normalized, version_list)
-        )
+        universe = self._ascending_versions(normalized, version_list)
+        if (
+            universe
+            and universe[-1] in constraint
+            and all(version in constraint for version in universe)
+        ):
+            return VersionRange.full(admit_arbitrary=False)
+        return constraint.snap_bounds(universe)
 
     def get_dependencies(
         self, package: str, version: Version

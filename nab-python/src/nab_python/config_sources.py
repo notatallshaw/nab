@@ -429,9 +429,9 @@ def _parse_dist_policy(value: Any, where: str) -> tuple[DistPolicy, bool]:
 
 
 def _parse_build_policy(value: Any, where: str) -> BuildPolicy:
-    # The plain scalar last-wins value only.  The universal and workspace
-    # floors are post-merge transforms applied over the merged config, not
-    # this row.
+    # The plain scalar last-wins value only.  The host-build gate that forces
+    # never for a declared target is a post-merge transform applied over the
+    # merged config, not this row.
     del where
     from .config import _parse_enum as _impl  # noqa: PLC0415 (config import cycle)
 

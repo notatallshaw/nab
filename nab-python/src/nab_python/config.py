@@ -21,9 +21,9 @@ from urllib.parse import urlsplit
 import tomli
 from typing_extensions import override
 
-from nab_index._subdir import subdirectory_escapes
 from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.multi_index import IndexConfig
+from nab_index.subdir import subdirectory_escapes
 
 from ._conflict_kind import KIND_EXTRA, KIND_GROUP
 from ._iso8601 import parse_iso_datetime
@@ -70,7 +70,6 @@ from .target import (
 )
 from .workspace import (
     WorkspaceConfig,
-    auto_promote_build_policy_for_workspace,
     discover_workspace_root,
     merge_workspace_local_sources,
     read_workspace_members,
@@ -588,13 +587,12 @@ def read_pyproject_config(
     own walks up from ``path`` for the first ancestor project file that
     declares one.  Either way every member is materialised as an
     additional :class:`LocalSource` (explicit
-    ``[[tool.nab.local-sources]]`` entries win on collision) and the
-    effective ``build-policy`` is floored at
-    :attr:`BuildPolicy.BUILD_LOCAL`, except under ``mode = "universal"``,
-    where ``build-policy`` stays at ``never`` (host builds are forbidden)
-    and the floor is not applied.  Pass ``discover_workspace=False``
-    to skip discovery; useful for tests or for callers that layer their
-    own workspace logic on top of a base config.
+    ``[[tool.nab.local-sources]]`` entries win on collision).  A workspace
+    does not change the effective ``build-policy``: a member with dynamic
+    metadata needs a build, and under ``never`` it is refused like any
+    other source.  Pass ``discover_workspace=False`` to skip discovery;
+    useful for tests or for callers that layer their own workspace logic
+    on top of a base config.
 
     The ``[tool.nab]``-config portion is sourced from the registry merged
     ladder (pyproject ``[tool.nab]`` plus a project-dir ``nab.toml``,
@@ -602,7 +600,7 @@ def read_pyproject_config(
     cross-file conflict check, and category gate), so a project-dir
     ``nab.toml`` value configures the resolve exactly as the inspector
     reports it.  The
-    cross-field transforms (mode/matrix, build-policy floors,
+    cross-field transforms (mode/matrix, the build-policy host-build gate,
     universal marker-environment ban, source-name uniqueness, declared
     index references) then run on the merged config; workspace discovery
     runs last.
@@ -830,7 +828,7 @@ _logger = logging.getLogger(__name__)
 def _apply_workspace_discovery(
     path: Path, config: NabProjectConfig, *, declared_in: str
 ) -> NabProjectConfig:
-    """Materialise the workspace members and floor the build policy.
+    """Materialise the workspace members as local sources.
 
     The project's own ``workspace`` table wins, whichever project file
     declared it (``declared_in`` names that file), and its members
@@ -839,7 +837,6 @@ def _apply_workspace_discovery(
     <member>`` still resolves against the workspace root.
     """
     if config.workspace is not None:
-        root_label = declared_in
         discovered = workspace_local_sources(
             config.workspace.members,
             root_dir=path.parent.resolve(),
@@ -849,7 +846,6 @@ def _apply_workspace_discovery(
         root_file = discover_workspace_root(path)
         if root_file is None:
             return config
-        root_label = str(root_file)
         discovered = read_workspace_members(root_file)
 
     if not discovered:
@@ -858,28 +854,9 @@ def _apply_workspace_discovery(
     merged = merge_workspace_local_sources(config.local_sources, discovered)
     _reject_duplicate_source_names(merged, config.vcs_sources, config.archive_sources)
     explicit_names = {canonicalize_name(src.name) for src in config.local_sources}
-    # A target that impersonates a machine forbids host builds, so the
-    # workspace BUILD_LOCAL floor does not apply there: keep never.  A
-    # python-only retarget stays on the host machine, so the floor still
-    # applies and a workspace member with dynamic metadata still builds.
-    #
-    # The planner without the requires-python check: the config is still
-    # being read, and --python has not moved the target yet.
-    promoted_policy = config.build_policy
-    if not _forbids_host_builds(_plan_targets(config.matrix, config.environment)):
-        promoted_policy = auto_promote_build_policy_for_workspace(config.build_policy)
-    if promoted_policy is not config.build_policy:
-        _logger.info(
-            "workspace discovery promoted build-policy from %r to %r"
-            " (workspace root: %s)",
-            config.build_policy.value,
-            promoted_policy.value,
-            root_label,
-        )
     return replace(
         config,
         local_sources=merged,
-        build_policy=promoted_policy,
         workspace_member_names=frozenset(
             canonicalize_name(src.name)
             for src in discovered
@@ -1043,9 +1020,10 @@ def enforce_build_policy_for_targets(
       value, global or in any override, is an error.  This matches pip,
       which requires ``--only-binary=:all:`` under ``--platform``.
     * A python-axis-only retarget on the host machine warns and permits:
-      the workspace ``build-local`` floor exists for members with dynamic
-      metadata, and forbidding a build here would break every workspace
-      that also pins a Python.  A deliberate deviation from pip.
+      the machine is still the host, so a build can run at all, and
+      refusing every one of them would take the default case with it.  A
+      deliberate deviation from pip.  Set ``build-policy = "never"`` to
+      forbid it.
 
     The host target permits, so the default case builds freely.
     """

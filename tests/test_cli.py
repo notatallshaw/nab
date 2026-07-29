@@ -7,11 +7,14 @@ import builtins
 import contextlib
 import errno
 import importlib
+import inspect
 import io
 import json
+import re
 import runpy
 import stat
 import sys
+import zipfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
@@ -26,7 +29,6 @@ from nab import _version as nab_version
 from nab._download import download
 from nab._lock import (
     _determine_lock_anchor,
-    _drop_workspace_pins,
     _emit,
     _emit_pylock,
     lock,
@@ -193,6 +195,19 @@ def _hashless_resolve_result() -> ResolveResult:
     )
 
 
+def _sidecarless_wheel(name: str = "foo", version: str = "1.0") -> bytes:
+    """Build wheel bytes whose METADATA sits inside the archive."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{name}/__init__.py", b"value = 1\n")
+        zf.writestr(
+            f"{name}-{version}.dist-info/METADATA",
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\nBody.\n",
+        )
+        zf.writestr(f"{name}-{version}.dist-info/WHEEL", b"Wheel-Version: 1.0\n")
+    return buf.getvalue()
+
+
 def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(body or '[project]\ndependencies = ["foo"]\n')
@@ -245,7 +260,11 @@ class _SidecarResponse:
 
 
 class _SidecarTransport:
-    """Serves a Simple-API listing and its PEP 658 sidecar bytes, keyed by URL."""
+    """Serves Simple-API listing, sidecar, and wheel bytes keyed by URL.
+
+    Every request gets the whole body, ignoring ``Range`` like a host with no
+    range support.
+    """
 
     def __init__(self, bodies: dict[str, bytes]) -> None:
         self._bodies = bodies
@@ -330,6 +349,54 @@ def _two_libc_universal_result() -> ResolveResult:
             spec=PlatformSpec("linux_x86_64", libc=libc),
         )
         for libc in ("glibc", "musl")
+    )
+    return ResolveResult(
+        targets=tuples,
+        target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
+    )
+
+
+def _two_implementation_universal_result() -> ResolveResult:
+    """Two Pythons on one platform, each in a CPython and a PyPy flavour.
+
+    ``python_version`` varies, so a template can name it, but the
+    implementation pairs still land on one path.
+    """
+    tuples = tuple(
+        ResolveTarget.for_declared(
+            python_version=py_minor,
+            spec=PlatformSpec("linux_x86_64"),
+            implementation=implementation,
+            multi_implementation=True,
+        )
+        for py_minor in ("3.11", "3.12")
+        for implementation in ("cpython", "pypy")
+    )
+    return ResolveResult(
+        targets=tuples,
+        target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
+    )
+
+
+def _mixed_implementation_universal_result() -> ResolveResult:
+    """A CPython 3.11 tuple, plus a CPython and a PyPy 3.12 tuple.
+
+    The first pair to collide under a ``{platform_id}`` template differs
+    in ``python_version``, but naming it leaves the two 3.12 tuples on
+    one path.
+    """
+    tuples = tuple(
+        ResolveTarget.for_declared(
+            python_version=py_minor,
+            spec=PlatformSpec("linux_x86_64"),
+            implementation=implementation,
+            multi_implementation=True,
+        )
+        for py_minor, implementation in (
+            ("3.11", "cpython"),
+            ("3.12", "cpython"),
+            ("3.12", "pypy"),
+        )
     )
     return ResolveResult(
         targets=tuples,
@@ -823,6 +890,53 @@ class TestLockCommandSpecific:
         err = capsys.readouterr().err
         assert "cannot lock" in err
         assert "sha256 mismatch" in err
+        assert "0" * 64 in err
+        assert "Traceback" not in err
+
+    def test_wheel_hash_mismatch_exits(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A full-body wheel failing its published hash exits 1, not a traceback.
+
+        Drives a real resolve against a fake index that publishes a sha256 for
+        a sidecar-less wheel.  The transport ignores ``Range``, so the read
+        steps down to the whole body and checks it against that digest.
+        """
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        pyproject = _make_pyproject(tmp_path)
+
+        wheel_url = "https://files.example.com/foo-1.0-py3-none-any.whl"
+        listing = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": wheel_url,
+                    "hashes": {"sha256": "0" * 64},
+                }
+            ]
+        }
+        transport = _SidecarTransport(
+            {
+                "https://pypi.org/simple/foo/": json.dumps(listing).encode(),
+                wheel_url: _sidecarless_wheel(),
+            }
+        )
+
+        with (
+            patch("nab.cli._make_transport", return_value=transport),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
+
+        err = capsys.readouterr().err
+        assert "cannot lock" in err
+        assert "wheel sha256 mismatch" in err
         assert "0" * 64 in err
         assert "Traceback" not in err
 
@@ -2204,6 +2318,48 @@ class TestLockCommandUniversal:
         assert "tells them apart" in err
         assert not out.exists()
 
+    def test_plain_output_offers_no_template_that_would_collide(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A variable that varies but leaves a collision is not offered as a fix."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "requirements.txt"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_two_implementation_universal_result(),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "4 tuples" in err
+        assert "tells them apart" in err
+        assert "Emit pylock output instead" in err
+        assert "{python_version}" not in err
+        assert not out.exists()
+
+    def test_collision_offers_no_template_that_would_collide(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A variable that separates the colliding pair only is not offered."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{platform_id}.txt"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_mixed_implementation_universal_result(),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+        err = capsys.readouterr().err
+        assert "both map to" in err
+        assert "tells them apart" in err
+        assert "Emit pylock output instead" in err
+        assert "{python_version}" not in err
+        assert list(tmp_path.glob("req-*.txt")) == []
+
     def test_template_missing_hash_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -2496,25 +2652,6 @@ class TestNoEmitWorkspace:
         # alpha's [[packages]] row and the dangling forward edge are both gone.
         assert 'name = "alpha"' not in text
 
-    def test_drop_filters_dependency_graph(self) -> None:
-        """Dropped members vanish as graph keys and as edge targets."""
-        target = ResolveTarget.for_host()
-        lock_input = LockInput(
-            targets={
-                target.label: _target_lock(
-                    target,
-                    {"foo": V("1.0"), "bar": V("2.0")},
-                    {
-                        "foo": ("alpha", "bar"),
-                        "bar": ("alpha",),
-                        "alpha": ("bar",),
-                    },
-                )
-            }
-        )
-        dropped = _drop_workspace_pins(lock_input, frozenset({"alpha"}))
-        assert dropped.targets[target.label].dependencies == {"foo": ("bar",)}
-
 
 class TestRelockDiffSummary:
     """``_emit`` reports what changed against the prior pylock."""
@@ -2783,6 +2920,45 @@ class TestConflictsDocTranscript:
         block = _console_block(_CONFLICTS_DOC.read_text(encoding="utf-8"))
         assert block[0] == "$ nab lock --extras all"
         assert printed in block[1:]
+
+
+_CLI_REFERENCE_DOC = (
+    Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
+)
+
+
+def _doc_section(text: str, heading: str) -> str:
+    return text.partition(f"\n{heading}\n")[2].partition("\n## ")[0]
+
+
+def _names_flag(text: str, flag: str) -> bool:
+    """Whether ``text`` names ``flag``, its ``--no-`` form, or a covering wildcard."""
+    forms = [flag, f"--no-{flag.removeprefix('--')}"]
+    if flag.startswith("--project-"):
+        forms.append("--project-*")
+    return any(re.search(rf"`{re.escape(form)}(?![\w-])", text) for form in forms)
+
+
+class TestCliReferenceFlagCoverage:
+    """Each run subcommand's reference section names every flag it accepts."""
+
+    @pytest.mark.parametrize(
+        ("heading", "command"),
+        [("## `nab lock`", lock), ("## `nab download`", download)],
+    )
+    def test_section_names_every_flag(
+        self, heading: str, command: Callable[..., None]
+    ) -> None:
+        text = _CLI_REFERENCE_DOC.read_text(encoding="utf-8")
+
+        # Flags shared by both commands are documented once, in their own section.
+        scope = _doc_section(text, heading) + _doc_section(text, "## Runtime flags")
+
+        for name, param in inspect.signature(command).parameters.items():
+            if param.kind is not inspect.Parameter.KEYWORD_ONLY:
+                continue
+            flag = "--" + name.replace("_", "-")
+            assert _names_flag(scope, flag), f"{heading} omits {flag}"
 
 
 class TestDetermineLockAnchor:

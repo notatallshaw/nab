@@ -4040,13 +4040,10 @@ class TestWorkspaceDiscoveryIntegration:
         with pytest.raises(ConfigError, match="duplicate canonical name"):
             read_pyproject_config(root)
 
-    def test_workspace_promotes_never_to_build_local_and_logs(
+    def test_workspace_keeps_an_explicit_never(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """An explicit ``never`` is floored at ``build-local`` for workspaces.
-
-        The log line is informational so users can audit the auto-promote.
-        """
+        """A workspace does not raise an explicit ``never``."""
         member = self._ws(tmp_path)
         member.write_text(
             '[project]\nname = "alpha"\nversion = "0"\n'
@@ -4055,10 +4052,10 @@ class TestWorkspaceDiscoveryIntegration:
         )
         with caplog.at_level("INFO", logger="nab_python.config"):
             config = read_pyproject_config(member)
-        assert config.build_policy is BuildPolicy.BUILD_LOCAL
-        assert any(
-            "promoted build-policy" in record.getMessage() for record in caplog.records
-        )
+        assert config.build_policy is BuildPolicy.NEVER
+        assert not [
+            record for record in caplog.records if "build-policy" in record.getMessage()
+        ]
 
     def test_user_build_remote_policy_not_downgraded(self, tmp_path: Path) -> None:
         member = self._ws(tmp_path)
@@ -4070,12 +4067,8 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(member)
         assert config.build_policy is BuildPolicy.BUILD_REMOTE
 
-    def test_universal_member_not_promoted(self, tmp_path: Path) -> None:
-        """Universal mode keeps never; workspace discovery does not promote it.
-
-        A host build cannot reflect a non-host matrix tuple, so the
-        BUILD_LOCAL floor applied to workspace members is skipped.
-        """
+    def test_universal_member_keeps_never(self, tmp_path: Path) -> None:
+        """Universal mode forces never, and a workspace does not lift it."""
         member = self._ws(tmp_path)
         member.write_text(
             '[project]\nname = "alpha"\nversion = "0"\n'
@@ -4085,12 +4078,8 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(member)
         assert config.build_policy is BuildPolicy.NEVER
 
-    def test_declared_platform_member_not_promoted(self, tmp_path: Path) -> None:
-        """A declared platform keeps never; discovery does not promote it.
-
-        A host build cannot reflect the declared machine, so the BUILD_LOCAL
-        floor applied to workspace members is skipped.
-        """
+    def test_declared_platform_member_keeps_never(self, tmp_path: Path) -> None:
+        """A declared platform forbids host builds, workspace or not."""
         member = self._ws(tmp_path)
         member.write_text(
             '[project]\nname = "alpha"\nversion = "0"\n'
@@ -4102,18 +4091,29 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(member)
         assert config.build_policy is BuildPolicy.NEVER
 
-    def test_declared_python_member_still_promoted(self, tmp_path: Path) -> None:
-        """A python-only retarget keeps the BUILD_LOCAL floor.
-
-        The machine is still the host, and a workspace member with dynamic
-        metadata has to build, so the floor applies and the build is
-        permitted (with a warning).  A deliberate deviation from pip.
-        """
+    def test_declared_python_member_keeps_never(self, tmp_path: Path) -> None:
+        """A python-only retarget stays on the host but still honours ``never``."""
         member = self._ws(tmp_path)
         member.write_text(
             '[project]\nname = "alpha"\nversion = "0"\n'
             "[tool.nab]\n"
             'build-policy = "never"\n'
+            "[tool.nab.environment]\n"
+            'python = "3.9"\n',
+        )
+        config = read_pyproject_config(member)
+        assert config.build_policy is BuildPolicy.NEVER
+
+    def test_declared_python_member_still_permits_a_build(self, tmp_path: Path) -> None:
+        """A python-only retarget does not force ``never`` on its own.
+
+        The platform axis is what forbids host builds; moving only the
+        python axis leaves the default policy alone, so a member with
+        dynamic metadata still builds.
+        """
+        member = self._ws(tmp_path)
+        member.write_text(
+            '[project]\nname = "alpha"\nversion = "0"\n'
             "[tool.nab.environment]\n"
             'python = "3.9"\n',
         )
@@ -4133,9 +4133,9 @@ class TestWorkspaceDiscoveryIntegration:
         config = read_pyproject_config(path)
         assert config == NabProjectConfig()
 
-    def test_empty_members_does_not_promote(self, tmp_path: Path) -> None:
+    def test_empty_members_adds_no_sources(self, tmp_path: Path) -> None:
         # A workspace root with members = [] is still a workspace, but
-        # there are no LocalSources to add and no policy to promote.
+        # there are no LocalSources to add.
         ws_pyproject = tmp_path / "pyproject.toml"
         ws_pyproject.write_text(
             '[project]\nname = "ws"\nversion = "0"\n'
@@ -4152,10 +4152,9 @@ class TestWorkspaceDiscoveryIntegration:
     def test_root_conflicts_and_defaults_do_not_flow_to_member(
         self, tmp_path: Path
     ) -> None:
-        # Per the documented scope, only workspace members and the
-        # build-policy floor cross the root/member boundary; conflicts,
-        # default-groups, and constraints stay scoped to the file being
-        # locked.
+        # Per the documented scope, only workspace members cross the
+        # root/member boundary; conflicts, default-groups, and constraints
+        # stay scoped to the file being locked.
         ws_pyproject = tmp_path / "pyproject.toml"
         ws_pyproject.write_text(
             '[project]\nname = "ws"\nversion = "0"\n'
@@ -4201,7 +4200,7 @@ class TestWorkspaceDiscoveryIntegration:
 
     def test_member_lock_finds_root_workspace_in_nab_toml(self, tmp_path: Path) -> None:
         # The root declares its workspace in nab.toml, so locking a member
-        # has to walk up to it: members and build-policy floor included.
+        # has to walk up to it.
         (tmp_path / "pyproject.toml").write_text(
             '[project]\nname = "ws"\nversion = "0"\n',
         )
@@ -4222,7 +4221,7 @@ class TestWorkspaceDiscoveryIntegration:
             LocalSource(name="alpha", path=str(member_dir), editable=True),
         )
         assert config.workspace_member_names == frozenset({"alpha"})
-        assert config.build_policy is BuildPolicy.BUILD_LOCAL
+        assert config.build_policy is BuildPolicy.NEVER
 
 
 def _inspect(path: Path, key: str) -> str:
@@ -4378,8 +4377,8 @@ class TestProjectNabTomlConfiguresResolve:
         assert config.mode is ResolveMode.UNIVERSAL
         assert config.matrix is not None
         assert config.matrix.platforms == (PlatformSpec("linux_x86_64"),)
-        # Universal mode forces the build-policy floor to never even though
-        # the project-nab.toml set no build-policy.
+        # Universal mode forces build-policy to never even though the
+        # project-nab.toml set no build-policy.
         assert config.build_policy is BuildPolicy.NEVER
         assert _inspect(path, "mode") == "universal"
 
@@ -4413,7 +4412,7 @@ class TestProjectNabTomlConfiguresResolve:
             LocalSource(name="foo", path=str(member_dir), editable=True),
         )
         assert config.workspace_member_names == frozenset({"foo"})
-        assert config.build_policy is BuildPolicy.BUILD_LOCAL
+        assert config.build_policy is BuildPolicy.NEVER
         assert "members=['libs/foo']" in _inspect(path, "workspace")
 
 

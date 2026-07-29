@@ -6,11 +6,12 @@ import asyncio
 import gzip
 import hashlib
 import io
+import itertools
 import json
 import ssl
 import tarfile
 import threading
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -38,6 +39,7 @@ from nab_index.transport import (
     AsyncHttpTransport,
     ContentDecodingError,
     HttpError,
+    HttpResponse,
     accepts_gzip,
     decode_body,
 )
@@ -66,6 +68,14 @@ GZIP_BODY = gzip.compress(LISTING_BODY)
 # connection drop whose Content-Length matches the bytes that did arrive.
 TRUNCATED_GZIP_BODY = GZIP_BODY[: len(GZIP_BODY) // 2]
 
+# Only the first is rejected up front; the rest raise out of urllib3's conversions.
+UNPARSEABLE_RETRY_AFTERS = [
+    pytest.param("soon", id="not-a-date"),
+    pytest.param("Wed, 31 Dec 10000 23:59:59 GMT", id="year-past-datetime"),
+    pytest.param("9" * 4301, id="digits-past-int-limit"),
+    pytest.param(f"Wed, {'9' * 400} Dec 2020 00:00:00 GMT", id="day-past-float"),
+]
+
 
 class _StubIndex(ThreadingHTTPServer):
     """Loopback index that serves each queued status once, then 200.
@@ -76,6 +86,7 @@ class _StubIndex(ThreadingHTTPServer):
 
     statuses: list[int]
     seen: list[str]
+    retry_after: str | None
 
 
 class _StubIndexHandler(BaseHTTPRequestHandler):
@@ -88,6 +99,8 @@ class _StubIndexHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         if 300 <= status < 400:
             self.send_header("Location", "/redirected/")
+        if self.server.retry_after is not None:
+            self.send_header("Retry-After", self.server.retry_after)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -97,10 +110,13 @@ class _StubIndexHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _stub_index(statuses: list[int]) -> Iterator[_StubIndex]:
+def _stub_index(
+    statuses: list[int], retry_after: str | None = None
+) -> Iterator[_StubIndex]:
     server = _StubIndex(("127.0.0.1", 0), _StubIndexHandler)
     server.statuses = list(statuses)
     server.seen = []
+    server.retry_after = retry_after
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -115,6 +131,7 @@ class _GzipStubIndex(ThreadingHTTPServer):
     """Loopback index that serves each queued gzip body once, then GZIP_BODY."""
 
     bodies: list[bytes]
+    encoding: str
     seen: list[str]
 
 
@@ -125,7 +142,7 @@ class _GzipStubIndexHandler(BaseHTTPRequestHandler):
         body = self.server.bodies.pop(0) if self.server.bodies else GZIP_BODY
 
         self.send_response(200)
-        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Encoding", self.server.encoding)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -135,9 +152,12 @@ class _GzipStubIndexHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _gzip_stub_index(bodies: list[bytes]) -> Iterator[_GzipStubIndex]:
+def _gzip_stub_index(
+    bodies: list[bytes], encoding: str = "gzip"
+) -> Iterator[_GzipStubIndex]:
     server = _GzipStubIndex(("127.0.0.1", 0), _GzipStubIndexHandler)
     server.bodies = list(bodies)
+    server.encoding = encoding
     server.seen = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -219,6 +239,27 @@ def thread_slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return delays
 
 
+def _requests_before_giving_up(classes: Sequence[str]) -> int:
+    """Requests urllib3 issues for one URL whose failures cycle through ``classes``."""
+    failures: dict[str, dict[str, Any]] = {
+        "status": {"response": urllib3.HTTPResponse(status=503)},
+        "connect": {"error": urllib3.exceptions.ConnectTimeoutError()},
+    }
+
+    retry = GET_RETRY
+    issued = 0
+
+    # Bounded so a policy that never exhausts fails the assertion instead of hanging.
+    for name in itertools.islice(itertools.cycle(classes), 50):
+        issued += 1
+        try:
+            retry = retry.increment("GET", "/pkg/", **failures[name])
+        except urllib3.exceptions.MaxRetryError:
+            break
+
+    return issued
+
+
 def _assert_jittered_backoff_schedule(delays: list[float]) -> None:
     """The full three-retry schedule: immediate, then 0.5 and 1.0 plus jitter."""
     assert len(delays) == MAX_RETRIES
@@ -256,6 +297,12 @@ class TestRetryPolicy:
         assert GET_RETRY.status == MAX_RETRIES
         assert GET_RETRY.other == MAX_RETRIES
 
+    def test_each_failure_class_has_its_own_budget(self) -> None:
+        """Each class carries its own MAX_RETRIES, so mixed failures retry for longer."""
+        assert _requests_before_giving_up(["status"]) == MAX_RETRIES + 1
+        assert _requests_before_giving_up(["connect"]) == MAX_RETRIES + 1
+        assert _requests_before_giving_up(["status", "connect"]) == 2 * MAX_RETRIES + 1
+
     def test_redirects_have_their_own_budget(self) -> None:
         """A redirect is not a failure, so it never spends a transient retry."""
         assert GET_RETRY.redirect == MAX_REDIRECTS
@@ -285,9 +332,12 @@ class TestRetryPolicy:
         assert next_delay(1, "3600") == 10.0
         assert GET_RETRY.get_retry_after(_urllib3_response(503, "3600")) == 10.0
 
-    def test_unparseable_retry_after_falls_back_to_backoff(self) -> None:
-        assert 0.5 <= next_delay(2, "soon") < 0.5 + GET_RETRY.backoff_jitter
-        assert GET_RETRY.get_retry_after(_urllib3_response(503, "soon")) is None
+    @pytest.mark.parametrize("retry_after", UNPARSEABLE_RETRY_AFTERS)
+    def test_unparseable_retry_after_falls_back_to_backoff(
+        self, retry_after: str
+    ) -> None:
+        assert 0.5 <= next_delay(2, retry_after) < 0.5 + GET_RETRY.backoff_jitter
+        assert GET_RETRY.get_retry_after(_urllib3_response(503, retry_after)) is None
 
     def test_absent_retry_after_falls_back_to_backoff(self) -> None:
         assert GET_RETRY.get_retry_after(_urllib3_response(503, None)) is None
@@ -323,6 +373,10 @@ class TestDecodeBody:
 
     def test_gzip_value_is_case_insensitive(self) -> None:
         assert decode_body(GZIP_BODY, " GZip ") == LISTING_BODY
+
+    def test_x_gzip_decodes(self) -> None:
+        assert decode_body(GZIP_BODY, "x-gzip") == LISTING_BODY
+        assert decode_body(GZIP_BODY, " X-GZip ") == LISTING_BODY
 
     def test_multi_member_gzip_decodes(self) -> None:
         body = GZIP_BODY + gzip.compress(b" and more")
@@ -647,6 +701,30 @@ class TestHttpxAsyncTransport:
         assert route.call_count == 2
         assert slept == [10.0]
 
+    @pytest.mark.parametrize("retry_after", UNPARSEABLE_RETRY_AFTERS)
+    @respx.mock
+    def test_get_backs_off_when_retry_after_does_not_parse(
+        self, retry_after: str, slept: list[float]
+    ) -> None:
+        """An unparseable Retry-After must not cost the retry budget."""
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=[httpx.Response(429, headers={"Retry-After": retry_after})]
+            * (MAX_RETRIES + 1)
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        resp = asyncio.run(go())
+        assert route.call_count == MAX_RETRIES + 1
+        _assert_jittered_backoff_schedule(slept)
+        with pytest.raises(HttpError, match="429"):
+            resp.raise_for_status()
+
     @respx.mock
     def test_get_gives_up_on_a_persistent_transient_status(
         self, slept: list[float]
@@ -761,6 +839,24 @@ class TestHttpxAsyncTransport:
         assert resp.content == LISTING_BODY
         assert resp.text == LISTING_BODY.decode()
         assert resp.json() == {"files": []}
+
+    @respx.mock
+    def test_get_decodes_a_body_labelled_x_gzip(self) -> None:
+        """An index may label a gzip body with the coding's older name."""
+        respx.get("https://example.com/pkg").mock(
+            return_value=httpx.Response(
+                200, headers={"Content-Encoding": "x-gzip"}, content=GZIP_BODY
+            )
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        assert asyncio.run(go()).json() == {"files": []}
 
     @respx.mock
     def test_get_retries_a_truncated_gzip_body(self, slept: list[float]) -> None:
@@ -1155,6 +1251,25 @@ class TestUrllib3AsyncTransport:
             with pytest.raises(HttpError, match="HTTP 503"):
                 resp.raise_for_status()
 
+    def test_get_backs_off_when_retry_after_does_not_parse(self) -> None:
+        """An unparseable Retry-After must not cost the retry budget."""
+        with _stub_index(
+            [429] * (MAX_RETRIES + 1), retry_after="Wed, 31 Dec 10000 23:59:59 GMT"
+        ) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            assert len(index.seen) == MAX_RETRIES + 1
+            with pytest.raises(HttpError, match="HTTP 429"):
+                resp.raise_for_status()
+
     def test_get_does_not_retry_a_client_error(self) -> None:
         """A 404 is the index's answer, so it is fetched once."""
         with _stub_index([404]) as index:
@@ -1185,6 +1300,20 @@ class TestUrllib3AsyncTransport:
             resp.raise_for_status()
             assert resp.content == LISTING_BODY
             assert len(index.seen) == 1
+
+    def test_get_decodes_a_body_labelled_x_gzip(self) -> None:
+        """An index may label a gzip body with the coding's older name."""
+        with _gzip_stub_index([], encoding="x-gzip") as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            assert asyncio.run(go()).content == LISTING_BODY
 
     def test_get_retries_a_truncated_gzip_body(self, thread_slept: list[float]) -> None:
         """A gzip body cut before its trailer is retried like a dropped connection."""
@@ -1489,6 +1618,49 @@ class TestArtifactContentEncoding:
             assert coord.index.get_sdist_archive("demo", SDIST_SHA256) == SDIST_BODY
 
         assert server.accept_encoding == ["identity"]
+
+
+class TestUnfollowedRedirectAcrossBackends:
+    """Both backends treat a 300 they did not follow the same way.
+
+    ``raise_for_status`` is the 4xx/5xx line, so it clears the 300 on either
+    backend; the body-reading calls are what reject it.
+    """
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_raise_for_status_clears_a_300(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _stub_index([300]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
+
+            async def go() -> HttpResponse:
+                transport = make_transport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            response = asyncio.run(go())
+
+        assert response.status_code == 300
+        response.raise_for_status()
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_metadata_sidecar_300_raises(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _stub_index([300]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/demo-1.0.whl.metadata"
+
+            async def go() -> str:
+                async with CachedAsyncSimpleClient(
+                    make_transport(), NullCache()
+                ) as client:
+                    return await client.get_metadata_text("demo", "1.0", url)
+
+            with pytest.raises(HttpError, match="300"):
+                asyncio.run(go())
 
 
 class TestExtractSdistFiles:
