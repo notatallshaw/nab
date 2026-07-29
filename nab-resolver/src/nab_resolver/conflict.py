@@ -50,6 +50,14 @@ _MIN_RESOLVED_TERMS = 2
 # removing ROOT (decided at level 1 in _add_root_requirements).
 _TARGETED_BT_MIN_LEVEL = 2
 
+# Each resolution step replaces the satisfier's term with terms satisfied
+# strictly earlier, so the most recent satisfier moves down the trail every
+# step and one step per trail entry bounds a coherent loop.  The multiplier is
+# headroom over that bound and the floor covers short trails, so only a state
+# that has stopped making progress reaches the budget.
+_STEPS_PER_TRAIL_ENTRY = 4
+_MIN_CONFLICT_STEPS = 32
+
 
 def conflict_resolution(
     resolver: Resolver[Any, Any],
@@ -62,12 +70,20 @@ def conflict_resolution(
     until the learned clause has at most one term at the current
     decision level.
 
+    Raises ``ResolutionError`` when the conflict proves the requirements
+    unsatisfiable, and also when the loop exceeds its step budget, which
+    signals a resolver bug rather than an unsatisfiable input.
+
     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#conflict-resolution
     """
     current_incompatibility = conflicting_incompatibility
     is_derived = False
+    step_budget = max(
+        _MIN_CONFLICT_STEPS,
+        resolver.solution.trail_length * _STEPS_PER_TRAIL_ENTRY,
+    )
 
-    while True:
+    for _ in range(step_budget):
         if is_terminal_incompatibility(current_incompatibility):
             raise ResolutionError(
                 format_error(
@@ -176,6 +192,13 @@ def conflict_resolution(
             cause_left=current_incompatibility,
             cause_right=most_recent_satisfier.cause,
         )
+
+    stalled_message = (
+        f"Conflict resolution made no progress in {step_budget} steps; this is "
+        "a resolver bug rather than an unsatisfiable requirement. Stalled on "
+        f"{current_incompatibility!r}"
+    )
+    raise ResolutionError(stalled_message, incompatibility=current_incompatibility)
 
 
 def update_culprit_counts(

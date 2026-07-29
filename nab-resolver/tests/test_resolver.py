@@ -612,6 +612,108 @@ class TestMaxIterations:
             resolver.resolve({"root": Range.singleton(1)})
 
 
+class ConflictStepObserver(ResolverObserver[str, int]):
+    """Records how many conflict-resolution steps each conflict took."""
+
+    def __init__(self) -> None:
+        self.steps_per_conflict: list[int] = []
+
+    def on_conflict(self, incompatibility: Incompatibility[str, int]) -> None:
+        self.steps_per_conflict.append(0)
+
+    def on_conflict_step(
+        self,
+        incompatibility: Incompatibility[str, int],
+        *,
+        satisfier_package: str,
+        satisfier_is_decision: bool,
+        satisfier_level: int,
+        previous_level: int,
+        can_backjump: bool,
+    ) -> None:
+        self.steps_per_conflict[-1] += 1
+
+
+def stalled_solution(
+    padding: int,
+) -> tuple[PartialSolution[str, int], Incompatibility[str, int]]:
+    """Build a trail on which one clause resolves with itself forever.
+
+    ``app``'s only assignment is a derivation whose cause is the clause under
+    resolution and whose accumulated range is empty.  An empty range satisfies
+    both polarities, so the clause is satisfied by the derivation it caused:
+    the loop resolves the clause with itself, :func:`prior_cause` returns the
+    same term every time, and no trail depth is consumed.  ``padding``
+    lengthens the trail without disturbing that fixed point.
+    """
+    solution: PartialSolution[str, int] = PartialSolution()
+    solution.decide("root", 1)
+    seed: Incompatibility[str, int] = Incompatibility(
+        [Term("root", Range.singleton(1))], cause=IncompatibilityCause.ROOT
+    )
+    for index in range(padding):
+        solution.derive(f"pad{index}", Range.at_least(1), positive=True, cause=seed)
+
+    stalled: Incompatibility[str, int] = Incompatibility(
+        [Term("app", Range.singleton(3))], cause=IncompatibilityCause.DERIVED
+    )
+    solution.derive("app", Range.empty(), positive=True, cause=stalled)
+    return solution, stalled
+
+
+# A regressed guard would hang the stall tests instead of failing them.
+STALL_TIMEOUT_SECONDS = 60
+
+
+class TestConflictProgressGuard:
+    @pytest.mark.timeout(STALL_TIMEOUT_SECONDS)
+    def test_self_resolving_clause_raises_instead_of_spinning(self) -> None:
+        """A clause that resolves with itself hits the step budget."""
+        solution, stalled = stalled_solution(padding=0)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution = solution
+        assert solution.trail_length == 2
+
+        with pytest.raises(ResolutionError) as excinfo:
+            conflict_resolution(resolver, stalled)
+
+        message = str(excinfo.value)
+        assert "no progress in 32 steps" in message
+        assert "resolver bug" in message
+        assert "app" in message
+        assert excinfo.value.incompatibility is not None
+
+    @pytest.mark.timeout(STALL_TIMEOUT_SECONDS)
+    def test_step_budget_scales_with_trail_depth(self) -> None:
+        """A deeper trail buys proportionally more steps before the raise."""
+        solution, stalled = stalled_solution(padding=30)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution = solution
+        assert solution.trail_length == 32
+
+        with pytest.raises(ResolutionError, match="no progress in 128 steps"):
+            conflict_resolution(resolver, stalled)
+
+    def test_backtracking_resolve_stays_far_inside_the_budget(self) -> None:
+        """A conflict-heavy resolve never approaches the step budget."""
+        provider = DictProvider(
+            {
+                "root": {1: {"a": Range.full(), "b": Range.full()}},
+                "a": {v: {"c": Range.singleton(v)} for v in range(20, 0, -1)},
+                "b": {v: {"c": Range.less_than(3)} for v in range(20, 0, -1)},
+                "c": {v: {} for v in range(20, 0, -1)},
+            }
+        )
+        observer = ConflictStepObserver()
+        resolver = Resolver(provider, observer=observer)
+
+        result = resolver.resolve({"root": Range.singleton(1)})
+
+        assert result["c"] < 3
+        assert resolver.stats.conflicts > 0
+        assert max(observer.steps_per_conflict) < 32
+
+
 class EventTrackingObserver(ResolverObserver):
     """Observer that records all events to a list for test assertions."""
 
