@@ -66,7 +66,9 @@ def compute_matching(
 
     Also fires speculative metadata prefetch when this is the first time we
     notice the listing has arrived in the coordinator index.  Returns
-    :data:`_NO_LISTING_PRIOR` while the listing is still in flight.
+    :data:`_NO_LISTING_PRIOR` while the listing is still in flight, reading
+    arrival through ``arrived_listing`` so it agrees with ``is_ready`` for the
+    whole decision scan.
     """
     per_pkg = provider.matching_cache.get(normalized)
     if per_pkg is not None:
@@ -82,7 +84,7 @@ def compute_matching(
         or normalized in provider.archive_sources
     )
     if normalized not in provider.versions_cache and not has_local_source:
-        files = provider.coordinator.index.get_listing(normalized)
+        files = provider.arrived_listing(normalized)
         if files is not None:
             versions = provider.filter_distributions(normalized, files)
             provider.versions_cache[normalized] = versions
@@ -95,7 +97,7 @@ def compute_matching(
     elif has_local_source:
         matching = 1
     else:
-        # Not cached, so the next call re-checks the index and the
+        # Not cached, so a later scan re-checks the index and the
         # listing-arrival side effect above can still fire.
         return _NO_LISTING_PRIOR
 
