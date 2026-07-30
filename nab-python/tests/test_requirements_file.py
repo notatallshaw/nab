@@ -503,6 +503,25 @@ class TestExpandSelfExtras:
         env = {"python_version": "3.11", "python_full_version": "3.11.0"}
         assert expand_self_extras(opt, "mypkg", ["all"], env) == ["all"]
 
+    def test_self_reference_negated_extra_skips_own_extra(self) -> None:
+        """A self-ref gated ``extra != "<own-extra>"`` does not activate for it."""
+        opt = {
+            "cpu": ['mypkg[fast]; extra != "cpu"'],
+            "fast": ["some-dep"],
+        }
+        env = {"python_version": "3.11", "python_full_version": "3.11.0"}
+        assert expand_self_extras(opt, "mypkg", ["cpu"], env) == ["cpu"]
+
+    def test_self_reference_negated_extra_walks_other_extra(self) -> None:
+        """A self-ref gated ``extra != "cpu"`` activates when walked from
+        another extra."""
+        opt = {
+            "gpu": ['mypkg[fast]; extra != "cpu"'],
+            "fast": ["some-dep"],
+        }
+        env = {"python_version": "3.11", "python_full_version": "3.11.0"}
+        assert expand_self_extras(opt, "mypkg", ["gpu"], env) == ["gpu", "fast"]
+
 
 class TestExpandExtraRequirements:
     def test_empty_selection_returns_empty(self) -> None:

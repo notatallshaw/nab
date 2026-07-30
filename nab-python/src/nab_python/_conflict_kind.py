@@ -11,8 +11,11 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from ._vendor.packaging.markersets import MarkerSet
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from collections.abc import Set as AbstractSet
 
     from ._vendor.packaging.markers import Marker
 
@@ -31,8 +34,9 @@ MARKER_VARIABLE_FOR_KIND = {
 # packaging only defines when consuming a lockfile.  At resolve time no
 # conflict-fork member is active as a marker-set member (forks fold their
 # members into requirements, not the environment), so both are empty.  Seeding
-# them keeps a dependency marker that tests one from raising a raw KeyError at
-# evaluation; the membership simply tests False and the dep is dropped.
+# them keeps a dependency marker that tests one from raising an
+# UndefinedEnvironmentName at evaluation; the membership tests False and
+# the dep is dropped.
 EMPTY_MEMBERSHIP_SETS: dict[str, frozenset[str]] = {
     variable: frozenset() for variable in MARKER_VARIABLE_FOR_KIND.values()
 }
@@ -53,10 +57,22 @@ def membership_set_in_marker(marker_text: str) -> str | None:
     return match.group(1) if match else None
 
 
-def dependency_marker_holds(marker: Marker, environment: Mapping[str, str]) -> bool:
+def dependency_marker_holds(
+    marker: Marker, environment: Mapping[str, str | AbstractSet[str]]
+) -> bool:
     """Evaluate a dependency marker for a resolve-time ``environment``.
 
-    Seeds the empty lockfile-only set variables so a marker that tests one
-    evaluates cleanly to False instead of raising a raw KeyError.
+    ``extra`` is set-valued: bound to the active extra names, ``extra == "x"``
+    tests membership and ``extra != "x"`` non-membership, both PEP 685
+    normalised.  It defaults to the empty set when ``environment`` omits it.
+
+    A standard variable a marker names but ``environment`` omits raises
+    ``UndefinedEnvironmentName``; callers pass a complete
+    ``ResolveTarget.marker_env``.  The lockfile-only set variables are seeded
+    empty, so a marker that tests one evaluates to False rather than raising.
     """
-    return bool(marker.evaluate({**environment, **EMPTY_MEMBERSHIP_SETS}))
+    env: dict[str, str | AbstractSet[str]] = {"extra": frozenset()}
+    env.update(environment)
+    env.update(EMPTY_MEMBERSHIP_SETS)
+
+    return MarkerSet.from_marker(marker).evaluate(env)

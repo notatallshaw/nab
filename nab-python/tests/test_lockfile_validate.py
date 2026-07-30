@@ -377,6 +377,26 @@ def test_direct_indeterminate_form_skipped() -> None:
     )
 
 
+def test_direct_undefined_variable_skipped() -> None:
+    """A marker naming a variable the environment omits is indeterminate.
+
+    ``extras`` and the other lockfile-only set variables are seeded empty,
+    so they evaluate to False rather than raising. A standard variable the
+    environment does not supply still raises
+    :class:`UndefinedEnvironmentName`, and an item nab cannot decide for is
+    skipped rather than reported as unsatisfied.
+    """
+    committed = pylock_of()
+    assert (
+        check_direct_requirements(
+            committed,
+            [root('bar>=1; python_version >= "3.12"')],
+            marker_env={"sys_platform": "linux"},
+        )
+        is None
+    )
+
+
 def test_direct_no_requirements_returns_none() -> None:
     assert check_direct_requirements(pylock_of(), [], marker_env=LINUX_ENV) is None
 

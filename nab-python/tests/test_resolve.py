@@ -2209,9 +2209,10 @@ class TestBuildResolverInputs:
     def test_env_gated_drop_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
         """A requirement dropped by a plain env marker stays silent."""
         reqs = [Requirement('foo ; python_version < "3.0"')]
+        env = {"python_version": "3.11", "python_full_version": "3.11.2"}
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
             resolver_requirements, _ = _build_resolver_inputs(
-                reqs, NabProjectConfig(), environment={}
+                reqs, NabProjectConfig(), environment=env
             )
         assert "foo" not in resolver_requirements
         assert not caplog.records
