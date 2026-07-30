@@ -30,7 +30,7 @@ import sys
 import tempfile
 import venv
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -42,6 +42,7 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from .._vcs_admission import UnsupportedVcsError
 from ..config import NabProjectConfig
 from ..download import DownloadError, download_lock
+from ..lockfile import IndexPin
 from ..requirements_file import InvalidProjectRequirementError
 
 if TYPE_CHECKING:
@@ -51,6 +52,9 @@ if TYPE_CHECKING:
     from installer.records import RecordEntry
     from installer.utils import Scheme
     from nab_index.transport import AsyncHttpTransport
+
+    from ..lockfile import LockInput, PinShape
+    from ..tags import TagSet
 
 __all__ = [
     "NabBuildEnv",
@@ -362,14 +366,12 @@ class NabBuildEnv:
             msg = f"build env resolve failed: {exc}"
             raise BuildEnvError(msg) from exc
 
-        lock_input = build_lock_input(result, config=inner_config)
+        lock_input = _one_wheel_per_pin(build_lock_input(result, config=inner_config))
 
         # Reject sdist-only pins early: build deps that ship only an
         # sdist trigger a recursive backend invocation that this
         # builder does not handle.  Most build tools (hatchling,
         # setuptools, flit, pdm-backend) publish wheels.
-        from ..lockfile import IndexPin
-
         pins = {
             name: pin
             for lock in lock_input.targets.values()
@@ -401,6 +403,54 @@ class NabBuildEnv:
         # the temp dir, cleaned up with the env.
         all_paths = list(download_result.written) + list(download_result.skipped)
         return [p for p in all_paths if p.suffix == ".whl"]
+
+
+def _one_wheel_per_pin(lock_input: LockInput) -> LockInput:
+    """Narrow every index pin to the one wheel its target installs.
+
+    A lock records every wheel of the pinned version the target
+    accepts, so a pin can carry several: the tiered manylinux
+    aliases, or a ``py3-none-any`` beside a platform wheel.  The
+    inner resolve plans the host alone, so the target's tags are
+    those of the interpreter the backend runs under.
+
+    Narrowing is for the download and the install; a written lock
+    keeps every wheel, so one lock stays portable across targets.
+    """
+    targets = {
+        label: replace(
+            lock,
+            pins={
+                name: _picked_wheel_pin(pin, lock.target.tags)
+                for name, pin in lock.pins.items()
+            },
+        )
+        for label, lock in lock_input.targets.items()
+    }
+
+    return replace(lock_input, targets=targets)
+
+
+def _picked_wheel_pin(pin: PinShape, tags: TagSet) -> PinShape:
+    """Return ``pin`` narrowed to the one wheel ``tags`` prefers.
+
+    Deliberately not the provider's ``pick_dist``.  That one answers
+    whose METADATA the pin has to satisfy, so between wheels the tags
+    rank equally it takes the one carrying a :pep:`658` sidecar, and
+    it may answer with an sdist or with a wheel this host cannot
+    install.  An install has none of those outs: it must be a wheel,
+    it must be the wheel :pep:`425` ranks highest, and nothing
+    compatible is an error.
+    """
+    if not isinstance(pin, IndexPin) or not pin.wheels:
+        return pin
+
+    preferred = tags.pick(pin.wheels)
+    if preferred is None:
+        msg = f"no wheel of {pin.name}=={pin.version} matches the build host's tags"
+        raise BuildEnvError(msg)
+
+    return replace(pin, wheels=(preferred,))
 
 
 def _remove_files(entries: list[tuple[Path, Path]]) -> None:

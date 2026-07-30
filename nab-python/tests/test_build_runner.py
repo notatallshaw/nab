@@ -30,18 +30,31 @@ import build
 import pytest
 from installer.utils import SCHEME_NAMES, Scheme
 
+from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
 from nab_python._build import runner as runner_mod
 from nab_python._build.env import (
     BuildEnvError,
     NabBuildEnv,
     _FastSchemeDictionaryDestination,
+    _picked_wheel_pin,
     _venv_scheme_paths,
 )
 from nab_python._build.runner import BuildBackendError, run_build_backend
+from nab_python._provider.metadata_resolver import pick_dist
+from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
-from nab_python.download import DownloadError, DownloadResult
-from nab_python.lockfile import LockInput
+from nab_python.download import DownloadError, DownloadResult, iter_artifacts
+from nab_python.lockfile import (
+    IndexPin,
+    LockInput,
+    SdistArtifact,
+    TargetLock,
+    WheelArtifact,
+)
+from nab_python.resolve import ResolveResult, TargetResult
+from nab_python.tags import PlatformSpec, TagSet
+from nab_python.target import ResolveTarget
 from nab_resolver.resolver import ResolutionError
 
 # A minimal, in-tree PEP 517 backend.  Implements
@@ -1231,6 +1244,345 @@ class TestResolveAndDownload:
         wheel_dir.mkdir()
         with pytest.raises(BuildEnvError, match="build env download"):
             env._resolve_and_download(wheel_dir)
+
+
+class TestResolveAndDownloadSiblingWheels:
+    """``_resolve_and_download`` narrows a pin to the one wheel PEP 425
+    prefers, so the build venv never gets two wheels of a version.
+    """
+
+    MANYLINUX2014 = (
+        "demo-1.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+    )
+    MANYLINUX1 = "demo-1.0-cp312-cp312-manylinux_2_5_x86_64.manylinux1_x86_64.whl"
+    PURE = "demo-1.0-py3-none-any.whl"
+    WINDOWS = "demo-1.0-cp312-cp312-win_amd64.whl"
+    MACOS = "demo-1.0-cp312-cp312-macosx_11_0_arm64.whl"
+    SDIST = "demo-1.0.tar.gz"
+
+    def _run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        filenames: list[str],
+        *,
+        with_sdist: bool = False,
+    ) -> tuple[list[str], list[Path]]:
+        """Resolve a pin carrying ``filenames`` for a cp312 linux target.
+
+        Returns the filenames handed to the downloader and the wheel
+        paths the caller gets back.
+        """
+        sdist = (
+            SdistArtifact(
+                filename=self.SDIST,
+                url=f"https://pypi.example/{self.SDIST}",
+                hashes=(("sha256", "1" * 64),),
+            )
+            if with_sdist
+            else None
+        )
+        pin = IndexPin(
+            name="demo",
+            version="1.0",
+            index="https://pypi.org/simple/",
+            sdist=sdist,
+            wheels=tuple(
+                WheelArtifact(
+                    filename=name,
+                    url=f"https://pypi.example/{name}",
+                    hashes=(("sha256", "0" * 64),),
+                )
+                for name in filenames
+            ),
+        )
+
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec(platform_id="linux_x86_64")
+        )
+        fake_result = ResolveResult(
+            targets=(target,),
+            target_results=[
+                TargetResult(
+                    target=target,
+                    success=True,
+                    pins={"demo": Version("1.0")},
+                    lock=TargetLock(target=target, pins={"demo": pin}),
+                )
+            ],
+        )
+        monkeypatch.setattr(
+            "nab_python.resolve.resolve_for_targets", lambda *_a, **_k: fake_result
+        )
+
+        requested: list[str] = []
+
+        def _fake_download(
+            lock_input: LockInput, _transport: object, output_dir: Path
+        ) -> DownloadResult:
+            written = []
+            for entry in iter_artifacts(lock_input):
+                requested.append(entry.filename)
+                written.append(output_dir / entry.filename)
+            return DownloadResult(written=tuple(written), skipped=())
+
+        monkeypatch.setattr("nab_python._build.env.download_lock", _fake_download)
+
+        env = NabBuildEnv(requires=["demo"], config=NabProjectConfig())
+        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
+        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
+        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+
+        return requested, env._resolve_and_download(wheel_dir)
+
+    @pytest.mark.parametrize(
+        "filenames",
+        [
+            [MANYLINUX2014, MANYLINUX1],
+            [MANYLINUX1, MANYLINUX2014],
+            [PURE, MANYLINUX2014],
+        ],
+        ids=["preferred-first", "preferred-last", "pure-and-platform"],
+    )
+    def test_only_preferred_wheel_is_fetched(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        filenames: list[str],
+    ) -> None:
+        """The preferred wheel wins whatever order the pin lists them in."""
+        requested, wheels = self._run(tmp_path, monkeypatch, filenames)
+        assert requested == [self.MANYLINUX2014]
+        assert [p.name for p in wheels] == [self.MANYLINUX2014]
+
+    def test_single_wheel_passes_through(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        requested, wheels = self._run(tmp_path, monkeypatch, [self.MANYLINUX1])
+        assert requested == [self.MANYLINUX1]
+        assert [p.name for p in wheels] == [self.MANYLINUX1]
+
+    def test_sdist_is_kept(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Narrowing the wheels leaves the sdist, so the pin does not
+        then read as sdist-only.
+        """
+        requested, wheels = self._run(
+            tmp_path,
+            monkeypatch,
+            [self.MANYLINUX2014, self.MANYLINUX1],
+            with_sdist=True,
+        )
+        assert requested == [self.SDIST, self.MANYLINUX2014]
+        assert [p.name for p in wheels] == [self.MANYLINUX2014]
+
+    @pytest.mark.parametrize(
+        "filenames",
+        [[WINDOWS], [WINDOWS, MACOS]],
+        ids=["one", "several"],
+    )
+    def test_no_wheel_the_host_can_install_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        filenames: list[str],
+    ) -> None:
+        """A pin the host cannot install is an error, not an empty venv.
+
+        The provider's tag filter drops those wheels before a pin is
+        built, so this holds a cross-module invariant rather than a
+        case a real resolve reaches; hence the hand-built lock input.
+        """
+        with pytest.raises(
+            BuildEnvError, match="no wheel of demo==1.0 matches the build host's tags"
+        ):
+            self._run(tmp_path, monkeypatch, filenames)
+
+
+class TestBuildEnvInstallsOnePreferredWheel:
+    """The venv ends up with one wheel per build dependency, and with the
+    one the host's tags rank highest.
+
+    Real resolve, download and install against a ``file://`` index, since
+    the wheels overwrite each other file by file and only the finished
+    venv says which one's code is importable.
+    """
+
+    @staticmethod
+    def _index(root: Path, order: tuple[str, ...]) -> None:
+        """Serve demo 1.0 as two wheels the host accepts, in ``order``.
+
+        One carries the host's most specific tag and one its most
+        generic, and each records in its ``__init__`` which it is.
+        """
+        tags = ResolveTarget.for_host().tags
+        by_mark = {"specific": tags.ordered[0], "generic": tags.ordered[-1]}
+        pkg = root / "demo"
+        pkg.mkdir(parents=True)
+        links = []
+        for mark in order:
+            tag = by_mark[mark]
+            filename = f"demo-1.0-{tag.interpreter}-{tag.abi}-{tag.platform}.whl"
+            path = pkg / filename
+            _make_installable_wheel(
+                path,
+                "demo",
+                "1.0",
+                package_files={"__init__.py": f"MARK = {mark!r}\n".encode()},
+            )
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            links.append(f'<a href="{filename}#sha256={digest}">{filename}</a>')
+        (pkg / "index.html").write_text(
+            "<!DOCTYPE html><html><body>" + "\n".join(links) + "</body></html>",
+            encoding="utf-8",
+        )
+
+    @pytest.mark.parametrize(
+        "order",
+        [("specific", "generic"), ("generic", "specific")],
+        ids=["preferred-first", "preferred-last"],
+    )
+    def test_the_preferred_wheel_is_the_installed_one(
+        self, tmp_path: Path, order: tuple[str, ...]
+    ) -> None:
+        """The listing order does not decide which wheel's code wins."""
+        index_dir = tmp_path / "index"
+        self._index(index_dir, order)
+        config = NabProjectConfig(indexes=(IndexConfig("local", index_dir.as_uri()),))
+
+        with NabBuildEnv(requires=["demo"], config=config) as env:
+            venv_path = env._venv_path
+            assert venv_path is not None
+            installed = [
+                p.read_text(encoding="utf-8")
+                for p in venv_path.rglob("demo/__init__.py")
+            ]
+            dist_infos = list(venv_path.rglob("demo-1.0.dist-info"))
+
+        assert installed == ["MARK = 'specific'\n"]
+        assert len(dist_infos) == 1
+
+
+class TestInstallPickIsNotTheMetadataPick:
+    """The build env narrows with ``TagSet.pick``, not with ``pick_dist``.
+
+    Both go through the one PEP 425 ranking, and they differ only in
+    what they fall back to when the ranking does not decide.  Swapping
+    one for the other is a behaviour change, so these pin the three
+    inputs that separate them.
+    """
+
+    TIE_PLAIN = "demo-1.0-py2.py3-none-any.whl"
+    TIE_SIDECAR = "demo-1.0-py3-none-any.whl"
+    WINDOWS = "demo-1.0-cp312-cp312-win_amd64.whl"
+    MACOS = "demo-1.0-cp312-cp312-macosx_11_0_arm64.whl"
+    SDIST = "demo-1.0.tar.gz"
+    SDIST_ZIP = "demo-1.0.zip"
+
+    @staticmethod
+    def _tags() -> TagSet:
+        return ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec(platform_id="linux_x86_64")
+        ).tags
+
+    @staticmethod
+    def _listed_sdist(filename: str) -> SdistFile:
+        return SdistFile(
+            filename=filename,
+            url=f"https://pypi.example/{filename}",
+            version="1.0",
+            requires_python=None,
+            upload_time=None,
+        )
+
+    @staticmethod
+    def _listed(filename: str, *, has_metadata: bool) -> WheelFile:
+        return WheelFile(
+            filename=filename,
+            url=f"https://pypi.example/{filename}",
+            version="1.0",
+            requires_python=None,
+            has_metadata=has_metadata,
+            upload_time=None,
+        )
+
+    @classmethod
+    def _pin(cls, filenames: list[str]) -> IndexPin:
+        return IndexPin(
+            name="demo",
+            version="1.0",
+            index="https://pypi.org/simple/",
+            wheels=tuple(
+                WheelArtifact(
+                    filename=name,
+                    url=f"https://pypi.example/{name}",
+                    hashes=(("sha256", "0" * 64),),
+                )
+                for name in filenames
+            ),
+        )
+
+    def test_tag_tie_goes_to_the_sidecar_only_for_metadata(self) -> None:
+        """A tie breaks on the sidecar for metadata and on order for install.
+
+        The lock records no ``has_metadata``, so the install side
+        cannot express that tie-break even if it wanted to.
+        """
+        tags = self._tags()
+        listed = [
+            self._listed(self.TIE_PLAIN, has_metadata=False),
+            self._listed(self.TIE_SIDECAR, has_metadata=True),
+        ]
+        assert tags.wheel_rank(self.TIE_PLAIN) == tags.wheel_rank(self.TIE_SIDECAR)
+        assert pick_dist(listed, tags).filename == self.TIE_SIDECAR
+
+        pin = _picked_wheel_pin(self._pin([self.TIE_PLAIN, self.TIE_SIDECAR]), tags)
+        assert isinstance(pin, IndexPin)
+        assert [w.filename for w in pin.wheels] == [self.TIE_PLAIN]
+
+    def test_metadata_may_come_from_a_wheel_the_host_cannot_install(self) -> None:
+        """Two off-target wheels, since ``pick_dist`` falls back only
+        when the tags rank nothing at all.
+        """
+        tags = self._tags()
+        listed = [
+            self._listed(self.WINDOWS, has_metadata=True),
+            self._listed(self.MACOS, has_metadata=False),
+        ]
+        picked = pick_dist(listed, tags)
+        assert picked.filename == self.WINDOWS
+        assert not tags.accepts(picked.filename)
+
+        with pytest.raises(BuildEnvError, match="matches the build host's tags"):
+            _picked_wheel_pin(self._pin([self.WINDOWS, self.MACOS]), tags)
+
+    def test_metadata_may_come_from_an_sdist(self) -> None:
+        """A version publishing no wheel is read from its sdist.
+
+        Two sdists, because ``pick_dist`` hands back a lone dist
+        without ranking anything.  The install side has no such
+        fallback: the pin comes back untouched, and the sdist-only
+        check rejects it.
+        """
+        tags = self._tags()
+        listed = [self._listed_sdist(self.SDIST), self._listed_sdist(self.SDIST_ZIP)]
+        assert pick_dist(listed, tags) is listed[0]
+
+        pin = IndexPin(
+            name="demo",
+            version="1.0",
+            index="https://pypi.org/simple/",
+            sdist=SdistArtifact(
+                filename=self.SDIST,
+                url=f"https://pypi.example/{self.SDIST}",
+                hashes=(("sha256", "1" * 64),),
+            ),
+        )
+        assert _picked_wheel_pin(pin, tags) is pin
 
 
 class TestNabBuildEnvLifecycle:
