@@ -48,6 +48,8 @@ __all__ = [
     "WheelFile",
     "WheelHashMismatchError",
     "extract_sdist_archive",
+    "holds_unreadable_format",
+    "is_readable_filename",
     "verify_sdist_hash",
 ]
 
@@ -174,6 +176,36 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
     except InvalidSdistFilename:
         return None
     return (name, str(version))
+
+
+def holds_unreadable_format(data: object) -> bool:
+    """Whether a Simple-API body offers a file nab cannot read.
+
+    nab reads wheels and ``.tar.gz`` sdists, so a page of ``.zip`` sdists
+    or ``.exe`` installers parses to no files at all.  A body that is not
+    a list of file entries answers ``False``.
+    """
+    if not isinstance(data, dict):
+        return False
+    raw_files = data.get("files")
+    if not isinstance(raw_files, list):
+        return False
+
+    for file_info in raw_files:
+        if not isinstance(file_info, dict) or file_info.get("yanked"):
+            continue
+        filename = file_info.get("filename")
+        if isinstance(filename, str) and not is_readable_filename(filename):
+            return True
+    return False
+
+
+def is_readable_filename(filename: str) -> bool:
+    """Whether ``filename`` names a wheel or a ``.tar.gz`` sdist."""
+    return (
+        _parse_wheel_filename(filename) is not None
+        or _parse_sdist_filename(filename) is not None
+    )
 
 
 # PEP 691: advertise every serialization we can read, because an index that

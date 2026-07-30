@@ -304,6 +304,33 @@ class TestFlatWheelhouse:
         (tmp_path / "foo-1.0.zip").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         assert run(client.get_files("foo")) == []
+        assert client.served_unreadable_only("foo")
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            pytest.param("bar-1.0.zip", id="another-package"),
+            pytest.param("foo-notaversion.zip", id="unparseable-version"),
+            pytest.param("foo-1.5.win32.exe", id="installer-names-no-package"),
+        ],
+    )
+    def test_unmatched_file_is_not_an_unreadable_listing(
+        self, tmp_path: Path, filename: str
+    ) -> None:
+        """A wheelhouse serves every package, so only a named dist counts."""
+        (tmp_path / filename).write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert run(client.get_files("foo")) == []
+        assert not client.served_unreadable_only("foo")
+
+    def test_zip_beside_readable_wheel_is_not_unreadable_only(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "foo-1.0.zip").write_bytes(b"")
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert len(run(client.get_files("foo"))) == 1
+        assert not client.served_unreadable_only("foo")
 
     def test_filters_other_packages(self, tmp_path: Path) -> None:
         (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
@@ -542,6 +569,24 @@ class TestPep503Directory:
         assert v1.requires_python == ">=3.10"
         v2 = next(r for r in result if r.version == "2.0")
         assert v2.requires_python is None
+
+    def test_page_of_zip_sdists_is_an_unreadable_listing(self, tmp_path: Path) -> None:
+        body = '<a href="foo-1.0.zip">foo-1.0</a><a href="foo-2.0.zip">foo-2.0</a>'
+        self._make_index(tmp_path, body)
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert run(client.get_files("foo")) == []
+        assert client.served_unreadable_only("foo")
+
+    def test_page_of_other_names_is_not_an_unreadable_listing(
+        self, tmp_path: Path
+    ) -> None:
+        """A page listing another project's wheel is a mismatch, not a format."""
+        body = '<a href="bar-1.0-py3-none-any.whl">bar-1.0</a>'
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "bar-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert run(client.get_files("foo")) == []
+        assert not client.served_unreadable_only("foo")
 
     def test_relative_href_resolves_against_dir(self, tmp_path: Path) -> None:
         body = '<a href="foo-1.0-py3-none-any.whl">foo</a>'

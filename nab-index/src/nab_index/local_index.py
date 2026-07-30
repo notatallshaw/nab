@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING
 from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import url2pathname
 
+from packaging.utils import InvalidSdistFilename, parse_sdist_filename
+
 from ._naming import canonical as _canonical
 from ._pep503 import hash_fragment, metadata_declaration, read_page
 from .client import (
@@ -39,6 +41,7 @@ from .client import (
     _extract_sdist_files,
     _parse_sdist_filename,
     _parse_wheel_filename,
+    is_readable_filename,
 )
 from .transport import HttpError
 
@@ -150,11 +153,15 @@ _FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
 def _scan_pep503_directory(
     package_dir: Path,
     canonical: str,
-) -> list[WheelFile | SdistFile]:
-    """Parse ``<package>/index.html`` and return file records."""
+) -> tuple[list[WheelFile | SdistFile], bool]:
+    """Parse ``<package>/index.html`` and return file records.
+
+    The second element says the page linked a file in a format nab does
+    not read, which tells a page of ``.zip`` sdists from an empty one.
+    """
     index_html = package_dir / "index.html"
     if not index_html.exists():
-        return []
+        return [], False
 
     try:
         text = index_html.read_text(encoding="utf-8")
@@ -176,6 +183,8 @@ def _scan_pep503_directory(
             raise MalformedLocalListingError(msg) from exc
 
     files: list[WheelFile | SdistFile] = []
+    unreadable = False
+
     for anchor in anchors:
         # PEP 592: a yanked link never reaches the listing.
         if anchor.yanked:
@@ -186,6 +195,10 @@ def _scan_pep503_directory(
         )
         if filename is None:
             continue
+        if not is_readable_filename(filename):
+            unreadable = True
+            continue
+
         record = _make_record(
             filename,
             file_url,
@@ -197,7 +210,7 @@ def _scan_pep503_directory(
         )
         if record is not None:
             files.append(record)
-    return files
+    return files, unreadable
 
 
 def _resolve_local_link(
@@ -253,18 +266,25 @@ def _resolve_local_link(
 def _scan_flat_wheelhouse(
     root: Path,
     package: str,
-) -> list[WheelFile | SdistFile]:
+) -> tuple[list[WheelFile | SdistFile], bool]:
     """Find all dists for ``package`` in a flat directory of files.
 
     Entries are sorted because the listing order breaks ties between dists at
     one version, and ``iterdir`` order comes from the filesystem.
+
+    The second element says the directory holds a ``.zip`` sdist for
+    ``package``, a format nab does not read.  One directory serves every
+    package, so a file that does not name ``package`` says nothing about it.
     """
     canonical = _canonical(package)
     files: list[WheelFile | SdistFile] = []
+    unreadable = False
+
     for entry in sorted(root.iterdir()):
         if not entry.is_file():
             continue
         if _FLAT_EXTS.search(entry.name) is None:
+            unreadable = unreadable or _is_zip_sdist(entry.name, canonical)
             continue
         requires_python = _flat_requires_python(entry, canonical)
         record = _make_record(
@@ -278,7 +298,18 @@ def _scan_flat_wheelhouse(
         )
         if record is not None:
             files.append(record)
-    return files
+    return files, unreadable
+
+
+def _is_zip_sdist(filename: str, canonical: str) -> bool:
+    """Whether ``filename`` is a ``.zip`` sdist belonging to ``canonical``."""
+    if not filename.endswith(".zip"):
+        return False
+    try:
+        name, _ = parse_sdist_filename(filename)
+    except InvalidSdistFilename:
+        return False
+    return name == canonical
 
 
 def _flat_requires_python(entry: Path, canonical: str) -> str | None:
@@ -467,6 +498,7 @@ class LocalIndexClient:
     def __init__(self, index_url: str) -> None:
         """Hold the resolved root path for ``index_url``."""
         self._root = parse_file_url(index_url)
+        self._unreadable_only: set[str] = set()
 
     async def aclose(self) -> None:
         """No-op; nothing to release."""
@@ -482,12 +514,21 @@ class LocalIndexClient:
         """Return all distribution files known for ``package``."""
         canonical = _canonical(package)
         package_dir = self._root / canonical
-        if (package_dir / "index.html").is_file():
-            return _scan_pep503_directory(package_dir, canonical)
 
-        if not self._root.is_dir():
-            return []
-        return _scan_flat_wheelhouse(self._root, package)
+        if (package_dir / "index.html").is_file():
+            files, unreadable = _scan_pep503_directory(package_dir, canonical)
+        elif not self._root.is_dir():
+            files, unreadable = [], False
+        else:
+            files, unreadable = _scan_flat_wheelhouse(self._root, package)
+
+        if not files and unreadable:
+            self._unreadable_only.add(package)
+        return files
+
+    def served_unreadable_only(self, package: str) -> bool:
+        """Whether a listing for ``package`` held only files nab cannot read."""
+        return package in self._unreadable_only
 
     async def get_metadata_text(
         self,

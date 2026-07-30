@@ -1679,9 +1679,11 @@ class Provider:
         ``all_versions`` is post-filter, so an empty one means either the
         index served no files or every file it served was dropped by the
         wheel-tag filter, requires-python, dist-policy, or the upload-time
-        cutoff.  The raw listing tells absence from incompatibility apart,
-        except that an index skipped offline also stores an empty listing,
-        so that case is reported as offline rather than absence.
+        cutoff.  The stored listing tells absence from incompatibility
+        apart, except that it is also empty for an index skipped offline
+        and for a page of formats nab does not read (``.zip`` sdists,
+        ``.exe`` installers).  Both are marked when stored so the reason
+        names them instead of absence.
         The wheel-tag case (a Windows-only package on a Linux target) is
         named only when the base pass dropped nothing, or when the file
         it dropped was an sdist: there the reason names both the rejected
@@ -1701,6 +1703,11 @@ class Provider:
             if not raw_listing:
                 if self.coordinator.index.is_offline_listing_miss(normalized):
                     reason = "offline mode skipped an index with no cached listing"
+                elif self.coordinator.index.is_unreadable_only_listing(normalized):
+                    reason = (
+                        "found on index but no file is a wheel or a .tar.gz sdist"
+                        " (the formats nab reads)"
+                    )
                 else:
                     reason = "package not found on any configured index"
             elif tag_excluded and normalized not in self.base_filtered_packages:

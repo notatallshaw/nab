@@ -29,6 +29,7 @@ from .client import (
     _parse_files,
     _select_artifact_hash,
     _verify_metadata_hash,
+    holds_unreadable_format,
     verify_sdist_hash,
 )
 from .lazy_wheel import (
@@ -93,6 +94,7 @@ class CachedAsyncSimpleClient:
         self._cache = cache
         self._index_url = index_url.rstrip("/") + "/"
         self._offline = offline
+        self._unreadable_only: set[str] = set()
         self._range_memo = (
             range_memo if range_memo is not None else RangeCapabilityMemo()
         )
@@ -137,7 +139,7 @@ class CachedAsyncSimpleClient:
             data = self._decode_cached_listing(body, package)
             if data is not None:
                 if policy.is_fresh() or self._offline:
-                    return _parse_files(data, self._index_url, package)
+                    return self._parse_body(data, package)
                 return await self._revalidate_simple(package, body, policy)
             corrupt_positive = True
 
@@ -193,7 +195,18 @@ class CachedAsyncSimpleClient:
                 f"{package!r}: body is not valid JSON"
             )
             raise MalformedSimpleResponseError(msg) from exc
-        return _parse_files(data, self._index_url, package)
+        return self._parse_body(data, package)
+
+    def _parse_body(self, data: object, package: str) -> list[WheelFile | SdistFile]:
+        """Parse a decoded listing body, marking one with no readable file."""
+        files = _parse_files(data, self._index_url, package)
+        if not files and holds_unreadable_format(data):
+            self._unreadable_only.add(package)
+        return files
+
+    def served_unreadable_only(self, package: str) -> bool:
+        """Whether a listing for ``package`` held only files nab cannot read."""
+        return package in self._unreadable_only
 
     async def _revalidate_simple(
         self, package: str, body: bytes, policy: CachePolicy

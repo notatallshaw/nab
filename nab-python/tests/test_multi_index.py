@@ -44,6 +44,7 @@ class FakeClient:
 
     def __init__(self, listing: dict[str, list[WheelFile | SdistFile]]) -> None:
         self.listing = listing
+        self.unreadable: set[str] = set()
         self.get_files_calls: list[str] = []
         self.metadata_calls: list[tuple[str, str, str]] = []
         self.sdist_calls: list[tuple[str, str, str]] = []
@@ -57,6 +58,9 @@ class FakeClient:
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
         self.get_files_calls.append(package)
         return list(self.listing.get(_normalise_name(package), []))
+
+    def served_unreadable_only(self, package: str) -> bool:
+        return package in self.unreadable
 
     async def get_metadata_text(
         self,
@@ -172,6 +176,20 @@ class TestPresenceBased:
             {},
         )
         assert run(client.get_files("foo")) == []
+
+    def test_unreadable_only_reported_from_any_walked_index(self) -> None:
+        """An empty walk routes to the first index, so every client is asked."""
+        first = FakeClient({})
+        second = FakeClient({})
+        second.unreadable.add("foo")
+        client = MultiIndexClient(
+            {"a": first, "b": second},
+            ["a", "b"],
+            {},
+        )
+        assert run(client.get_files("foo")) == []
+        assert client.served_unreadable_only("foo")
+        assert not client.served_unreadable_only("bar")
 
     def test_route_cache_subsequent_calls(self) -> None:
         first = FakeClient({})

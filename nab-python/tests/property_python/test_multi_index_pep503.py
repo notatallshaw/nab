@@ -72,6 +72,9 @@ class _Stub:
             return [_wheel(norm)]
         return []
 
+    def served_unreadable_only(self, package: str) -> bool:
+        return False
+
     async def get_metadata_text(
         self,
         package: str,

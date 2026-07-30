@@ -4,7 +4,54 @@ from __future__ import annotations
 
 import pytest
 
-from nab_index.client import _sdist_member_top_level
+from nab_index.client import (
+    _sdist_member_top_level,
+    holds_unreadable_format,
+    is_readable_filename,
+)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["foo-1.0-py3-none-any.whl", "foo-1.0.tar.gz"],
+)
+def test_readable_filenames(filename: str) -> None:
+    assert is_readable_filename(filename)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["foo-1.0.zip", "foo-1.5.win32.exe", "foo-1.0.tar.bz2", "foo.egg"],
+)
+def test_unreadable_filenames(filename: str) -> None:
+    assert not is_readable_filename(filename)
+
+
+def test_holds_unreadable_format_finds_zip_sdist() -> None:
+    data = {"files": [{"filename": "foo-1.0.zip", "url": "https://e.example/f"}]}
+    assert holds_unreadable_format(data)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(["files"], id="body-not-an-object"),
+        pytest.param({"files": "nope"}, id="files-not-a-list"),
+        pytest.param({"files": []}, id="no-entries"),
+        pytest.param({"files": ["foo-1.0.zip"]}, id="entry-not-an-object"),
+        pytest.param({"files": [{"filename": 3}]}, id="filename-not-a-string"),
+        pytest.param(
+            {"files": [{"filename": "foo-1.0.zip", "yanked": True}]},
+            id="yanked-entry",
+        ),
+        pytest.param(
+            {"files": [{"filename": "foo-1.0-py3-none-any.whl"}]},
+            id="readable-entry",
+        ),
+    ],
+)
+def test_holds_unreadable_format_false(data: object) -> None:
+    assert not holds_unreadable_format(data)
 
 
 def test_sdist_member_top_level_normal() -> None:
