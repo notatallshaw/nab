@@ -79,6 +79,19 @@ require `build-policy = "build-remote"` (a clone is considered
 network-fetched, even though they end up on disk before the
 backend runs).  See the [build policy](../reference/build-policy.md) page.
 
+## Offline runs
+
+`--offline` stops nab from cloning.  A commit already in the
+clone cache is served from there; anything else fails instead of
+reaching the remote.  An unpinned ref fails even with a warm
+cache, because resolving a branch or tag to a commit needs
+`git ls-remote`.
+
+A `git+file` repo is on local disk rather than the network, so it
+still clones, as long as its URL names no host.
+`git+file:///srv/repo.git` clones offline;
+`git+file://server/srv/repo.git` is a UNC share and does not.
+
 ## `pkg @ git+...` at the project root
 
 PEP 508 lets you write a direct-URL requirement under

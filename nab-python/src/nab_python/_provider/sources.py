@@ -227,6 +227,7 @@ def materialize_vcs_source(
             provider.vcs_cache_dir,
             request,
             require_pin=provider.vcs_config.require_pin,
+            offline=provider.coordinator.offline,
         )
     except VcsCloneError as exc:
         msg = f"vcs source {source.name!r}: {exc}"

@@ -727,6 +727,11 @@ class FetchCoordinator:
         self._async_q: asyncio.Queue[_QueueItem] | None = None
         self._queue_ready = threading.Event()
 
+    @property
+    def offline(self) -> bool:
+        """Whether this run may read the cache only, never the network."""
+        return self._offline
+
     def __enter__(self) -> Self:
         """Start the fetcher thread and return self."""
         self.start()
