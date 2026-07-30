@@ -6238,6 +6238,36 @@ class TestExtras:
         assert V("2.0") in proxy_terms[0].constraint
         assert V("1.0") in base_terms[0].constraint
 
+    def test_choose_extra_version_blocks_a_prerelease_excluded_by_the_base(
+        self,
+    ) -> None:
+        """The pre-release enumeration reads the same descending listing.
+
+        Both the candidate filter and the ``prereleases=True`` fallback bisect
+        ``versions_only``, so this pins that a pre-release the base's range
+        excludes still reaches the block recorder.
+        """
+        wheels = [make_wheel(v) for v in ("2.0", "2.0a1", "1.0")]
+        coordinator = make_coordinator(
+            wheels, metadata_text=EXTRA_METADATA, package="foo"
+        )
+        provider = Provider(coordinator)
+        all_versions = provider.versions_only("foo", provider.fetch_versions("foo"))
+        assert all_versions == sorted(all_versions, reverse=True)
+        provider.receive_partial_solution_hint(
+            {"foo": SpecifierSet("<2.0a1").to_range()},
+            {},
+        )
+        result = provider.choose_version(
+            "foo[security]", SpecifierSet(">=2.0a1").to_range()
+        )
+        assert result is None
+        clauses = provider.consume_pending_clauses()
+        proxy_terms = [
+            t for c in clauses for t in c.terms if t.package == "foo[security]"
+        ]
+        assert any(V("2.0a1") in t.constraint for t in proxy_terms)
+
     def test_choose_extra_version_records_range_block_when_base_undecided(
         self,
     ) -> None:
@@ -8184,6 +8214,32 @@ class TestPrioritizeMatchingFromIndex:
         first = provider.versions_only("foo", version_list)
         second = provider.versions_only("foo", version_list)
         assert first is second
+
+    def test_versions_only_is_descending_whatever_the_index_order(self) -> None:
+        """The listing view is newest-first, which choose_version's filter asserts.
+
+        ``filter(assume_sorted="descending")`` bisects the view rather than
+        testing every entry, so an index that lists files in any other order
+        must still reach the provider sorted.
+        """
+        wheels = [make_wheel(v) for v in ("1.0", "3.0", "1.0a1", "2.0", "0.9")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        versions = provider.versions_only("foo", provider.fetch_versions("foo"))
+        assert versions == sorted(versions, reverse=True)
+        assert versions[0] == V("3.0")
+
+    def test_choose_version_candidates_match_the_entry_wise_filter(self) -> None:
+        """The bisected candidate list equals what the plain filter yields."""
+        wheels = [make_wheel(v) for v in ("0.9", "1.0a1", "1.0", "1.5", "2.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        version_list = provider.fetch_versions("foo")
+        all_versions = provider.versions_only("foo", version_list)
+        for spec in ("", ">=1.0", ">=1.0,<2.0", "!=1.0", ">=1.0a1", "===1.0"):
+            version_range = SpecifierSet(spec).to_range()
+            bisected = version_range.filter(all_versions, assume_sorted="descending")
+            assert list(bisected) == list(version_range.filter(all_versions))
 
     def test_wheel_by_version_cache_hit(self) -> None:
         """Calling _wheel_by_version twice returns the same cached dict."""
