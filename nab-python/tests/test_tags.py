@@ -1252,6 +1252,17 @@ class TestPythonAxisAccepts:
         """It carries no tags to reject it by."""
         assert python_axis_accepts("3.7", "cpython", "pkg-1.0.tar.gz")
 
+    def test_an_implementation_without_tag_rules_has_no_opinion(self) -> None:
+        """nab has no tag rules for it, and guessing CPython's would invert them."""
+        assert python_axis_accepts(
+            "3.10",
+            "graalpy",
+            "pkg-1.0-graalpy310-graalpy240_310_native-manylinux_2_17_x86_64.whl",
+        )
+        assert python_axis_accepts(
+            "3.10", "graalpy", "pkg-1.0-cp310-cp310-manylinux_2_17_x86_64.whl"
+        )
+
 
 class TestLinuxPlatformOrderMatchesSysTags:
     """A declared linux target ranks platform tags the way ``sys_tags`` does.
