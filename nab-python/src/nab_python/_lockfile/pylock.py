@@ -39,6 +39,7 @@ from .disjointness import validate_marker_disjointness
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Set as AbstractSet
 
     from ..lockfile import (
         LockInput,
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
         TargetLock,
         WheelArtifact,
     )
+    from ..target import ResolveTarget
 
 
 __all__ = [
@@ -124,14 +126,15 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
     from ..lockfile import LOCK_VERSION
 
     base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
-    package_records = _build_packages(lock_input, base)
+    exclusion_groups = conflict_exclusion_groups(lock_input.conflicts)
+    package_records = _build_packages(lock_input, base, exclusion_groups)
     package_records.sort(key=_package_sort_key)
     validate_marker_disjointness(
         package_records,
         environments=lock_input.marker_envs,
         extras=lock_input.extras,
         groups=lock_input.active_groups,
-        exclusive_groups=conflict_exclusion_groups(lock_input.conflicts),
+        exclusive_groups=exclusion_groups,
         declared_groups=conflict_member_groups(lock_input.conflicts),
     )
     tool: dict[str, Any] | None = (
@@ -332,7 +335,11 @@ def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
     )
 
 
-def _build_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
+def _build_packages(
+    lock_input: LockInput,
+    lock_dir: Path,
+    exclusion_groups: Sequence[AbstractSet[tuple[str, str]]],
+) -> list[Package]:
     """Collapse the per-target pins into Package entries with markers.
 
     For each canonical package name:
@@ -379,6 +386,11 @@ def _build_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
     base_names = _close_base_names(
         targets, env_signatures, env_fork_counts, lock_input.env_base_names
     )
+    # One selection marker per label; it does not vary by package.
+    selection_markers = {
+        label: _selection_marker(lock.target, exclusion_groups)
+        for label, lock in targets.items()
+    }
 
     for canonical_name, per_target in by_name.items():
         groups = _group_pins_by_pin(per_target)
@@ -399,6 +411,7 @@ def _build_packages(lock_input: LockInput, lock_dir: Path) -> list[Package]:
                 env_signatures,
                 env_fork_counts,
                 base_names,
+                selection_markers,
             )
             out.append(
                 _pin_to_package(
@@ -641,6 +654,7 @@ def _build_marker(
     env_signatures: Mapping[str, tuple[tuple[str, str], ...]],
     env_fork_counts: Mapping[tuple[tuple[str, str], ...], int],
     env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]],
+    selection_markers: Mapping[str, str],
 ) -> Marker | None:
     """Return the marker selecting ``labels``, or ``None`` if unconditional.
 
@@ -658,6 +672,13 @@ def _build_marker(
     membership OR and does not install when no member is selected.
     An environment with no base-name set (no conflict fork ran) leaves
     the gate open.
+
+    A membership contribution carries the fork's positive selection AND
+    the negation of every co-member of the conflict sets it selects from
+    (``"cpu" in extras and "gpu" not in extras``), so the forks are
+    mutually exclusive in the marker itself: a PEP 751 consumer that never
+    reads ``[tool.nab].conflicts`` still installs at most one fork.  See
+    :func:`_selection_marker`.
 
     A package a selected extra or group reaches while the project's own
     dependencies do not carries that selection's gate (see
@@ -701,7 +722,7 @@ def _build_marker(
             )
         else:
             contributions.extend(
-                Marker(_with_gate(targets[label].target.marker_string, gates[label]))
+                Marker(_with_gate(selection_markers[label], gates[label]))
                 for label in env_labels
             )
             unconditional = False
@@ -718,6 +739,33 @@ def _build_marker(
     if len(common) == 1:
         return Marker(_gate_clause(next(iter(common))))
     return _or_markers(contributions)
+
+
+def _selection_marker(
+    target: ResolveTarget,
+    exclusion_groups: Sequence[AbstractSet[tuple[str, str]]],
+) -> str:
+    """Return the fork's per-package marker with its co-members negated.
+
+    Starts from the target's
+    :attr:`~nab_python.target.ResolveTarget.marker_string` and conjoins
+    ``'name' not in <variable>`` for every other member of every conflict
+    set the selection draws from, so at most one fork installs.  A
+    selection drawing from no exclusion group returns ``marker_string``
+    unchanged.
+    """
+    selected = set(target.selection)
+
+    co_members: set[tuple[str, str]] = set()
+    for group in exclusion_groups:
+        if group & selected:
+            co_members |= group - selected
+
+    marker = target.marker_string
+    for kind, name in sorted(co_members):
+        variable = MARKER_VARIABLE_FOR_KIND[kind]
+        marker += f' and "{name}" not in {variable}'
+    return marker
 
 
 def _gate_clause(gate: Sequence[tuple[str, str]]) -> str:
