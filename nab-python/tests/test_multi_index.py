@@ -48,7 +48,11 @@ class FakeClient:
         self.metadata_calls: list[tuple[str, str, str]] = []
         self.sdist_calls: list[tuple[str, str, str]] = []
         self.range_calls: list[tuple[str, str, str]] = []
-        self.closed = False
+        self.close_count = 0
+
+    @property
+    def closed(self) -> bool:
+        return self.close_count > 0
 
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
         self.get_files_calls.append(package)
@@ -95,7 +99,7 @@ class FakeClient:
         return RangeMetadataResult(f"range:{package}:{version}", RangeOutcome.PARTIAL)
 
     async def aclose(self) -> None:
-        self.closed = True
+        self.close_count += 1
 
 
 class _NoNetworkTransport:
@@ -380,7 +384,7 @@ class TestAClose:
         assert c.closed
 
     def test_dedup_repeat_close(self) -> None:
-        # Same client appearing under two names should only close once.
+        # A client shared under two names must close exactly once.
         shared = FakeClient({})
         client = MultiIndexClient(
             {"a": shared, "alias": shared},
@@ -388,7 +392,7 @@ class TestAClose:
             {},
         )
         run(client.aclose())
-        assert shared.closed
+        assert shared.close_count == 1
 
     def test_async_with(self) -> None:
         a = FakeClient({})
