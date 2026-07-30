@@ -28,6 +28,7 @@ from nab_python.tags import (
     _ordered_tags_for_spec,
     _parse_tag_str,
     _platform_tags_for_spec,
+    python_axis_accepts,
     wheel_tag_set,
 )
 from nab_python.target import PLATFORM_MARKERS
@@ -1187,6 +1188,69 @@ class TestTagSetAccepts:
         specific = Tag("cp311", "cp311", "manylinux_2_28_x86_64")
         generic = Tag("py3", "none", "any")
         assert self._TAGS.rank[specific] < self._TAGS.rank[generic]
+
+
+class TestPythonAxisAccepts:
+    """``python_axis_accepts`` answers the Python axis alone, any platform.
+
+    It is what a target whose tags a marker overlay disowned can still ask:
+    the overlay cannot rebuild the platform tags, but the Python version and
+    the implementation survive it.
+    """
+
+    def test_the_targets_own_interpreter_is_accepted(self) -> None:
+        assert python_axis_accepts(
+            "3.7", "cpython", "pkg-1.0-cp37-cp37m-manylinux1_x86_64.whl"
+        )
+
+    def test_a_foreign_platform_is_still_accepted(self) -> None:
+        """The platform axis is projected out, so it decides nothing."""
+        assert python_axis_accepts("3.7", "cpython", "pkg-1.0-cp37-cp37m-win_amd64.whl")
+
+    def test_another_interpreter_is_rejected(self) -> None:
+        assert not python_axis_accepts(
+            "3.7", "cpython", "pkg-1.0-cp27-cp27m-manylinux1_x86_64.whl"
+        )
+        assert not python_axis_accepts(
+            "3.7", "cpython", "pkg-1.0-cp35-cp35m-manylinux1_x86_64.whl"
+        )
+
+    def test_an_older_abi3_wheel_is_accepted(self) -> None:
+        """PEP 384's stable ABI runs forward, so an older abi3 wheel installs."""
+        assert python_axis_accepts(
+            "3.7", "cpython", "pkg-1.0-cp35-abi3-manylinux1_x86_64.whl"
+        )
+
+    def test_a_newer_abi3_wheel_is_rejected(self) -> None:
+        assert not python_axis_accepts(
+            "3.7", "cpython", "pkg-1.0-cp38-abi3-manylinux1_x86_64.whl"
+        )
+
+    def test_generic_wheels_track_the_major(self) -> None:
+        assert python_axis_accepts("3.7", "cpython", "pkg-1.0-py2.py3-none-any.whl")
+        assert python_axis_accepts("3.7", "cpython", "pkg-1.0-py3-none-any.whl")
+        assert not python_axis_accepts("3.7", "cpython", "pkg-1.0-py2-none-any.whl")
+
+    def test_the_implementation_separates_the_axes(self) -> None:
+        """A PyPy target loads no CPython ABI, and the reverse."""
+        pypy = "pkg-1.0-pp310-pypy310_pp73-manylinux_2_17_x86_64.whl"
+        cpython = "pkg-1.0-cp310-cp310-manylinux_2_17_x86_64.whl"
+        assert python_axis_accepts("3.10", "pypy", pypy)
+        assert not python_axis_accepts("3.10", "cpython", pypy)
+        assert not python_axis_accepts("3.10", "pypy", cpython)
+
+    def test_both_free_threaded_builds_are_accepted(self) -> None:
+        """A marker environment does not name the build, so neither is excluded."""
+        assert python_axis_accepts(
+            "3.13", "cpython", "pkg-1.0-cp313-cp313-manylinux_2_17_x86_64.whl"
+        )
+        assert python_axis_accepts(
+            "3.13", "cpython", "pkg-1.0-cp313-cp313t-manylinux_2_17_x86_64.whl"
+        )
+
+    def test_an_unparseable_filename_is_accepted(self) -> None:
+        """It carries no tags to reject it by."""
+        assert python_axis_accepts("3.7", "cpython", "pkg-1.0.tar.gz")
 
 
 class TestLinuxPlatformOrderMatchesSysTags:

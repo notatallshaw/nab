@@ -9703,3 +9703,186 @@ class TestSiblingMetadataDivergence:
                 [Requirement("pkg")],
                 config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
             )
+
+
+# One Requires-Python spanning every interpreter a release built for, the
+# torch 1.4.0 shape: it admits every sibling wheel, so the Requires-Python
+# guard on the tie set never fires and the tags have to do the narrowing.
+_SPLIT_RP = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*"
+
+
+def _split_wheel(tag: str) -> WheelFile:
+    """A pkg 1.0 wheel for one interpreter, carrying the release's Requires-Python."""
+    filename = f"pkg-1.0-{tag}.whl"
+    return WheelFile(
+        filename=filename,
+        url=f"https://example.com/{filename}",
+        version="1.0",
+        requires_python=_SPLIT_RP,
+        has_metadata=True,
+        upload_time=None,
+    )
+
+
+def _split_meta(*requires_dist: str) -> str:
+    """A METADATA blob carrying the split release's Requires-Python."""
+    return (
+        f"Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+        f"Requires-Python: {_SPLIT_RP}\n"
+        + "".join(f"Requires-Dist: {line}\n" for line in requires_dist)
+        + "\n"
+    )
+
+
+def _overlay_target() -> ResolveTarget:
+    """A declared python 3.7 linux target moved off its tags by a marker overlay."""
+    target = ResolveTarget.for_declared(
+        python_version="3.7", spec=PlatformSpec("linux_x86_64")
+    ).with_marker_overrides({"platform_system": "Windows"})
+    assert not target.tags_faithful
+    return target
+
+
+class TestNoTagAxisPythonNarrowing:
+    """A disowned tag axis still narrows siblings by the target's Python.
+
+    A marker overlay cannot rebuild the platform tags, so under one the
+    provider filters no wheel by tag.  It does keep ``python_version`` and
+    ``implementation_name``, so a wheel built for another interpreter is still
+    a wheel this target can never install, and neither the tie set nor the pick
+    may treat it as a candidate.
+    """
+
+    _V = V("1.0")
+
+    def test_other_interpreter_siblings_never_tie(self) -> None:
+        """A release split across interpreters resolves under an overlay.
+
+        The divergent wheel is built for another interpreter, so it is no
+        ambiguity for this target and the version stays resolvable.
+        """
+        cp27 = _split_wheel("cp27-cp27m-manylinux1_x86_64")
+        cp35 = _split_wheel("cp35-cp35m-manylinux1_x86_64")
+        cp37 = _split_wheel("cp37-cp37m-manylinux1_x86_64")
+        coordinator = make_coordinator([cp27, cp35, cp37], package="pkg")
+        for wheel in (cp27, cp37):
+            coordinator.index.store_metadata(
+                "pkg", "1.0", _split_meta("common>=1"), wheel.metadata_url
+            )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1", "numpy"), cp35.metadata_url
+        )
+        provider = Provider(coordinator, target=_overlay_target())
+        deps = provider.get_dependencies("pkg", self._V)
+        assert "common" in deps
+        assert "numpy" not in deps
+
+    def test_same_interpreter_divergence_still_crashes(self) -> None:
+        """Two wheels for the target's own interpreter remain a real ambiguity.
+
+        Only the platform separates them, and the platform is the axis the
+        overlay disowned, so nothing can rank them and the crash must stand.
+        """
+        linux = _split_wheel("cp37-cp37m-manylinux1_x86_64")
+        macos = _split_wheel("cp37-none-macosx_10_9_x86_64")
+        coordinator = make_coordinator([linux, macos], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1"), linux.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1", "numpy"), macos.metadata_url
+        )
+        provider = Provider(coordinator, target=_overlay_target())
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            provider.get_dependencies("pkg", self._V)
+        assert "numpy" in str(exc.value)
+
+    def test_the_pick_reads_a_wheel_the_target_could_install(self) -> None:
+        """Listing order does not decide which wheel a version's deps come from.
+
+        The interpreter wheels are listed oldest first, as an index serves
+        them, so an order-driven pick would read this target's dependencies
+        out of a wheel built for another Python.
+        """
+        cp27 = _split_wheel("cp27-cp27m-manylinux1_x86_64")
+        cp35 = _split_wheel("cp35-cp35m-manylinux1_x86_64")
+        cp37 = _split_wheel("cp37-cp37m-manylinux1_x86_64")
+        coordinator = make_coordinator([cp27, cp35, cp37], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("py27dep>=1"), cp27.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("py35dep>=1"), cp35.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("py37dep>=1"), cp37.metadata_url
+        )
+        provider = Provider(coordinator, target=_overlay_target())
+        assert (
+            metadata_resolver.pick_dist_for_metadata(
+                [(self._V, cp27), (self._V, cp35), (self._V, cp37)],
+                self._V,
+                provider.wheel_tags,
+                provider.target,
+            )
+            is cp37
+        )
+        assert "py37dep" in provider.get_dependencies("pkg", self._V)
+
+    def test_a_split_release_resolves_end_to_end_under_an_overlay(self) -> None:
+        """The whole resolve completes, rather than aborting on the ambiguity.
+
+        Every wheel built for another interpreter declares a dependency the
+        pick does not, and the index does not carry it, so treating any of
+        them as this target's wheel fails the resolve just as loudly as the
+        crash did.
+        """
+        cp27 = _split_wheel("cp27-cp27m-manylinux1_x86_64")
+        cp35 = _split_wheel("cp35-cp35m-manylinux1_x86_64")
+        cp37 = _split_wheel("cp37-cp37m-manylinux1_x86_64")
+        coordinator = make_coordinator([cp27, cp35, cp37], package="pkg")
+        coordinator.index.store_metadata("pkg", "1.0", _split_meta(), cp37.metadata_url)
+        for wheel in (cp27, cp35):
+            coordinator.index.store_metadata(
+                "pkg", "1.0", _split_meta("numpy"), wheel.metadata_url
+            )
+        result = resolve_with_coordinator(
+            coordinator,
+            [_overlay_target()],
+            [Requirement("pkg")],
+            config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+        )
+        assert result.success
+        assert result.target_results[0].pins == {"pkg": self._V}
+
+    def test_a_version_built_for_no_admitted_interpreter_keeps_listing_order(
+        self,
+    ) -> None:
+        """Narrowing to no wheel at all decides nothing, so listing order stands."""
+        cp27 = _split_wheel("cp27-cp27m-manylinux1_x86_64")
+        cp35 = _split_wheel("cp35-cp35m-manylinux1_x86_64")
+        assert (
+            metadata_resolver.pick_dist_for_metadata(
+                [(self._V, cp27), (self._V, cp35)],
+                self._V,
+                None,
+                _overlay_target(),
+            )
+            is cp27
+        )
+
+    def test_abi3_sibling_of_an_older_interpreter_still_ties(self) -> None:
+        """An abi3 wheel below the target's interpreter is installable, so it ties."""
+        pick = _split_wheel("cp37-cp37m-manylinux1_x86_64")
+        abi3 = _split_wheel("cp35-abi3-manylinux1_x86_64")
+        coordinator = make_coordinator([pick, abi3], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1"), pick.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1", "numpy"), abi3.metadata_url
+        )
+        provider = Provider(coordinator, target=_overlay_target())
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            provider.get_dependencies("pkg", self._V)
+        assert "numpy" in str(exc.value)

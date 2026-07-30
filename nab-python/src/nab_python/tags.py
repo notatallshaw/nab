@@ -48,6 +48,7 @@ __all__ = [
     "TagSet",
     "TagsSource",
     "platform_kind",
+    "python_axis_accepts",
     "supports_free_threading",
     "wheel_tag_set",
 ]
@@ -740,3 +741,47 @@ def _tags_in_order(
         interpreter=compat_interpreter,
         platforms=platforms,
     )
+
+
+@cache
+def _python_axis_tags(
+    python_version: str, implementation: str
+) -> frozenset[tuple[str, str]]:
+    """Return the ``(interpreter, abi)`` pairs one Python axis accepts.
+
+    :func:`_tags_in_order` pairs the same interpreters and abis with every
+    platform it is given, so projecting the platform away leaves exactly the
+    axes the Python version and the implementation decide.  Both builds are
+    admitted where :pep:`703` offers one, since free-threading is a property
+    of the interpreter binary that a marker environment does not name.
+    """
+    builds = (False, True) if supports_free_threading(python_version) else (False,)
+    return frozenset(
+        (tag.interpreter, tag.abi)
+        for free_threaded in builds
+        for tag in _tags_in_order(
+            python_version,
+            (_ANY_PLATFORM,),
+            implementation,
+            free_threaded=free_threaded,
+        )
+    )
+
+
+def python_axis_accepts(
+    python_version: str, implementation: str, wheel_filename: str
+) -> bool:
+    """Whether a Python axis accepts a wheel filename's tags, on any platform.
+
+    The platform axis is ignored.  That is what a target whose tags a marker
+    overlay disowned can still be asked: an overlay cannot rebuild the
+    platform tags, but ``python_version`` and ``implementation_name`` survive
+    it (see :meth:`~nab_python.target.ResolveTarget.with_marker_overrides`).
+    A filename that does not parse as a wheel is admitted; it carries no tags
+    to reject it by.
+    """
+    tags = wheel_tag_set(wheel_filename)
+    if not tags:
+        return True
+    accepted = _python_axis_tags(python_version, implementation)
+    return any((tag.interpreter, tag.abi) in accepted for tag in tags)
