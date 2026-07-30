@@ -1799,3 +1799,27 @@ class TestExtractSdistFiles:
             link.linkname = "pkg-1.0/absent"
             tar.addfile(link)
         assert _extract_sdist_files(buf.getvalue()) == (None, None)
+
+    @pytest.mark.parametrize(
+        "links",
+        [
+            [("pkg-1.0/PKG-INFO", "PKG-INFO")],
+            [("pkg-1.0/PKG-INFO", "other"), ("pkg-1.0/other", "PKG-INFO")],
+        ],
+        ids=["self", "two-member-cycle"],
+    )
+    def test_returns_none_when_pkg_info_symlinks_form_a_cycle(
+        self, links: list[tuple[str, str]]
+    ) -> None:
+        """A PKG-INFO symlink cycle never resolves, so it is treated as absent."""
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            directory = tarfile.TarInfo("pkg-1.0")
+            directory.type = tarfile.DIRTYPE
+            tar.addfile(directory)
+            for name, linkname in links:
+                link = tarfile.TarInfo(name)
+                link.type = tarfile.SYMTYPE
+                link.linkname = linkname
+                tar.addfile(link)
+        assert _extract_sdist_files(buf.getvalue()) == (None, None)
