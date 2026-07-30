@@ -66,6 +66,9 @@ class PackagingProvider:
 
     _CONFLICT_THRESHOLD = 5
 
+    def begin_decision_scan(self) -> None:
+        """No-op: nothing this in-memory provider answers arrives async."""
+
     def prioritize(
         self,
         package: str,

@@ -91,6 +91,17 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         """Return ``{dependency_package: required_range}`` for this version."""
         ...
 
+    def begin_decision_scan(self) -> None:
+        """Announce the start of one decision scan.
+
+        ``choose_package_to_decide`` builds every undecided package's sort key
+        from ``prioritize`` and ``is_ready``, so both must answer from state
+        that does not move until the next call.  Providers whose answers depend
+        on another thread freeze that state here; for providers with no such
+        state this is a no-op.
+        """
+        ...
+
     def prioritize(
         self,
         package: PackageType,

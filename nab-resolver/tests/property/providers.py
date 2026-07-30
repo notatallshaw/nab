@@ -51,6 +51,9 @@ class FuzzProvider:
         """Return dependencies for a specific version."""
         return self._graph.get(package, {}).get(version, {})
 
+    def begin_decision_scan(self) -> None:
+        """No-op: nothing in this stub moves under a scan."""
+
     def prioritize(
         self,
         package: str,
@@ -139,6 +142,9 @@ class PromotingFuzzProvider:
         """Return dependencies for a specific version."""
         return self._graph.get(package, {}).get(version, {})
 
+    def begin_decision_scan(self) -> None:
+        """No-op: nothing in this stub moves under a scan."""
+
     def prioritize(
         self,
         package: str,
@@ -225,6 +231,9 @@ class OldestFirstProvider:
     def get_dependencies(self, package: str, version: int) -> dict[str, Range[int]]:
         """Return dependencies for a specific version."""
         return self._graph.get(package, {}).get(version, {})
+
+    def begin_decision_scan(self) -> None:
+        """No-op: nothing in this stub moves under a scan."""
 
     def prioritize(
         self,

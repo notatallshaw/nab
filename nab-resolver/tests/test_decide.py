@@ -1,9 +1,14 @@
-"""Unit tests for :func:`nab_resolver.decide.absorb_redundant_requirement`.
+"""Unit tests for :mod:`nab_resolver.decide`.
 
-The generic solver re-derives a requirement that is redundant on a package's
-version set yet still changes its range. Packaging's pre-release opt-in is one
-such refinement. Here a range double carries a plain passenger flag that rides
-set algebra, so the contract can be exercised without any PEP 440 semantics.
+``absorb_redundant_requirement`` re-derives a requirement that is redundant on
+a package's version set yet still changes its range. Packaging's pre-release
+opt-in is one such refinement. Here a range double carries a plain passenger
+flag that rides set algebra, so the contract can be exercised without any
+PEP 440 semantics.
+
+``choose_package_to_decide`` calls ``begin_decision_scan`` once before it reads
+any sort key, which is how a provider fed by another thread knows when its
+answers may move.
 """
 
 from __future__ import annotations
@@ -105,6 +110,9 @@ class _InertProvider:
     ) -> Mapping[Any, RangeProtocol[int]]:
         return {}
 
+    def begin_decision_scan(self) -> None:
+        pass
+
     def prioritize(
         self,
         package: Any,
@@ -139,16 +147,46 @@ class _InertProvider:
         return constraint
 
 
-def _resolver() -> tuple[Resolver[Any, int], _RecordingObserver]:
+class _ScanOrderProvider(_InertProvider):
+    """Records the scan-boundary and sort-key calls in the order they arrive."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def begin_decision_scan(self) -> None:
+        self.calls.append("begin")
+
+    def prioritize(
+        self,
+        package: Any,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[Any, int],
+        culprit_counts: Mapping[Any, int] | None = None,
+    ) -> Any:
+        self.calls.append(f"prioritize {package}")
+        return 0
+
+    def is_ready(self, package: Any) -> bool:
+        self.calls.append(f"is_ready {package}")
+        return True
+
+
+def _resolver_with(
+    provider: _InertProvider,
+) -> tuple[Resolver[Any, int], _RecordingObserver]:
     observer = _RecordingObserver()
     # RefiningRange is a valid range at runtime; the cast satisfies the
     # Self-typed RangeProtocol that a plain subclass cannot express.
     resolver = Resolver(
-        _InertProvider(),
+        provider,
         observer=observer,
         range_type=cast("type[RangeProtocol[int]]", RefiningRange),
     )
     return resolver, observer
+
+
+def _resolver() -> tuple[Resolver[Any, int], _RecordingObserver]:
+    return _resolver_with(_InertProvider())
 
 
 def _dependency_cause() -> Incompatibility[Any, int]:
@@ -244,3 +282,45 @@ class TestAbsorbRedundantRequirement:
         reverted = resolver.solution.positive_range("c")
         assert isinstance(reverted, RefiningRange)
         assert reverted.flag is False
+
+
+class TestScanBoundary:
+    """One ``begin_decision_scan`` opens each scan, ahead of every key read."""
+
+    def test_scan_opens_once_before_any_key_is_read(self) -> None:
+        """The boundary call comes first and does not repeat inside the scan."""
+        provider = _ScanOrderProvider()
+        resolver, _ = _resolver_with(provider)
+        for package in ("a", "b", "c"):
+            resolver.solution.derive(
+                package,
+                RefiningRange.at_least(1),
+                positive=True,
+                cause=_dependency_cause(),
+            )
+
+        assert decide.choose_package_to_decide(resolver) is not None
+        assert provider.calls[0] == "begin"
+        assert provider.calls.count("begin") == 1
+        assert len(provider.calls) == 1 + 2 * 3
+
+    def test_each_scan_opens_a_new_one(self) -> None:
+        """A second scan gets its own boundary call."""
+        provider = _ScanOrderProvider()
+        resolver, _ = _resolver_with(provider)
+        resolver.solution.derive(
+            "a", RefiningRange.at_least(1), positive=True, cause=_dependency_cause()
+        )
+
+        decide.choose_package_to_decide(resolver)
+        decide.choose_package_to_decide(resolver)
+
+        assert provider.calls.count("begin") == 2
+
+    def test_nothing_undecided_opens_no_scan(self) -> None:
+        """With every package decided the provider is left alone."""
+        provider = _ScanOrderProvider()
+        resolver, _ = _resolver_with(provider)
+
+        assert decide.choose_package_to_decide(resolver) is None
+        assert provider.calls == []

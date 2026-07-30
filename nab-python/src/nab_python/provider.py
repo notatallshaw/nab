@@ -702,6 +702,11 @@ class Provider:
         # so the per-call (normalized, range) tuple alloc is worth avoiding.
         self.matching_cache: dict[str, dict[RangeProtocol[Version], int]] = {}
 
+        # Scan counter, plus the scan in which each name was last seen with its
+        # listing still in flight.  See ``arrived_listing``.
+        self._scan_generation = 0
+        self._absent_listing_scan: dict[str, int] = {}
+
         # Requires-Python compatibility, keyed by the raw specifier string.
         self.requires_python_cache: dict[str, bool] = {}
 
@@ -2177,6 +2182,31 @@ class Provider:
         self._package_parts[package] = result
         return result
 
+    def begin_decision_scan(self) -> None:
+        """Open a decision scan, expiring the last one's in-flight answers.
+
+        The coming scan re-reads the index, then holds any name it finds still
+        in flight that way until the next call.
+        """
+        self._scan_generation += 1
+
+    def arrived_listing(self, normalized: str) -> list[DistFile] | None:
+        """Return ``normalized``'s listing, or None while it is in flight.
+
+        The fetcher thread publishes listings asynchronously, so a bare index
+        read can answer differently for two packages compared inside one
+        decision scan, and differently for the two halves of one package's
+        sort key.  A name first seen in flight stays in flight until the next
+        ``begin_decision_scan``, so one scan sorts against one view of what
+        has landed.
+        """
+        if self._absent_listing_scan.get(normalized) == self._scan_generation:
+            return None
+        listing = self.coordinator.index.get_listing(normalized)
+        if listing is None:
+            self._absent_listing_scan[normalized] = self._scan_generation
+        return listing
+
     def is_ready(self, package: str) -> bool:
         """Check if a package's listing is available without blocking.
 
@@ -2188,7 +2218,7 @@ class Provider:
             return normalized in self.versions_cache
         if normalized in self.versions_cache:
             return True
-        return self.coordinator.index.get_listing(normalized) is not None
+        return self.arrived_listing(normalized) is not None
 
     def prioritize(
         self,
