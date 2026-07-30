@@ -347,6 +347,13 @@ class Range(Generic[VersionType]):
         """Return whether self and other share no version."""
         return (self & other).is_empty
 
+    def relation(self, other: Range[VersionType]) -> tuple[bool, bool]:
+        """Return ``(is_subset, is_disjoint)`` against other.
+
+        Asked separately here; an implementation may answer both in one walk.
+        """
+        return self.is_subset(other), self.is_disjoint(other)
+
     @override
     def __eq__(self, other: object) -> bool:
         """Test equality by comparing interval tuples."""

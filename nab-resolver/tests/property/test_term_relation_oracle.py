@@ -75,7 +75,7 @@ def _oracle_acceptable(
         return {SetRelation.SATISFIED}
     if all_false:
         if can_be_absent and rep_is_empty(present):
-            # Only the absent scenario exists.  classify_intersection's
+            # Only the absent scenario exists.  classify_relation's
             # covers-before-empty tie-break reports SATISFIED, which the
             # needs_positive gate downgrades to UNDETERMINED, so the
             # truthful CONTRADICTED is unreachable here.  Sound but lossy.

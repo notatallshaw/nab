@@ -96,6 +96,13 @@ class RangeProtocol(Protocol[VersionType_contra]):
         """Return whether self and other share no version."""
         ...
 
+    def relation(self, other: Self) -> tuple[bool, bool]:
+        """Return ``(is_subset, is_disjoint)`` against other.
+
+        Both answers hold at once only for an empty self.
+        """
+        ...
+
     # __eq__ and __hash__ come from object; redeclaring them in the
     # Protocol adds no constraint and mypy and zuban disagree on @override.
 
