@@ -75,17 +75,14 @@ def resolve_metadata(
 
     # Sibling wheels of one version can declare different dependencies, so the
     # read is keyed by the artifact this target would install.  ``versions`` is
-    # the target's own tag-filtered listing, so the pick is per-target.  A
-    # sidecar wheel keys on its sidecar URL; a bare remote wheel (rung 4) keys
-    # on its own wheel URL, so its range-recovered text stays independent of a
-    # sibling wheel's.
+    # the target's own tag-filtered listing, so the pick is per-target.
     dist = pick_dist_for_metadata(
         versions, version, provider.wheel_tags, provider.target
     )
-    if _is_bare_remote_wheel(dist):
-        metadata_url = dist.url
-    elif isinstance(dist, WheelFile):
-        metadata_url = dist.metadata_url
+
+    # A wheel keys on its sidecar URL, or on its own URL when it publishes none.
+    if isinstance(dist, WheelFile):
+        metadata_url = dist.metadata_url or dist.url
     else:
         metadata_url = None
 

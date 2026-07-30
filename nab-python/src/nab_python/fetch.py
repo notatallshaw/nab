@@ -258,11 +258,11 @@ class InMemoryIndex:
         """Return the text answering for ``metadata_url`` and its origin.
 
         Caller holds the lock.  The artifact's own slot wins, then the
-        version-level one.  An sdist's PKG-INFO answers for an artifact with
-        no text of its own, but not for a sidecar nobody has fetched yet:
+        version-level one.  An sdist's PKG-INFO answers for an artifact whose
+        own read returned nothing, but not for one nobody has read yet:
         lending it there would give a wheel that declares its own dependencies
         the sdist's.  An injected override has no artifact behind it and
-        answers for any.  A wheel with no sidecar asks with ``None``.
+        answers for any.
         """
         if metadata_url is not None:
             slot = (package, version, metadata_url)
@@ -388,9 +388,7 @@ class InMemoryIndex:
     ) -> BaseException | None:
         """Return a recorded metadata fetch error, or ``None``.
 
-        The artifact's own error wins; a version-level error (a tampered
-        sdist archive) answers for any artifact, as the version-level text
-        does.
+        The artifact's own error wins, then a version-level one.
         """
         with self._lock:
             if metadata_url is not None:
@@ -405,11 +403,11 @@ class InMemoryIndex:
         """Store sdist-derived PKG-INFO in the version-level metadata slot.
 
         PKG-INFO is core-metadata-equivalent, so it stands for the version
-        rather than for one artifact and answers for a wheel with no sidecar
-        of its own.  The pending key differs from a wheel's so an sdist
-        request can run in parallel with (or after) a failed wheel metadata
-        request.  :meth:`metadata_from_sdist` reports which kind the
-        version-level slot holds.
+        rather than for one artifact and answers a read that names no
+        artifact.  The pending key differs from a wheel's so an sdist request
+        can run in parallel with (or after) a failed wheel metadata request.
+        :meth:`metadata_from_sdist` reports which kind the version-level slot
+        holds.
         """
         key = f"sdist:{package}:{version}"
         with self._lock:

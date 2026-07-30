@@ -7535,6 +7535,46 @@ PKG_INFO_DYNAMIC_PROVIDES_EXTRA = (
 )
 
 
+_MATRIX_ORDERS = [
+    ("windows_amd64", "linux_x86_64"),
+    ("linux_x86_64", "windows_amd64"),
+]
+
+
+def _declared_target(platform: str) -> ResolveTarget:
+    """A declared 3.12 target for one platform."""
+    return ResolveTarget.for_declared(
+        python_version="3.12", spec=PlatformSpec(platform)
+    )
+
+
+def _wheelhouse_wheel(
+    directory: Path, *reqs: str, dist_info: str = "pkg-1.0"
+) -> WheelFile:
+    """Write a linux-only 1.0 wheel to disk, listed as a flat wheelhouse would.
+
+    A flat wheelhouse serves no PEP 658 sidecar, so ``has_metadata`` is false
+    and the METADATA lives only inside the ``.whl``.  A ``dist_info`` naming
+    another distribution makes that METADATA unreadable.
+    """
+    filename = "pkg-1.0-py3-none-manylinux_2_17_x86_64.whl"
+    path = directory / filename
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(
+            f"{dist_info}.dist-info/METADATA", make_metadata("pkg", "1.0", *reqs)
+        )
+
+    return WheelFile(
+        filename=filename,
+        url=path.as_uri(),
+        version="1.0",
+        requires_python=None,
+        has_metadata=False,
+        upload_time=None,
+        local_path=path,
+    )
+
+
 class TestSharedSlotProvenance:
     def test_pkg_info_stays_gated_for_provider_with_wheel_in_view(self) -> None:
         """PKG-INFO stored by one provider stays sdist-gated for another.
@@ -7584,6 +7624,86 @@ class TestSharedSlotProvenance:
         second = Provider(coordinator, target=_PY312)
         second.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
         assert "dep-b" in second.get_dependencies("pkg", V("1.0"))
+
+    @pytest.mark.parametrize("order", _MATRIX_ORDERS)
+    def test_a_wheelhouse_wheel_reads_its_own_metadata(
+        self, tmp_path: Path, order: tuple[str, str]
+    ) -> None:
+        """A find-links wheel is not served a sibling target's PKG-INFO.
+
+        A flat wheelhouse publishes no sidecar, and the windows target, whose
+        only artifact is the sdist, fills the version-level slot the matrix
+        shares.  Either order leaves linux its own wheel's dependencies.
+        """
+        wheel = _wheelhouse_wheel(tmp_path, "wheel-dep")
+        pkg_info = (
+            "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\nRequires-Dist: sdist-dep\n"
+        )
+        coordinator = make_coordinator(
+            [wheel, make_sdist("1.0")], sdist_pkg_info=pkg_info
+        )
+
+        deps = {
+            platform: Provider(
+                coordinator, target=_declared_target(platform)
+            ).get_dependencies("pkg", V("1.0"))
+            for platform in order
+        }
+
+        assert "sdist-dep" in deps["windows_amd64"]
+        assert "wheel-dep" in deps["linux_x86_64"]
+        assert "sdist-dep" not in deps["linux_x86_64"]
+
+    @pytest.mark.parametrize("order", _MATRIX_ORDERS)
+    def test_an_unreadable_wheelhouse_wheel_falls_back_to_pkg_info(
+        self, tmp_path: Path, order: tuple[str, str]
+    ) -> None:
+        """A wheel with no usable METADATA of its own still reads the sdist's.
+
+        Its ``.dist-info`` names another distribution, so nothing answers for
+        the wheel and the version-level PKG-INFO stands for the version.
+        """
+        wheel = _wheelhouse_wheel(tmp_path, "wheel-dep", dist_info="other-9.9")
+        pkg_info = (
+            "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\nRequires-Dist: sdist-dep\n"
+        )
+        coordinator = make_coordinator(
+            [wheel, make_sdist("1.0")], sdist_pkg_info=pkg_info
+        )
+
+        deps = {
+            platform: Provider(
+                coordinator, target=_declared_target(platform)
+            ).get_dependencies("pkg", V("1.0"))
+            for platform in order
+        }
+
+        assert "sdist-dep" in deps["linux_x86_64"]
+        assert "wheel-dep" not in deps["linux_x86_64"]
+
+    @pytest.mark.parametrize("order", _MATRIX_ORDERS)
+    def test_a_wheelhouse_wheel_survives_an_unbuildable_sdist(
+        self, tmp_path: Path, order: tuple[str, str]
+    ) -> None:
+        """A target holding an installable wheel is not refused with the sdist.
+
+        The sdist's pre-PEP-643 PKG-INFO has to go through the dynamic-deps
+        path, which the default build policy refuses.  That refusal belongs to
+        the target with no wheel; the target that installs the wheelhouse wheel
+        reads its METADATA off disk and keeps the version.
+        """
+        wheel = _wheelhouse_wheel(tmp_path, "wheel-dep")
+        coordinator = make_coordinator(
+            [wheel, make_sdist("1.0")], sdist_pkg_info=PKG_INFO_PRE_PEP643_DEPS
+        )
+
+        for platform in order:
+            provider = Provider(coordinator, target=_declared_target(platform))
+            if platform == "windows_amd64":
+                with pytest.raises(UnsupportedSdistError):
+                    provider.get_dependencies("pkg", V("1.0"))
+            else:
+                assert "wheel-dep" in provider.get_dependencies("pkg", V("1.0"))
 
 
 class TestPickDistForMetadata:
