@@ -261,11 +261,16 @@ def _user_agent_stub_index() -> Iterator[_UserAgentStubIndex]:
 
 
 class _MovedIndex(ThreadingHTTPServer):
-    """Loopback index that moves its project page, mapping path to Location."""
+    """Loopback index that moves its project page, mapping path to Location.
+
+    ``transient`` queues statuses served once each after the hops are done,
+    for a retryable blip between the final redirect and the body.
+    """
 
     hops: dict[str, str]
     body: bytes
     seen: list[str]
+    transient: list[int]
 
 
 class _MovedIndexHandler(BaseHTTPRequestHandler):
@@ -276,6 +281,12 @@ class _MovedIndexHandler(BaseHTTPRequestHandler):
         if location is not None:
             self.send_response(301)
             self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+
+        if self.server.transient:
+            self.send_response(self.server.transient.pop(0))
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -292,11 +303,14 @@ class _MovedIndexHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _moved_index(hops: dict[str, str], body: bytes) -> Iterator[_MovedIndex]:
+def _moved_index(
+    hops: dict[str, str], body: bytes, transient: Sequence[int] = ()
+) -> Iterator[_MovedIndex]:
     server = _MovedIndex(("127.0.0.1", 0), _MovedIndexHandler)
     server.hops = dict(hops)
     server.body = body
     server.seen = []
+    server.transient = list(transient)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -1553,6 +1567,15 @@ class TestUrllib3AsyncTransport:
         adapter = _Urllib3Response(fake, b"", _REQUESTED_URL)
         assert adapter.url == "https://mirror.example.com/pypi/simple/pkg/moved/"
 
+    def test_url_ignores_a_retried_status(self) -> None:
+        """urllib3 records a status retry with the request path and no Location."""
+        fake = MagicMock(spec=urllib3.BaseHTTPResponse)
+        fake.status = 200
+        fake.retries = urllib3.Retry(
+            history=(RequestHistory("GET", "/simple/pkg/", None, 503, None),)
+        )
+        assert _Urllib3Response(fake, b"", _REQUESTED_URL).url == _REQUESTED_URL
+
     def test_uses_truststore_ssl_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Each per-thread PoolManager gets a truststore SSLContext."""
         captured: dict[str, Any] = {}
@@ -2020,6 +2043,57 @@ class TestMovedProjectPage:
 
         assert warm.url == cold.url
         assert warm.url == f"{root}/pypi/simple/pkg/pkg-1.0-py3-none-any.whl"
+
+
+class TestRetriedProjectPage:
+    """A retried status is not a redirect, so it leaves the base alone.
+
+    urllib3 puts a status, connect, or read retry in the same history as a
+    redirect, recorded with the request path rather than an absolute URL.
+    """
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_relative_file_url_survives_a_retried_status(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _moved_index({}, RELATIVE_LISTING, transient=[503]) as index:
+            root = f"http://127.0.0.1:{index.server_port}"
+
+            async def go() -> list[WheelFile | SdistFile]:
+                async with AsyncSimpleClient(
+                    make_transport(), f"{root}/simple/"
+                ) as client:
+                    return await client.get_files("pkg")
+
+            (wheel,) = asyncio.run(go())
+            assert index.seen == ["/simple/pkg/", "/simple/pkg/"]
+
+        assert isinstance(wheel, WheelFile)
+        assert wheel.url == f"{root}/simple/pkg/pkg-1.0-py3-none-any.whl"
+        assert wheel.metadata_url == f"{wheel.url}.metadata"
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_status_retried_after_a_redirect_keeps_the_redirect_target(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _moved_index(
+            {"/simple/pkg/": "/pypi/simple/pkg/"}, RELATIVE_LISTING, transient=[503]
+        ) as index:
+            root = f"http://127.0.0.1:{index.server_port}"
+
+            async def go() -> list[WheelFile | SdistFile]:
+                async with AsyncSimpleClient(
+                    make_transport(), f"{root}/simple/"
+                ) as client:
+                    return await client.get_files("pkg")
+
+            (wheel,) = asyncio.run(go())
+
+            # Backends resume at different points, so pin the outcome, not the order.
+            assert index.transient == []
+            assert index.seen[-1] == "/pypi/simple/pkg/"
+
+        assert wheel.url == f"{root}/pypi/simple/pkg/pkg-1.0-py3-none-any.whl"
 
 
 class TestExtractSdistFiles:

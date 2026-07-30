@@ -76,8 +76,8 @@ class _FakeResponse:
         self.content = body
         self.status_code = status
         self.headers = headers or {}
-        # A non-empty ``url`` stands for a page the index redirected to; the
-        # transport otherwise stamps the requested URL, as a real one reports it.
+        # Empty means the transport fills in the requested URL. Set it to
+        # stand in for a page the index redirected to.
         self.url = url
 
     @property
@@ -1677,12 +1677,11 @@ class TestExpiresFreshness:
 
 
 class TestRedirectedProjectPage:
-    """A relative file URL resolves against the page the index actually served.
+    """A relative file URL resolves against the page the index served.
 
-    An index is free to redirect a project page (a path-rewriting proxy, an
-    http-to-https upgrade, a CDN host move) and free to publish a relative
-    ``files[].url``. RFC 3986 section 5.1.3 makes the redirect target the base,
-    so the resolved URL must not point back at the requested path.
+    An index may redirect a project page and still publish a relative
+    ``files[].url``. RFC 3986 section 5.1.3 makes the redirect target the
+    base, so the resolved URL must not point back at the requested path.
     """
 
     _MOVED_PAGE = "https://mirror.example.com/pypi/simple/pkg/"
@@ -1761,6 +1760,7 @@ class TestRedirectedProjectPage:
                 await client.aclose()
 
         (wheel,) = asyncio.run(go())
+
         assert wheel.url == self._EXPECTED_URL
 
     def test_304_revalidation_adopts_the_redirect_target(self, tmp_path: Path) -> None:

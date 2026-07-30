@@ -98,10 +98,9 @@ class CachePolicy:
     ``fetched_at`` is the start of the freshness window: when nab received the
     response, less any Age a relaying shared cache reported.
 
-    ``page_url`` is the URL the stored body was retrieved from, which its
-    relative entries resolve against. It differs from the requested URL when
-    the index redirected, and is ``None`` for an entry written before it was
-    recorded and for the negative sentinel, which has no body.
+    ``page_url`` is the URL the stored body was retrieved from, the base its
+    relative entries resolve against. It is ``None`` for the negative
+    sentinel, which has no body, and for an entry cached without it.
     """
 
     fetched_at: int
@@ -464,6 +463,11 @@ def _encode_policy(policy: CachePolicy) -> bytes:
     ).encode("utf-8")
 
 
+def _policy_page_url(value: object) -> str | None:
+    """Page URL from a decoded policy, or None when it is unusable as a base."""
+    return value if isinstance(value, str) and value else None
+
+
 def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
     try:
         doc = json.loads(policy_bytes)
@@ -471,7 +475,7 @@ def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
             fetched_at=int(doc["fetched_at"]),
             max_age=int(doc["max_age"]),
             etag=doc.get("etag"),
-            page_url=doc.get("page_url"),
+            page_url=_policy_page_url(doc.get("page_url")),
         )
     except (ValueError, KeyError, TypeError):
         return None

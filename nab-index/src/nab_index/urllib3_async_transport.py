@@ -63,15 +63,19 @@ class _SSLContext(truststore.SSLContext):
 def _final_url(response: urllib3.BaseHTTPResponse, requested_url: str) -> str:
     """Return the absolute URL ``response`` was retrieved from.
 
-    urllib3 reports a redirect's ``Location`` verbatim, and a relative one is
-    legal, so the last hop's location is resolved against the URL that served
-    it (RFC 3986 section 5.1.3).
+    urllib3 records status, connect, and read retries in the same history as
+    redirects, and records them with the request path alone, so only a hop
+    carrying a ``Location`` moves the URL. A ``Location`` is reported verbatim
+    and may be relative, so each is resolved against the URL that served it
+    (RFC 3986 section 5.1.3).
     """
     history = response.retries.history if response.retries is not None else ()
-    if not history:
-        return requested_url
-    last = history[-1]
-    return urljoin(last.url or requested_url, last.redirect_location or "")
+
+    url = requested_url
+    for hop in history:
+        if hop.redirect_location:
+            url = urljoin(hop.url or url, hop.redirect_location)
+    return url
 
 
 class _Urllib3Response:

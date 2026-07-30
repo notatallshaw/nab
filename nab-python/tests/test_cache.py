@@ -553,12 +553,32 @@ class TestEncodePolicy:
             "page_url": None,
         }
 
-    def test_policy_written_before_page_url_decodes(self, tmp_path: Path) -> None:
+    def test_policy_without_a_page_url_decodes(self, tmp_path: Path) -> None:
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
         cache.put_simple("foo", b"{}", _FRESH)
         path = tmp_path / "simple-v0" / "pypi" / "foo.policy"
         path.write_bytes(b'{"fetched_at":1,"max_age":600,"etag":"x"}')
+
         entry = cache.get_simple("foo")
+
+        assert entry is not None
+        assert entry[1].page_url is None
+
+    @pytest.mark.parametrize("page_url", [123, "", []])
+    def test_unusable_page_url_is_dropped(
+        self, tmp_path: Path, page_url: object
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
+        cache.put_simple("foo", b"{}", _FRESH)
+        path = tmp_path / "simple-v0" / "pypi" / "foo.policy"
+        path.write_bytes(
+            json.dumps(
+                {"fetched_at": 1, "max_age": 600, "etag": "x", "page_url": page_url}
+            ).encode()
+        )
+
+        entry = cache.get_simple("foo")
+
         assert entry is not None
         assert entry[1].page_url is None
 

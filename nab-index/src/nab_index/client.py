@@ -443,9 +443,9 @@ def _parse_files(
     name check those leak into the listing as a phantom version, and
     show up in the resolved lockfile as ``cffi==2``.
 
-    ``page_url`` is the URL the project page was retrieved from, which a
-    relative entry resolves against; ``None`` means it was retrieved from
-    the URL ``index_url`` and ``package`` name, with no redirect between.
+    ``page_url`` is the URL the project page was retrieved from, the base a
+    relative entry resolves against. ``None`` falls back to the page URL
+    built from ``index_url`` and ``package``.
 
     PEP 592 ``yanked`` files are dropped unconditionally.
 
