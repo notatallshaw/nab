@@ -82,6 +82,7 @@ from nab_python.resolve import (
     build_lock_input,  # noqa: F401 - referenced as _cli.build_lock_input in _lock
     resolve_for_targets,
 )
+from nab_python.target import NonIntervalMarkerError
 from nab_python.workspace import WorkspaceDiscoveryError
 from nab_resolver.resolver import ResolutionError
 
@@ -584,6 +585,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
         MissingExtraError,
         SiblingMetadataDivergenceError,
         SourceNameMismatchError,
+        NonIntervalMarkerError,
     ) as e:
         printer().error(f"{failure_prefix}: {e}")
         sys.exit(1)
