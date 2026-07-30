@@ -159,10 +159,22 @@ def run_build_backend(
 def _read_build_system(
     data: dict,
 ) -> tuple[str, tuple[str, ...], tuple[str, ...] | None]:
-    """Return ``(backend, requires, backend_path)`` per PEP 517 / 518."""
-    table = data.get("build-system")
-    if not isinstance(table, dict):
+    """Return ``(backend, requires, backend_path)`` per PEP 517 / 518.
+
+    A missing ``[build-system]`` takes the PEP 517 defaults; a
+    ``build-system`` that is not a table is malformed, not absent.
+    """
+    if "build-system" not in data:
         return _DEFAULT_BACKEND, _DEFAULT_REQUIRES, None
+
+    table = data["build-system"]
+    if not isinstance(table, dict):
+        msg = (
+            "build-system in pyproject.toml must be a table,"
+            f" not {type(table).__name__}"
+        )
+        raise BuildBackendError(msg)
+
     backend = table.get("build-backend")
     if not isinstance(backend, str):
         backend = _DEFAULT_BACKEND

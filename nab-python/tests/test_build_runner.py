@@ -407,6 +407,16 @@ class TestRunBuildBackend:
         ):
             run_build_backend(tmp_path, config=config)
 
+    def test_build_system_not_a_table(
+        self, tmp_path: Path, config: NabProjectConfig
+    ) -> None:
+        """A scalar build-system key fails the build."""
+        (tmp_path / "pyproject.toml").write_text(
+            'build-system = "hatchling.build"\n', encoding="utf-8"
+        )
+        with pytest.raises(BuildBackendError, match="must be a table"):
+            run_build_backend(tmp_path, config=config)
+
     def test_venv_creation_oserror_wrapped(
         self,
         tmp_path: Path,
@@ -529,6 +539,14 @@ class TestReadBuildSystem:
         )
 
         assert _read_build_system({}) == (_DEFAULT_BACKEND, _DEFAULT_REQUIRES, None)
+
+    @pytest.mark.parametrize("value", ["hatchling.build", ["setuptools>=61"], 1])
+    def test_build_system_not_a_table_raises(self, value: object) -> None:
+        """PEP 518 defines build-system as a table."""
+        from nab_python._build.runner import _read_build_system
+
+        with pytest.raises(BuildBackendError, match="must be a table"):
+            _read_build_system({"build-system": value})
 
     def test_build_backend_wrong_type_uses_default(self) -> None:
         from nab_python._build.runner import _DEFAULT_BACKEND, _read_build_system
