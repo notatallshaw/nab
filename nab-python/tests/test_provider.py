@@ -2553,8 +2553,8 @@ class TestLocalSources:
         """Dynamic LocalSource deps under NEVER raise UnsupportedSdistError.
 
         Static-only reads are fine; once ``dynamic = ["dependencies"]``
-        appears, NEVER cannot satisfy the request and the version is
-        skipped (or, on a forced fetch, surfaces as an error).
+        appears, NEVER cannot satisfy the request and listing the source
+        raises.
         """
 
         self._write_local(

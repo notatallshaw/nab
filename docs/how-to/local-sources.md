@@ -55,8 +55,10 @@ require `build-policy = "build-local"` (the default) or
 `"build-remote"`.  nab spins up an isolated venv, installs the
 declared build requirements, and invokes the PEP 517 backend
 through `pyproject_hooks` to extract the live dependency list.
-Setting `"never"` instead skips the version with
-`UnsupportedSdistError` so the resolver moves on.
+Setting `"never"` instead ends the resolve.  nab reads the source
+while listing its one version, so there is no candidate to
+reject.  The error names the source and the policy that forbade
+the build.
 
 ## Lockfile shape
 

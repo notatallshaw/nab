@@ -193,8 +193,10 @@ class BuildPolicy(enum.Enum):
     Wheels, PEP 643 sdists, sdists with a static ``pyproject.toml`` fallback,
     local checkouts via ``[[tool.nab.local-sources]]``, VCS clones via
     ``[[tool.nab.vcs-sources]]``, and archive sources via
-    ``[[tool.nab.archive-sources]]`` are all read statically.  Sources whose
-    metadata is dynamic without a static fallback are skipped.
+    ``[[tool.nab.archive-sources]]`` are all read statically.  A source whose
+    metadata cannot be read statically raises :class:`UnsupportedSdistError`,
+    which skips a PyPI sdist version but ends the resolve for a declared
+    source.
     """
 
     BUILD_LOCAL = "build-local"
@@ -293,9 +295,11 @@ class UnsupportedSdistError(MetadataError):
     :class:`BuildPolicy` (or its per-package override) does not permit:
     dynamic metadata under :attr:`BuildPolicy.NEVER`, a VCS clone under
     :attr:`BuildPolicy.BUILD_LOCAL`, or a remote sdist build failure
-    under :attr:`BuildPolicy.BUILD_REMOTE`.  Caught by
-    :meth:`Provider._look_ahead_ok` so the resolver skips the
-    version instead of failing.
+    under :attr:`BuildPolicy.BUILD_REMOTE`.  For a PyPI sdist it is
+    caught by :meth:`Provider._look_ahead_ok`, so the resolver skips
+    the version.  A declared source (local, VCS, archive, or workspace
+    member) is read while listing its one version, so the error ends
+    the resolve instead.
     """
 
 
