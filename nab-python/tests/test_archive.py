@@ -840,7 +840,7 @@ class TestArchiveBuildPolicyLevels:
 
     Pins the behaviour the BuildPolicy attribute docstrings enumerate: a
     static ``[project]`` archive is read at every level, and a dynamic
-    archive is skipped until build-remote, where the backend is invoked.
+    archive raises until build-remote, where the backend is invoked.
     """
 
     def _extract(self, policy: BuildPolicy, path: Path) -> WheelMetadata:
@@ -869,7 +869,7 @@ class TestArchiveBuildPolicyLevels:
         assert [str(r) for r in metadata.requires_dist] == ["requests>=2"]
 
     @pytest.mark.parametrize("policy", [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL])
-    def test_dynamic_archive_skipped_below_build_remote(
+    def test_dynamic_archive_raises_below_build_remote(
         self, policy: BuildPolicy, tmp_path: Path
     ) -> None:
         (tmp_path / "pyproject.toml").write_text(

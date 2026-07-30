@@ -32,15 +32,17 @@ Static metadata only, from any source:
   look-ahead and surfaces as a no-version diagnostic if no
   candidate ultimately works.
 * Local checkouts declared via `[[tool.nab.local-sources]]`:
-  the directory's `pyproject.toml` is read statically.  A
-  member that requires `dynamic = ["dependencies"]` is skipped.
+  the directory's `pyproject.toml` is read statically.  A missing
+  or malformed `[project]`, or a `dynamic` list covering
+  `version`, `requires-python`, `dependencies`, or
+  `optional-dependencies`, ends the resolve.
 * VCS clones declared via `[[tool.nab.vcs-sources]]`: the clone
   is fetched and its `pyproject.toml` is read statically.  Same
-  skip behaviour for dynamic deps.
+  failure when the static read comes up empty.
 * Archive sources declared via `[[tool.nab.archive-sources]]`:
   the `.tar.gz` is downloaded, hash-verified, and extracted, then
-  its `pyproject.toml` is read statically.  Same skip behaviour
-  for dynamic deps.
+  its `pyproject.toml` is read statically.  Same failure when the
+  static read comes up empty.
 
 Picks the most reproducible posture: every input to the SAT
 problem is a file read, not a sandboxed subprocess.  Use `never`
@@ -72,12 +74,28 @@ sdists.  On top of `build-local`:
   temp directory, and built.
 
 A backend failure on any of these surfaces as
-`UnsupportedSdistError`; the resolver skips that version, then
-either picks the next candidate or, if no candidate works,
-reports the accumulated build failures as a no-version
+`UnsupportedSdistError`; for a PyPI sdist the resolver skips that
+version, then either picks the next candidate or, if no candidate
+works, reports the accumulated build failures as a no-version
 diagnostic.  Honesty over silence: a version that needs a build
 which fails is treated as unbuildable, not as having zero
-dependencies.
+dependencies.  A VCS clone or an archive source ends the resolve
+instead; see below.
+
+## A source that cannot be read ends the resolve
+
+A declared source (`[[tool.nab.local-sources]]`,
+`[[tool.nab.vcs-sources]]`, `[[tool.nab.archive-sources]]`, or a
+workspace member) is the only candidate for its name, and nab
+reads its metadata while listing that one version.  If the
+effective policy forbids the build that read needs, or the
+backend runs and fails, nab names the source it could not read
+and exits non-zero.  No candidate was formed, so there is nothing
+to skip and no no-version diagnostic to report.
+
+A PyPI sdist is one candidate among many, read at look-ahead, so
+a forbidden or failed build rejects that version alone and the
+resolver moves on to the next.
 
 ## Choosing a level
 
