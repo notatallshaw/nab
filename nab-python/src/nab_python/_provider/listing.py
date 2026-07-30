@@ -727,7 +727,7 @@ def await_metadata_batch(
 ) -> None:
     """Wait for all submitted metadata to arrive, then parse into cache."""
     # Imported lazily: provider.py imports this module.
-    from ..provider import IncompatiblePythonError
+    from ..provider import ForeignMetadataError, IncompatiblePythonError
 
     for version, ver_str, metadata_url, event in submitted:
         cache_key = (package, version)
@@ -761,12 +761,14 @@ def await_metadata_batch(
             ValueError,
             InvalidVersion,
             InvalidSpecifier,
+            ForeignMetadataError,
             IncompatiblePythonError,
             UnsupportedVcsError,
             NotImplementedError,
         ):
-            # Malformed metadata, a Python-incompatible Requires-Python, or a
-            # refused base direct-URL/VCS dep: leave the version un-cached so
+            # Malformed metadata, metadata declaring another release, a
+            # Python-incompatible Requires-Python, or a refused base
+            # direct-URL/VCS dep: leave the version un-cached so
             # get_dependencies re-raises at selection time instead of aborting
             # the speculative prefetch of a candidate the scan may never pick.
             continue

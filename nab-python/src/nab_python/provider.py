@@ -64,6 +64,7 @@ __all__ = [
     "DistFile",
     "DistPolicy",
     "ExtrasMode",
+    "ForeignMetadataError",
     "IncompatiblePythonError",
     "InvalidUploadTimeError",
     "ListingFilterCache",
@@ -300,6 +301,16 @@ class UnsupportedSdistError(MetadataError):
     the version.  A declared source (local, VCS, archive, or workspace
     member) is read while listing its one version, so the error ends
     the resolve instead.
+    """
+
+
+class ForeignMetadataError(MetadataError):
+    """An index candidate's METADATA declares a different release.
+
+    Core metadata ``Name`` and ``Version`` say which release an artifact is, so
+    a candidate whose METADATA (or :pep:`658` sidecar) names another project or
+    version describes some other release's dependencies.  Caught by
+    :meth:`Provider._look_ahead_ok` so the resolver skips the version.
     """
 
 
@@ -2075,9 +2086,9 @@ class Provider:
     ) -> None:
         """Parse fetched metadata, routing each failure to its own cache.
 
-        A disallowed build, a Python-incompatible candidate, and an unparseable
-        payload each record their own failure kind so a re-query is answered
-        from cache. Hard errors propagate unrecorded.
+        A disallowed build, a candidate ruled out by its own metadata, and an
+        unparseable payload each record their own failure kind so a re-query
+        is answered from cache. Hard errors propagate unrecorded.
         """
         package, version = cache_key
         from .config import OverrideConflictError  # noqa: PLC0415 (config import cycle)
@@ -2089,7 +2100,7 @@ class Provider:
         except UnsupportedSdistError:
             self._unsupported_sdists.add(cache_key)
             raise
-        except IncompatiblePythonError as exc:
+        except (ForeignMetadataError, IncompatiblePythonError) as exc:
             self._invalid_metadata[cache_key] = str(exc)
             raise
         except (
