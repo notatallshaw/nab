@@ -35,6 +35,10 @@ def format_error(
 ) -> str:
     """Format a human-readable error from an incompatibility derivation tree.
 
+    Where narrowing leaves a line ruling out versions its causes no longer
+    account for, the range it dropped is stated once for that package, as the
+    resolver states it when it looks for a version in a range and finds none.
+
     ``narrow`` maps ``(package, constraint)`` to a display constraint and is
     applied to originally-positive terms only; a negative dependency-side
     term renders as requested even when displayed negated.  On a
@@ -72,9 +76,19 @@ def explain_incompatibility(
     # The flag marks a node whose children are already pushed: it renders after them.
     stack: list[tuple[Incompatibility[Any, Any], bool]] = [(incompatibility, False)]
 
+    needed, unstated = (
+        ({}, {}) if narrow is None else _unstated_ranges(incompatibility, narrow)
+    )
+
     while stack:
         node, expanded = stack.pop()
         if expanded:
+            for package in needed.get(id(node), ()):
+                gap = unstated.pop(package, None)
+                if gap is not None:
+                    lines.append(
+                        f"because no versions of {package} {gap} are available"
+                    )
             lines.append(_render_line(node, narrow))
             continue
 
@@ -92,20 +106,131 @@ def explain_incompatibility(
                 stack.append((node.cause_left, False))
 
 
-def _narrow_positive(
-    term: Term[Any, Any], narrow: _NarrowFn, *, allow_full: bool
-) -> Term[Any, Any]:
-    """Return ``term`` with a narrowed constraint when originally positive.
-
-    Unless ``allow_full``, a narrowing to the full range is refused and the
-    term renders as requested.
-    """
+def _narrow_positive(term: Term[Any, Any], narrow: _NarrowFn) -> Term[Any, Any]:
+    """Return ``term`` with a narrowed constraint when originally positive."""
     if not term.is_positive():
         return term
-    shown = Term(term.package, narrow(term.package, term.constraint), positive=True)
-    if allow_full or not _is_full(shown):
-        return shown
-    return term
+    return Term(term.package, narrow(term.package, term.constraint), positive=True)
+
+
+def _shown_terms(
+    incompatibility: Incompatibility[Any, Any], narrow: _NarrowFn
+) -> dict[Any, Term[Any, Any]]:
+    """Return the terms of ``incompatibility`` as its line renders them.
+
+    The comparison runs on exactly what the reader sees, so a requirement is
+    read as printed, un-narrowed, the way the line states it.
+    """
+    if incompatibility.cause is IncompatibilityCause.NO_VERSIONS:
+        return {term.package: term for term in incompatibility.terms}
+    return {
+        term.package: _narrow_positive(term, narrow) for term in incompatibility.terms
+    }
+
+
+def _satisfying(term: Term[Any, Any] | None) -> Any:
+    """Return the versions that satisfy ``term``, or None for no restriction."""
+    if term is None:
+        return None
+    return term.constraint if term.is_positive() else ~term.constraint
+
+
+def _shortfall(
+    conclusion: Term[Any, Any] | None,
+    left: Term[Any, Any] | None,
+    right: Term[Any, Any] | None,
+) -> Any:
+    """Return what a step rules out for one package that its causes do not.
+
+    A step rules out the union of what its causes rule out.  Absent from one
+    cause the package carries the other's term; absent from the step it was
+    resolved away, which needs the causes to leave nothing.
+    """
+    joint = (
+        left if right is None else right if left is None else union_terms(left, right)
+    )
+    covered = _satisfying(joint)
+    stated = _satisfying(conclusion)
+    if covered is None:
+        return None
+    return ~covered if stated is None else stated - covered
+
+
+def _unstated_ranges(
+    root: Incompatibility[Any, Any], narrow: _NarrowFn
+) -> tuple[dict[int, list[Any]], dict[Any, Any]]:
+    """Return which line needs a package's listing stated, and what to state.
+
+    The first mapping is node id to packages, the second is package to the whole
+    range to state for it.  A derivation can reach past its causes at more than
+    one line over gaps of one listing, so the ranges are unioned per package and
+    the caller states each once, at the first line that needs it.
+    """
+    needed: dict[int, list[Any]] = {}
+    unstated: dict[Any, Any] = {}
+    seen_ids: set[int] = set()
+    stack: list[Incompatibility[Any, Any]] = [root]
+
+    while stack:
+        node = stack.pop()
+        if id(node) in seen_ids:
+            continue
+        seen_ids.add(id(node))
+
+        for package, gap in _narrowed_away(node, narrow):
+            needed.setdefault(id(node), []).append(package)
+            previous = unstated.get(package)
+            unstated[package] = gap if previous is None else previous | gap
+
+        if node.cause_left is not None:
+            stack.append(node.cause_left)
+        if node.cause_right is not None:
+            stack.append(node.cause_right)
+
+    return needed, unstated
+
+
+def _narrowed_away(
+    incompatibility: Incompatibility[Any, Any], narrow: _NarrowFn
+) -> list[tuple[Any, Any]]:
+    """Return the packages and ranges narrowing drops from a line's support.
+
+    Narrowing a widened term back onto the listed versions drops the versions the
+    widening added, so a line can rule out, or resolve a requirement over, a range
+    its causes no longer account for.  Only a shortfall the un-narrowed terms do
+    not have is reported, so what is stated is what narrowing dropped: a range
+    holding no listed version, since narrowing keeps which listed versions a
+    constraint contains.
+    """
+    left = incompatibility.cause_left
+    right = incompatibility.cause_right
+    if (
+        incompatibility.cause is not IncompatibilityCause.DERIVED
+        or left is None
+        or right is None
+    ):
+        return []
+
+    raw_left = {term.package: term for term in left.terms}
+    raw_right = {term.package: term for term in right.terms}
+    raw_node = {term.package: term for term in incompatibility.terms}
+    shown_left = _shown_terms(left, narrow)
+    shown_right = _shown_terms(right, narrow)
+    shown_node = _shown_terms(incompatibility, narrow)
+
+    found: list[tuple[Any, Any]] = []
+    for package in {**raw_left, **raw_right}:
+        raw_gap = _shortfall(
+            raw_node.get(package), raw_left.get(package), raw_right.get(package)
+        )
+        if raw_gap is not None and not raw_gap.is_empty:
+            continue
+        gap = _shortfall(
+            shown_node.get(package), shown_left.get(package), shown_right.get(package)
+        )
+        if gap is not None and not gap.is_empty:
+            found.append((package, gap))
+    return found
 
 
 def _render_line(
@@ -115,13 +240,10 @@ def _render_line(
     """Render a single incompatibility as one explanation line."""
     cause = incompatibility.cause
     terms = incompatibility.terms
-    if narrow is not None:
-        # Without its range the line would claim the package has no versions
-        # at all, not that the ones it has were rejected here.
-        allow_full = cause is not IncompatibilityCause.NO_VERSIONS
-        terms = [
-            _narrow_positive(term, narrow, allow_full=allow_full) for term in terms
-        ]
+    # An availability line renders its own range: narrowing it onto the listing
+    # is what let it stop covering the requirement it closes against.
+    if narrow is not None and cause is not IncompatibilityCause.NO_VERSIONS:
+        terms = [_narrow_positive(term, narrow) for term in terms]
 
     # Attribution form for the two standard two-term clauses.
     if (

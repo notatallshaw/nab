@@ -196,6 +196,10 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         ``package`` may be the virtual root sentinel or another package
         outside the provider's namespace; return such constraints
         unchanged, as providers that do not widen do for all input.
+
+        Soundness contract: the result must hold the same known versions as
+        ``constraint``.  The renderer reports what a narrowing drops as a range
+        holding no version, so dropping one that exists states a falsehood.
         """
         ...
 
