@@ -67,6 +67,7 @@ from nab_python.lockfile import (
     WheelArtifact,
     build_pylock,
     build_target_lock,
+    drop_workspace_pins,
     package_metadata_override_records,
     read_lockfile_anchor,
     read_lockfile_packages,
@@ -1125,6 +1126,37 @@ class TestConflictForkBaseDepDivergentClosure:
             marker = by_name[name].marker
             assert "in extras" not in str(marker)
             assert marker is None or marker.evaluate(no_member)
+
+    def test_workspace_drop_keeps_base_closure(self) -> None:
+        # app -> member -> foo, all unconditional, and app is the only
+        # declared base name.  foo is base only through the member, so
+        # dropping the member must not cut the closure walk short.
+        fork_pins: dict[str, PinShape] = {
+            "app": _index_pin(name="app", version="2.0"),
+            "member": LocalPin(name="member", version="1.0", path="packages/member"),
+            "foo": _index_pin(name="foo", version="1.0"),
+        }
+        fork_deps = {"app": ("member",), "member": ("foo",)}
+
+        lock_input = self._lock_input_with(
+            cpu_pins=fork_pins,
+            cpu_deps=fork_deps,
+            cpu_base_deps=fork_deps,
+            gpu_pins=fork_pins,
+            gpu_deps=fork_deps,
+            gpu_base_deps=fork_deps,
+            base_names=frozenset({"app"}),
+        )
+
+        pylock = build_pylock(drop_workspace_pins(lock_input, frozenset({"member"})))
+        by_name = {str(p.name): p for p in pylock.packages}
+
+        assert "member" not in by_name
+        foo = by_name["foo"]
+        assert "in extras" not in str(foo.marker)
+        assert foo.marker is None or foo.marker.evaluate(
+            self._LINUX.env_with_membership()
+        )
 
 
 class TestConflictForksWithoutBaseAttribution:

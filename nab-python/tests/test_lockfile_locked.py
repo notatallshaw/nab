@@ -62,6 +62,7 @@ def _lock_input(
     pins: Mapping[str, IndexPin],
     *,
     dependencies: Mapping[str, tuple[str, ...]] | None = None,
+    base_dependencies: Mapping[str, tuple[str, ...]] | None = None,
 ) -> LockInput:
     return LockInput(
         targets={
@@ -69,6 +70,7 @@ def _lock_input(
                 target=TARGET,
                 pins=dict(pins),
                 dependencies=dict(dependencies or {}),
+                base_dependencies=dict(base_dependencies or {}),
             )
         }
     )
@@ -240,6 +242,17 @@ class TestDropWorkspacePins:
         target = dropped.targets[TARGET.label]
         assert set(target.pins) == {"foo"}
         assert target.dependencies == {"foo": ("bar",)}
+
+    def test_drop_carries_base_dependency_edges(self) -> None:
+        edges = {"foo": ("alpha", "bar"), "alpha": ("bar",)}
+        lock_input = _lock_input(
+            {"foo": _pin("foo", "1.0"), "alpha": _pin("alpha", "2.0")},
+            dependencies=edges,
+            base_dependencies=edges,
+        )
+
+        dropped = drop_workspace_pins(lock_input, frozenset({"alpha"}))
+        assert dropped.targets[TARGET.label].base_dependencies == edges
 
 
 class TestSummarizeLock:
