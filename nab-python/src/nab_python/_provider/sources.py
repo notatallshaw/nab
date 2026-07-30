@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ..provider import ArchiveSource, LocalSource, Provider, VcsSource
 
 _EXTRACTED_MARKER = ".nab-extracted"
+_HASHES_MARKER = ".nab-hashes"
 
 
 def index_local_sources(
@@ -282,12 +283,49 @@ def index_archive_sources(
 def _fetch_archive_bytes(
     provider: Provider,
     source: ArchiveSource,
-) -> tuple[Path, ArchiveRequest, str, bytes]:
-    """Return ``(cache_dir, request, digest, data)`` for a verified archive.
+    request: ArchiveRequest,
+) -> bytes:
+    """Return the hash-verified bytes of ``source``'s archive.
 
-    Raises before returning if the cache dir is missing, the download failed,
-    or the bytes fail their hash.  The coordinator reads the declared URL
-    without verifying it, so every declared hash is checked here.
+    Raises before returning if the fetch recorded a failure, produced no
+    bytes, or the bytes fail their hash.  The coordinator reads the declared
+    URL without verifying it, so every declared hash is checked here.
+    """
+    from ..provider import UnsupportedSdistError
+
+    canonical = canonicalize_name(source.name)
+    digest = request.hashes[0][1]
+    index = provider.coordinator.index
+
+    event = provider.coordinator.request_direct_archive(canonical, digest, request.url)
+    event.wait()
+
+    failure = index.get_sdist_archive_error(canonical, digest)
+    if failure is not None:
+        msg = f"archive source {source.name!r}: {failure}"
+        raise UnsupportedSdistError(msg) from failure
+
+    data = index.get_sdist_archive(canonical, digest)
+    if data is None:
+        msg = f"archive source {source.name!r}: download from {request.url} failed"
+        raise UnsupportedSdistError(msg)
+
+    for pinned_hash in request.hashes:
+        verify_sdist_hash(data, pinned_hash)
+
+    return data
+
+
+def _prepare_archive_tree(
+    provider: Provider,
+    source: ArchiveSource,
+) -> tuple[Path, ArchiveRequest]:
+    """Return the extracted tree's root and the parsed request for ``source``.
+
+    The cached tree is used with no download, offline runs included, only when
+    the record left at extraction covers every hash this resolve declares.
+    Otherwise the archive is downloaded and checked against the whole
+    declaration, so adding a hash re-verifies rather than trusting the tree.
     """
     from ..provider import UnsupportedSdistError
 
@@ -300,49 +338,63 @@ def _fetch_archive_bytes(
         raise UnsupportedSdistError(msg)
 
     request = ArchiveRequest.parse(source.url)
-    canonical = canonicalize_name(source.name)
 
-    # The version is unknown until the tree is extracted, so key the download
-    # by the first declared digest: unique and known up-front.  The fragment
+    # The version is unknown until the tree is extracted, so key the cache by
+    # the first declared digest: unique and known up-front.  The fragment
     # only carries accepted algorithms, so every pair is verifiable.
     digest = request.hashes[0][1]
+    target = cache_dir / digest
 
-    event = provider.coordinator.request_direct_archive(canonical, digest, request.url)
-    event.wait()
-    data = provider.coordinator.index.get_sdist_archive(canonical, digest)
-    if data is None:
-        msg = f"archive source {source.name!r}: download from {request.url} failed"
-        raise UnsupportedSdistError(msg)
+    declared = set(request.hashes)
+    if (target / _EXTRACTED_MARKER).is_file() and declared <= _verified_hashes(target):
+        return _extracted_root(target), request
 
-    for pinned_hash in request.hashes:
-        verify_sdist_hash(data, pinned_hash)
-    return cache_dir, request, digest, data
+    data = _fetch_archive_bytes(provider, source, request)
+    return _extract_archive(cache_dir, digest, data, request.hashes), request
 
 
-# Extraction (this function and _extract_archive) is excluded from coverage: it
-# requires the PEP 706 tar data filter (Python 3.10.12+), but GitHub Actions
-# setup-python installs 3.10.11 on macOS-arm64 and Windows (python.org stopped
-# shipping 3.10 installers after 3.10.11, and actions/python-versions builds
-# those OSes from installers), so no 3.10.12+ artifact exists for them.  The
-# extraction tests skip there, leaving these lines unhit on those two runners.
-# The download-and-verify guards live in _fetch_archive_bytes above so they stay
-# gated on every runner.  Remove the pragmas when that 3.10 cell is dropped,
-# sourced from python-build-standalone, or 3.10 reaches EOL (2026-10).
+def _verified_hashes(target: Path) -> set[tuple[str, str]]:
+    """Return the hashes the tree at ``target`` was verified against.
+
+    The record is written with the completion marker, so a tree with no record
+    covers nothing and is refetched rather than trusted.
+    """
+    record = target / _HASHES_MARKER
+    if not record.is_file():
+        return set()
+
+    lines = record.read_text(encoding="utf-8").splitlines()
+    return {
+        (algorithm, hex_digest)
+        for algorithm, _, hex_digest in (line.partition("=") for line in lines)
+    }
+
+
+# Extraction (this function and _extract_archive) is excluded from coverage: a
+# cold archive requires the PEP 706 tar data filter (Python 3.10.12+), but
+# GitHub Actions setup-python installs 3.10.11 on macOS-arm64 and Windows
+# (python.org stopped shipping 3.10 installers after 3.10.11, and
+# actions/python-versions builds those OSes from installers), so no 3.10.12+
+# artifact exists for them.  The extraction tests skip there, leaving these
+# lines unhit on those two runners.  The cache-hit test and the
+# download-and-verify guards live in _prepare_archive_tree and
+# _fetch_archive_bytes above so they stay gated on every runner.  Remove the
+# pragmas when that 3.10 cell is dropped, sourced from python-build-standalone,
+# or 3.10 reaches EOL (2026-10).
 def materialize_archive_source(
     provider: Provider,
     normalized: str,
     source: ArchiveSource,
 ) -> list[tuple[Version, SdistFile]]:  # pragma: no cover (tar data filter)
-    """Download and hash-verify ``source``, extract it, then materialise it.
+    """Materialise ``source`` from its extracted tree, downloading if needed.
 
-    A declared archive is always verified against its required hash in
-    :func:`_fetch_archive_bytes`, so a tampered archive fails the resolve
+    Every hash ``source`` declares is checked: against the downloaded bytes in
+    :func:`_fetch_archive_bytes`, or against the record the extraction left when
+    the cached tree is reused.  A tampered archive therefore fails the resolve
     loudly rather than being used and pinned unverified.  The extracted tree
     then takes the same path as a LocalSource.
     """
-    # Download, hash-verify, and extract the archive into the cache.
-    cache_dir, request, digest, data = _fetch_archive_bytes(provider, source)
-    root = _extract_archive(cache_dir, digest, data)
+    root, request = _prepare_archive_tree(provider, source)
 
     # Read the extracted tree's metadata as a local source and seed one candidate.
     path = root / request.subdirectory if request.subdirectory else root
@@ -358,15 +410,22 @@ def materialize_archive_source(
 
 
 def _extract_archive(
-    cache_dir: Path, digest: str, data: bytes
+    cache_dir: Path,
+    digest: str,
+    data: bytes,
+    verified: tuple[tuple[str, str], ...],
 ) -> Path:  # pragma: no cover (tar data filter; see materialize_archive_source)
     """Extract ``data`` under ``cache_dir`` keyed by ``digest``; return the root.
 
-    Idempotent, like :func:`prepare_clone`: a digest already extracted in a
-    prior resolve is reused rather than re-extracted, since the tree is
-    content-addressed by its verified hash.  A fresh extraction lands in a
-    temporary sibling and is renamed into place once its completion marker is
-    written, so the cache path never holds a partial tree.
+    ``verified`` names the hashes the caller checked ``data`` against, recorded
+    beside the completion marker so a later resolve reuses the tree only for a
+    declaration those hashes cover.
+
+    Idempotent, like :func:`prepare_clone`: a tree another run published
+    between the caller's cache check and this call is reused rather than
+    re-extracted.  A fresh extraction lands in a temporary sibling and is
+    renamed into place once its completion marker is written, so the cache
+    path never holds a partial tree.
     """
     from ..provider import UnsupportedSdistError
 
@@ -388,6 +447,11 @@ def _extract_archive(
             # resolved temp dir, since extract_sdist_archive resolves symlinks
             # and relative cache dirs.
             root_name = root.name if root != tmp.resolve() else ""
+
+            record = "\n".join(
+                f"{algorithm}={hex_digest}" for algorithm, hex_digest in verified
+            )
+            (tmp / _HASHES_MARKER).write_text(record, encoding="utf-8")
             (tmp / _EXTRACTED_MARKER).write_text(root_name, encoding="utf-8")
 
             try:
@@ -408,7 +472,15 @@ def _extract_archive(
             # interrupt included, would leak the temp tree.
             shutil.rmtree(tmp, ignore_errors=True)
 
-    root_name = marker.read_text(encoding="utf-8").strip()
+    return _extracted_root(target)
+
+
+def _extracted_root(target: Path) -> Path:
+    """Return the source root inside the extracted tree at ``target``.
+
+    An empty marker records a flat archive, whose root is the tree itself.
+    """
+    root_name = (target / _EXTRACTED_MARKER).read_text(encoding="utf-8").strip()
 
     # Resolve so the file URI works even for a relative cache dir.
     base = target / root_name if root_name else target

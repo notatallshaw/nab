@@ -1210,6 +1210,10 @@ class FetchCoordinator:
         absent so the resolver works with what the cache holds.  Any other
         failure is recorded as an error, because a file the listing advertised
         and the index then failed to serve is not one that does not exist.
+
+        A declared archive is the exception: it is the package's only
+        candidate, so there is nothing to degrade to and an offline miss is
+        recorded as an error.
         """
         assert req.version is not None
         if req.kind is FetchKind.METADATA:
@@ -1231,7 +1235,7 @@ class FetchCoordinator:
                 self.index.store_sdist_metadata(req.package, req.version, None)
             else:
                 self.index.store_sdist_metadata_error(req.package, req.version, exc)
-        elif offline:
+        elif offline and req.kind is FetchKind.SDIST_ARCHIVE:
             self.index.store_sdist_archive(req.package, req.version, None)
         else:
             self.index.store_sdist_archive_error(req.package, req.version, exc)

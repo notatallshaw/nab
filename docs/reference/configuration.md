@@ -576,7 +576,10 @@ dependencies works at any `build-policy`; dynamic dependencies require
 
 The URL is read by its own scheme, whatever the configured indexes use:
 a `file://` archive is read from disk, and any other archive is fetched
-over HTTP.
+over HTTP.  The extracted tree is cached alongside the hashes it was
+verified against, so a later resolve that declares those same hashes
+reuses it and downloads nothing, `--offline` included.  Declaring a hash
+the cached tree was not checked against downloads the archive again.
 
 ## Universal mode
 

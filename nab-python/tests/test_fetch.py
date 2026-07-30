@@ -19,7 +19,7 @@ import httpx
 import pytest
 import respx
 
-from nab_index.cache import NullCache
+from nab_index.cache import NullCache, OfflineError
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import (
     MalformedSimpleResponseError,
@@ -1479,6 +1479,22 @@ class TestFetchCoordinator:
 
             assert event is pending.event
             assert coord.index.get_sdist_archive("pkg", "digest") is None
+
+    def test_offline_direct_archive_records_the_offline_error(self) -> None:
+        """An offline miss on a declared archive is recorded as an error.
+
+        An index artifact recorded absent lets the resolver skip that version;
+        a declared archive is the package's only candidate, so there is no
+        version to skip to.
+        """
+        with _coord(offline=True) as coord:
+            event = coord.request_direct_archive(
+                "pkg", "digest", "https://files.example.com/pkg-1.0.tar.gz"
+            )
+            event.wait(timeout=5)
+            assert coord.index.get_sdist_archive("pkg", "digest") is None
+            error = coord.index.get_sdist_archive_error("pkg", "digest")
+            assert isinstance(error, OfflineError)
 
     def test_file_index_still_closes_the_transport(self, tmp_path: Path) -> None:
         """A file:// index client owns no transport; a direct archive fetch may."""

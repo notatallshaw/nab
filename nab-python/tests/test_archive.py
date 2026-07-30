@@ -28,6 +28,7 @@ from nab_index.client import SdistHashMismatchError, extract_sdist_archive
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.multi_index import IndexConfig
 from nab_index.subdir import subdirectory_escapes
+from nab_index.transport import HttpError
 from nab_python._provider import sources
 from nab_python._provider.sources import _fetch_archive_bytes
 from nab_python._vendor.packaging.utils import canonicalize_name
@@ -130,6 +131,26 @@ def _fetching_provider(
         archive_cache_dir=cache_dir,
         build_policy=BuildPolicy.NEVER,
     )
+
+
+def _fetch_bytes(provider: Provider, source: ArchiveSource) -> bytes:
+    """Fetch and verify ``source``'s archive the way materialisation does."""
+    return _fetch_archive_bytes(provider, source, ArchiveRequest.parse(source.url))
+
+
+def _warm_extracted_tree(cache: Path, digest: str, root: str) -> None:
+    """Write the extracted tree a prior resolve of ``digest`` leaves behind.
+
+    ``root`` is the archive's single root directory, or ``""`` for a flat
+    archive, as the completion marker records it.  The hash record names the
+    one sha256 that resolve verified.
+    """
+    target = cache / digest
+    source_dir = target / root if root else target
+    source_dir.mkdir(parents=True)
+    (source_dir / "pyproject.toml").write_text(_PYPROJECT, encoding="utf-8")
+    (target / ".nab-hashes").write_text(f"sha256={digest}", encoding="utf-8")
+    (target / ".nab-extracted").write_text(root, encoding="utf-8")
 
 
 def _lock_input(pins: Mapping[str, PinShape]) -> LockInput:
@@ -421,6 +442,31 @@ class TestArchiveMaterialize:
         assert sentinel.exists()
 
     @requires_data_filter
+    def test_every_verified_hash_is_recorded_for_reuse(self, tmp_path: Path) -> None:
+        # A warm resolve tests its declaration against the record, so the
+        # record has to name every hash the download was checked against.
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        digest = hashlib.sha256(data).hexdigest()
+        sha512 = hashlib.sha512(data).hexdigest()
+        source = ArchiveSource(
+            name="foo",
+            url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}&sha512={sha512}",
+        )
+        cache = tmp_path / "arch"
+        first = _provider([source], cache)
+        first.coordinator.index.store_sdist_archive("foo", digest, data)
+        first.fetch_versions("foo")
+
+        record = (cache / digest / ".nab-hashes").read_text(encoding="utf-8")
+        assert record.splitlines() == [f"sha256={digest}", f"sha512={sha512}"]
+
+        second = _provider([source], cache)
+        versions = second.fetch_versions("foo")
+
+        assert str(versions[0][0]) == "1.0.0"
+        second.coordinator.request_direct_archive.assert_not_called()
+
+    @requires_data_filter
     def test_partial_tree_never_visible_at_cache_path(
         self,
         tmp_path: Path,
@@ -510,7 +556,7 @@ class TestArchiveMaterialize:
         monkeypatch.setattr(sources, "extract_sdist_archive", interrupted_extract)
 
         with pytest.raises(KeyboardInterrupt):
-            sources._extract_archive(cache, digest, data)
+            sources._extract_archive(cache, digest, data, (("sha256", digest),))
 
         assert list(cache.iterdir()) == []
 
@@ -555,6 +601,108 @@ class TestArchiveMaterialize:
         assert str(versions[0][0]) == "1.0.0"
 
 
+class TestWarmArchiveCache:
+    """A digest already extracted is served from the cache, with no download."""
+
+    def test_warm_tree_is_served_without_a_fetch(self, tmp_path: Path) -> None:
+        digest = "b" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        _warm_extracted_tree(cache, digest, "foo-1.0.0")
+        provider = _provider([source], cache)
+
+        versions = provider.fetch_versions("foo")
+
+        assert str(versions[0][0]) == "1.0.0"
+        provider.coordinator.request_direct_archive.assert_not_called()
+
+    def test_warm_flat_tree_is_served_without_a_fetch(self, tmp_path: Path) -> None:
+        # An empty marker records a flat archive, whose root is the tree itself.
+        digest = "c" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        _warm_extracted_tree(cache, digest, "")
+        provider = _provider([source], cache)
+
+        versions = provider.fetch_versions("foo")
+
+        assert str(versions[0][0]) == "1.0.0"
+        provider.coordinator.request_direct_archive.assert_not_called()
+
+    def test_partial_tree_without_marker_is_not_served(self, tmp_path: Path) -> None:
+        # Without the completion marker the tree is a crashed run's leftover,
+        # so the archive is fetched rather than read out of a half-written tree.
+        digest = "d" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        partial = cache / digest / "foo-1.0.0"
+        partial.mkdir(parents=True)
+        (partial / "pyproject.toml").write_text(_PYPROJECT, encoding="utf-8")
+        provider = _provider([source], cache)
+
+        with pytest.raises(UnsupportedSdistError, match="download.*failed"):
+            provider.fetch_versions("foo")
+
+    def test_added_hash_is_checked_against_the_bytes(self, tmp_path: Path) -> None:
+        # The tree records only the sha256 it is keyed on, so adding a hash
+        # refetches and checks the bytes against it.
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo",
+            url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}&sha512={'f' * 128}",
+        )
+        cache = tmp_path / "arch"
+        _warm_extracted_tree(cache, digest, "foo-1.0.0")
+        provider = _provider([source], cache)
+        provider.coordinator.index.store_sdist_archive("foo", digest, data)
+
+        with pytest.raises(SdistHashMismatchError):
+            provider.fetch_versions("foo")
+
+    def test_tree_without_hash_record_is_not_served(self, tmp_path: Path) -> None:
+        # A tree extracted before the record was written says nothing about
+        # which hashes were checked, so it is refetched rather than trusted.
+        digest = "e" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        _warm_extracted_tree(cache, digest, "foo-1.0.0")
+        (cache / digest / ".nab-hashes").unlink()
+        provider = _provider([source], cache)
+
+        with pytest.raises(UnsupportedSdistError, match="download.*failed"):
+            provider.fetch_versions("foo")
+
+    @respx.mock
+    def test_offline_resolve_reads_the_warm_tree(self, tmp_path: Path) -> None:
+        # --offline never reaches the network, so the tree an earlier resolve
+        # extracted is all there is to resolve from.
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        digest = hashlib.sha256(data).hexdigest()
+        url = "https://ex.invalid/foo-1.0.0.tar.gz"
+        route = respx.get(url).mock(return_value=httpx.Response(200, content=data))
+        source = ArchiveSource(name="foo", url=f"{url}#sha256={digest}")
+        cache = tmp_path / "arch"
+        _warm_extracted_tree(cache, digest, "foo-1.0.0")
+
+        with FetchCoordinator(
+            transport=HttpxAsyncTransport(), offline=True
+        ) as coordinator:
+            provider = _fetching_provider(coordinator, source, cache)
+            versions = provider.fetch_versions("foo")
+
+        assert str(versions[0][0]) == "1.0.0"
+        assert not route.called
+
+
 class TestArchiveFetch:
     """An archive URL is read by its own scheme, whatever the index speaks."""
 
@@ -569,9 +717,8 @@ class TestArchiveFetch:
 
         with FetchCoordinator(transport=HttpxAsyncTransport()) as coordinator:
             provider = _fetching_provider(coordinator, source, tmp_path / "arch")
-            _, _, key, fetched = _fetch_archive_bytes(provider, source)
+            fetched = _fetch_bytes(provider, source)
 
-        assert key == digest
         assert fetched == data
 
     @respx.mock
@@ -591,12 +738,16 @@ class TestArchiveFetch:
             indexes=[IndexConfig("local", wheelhouse.as_uri())],
         ) as coordinator:
             provider = _fetching_provider(coordinator, source, tmp_path / "arch")
-            _, _, _, fetched = _fetch_archive_bytes(provider, source)
+            fetched = _fetch_bytes(provider, source)
 
         assert fetched == data
 
     @respx.mock
-    def test_offline_https_archive_is_not_fetched(self, tmp_path: Path) -> None:
+    def test_offline_cold_archive_reports_offline_not_download_failure(
+        self, tmp_path: Path
+    ) -> None:
+        # Nothing was downloaded, so "download failed" would name the wrong
+        # cause: the run was told not to reach the network.
         data = _make_sdist("foo", "1.0.0", _PYPROJECT)
         digest = hashlib.sha256(data).hexdigest()
         url = "https://ex.invalid/foo-1.0.0.tar.gz"
@@ -607,10 +758,24 @@ class TestArchiveFetch:
             transport=HttpxAsyncTransport(), offline=True
         ) as coordinator:
             provider = _fetching_provider(coordinator, source, tmp_path / "arch")
-            with pytest.raises(UnsupportedSdistError, match="download.*failed"):
-                _fetch_archive_bytes(provider, source)
+            with pytest.raises(UnsupportedSdistError, match="offline mode") as excinfo:
+                _fetch_bytes(provider, source)
 
+        assert url in str(excinfo.value)
         assert not route.called
+
+    @respx.mock
+    def test_http_error_is_reported_with_its_status(self, tmp_path: Path) -> None:
+        url = "https://ex.invalid/foo-1.0.0.tar.gz"
+        respx.get(url).mock(return_value=httpx.Response(404))
+        source = ArchiveSource(name="foo", url=f"{url}#sha256={'a' * 64}")
+
+        with FetchCoordinator(transport=HttpxAsyncTransport()) as coordinator:
+            provider = _fetching_provider(coordinator, source, tmp_path / "arch")
+            with pytest.raises(UnsupportedSdistError, match="404") as excinfo:
+                _fetch_bytes(provider, source)
+
+        assert isinstance(excinfo.value.__cause__, HttpError)
 
     def test_missing_file_archive_fails_the_resolve(self, tmp_path: Path) -> None:
         absent = tmp_path / "absent-1.0.0.tar.gz"
@@ -618,8 +783,8 @@ class TestArchiveFetch:
 
         with FetchCoordinator(transport=HttpxAsyncTransport()) as coordinator:
             provider = _fetching_provider(coordinator, source, tmp_path / "arch")
-            with pytest.raises(UnsupportedSdistError, match="download.*failed"):
-                _fetch_archive_bytes(provider, source)
+            with pytest.raises(UnsupportedSdistError, match="absent-1.0.0"):
+                _fetch_bytes(provider, source)
 
 
 class TestArchiveDownload:
