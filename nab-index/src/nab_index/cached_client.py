@@ -18,11 +18,14 @@ from typing import TYPE_CHECKING
 from .cache import CacheBackend, CachePolicy, OfflineError
 from .client import (
     _HTTP_NOT_FOUND,
+    _SIMPLE_ACCEPT,
     DEFAULT_INDEX,
     MalformedSimpleResponseError,
     SdistFile,
     WheelFile,
     _extract_sdist_files,
+    _header,
+    _listing_body,
     _parse_files,
     _select_artifact_hash,
     _verify_metadata_hash,
@@ -49,7 +52,6 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-_JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
 _DEFAULT_MAX_AGE = 600
 _HTTP_NOT_MODIFIED = 304
 _MAX_AGE_RE = re.compile(r"max-age\s*=\s*(\d+)")
@@ -62,22 +64,6 @@ def _parse_max_age(cache_control: str | None) -> int:
     if match is None:
         return _DEFAULT_MAX_AGE
     return int(match.group(1))
-
-
-def _header(response: HttpResponse, key: str) -> str | None:
-    """Case-insensitive header lookup.
-
-    The :class:`HttpResponse` Protocol only promises a plain
-    :class:`Mapping`. Both real transports (httpx, urllib3) return
-    case-insensitive header containers, but we don't rely on
-    that here so a plain-dict fake also works.
-    """
-    headers = response.headers
-    target = key.lower()
-    for name, value in headers.items():
-        if name.lower() == target:
-            return value
-    return None
 
 
 class CachedAsyncSimpleClient:
@@ -213,7 +199,7 @@ class CachedAsyncSimpleClient:
         self, package: str, body: bytes, policy: CachePolicy
     ) -> list[WheelFile | SdistFile]:
         url = f"{self._index_url}{package}/"
-        headers = {"Accept": _JSON_ACCEPT}
+        headers = {"Accept": _SIMPLE_ACCEPT}
         if policy.etag is not None:
             headers["If-None-Match"] = policy.etag
         response = await self._transport.get(url, headers=headers)
@@ -236,7 +222,7 @@ class CachedAsyncSimpleClient:
             self._cache.put_negative(package, self._negative_policy(response))
             return []
         raise_unless_ok(response, url)
-        new_body = response.content
+        new_body = _listing_body(response, self._index_url, package)
 
         # Parse before caching so a bad body never poisons the cache.
         files = self._parse_listing(new_body, package)
@@ -251,12 +237,12 @@ class CachedAsyncSimpleClient:
 
     async def _fetch_simple(self, package: str) -> list[WheelFile | SdistFile]:
         url = f"{self._index_url}{package}/"
-        response = await self._transport.get(url, headers={"Accept": _JSON_ACCEPT})
+        response = await self._transport.get(url, headers={"Accept": _SIMPLE_ACCEPT})
         if response.status_code == _HTTP_NOT_FOUND:
             self._cache.put_negative(package, self._negative_policy(response))
             return []
         raise_unless_ok(response, url)
-        body = response.content
+        body = _listing_body(response, self._index_url, package)
 
         # Parse before caching so a bad body never poisons the cache.
         files = self._parse_listing(body, package)

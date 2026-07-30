@@ -1150,8 +1150,8 @@ class TestGetFiles:
 class TestNonJsonListingBody:
     """A 200 response whose body is not JSON must not poison the cache.
 
-    An index that ignores the JSON Accept header can serve PEP 503 HTML
-    (or a proxy/captive-portal page) with status 200.
+    A proxy or captive portal can answer with a page of its own under status
+    200 and no HTML content type, so the body reaches the JSON decoder.
     """
 
     _HTML_BODY = b"<!DOCTYPE html><html><body>links</body></html>"
@@ -1283,6 +1283,248 @@ class TestNonUtf8ListingBody:
         assert cached is not None
         body, _ = cached
         assert body == LISTING_BYTES
+
+
+class TestHtmlListing:
+    """PEP 691: the served Content-Type picks the decoder, not the Accept header.
+
+    An index may answer with a type the client did not ask for;
+    download.pytorch.org answers the JSON request with a PEP 503 page.
+    """
+
+    _INDEX = "https://download.pytorch.org/whl/cpu/"
+    _WHEEL = "torch-2.7.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl"
+    _DIGEST = "c" * 64
+    _HREF = (
+        "/whl/cpu/torch-2.7.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl"
+        f"#sha256={_DIGEST}"
+    )
+    _UPLOAD_TIME = "2025-04-23T15:03:12Z"
+    _PAGE = (
+        "<!DOCTYPE html>\n"
+        "<html>\n"
+        "  <body>\n"
+        "    <h1>Links for torch</h1>\n"
+        f'    <a href="{_HREF}" data-requires-python="&gt;=3.9" '
+        f'data-upload-time="{_UPLOAD_TIME}">'
+        f"{_WHEEL}</a><br/>\n"
+        "  </body>\n"
+        "</html>\n"
+    ).encode()
+
+    def _fetch(
+        self,
+        cache: OnDiskCache,
+        body: bytes,
+        content_type: str,
+        package: str = "torch",
+    ) -> tuple[list, _FakeTransport]:
+        transport = _FakeTransport(
+            [_FakeResponse(body, headers={"content-type": content_type})]
+        )
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache, self._INDEX)
+            try:
+                return await client.get_files(package)
+            finally:
+                await client.aclose()
+
+        return (asyncio.run(go()), transport)
+
+    def test_pep503_page_is_read(self, tmp_path: Path) -> None:
+        files, _ = self._fetch(_make_cache(tmp_path), self._PAGE, "text/html")
+        (wheel,) = files
+        assert isinstance(wheel, WheelFile)
+        assert wheel.filename == self._WHEEL
+        assert wheel.version == "2.7.0+cpu"
+        assert wheel.url == (
+            "https://download.pytorch.org/whl/cpu/"
+            "torch-2.7.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl"
+        )
+        assert wheel.requires_python == ">=3.9"
+        assert wheel.hashes == (("sha256", self._DIGEST),)
+        assert wheel.upload_time == self._UPLOAD_TIME
+
+    def test_malformed_ipv6_href_is_dropped(self, tmp_path: Path) -> None:
+        # An unterminated IPv6 bracket makes the href join and split raise;
+        # that anchor is dropped and its good sibling still resolves.
+        page = (
+            b'<a href="http://[bad">bad</a>'
+            b'<a href="torch-2.7.0-py3-none-any.whl">good</a>'
+        )
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert [f.filename for f in files] == ["torch-2.7.0-py3-none-any.whl"]
+
+    def test_malformed_base_href_fails_the_listing(self, tmp_path: Path) -> None:
+        # Every relative anchor resolves against <base href>, so one that
+        # cannot be parsed leaves the page's targets unknown.
+        page = (
+            b'<base href="http://[bad"><a href="torch-2.7.0-py3-none-any.whl">good</a>'
+        )
+        with pytest.raises(MalformedSimpleResponseError, match="base href"):
+            self._fetch(_make_cache(tmp_path), page, "text/html")
+
+    def test_page_without_upload_time_leaves_it_unset(self, tmp_path: Path) -> None:
+        page = b'<a href="torch-2.7.0-py3-none-any.whl">a</a>'
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert [f.upload_time for f in files] == [None]
+
+    def test_accept_advertises_every_supported_type(self, tmp_path: Path) -> None:
+        _, transport = self._fetch(_make_cache(tmp_path), self._PAGE, "text/html")
+        sent = transport.calls[0][1]
+        assert sent is not None
+        assert sent["Accept"] == (
+            "application/vnd.pypi.simple.v1+json, "
+            "application/vnd.pypi.simple.v1+html;q=0.2, "
+            "text/html;q=0.01"
+        )
+
+    @pytest.mark.parametrize(
+        "content_type",
+        [
+            "text/html",
+            "text/html; charset=UTF-8",
+            "Text/HTML",
+            "application/vnd.pypi.simple.v1+html",
+            "application/vnd.pypi.simple.latest+html",
+        ],
+    )
+    def test_html_content_types_all_decode(
+        self, tmp_path: Path, content_type: str
+    ) -> None:
+        files, _ = self._fetch(_make_cache(tmp_path), self._PAGE, content_type)
+        assert [f.version for f in files] == ["2.7.0+cpu"]
+
+    def test_json_content_type_still_decodes_json(self, tmp_path: Path) -> None:
+        files, _ = self._fetch(
+            _make_cache(tmp_path),
+            LISTING_BYTES,
+            "application/vnd.pypi.simple.v1+json",
+            package="pkg",
+        )
+        assert [f.filename for f in files] == ["pkg-1.0-py3-none-any.whl"]
+
+    def test_cached_page_serves_warm_hit_without_network(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        first, _ = self._fetch(cache, self._PAGE, "text/html")
+        offline = _FakeTransport()
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(offline, cache, self._INDEX)
+            try:
+                return await client.get_files("torch")
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == first
+        assert offline.calls == []
+
+    def test_revalidation_replaces_body_with_new_page(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        self._fetch(cache, self._PAGE, "text/html")
+        cached = cache.get_simple("torch")
+        assert cached is not None
+        cache.put_simple(
+            "torch", cached[0], CachePolicy(fetched_at=0, max_age=1, etag="old")
+        )
+        newer = self._PAGE.replace(b"2.7.0", b"2.8.0")
+        files, transport = self._fetch(cache, newer, "text/html")
+        assert [f.version for f in files] == ["2.8.0+cpu"]
+        assert len(transport.calls) == 1
+
+    def test_yanked_anchor_dropped(self, tmp_path: Path) -> None:
+        page = (
+            b'<a href="torch-2.7.0-py3-none-any.whl" data-yanked="bad build">a</a>'
+            b'<a href="torch-2.8.0-py3-none-any.whl">b</a>'
+        )
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert [f.version for f in files] == ["2.8.0"]
+
+    def test_relative_href_resolves_against_page(self, tmp_path: Path) -> None:
+        page = b'<a href="../pkgs/torch-2.7.0-py3-none-any.whl">a</a>'
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert [f.url for f in files] == [
+            "https://download.pytorch.org/whl/cpu/pkgs/torch-2.7.0-py3-none-any.whl"
+        ]
+
+    def test_base_href_redirects_relative_anchor(self, tmp_path: Path) -> None:
+        page = (
+            b'<html><head><base href="https://mirror.example/dl/"></head>'
+            b'<body><a href="torch-2.7.0-py3-none-any.whl">a</a></body></html>'
+        )
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert [f.url for f in files] == [
+            "https://mirror.example/dl/torch-2.7.0-py3-none-any.whl"
+        ]
+
+    def test_anchor_without_a_filename_skipped(self, tmp_path: Path) -> None:
+        page = b'<a href="../">parent</a><a href="torch-2.7.0-py3-none-any.whl">a</a>'
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert [f.version for f in files] == ["2.7.0"]
+
+    def test_core_metadata_hash_carried(self, tmp_path: Path) -> None:
+        page = (
+            b'<a href="torch-2.7.0-py3-none-any.whl" '
+            b'data-core-metadata="sha256=ABCD">a</a>'
+        )
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        (wheel,) = files
+        assert isinstance(wheel, WheelFile)
+        assert wheel.has_metadata
+        assert wheel.metadata_hash == ("sha256", "abcd")
+
+    def test_bare_metadata_attribute_advertises_sidecar_without_hash(
+        self, tmp_path: Path
+    ) -> None:
+        page = (
+            b'<a href="torch-2.7.0-py3-none-any.whl" '
+            b'data-dist-info-metadata="true">a</a>'
+        )
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        (wheel,) = files
+        assert isinstance(wheel, WheelFile)
+        assert wheel.has_metadata
+        assert wheel.metadata_hash is None
+
+    def test_page_without_links_or_marker_is_not_an_empty_listing(
+        self, tmp_path: Path
+    ) -> None:
+        # A 200 site error page would otherwise read as "package absent" and
+        # let the multi-index router fall through to a lower-priority index.
+        page = (
+            b"<html><body><h1>Sorry, that page could not be found.</h1></body></html>"
+        )
+        with pytest.raises(MalformedSimpleResponseError, match="not a project page"):
+            self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert _make_cache(tmp_path).get_simple("torch") is None
+
+    def test_unrelated_meta_tags_do_not_make_it_a_project_page(
+        self, tmp_path: Path
+    ) -> None:
+        page = (
+            b'<html><head><meta charset="utf-8">'
+            b'<meta name="generator" content="mkdocs"></head><body></body></html>'
+        )
+        with pytest.raises(MalformedSimpleResponseError, match="not a project page"):
+            self._fetch(_make_cache(tmp_path), page, "text/html")
+
+    def test_marker_lets_a_project_page_list_no_files(self, tmp_path: Path) -> None:
+        page = (
+            b'<html><head><meta name="pypi:repository-version" content="1.4">'
+            b"</head><body></body></html>"
+        )
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert files == []
+
+    def test_non_utf8_page_raises_clean_error(self, tmp_path: Path) -> None:
+        page = '<a href="torch-2.7.0-py3-none-any.whl">café</a>'.encode("latin-1")
+        with pytest.raises(
+            MalformedSimpleResponseError, match="HTML body is not valid UTF-8"
+        ) as caught:
+            self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert isinstance(caught.value, HttpError)
+        assert _make_cache(tmp_path).get_simple("torch") is None
 
 
 class TestGetMetadataText:

@@ -1,14 +1,16 @@
 """PyPI Simple API client using PEP 691 JSON and PEP 658/714 metadata.
 
-Fetches package listings and wheel/sdist metadata from PyPI.
-Transport-agnostic: any async HTTP client implementing the
-:class:`AsyncHttpTransport` protocol can be used.
+Fetches package listings and wheel/sdist metadata from PyPI. An index that
+answers with the PEP 503 HTML serialization instead is read through
+:mod:`nab_index._pep503`. Transport-agnostic: any async HTTP client
+implementing the :class:`AsyncHttpTransport` protocol can be used.
 """
 
 from __future__ import annotations
 
 import hashlib
 import io
+import json
 import re
 import sys
 import tarfile
@@ -25,6 +27,7 @@ from packaging.utils import (
 )
 from packaging.version import InvalidVersion, Version
 
+from ._pep503 import json_listing
 from .transport import IDENTITY_HEADERS, HttpError, raise_unless_ok
 
 if TYPE_CHECKING:
@@ -33,7 +36,7 @@ if TYPE_CHECKING:
     from packaging.utils import NormalizedName
     from typing_extensions import Self
 
-    from .transport import AsyncHttpTransport
+    from .transport import AsyncHttpTransport, HttpResponse
 
 __all__ = [
     "DEFAULT_INDEX",
@@ -60,9 +63,10 @@ _SUPPORTS_DATA_FILTER = hasattr(tarfile, "data_filter")
 class MalformedSimpleResponseError(HttpError):
     """The index served a 200 response that is not a usable Simple-API body.
 
-    Covers a listing that is not valid JSON and a PEP 658 metadata sidecar
-    that is not valid UTF-8. Subclasses :class:`HttpError` so a broken body
-    is caught alongside transport and 4xx/5xx failures.
+    Covers a listing that is neither valid JSON nor decodable HTML, and a
+    PEP 658 metadata sidecar that is not valid UTF-8. Subclasses
+    :class:`HttpError` so a broken body is caught alongside transport and
+    4xx/5xx failures.
     """
 
 
@@ -172,10 +176,73 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
     return (name, str(version))
 
 
-_JSON_ACCEPT = "application/vnd.pypi.simple.v1+json"
+# PEP 691: advertise every serialization we can read, because an index that
+# cannot honour the header may answer with a type we did not ask for.
+_SIMPLE_ACCEPT = (
+    "application/vnd.pypi.simple.v1+json, "
+    "application/vnd.pypi.simple.v1+html;q=0.2, "
+    "text/html;q=0.01"
+)
 _HTTP_NOT_FOUND = 404
 
 DEFAULT_INDEX = "https://pypi.org/simple/"
+
+
+def _header(response: HttpResponse, key: str) -> str | None:
+    """Case-insensitive header lookup.
+
+    The :class:`HttpResponse` Protocol only promises a plain
+    :class:`Mapping`. Both real transports (httpx, urllib3) return
+    case-insensitive header containers, but we don't rely on
+    that here so a plain-dict fake also works.
+    """
+    headers = response.headers
+    target = key.lower()
+    for name, value in headers.items():
+        if name.lower() == target:
+            return value
+    return None
+
+
+def _is_html_listing(content_type: str | None) -> bool:
+    """Return True when a Content-Type names an HTML Simple-API serialization.
+
+    Covers :pep:`503`'s ``text/html`` and :pep:`691`'s
+    ``application/vnd.pypi.simple.vN+html``.
+    """
+    if content_type is None:
+        return False
+    media_type = content_type.partition(";")[0].strip().lower()
+    return media_type == "text/html" or media_type.endswith("+html")
+
+
+def _listing_body(response: HttpResponse, index_url: str, package: str) -> bytes:
+    """Return a listing response's body as PEP 691 JSON bytes.
+
+    The served Content-Type picks the decoder. An HTML page is re-serialized
+    so the parser and the cache only ever see one shape; any other body is
+    passed through untouched.
+    """
+    body = response.content
+    if not _is_html_listing(_header(response, "content-type")):
+        return body
+
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        msg = (
+            f"{index_url} served a malformed Simple-API response for "
+            f"{package!r}: HTML body is not valid UTF-8"
+        )
+        raise MalformedSimpleResponseError(msg) from exc
+
+    try:
+        return json_listing(text, f"{index_url}{package}/")
+    except ValueError as exc:
+        msg = (
+            f"{index_url} served a malformed Simple-API response for {package!r}: {exc}"
+        )
+        raise MalformedSimpleResponseError(msg) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,11 +338,12 @@ class AsyncSimpleClient:
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
         """Fetch all distribution files for a package."""
         url = f"{self._index_url}{package}/"
-        response = await self._transport.get(url, headers={"Accept": _JSON_ACCEPT})
+        response = await self._transport.get(url, headers={"Accept": _SIMPLE_ACCEPT})
         if response.status_code == _HTTP_NOT_FOUND:
             return []
         raise_unless_ok(response, url)
-        return _parse_files(response.json(), self._index_url, package)
+        body = _listing_body(response, self._index_url, package)
+        return _parse_files(json.loads(body), self._index_url, package)
 
     async def get_metadata_text(self, metadata_url: str) -> str:
         """Fetch metadata text from a known PEP 658/714 metadata URL."""

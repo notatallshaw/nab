@@ -8,8 +8,11 @@ import pytest
 
 from nab import cli as nab_cli
 from nab.cli import app
-from nab_index.cache import CachePolicy, OnDiskCache
+from nab_index.cache import CACHE_VERSION_SIMPLE, CachePolicy, OnDiskCache
 from nab_python.config_sources import SourceRoots
+
+# Derived so a bucket-version bump does not need every path updated.
+SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
@@ -173,7 +176,7 @@ class TestLayeredCacheDir:
     ) -> None:
         root = tmp_path / "env-declared"
         _populate(root)
-        policy_path = root / "simple-v0" / "pypi" / "foo.policy"
+        policy_path = root / SIMPLE_BUCKET / "pypi" / "foo.policy"
         policy_path.write_bytes(b"not json")
         monkeypatch.setenv("NAB_CACHE_DIR", str(root))
         _run_cache(["verify"])
@@ -189,7 +192,7 @@ class TestLayeredCacheDir:
         _populate(root)
         monkeypatch.setenv("NAB_CACHE_DIR", str(root))
         _run_cache(["clear"])
-        assert not (root / "simple-v0").exists()
+        assert not (root / SIMPLE_BUCKET).exists()
         assert not (root / "metadata-v1").exists()
         assert str(root) in capsys.readouterr().err
 
@@ -248,7 +251,7 @@ class TestCacheVerify:
     ) -> None:
         root = tmp_path / "cache"
         _populate(root)
-        policy_path = root / "simple-v0" / "pypi" / "foo.policy"
+        policy_path = root / SIMPLE_BUCKET / "pypi" / "foo.policy"
         policy_path.write_bytes(b"not json")
         _run_cache(["verify", "--cache-dir", str(root)])
         err = capsys.readouterr().err
@@ -273,7 +276,7 @@ class TestCacheVerify:
         (outside / "foo.policy").write_bytes(b"not json")
         root = tmp_path / "cache"
         root.mkdir()
-        _symlink_or_skip(root / "simple-v0", outside, target_is_directory=True)
+        _symlink_or_skip(root / SIMPLE_BUCKET, outside, target_is_directory=True)
         _run_cache(["verify", "--cache-dir", str(root)])
         assert capsys.readouterr().err == ""
 
@@ -306,7 +309,7 @@ class TestCacheClear:
         sibling = root / "unrelated.txt"
         sibling.write_text("keep me")
         _run_cache(["clear", "--cache-dir", str(root)])
-        assert not (root / "simple-v0").exists()
+        assert not (root / SIMPLE_BUCKET).exists()
         assert not (root / "simple-neg-v0").exists()
         assert not (root / "metadata-v1").exists()
         assert not (root / "sdist-v1").exists()
@@ -328,11 +331,11 @@ class TestCacheClear:
         (outside / "keep.txt").write_text("precious")
         root = tmp_path / "cache"
         root.mkdir()
-        (root / "simple-v0").mkdir()
+        (root / SIMPLE_BUCKET).mkdir()
         _symlink_or_skip(root / "metadata-v1", outside, target_is_directory=True)
         _run_cache(["clear", "--cache-dir", str(root)])
         assert (outside / "keep.txt").read_text() == "precious"
-        assert not (root / "simple-v0").exists()
+        assert not (root / SIMPLE_BUCKET).exists()
         assert not (root / "metadata-v1").exists()
 
     def test_nonexistent_root_is_noop(
@@ -351,7 +354,7 @@ class TestCacheClear:
         foreign = root / "metadata-notes.txt"
         foreign.write_text("mine")
         _run_cache(["clear", "--cache-dir", str(root)])
-        assert not (root / "simple-v0").exists()
+        assert not (root / SIMPLE_BUCKET).exists()
         assert not (root / "metadata-v1").exists()
         assert foreign.read_text() == "mine"
         assert str(root) in capsys.readouterr().err
