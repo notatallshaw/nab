@@ -19,7 +19,7 @@ import tarfile
 import zipfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -3387,7 +3387,8 @@ class TestLockAnchorReuse:
 
     _RECORDED = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
-    def test_relock_records_reused_anchor(self, tmp_path: Path) -> None:
+    def _relative_cutoff_relock(self, tmp_path: Path) -> tuple[Path, Path]:
+        """A pylock recording ``_RECORDED`` and a project with a ``P4D`` cutoff."""
         prior = tmp_path / "pylock.toml"
         prior.write_text(
             f"[tool.nab]\ncreated-at = {self._RECORDED.isoformat()}\n",
@@ -3396,6 +3397,22 @@ class TestLockAnchorReuse:
             tmp_path,
             '[project]\ndependencies = ["foo"]\n[tool.nab]\nuploaded-prior-to = "P4D"\n',
         )
+        return prior, pyproject
+
+    def _relock_cutoff(self, tmp_path: Path, *, upgrade: bool = False) -> datetime:
+        """The ``P4D`` window a re-lock over a recorded anchor resolves against."""
+        prior, pyproject = self._relative_cutoff_relock(tmp_path)
+        with patch(
+            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+        ) as mock_resolve:
+            lock(pyproject, output=prior, upgrade=upgrade)
+
+        cutoff = mock_resolve.call_args.kwargs["config"].uploaded_prior_to
+        assert isinstance(cutoff, datetime)
+        return cutoff
+
+    def test_relock_records_reused_anchor(self, tmp_path: Path) -> None:
+        prior, pyproject = self._relative_cutoff_relock(tmp_path)
         with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=prior)
         # New pylock's [tool.nab].created-at must equal the prior anchor.
@@ -3404,14 +3421,7 @@ class TestLockAnchorReuse:
         assert read_lockfile_anchor(prior) == self._RECORDED
 
     def test_upgrade_writes_fresh_anchor(self, tmp_path: Path) -> None:
-        prior = tmp_path / "pylock.toml"
-        prior.write_text(
-            f"[tool.nab]\ncreated-at = {self._RECORDED.isoformat()}\n",
-        )
-        pyproject = _make_pyproject(
-            tmp_path,
-            '[project]\ndependencies = ["foo"]\n[tool.nab]\nuploaded-prior-to = "P4D"\n',
-        )
+        prior, pyproject = self._relative_cutoff_relock(tmp_path)
         with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=prior, upgrade=True)
         from nab_python.lockfile import read_lockfile_anchor
@@ -3435,6 +3445,17 @@ class TestLockAnchorReuse:
         from nab_python.lockfile import read_lockfile_anchor
 
         assert read_lockfile_anchor(out) == absolute
+
+    def test_relative_cutoff_window_uses_reused_anchor(self, tmp_path: Path) -> None:
+        # The reused created-at sets the resolve window, not just the recorded
+        # provenance.
+        assert self._relock_cutoff(tmp_path) == self._RECORDED - timedelta(days=4)
+
+    def test_upgrade_moves_relative_cutoff_window(self, tmp_path: Path) -> None:
+        fresh = self._relock_cutoff(tmp_path, upgrade=True)
+
+        window = datetime.now(timezone.utc) - timedelta(days=4)
+        assert abs((window - fresh).total_seconds()) < 60
 
 
 def _hashed_pin(version: str, name: str, *, sha: str) -> IndexPin:
