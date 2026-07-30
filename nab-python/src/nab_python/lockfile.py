@@ -464,8 +464,10 @@ def drop_workspace_pins(lock_input: LockInput, exclude: frozenset[str]) -> LockI
     ``exclude`` holds canonical workspace member names; pin keys are already
     canonical.  An empty set returns ``lock_input`` unchanged.  Each target's
     pins are filtered, and its forward dependency graph and membership gates
-    with them, so no edge or gate names a dropped member with no
-    ``[[packages]]`` entry.
+    with them, so no emitted edge or gate names a dropped member with no
+    ``[[packages]]`` entry.  ``base_dependencies`` carries through untouched:
+    it is never emitted, and cutting the member out of it would strip base
+    status from everything reached only through that member.
     """
     if not exclude:
         return lock_input
@@ -474,8 +476,8 @@ def drop_workspace_pins(lock_input: LockInput, exclude: frozenset[str]) -> LockI
         return canonicalize_name(name) not in exclude
 
     targets = {
-        label: TargetLock(
-            target=lock.target,
+        label: replace(
+            lock,
             pins={name: pin for name, pin in lock.pins.items() if keep(name)},
             dependencies={
                 name: kept
