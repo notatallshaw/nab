@@ -1015,6 +1015,21 @@ class TestResolverInternals:
         with pytest.raises(ResolutionError):
             conflict_resolution(resolver, conflict)
 
+    def test_terminal_clause_raises_before_the_satisfier_search(self) -> None:
+        """A clause holding only ROOT terms ends conflict resolution.
+
+        The raise sits at the top of the loop, ahead of any satisfier
+        lookup, so an empty solution is enough to reach it.
+        """
+        conflict = Incompatibility(
+            [Term(ROOT, Range.singleton(1))],
+            cause=IncompatibilityCause.DERIVED,
+        )
+        resolver = Resolver(DictProvider({}))
+        with pytest.raises(ResolutionError) as exc_info:
+            conflict_resolution(resolver, conflict)
+        assert exc_info.value.incompatibility is conflict
+
     def test_recompute_previous_level_no_cause(self) -> None:
         """recompute_previous_level returns unchanged when cause is None."""
         resolver = Resolver(DictProvider({}))
@@ -1298,6 +1313,36 @@ class TestBackjumpToRoot:
         )
         with pytest.raises(ResolutionError):
             Resolver(provider).resolve({"root": Range.singleton(1)})
+
+    def test_terminal_clause_reports_the_whole_derivation(self) -> None:
+        """A real resolve reaches a clause holding only ROOT terms.
+
+            root -> a, b
+            a@1 -> c >= 3
+            b@1 -> c <= 1
+            c has versions 1, 2, 3
+
+        Resolving backwards eliminates a, b and c, leaving a clause
+        with only ROOT terms, and the error still renders the whole
+        derivation that produced it.
+        """
+        provider = DictProvider(
+            {
+                "root": {1: {"a": Range.full(), "b": Range.full()}},
+                "a": {1: {"c": Range.at_least(3)}},
+                "b": {1: {"c": Range.at_most(1)}},
+                "c": {3: {}, 2: {}, 1: {}},
+            }
+        )
+        with pytest.raises(ResolutionError) as exc_info:
+            Resolver(provider).resolve({"root": Range.singleton(1)})
+        incompatibility = exc_info.value.incompatibility
+        assert incompatibility is not None
+        assert is_terminal_incompatibility(incompatibility)
+        message = str(exc_info.value)
+        assert "a 1 depends on c [3, +inf)" in message
+        assert "b 1 depends on c (-inf, 1]" in message
+        assert "your project depends on root 1" in message
 
 
 class TestRestart:
