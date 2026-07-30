@@ -2,27 +2,34 @@
 
 PEP 751 forbids two ``[[packages]]`` entries with the same name from
 firing under one install context.  This module owns the validator
-that enumerates the install-context universe (environments x valid
-extras/groups combinations) and reports any pair that collide, plus
-the bookkeeping helpers that prune the axes to the marker variables a
-same-name candidate actually references.  Declared conflicts shrink
-the combination space directly: a set with N mutually-exclusive
-members contributes only N+1 outcomes (none, or each member alone),
-not the 2^N raw powerset.
+that decides, for every same-name pair, whether their markers can
+hold together under the declared install-context universe (declared
+environments, with conflict-forbidden co-selections excluded).
+
+The universe is not expressible as a single PEP 508 marker string, so
+the check runs through the marker algebra.  For each same-name pair and
+each declared environment the validator restricts both markers to the
+environment, then walks the conflict-respecting selections of the
+membership names the pair references: each conflict set contributes at
+most one active member, names in no conflict set are free, and
+undeclared names stay absent.  The pair collides when both residuals
+still fire together under some selection.  Only the referenced names
+enter the walk, so the cost tracks the pair's own markers rather than
+the ``powerset(extras) x powerset(groups)`` grid.
 """
 
 from __future__ import annotations
 
-import functools
-import re
+import itertools
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from .._conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_FOR_KIND
+from .._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 from .._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
     from collections.abc import Set as AbstractSet
 
     from .._vendor.packaging.markers import Marker
@@ -37,6 +44,10 @@ __all__ = [
 # the conflict declaration prunes from the install-context universe.
 _MUTUALLY_EXCLUSIVE_LIMIT = 2
 
+# The selection walk fails loud past this many conflict-respecting
+# selections, keeping the bounded-failure contract on pathological input.
+_MAX_SELECTIONS = 100_000
+
 
 class DisjointnessError(ValueError):
     """Two same-name ``[[packages]]`` entries can fire under one context.
@@ -44,9 +55,12 @@ class DisjointnessError(ValueError):
     PEP 751 forbids ambiguous installer matches.  When more than one
     same-name entry has a marker that holds for the same install
     context, the consumer cannot pick deterministically.  The
-    validator surfaces the colliding name, the witness context
-    (environment + extras + groups), and the colliding versions so
-    the producer can either change the resolution or declare a
+    validator surfaces the colliding name and the witness environment.
+    When the reported collision reduces to a concrete point it also
+    reports the active extras and groups and the colliding versions; when
+    that collision is an over-approximated ``contains`` region the algebra
+    cannot pin to a point, it reports only the name and environment.
+    Either way the producer can change the resolution or declare a
     conflict.
     """
 
@@ -62,13 +76,16 @@ def validate_marker_disjointness(
 ) -> None:
     """Confirm same-name ``[[packages]]`` entries are pairwise disjoint.
 
-    Builds the universe of install contexts as the cartesian product
-    of declared environments and the conflict-respecting combinations
-    of declared ``extras`` and ``dependency_groups`` (see
-    :func:`_enumerate_valid_points`).  For every point in that
-    universe and every package name, evaluates each candidate entry's
-    marker.  When two or more entries hold for the same point, raises
-    :class:`DisjointnessError` with the witness.
+    For every same-name pair the validator asks the marker algebra
+    whether the two markers can hold together within the declared
+    install-context universe.  The universe is the declared
+    environments on the environment axes, with the extras and
+    dependency-group axes restricted so that no conflict set has two
+    active members (``exclusive_groups``) and no name outside the
+    declared ``extras`` / ``groups`` is ever selected.  A pair collides
+    when, in some declared environment, both markers still fire under a
+    conflict-respecting selection of the membership names they
+    reference.
 
     The empty-environments path skips validation: a producer that
     does not declare a universe cannot specify what "all envs" means
@@ -77,25 +94,14 @@ def validate_marker_disjointness(
     that path is reached only by a caller that builds a
     :class:`~nab_python.lockfile.LockInput` with no targets of its own.
 
-    Powerset pruning: ``extras`` and ``dependency_groups`` are PEP
-    685 / PEP 735 marker variables that markers may or may not
-    reference.  Materialising the full ``2**N`` powerset is
-    intractable for projects that declare many extras.  Inspect each
-    marker's string form via :func:`_referenced_membership_names`
-    and only iterate the powerset over names that any marker
-    actually mentions.  When no marker references a variable, that
-    powerset collapses to ``{()}`` and the cartesian explosion
-    disappears.
-
     ``exclusive_groups`` declares mutually-exclusive selections from
     ``[tool.nab].conflicts``: each entry is a set of ``(kind, name)``
     members (``kind`` is ``"extra"`` or ``"group"``) of which at most
-    one may be active.  Contexts activating two or more members of a
-    set are pruned before the collision check, so a universal lock can
-    carry one fork per conflicting extra/group under bare
-    ``'name' in extras`` markers.  A collision outside every pruned
-    point still raises, hinting at the ``conflicts`` key when extras or
-    groups drive the colliding markers.
+    one may be active.  Their co-selection points are removed from the
+    universe, so a universal lock can carry one fork per conflicting
+    extra/group under bare ``'name' in extras`` markers.  A collision
+    outside every pruned point still raises, hinting at the
+    ``conflicts`` key when extras or groups drive the colliding markers.
 
     ``declared_groups`` carries every conflict set regardless of policy
     so the hint can distinguish an undeclared collision (suggest adding
@@ -104,55 +110,34 @@ def validate_marker_disjointness(
     """
     if not environments:
         return
+
     by_name: defaultdict[str, list[Package]] = defaultdict(list)
     for pkg in packages:
         by_name[str(pkg.name)].append(pkg)
     same_name_entries = [entries for entries in by_name.values() if len(entries) > 1]
     if not same_name_entries:
         return
-    candidate_markers = [pkg.marker for entries in same_name_entries for pkg in entries]
 
-    extras_var = MARKER_VARIABLE_FOR_KIND[KIND_EXTRA]
-    groups_var = MARKER_VARIABLE_FOR_KIND[KIND_GROUP]
-
-    relevant_extras = _restrict_to_referenced(extras, candidate_markers, extras_var)
-    relevant_groups = _restrict_to_referenced(groups, candidate_markers, groups_var)
-    points = list(
-        _enumerate_valid_points(relevant_extras, relevant_groups, exclusive_groups)
-    )
     distinct_environments = _distinct_environments(environments)
+    exclusion_sets = _canonical_exclusion_sets(exclusive_groups)
+    declared_members = _declared_membership_literals(extras, groups)
 
-    # Iterate env x point outermost so the install context dict is built
-    # once per (env, point) and reused across every same-name entry group.
-    # The earlier per-entry-group rebuild scaled M*D*P dicts where M is the
-    # same-name package count; conflict-fork locks make M scale with the
-    # universe size.
-    for env_label, env_dict in distinct_environments:
-        for extra_subset, group_subset in points:
-            context: dict[str, str | AbstractSet[str]] = dict(env_dict)
-            context[extras_var] = frozenset(extra_subset)
-            context[groups_var] = frozenset(group_subset)
-            for entries in same_name_entries:
-                matching = [
-                    pkg for pkg in entries if _marker_holds(pkg.marker, context)
-                ]
-                if len(matching) <= 1:
-                    continue
-                name = str(entries[0].name)
-                versions = sorted(str(p.version) if p.version else "" for p in matching)
-                hint = _conflict_hint(
-                    [p.marker for p in matching],
-                    extra_subset,
-                    group_subset,
-                    declared_groups,
+    for entries in same_name_entries:
+        marker_sets = [_marker_set(pkg.marker) for pkg in entries]
+        literals = [ms.membership_literals() for ms in marker_sets]
+        for i, j in itertools.combinations(range(len(entries)), 2):
+            names = literals[i] | literals[j]
+            selections = _conflict_respecting_selections(
+                names, exclusion_sets, declared_members
+            )
+            collision = _pair_collision(
+                marker_sets[i], marker_sets[j], selections, distinct_environments
+            )
+            if collision is not None:
+                label, env, witness_env = collision
+                _raise_collision(
+                    entries, marker_sets, label, env, witness_env, declared_groups
                 )
-                msg = (
-                    f"{name}: {len(matching)} entries fire under"
-                    f" env={env_label!r} extras={sorted(extra_subset)!r}"
-                    f" groups={sorted(group_subset)!r}: versions={versions}"
-                    f"{hint}"
-                )
-                raise DisjointnessError(msg)
 
 
 def _distinct_environments(
@@ -162,7 +147,7 @@ def _distinct_environments(
 
     A conflict-forked universal lock repeats a python/platform under
     several selection labels, so identical env dicts would otherwise be
-    re-evaluated once per fork with no added coverage.  The first label
+    re-checked once per fork with no added coverage.  The first label
     seen for each signature is kept so the error message matches the
     pre-dedup iteration order.
     """
@@ -177,79 +162,222 @@ def _distinct_environments(
     return distinct
 
 
-def _enumerate_valid_points(
-    relevant_extras: Sequence[str],
-    relevant_groups: Sequence[str],
+def _marker_set(marker: Marker | None) -> MarkerSet:
+    """Return the algebra set for ``marker``; the full set when absent."""
+    if marker is None:
+        return MarkerSet.full()
+    return MarkerSet.from_marker(marker)
+
+
+def _canonical_exclusion_sets(
     exclusive_groups: Sequence[AbstractSet[tuple[str, str]]],
-) -> Iterable[tuple[tuple[str, ...], tuple[str, ...]]]:
-    """Yield every (extras_subset, groups_subset) the conflicts allow.
+) -> list[frozenset[tuple[str, str]]]:
+    """Project each conflict set to ``(marker variable, canonical name)`` pairs.
 
-    The full powerset is ``2^(E+G)`` and overwhelmingly dominated by
-    points a declared conflict already forbids (any subset that picks
-    two members of one mutually-exclusive set).  Generating then
-    filtering wastes the exponent: a set with N members keeps only
-    N+1 of its 2^N subsets.  This enumerates by backtracking: at each
-    item, the include branch is skipped as soon as one of its
-    exclusion sets already has an active member, so the search visits
-    exactly the surviving subsets.
-
-    Names are compared under :func:`canonicalize_name` against the
-    declared conflict members; subsets are emitted as sorted tuples
-    drawn from the input order so the downstream collision check sees
-    them in a stable shape.
+    ``exclusive_groups`` members are ``(kind, name)`` with ``kind`` one
+    of ``"extra"`` / ``"group"``; the axis a marker tests them on is the
+    membership variable, so they are keyed by it here to compare against
+    the markers' membership literals under canonicalisation.
     """
-    extras = sorted(set(relevant_extras))
-    groups = sorted(set(relevant_groups))
-    items: list[tuple[str, str]] = [(KIND_EXTRA, e) for e in extras] + [
-        (KIND_GROUP, g) for g in groups
+    return [
+        frozenset(
+            (MARKER_VARIABLE_FOR_KIND[kind], canonicalize_name(name))
+            for kind, name in members
+        )
+        for members in exclusive_groups
     ]
 
-    # Per item, the indices of every exclusion set whose membership it
-    # belongs to.  Names compare canonicalised on both sides.
-    item_sets: list[list[int]] = []
-    for kind, name in items:
-        canonical = canonicalize_name(name)
-        sets_for_item: list[int] = []
-        for i, members in enumerate(exclusive_groups):
-            for member_kind, member_name in members:
-                if member_kind == kind and canonicalize_name(member_name) == canonical:
-                    sets_for_item.append(i)
-                    break
-        item_sets.append(sets_for_item)
 
-    active_per_set = [0] * len(exclusive_groups)
-    extras_buf: list[str] = []
-    groups_buf: list[str] = []
+def _declared_membership_literals(
+    extras: Sequence[str], groups: Sequence[str]
+) -> frozenset[tuple[str, str]]:
+    """Return every ``(variable, canonical name)`` the universe may select.
 
-    def recurse(idx: int) -> Iterable[tuple[tuple[str, ...], tuple[str, ...]]]:
-        if idx == len(items):
-            yield (tuple(extras_buf), tuple(groups_buf))
-            return
+    A membership literal outside this set names an extra or group the
+    producer never declared, so no install context selects it; the
+    universe pins it absent.
+    """
+    extras_var = MARKER_VARIABLE_FOR_KIND[KIND_EXTRA]
+    groups_var = MARKER_VARIABLE_FOR_KIND[KIND_GROUP]
+    return frozenset(
+        {(extras_var, canonicalize_name(name)) for name in extras}
+        | {(groups_var, canonicalize_name(name)) for name in groups}
+    )
 
-        # Exclude branch is always valid.
-        yield from recurse(idx + 1)
 
-        # Include branch is pruned as soon as a set has its single
-        # allowed member already active.
-        if any(
-            active_per_set[i] >= _MUTUALLY_EXCLUSIVE_LIMIT - 1 for i in item_sets[idx]
-        ):
-            return
-        kind, name = items[idx]
-        target = extras_buf if kind == KIND_EXTRA else groups_buf
-        target.append(name)
-        for i in item_sets[idx]:
-            active_per_set[i] += 1
-        yield from recurse(idx + 1)
-        for i in item_sets[idx]:
-            active_per_set[i] -= 1
-        target.pop()
+def _conflict_respecting_selections(
+    names: frozenset[tuple[str, str]],
+    exclusion_sets: Sequence[AbstractSet[tuple[str, str]]],
+    declared_members: frozenset[tuple[str, str]],
+) -> list[dict[str, frozenset[str]]]:
+    """Enumerate the membership selections the pair's markers can see.
 
-    yield from recurse(0)
+    A selection binds every membership variable the pair references to a
+    concrete set of active names.  Only declared names can be active, so
+    an undeclared reference stays absent in every selection.  Each
+    conflict set that touches the referenced names contributes at most
+    one active member; names in no conflict set are free and appear in
+    both states.  The count is the product of the per-conflict-set
+    choices and the free powerset, guarded by :data:`_MAX_SELECTIONS` so
+    a pathological input fails loud rather than iterating unbounded.
+    """
+    referenced_vars = frozenset(variable for variable, _ in names)
+    declared = names & declared_members
+    conflict_choices = [
+        sorted(members & declared) for members in exclusion_sets if members & declared
+    ]
+    constrained = {member for choice in conflict_choices for member in choice}
+    free = sorted(declared - constrained)
+
+    counts = [len(choice) + 1 for choice in conflict_choices] + [2] * len(free)
+    size = 1
+    for count in counts:
+        size *= count
+        if size > _MAX_SELECTIONS:
+            msg = f"conflict-respecting selections exceed {_MAX_SELECTIONS}"
+            raise IntractableMarkerSet(msg)
+
+    group_options = [
+        [frozenset()] + [frozenset({member}) for member in choice]
+        for choice in conflict_choices
+    ]
+    selections: list[dict[str, frozenset[str]]] = []
+    for combo in itertools.product(*group_options):
+        base = frozenset().union(*combo)
+        if not _conflict_respecting(base, exclusion_sets):
+            continue
+        for mask in range(1 << len(free)):
+            active = base | {free[k] for k in range(len(free)) if mask & (1 << k)}
+            selections.append(_selection_env(referenced_vars, active))
+    return selections
+
+
+def _conflict_respecting(
+    active: frozenset[tuple[str, str]],
+    exclusion_sets: Sequence[AbstractSet[tuple[str, str]]],
+) -> bool:
+    """Whether no conflict set has two active members in ``active``."""
+    return all(
+        len(members & active) < _MUTUALLY_EXCLUSIVE_LIMIT for members in exclusion_sets
+    )
+
+
+def _selection_env(
+    referenced_vars: frozenset[str], active: frozenset[tuple[str, str]]
+) -> dict[str, frozenset[str]]:
+    """Group an active selection into a per-variable ``restrict`` mapping.
+
+    Every referenced membership variable is bound, even to the empty set,
+    so a marker's membership atoms all fold to constants under the
+    resulting restriction rather than leaving a residual axis.
+    """
+    grouped: dict[str, set[str]] = {variable: set() for variable in referenced_vars}
+    for variable, name in active:
+        grouped[variable].add(name)
+    return {variable: frozenset(names) for variable, names in grouped.items()}
+
+
+def _pair_collision(
+    left: MarkerSet,
+    right: MarkerSet,
+    selections: Sequence[dict[str, frozenset[str]]],
+    distinct_environments: Sequence[tuple[str, Mapping[str, str]]],
+) -> tuple[str, Mapping[str, str], dict[str, str | frozenset[str]] | None] | None:
+    """Return a declared env where both markers can fire together, or None.
+
+    Each marker is restricted to the environment (its environment atoms
+    fold to constants, leaving the membership residual).  Each
+    conflict-respecting selection binds the membership variables, so the
+    pair collides in that environment when both bound residuals stay
+    non-empty together.  On a collision the label, the
+    environment, and a concrete satisfying assignment (the selection
+    merged with :meth:`MarkerSet.witness`) are returned; the witness is
+    ``None`` when the first colliding selection is an opaque-``contains``
+    over-approximation the algebra cannot reduce to a point.
+    """
+    for label, env in distinct_environments:
+        left_here = left.restrict(env)
+        right_here = right.restrict(env)
+        for selection in selections:
+            collision = left_here.restrict(selection) & right_here.restrict(selection)
+            if collision.is_empty():
+                continue
+            witness = collision.witness()
+            if witness is None:
+                return label, env, None
+            return label, env, {**witness, **selection}
+    return None
+
+
+def _membership_selection(
+    witness_env: Mapping[str, str | frozenset[str]], variable: str
+) -> frozenset[str]:
+    """Return the set the witness selected for a membership variable."""
+    value = witness_env.get(variable)
+    if isinstance(value, frozenset):
+        return value
+    return frozenset()
+
+
+def _raise_collision(
+    entries: Sequence[Package],
+    marker_sets: Sequence[MarkerSet],
+    label: str,
+    env: Mapping[str, str],
+    witness_env: dict[str, str | frozenset[str]] | None,
+    declared_groups: Sequence[AbstractSet[tuple[str, str]]],
+) -> None:
+    """Raise :class:`DisjointnessError` with a concrete witness context.
+
+    The witness names one install context where the pair holds together,
+    so the message reports the environment, the active ``(extras,
+    groups)`` selection, the entries that fire there, and their versions.
+    When the reported collision has no pinned point (an opaque-``contains``
+    over-approximation), the pair is still reported as non-disjoint,
+    without a point.
+    """
+    name = str(entries[0].name)
+    if witness_env is None:
+        msg = f"{name}: same-name entries are not disjoint under env={label!r}"
+        raise DisjointnessError(msg)
+
+    extras_var = MARKER_VARIABLE_FOR_KIND[KIND_EXTRA]
+    groups_var = MARKER_VARIABLE_FOR_KIND[KIND_GROUP]
+    extra_selection = _membership_selection(witness_env, extras_var)
+    group_selection = _membership_selection(witness_env, groups_var)
+
+    # A same-name entry outside the colliding pair may reference a
+    # variable the point leaves unbound, so each entry is folded against
+    # the point rather than evaluated: a non-empty residual fires here too.
+    point: dict[str, str | AbstractSet[str]] = {
+        **env,
+        **witness_env,
+        extras_var: extra_selection,
+        groups_var: group_selection,
+    }
+    matching = [
+        (pkg, ms)
+        for pkg, ms in zip(entries, marker_sets, strict=True)
+        if not ms.restrict(point).is_empty()
+    ]
+
+    extra_subset = sorted(extra_selection)
+    group_subset = sorted(group_selection)
+    versions = sorted(str(p.version) if p.version else "" for p, _ in matching)
+    hint = _conflict_hint(
+        [ms for _, ms in matching], extra_subset, group_subset, declared_groups
+    )
+    msg = (
+        f"{name}: {len(matching)} entries fire under"
+        f" env={label!r} extras={extra_subset!r}"
+        f" groups={group_subset!r}: versions={versions}"
+        f"{hint}"
+    )
+    raise DisjointnessError(msg)
 
 
 def _conflict_hint(
-    markers: Sequence[Marker | None],
+    marker_sets: Sequence[MarkerSet],
     extra_subset: Sequence[str],
     group_subset: Sequence[str],
     declared_groups: Sequence[AbstractSet[tuple[str, str]]] = (),
@@ -270,10 +398,10 @@ def _conflict_hint(
     the user has to switch to an exclusive policy to prune the point.
     """
     extras_driven = _membership_drives_point(
-        markers, MARKER_VARIABLE_FOR_KIND[KIND_EXTRA], extra_subset
+        marker_sets, MARKER_VARIABLE_FOR_KIND[KIND_EXTRA], extra_subset
     )
     groups_driven = _membership_drives_point(
-        markers, MARKER_VARIABLE_FOR_KIND[KIND_GROUP], group_subset
+        marker_sets, MARKER_VARIABLE_FOR_KIND[KIND_GROUP], group_subset
     )
     if not (extras_driven or groups_driven):
         return ""
@@ -298,117 +426,22 @@ def _conflict_hint(
 
 
 def _membership_drives_point(
-    markers: Sequence[Marker | None], variable: str, subset: Sequence[str]
+    marker_sets: Sequence[MarkerSet], variable: str, subset: Sequence[str]
 ) -> bool:
     """Return True when a referenced ``variable`` literal is active here.
 
     A membership variable drives the witness only when the witness
     ``subset`` is non-empty and intersects the literals the colliding
     markers test for membership in ``variable`` (compared under
-    canonicalisation, matching the powerset axis restriction).
+    canonicalisation, matching the universe's axis restriction).
     """
-    referenced, _ = _referenced_membership_names(markers, variable)
+    referenced = {
+        name
+        for marker_set in marker_sets
+        for var, name in marker_set.membership_literals()
+        if var == variable
+    }
     if not referenced:
         return False
     active = {canonicalize_name(name) for name in subset}
-    return any(canonicalize_name(name) in active for name in referenced)
-
-
-@functools.cache
-def _membership_name_pattern(variable: str) -> re.Pattern[str]:
-    """Compile (and cache) the regex matching ``"NAME" [not] in <variable>``.
-
-    Used to detect which extras / dependency-group names a marker
-    references.  PEP 508 reserves ``extras`` (PEP 685) and
-    ``dependency_groups`` (PEP 735) as bare-token marker variables,
-    so a literal-vs-variable membership test always serialises as
-    ``"<lit>" [not] in <var>`` after :func:`Marker.__str__`
-    normalisation.  Rejected alternatives: walking
-    ``Marker._markers`` (private packaging API) or vendoring
-    ``Marker.as_ast()`` from packaging PR #1145 (still open; loses
-    operand-vs-variable distinction in the proposed shape).
-
-    The rejection now carries a second caller: the lock's
-    ``environments`` declaration scans marker strings the same way
-    (:func:`~nab_python.target.environment_declaration`), deciding each
-    clause it finds through the public ``Marker.evaluate``.  Both rest on
-    the same normalisation, so it stays the one place a marker's shape is
-    read, and neither reaches past packaging's public API.
-    """
-    return re.compile(
-        r"""(['"])([^'"]*)\1\s+(?:not\s+)?in\s+""" + re.escape(variable) + r"\b",
-        re.IGNORECASE,
-    )
-
-
-def _referenced_membership_names(
-    markers: Iterable[Marker | None], variable: str
-) -> tuple[frozenset[str], bool]:
-    """Return the literals any marker tests for membership in ``variable``.
-
-    ``variable`` is one of ``"extras"`` or ``"dependency_groups"``;
-    a literal ``"foo"`` referenced as ``"foo" in extras`` (or its
-    ``not in`` form) lands in the result.  The regex matches
-    ``str(marker)`` because :class:`Marker` re-emits a canonical
-    form where the literal is always quoted and the variable is
-    always a bare token.
-
-    Also returns a flag set when *any* marker contains the bare
-    ``variable`` token; callers can use it to detect unusual marker
-    shapes that mention the variable but did not match the regex
-    (a future PEP form, a comparison flipped to put the variable
-    on the LHS, etc.) and fall back to a safe over-approximation.
-    """
-    pattern = _membership_name_pattern(variable)
-    bare_token = re.compile(r"\b" + re.escape(variable) + r"\b")
-    found: set[str] = set()
-    has_bare_reference = False
-    for marker in markers:
-        if marker is None:
-            continue
-        text = str(marker)
-        if bare_token.search(text):
-            has_bare_reference = True
-        for match in pattern.finditer(text):
-            found.add(match.group(2))
-    return frozenset(found), has_bare_reference
-
-
-def _restrict_to_referenced(
-    declared: Sequence[str],
-    markers: Sequence[Marker | None],
-    variable: str,
-) -> tuple[str, ...]:
-    """Restrict ``declared`` to the subset that any marker references.
-
-    ``variable`` is the marker token (``"extras"`` or
-    ``"dependency_groups"``).  The intersection of declared names
-    and regex-matched literals shrinks the powerset axis to what
-    the markers actually depend on.  Both sides are normalised with
-    :func:`canonicalize_name` before intersecting, because PEP 685 and
-    PEP 735 compare names under normalisation but :meth:`Marker.__str__`
-    re-emits the membership literal verbatim; a case- or separator-only
-    difference would otherwise drop the name and miss its collision.
-    When the bare token appears in some marker but no literals were
-    extracted (an unusual form the regex did not anticipate), fall back
-    to the full declared list so the validator over-approximates rather
-    than silently misses a collision.
-    """
-    referenced, has_bare = _referenced_membership_names(markers, variable)
-    if not has_bare:
-        return ()
-    if not referenced:
-        return tuple(declared)
-    normalized = {canonicalize_name(name) for name in referenced}
-    return tuple(name for name in declared if canonicalize_name(name) in normalized)
-
-
-def _marker_holds(
-    marker: Marker | None, context: Mapping[str, str | AbstractSet[str]]
-) -> bool:
-    """Return True when ``marker`` is absent or evaluates True under ``context``."""
-    if marker is None:
-        return True
-    # ``Marker.evaluate`` treats the environment as read-only, so no
-    # defensive copy is needed here.
-    return bool(marker.evaluate(context))
+    return any(name in active for name in referenced)
