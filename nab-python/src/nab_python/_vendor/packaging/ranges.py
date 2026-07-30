@@ -131,6 +131,95 @@ def _union_ranges(
     return merged
 
 
+def _relate_bounds(
+    left: Sequence[Interval],
+    right: Sequence[Interval],
+) -> tuple[bool, bool]:
+    """Return ``(is_subset, is_disjoint)`` for two sorted interval lists.
+
+    One two-pointer merge answers both without building the intersection or the
+    complement. The lists are canonical (sorted, non-overlapping, and
+    non-touching, since :func:`_union_ranges` merges across empty gaps), so a
+    covered left interval sits wholly inside one right interval rather than
+    spanning two: ``left`` is a subset when every one of its intervals is
+    covered, and the two are disjoint when no overlap is found at all. A partial
+    overlap rules out both, so the walk stops there.
+    """
+    matched = 0
+    left_index = right_index = 0
+    disjoint = True
+    while left_index < len(left) and right_index < len(right):
+        left_lower, left_upper = left[left_index]
+        right_lower, right_upper = right[right_index]
+
+        # ``max`` and ``min`` return their first argument on a tie, so both cuts
+        # are the left ones exactly when the overlap is the whole left interval.
+        lower = max(left_lower, right_lower)
+        upper = min(left_upper, right_upper)
+
+        if not range_is_empty(lower, upper):
+            if lower is left_lower and upper is left_upper:
+                matched += 1
+            else:
+                return False, False
+            disjoint = False
+
+        # Advance whichever side has the smaller upper bound.
+        if left_upper < right_upper:
+            left_index += 1
+        else:
+            right_index += 1
+
+    return matched == len(left), disjoint
+
+
+def _subset_bounds(left: Sequence[Interval], right: Sequence[Interval]) -> bool:
+    """Return whether every version in ``left`` is also in ``right``.
+
+    The canonical lists let one two-pointer walk decide containment: skip the
+    right intervals that end too early, then check that the surviving one starts
+    early enough.
+    """
+    right_index = 0
+    right_len = len(right)
+    for left_lower, left_upper in left:
+        # A right interval ending below this one cannot cover it, and the left
+        # list ascends, so it cannot cover any later one either.
+        while right_index < right_len and right[right_index][1] < left_upper:
+            right_index += 1
+        if right_index == right_len:
+            return False
+        if right[right_index][0] > left_lower:
+            return False
+    return True
+
+
+def _disjoint_bounds(left: Sequence[Interval], right: Sequence[Interval]) -> bool:
+    """Return whether no version lies in both ``left`` and ``right``.
+
+    A two-pointer merge that stops at the first overlap.
+    """
+    left_index = right_index = 0
+    left_len = len(left)
+    right_len = len(right)
+    while left_index < left_len and right_index < right_len:
+        left_lower, left_upper = left[left_index]
+        right_lower, right_upper = right[right_index]
+
+        lower = max(left_lower, right_lower)
+        upper = min(left_upper, right_upper)
+        if not range_is_empty(lower, upper):
+            return False
+
+        # Advance whichever side has the smaller upper bound.
+        if left_upper < right_upper:
+            left_index += 1
+        else:
+            right_index += 1
+
+    return True
+
+
 def _complement_ranges(ranges: Sequence[Interval]) -> list[Interval]:
     """Complement a sorted, non-overlapping interval list.
 
@@ -410,9 +499,9 @@ class VersionRange:
     that opt-in scoped to those versions, so unrelated pre-releases are not
     admitted wholesale.
 
-    :meth:`intersection`, :meth:`union`, :meth:`difference`, and the
-    :meth:`is_subset` / :meth:`is_superset` / :meth:`is_disjoint` predicates
-    require both operands to share the same configured policy.
+    :meth:`intersection`, :meth:`union`, :meth:`difference`, :meth:`relation`,
+    and the :meth:`is_subset` / :meth:`is_superset` / :meth:`is_disjoint`
+    predicates require both operands to share the same configured policy.
 
     >>> r = SpecifierSet(">=1.0,<2.0").to_range()
     >>> "1.5" in r
@@ -1027,6 +1116,15 @@ class VersionRange:
         False
         >>> VersionRange.empty().is_subset(outer)
         True
+
+        A range with an exclusion is a subset of its span, but the span is not a
+        subset of it:
+
+        >>> punctured = SpecifierSet(">=1.0,<2.0,!=1.5").to_range()
+        >>> punctured.is_subset(outer)
+        True
+        >>> outer.is_subset(punctured)
+        False
         """
         self._check_policy_compat(other)
 
@@ -1037,11 +1135,51 @@ class VersionRange:
 
         # Plain ranges: subset reduces to bounds containment, no algebra needed.
         if self._is_plain() and other._is_plain():
-            return not intersect_ranges(self._bounds, _complement_ranges(other._bounds))
+            return _subset_bounds(self._bounds, other._bounds)
 
         # difference (unlike intersection with the one-way complement) resolves
         # ``===`` literals against both operands, so it stays correct for them.
         return self.difference(other).is_empty
+
+    def relation(self, other: VersionRange) -> tuple[bool, bool]:
+        """Return ``(is_subset, is_disjoint)`` against ``other``.
+
+        Subset-only is containment, disjoint-only is separation, and neither is
+        overlap. Both hold together only when self is empty, which is a subset
+        of everything and shares a member with nothing.
+
+        Both operands must share the same configured pre-release policy;
+        otherwise :exc:`ValueError` is raised.
+
+        >>> inner = SpecifierSet(">=1.5,<1.8").to_range()
+        >>> outer = SpecifierSet(">=1.0,<2.0").to_range()
+        >>> inner.relation(outer)
+        (True, False)
+        >>> outer.relation(SpecifierSet(">=5.0").to_range())
+        (False, True)
+        >>> VersionRange.empty().relation(outer)
+        (True, True)
+        """
+        # Identity settles both answers and the policy check with it.
+        if self is other:
+            if self.is_empty:
+                return True, True
+            return True, False
+
+        self._check_policy_compat(other)
+
+        if self._is_plain() and other._is_plain():
+            # On plain ranges the bounds decide membership, so equal bounds
+            # settle both answers without a walk.
+            if self._bounds == other._bounds:
+                if self._bounds:
+                    return True, False
+                return True, True
+            return _relate_bounds(self._bounds, other._bounds)
+
+        # Literals, a live arbitrary admission, or a pre-release-excluding
+        # policy all put members outside the bounds, so defer to the algebra.
+        return self.is_subset(other), self.is_disjoint(other)
 
     def is_superset(self, other: VersionRange) -> bool:
         """Return whether every member of other is also a member of self.
@@ -1073,12 +1211,19 @@ class VersionRange:
         True
         >>> a.is_disjoint(SpecifierSet(">=1.5,<2.5").to_range())
         False
+
+        A range pinned to a version the other excludes is disjoint from it:
+
+        >>> SpecifierSet("==1.5").to_range().is_disjoint(
+        ...     SpecifierSet(">=1.0,<2.0,!=1.5").to_range()
+        ... )
+        True
         """
         self._check_policy_compat(other)
 
         # Plain ranges: disjointness is an empty bounds intersection.
         if self._is_plain() and other._is_plain():
-            return not intersect_ranges(self._bounds, other._bounds)
+            return _disjoint_bounds(self._bounds, other._bounds)
         return self.intersection(other).is_empty
 
     @typing.overload

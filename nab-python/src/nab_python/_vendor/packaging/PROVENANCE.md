@@ -11,12 +11,26 @@ plus at most one checked-in patch, and nothing else.
   to.
 - `tasks/vendoring/packaging.patch`, when present, is the only divergence from
   pristine; the rebuild reapplies it after refreshing. With no patch file the
-  tree is byte-identical to upstream at the pin. The current patch adds
-  `VersionRange.from_bounds` and `VersionRange.snap_bounds` to `ranges.py`,
-  generated from the `range-from-bounds` branch of the packaging fork
-  (`git diff upstream/main..range-from-bounds -- src/packaging/ranges.py`,
-  paths rewritten to this directory). An upstream PR is planned; until it
-  lands the patch carries the two methods.
+  tree is byte-identical to upstream at the pin. The patch carries:
+  - `ranges.py`: `VersionRange.from_bounds`, `snap_bounds`,
+    `release_intervals`, and `relation`; `is_subset` and `is_disjoint`
+    answered by a direct walk over the interval lists instead of an
+    intermediate range; the module-level helpers they need (`_relate_bounds`,
+    `_subset_bounds`, `_disjoint_bounds`, `_bisect_predicate`,
+    `_partition_indexes`, `_lattice_release`, `_release_boundary_point`); and
+    the class-docstring lines naming them.
+  - `_ranges.py`: an unbounded end canonicalizes its inclusivity, and
+    `LowerBound.__gt__`, `LowerBound.__le__`, and `UpperBound.__gt__` are
+    written out beside `functools.total_ordering`, which still derives the
+    rest.
+  - `markersets.py` and `_markersets.py`: the marker-algebra module and the
+    private engine behind it, both new files, plus the `Marker.to_set`
+    accessor they need on `markers.py`.
+
+  Upstream PRs are planned for the bound ordering, the direct subset and
+  disjoint walks, and `from_bounds`/`snap_bounds`/`release_intervals`.
+  `relation` is deliberately not proposed yet: most of its win is available
+  from the direct walks alone, and what is left depends on the interval shapes.
 - `tasks/vendor-packaging.sh` fetches `pypa/packaging` at the pin, replaces this
   package with the pristine `src/packaging/` tree plus the repo-root license
   texts, and reapplies the patch. `--check` rebuilds into a temp location and
@@ -28,8 +42,12 @@ plus at most one checked-in patch, and nothing else.
 ## Refreshing
 
 1. Bump `tasks/vendoring/packaging.pin` to the new upstream commit.
-2. If the patch no longer applies, rebase its source branch onto the new pin
-   and regenerate `packaging.patch` from it.
+2. If the patch no longer applies, regenerate it from the committed vendored
+   tree rather than from any fork branch: the patch is the accumulated
+   divergence and no single branch carries all of it. Copy the committed
+   `_vendor/packaging/` over pristine-at-pin in a local `packaging` clone,
+   diff, and rewrite the paths back to this directory. Drop from the diff
+   whatever the new pin has absorbed.
 3. Run `tasks/vendor-packaging.sh`, then the test suite.
 
 ## License
