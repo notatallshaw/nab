@@ -10,13 +10,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .._vendor.packaging.ranges import VersionRange
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from nab_resolver.types import RangeProtocol
 
     from .._vendor.packaging.version import Version
-    from ..provider import Provider
+    from ..provider import DistFile, Provider
 
 
 CONFLICT_THRESHOLD = 5
@@ -33,6 +35,11 @@ TIER_CULPRIT = 2
 # Matching count used while a listing is in flight, so not-yet-fetched
 # packages sort behind ready ones.
 _NO_LISTING_PRIOR = 1000
+
+
+def _version_of(entry: tuple[Version, DistFile]) -> Version:
+    """Return the version half of a ``versions_cache`` entry."""
+    return entry[0]
 
 
 def compute_tier(
@@ -92,8 +99,17 @@ def compute_matching(
             provider.speculative_prefetch(normalized, versions)
 
     if normalized in provider.versions_cache:
+        assert isinstance(version_range, VersionRange)
         versions = provider.versions_cache[normalized]
-        matching = sum(1 for v, _ in versions if v in version_range)
+
+        # prereleases=True counts every in-bounds version; the default policy
+        # would buffer in-bounds pre-releases out of the count.
+        matching = sum(
+            1
+            for _ in version_range.filter(
+                versions, prereleases=True, key=_version_of, assume_sorted="descending"
+            )
+        )
     elif has_local_source:
         matching = 1
     else:

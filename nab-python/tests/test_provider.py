@@ -700,6 +700,44 @@ class TestChooseVersion:
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) is None
 
+    _PREFERENCE_META = "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\n\n"
+
+    def _preference_provider(
+        self, preferred: str, versions: tuple[str, ...] = ("1.0", "2.0", "3.0")
+    ) -> Provider:
+        coordinator = make_coordinator(
+            [make_wheel(v) for v in versions],
+            metadata_by_version={
+                v: self._PREFERENCE_META.format(ver=v) for v in versions
+            },
+            package="foo",
+        )
+        return Provider(coordinator, target=_PY312, preferences={"foo": V(preferred)})
+
+    def test_a_preference_inside_the_range_wins(self) -> None:
+        """The membership walk stops at the preference wherever it sits."""
+        provider = self._preference_provider("1.0")
+        spec = SpecifierSet(">=1.0")
+        assert provider.choose_version("foo", spec.to_range()) == V("1.0")
+
+    def test_a_preference_outside_the_range_is_dropped(self) -> None:
+        """A preference the range excludes falls through to the strategy."""
+        provider = self._preference_provider("1.0")
+        spec = SpecifierSet(">=2.0")
+        assert provider.choose_version("foo", spec.to_range()) == V("3.0")
+
+    def test_a_preference_the_index_never_listed_is_dropped(self) -> None:
+        """A preference absent from the listing exhausts the walk and loses."""
+        provider = self._preference_provider("9.9")
+        spec = SpecifierSet(">=1.0")
+        assert provider.choose_version("foo", spec.to_range()) == V("3.0")
+
+    def test_a_preference_buffered_out_by_the_default_policy_is_dropped(self) -> None:
+        """The membership question honours the filter's pre-release policy."""
+        provider = self._preference_provider("2.0a1", ("1.0", "2.0a1", "2.0"))
+        spec = SpecifierSet(">=1.0")
+        assert provider.choose_version("foo", spec.to_range()) == V("2.0")
+
 
 class TestHasSatisfyingVersion:
     def test_true_when_a_version_is_in_range(self) -> None:
@@ -8204,6 +8242,33 @@ class TestPrioritizeMatchingFromIndex:
         per_pkg = provider.matching_cache["foo"]
         assert spec_a in per_pkg
         assert spec_b in per_pkg
+
+    def test_matching_counts_one_entry_per_file(self) -> None:
+        """versions_cache holds a row per file, so a dual-artifact release counts twice."""
+        files = [make_wheel("2.0"), make_sdist("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(files, package="foo")
+        provider = Provider(coordinator)
+        version_range = SpecifierSet(">=2.0").to_range()
+        result = provider.prioritize("foo", version_range, {})
+        cached = provider.versions_cache["foo"]
+        assert result[1] == sum(1 for v, _ in cached if v in version_range)
+        assert result[1] == 2
+
+    def test_matching_counts_an_in_bounds_prerelease(self) -> None:
+        """The count is the membership test, which admits in-bounds pre-releases.
+
+        The default filtering policy would buffer 2.0a1 behind the matching
+        final release and drop it, so only the admitting policy agrees.
+        """
+        wheels = [make_wheel(v) for v in ("2.0", "2.0a1", "1.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        version_range = SpecifierSet(">=2.0a1").to_range()
+        result = provider.prioritize("foo", version_range, {})
+        cached = provider.versions_cache["foo"]
+        assert V("2.0a1") in version_range
+        assert result[1] == sum(1 for v, _ in cached if v in version_range)
+        assert result[1] == 2
 
     def test_versions_only_cache_hit(self) -> None:
         """Calling versions_only twice returns the same cached list."""
