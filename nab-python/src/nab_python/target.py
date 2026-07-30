@@ -471,6 +471,9 @@ def micro_boundary_points(
     :class:`NonIntervalMarkerError` (see there); with the whole-minor pin gone,
     an untileable marker stops the resolve loudly.  A whole target (a host, or
     a python-patches pin) is not an interval and is never cut.
+
+    Markers are scanned in text order, so the clause a crash names is the same
+    every run even when ``consulted`` is unordered.
     """
     if not target.is_minor_interval:
         return []
@@ -479,7 +482,7 @@ def micro_boundary_points(
     scanned = _scanned_version_variables(target)
 
     points: set[Version] = set()
-    for marker in consulted:
+    for marker in sorted(consulted, key=str):
         for atom in _MARKER_CLAUSE_RE.finditer(str(marker)):
             points.update(
                 _clause_boundary_points(

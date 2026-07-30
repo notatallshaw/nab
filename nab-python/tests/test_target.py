@@ -1123,6 +1123,25 @@ class TestMicroBoundarySplitting:
         with pytest.raises(NonIntervalMarkerError):
             micro_boundary_points(self._target(), [Marker(marker)])
 
+    def test_the_crash_names_the_same_clause_in_either_order(self) -> None:
+        """Two untileable markers name the same clause in either order.
+
+        The caller passes an unordered set, so the scan order varies per run.
+        """
+        markers = [
+            Marker('python_full_version in "3.12.1"'),
+            Marker('python_full_version === "3.12.4"'),
+        ]
+
+        messages: set[str] = set()
+        for ordering in (markers, list(reversed(markers))):
+            with pytest.raises(NonIntervalMarkerError) as caught:
+                micro_boundary_points(self._target(), ordering)
+            messages.add(str(caught.value))
+
+        assert len(messages) == 1
+        assert 'clause python_full_version === "3.12.4" cannot tile' in messages.pop()
+
     def test_a_non_version_clause_is_ignored(self) -> None:
         """Only the python_full_version clause of a marker is a boundary."""
         found = micro_boundary_points(
