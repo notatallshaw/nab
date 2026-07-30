@@ -109,6 +109,11 @@ class PartialSolution(Generic[PackageType, VersionType]):
         """Return the current decision depth."""
         return self._decision_level
 
+    @property
+    def trail_length(self) -> int:
+        """Return the number of assignments currently on the trail."""
+        return len(self._assignments)
+
     def assignments_for(
         self, package: PackageType
     ) -> Sequence[Assignment[PackageType, VersionType]]:

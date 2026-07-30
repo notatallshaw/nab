@@ -13,6 +13,21 @@ class TestAssignments:
         assert ps.decision_level == 0
         assert ps.get("foo") is None
 
+    def test_trail_length_counts_assignments(self) -> None:
+        ps = PartialSolution()
+        inc = Incompatibility(
+            [Term("bar", Range.at_least(5))],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+        assert ps.trail_length == 0
+
+        ps.decide("foo", 5)
+        ps.derive("bar", Range.at_least(5), positive=False, cause=inc)
+        assert ps.trail_length == 2
+
+        ps.backtrack(0)
+        assert ps.trail_length == 0
+
     def test_decide(self) -> None:
         ps = PartialSolution()
         ps.decide("foo", 5)
