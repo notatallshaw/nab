@@ -260,9 +260,9 @@ class CachedAsyncSimpleClient:
             data = self._decode_cached_listing(body, package)
             if data is not None:
                 if policy.is_fresh() or self._offline:
-                    return self._parse_body(data, package)
+                    return self._parse_body(data, package, page_url=policy.page_url)
                 if self._floor_keeps_fresh(policy, package, "listing"):
-                    return self._parse_body(data, package)
+                    return self._parse_body(data, package, page_url=policy.page_url)
                 return await self._revalidate_simple(package, body, policy)
             corrupt_positive = True
 
@@ -328,8 +328,10 @@ class CachedAsyncSimpleClient:
             )
             return None
 
-    def _parse_listing(self, body: bytes, package: str) -> list[WheelFile | SdistFile]:
-        """Parse a Simple-API listing body.
+    def _parse_listing(
+        self, body: bytes, package: str, page_url: str
+    ) -> list[WheelFile | SdistFile]:
+        """Parse a Simple-API listing body served from ``page_url``.
 
         A body that is not valid JSON raises the same
         :class:`MalformedSimpleResponseError` as a valid-JSON body of the
@@ -345,11 +347,17 @@ class CachedAsyncSimpleClient:
                 f"{package!r}: body is not valid JSON"
             )
             raise MalformedSimpleResponseError(msg) from exc
-        return self._parse_body(data, package)
+        return self._parse_body(data, package, page_url=page_url)
 
-    def _parse_body(self, data: object, package: str) -> list[WheelFile | SdistFile]:
-        """Parse a decoded listing body, marking one with no readable file."""
-        files = _parse_files(data, self._index_url, package)
+    def _parse_body(
+        self, data: object, package: str, *, page_url: str | None = None
+    ) -> list[WheelFile | SdistFile]:
+        """Parse a decoded listing body, marking one with no readable file.
+
+        ``page_url`` is the URL the body was served from, which its relative
+        entries resolve against.
+        """
+        files = _parse_files(data, self._index_url, package, page_url=page_url)
         if not files and holds_unreadable_format(data):
             self._unreadable_only.add(package)
         return files
@@ -376,9 +384,10 @@ class CachedAsyncSimpleClient:
                     else policy.max_age
                 ),
                 etag=_header(response, "etag") or policy.etag,
+                page_url=response.url,
             )
             self._cache.refresh_simple_policy(package, new_policy)
-            return self._parse_listing(body, package)
+            return self._parse_listing(body, package, response.url)
 
         if response.status_code == _HTTP_NOT_FOUND:
             self._cache.put_negative(package, self._negative_policy(response))
@@ -389,12 +398,13 @@ class CachedAsyncSimpleClient:
         )
 
         # Parse before caching so a bad body never poisons the cache.
-        files = self._parse_listing(new_body, package)
+        files = self._parse_listing(new_body, package, response.url)
 
         new_policy = CachePolicy(
             fetched_at=_freshness_start(response),
             max_age=_freshness_lifetime(response),
             etag=_header(response, "etag"),
+            page_url=response.url,
         )
         self._cache.put_simple(package, new_body, new_policy)
         return files
@@ -410,12 +420,13 @@ class CachedAsyncSimpleClient:
         body = _listing_body(response, self._index_url, package, self._serialization)
 
         # Parse before caching so a bad body never poisons the cache.
-        files = self._parse_listing(body, package)
+        files = self._parse_listing(body, package, response.url)
 
         policy = CachePolicy(
             fetched_at=_freshness_start(response),
             max_age=_freshness_lifetime(response),
             etag=_header(response, "etag"),
+            page_url=response.url,
         )
         self._cache.put_simple(package, body, policy)
         self._cache.drop_negative(package)

@@ -46,10 +46,13 @@ INDEX = "https://idx.example/simple/"
 class FakeResponse:
     """Minimal ``HttpResponse`` stand-in over canned bytes."""
 
-    def __init__(self, status: int, headers: dict[str, str], body: bytes) -> None:
+    def __init__(
+        self, status: int, headers: dict[str, str], body: bytes, url: str = INDEX
+    ) -> None:
         self.status_code = status
         self.headers = headers
         self.content = body
+        self.url = url
 
     @property
     def text(self) -> str:
@@ -79,7 +82,7 @@ class FakeTransport:
         self.calls.append((url, headers))
         responses = self.script[url]
         entry = responses.pop(0) if len(responses) > 1 else responses[0]
-        return FakeResponse(*entry)
+        return FakeResponse(*entry, url=url)
 
     async def aclose(self) -> None:
         pass

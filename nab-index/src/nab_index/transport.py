@@ -134,6 +134,15 @@ class HttpResponse(Protocol):
         ...
 
     @property
+    def url(self) -> str:
+        """Absolute URL the body was retrieved from, after any redirect.
+
+        RFC 3986 section 5.1.3: this, not the requested URL, is the base a
+        relative URL inside the body resolves against.
+        """
+        ...
+
+    @property
     def headers(self) -> Mapping[str, str]:
         """Response headers, case-insensitive lookup by lowercased key."""
         ...
