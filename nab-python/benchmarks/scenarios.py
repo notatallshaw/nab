@@ -145,7 +145,7 @@ def parse_requirements(
             else VersionRange.full(admit_arbitrary=False)
         )
         reqs[name] = reqs.get(name, VersionRange.full()) & term
-        for extra in req.extras:
+        for extra in sorted(req.extras):
             reqs[f"{name}[{extra}]"] = VersionRange.full(admit_arbitrary=False)
     return reqs
 
