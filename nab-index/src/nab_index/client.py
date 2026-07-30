@@ -583,6 +583,9 @@ def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
         KeyError,
         EOFError,
         zlib.error,
+        # tarfile resolves a link member by recursing on its target, so a
+        # cycle of links only ends at the recursion limit.
+        RecursionError,
     ):
         return (None, None)
 
