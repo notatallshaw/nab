@@ -15,8 +15,11 @@ distribution as the oracle and requires agreement:
    ``parse_wheel_filename`` on every spec-valid filename.
 5. ``TagSet.pick`` must choose a wheel whose best upstream rank is
    the minimum over all candidate wheels.
+6. Among wheels of equal rank, ``TagSet.pick`` must choose the one
+   with the highest upstream `PEP 427`_ build tag.
 
 .. _PEP 425: https://peps.python.org/pep-0425/
+.. _PEP 427: https://peps.python.org/pep-0427/
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from packaging import tags as upstream_tags
 from packaging import utils as upstream_utils
-from packaging.utils import InvalidWheelFilename
+from packaging.utils import BuildTag, InvalidWheelFilename
 from packaging.version import InvalidVersion
 
 from nab_index.client import WheelFile
@@ -364,6 +367,55 @@ class TestSelectWheelMinimizesUpstreamRank:
             f"chose {chosen.filename} rank {best_rank(chosen)}; "
             f"best available {min(oracle_ranks)}"
         )
+
+
+BUILD_TAGS = (
+    "0",
+    "1",
+    "5",
+    "42",
+    "999999999",
+    "1000000000",
+    "1753900000",
+    "1753900001",
+    "20260730123456",
+    "3post1",
+)
+
+
+class TestBuildTagOrderMatchesUpstream:
+    """`PEP 427`_ orders same-tag wheels by build number, an absent tag
+    lowest.  Upstream ``parse_wheel_filename`` reads the whole leading
+    digit run, so ``TagSet.pick`` must choose a wheel whose upstream
+    build tag is the maximum over all candidate wheels.
+
+    .. _PEP 427: https://peps.python.org/pep-0427/#file-name-convention
+    """
+
+    @given(
+        builds=st.lists(
+            st.sampled_from(BUILD_TAGS), min_size=1, max_size=4, unique=True
+        ),
+        untagged=st.booleans(),
+        python_version=st.sampled_from(PY_VERSIONS),
+    )
+    @PROPERTY_SETTINGS
+    def test_pick_prefers_the_highest_upstream_build_tag(
+        self, builds: list[str], untagged: bool, python_version: str
+    ) -> None:
+        """The picked wheel carries the highest upstream build tag."""
+        wheels = [_wheel(f"pkg-1.0-{build}-py3-none-any.whl") for build in builds]
+        if untagged:
+            wheels.append(_wheel("pkg-1.0-py3-none-any.whl"))
+
+        def oracle_build(w: WheelFile) -> BuildTag:
+            return upstream_utils.parse_wheel_filename(w.filename)[2]
+
+        chosen = TagSet.for_spec(
+            python_version=python_version, spec=PlatformSpec("linux_x86_64")
+        ).pick(wheels)
+        assert chosen is not None
+        assert oracle_build(chosen) == max(oracle_build(w) for w in wheels)
 
 
 class TestAcceptedSpecNamesAPlatform:

@@ -920,6 +920,25 @@ class TestSelectWheel:
         )
         assert chosen is build3
 
+    def test_timestamp_build_tag_beats_untagged(self) -> None:
+        """A rebuild numbered with a timestamp sorts above an absent tag."""
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 28))
+        untagged = _wheel("pkg-1.0-py3-none-any.whl")
+        rebuild = _wheel("pkg-1.0-1753900000-py3-none-any.whl")
+        chosen = TagSet.for_spec(python_version="3.12", spec=spec).pick(
+            [untagged, rebuild]
+        )
+        assert chosen is rebuild
+
+    def test_higher_timestamp_build_tag_wins_either_order(self) -> None:
+        """Two timestamp rebuilds order by build number, not by listing order."""
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 28))
+        older = _wheel("pkg-1.0-1753900000-py3-none-any.whl")
+        newer = _wheel("pkg-1.0-1753900001-py3-none-any.whl")
+        tags = TagSet.for_spec(python_version="3.12", spec=spec)
+        assert tags.pick([older, newer]) is newer
+        assert tags.pick([newer, older]) is newer
+
     def test_an_absurd_build_number_is_malformed(self) -> None:
         """The index names the build tag, and int() raises above 4300 digits."""
         spec = PlatformSpec("linux_x86_64")
@@ -985,6 +1004,15 @@ class TestWheelRank:
         assert build5 is not None
         assert untagged[0] == build5[0]
         assert untagged[1] < build5[1]
+
+    def test_timestamp_build_tags_do_not_tie(self) -> None:
+        """Timestamp-numbered rebuilds rank apart, so they never tie."""
+        tags = TagSet.for_spec(python_version="3.12", spec=PlatformSpec("linux_x86_64"))
+        first = tags.wheel_rank("pkg-1.0-20260730123456-py3-none-any.whl")
+        second = tags.wheel_rank("pkg-1.0-20260730123457-py3-none-any.whl")
+        assert first is not None
+        assert second is not None
+        assert first < second
 
 
 class TestUnknownPlatformKindGuard:
