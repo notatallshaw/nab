@@ -9747,10 +9747,12 @@ class TestNoTagAxisPythonNarrowing:
     """A disowned tag axis still narrows siblings by the target's Python.
 
     A marker overlay cannot rebuild the platform tags, so under one the
-    provider filters no wheel by tag.  It does keep ``python_version`` and
-    ``implementation_name``, so a wheel built for another interpreter is still
-    a wheel this target can never install, and neither the tie set nor the pick
-    may treat it as a candidate.
+    provider filters no wheel by tag.  The target still names a Python,
+    whichever ``python_version`` and ``implementation_name`` the overlay leaves
+    in force, so a wheel built for another interpreter is still a wheel this
+    target can never install, and neither the tie set nor the pick may treat it
+    as a candidate.  Where the Python axis admits no wheel of a version it
+    decides nothing, and both fall back to the whole listing.
     """
 
     _V = V("1.0")
@@ -9870,6 +9872,26 @@ class TestNoTagAxisPythonNarrowing:
             )
             is cp27
         )
+
+    def test_a_version_admitting_no_wheel_still_crashes_on_divergence(self) -> None:
+        """A pick the target cannot install either leaves every sibling a tie.
+
+        Narrowing to nothing decides nothing, so the pick falls back to listing
+        order and the divergence it would read past has to stay loud.
+        """
+        cp27 = _split_wheel("cp27-cp27m-manylinux1_x86_64")
+        cp35 = _split_wheel("cp35-cp35m-manylinux1_x86_64")
+        coordinator = make_coordinator([cp27, cp35], package="pkg")
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1"), cp27.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta("common>=1", "numpy"), cp35.metadata_url
+        )
+        provider = Provider(coordinator, target=_overlay_target())
+        with pytest.raises(SiblingMetadataDivergenceError) as exc:
+            provider.get_dependencies("pkg", self._V)
+        assert "numpy" in str(exc.value)
 
     def test_abi3_sibling_of_an_older_interpreter_still_ties(self) -> None:
         """An abi3 wheel below the target's interpreter is installable, so it ties."""

@@ -422,6 +422,10 @@ _IMPLEMENTATION_FOR_PREFIX: Mapping[str, str] = MappingProxyType(
 _INTERPRETER_PREFIX_LEN = 2
 _FREE_THREADED_ABI_SUFFIX = "t"
 
+# The implementations nab has tag rules for, read off the prefix map so the
+# two never name different sets.
+_TAG_RULE_IMPLEMENTATIONS = frozenset(_IMPLEMENTATION_FOR_PREFIX.values())
+
 # The platform tag of an interpreter-agnostic wheel.  It is not a
 # machine, so it never seeds the platform axis of another target.
 _ANY_PLATFORM = "any"
@@ -779,7 +783,15 @@ def python_axis_accepts(
     it (see :meth:`~nab_python.target.ResolveTarget.with_marker_overrides`).
     A filename that does not parse as a wheel is admitted; it carries no tags
     to reject it by.
+
+    An implementation nab has no tag rules for gets no opinion either, for the
+    same reason :func:`_host_implementation` refuses to guess one: CPython's
+    tag rules would admit the wheels such a target cannot load and reject the
+    ones it can.  Only a marker overlay reaches here with one; every other
+    route builds the Python axis from an interpreter nab has rules for.
     """
+    if implementation not in _TAG_RULE_IMPLEMENTATIONS:
+        return True
     tags = wheel_tag_set(wheel_filename)
     if not tags:
         return True
