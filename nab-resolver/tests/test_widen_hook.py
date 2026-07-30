@@ -127,6 +127,23 @@ class _WideningProvider(_BaseProvider):
         return widened
 
 
+class _SnappingProvider(_WideningProvider):
+    """Widens to the neighbor gap and snaps displayed constraints onto the listing."""
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        universe = sorted(self._packages.get(package, {}))
+        inside = [version for version in universe if version in constraint]
+        if not inside:
+            return constraint
+        if len(inside) == len(universe):
+            return Range.full()
+        if len(inside) == 1:
+            return Range.singleton(inside[0])
+        return Range.between(inside[0], inside[-1] + 1)
+
+
 class _SpanWideningProvider(_BaseProvider):
     """Widens a decided version across adjacent versions with equal deps."""
 
@@ -385,24 +402,17 @@ class TestFormatErrorNarrow:
         assert message == "because foo 2 depends on bar [3, +inf)"
         assert narrowed_packages == ["foo"]
 
-    def test_narrow_applies_to_no_versions_term(self) -> None:
+    def test_no_versions_term_renders_its_own_range(self) -> None:
+        """Narrowing it is what let it stop covering the requirement below."""
         clause = Incompatibility(
             [Term("qux", Range.at_least(5), positive=True)],
             cause=IncompatibilityCause.NO_VERSIONS,
         )
-        message = format_error(
-            clause, narrow=lambda package, constraint: Range.singleton(7)
-        )
-        assert message == "because no versions of qux 7 are available"
-
-    def test_no_versions_term_is_not_narrowed_to_full(self) -> None:
-        """Without the range the line would claim qux has no versions at all."""
-        clause = Incompatibility(
-            [Term("qux", Range.at_least(5), positive=True)],
-            cause=IncompatibilityCause.NO_VERSIONS,
-        )
-        message = format_error(clause, narrow=lambda package, constraint: Range.full())
-        assert message == "because no versions of qux [5, +inf) are available"
+        for narrowed in (Range.singleton(7), Range.full()):
+            message = format_error(
+                clause, narrow=lambda package, constraint, r=narrowed: r
+            )
+            assert message == "because no versions of qux [5, +inf) are available"
 
     def test_other_causes_accept_a_narrowing_to_full(self) -> None:
         clause = Incompatibility(
@@ -428,9 +438,11 @@ class TestFormatErrorNarrow:
         assert message == "so a 3 and not b [1, 9)"
 
     def test_raise_site_narrows_through_provider(self) -> None:
-        """The resolver passes ``narrow_for_display`` to ``format_error``:
-        the positive NO_VERSIONS term is narrowed, the negative dep side of
-        the DEPENDENCY clause still renders the requested range."""
+        """The resolver passes ``narrow_for_display`` to ``format_error``.
+
+        The availability line and the negative dependency side both render the
+        range they hold; only an originally-positive term elsewhere is narrowed.
+        """
         provider = _NarrowingProvider(
             {"root": {1: {"foo": Range.full()}}},
             target="foo",
@@ -440,8 +452,7 @@ class TestFormatErrorNarrow:
         with pytest.raises(ResolutionError) as exc_info:
             resolver.resolve({"root": Range.singleton(1)})
         message = str(exc_info.value)
-        assert "because no versions of foo [5, 7) are available" in message
-        # Pinned as a whole line: a narrowed dep side would print [5, 7).
+        assert "because no versions of foo are available" in message.splitlines()
         assert "because root 1 depends on foo" in message.splitlines()
         assert provider.narrow_calls
 
@@ -512,3 +523,74 @@ class TestConflictCreditTarget:
             cause=IncompatibilityCause.DEPENDENCY,
         )
         assert conflict_credit_target(self._derivation("child", self_dep)) == "child"
+
+
+_REJECTED_RUN = {
+    "a": {
+        1: {},
+        2: {"py": Range.at_least(10)},
+        3: {"py": Range.at_least(11)},
+        4: {"py": Range.at_least(12)},
+    },
+    "py": {9: {}},
+}
+
+
+class TestUnstatedVersions:
+    """A line that reaches past its causes states the listing it needs, once."""
+
+    def _message(
+        self, packages: dict[str, dict[int, dict[str, Range]]], root: dict[str, Range]
+    ) -> str:
+        with pytest.raises(ResolutionError) as exc_info:
+            Resolver(_SnappingProvider(packages)).resolve(root)
+        return str(exc_info.value)
+
+    def test_states_the_gaps_a_widened_run_leaves(self) -> None:
+        """Several lines reach past their causes; the listing is stated once."""
+        message = self._message(_REJECTED_RUN, {"a": Range.at_least(2)})
+        assert message.count("because no versions of a") == 1
+        assert "because no versions of a (2, 3) | (3, 4) | (4, +inf) are available" in (
+            message
+        )
+
+    def test_states_the_gap_a_resolved_requirement_leaves(self) -> None:
+        """The requirement runs past the exclusion that resolves it."""
+        packages = {"a": {1: {}, 2: {"py": Range.at_least(11)}, 3: {}}, "py": {9: {}}}
+        root = {"a": Range.greater_than(1) & Range.less_than(3)}
+        message = self._message(packages, root)
+        assert "because no versions of a (1, 2) | (2, 3) are available" in message
+
+    def test_states_nothing_when_narrowing_drops_no_version(self) -> None:
+        provider = _WideningProvider(_REJECTED_RUN)
+        with pytest.raises(ResolutionError) as exc_info:
+            Resolver(provider).resolve({"a": Range.at_least(2)})
+        incompatibility = exc_info.value.incompatibility
+        assert incompatibility is not None
+        assert format_error(
+            incompatibility, narrow=provider.narrow_for_display
+        ) == format_error(incompatibility)
+
+    def test_states_nothing_for_a_derivation_without_causes(self) -> None:
+        clause = Incompatibility(
+            [Term("a", Range.at_least(2), positive=True)],
+            cause=IncompatibilityCause.DERIVED,
+        )
+        message = format_error(
+            clause, narrow=lambda package, constraint: Range.singleton(3)
+        )
+        assert message == "so a 3"
+
+    def test_states_nothing_for_a_package_the_line_shows_negated(self) -> None:
+        cause = Incompatibility(
+            [Term("a", Range.singleton(2), positive=True)],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+        clause = Incompatibility(
+            [Term("a", Range.at_least(1), positive=False)],
+            cause=IncompatibilityCause.DERIVED,
+            cause_left=cause,
+            cause_right=cause,
+        )
+        message = format_error(clause, narrow=lambda package, constraint: constraint)
+        assert message == "because no versions of a 2 are available\nso not a [1, +inf)"
