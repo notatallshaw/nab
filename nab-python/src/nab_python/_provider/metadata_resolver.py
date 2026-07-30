@@ -254,10 +254,11 @@ def pick_dist(
     satisfy.  ``tags`` is ``None`` when there is no tag axis to rank by,
     either because nothing said which machine the resolve is for or because
     a marker overlay moved the target off its tags.  ``target`` still names
-    the Python, so wheels built for another interpreter drop out: reading a
-    release's dependencies out of a wheel the target could never install is
-    the unsoundness :func:`check_sibling_metadata_divergence` guards against,
-    one layer earlier.  When that leaves nothing, the whole listing stands.
+    the Python, so wheels built for another interpreter drop out
+    (:func:`_python_axis_narrowed`): reading a release's dependencies out of a
+    wheel the target could never install is the unsoundness
+    :func:`check_sibling_metadata_divergence` guards against, one layer
+    earlier.
 
     Among the wheels that remain the cheapest metadata source wins: a wheel
     with a :pep:`658` ``metadata_url``, then any wheel.  Only a version
@@ -273,8 +274,7 @@ def pick_dist(
         return dists[0]
 
     if tags is None:
-        admitted = [w for w in wheels if _python_axis_admits(target, w.filename)]
-        wheels = admitted or wheels
+        wheels = _python_axis_narrowed(target, wheels)
         installed = None
     else:
         # Sidecars first: ``pick`` keeps input order among wheels it ranks equally.
@@ -867,15 +867,16 @@ def check_sibling_metadata_divergence(
         return
 
     wheels = [d for v, d in versions if v == version and isinstance(d, WheelFile)]
+    if tags is None:
+        # The pick came off the same narrowing, so it is one of these.
+        wheels = _python_axis_narrowed(provider.target, wheels)
     if len(wheels) <= 1:
         return
 
     pick_key = None if tags is None else tags.wheel_rank(pick.filename)
     pick_sig: TargetDepSignature | None = None
     for sibling in wheels:
-        if sibling is pick or not _wheels_tie(
-            tags, provider.target, pick_key, sibling.filename
-        ):
+        if sibling is pick or not _wheels_tie(tags, pick_key, sibling.filename):
             continue
         sibling_metadata = _tie_sibling_metadata(
             provider, index, normalized, version, sibling
@@ -957,41 +958,53 @@ def _resident_wheel_text(
 
 def _wheels_tie(
     tags: TagSet | None,
-    target: ResolveTarget | None,
     pick_key: tuple[int, tuple[int, str]] | None,
     sibling_filename: str,
 ) -> bool:
     """Whether a sibling wheel ties the pick under the target's install rules.
 
-    With no tag axis a sibling is a real ambiguity only when the target's
-    Python axis admits it.  A marker overlay disowns the platform tags but
-    keeps ``python_version`` and ``implementation_name``, so a wheel built for
-    another interpreter is a choice no installer on this target could make,
-    and comparing it would crash on an ambiguity that does not exist.  The
-    ``Requires-Python`` guard in :func:`_tie_sibling_metadata` cannot catch
-    that: a release publishing one wheel per interpreter declares one
-    ``Requires-Python`` spanning them all, so that guard admits every sibling.
-
-    Otherwise a sibling ties only when its
-    :meth:`~nab_python.tags.TagSet.wheel_rank` key equals the pick's and is not
-    None; a sibling the pick ranks strictly below is never installed and is
-    exempt.
+    With no tag axis nothing ranks the wheels that :func:`_python_axis_narrowed`
+    left standing, so each of them is a real ambiguity.  Otherwise a sibling
+    ties only when its :meth:`~nab_python.tags.TagSet.wheel_rank` key equals
+    the pick's and is not None; a sibling the pick ranks strictly below is
+    never installed and is exempt.
     """
     if tags is None:
-        return _python_axis_admits(target, sibling_filename)
+        return True
     sibling_key = tags.wheel_rank(sibling_filename)
     return sibling_key is not None and sibling_key == pick_key
 
 
-def _python_axis_admits(target: ResolveTarget | None, filename: str) -> bool:
-    """Whether a target's Python axis admits a wheel filename's tags.
+def _python_axis_narrowed(
+    target: ResolveTarget | None, wheels: list[WheelFile]
+) -> list[WheelFile]:
+    """Keep the wheels the target's Python axis admits, all of them if none.
 
-    Without a target nothing has said which Python the resolve is for, so
-    every wheel is admitted.
+    A marker overlay cannot rebuild the platform tags, but the target still
+    names a Python: whichever ``python_version`` and ``implementation_name``
+    the overlay leaves in force.  A wheel built for another interpreter is a
+    choice no installer on that Python makes, so it neither answers for the
+    version's dependencies nor ties the wheel that does.  The
+    ``Requires-Python`` guard in :func:`_tie_sibling_metadata` cannot do this
+    work: a release publishing one wheel per interpreter declares one
+    ``Requires-Python`` spanning them all, so it admits every sibling.
+
+    Admitting nothing decides nothing, so every wheel stands: the pick keeps
+    its listing-order fallback, and the tie set keeps the pick's siblings
+    rather than disarming the divergence check over a pick this target cannot
+    install either.  Without a target nothing has said which Python the
+    resolve is for, so again every wheel stands.
     """
     if target is None:
-        return True
-    return python_axis_accepts(target.python_version, target.implementation, filename)
+        return wheels
+    admitted = [
+        wheel
+        for wheel in wheels
+        if python_axis_accepts(
+            target.python_version, target.implementation, wheel.filename
+        )
+    ]
+    return admitted or wheels
 
 
 def _divergent_dep_labels(
