@@ -95,7 +95,7 @@ def look_ahead_ok(
         # already has the clause via its root_requirements input).
         if dep_normalized in provider.root_requirements:
             root_range = provider.root_requirements[dep_normalized]
-            if (dep_range & root_range).is_empty:
+            if dep_range.is_disjoint(root_range):
                 provider.pending_root_blocks[
                     (package, dep_normalized, dep_range, root_range)
                 ].append(version)
@@ -119,7 +119,7 @@ def look_ahead_ok(
             if (
                 pos_range is not None
                 and decided_version is None
-                and (dep_range & pos_range).is_empty
+                and dep_range.is_disjoint(pos_range)
             ):
                 range_key = (package, dep_normalized, pos_range)
                 provider.pending_range_blocks[range_key].append(version)
