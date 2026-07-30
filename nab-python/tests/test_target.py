@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from nab_python._vendor.packaging.markers import Marker
+from nab_python._vendor.packaging.markers import InvalidMarker, Marker
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.tags import Tag
@@ -719,14 +719,37 @@ class TestMarkerVariables:
         }
 
     def test_a_marker_naming_nothing_yields_nothing(self) -> None:
+        """``extra`` is not a lock-environment axis, so it is filtered out."""
         assert marker_variables('extra == "docs"') == frozenset()
 
-    def test_a_name_in_a_string_literal_counts(self) -> None:
-        """Over-approximating narrows the declaration, which is the safe way."""
-        assert marker_variables('os_name == "platform_machine"') == {
-            "os_name",
-            "platform_machine",
+    def test_set_variables_are_not_environment_axes(self) -> None:
+        """The set variables never enter the ``environments`` declaration:
+        a lock cannot pin ``extras`` / ``dependency_groups``."""
+        assert marker_variables('"docs" in extras') == frozenset()
+        assert marker_variables('"g" in dependency_groups') == frozenset()
+
+    def test_a_name_in_a_string_literal_is_not_a_referenced_variable(self) -> None:
+        """A quoted value on the right of a variable comparison is not a variable
+        the marker reads, so parsing reports only the bare variable.
+        """
+        assert marker_variables('os_name == "platform_machine"') == {"os_name"}
+
+    def test_unparseable_marker_raises(self) -> None:
+        """A string that is not a valid marker raises InvalidMarker."""
+        with pytest.raises(InvalidMarker):
+            marker_variables("this is not a marker")
+
+    def test_arbitrary_equality_still_yields_the_variable_name(self) -> None:
+        """A ``===`` marker names a variable even though the algebra rejects it
+        at construction: extracting names does not build atoms.
+        """
+        assert marker_variables('python_full_version === "3.13.5"') == {
+            "python_full_version"
         }
+        assert marker_variables('implementation_version === "3.13.5"') == {
+            "implementation_version"
+        }
+        assert marker_variables('platform_release === "6.8.0"') == {"platform_release"}
 
     def test_every_declared_variable_is_a_marker_environment_key(self) -> None:
         target = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
@@ -758,6 +781,18 @@ class TestEnvironmentDeclaration:
         )
         assert declaration.endswith('and platform_system == "Linux"')
         assert Marker(declaration).evaluate(_HOST_ENV)
+
+    def test_an_arbitrary_equality_marker_adds_no_full_version_clause(self) -> None:
+        """A consulted ``===`` on the version axis names the axis (the scrape
+        collects it) but the algebra rejects the ``===`` atom, so it yields no
+        boundary: a whole target adds no ``python_full_version`` clause and the
+        declaration still holds on the target.
+        """
+        declaration = environment_declaration(
+            self._target(), [Marker('python_full_version === "3.13.5"')]
+        )
+        assert "python_full_version" not in declaration
+        assert Marker(declaration).evaluate(self._target().marker_env)
 
     def test_consulted_variables_are_declared_in_sorted_order(self) -> None:
         declaration = environment_declaration(
@@ -888,6 +923,22 @@ class TestVersionEmission:
         slice's upper bound stays release form."""
         below, above = slices_from_points(self._minor(), [Version("3.12.4")])
         consulted = [Marker('python_full_version >= "3.12.4"')]
+        assert 'python_full_version < "3.12.4"' in environment_declaration(
+            below, consulted
+        )
+        assert 'python_full_version >= "3.12.4.dev0"' in environment_declaration(
+            above, consulted
+        )
+
+    def test_a_consulted_marker_without_the_axis_adds_no_clause(self) -> None:
+        """A consulted marker that never reads ``python_full_version`` does not
+        disturb the slice bounds; only the markers that read the axis split it,
+        so an off-axis ``os_name`` clause leaves the split untouched."""
+        below, above = slices_from_points(self._minor(), [Version("3.12.4")])
+        consulted = [
+            Marker('python_full_version >= "3.12.4"'),
+            Marker('os_name == "posix"'),
+        ]
         assert 'python_full_version < "3.12.4"' in environment_declaration(
             below, consulted
         )

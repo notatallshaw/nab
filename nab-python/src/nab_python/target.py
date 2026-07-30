@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from ._conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
 from ._vendor.packaging import tags as ptags
 from ._vendor.packaging.markers import Marker, default_environment
+from ._vendor.packaging.markersets import variable_names
 from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.version import InvalidVersion, Version
 from .tags import (
@@ -232,10 +233,6 @@ _ALWAYS_DECLARED: tuple[str, ...] = (
     "platform_machine",
 )
 
-_MARKER_VARIABLE_RE = re.compile(
-    r"\b(" + "|".join(sorted(PEP508_MARKER_VARIABLES)) + r")\b"
-)
-
 # The variables a lock never declares by value: their bounds come only from a
 # slice's ``python_full_version`` clauses (see :func:`slices_from_points`).
 # Both carry a micro release, and on CPython they carry the same one
@@ -261,13 +258,24 @@ _MARKER_CLAUSE_RE = re.compile(
 def marker_variables(marker_text: str) -> frozenset[str]:
     """Return the PEP 508 environment variables ``marker_text`` names.
 
-    Matches the spec's names as whole words against the marker's string
-    form.  A name inside a string literal (``sys_platform ==
-    "python_version"``) counts, so the result over-approximates; a
-    declaration built from too many variables is narrower than one built
-    from too few, which is the safe direction to be wrong in.
+    Parses the marker and reads the variables its operands name, keeping
+    only the PEP 508 environment variables: the set variables ``extra`` /
+    ``extras`` / ``dependency_groups`` are not lock-environment axes (a lock
+    cannot pin them), so they drop out.  A quoted name on the right of a
+    variable comparison (``sys_platform == "python_version"``) is a value the
+    marker compares against, not a variable it reads, and is not returned; but
+    packaging reads the right operand of a literal-only comparison
+    (``"3.9" == "python_version"``) as an environment key, so that name is
+    returned.  The result is an
+    over-approximation of semantic support: a tautology such as
+    ``python_version >= "0"`` still reports ``python_version``.
+    Over-declaring narrows the lock, which is the safe direction to be
+    wrong in.
+
+    Every call site passes a serialised :class:`Marker`; an input that is not
+    a valid marker raises :class:`InvalidMarker`.
     """
-    return frozenset(_MARKER_VARIABLE_RE.findall(marker_text))
+    return variable_names(marker_text) & PEP508_MARKER_VARIABLES
 
 
 def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) -> str:
