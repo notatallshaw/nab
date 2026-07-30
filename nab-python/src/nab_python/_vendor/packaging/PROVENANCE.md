@@ -19,8 +19,8 @@ plus at most one checked-in patch, and nothing else.
     an intermediate range; the module-level helpers they need (`_relate_bounds`,
     `_subset_bounds`, `_disjoint_bounds`, `_bisect_predicate`,
     `_partition_indexes`, `_make_project`, `_check_order`, `_lattice_release`,
-    `_release_boundary_point`); the `SortedOrder` alias; and the
-    class-docstring lines naming them.
+    `_release_boundary_point`); the `SortedOrder` alias and its `__all__`
+    entry; and the class-docstring lines naming them.
   - `_ranges.py`: an unbounded end canonicalizes its inclusivity, and
     `LowerBound.__gt__`, `LowerBound.__le__`, and `UpperBound.__gt__` are
     written out beside `functools.total_ordering`, which still derives the

@@ -36,11 +36,7 @@ def _first(entry: tuple[Version, str]) -> Version:
 
 def _bisects(version_range: VersionRange) -> bool:
     """True when the range decides membership from its bounds alone."""
-    return (
-        not version_range._admit
-        and not version_range._reject
-        and not version_range._arbitrary_active()
-    )
+    return not version_range._admit and not version_range._reject
 
 
 def _check_every_shape(
@@ -140,10 +136,8 @@ def test_a_contradicted_direction_raises(versions: list[Version], spec: str) -> 
 @given(versions=_listings(), spec=range_specs())
 @PROPERTY_SETTINGS
 def test_an_unrecognised_direction_raises(versions: list[Version], spec: str) -> None:
-    """Only the two named orders reach the bisection."""
+    """Only the two named orders are accepted, whatever the range holds."""
     version_range = SpecifierSet(spec).to_range()
-    if not _bisects(version_range):
-        return
     with pytest.raises(ValueError, match="must be 'ascending' or 'descending'"):
         version_range.filter(versions, assume_sorted="Ascending")  # type: ignore[arg-type]
 
@@ -161,15 +155,18 @@ def test_string_entries_filter_by_version(versions: list[Version], spec: str) ->
 
 @given(versions=_listings(), spec=range_specs())
 @PROPERTY_SETTINGS
-def test_arbitrary_admission_keeps_a_non_version_member(
+def test_an_arbitrarily_admitted_member_breaks_the_precondition(
     versions: list[Version], spec: str
 ) -> None:
-    """A range that admits arbitrary strings yields them on either spelling."""
+    """A string the bounds do not describe has no place in version order.
+
+    The entry walk yields it, but nothing says where it sits, so the sorted
+    path refuses the sequence rather than guessing.
+    """
     version_range = SpecifierSet(spec).to_range()
     if not version_range._arbitrary_active():
         return
     texts: list[str] = [*[str(v) for v in versions], "frobnicate"]
-    assert list(version_range.filter(texts, assume_sorted="ascending")) == list(
-        version_range.filter(texts)
-    )
-    assert "frobnicate" in list(version_range.filter(texts, assume_sorted="ascending"))
+    assert "frobnicate" in list(version_range.filter(texts))
+    with pytest.raises(ValueError, match="does not parse as a version"):
+        list(version_range.filter(texts, assume_sorted="ascending"))

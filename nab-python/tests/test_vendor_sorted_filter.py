@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from nab_python._vendor.packaging import ranges
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
@@ -168,15 +169,26 @@ class TestSortedFilter:
         filtered = _range("<0.5").filter(listing, assume_sorted="descending")
         assert list(filtered) == []
 
-    def test_the_result_is_lazy(self) -> None:
-        """A caller taking one candidate does not pay for the whole listing."""
-        full = VersionRange.full(admit_arbitrary=False)
-        filtered = full.filter(DESCENDING, assume_sorted="descending")
+    def test_the_result_is_lazy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A caller taking one candidate locates one interval, not all of them."""
+        located: list[tuple[int, int]] = []
+        real = ranges._partition_indexes
+
+        def spy(*args: Any, **kwargs: Any) -> tuple[int, int]:
+            result = real(*args, **kwargs)
+            located.append(result)
+            return result
+
+        monkeypatch.setattr(ranges, "_partition_indexes", spy)
+        multi = _range("!=1.5,!=2.0")
+        assert len(multi._bounds) == 3
+        filtered = multi.filter(DESCENDING, assume_sorted="descending")
         assert next(iter(filtered)) == DESCENDING[0]
+        assert len(located) == 1
 
 
 class TestSortedFilterLiterals:
-    """``===`` names members the bounds do not describe, so the cuts stand down."""
+    """``===`` names members the bounds do not describe, so bisection is off."""
 
     def test_admit_literal_falls_back_to_the_entry_walk(self) -> None:
         listing = [V(v) for v in ("2.0", "1.5", "1.0")]
@@ -205,30 +217,35 @@ class TestSortedFilterLiterals:
 
 
 class TestSortedFilterArbitraryAdmission:
-    """Live arbitrary admission takes non-version members, so the cuts stand down.
+    """Live arbitrary admission does not turn bisection off.
 
-    Those strings have no place in version order, and refusing a legitimate
-    member would be the wrong answer, so such a range ignores the keyword the
-    same way a ``===`` literal does.
+    It only takes strings that do not parse as a version, and those have no
+    place in version order, so the sorted walk rejects one rather than gating
+    on the flag.
     """
 
-    def test_live_admission_falls_back_to_the_entry_walk(self) -> None:
+    def test_live_admission_still_bisects(self) -> None:
         full = VersionRange.full()
         assert full._arbitrary_active()
-        listing = ["3.0", "2.0", "frobnicate", "1.0"]
+        listing = [V(v) for v in ("3.0", "2.0", "1.0")]
         assert list(full.filter(listing, assume_sorted="descending")) == listing
+
+    def test_an_admitted_string_has_no_place_in_version_order(self) -> None:
+        full = VersionRange.full()
+        listing = ["3.0", "2.0", "frobnicate", "1.0"]
+        with pytest.raises(ValueError, match="does not parse as a version"):
+            list(full.filter(listing, assume_sorted="descending"))
         assert list(full.filter(listing)) == listing
 
-    def test_the_fallback_ignores_a_wrong_declared_order(self) -> None:
+    def test_a_wrong_declared_order_is_caught_here_too(self) -> None:
         full = VersionRange.full()
-        assert list(full.filter(LISTING, assume_sorted="descending")) == list(
-            full.filter(LISTING)
-        )
+        with pytest.raises(ValueError, match="assume_sorted='descending'"):
+            full.filter(LISTING, assume_sorted="descending")
 
-    def test_the_empty_specifier_set_admits_arbitrary_strings(self) -> None:
+    def test_the_empty_specifier_set_bisects_too(self) -> None:
         universal = _range("")
         assert universal._arbitrary_active()
-        listing = ["3.0", "2.0", "weird", "1.0"]
+        listing = [V(v) for v in ("3.0", "2.0", "1.0")]
         assert list(universal.filter(listing, assume_sorted="descending")) == listing
 
     def test_an_inert_arbitrary_flag_still_bisects(self) -> None:

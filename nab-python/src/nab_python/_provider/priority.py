@@ -8,6 +8,7 @@ first inside a conflict cluster); runaway top culprits get tier 2
 
 from __future__ import annotations
 
+from operator import itemgetter
 from typing import TYPE_CHECKING
 
 from .._vendor.packaging.ranges import VersionRange
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from nab_resolver.types import RangeProtocol
 
     from .._vendor.packaging.version import Version
-    from ..provider import DistFile, Provider
+    from ..provider import Provider
 
 
 CONFLICT_THRESHOLD = 5
@@ -35,11 +36,6 @@ TIER_CULPRIT = 2
 # Matching count used while a listing is in flight, so not-yet-fetched
 # packages sort behind ready ones.
 _NO_LISTING_PRIOR = 1000
-
-
-def _version_of(entry: tuple[Version, DistFile]) -> Version:
-    """Return the version half of a ``versions_cache`` entry."""
-    return entry[0]
 
 
 def compute_tier(
@@ -107,7 +103,10 @@ def compute_matching(
         matching = sum(
             1
             for _ in version_range.filter(
-                versions, prereleases=True, key=_version_of, assume_sorted="descending"
+                versions,
+                prereleases=True,
+                key=itemgetter(0),
+                assume_sorted="descending",
             )
         )
     elif has_local_source:

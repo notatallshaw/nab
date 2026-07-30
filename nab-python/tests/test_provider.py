@@ -6281,9 +6281,9 @@ class TestExtras:
     ) -> None:
         """The pre-release enumeration reads the same descending listing.
 
-        Both the candidate filter and the ``prereleases=True`` fallback bisect
-        ``versions_only``, so this pins that a pre-release the base's range
-        excludes still reaches the block recorder.
+        The proxy range's bounds are wider than its opt-in region, so the
+        default policy buffers 2.0a1 behind 2.0 and drops it; only the
+        ``prereleases=True`` pass reaches the block recorder with it.
         """
         wheels = [make_wheel(v) for v in ("2.0", "2.0a1", "1.0")]
         coordinator = make_coordinator(
@@ -6293,11 +6293,11 @@ class TestExtras:
         all_versions = provider.versions_only("foo", provider.fetch_versions("foo"))
         assert all_versions == sorted(all_versions, reverse=True)
         provider.receive_partial_solution_hint(
-            {"foo": SpecifierSet("<2.0a1").to_range()},
+            {"foo": SpecifierSet("<1.0").to_range()},
             {},
         )
         result = provider.choose_version(
-            "foo[security]", SpecifierSet(">=2.0a1").to_range()
+            "foo[security]", SpecifierSet(">=1.0,<3.0").to_range()
         )
         assert result is None
         clauses = provider.consume_pending_clauses()
@@ -8255,20 +8255,19 @@ class TestPrioritizeMatchingFromIndex:
         assert result[1] == 2
 
     def test_matching_counts_an_in_bounds_prerelease(self) -> None:
-        """The count is the membership test, which admits in-bounds pre-releases.
+        """The count admits an in-bounds pre-release the default policy would drop.
 
-        The default filtering policy would buffer 2.0a1 behind the matching
-        final release and drop it, so only the admitting policy agrees.
+        The range's bounds are wider than its pre-release opt-in region, so the
+        default policy buffers 2.0a1 behind the matching final release and drops
+        it; only the admitting policy counts all three.
         """
         wheels = [make_wheel(v) for v in ("2.0", "2.0a1", "1.0")]
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
-        version_range = SpecifierSet(">=2.0a1").to_range()
+        version_range = SpecifierSet(">=1.0,<3.0").to_range()
         result = provider.prioritize("foo", version_range, {})
-        cached = provider.versions_cache["foo"]
         assert V("2.0a1") in version_range
-        assert result[1] == sum(1 for v, _ in cached if v in version_range)
-        assert result[1] == 2
+        assert result[1] == 3
 
     def test_versions_only_cache_hit(self) -> None:
         """Calling versions_only twice returns the same cached list."""
@@ -8284,8 +8283,8 @@ class TestPrioritizeMatchingFromIndex:
         """The listing view is newest-first, which choose_version's filter asserts.
 
         ``filter(assume_sorted="descending")`` bisects the view rather than
-        testing every entry, so an index that lists files in any other order
-        must still reach the provider sorted.
+        testing every entry, so an index listing files in any other order must
+        still reach the provider sorted.
         """
         wheels = [make_wheel(v) for v in ("1.0", "3.0", "1.0a1", "2.0", "0.9")]
         coordinator = make_coordinator(wheels, package="foo")

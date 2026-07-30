@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from .specifiers import SpecifierSet
 
 
-__all__ = ["VersionRange"]
+__all__ = ["SortedOrder", "VersionRange"]
 
 T = TypeVar("T")
 UnparsedVersion = Union[Version, str]
@@ -432,8 +432,8 @@ def _make_project(
     The bisections compare against bound predicates that only accept a
     :class:`~packaging.version.Version`, so every probed item is coerced. An
     item that does not parse cannot sit in version order at all, which is a
-    broken precondition rather than a non-match, so it raises rather than being
-    dropped the way :meth:`VersionRange.filter` drops it.
+    broken precondition rather than a non-match, so this raises rather than
+    dropping the item the way :meth:`VersionRange.filter` drops it.
     """
 
     def project(item: Any) -> Version:  # noqa: ANN401
@@ -1342,19 +1342,19 @@ class VersionRange:
         ``prereleases=True`` would yield it). A flushed buffer comes after
         every in-place yield, so the output is not version-sorted.
 
-        ``assume_sorted`` names the version order ``iterable`` is already in. It
-        promises ``iterable`` is a sequence in that order and that every entry
-        parses as a version; break either half and the result is undefined, the
-        way :func:`itertools.groupby` is on unsorted input, and a ``ValueError``
-        may come back in place of an answer. Each interval's matching entries
-        form one contiguous slice of an ordered sequence, so two bisections per
-        interval locate them and the pre-release policy runs over those alone;
-        that is ``O(intervals * log(len(iterable)))`` plus the matches, rather
-        than a bound test per entry, which tells on a long listing. The yielded
-        items, and their order, are the same either way. A range carrying ``===``
-        literals or live arbitrary admission decides membership for strings the
-        bounds do not describe, so it falls back to a test per entry and ignores
-        ``assume_sorted`` altogether.
+        ``assume_sorted`` names the version order ``iterable`` is already in,
+        and ``iterable`` must then be a sequence in that order whose every entry
+        parses as a version. Each interval's matching entries form one
+        contiguous slice of an ordered sequence, so two bisections per interval
+        locate them and the pre-release policy runs over those alone; that is
+        ``O(intervals * log(len(iterable)))`` plus the matches, rather than a
+        bound test per entry. The yielded items, and their order, are the same
+        either way. A sequence not in the named order gives a wrong answer, in
+        the way :func:`itertools.groupby` does on unsorted input; only a
+        contradiction between the two end entries is caught. A range carrying
+        ``===`` literals decides membership for strings the bounds do not
+        describe, so it falls back to a test per entry and ignores
+        ``assume_sorted``.
 
         The signature otherwise mirrors
         :meth:`~packaging.specifiers.SpecifierSet.filter`.
@@ -1376,12 +1376,22 @@ class VersionRange:
         [('1.5', 'b.whl'), ('1.0', 'a.whl')]
 
         :raises ValueError: if ``assume_sorted`` is neither ``"ascending"`` nor
-            ``"descending"``, or the two end entries contradict it. Both are
-            checked before the iterator is returned.
+            ``"descending"``, or if the two end entries contradict it; both come
+            from the call rather than the iterator. An entry the walk coerces
+            that does not parse as a version raises as it is reached.
 
         .. versionchanged:: 26.4
             Added the ``assume_sorted`` keyword.
         """
+        if assume_sorted is not None and assume_sorted not in (
+            "ascending",
+            "descending",
+        ):
+            raise ValueError(
+                f"assume_sorted must be 'ascending' or 'descending', "
+                f"not {assume_sorted!r}"
+            )
+
         region: tuple[Interval, ...] = ()
         if prereleases is None:
             # The region applies only under the autodetect default; a configured
@@ -1389,30 +1399,30 @@ class VersionRange:
             prereleases = self._prereleases_configured
             region = self._pre_region
 
+        # A region spanning the whole bounds force-admits every in-bounds
+        # pre-release, i.e. ``prereleases=True``; take the cheaper no-buffer
+        # path. (Confined to the no-literal branches: the admission path orders
+        # arbitrary strings differently under True than under the region.)
+        whole_region = bool(region) and region == self._bounds
+
+        if assume_sorted is not None and not self._admit and not self._reject:
+            # Arbitrary admission needs no gate: it only concerns strings that
+            # do not parse as a version, which ``_make_project`` rejects.
+            descending = assume_sorted == "descending"
+            sequence = typing.cast("Sequence[Any]", iterable)
+            project = _make_project(key)
+            _check_order(sequence, project, descending=descending)
+
+            if whole_region:
+                return self._filter_sorted(
+                    sequence, project, key, True, (), descending=descending
+                )
+            return self._filter_sorted(
+                sequence, project, key, prereleases, region, descending=descending
+            )
+
         arbitrary_active = self._arbitrary_active()
         if not self._admit and not self._reject and not arbitrary_active:
-            # A region spanning the whole bounds force-admits every in-bounds
-            # pre-release, i.e. ``prereleases=True``; take the cheaper no-buffer
-            # path. (Confined to this branch: the admission path orders arbitrary
-            # strings differently under True than under the region.)
-            whole_region = bool(region) and region == self._bounds
-            if assume_sorted is not None:
-                if assume_sorted not in ("ascending", "descending"):
-                    raise ValueError(
-                        f"assume_sorted must be 'ascending' or 'descending', "
-                        f"not {assume_sorted!r}"
-                    )
-                descending = assume_sorted == "descending"
-                sequence = typing.cast("Sequence[Any]", iterable)
-                project = _make_project(key)
-                _check_order(sequence, project, descending=descending)
-                if whole_region:
-                    return self._filter_sorted(
-                        sequence, project, key, True, (), descending=descending
-                    )
-                return self._filter_sorted(
-                    sequence, project, key, prereleases, region, descending=descending
-                )
             if whole_region:
                 return filter_by_ranges(self._bounds, iterable, key, True)
             return filter_by_ranges(self._bounds, iterable, key, prereleases, region)
@@ -1434,12 +1444,11 @@ class VersionRange:
 
         The bounds ascend, so a descending sequence walks them backwards; either
         way the located slices concatenate in sequence order, which is what
-        :meth:`filter` yields.
+        :meth:`filter` yields. An interval is located only once the previous one
+        is exhausted, so a caller taking a prefix pays for the prefix.
         """
         bounds = tuple(reversed(self._bounds)) if descending else self._bounds
 
-        # An interval is located only once the previous one is exhausted, so a
-        # caller taking a prefix pays for the prefix.
         if prereleases is True:
             for lower, upper in bounds:
                 start, stop = _partition_indexes(
@@ -1453,24 +1462,22 @@ class VersionRange:
         plain = key is None
         buffered: list[Any] = []
         found_final = False
+
         for lower, upper in bounds:
             start, stop = _partition_indexes(
                 versions, lower, upper, project, descending=descending
             )
             for index in range(start, stop):
                 item = versions[index]
-                # Skip re-coercing an entry that is already a ``Version``.
                 parsed = item if plain and item.__class__ is Version else project(item)
                 if not parsed.is_prerelease:
                     found_final = True
                     yield item
                 elif exclude_prereleases:
                     continue
-                # PEP 440 default, mirroring ``filter_by_ranges``: buffer the
-                # pre-releases and release the buffer only if no final matches.
-                # One inside the opt-in region is force-admitted in place, so
-                # the region is consulted per entry rather than folded into the
-                # cuts.
+                # PEP 440 default, mirroring ``filter_by_ranges``: buffer
+                # pre-releases and flush only if no final matches. One inside
+                # the opt-in region is force-admitted in place.
                 elif region and matches_bounds_only(region, parsed):
                     yield item
                 elif not found_final:
