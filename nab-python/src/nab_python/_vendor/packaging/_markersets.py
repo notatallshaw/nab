@@ -1554,6 +1554,17 @@ def _rows_equivalent(
     return True
 
 
+def universe_is_empty(universe: Formula, max_cells: int) -> bool:
+    """Whether a universe admits no environment, decided per row.
+
+    A union is empty iff every top-level disjunct is, so each is tested alone,
+    staying on one row's product instead of the whole-matrix complement.
+    """
+    nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
+    disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
+    return all(is_empty(disjunct, max_cells) for disjunct in disjuncts)
+
+
 def equivalent_within_rows(
     left: Formula, right: Formula, universe: Formula, max_cells: int
 ) -> bool:

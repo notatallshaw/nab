@@ -1,9 +1,9 @@
 diff --git a/nab-python/src/nab_python/_vendor/packaging/_markersets.py b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
 new file mode 100644
-index 0000000..fe5c0c9
+index 0000000..34252cb
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
-@@ -0,0 +1,1649 @@
+@@ -0,0 +1,1660 @@
 +"""Marker algebra engine: reason about PEP 508 markers as sets of environments.
 +
 +The private engine behind :class:`~packaging.markersets.MarkerSet`. Parses a
@@ -1560,6 +1560,17 @@ index 0000000..fe5c0c9
 +    return True
 +
 +
++def universe_is_empty(universe: Formula, max_cells: int) -> bool:
++    """Whether a universe admits no environment, decided per row.
++
++    A union is empty iff every top-level disjunct is, so each is tested alone,
++    staying on one row's product instead of the whole-matrix complement.
++    """
++    nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
++    disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
++    return all(is_empty(disjunct, max_cells) for disjunct in disjuncts)
++
++
 +def equivalent_within_rows(
 +    left: Formula, right: Formula, universe: Formula, max_cells: int
 +) -> bool:
@@ -1681,7 +1692,7 @@ index c78fd5d..0d7ee1d 100644
      """
 diff --git a/nab-python/src/nab_python/_vendor/packaging/markersets.py b/nab-python/src/nab_python/_vendor/packaging/markersets.py
 new file mode 100644
-index 0000000..a539f29
+index 0000000..7c48303
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/markersets.py
 @@ -0,0 +1,351 @@
@@ -2001,7 +2012,7 @@ index 0000000..a539f29
 +        :raises IntractableMarkerSet: if deciding a removal exceeds the internal
 +            cell budget, or the marker nests past the stack.
 +        """
-+        if within.is_empty():
++        if _markersets.universe_is_empty(within._tree, _MAX_CELLS):
 +            msg = "within must not be the empty set"
 +            raise ValueError(msg)
 +        return self._wrap(

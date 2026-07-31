@@ -314,7 +314,7 @@ class MarkerSet:
         :raises IntractableMarkerSet: if deciding a removal exceeds the internal
             cell budget, or the marker nests past the stack.
         """
-        if within.is_empty():
+        if _markersets.universe_is_empty(within._tree, _MAX_CELLS):
             msg = "within must not be the empty set"
             raise ValueError(msg)
         return self._wrap(
