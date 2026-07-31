@@ -42,6 +42,11 @@ if TYPE_CHECKING:
 # IntractableMarkerSet.
 _MAX_CELLS = 100_000
 
+# The total cell work one `simplify` may spend. `_MAX_CELLS` bounds a single
+# decision, this bounds the greedy loop that issues them. A runaway guard rather
+# than a tuning knob: the widest marker in nab's own CI locks spends 4.1 million.
+_MAX_WORK = 100_000_000
+
 __all__ = [
     "IntractableMarkerSet",
     "MarkerSet",
@@ -312,13 +317,16 @@ class MarkerSet:
         :raises ValueError: if ``within`` is the empty set, which makes every set
             vacuously equivalent.
         :raises IntractableMarkerSet: if deciding a removal exceeds the internal
-            cell budget, or the marker nests past the stack.
+            cell budget, if the whole run exceeds the internal work budget, or
+            if the marker nests past the stack.
         """
         if _markersets.universe_is_empty(within._tree, _MAX_CELLS):
             msg = "within must not be the empty set"
             raise ValueError(msg)
         return self._wrap(
-            _markersets.simplify_within(self._tree, within._tree, _MAX_CELLS)
+            _markersets.simplify_within(
+                self._tree, within._tree, _MAX_CELLS, _MAX_WORK
+            )
         )
 
     # ---- serialisation

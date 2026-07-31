@@ -1,9 +1,9 @@
 diff --git a/nab-python/src/nab_python/_vendor/packaging/_markersets.py b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
 new file mode 100644
-index 0000000..34252cb
+index 0000000..ca941f5
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
-@@ -0,0 +1,1660 @@
+@@ -0,0 +1,1691 @@
 +"""Marker algebra engine: reason about PEP 508 markers as sets of environments.
 +
 +The private engine behind :class:`~packaging.markersets.MarkerSet`. Parses a
@@ -994,6 +994,24 @@ index 0000000..34252cb
 +# simplify never shares a store.
 +_partition_cache = threading.local()
 +
++# ``max_cells`` bounds one decision, and the greedy fixpoint issues one per
++# clause and per atom per universe row, so the meter is what bounds the run:
++# every cell enumeration charges the work it is about to do. Thread-local, and
++# unset outside a simplify so every other decision stays unmetered.
++_work_meter = threading.local()
++
++
++def charge_work(units: int) -> None:
++    """Charge ``units`` of cell work to the running simplify's meter, if any."""
++    remaining = getattr(_work_meter, "remaining", None)
++    if remaining is None:
++        return
++    remaining -= units
++    _work_meter.remaining = remaining
++    if remaining < 0:
++        msg = "simplification work exceeds max_work"
++        raise IntractableMarkerSet(msg)
++
 +
 +def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
 +    """Partition one axis's domain into cells on which every atom is constant."""
@@ -1159,8 +1177,10 @@ index 0000000..34252cb
 +    # product times the leaf-occurrence count: a marker that repeats atoms inflates
 +    # the walk without inflating the distinct-atom count or the cell product.
 +    leaf_occurrences = len(atoms)
-+    guarded_product_size(
-+        (*(len(part) for part in partitions), leaf_occurrences), max_cells
++    charge_work(
++        guarded_product_size(
++            (*(len(part) for part in partitions), leaf_occurrences), max_cells
++        )
 +    )
 +
 +    for combo in product(*partitions):
@@ -1629,7 +1649,9 @@ index 0000000..34252cb
 +    return tuple(sorted(_clause_key(clause) for clause in clauses))
 +
 +
-+def simplify_within(node: Formula, universe: Formula, max_cells: int) -> Formula:
++def simplify_within(
++    node: Formula, universe: Formula, max_cells: int, max_work: int
++) -> Formula:
 +    """Return the smallest tree equivalent to ``node`` on every point of ``universe``.
 +
 +    Greedy: drop each clause, then each atom, whose removal preserves
@@ -1638,13 +1660,21 @@ index 0000000..34252cb
 +    per universe row so a wide multi-platform universe stays decidable. A
 +    universe of ``TRUE`` reduces it to a context-free factoring, and a total
 +    atom order fixes the output.
++
++    ``max_cells`` bounds one decision and ``max_work`` bounds the whole run,
++    because a wide matrix runs many cheap decisions where a large membership
++    powerset runs few expensive ones. Either overrun raises
++    :class:`IntractableMarkerSet`.
 +    """
 +    nnf = node if isinstance(node, BoolConst) else to_nnf(node)
 +    clauses = _dedupe(_to_clauses(nnf, max_cells))
 +    original = _disjunction(clauses)
 +    rows = _decompose_rows(universe)
 +    original_by_row = [restrict_tree(original, row.pins) for row in rows]
++    previous_store = getattr(_partition_cache, "store", None)
++    previous_work = getattr(_work_meter, "remaining", None)
 +    _partition_cache.store = {}
++    _work_meter.remaining = max_work
 +    try:
 +        while True:
 +            before = _canonical(clauses)
@@ -1653,7 +1683,8 @@ index 0000000..34252cb
 +            if _canonical(clauses) == before:
 +                break
 +    finally:
-+        _partition_cache.store = None
++        _partition_cache.store = previous_store
++        _work_meter.remaining = previous_work
 +    if not clauses:
 +        return FALSE
 +    clauses = sorted(clauses, key=_clause_key)
@@ -1692,10 +1723,10 @@ index c78fd5d..0d7ee1d 100644
      """
 diff --git a/nab-python/src/nab_python/_vendor/packaging/markersets.py b/nab-python/src/nab_python/_vendor/packaging/markersets.py
 new file mode 100644
-index 0000000..7c48303
+index 0000000..74930e7
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/markersets.py
-@@ -0,0 +1,351 @@
+@@ -0,0 +1,359 @@
 +"""The public :class:`MarkerSet`: a marker's denotation as a set of environments.
 +
 +A :class:`MarkerSet` is the denotation of a PEP 508 marker as a set of
@@ -1739,6 +1770,11 @@ index 0000000..7c48303
 +# depends on its value; a set too complex to decide within it raises
 +# IntractableMarkerSet.
 +_MAX_CELLS = 100_000
++
++# The total cell work one `simplify` may spend. `_MAX_CELLS` bounds a single
++# decision, this bounds the greedy loop that issues them. A runaway guard rather
++# than a tuning knob: the widest marker in nab's own CI locks spends 4.1 million.
++_MAX_WORK = 100_000_000
 +
 +__all__ = [
 +    "IntractableMarkerSet",
@@ -2010,13 +2046,16 @@ index 0000000..7c48303
 +        :raises ValueError: if ``within`` is the empty set, which makes every set
 +            vacuously equivalent.
 +        :raises IntractableMarkerSet: if deciding a removal exceeds the internal
-+            cell budget, or the marker nests past the stack.
++            cell budget, if the whole run exceeds the internal work budget, or
++            if the marker nests past the stack.
 +        """
 +        if _markersets.universe_is_empty(within._tree, _MAX_CELLS):
 +            msg = "within must not be the empty set"
 +            raise ValueError(msg)
 +        return self._wrap(
-+            _markersets.simplify_within(self._tree, within._tree, _MAX_CELLS)
++            _markersets.simplify_within(
++                self._tree, within._tree, _MAX_CELLS, _MAX_WORK
++            )
 +        )
 +
 +    # ---- serialisation

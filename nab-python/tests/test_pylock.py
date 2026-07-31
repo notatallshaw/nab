@@ -28,6 +28,7 @@ from nab_python._lockfile.pylock import (
     build_pylock,
     render_lock,
 )
+from nab_python._vendor.packaging import markersets
 from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 from nab_python._vendor.packaging.pylock import Package, PackageWheel
@@ -518,3 +519,22 @@ class TestCorpusByteIdentity:
                 else None
             )
             assert (str(again) if again is not None else None) == shown
+
+
+class TestWorkBudget:
+    """A run past the simplifier's work budget ships the raw marker.
+
+    An overrun raises ``IntractableMarkerSet``, which is already the raw-marker
+    path.
+    """
+
+    def test_overrun_ships_raw_byte_identical(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _wide_linux_marker()
+        within = _union(_wide_rows())
+        assert str(_finalize_marker(raw, within, "foo")) != str(raw)
+        monkeypatch.setattr(markersets, "_MAX_WORK", 1)
+        result = _finalize_marker(raw, within, "foo")
+        assert result is not None
+        assert str(result) == str(raw)

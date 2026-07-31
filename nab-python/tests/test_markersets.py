@@ -470,3 +470,24 @@ def test_degeneration_pins_nothing_overruns_and_raises() -> None:
         engine.equivalent_within_rows(
             engine.parse(span), engine.parse(span), universe, _MAX_CELLS
         )
+
+
+def test_work_budget_overrun_raises() -> None:
+    """A run past the work budget raises rather than running to a fixpoint.
+
+    The same input succeeds under the shipped budget.
+    """
+    within = _narrow_universe()
+    marker = engine.parse(_narrow_linux_span())
+    with pytest.raises(IntractableMarkerSet, match="max_work"):
+        engine.simplify_within(marker, within._tree, _MAX_CELLS, 1)
+    assert ms(_narrow_linux_span()).simplify(within=within).to_marker_string() == (
+        'platform_machine == "x86_64" and sys_platform == "linux"'
+    )
+
+
+def test_work_meter_is_unset_outside_a_simplify() -> None:
+    within = _narrow_universe()
+    ms(_narrow_linux_span()).simplify(within=within)
+    assert getattr(engine._work_meter, "remaining", None) is None
+    assert getattr(engine._partition_cache, "store", None) is None

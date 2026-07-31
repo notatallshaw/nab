@@ -988,6 +988,24 @@ def _partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[
 # simplify never shares a store.
 _partition_cache = threading.local()
 
+# ``max_cells`` bounds one decision, and the greedy fixpoint issues one per
+# clause and per atom per universe row, so the meter is what bounds the run:
+# every cell enumeration charges the work it is about to do. Thread-local, and
+# unset outside a simplify so every other decision stays unmetered.
+_work_meter = threading.local()
+
+
+def charge_work(units: int) -> None:
+    """Charge ``units`` of cell work to the running simplify's meter, if any."""
+    remaining = getattr(_work_meter, "remaining", None)
+    if remaining is None:
+        return
+    remaining -= units
+    _work_meter.remaining = remaining
+    if remaining < 0:
+        msg = "simplification work exceeds max_work"
+        raise IntractableMarkerSet(msg)
+
 
 def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
     """Partition one axis's domain into cells on which every atom is constant."""
@@ -1153,8 +1171,10 @@ def _satisfying_cells(
     # product times the leaf-occurrence count: a marker that repeats atoms inflates
     # the walk without inflating the distinct-atom count or the cell product.
     leaf_occurrences = len(atoms)
-    guarded_product_size(
-        (*(len(part) for part in partitions), leaf_occurrences), max_cells
+    charge_work(
+        guarded_product_size(
+            (*(len(part) for part in partitions), leaf_occurrences), max_cells
+        )
     )
 
     for combo in product(*partitions):
@@ -1623,7 +1643,9 @@ def _canonical(clauses: list[frozenset[Atom]]) -> tuple:
     return tuple(sorted(_clause_key(clause) for clause in clauses))
 
 
-def simplify_within(node: Formula, universe: Formula, max_cells: int) -> Formula:
+def simplify_within(
+    node: Formula, universe: Formula, max_cells: int, max_work: int
+) -> Formula:
     """Return the smallest tree equivalent to ``node`` on every point of ``universe``.
 
     Greedy: drop each clause, then each atom, whose removal preserves
@@ -1632,13 +1654,21 @@ def simplify_within(node: Formula, universe: Formula, max_cells: int) -> Formula
     per universe row so a wide multi-platform universe stays decidable. A
     universe of ``TRUE`` reduces it to a context-free factoring, and a total
     atom order fixes the output.
+
+    ``max_cells`` bounds one decision and ``max_work`` bounds the whole run,
+    because a wide matrix runs many cheap decisions where a large membership
+    powerset runs few expensive ones. Either overrun raises
+    :class:`IntractableMarkerSet`.
     """
     nnf = node if isinstance(node, BoolConst) else to_nnf(node)
     clauses = _dedupe(_to_clauses(nnf, max_cells))
     original = _disjunction(clauses)
     rows = _decompose_rows(universe)
     original_by_row = [restrict_tree(original, row.pins) for row in rows]
+    previous_store = getattr(_partition_cache, "store", None)
+    previous_work = getattr(_work_meter, "remaining", None)
     _partition_cache.store = {}
+    _work_meter.remaining = max_work
     try:
         while True:
             before = _canonical(clauses)
@@ -1647,7 +1677,8 @@ def simplify_within(node: Formula, universe: Formula, max_cells: int) -> Formula
             if _canonical(clauses) == before:
                 break
     finally:
-        _partition_cache.store = None
+        _partition_cache.store = previous_store
+        _work_meter.remaining = previous_work
     if not clauses:
         return FALSE
     clauses = sorted(clauses, key=_clause_key)
