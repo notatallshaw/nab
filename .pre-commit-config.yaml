@@ -24,9 +24,9 @@ repos:
     rev: 37bb98842b0d8c4ffebdb75301a13db0267cef89  # frozen: v1.47.2
     hooks:
       - id: typos
-        # Benchmarks, CI lockfiles and vendored code are full of real
-        # PyPI names typos misreads.
-        exclude: ^(nab-python/benchmarks/|\.github/requirements/|.*/_vendor/)
+        # Benchmarks, CI lockfiles, captured lock data and vendored code are
+        # full of real PyPI names typos misreads.
+        exclude: ^(nab-python/benchmarks/|nab-python/tests/data/|\.github/requirements/|.*/_vendor/)
         args: []
 
   - repo: https://github.com/zizmorcore/zizmor-pre-commit

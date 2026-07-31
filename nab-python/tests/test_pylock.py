@@ -8,6 +8,7 @@ fail-closed verify on the emitted bytes.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from functools import reduce
 from pathlib import Path
@@ -580,3 +581,152 @@ class TestFinalizeMemo:
         memo: dict[str, Marker | None] = {}
         assert _finalize_cached(None, MarkerSet.full(), "foo", memo) is None
         assert memo == {}
+
+
+_LOCK_MARKERS = json.loads(
+    (Path(__file__).parent / "data" / "ci_lock_markers.json").read_text()
+)
+
+# The declared environments span 5 platforms x 5 minors (3.10 split at 3.10.2).
+# 178 markers across the 7 universal locks shorten; the docs lock's 34 already
+# say the shortest thing they can and stay byte-identical.
+_WIDE_MARKER_COUNT = 178
+_DOCS_MARKER_COUNT = 34
+_SUBSET_RAW_BYTES = 40183
+_SUBSET_GOLD_BYTES = 5822
+
+
+def _fixture_universe(rows: Sequence[str]) -> MarkerSet:
+    return _union([Marker(r) for r in rows])
+
+
+def _row_env(row: str) -> dict[str, str]:
+    witness = MarkerSet.from_marker(Marker(row)).witness()
+    assert witness is not None
+    return {k: v for k, v in witness.items() if isinstance(v, str)}
+
+
+class TestEightLockRegression:
+    """The captured markers of the eight committed CI locks.
+
+    Each raw marker finalises offline to the byte the lock now carries, and the
+    emission gates still pass on the simplified output.
+    """
+
+    def test_wide_locks_become_tractable_and_byte_exact(self) -> None:
+        raw_total = gold_total = count = 0
+        for name, lock in _LOCK_MARKERS["locks"].items():
+            if name == "docs":
+                continue
+            within = _fixture_universe(lock["environments"])
+            for pkg in lock["packages"]:
+                raw = Marker(pkg["raw"])
+                simplified = MarkerSet.from_marker(raw).simplify(within=within)
+                assert simplified is not None
+                finalized = _finalize_marker(raw, within, pkg["name"])
+                shown = str(finalized) if finalized is not None else ""
+                assert shown == pkg["golden"]
+                raw_total += len(pkg["raw"])
+                gold_total += len(pkg["golden"])
+                count += 1
+        assert count == _WIDE_MARKER_COUNT
+        assert raw_total == _SUBSET_RAW_BYTES
+        assert gold_total == _SUBSET_GOLD_BYTES
+
+    def test_docs_lock_stays_byte_identical(self) -> None:
+        lock = _LOCK_MARKERS["locks"]["docs"]
+        within = _fixture_universe(lock["environments"])
+        count = 0
+        for pkg in lock["packages"]:
+            raw = Marker(pkg["raw"])
+            simplified = MarkerSet.from_marker(raw).simplify(within=within)
+            assert simplified is not None
+            finalized = _finalize_marker(raw, within, pkg["name"])
+            assert str(finalized) == pkg["raw"] == pkg["golden"]
+            count += 1
+        assert count == _DOCS_MARKER_COUNT
+
+    def test_named_landmarks(self) -> None:
+        golden = {
+            (name, pkg["name"]): (len(pkg["raw"]), len(pkg["golden"]))
+            for name, lock in _LOCK_MARKERS["locks"].items()
+            for pkg in lock["packages"]
+        }
+        assert golden[("crosshair", "zipp")] == (4037, 66)
+        assert golden[("release", "backports-tarfile")] == (2269, 89)
+        per_lock = {
+            name: (
+                sum(len(p["raw"]) for p in lock["packages"]),
+                sum(len(p["golden"]) for p in lock["packages"]),
+            )
+            for name, lock in _LOCK_MARKERS["locks"].items()
+        }
+        assert per_lock["release"] == (14241, 2045)
+        assert per_lock["crosshair"] == (11304, 1176)
+
+    def test_raw_golden_agree_under_upstream_evaluate(self) -> None:
+        """Check every shipped golden against the upstream Marker evaluator.
+
+        The operator and the emission verify share one row oracle; an independent
+        evaluator catches a bug they would both miss. Evaluates raw and golden on
+        every declared row under an empty and the lock's own group selection.
+        """
+        checked = 0
+        for name, lock in _LOCK_MARKERS["locks"].items():
+            envs = [_row_env(row) for row in lock["environments"]]
+            selections = (frozenset[str](), frozenset({name}))
+            for pkg in lock["packages"]:
+                raw = Marker(pkg["raw"])
+                golden = Marker(pkg["golden"]) if pkg["golden"] else None
+                for base in envs:
+                    for groups in selections:
+                        env: dict[str, str | frozenset[str]] = {
+                            **base,
+                            "dependency_groups": groups,
+                        }
+                        gold_holds = (
+                            golden.evaluate(env, context="lock_file")
+                            if golden is not None
+                            else True
+                        )
+                        assert raw.evaluate(env, context="lock_file") == gold_holds, (
+                            f"{name}/{pkg['name']}: {pkg['raw']!r} and"
+                            f" {pkg['golden']!r} disagree at {env!r}"
+                        )
+                checked += 1
+        assert checked == _WIDE_MARKER_COUNT + _DOCS_MARKER_COUNT
+
+    def test_gates_pass_on_simplified_output(self) -> None:
+        for name, lock in _LOCK_MARKERS["locks"].items():
+            rows = lock["environments"]
+            packages = [
+                Package(
+                    name=canonicalize_name(pkg["name"]),
+                    marker=Marker(pkg["golden"]) if pkg["golden"] else None,
+                )
+                for pkg in lock["packages"]
+            ]
+            environments = {f"e{i}": _row_env(row) for i, row in enumerate(rows)}
+            validate_marker_disjointness(
+                packages, environments=environments, extras=(), groups=(name,)
+            )
+
+
+class TestRegenLocksIdempotent:
+    """Re-finalising a committed lock changes no marker.
+
+    Simplification is idempotent, so a drift in any lock's markers shows up here
+    rather than only in a lock refresh.
+    """
+
+    def test_committed_locks_refinalize_identically(self) -> None:
+        lock_dir = Path(__file__).parents[2] / ".github" / "requirements"
+        for name in _LOCK_MARKERS["locks"]:
+            data = tomllib.loads((lock_dir / f"pylock.{name}.toml").read_text())
+            within = _fixture_universe(data.get("environments", []))
+            for pkg in data["packages"]:
+                marker = pkg.get("marker")
+                if marker is None:
+                    continue
+                again = _finalize_marker(Marker(marker), within, pkg["name"])
+                assert str(again) == marker
