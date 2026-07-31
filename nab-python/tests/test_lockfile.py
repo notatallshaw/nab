@@ -5370,3 +5370,306 @@ class TestConflictForkNegatedEmission:
 
         assert torch_markers["2.5.0"] == raw_marker(("a0", "b0", "c0"))
         assert torch_markers["2.6.0"] == raw_marker(("a1", "b1", "c1"))
+
+
+class TestConflictSetCrossGating:
+    """Two engaged conflict sets gate a package only along the set it varies over.
+
+    ``--all-groups`` over two declared sets forks into their cartesian
+    product.  A package one member of one set pulls in is the same in
+    every fork of the other set, so its marker names only its own set;
+    conjoining a member of both leaves a selection naming a member of one
+    set alone matching no entry, which under-installs silently.  The
+    projection stops wherever a dependency cannot follow it.
+
+    The fixture mirrors what a resolve produces for a project with
+    ``a1 = [six==1.16.0]``, ``a2 = [six==1.15.0]``,
+    ``b1/b2/b3 = [idna==3.7/3.6/3.4]``, a base dependency on
+    ``packaging``, and ``conflicts = [[a1, a2], [b1, b2, b3]]``.
+    """
+
+    _BASE: ClassVar[ResolveTarget] = _target(python_version="3.12")
+    _ENV: ClassVar[dict[str, str]] = dict(_target(python_version="3.12").marker_env)
+    _A: ClassVar[dict[str, str]] = {"a1": "1.16.0", "a2": "1.15.0"}
+    _B: ClassVar[dict[str, str]] = {"b1": "3.7", "b2": "3.6", "b3": "3.4"}
+
+    @property
+    def _conflicts(self) -> tuple[ConflictSet, ...]:
+        return tuple(
+            ConflictSet(
+                members=tuple(ConflictMember(ConflictKind.GROUP, m) for m in members),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            )
+            for members in (self._A, self._B)
+        )
+
+    def _forked_lock(
+        self,
+        contribution: Callable[
+            [str, str],
+            tuple[dict[str, PinShape], dict[str, tuple[tuple[str, str], ...]]],
+        ],
+        base_names: frozenset[str] = frozenset(),
+        edges: Callable[[str, str], dict[str, tuple[str, ...]]] | None = None,
+    ) -> Pylock:
+        """Emit the 2x3 product of the a and b sets, one fork per point."""
+        targets: dict[str, TargetLock] = {}
+        for a, b in itertools.product(self._A, self._B):
+            fork = self._BASE.with_selection((("group", a), ("group", b)))
+            pins, gates = contribution(a, b)
+            targets[fork.label] = TargetLock(
+                target=fork,
+                pins=pins,
+                dependencies=edges(a, b) if edges is not None else {},
+                package_gates=gates,
+            )
+        text = write_lock(
+            LockInput(
+                targets=targets,
+                env_base_names={_env_signature(self._BASE): base_names},
+                dependency_groups=(*self._A, *self._B),
+                conflicts=self._conflicts,
+            )
+        )
+        return Pylock.from_dict(tomllib.loads(text))
+
+    def _lock(self) -> Pylock:
+        def contribution(
+            a: str, b: str
+        ) -> tuple[dict[str, PinShape], dict[str, tuple[tuple[str, str], ...]]]:
+            return (
+                {
+                    "packaging": _selection_pin("packaging", "24.0"),
+                    "six": _selection_pin("six", self._A[a]),
+                    "idna": _selection_pin("idna", self._B[b]),
+                },
+                # What ``_membership_gates`` derives: the group whose
+                # requirements reach the package, and nothing for the
+                # package the project requires itself.
+                {"six": (("group", a),), "idna": (("group", b),)},
+            )
+
+        return self._forked_lock(contribution, base_names=frozenset({"packaging"}))
+
+    def _select(self, pylock: Pylock, groups: Sequence[str]) -> set[str]:
+        return {
+            f"{pkg.name} {pkg.version}"
+            for pkg, _ in pylock.select(
+                environment=self._ENV,  # type: ignore[arg-type]
+                extras=(),
+                dependency_groups=groups,
+            )
+        }
+
+    def _dangling(self, pylock: Pylock) -> list[tuple[tuple[str, ...], str, list[str]]]:
+        """Selections where a selected entry declares a dep the selection misses."""
+        out = []
+        for a, b in itertools.product([None, *self._A], [None, *self._B]):
+            groups = tuple(name for name in (a, b) if name is not None)
+            chosen = [
+                pkg
+                for pkg, _ in pylock.select(
+                    environment=self._ENV,  # type: ignore[arg-type]
+                    extras=(),
+                    dependency_groups=groups,
+                )
+            ]
+            names = {str(pkg.name) for pkg in chosen}
+            for pkg in chosen:
+                missing = sorted(
+                    {str(dep["name"]) for dep in (pkg.dependencies or ())} - names
+                )
+                if missing:
+                    out.append((groups, str(pkg.name), missing))
+        return out
+
+    def test_marker_names_only_the_set_the_package_varies_over(self) -> None:
+        by_key = {
+            (str(p.name), str(p.version)): str(p.marker) for p in self._lock().packages
+        }
+
+        six = by_key["six", "1.16.0"]
+        assert '"a1" in dependency_groups' in six
+        assert '"a2" not in dependency_groups' in six
+        assert not any(member in six for member in self._B)
+
+        idna = by_key["idna", "3.7"]
+        assert '"b1" in dependency_groups' in idna
+        assert '"b2" not in dependency_groups' in idna
+        assert '"b3" not in dependency_groups' in idna
+        assert not any(member in idna for member in self._A)
+
+    def test_base_dependency_keeps_its_unconditional_entry(self) -> None:
+        packaging = next(p for p in self._lock().packages if str(p.name) == "packaging")
+        assert packaging.marker is None
+
+    @pytest.mark.parametrize("a", [None, "a1", "a2"])
+    @pytest.mark.parametrize("b", [None, "b1", "b2", "b3"])
+    def test_every_legal_selection_installs_what_it_asked_for(
+        self, a: str | None, b: str | None
+    ) -> None:
+        # at-most-one permits selecting none of a set, so the legal
+        # selections are the product of each set plus its empty case.
+        groups = [name for name in (a, b) if name is not None]
+        expected = {"packaging 24.0"}
+        if a is not None:
+            expected.add(f"six {self._A[a]}")
+        if b is not None:
+            expected.add(f"idna {self._B[b]}")
+        assert self._select(self._lock(), groups) == expected
+
+    def test_entries_of_one_name_stay_disjoint(self) -> None:
+        # The forks stay mutually exclusive in the markers alone, with no
+        # conflict-declaration universe to lean on.
+        pylock = self._lock()
+        for name in ("six", "idna"):
+            markers = [
+                MarkerSet.from_marker(str(p.marker))
+                for p in pylock.packages
+                if str(p.name) == name
+            ]
+            for left, right in itertools.combinations(markers, 2):
+                assert left.is_disjoint(right)
+
+    def test_disjointness_gate_accepts_the_projected_markers(self) -> None:
+        validate_marker_disjointness(
+            self._lock().packages,
+            environments={"env": self._ENV},
+            extras=(),
+            groups=(*self._A, *self._B),
+            exclusive_groups=conflict_exclusion_groups(self._conflicts),
+        )
+
+    def test_a_package_varying_over_both_sets_keeps_both(self) -> None:
+        # attrs is pinned by the a-member and the b-member together, so
+        # neither set is flat and the marker keeps the full conjunction.
+        pylock = self._forked_lock(
+            lambda a, b: (
+                {"attrs": _selection_pin("attrs", f"{a[-1]}.{b[-1]}")},
+                {"attrs": (("group", a), ("group", b))},
+            )
+        )
+        marker = next(str(p.marker) for p in pylock.packages if str(p.version) == "1.1")
+        assert '"a1" in dependency_groups' in marker
+        assert '"b1" in dependency_groups' in marker
+        assert '"a2" not in dependency_groups' in marker
+        assert '"b2" not in dependency_groups' in marker
+        assert '"b3" not in dependency_groups' in marker
+
+    def test_member_only_package_flat_everywhere_keeps_the_set_that_reaches_it(
+        self,
+    ) -> None:
+        # attrs is the same in all six forks, and its gate says the
+        # a-members are what reach it, so the b-set drops and the a-set
+        # stays: a1 alone installs it, no member at all does not.
+        pylock = self._forked_lock(
+            lambda a, _b: (
+                {"attrs": _selection_pin("attrs", "24.0")},
+                {"attrs": (("group", a),)},
+            )
+        )
+        assert self._select(pylock, ["a1"]) == {"attrs 24.0"}
+        assert self._select(pylock, ["b1"]) == set()
+        assert self._select(pylock, []) == set()
+
+    def test_a_dependency_either_set_reaches_installs_for_either_alone(self) -> None:
+        # attrs is the same in every fork and a member of each set
+        # requires it, so neither set is what selects it and the gate
+        # stands alone.
+        pylock = self._forked_lock(
+            lambda a, b: (
+                {"attrs": _selection_pin("attrs", "24.0")},
+                {"attrs": (("group", a), ("group", b))},
+            )
+        )
+        marker = next(str(p.marker) for p in pylock.packages)
+        assert "not in dependency_groups" not in marker
+        for member in (*self._A, *self._B):
+            assert self._select(pylock, [member]) == {"attrs 24.0"}
+        assert self._select(pylock, []) == set()
+
+    def test_a_dependency_two_members_share_installs_for_either_alone(self) -> None:
+        # a1 and b1 both name attrs, so the forks that select neither do
+        # not carry it at all; a1 alone and b1 alone still install it.
+        def contribution(
+            a: str, b: str
+        ) -> tuple[dict[str, PinShape], dict[str, tuple[tuple[str, str], ...]]]:
+            named = tuple(("group", m) for m in (a, b) if m in {"a1", "b1"})
+            if not named:
+                return ({}, {})
+            return ({"attrs": _selection_pin("attrs", "24.0")}, {"attrs": named})
+
+        pylock = self._forked_lock(contribution)
+        assert self._select(pylock, ["a1"]) == {"attrs 24.0"}
+        assert self._select(pylock, ["b1"]) == {"attrs 24.0"}
+        assert self._select(pylock, ["a2", "b2"]) == set()
+        assert self._select(pylock, []) == set()
+
+    def test_a_drop_a_dependency_cannot_follow_is_refused(self) -> None:
+        # attrs is the same in every fork of the b-set but the idna it
+        # requires is not, so attrs keeps the b-clauses rather than
+        # installing into a selection idna cannot reach.
+        pylock = self._forked_lock(
+            lambda a, b: (
+                {
+                    "attrs": _selection_pin("attrs", "24.0"),
+                    "idna": _selection_pin("idna", self._B[b]),
+                },
+                {"attrs": (("group", a),), "idna": (("group", a),)},
+            ),
+            edges=lambda _a, _b: {"attrs": ("idna",)},
+        )
+        assert self._dangling(pylock) == []
+        assert self._select(pylock, ["a1"]) == set()
+        assert self._select(pylock, ["a1", "b1"]) == {"attrs 24.0", "idna 3.7"}
+
+    def test_an_edge_only_one_fork_carries_holds_the_whole_entry(self) -> None:
+        # The entry's edges are the union over its forks, so the idna
+        # only the b1 forks require rides on attrs everywhere; a fork
+        # that does not carry idna at all projects nothing.
+        def contribution(
+            a: str, b: str
+        ) -> tuple[dict[str, PinShape], dict[str, tuple[tuple[str, str], ...]]]:
+            pins: dict[str, PinShape] = {"attrs": _selection_pin("attrs", "24.0")}
+            gates = {"attrs": (("group", a),)}
+            if b == "b1":
+                pins["idna"] = _selection_pin("idna", "3.7")
+                gates["idna"] = (("group", a),)
+            return (pins, gates)
+
+        pylock = self._forked_lock(
+            contribution,
+            edges=lambda _a, b: {"attrs": ("idna",)} if b == "b1" else {},
+        )
+        assert self._select(pylock, ["a1", "b1"]) == {"attrs 24.0", "idna 3.7"}
+        assert self._select(pylock, ["a1"]) == set()
+
+    def test_a_fork_the_base_reaches_blocks_the_drop(self) -> None:
+        # attrs is ungated in the b1 forks, so those install it whichever
+        # a-member is selected while the others need their own; no one
+        # set of clauses covers both, and the b-set stays named.
+        pylock = self._forked_lock(
+            lambda _a, b: (
+                {"attrs": _selection_pin("attrs", "24.0")},
+                {} if b == "b1" else {"attrs": (("group", b),)},
+            )
+        )
+        assert self._select(pylock, ["b1"]) == {"attrs 24.0"}
+        assert self._select(pylock, ["b2"]) == {"attrs 24.0"}
+        assert self._select(pylock, ["a1"]) == set()
+        assert self._select(pylock, []) == set()
+
+    def test_reach_that_differs_across_the_dropped_set_blocks_the_drop(self) -> None:
+        # attrs is reached through the a-member in the b1 forks and
+        # through the b-member elsewhere, so the b-set is not something
+        # attrs is indifferent to and its clauses stay.
+        pylock = self._forked_lock(
+            lambda a, b: (
+                {"attrs": _selection_pin("attrs", "24.0")},
+                {"attrs": ((("group", a),) if b == "b1" else (("group", b),))},
+            )
+        )
+        assert self._select(pylock, ["b2"]) == {"attrs 24.0"}
+        assert self._select(pylock, ["a1", "b1"]) == {"attrs 24.0"}
+        assert self._select(pylock, ["b1"]) == set()
+        assert self._select(pylock, ["a1"]) == set()
