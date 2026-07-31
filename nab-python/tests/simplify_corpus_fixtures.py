@@ -214,6 +214,59 @@ def _iter_atoms(markers: object) -> Iterator[tuple]:
             yield node
 
 
+# Fifteen minors make the whole-matrix complement of a single-platform full span
+# overrun the cell budget while the row-restricted oracle stays cheap.
+WIDE_PYS = [f"3.{i}" for i in range(15)]
+NARROW_PYS = [f"3.{i}" for i in range(9, 15)]
+WIDE_PLATS = [
+    ("linux", "x86_64"),
+    ("linux", "aarch64"),
+    ("darwin", "arm64"),
+    ("darwin", "x86_64"),
+    ("win32", "AMD64"),
+]
+
+
+def _rows(pys: list[str]) -> list[str]:
+    return [
+        f'python_version == "{py}" and sys_platform == "{sp}" '
+        f'and platform_machine == "{mach}"'
+        for py in pys
+        for sp, mach in WIDE_PLATS
+    ]
+
+
+def wide_universe() -> list[str]:
+    """The declared rows: every python minor crossed with every platform."""
+    return _rows(WIDE_PYS)
+
+
+def narrow_universe() -> list[str]:
+    """A smaller declared universe for the structural (non-overrun) checks."""
+    return _rows(NARROW_PYS)
+
+
+def _full_span(sp: str, mach: str, pys: list[str]) -> str:
+    return " or ".join(
+        f'(python_version == "{py}" and sys_platform == "{sp}" '
+        f'and platform_machine == "{mach}")'
+        for py in pys
+    )
+
+
+def wide_curated() -> list[dict[str, object]]:
+    """Single-platform full-span markers whose whole-matrix oracle overruns.
+
+    Each pairs a marker with the declared multi-platform universe; the
+    row-restricted oracle collapses each to its platform pin.
+    """
+    universe = wide_universe()
+    return [
+        {"marker": _full_span("linux", "x86_64", WIDE_PYS), "environments": universe},
+        {"marker": _full_span("darwin", "arm64", WIDE_PYS), "environments": universe},
+    ]
+
+
 FIXTURES = [
     {
         "lock": "marker-heavy",

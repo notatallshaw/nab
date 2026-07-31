@@ -14,8 +14,14 @@ from functools import reduce
 from pathlib import Path
 
 import pytest
+from packaging.markers import Marker
 
-from nab_python._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
+from nab_python._vendor.packaging import _markersets as engine
+from nab_python._vendor.packaging.markersets import (
+    _MAX_CELLS,
+    IntractableMarkerSet,
+    MarkerSet,
+)
 
 _spec = importlib.util.spec_from_file_location(
     "simplify_corpus_fixtures",
@@ -234,3 +240,233 @@ def test_corpus_oracle_reproduces_documented_tiers() -> None:
     assert total == corpus.TOTAL_CHARS
     assert context_aware == corpus.CONTEXT_AWARE_CHARS
     assert context_free == corpus.CONTEXT_FREE_CHARS
+
+
+def _u(*texts: str) -> engine.Formula:
+    return engine.make_or(engine.parse(t) for t in texts)
+
+
+ORACLE_TRIPLES = [
+    (SPAN, SPAN, _u(*PY_ROWS)),
+    ('sys_platform == "linux"', SPAN, _u(*PY_ROWS)),
+    ('sys_platform == "linux"', SPAN, engine.TRUE),
+    (
+        'python_version == "3.11" and sys_platform == "linux"',
+        SPAN,
+        _u(*PY_ROWS),
+    ),
+    (
+        'sys_platform == "linux"',
+        'sys_platform == "linux" and python_version == "3.11"',
+        _u('python_version == "3.10"', 'python_version == "3.11"'),
+    ),
+    (
+        'sys_platform == "linux" and python_version == "3.11"',
+        'sys_platform == "linux"',
+        _u('python_version == "3.10"', 'python_version == "3.11"'),
+    ),
+    (
+        'sys_platform == "linux"',
+        SPAN,
+        engine.parse('python_version == "3.11" and sys_platform == "linux"'),
+    ),
+    (
+        'sys_platform == "linux"',
+        SPAN,
+        _u(
+            'python_version == "3.11"',
+            'python_version == "3.11" and sys_platform == "linux"',
+        ),
+    ),
+    (
+        'sys_platform == "linux"',
+        SPAN,
+        engine.parse(
+            'sys_platform == "linux" and '
+            '(python_version == "3.10" or python_version == "3.11")'
+        ),
+    ),
+    (
+        'implementation_version == "3.11.0"',
+        'implementation_version == "3.11.0"',
+        _u('implementation_version == "3.11.0" and sys_platform == "linux"'),
+    ),
+    # A row's `==` on a version-dispatch variable is PEP 440 equality, not exact
+    # string equality: `platform_release == "5.10"` still admits "5.10.0", so
+    # the row must not substitute the literal into atoms reading the string.
+    (
+        'platform_release in "5.10 6.1"',
+        'sys_platform == "linux" or sys_platform != "linux"',
+        _u('platform_release == "5.10"'),
+    ),
+    (
+        '"5.10.0" in platform_release',
+        'sys_platform == "linux" and sys_platform != "linux"',
+        _u('platform_release == "5.10"'),
+    ),
+    (
+        '"5.10.0" in platform_release or python_version >= "3.12"',
+        'python_version >= "3.12"',
+        _u('platform_release == "5.10"'),
+    ),
+]
+
+
+@pytest.mark.parametrize(("left", "right", "universe"), ORACLE_TRIPLES)
+def test_row_oracle_matches_whole_matrix(
+    left: str, right: str, universe: engine.Formula
+) -> None:
+    lf = engine.parse(left)
+    rf = engine.parse(right)
+    assert engine.equivalent_within_rows(lf, rf, universe, _MAX_CELLS) == (
+        engine._equivalent_within(lf, rf, universe, _MAX_CELLS)
+    )
+
+
+def _wide_universe() -> MarkerSet:
+    return union(*corpus.wide_universe())
+
+
+def _narrow_universe() -> MarkerSet:
+    return union(*corpus.narrow_universe())
+
+
+def _narrow_linux_span() -> str:
+    return " or ".join(
+        f'(python_version == "{py}" and sys_platform == "linux" '
+        'and platform_machine == "x86_64")'
+        for py in corpus.NARROW_PYS
+    )
+
+
+def test_wide_full_span_raises_on_whole_matrix_today() -> None:
+    marker = corpus.wide_curated()[0]["marker"]
+    with pytest.raises(IntractableMarkerSet):
+        engine._equivalent_within(
+            engine.parse(marker),
+            engine.parse(marker),
+            _wide_universe()._tree,
+            _MAX_CELLS,
+        )
+
+
+def test_wide_full_span_collapses_to_platform_pin() -> None:
+    marker = corpus.wide_curated()[0]["marker"]
+    within = _wide_universe()
+    result = ms(marker).simplify(within=within)
+    assert result.to_marker_string() == (
+        'platform_machine == "x86_64" and sys_platform == "linux"'
+    )
+    assert engine.equivalent_within_rows(
+        engine.parse(marker), result._tree, within._tree, _MAX_CELLS
+    )
+
+
+def test_wide_full_span_under_full_keeps_python_axis() -> None:
+    marker = corpus.wide_curated()[0]["marker"]
+    text = ms(marker).simplify(within=MarkerSet.full()).to_marker_string()
+    assert text is not None
+    assert "python_version" in text
+
+
+def test_wide_curated_dual_soundness() -> None:
+    for case in corpus.wide_curated():
+        marker = case["marker"]
+        environments = case["environments"]
+        within = union(*environments)
+        result = ms(marker).simplify(within=within)
+        text = result.to_marker_string()
+        assert engine.equivalent_within_rows(
+            engine.parse(marker), engine.parse(text or ""), within._tree, _MAX_CELLS
+        )
+        raw = Marker(marker)
+        simplified = None if text is None else Marker(text)
+        for row in environments:
+            env = corpus.env_dict_from_marker(row)
+            expected = raw.evaluate(env)
+            got = True if simplified is None else simplified.evaluate(env)
+            assert got == expected
+
+
+def test_partial_span_keeps_python_atom() -> None:
+    marker = " or ".join(
+        f'(python_version == "{py}" and sys_platform == "linux" '
+        'and platform_machine == "x86_64")'
+        for py in corpus.NARROW_PYS[2:]
+    )
+    within = _narrow_universe()
+    text = ms(marker).simplify(within=within).to_marker_string()
+    assert text is not None
+    assert "python_version" in text
+    assert engine.equivalent_within_rows(
+        engine.parse(marker), engine.parse(text), within._tree, _MAX_CELLS
+    )
+
+
+def test_membership_and_negated_extra_survive_over_universe() -> None:
+    marker = f'({_narrow_linux_span()}) and "cpu" in extras and "gpu" not in extras'
+    text = ms(marker).simplify(within=_narrow_universe()).to_marker_string()
+    assert text is not None
+    assert '"cpu" in extras' in text
+    assert '"gpu" not in extras' in text
+    assert "python_version" not in text
+
+
+def test_dev0_split_not_merged_with_release_neighbor() -> None:
+    lower = 'python_full_version >= "3.11.dev0" and python_full_version < "3.12"'
+    upper = 'python_full_version >= "3.12" and python_full_version < "3.13"'
+    marker = f'({lower} and sys_platform == "linux")'
+    within = union(lower, upper)
+    text = ms(marker).simplify(within=within).to_marker_string()
+    assert text is not None
+    outside = {
+        "python_version": "3.12",
+        "python_full_version": "3.12.0",
+        "sys_platform": "linux",
+    }
+    assert Marker(marker).evaluate(outside) is False
+    assert Marker(text).evaluate(outside) is False
+
+
+def test_determinism_under_shuffled_universe() -> None:
+    marker = _narrow_linux_span()
+    rows = corpus.narrow_universe()
+    forward = ms(marker).simplify(within=union(*rows)).to_marker_string()
+    reverse = ms(marker).simplify(within=union(*reversed(rows))).to_marker_string()
+    assert (
+        forward == reverse == 'platform_machine == "x86_64" and sys_platform == "linux"'
+    )
+
+
+def test_universe_aware_idempotence() -> None:
+    within = _narrow_universe()
+    once = ms(_narrow_linux_span()).simplify(within=within).to_marker_string()
+    assert once is not None
+    twice = ms(once).simplify(within=within).to_marker_string()
+    assert twice == once
+
+
+def test_degeneration_pins_nothing_simplifies_under_budget() -> None:
+    marker = 'python_version >= "3.9" and sys_platform == "linux"'
+    within = union('python_version >= "3.9"')
+    result = ms(marker).simplify(within=within)
+    assert result.to_marker_string() == 'sys_platform == "linux"'
+
+
+def test_degeneration_pins_nothing_overruns_and_raises() -> None:
+    span = " or ".join(
+        f'(python_version == "{py}" and sys_platform == "{sp}" '
+        f'and platform_machine == "{mach}")'
+        for py in corpus.WIDE_PYS
+        for sp, mach in corpus.WIDE_PLATS
+    )
+    sysp = " or ".join(f'sys_platform == "{sp}"' for sp in ("linux", "darwin", "win32"))
+    mach = " or ".join(
+        f'platform_machine == "{m}"' for m in ("x86_64", "aarch64", "arm64", "AMD64")
+    )
+    pyv = " or ".join(f'python_version == "{py}"' for py in corpus.WIDE_PYS)
+    universe = engine.parse(f"({sysp}) and ({mach}) and ({pyv})")
+    with pytest.raises(IntractableMarkerSet):
+        engine.equivalent_within_rows(
+            engine.parse(span), engine.parse(span), universe, _MAX_CELLS
+        )
