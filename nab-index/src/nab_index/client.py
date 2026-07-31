@@ -268,7 +268,6 @@ def _listing_body(
             if content_type is not None
             else "no Content-Type"
         )
-        # Only an HTML answer names a serialization the user could pin instead.
         instead = (
             f" set serialization = {SimpleSerialization.HTML.value!r},"
             if is_html
