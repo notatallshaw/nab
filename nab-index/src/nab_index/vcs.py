@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .subdir import subdirectory_escapes
 
@@ -153,11 +154,26 @@ def _repo_key(repo_url: str) -> str:
     return hashlib.sha256(repo_url.encode("utf-8")).hexdigest()[:16]
 
 
+def _is_local_repo(repo_url: str) -> bool:
+    """Return True when ``repo_url`` reaches its repo through the filesystem.
+
+    Offline means nab issues no network request of its own.  A ``file``
+    URL is read by path, so it stays available offline whatever the
+    authority says: git drops the authority outright on POSIX, and on
+    Windows turns it into a UNC path, which is a filesystem call like
+    any other.  Whether that path is backed by a local disk, NFS, or SMB
+    is the operating system's business, the same as it is for a
+    ``file:`` index.
+    """
+    return urlsplit(repo_url).scheme == "file"
+
+
 def prepare_clone(
     cache_root: Path,
     request: VcsRequest,
     *,
     require_pin: bool,
+    offline: bool = False,
 ) -> VcsClone:
     """Resolve ``request.ref`` to a SHA and ensure a clone exists at it.
 
@@ -167,13 +183,22 @@ def prepare_clone(
     the named ref to a SHA, then performs a shallow clone of that
     commit.
 
+    ``offline`` withholds every git call that would reach the remote: a
+    complete cached clone is still served; anything else raises
+    :class:`VcsCloneError`.  A ``file://`` repo is read through the
+    filesystem rather than the network, so it still clones.
+
     Idempotent: a destination carrying the completion marker is reused
     without a fetch.  A fresh clone lands in a temporary sibling
     directory and is renamed into place only once fully checked out, so
     a concurrent or interrupted run never leaves a partial tree at the
     cache path.
     """
-    sha = _resolve_sha(request, require_pin=require_pin)
+    may_reach_remote = not offline or _is_local_repo(request.repo_url)
+    sha = _resolve_sha(
+        request, require_pin=require_pin, may_reach_remote=may_reach_remote
+    )
+
     dest = cache_root / "vcs" / _repo_key(request.repo_url) / sha
     if _clone_complete(dest):
         return VcsClone(
@@ -181,6 +206,10 @@ def prepare_clone(
             commit_sha=sha,
             subdirectory=request.subdirectory,
         )
+
+    if not may_reach_remote:
+        msg = f"no cached clone of {request.repo_url} @ {sha} (offline mode)"
+        raise VcsCloneError(msg)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and not _clone_complete(dest):
@@ -214,11 +243,18 @@ def _clone_complete(dest: Path) -> bool:
     return (dest / ".git" / _COMPLETE_MARKER).is_file()
 
 
-def _resolve_sha(request: VcsRequest, *, require_pin: bool) -> str:
+def _resolve_sha(
+    request: VcsRequest,
+    *,
+    require_pin: bool,
+    may_reach_remote: bool = True,
+) -> str:
     """Return a 40-char SHA for ``request.ref``.
 
     Raises when ``require_pin`` is True and ``ref`` is not already a
-    SHA.  Otherwise consults ``git ls-remote`` to look up the ref.
+    SHA.  Otherwise consults ``git ls-remote`` to look up the ref, which
+    ``may_reach_remote=False`` refuses: no cache holds a ref-to-SHA
+    mapping.
     """
     if request.ref and FULL_GIT_SHA_RE.match(request.ref):
         return request.ref
@@ -231,6 +267,13 @@ def _resolve_sha(request: VcsRequest, *, require_pin: bool) -> str:
         raise VcsCloneError(msg)
 
     target = request.ref or "HEAD"
+    if not may_reach_remote:
+        msg = (
+            f"cannot resolve ref {target!r} at {request.repo_url}"
+            f" (offline mode): only a pinned commit resolves from cache"
+        )
+        raise VcsCloneError(msg)
+
     # Also request the peeled form: an exact-ref ls-remote omits the
     # companion refs/tags/<name>^{} line, so without it an annotated tag
     # would resolve to the tag object rather than the commit it points at.

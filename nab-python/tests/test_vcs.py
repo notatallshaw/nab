@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nab_index.client import SdistFile, WheelFile  # noqa: F401 - re-exported by helpers
+from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.vcs import (
     _COMPLETE_MARKER,
     VcsCloneError,
@@ -23,7 +24,7 @@ from nab_index.vcs import (
     prepare_clone,
 )
 from nab_python._vendor.packaging.version import Version
-from nab_python.fetch import InMemoryIndex
+from nab_python.fetch import FetchCoordinator, InMemoryIndex
 from nab_python.lockfile import VcsPin, build_target_lock
 from nab_python.provider import (
     BuildPolicy,
@@ -51,6 +52,12 @@ _STALLED_REPO_URLS = [
     "ssh://git@example.invalid/x/y.git",
     "git://example.invalid/x/y.git",
 ]
+
+
+def _refuse_git(*_args: object, **_kwargs: object) -> object:
+    """Stand in for git on a path that must not shell out at all."""
+    msg = "offline mode must not invoke git"
+    raise AssertionError(msg)
 
 
 def _stalled_remote(cmd: list[str], **kwargs: object) -> object:
@@ -598,11 +605,152 @@ class TestPrepareClone:
         assert payload.read_text() == "kept"
 
 
+class TestOfflineClone:
+    """``offline`` withholds every git call that would reach the remote."""
+
+    def test_cold_cache_fails_without_touching_the_remote(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(subprocess, "run", _refuse_git)
+        req = VcsRequest("git", "https://example.com/repo.git", "a" * 40, "")
+        with pytest.raises(VcsCloneError, match="offline"):
+            prepare_clone(tmp_path, req, require_pin=True, offline=True)
+
+    def test_warm_cache_is_served(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sha = "b" * 40
+        dest = tmp_path / "vcs" / "k" / sha
+        _mark_complete(dest)
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "k")
+        monkeypatch.setattr(subprocess, "run", _refuse_git)
+        req = VcsRequest("git", "https://example.com/repo.git", sha, "")
+        clone = prepare_clone(tmp_path, req, require_pin=True, offline=True)
+        assert clone.path == dest
+        assert clone.commit_sha == sha
+
+    def test_floating_ref_is_not_resolved(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A warm clone cache does not allow an ls-remote for a branch."""
+        sha = "c" * 40
+        _mark_complete(tmp_path / "vcs" / "k" / sha)
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "k")
+        monkeypatch.setattr(subprocess, "run", _refuse_git)
+        req = VcsRequest("git", "https://example.com/repo.git", "main", "")
+        with pytest.raises(VcsCloneError, match="offline"):
+            prepare_clone(tmp_path, req, require_pin=False, offline=True)
+
+    def test_file_url_repo_still_clones(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A ``file://`` repo is read by path, like a ``file:`` archive URL."""
+        sha = "d" * 40
+        commands: list[str] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            commands.append(cmd[1])
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", (tmp_path / "repo").as_uri(), sha, "")
+        clone = prepare_clone(tmp_path, req, require_pin=True, offline=True)
+        assert clone.commit_sha == sha
+        assert commands == ["init", "fetch", "checkout"]
+
+    def test_file_url_with_a_host_still_clones(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An authority does not make a ``file://`` repo a network fetch.
+
+        git drops it on POSIX and reads a UNC path on Windows, both
+        filesystem calls.  Offline gates the requests nab issues, not
+        what the mount behind a path happens to do.
+        """
+        sha = "f" * 40
+        commands: list[str] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            commands.append(cmd[1])
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "file://server/share/repo.git", sha, "")
+        clone = prepare_clone(tmp_path, req, require_pin=True, offline=True)
+        assert clone.commit_sha == sha
+        assert commands == ["init", "fetch", "checkout"]
+
+    def test_file_url_floating_ref_still_resolves(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sha = "e" * 40
+        _mark_complete(tmp_path / "vcs" / "k" / sha)
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "k")
+
+        def fake_run(cmd: list[str], **_kwargs: object) -> object:
+            assert cmd[:2] == ["git", "ls-remote"]
+            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n"})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", (tmp_path / "repo").as_uri(), "main", "")
+        clone = prepare_clone(tmp_path, req, require_pin=False, offline=True)
+        assert clone.commit_sha == sha
+
+
 class TestProviderVcsIntegration:
     def coordinator(self) -> MagicMock:
         coordinator = MagicMock()
         coordinator.index = InMemoryIndex()
+        coordinator.offline = False
         return coordinator
+
+    def test_declared_source_is_not_cloned_offline(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Offline gates a declared VCS source, as it already gates archives.
+
+        Uses a real coordinator so the run's own ``offline`` setting
+        drives the check rather than a mock attribute.
+        """
+        monkeypatch.setattr(subprocess, "run", _refuse_git)
+        sha = "a" * 40
+
+        provider = Provider(
+            FetchCoordinator(transport=HttpxAsyncTransport(), offline=True),
+            vcs_config=VcsConfig(
+                policy=VcsPolicy.ALLOW,
+                allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
+                require_pin=True,
+            ),
+            vcs_sources=[
+                VcsSource(name="foo", url=f"git+https://example.com/foo.git@{sha}"),
+            ],
+            vcs_cache_dir=tmp_path / "cache",
+            build_policy=BuildPolicy.NEVER,
+        )
+        with pytest.raises(UnsupportedSdistError, match="offline"):
+            provider.fetch_versions("foo")
 
     def test_pinned_clone_resolves(
         self,

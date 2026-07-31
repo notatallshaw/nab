@@ -245,7 +245,8 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     wires up (for example ``request_sdist_archive``) can reassign
     ``.side_effect`` on the returned mock; the index is exposed at
     ``coordinator.index`` for direct manipulation.  ``coordinator.indexes``
-    defaults to the single default-PyPI :class:`IndexConfig` list.
+    defaults to the single default-PyPI :class:`IndexConfig` list, and
+    ``coordinator.offline`` to False.
     """
     index = InMemoryIndex()
 
@@ -254,6 +255,7 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     coordinator = MagicMock()
     coordinator.index = index
     coordinator.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
+    coordinator.offline = False
 
     resolve_metadata = _make_metadata_resolver(
         metadata_text=metadata_text,

@@ -1342,10 +1342,16 @@ class TestVcsConfigPlumbing:
         real_prepare_clone = vcs_mod.prepare_clone
 
         def spy_prepare_clone(
-            cache_root: Path, request: VcsRequest, *, require_pin: bool
+            cache_root: Path,
+            request: VcsRequest,
+            *,
+            require_pin: bool,
+            offline: bool = False,
         ) -> VcsClone:
             roots.append(cache_root)
-            return real_prepare_clone(cache_root, request, require_pin=require_pin)
+            return real_prepare_clone(
+                cache_root, request, require_pin=require_pin, offline=offline
+            )
 
         def fake_run(cmd: list[str], **kwargs: object) -> object:
             cwd = Path(str(kwargs["cwd"]))
