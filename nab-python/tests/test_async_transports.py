@@ -283,6 +283,12 @@ class TestRetryPolicy:
         assert not GET_RETRY.is_retry("GET", 404, has_retry_after=False)
         assert not GET_RETRY.is_retry("GET", 403, has_retry_after=False)
 
+    def test_request_timeout_is_retried(self) -> None:
+        """A 408 says the server gave up waiting, so the client may repeat the GET."""
+        assert 408 in RETRY_STATUSES
+        assert GET_RETRY.is_retry("GET", 408, has_retry_after=False)
+        assert GET_RETRY.is_retry("GET", 408, has_retry_after=True)
+
     def test_cloudflare_transient_5xx_is_retried(self) -> None:
         """Cloudflare's 520-524 and 527 origin errors are blips, so they retry."""
         for status in (520, 521, 522, 523, 524, 527):
@@ -648,6 +654,26 @@ class TestHttpxAsyncTransport:
         """A Cloudflare 52x origin error is a blip, so ask again before believing it."""
         route = respx.get("https://example.com/pkg").mock(
             side_effect=[httpx.Response(status), httpx.Response(200, json={"ok": True})]
+        )
+
+        async def go() -> _HttpxResponse:
+            transport = HttpxAsyncTransport(http2=False)
+            try:
+                return await transport.get("https://example.com/pkg")
+            finally:
+                await transport.aclose()
+
+        resp = asyncio.run(go())
+        resp.raise_for_status()
+        assert resp.status_code == 200
+        assert route.call_count == 2
+        assert slept == [0.0]
+
+    @respx.mock
+    def test_get_retries_a_request_timeout(self, slept: list[float]) -> None:
+        """A 408 is a blip, so ask again before believing it."""
+        route = respx.get("https://example.com/pkg").mock(
+            side_effect=[httpx.Response(408), httpx.Response(200, json={"ok": True})]
         )
 
         async def go() -> _HttpxResponse:
@@ -1156,6 +1182,23 @@ class TestUrllib3AsyncTransport:
         """One Cloudflare 52x origin error with no Retry-After must not end the fetch."""
         with _stub_index([status]) as index:
             url = f"http://127.0.0.1:{index.server_port}/pkg/pkg-1.0.whl.metadata"
+
+            async def go() -> _Urllib3Response:
+                transport = Urllib3AsyncTransport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            resp = asyncio.run(go())
+            resp.raise_for_status()
+            assert resp.status_code == 200
+            assert len(index.seen) == 2
+
+    def test_get_retries_a_request_timeout(self) -> None:
+        """One 408 must not end the fetch."""
+        with _stub_index([408]) as index:
+            url = f"http://127.0.0.1:{index.server_port}/pkg/"
 
             async def go() -> _Urllib3Response:
                 transport = Urllib3AsyncTransport()

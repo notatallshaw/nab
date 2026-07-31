@@ -1,7 +1,7 @@
 """Retry policy for index GETs, shared by the async transports.
 
-An index GET is idempotent, and a 5xx, a 429, or a dropped connection is
-usually a blip rather than the index's answer.
+An index GET is idempotent, and a 5xx, a 429, a 408, or a dropped connection
+is usually a blip rather than the index's answer.
 
 urllib3's default retries a connection error but retries a 413, 429, or 503
 only when the response carries ``Retry-After``; httpx retries nothing. Both
@@ -30,8 +30,9 @@ the transports' own retry loops count them across all failures."""
 MAX_REDIRECTS = 20
 """Redirects followed per GET, matching httpx's default."""
 
+# A 408 says the server gave up waiting for the request (RFC 9110 15.5.9).
 # 520-524 and 527 are Cloudflare's transient origin errors, not the index's answer.
-RETRY_STATUSES = frozenset({429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 527})
+RETRY_STATUSES = frozenset({408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 527})
 """Statuses that are retried; any other status is served to the caller."""
 
 _BACKOFF_FACTOR = 0.25
