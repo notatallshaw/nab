@@ -1706,8 +1706,8 @@ class TestResolveUniversalPyproject:
 
         ``all`` reaches cpu everywhere and gpu from 3.10.4 up, so every real
         3.10.4+ interpreter activates both. The tuple's synthesized 3.10.0
-        answers the gate false, so the check has to split the minor the way the
-        resolve does before it reads the clause.
+        answers the gate false, so the check has to split the minor before it
+        reads the clause.
         """
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
@@ -1788,6 +1788,70 @@ class TestResolveUniversalPyproject:
         )
         _resolved(pyproject, extras=["all"])
         mock_engine.assert_called_once()
+
+    @patch("nab_python.resolve.resolve_with_coordinator")
+    def test_untileable_self_ref_marker_off_the_matrix_resolves(
+        self, mock_engine: MagicMock, tmp_path: Path
+    ) -> None:
+        """A self-ref no tuple can reach does not have to tile a minor.
+
+        The closure is walked without an environment, so legacy's 3.7-only
+        membership marker is scanned on a 3.10 tuple that never reaches it.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "legacy = [\"x[gpu]; python_full_version in '3.7.1 3.7.2'\"]\n"
+            "all = [\n"
+            '    "x[cpu]",\n'
+            "    \"x[legacy]; python_version < '3.8'\",\n"
+            "]\n"
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.10"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        _resolved(pyproject, extras=["all"])
+        mock_engine.assert_called_once()
+
+    def test_untileable_self_ref_marker_keeps_the_other_boundaries(
+        self, tmp_path: Path
+    ) -> None:
+        """Skipping an untileable marker leaves the cuts the rest make.
+
+        gpu is still reached from 3.10.4 up alongside cpu, so the refusal
+        stands with legacy's untileable marker in the same closure.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "legacy = [\"x[gpu]; python_full_version in '3.7.1 3.7.2'\"]\n"
+            "all = [\n"
+            '    "x[cpu]",\n'
+            "    \"x[legacy]; python_version < '3.8'\",\n"
+            "    \"x[gpu]; python_full_version >= '3.10.4'\",\n"
+            "]\n"
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.10"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_universal,
+            pytest.raises(ConflictSelectionError, match="cannot be selected together"),
+        ):
+            _resolved(pyproject, extras=["all"])
+        mock_universal.assert_not_called()
 
     @patch("nab_python.resolve.resolve_with_coordinator")
     def test_umbrella_extra_reaching_one_member_single_fork(

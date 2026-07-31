@@ -300,9 +300,7 @@ def self_extra_markers(
     """Return the markers gating the self-references ``selected`` reaches.
 
     The closure is walked without an environment, so the result holds every
-    clause :func:`expand_self_extras` could read under any of them.  A
-    caller deciding which environments to expand the closure under needs the
-    clauses before it has an environment to read them with.
+    clause :func:`expand_self_extras` could read under any environment.
     """
     if project_name is None:
         return []

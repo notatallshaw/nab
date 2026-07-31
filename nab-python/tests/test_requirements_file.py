@@ -547,7 +547,7 @@ class TestSelfExtraMarkers:
         ]
 
     def test_marker_collected_regardless_of_outer_gate(self) -> None:
-        """A gate behind a false-under-some-environment gate still counts:
+        """A nested gate counts even where the gate above it reads false:
         the environments the caller has to check are not chosen yet."""
         opt = {
             "all": ["mypkg[mid]; python_version < '3.0'"],

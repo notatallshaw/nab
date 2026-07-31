@@ -24,7 +24,7 @@ import logging
 import tempfile
 import time
 from collections import defaultdict
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -82,6 +82,7 @@ from .requirements_file import (
 )
 from .target import (
     UNBOUNDABLE_MARKER_VARIABLES,
+    NonIntervalMarkerError,
     ResolveTarget,
     environment_declaration,
     marker_variables,
@@ -1234,18 +1235,31 @@ def _conflict_check_targets(
 
     A bare-minor target's ``python_full_version`` is the synthesized
     ``{minor}.0`` floor, so a self reference gated on ``python_full_version
-    >= "3.10.4"`` read there answers for the whole minor by how its floor
-    happens to read it.  The resolve does not work that way:
-    :func:`_resolve_with_micro_narrowing` splits the minor at that boundary
-    and runs the upper slice with both extras active, so the checks split it
-    the same way and read the closure once per slice.
+    >= "3.10.4"`` answers for the whole minor by how that floor reads it, and
+    a member reached only above the boundary is never seen.  One slice per
+    boundary reads the closure where each answer holds.
     """
     markers = self_extra_markers(tables.optional, tables.project_name, selected_extras)
     return [
         sliced
         for target in targets
-        for sliced in slices_from_points(target, micro_boundary_points(target, markers))
+        for sliced in slices_from_points(target, _tileable_points(target, markers))
     ]
+
+
+def _tileable_points(target: ResolveTarget, markers: Sequence[Marker]) -> list[Version]:
+    """Return the boundaries the tileable ``markers`` cut ``target``'s minor at.
+
+    The self-extra closure is walked without an environment, so it carries
+    markers from branches this target never reaches; one of those that cannot
+    tile the minor is skipped rather than raised on.  A marker a resolve does
+    consult still raises, in :func:`_resolve_with_micro_narrowing`.
+    """
+    points: set[Version] = set()
+    for marker in markers:
+        with suppress(NonIntervalMarkerError):
+            points.update(micro_boundary_points(target, [marker]))
+    return sorted(points)
 
 
 def _check_conflict_minimums(
