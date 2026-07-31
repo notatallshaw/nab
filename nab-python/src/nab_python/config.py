@@ -22,7 +22,9 @@ import tomli
 from typing_extensions import override
 
 from nab_index.archive import ArchiveRequest, ArchiveRequestError
+from nab_index.local_index import is_file_url
 from nab_index.multi_index import IndexConfig
+from nab_index.serialization import SimpleSerialization
 from nab_index.subdir import subdirectory_escapes
 
 from ._conflict_kind import KIND_EXTRA, KIND_GROUP
@@ -1728,7 +1730,7 @@ def _environment_from_effective(
     return environment
 
 
-_INDEX_KEYS = frozenset({"name", "url"})
+_INDEX_KEYS = frozenset({"name", "url", "serialization"})
 
 
 def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
@@ -1761,7 +1763,20 @@ def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
         if not isinstance(name, str) or not isinstance(url, str):
             msg = f"indexes[{i}] name and url must be strings"
             raise ConfigError(msg)
-        out.append(IndexConfig(name=name, url=url))
+        if "serialization" in entry and is_file_url(url):
+            msg = (
+                f"indexes[{i}].serialization is not settable on a file:// index:"
+                " a local index is read from disk with no Accept negotiation,"
+                f" so the pin would do nothing.  Drop it from index {name!r}."
+            )
+            raise ConfigError(msg)
+        serialization = _parse_enum(
+            f"indexes[{i}].serialization",
+            entry.get("serialization"),
+            SimpleSerialization,
+            SimpleSerialization.NEGOTIATE,
+        )
+        out.append(IndexConfig(name=name, url=url, serialization=serialization))
     _check_index_name_uniqueness(out)
     return tuple(out)
 

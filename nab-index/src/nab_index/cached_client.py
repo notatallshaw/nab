@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING
 from .cache import CacheBackend, CachePolicy, OfflineError
 from .client import (
     _HTTP_NOT_FOUND,
-    _SIMPLE_ACCEPT,
     DEFAULT_INDEX,
     MalformedSimpleResponseError,
     SdistFile,
@@ -38,6 +37,7 @@ from .lazy_wheel import (
     RangeOutcome,
     read_wheel_metadata_over_range,
 )
+from .serialization import SimpleSerialization, simple_accept_header
 from .transport import IDENTITY_HEADERS, raise_unless_ok
 
 if TYPE_CHECKING:
@@ -82,6 +82,7 @@ class CachedAsyncSimpleClient:
         *,
         offline: bool = False,
         range_memo: RangeCapabilityMemo | None = None,
+        serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE,
     ) -> None:
         """Create a cached client wrapping ``transport``.
 
@@ -89,11 +90,15 @@ class CachedAsyncSimpleClient:
         indexes' clients; the coordinator owns the shared instance and injects
         it. A fresh memo is built when none is passed, so a stand-alone client
         still learns each host's range behaviour within its own lifetime.
+
+        ``serialization`` pins which Simple-API serialization this index is
+        asked for and read as.
         """
         self._transport = transport
         self._cache = cache
         self._index_url = index_url.rstrip("/") + "/"
         self._offline = offline
+        self._serialization = serialization
         self._unreadable_only: set[str] = set()
         self._range_memo = (
             range_memo if range_memo is not None else RangeCapabilityMemo()
@@ -212,7 +217,7 @@ class CachedAsyncSimpleClient:
         self, package: str, body: bytes, policy: CachePolicy
     ) -> list[WheelFile | SdistFile]:
         url = f"{self._index_url}{package}/"
-        headers = {"Accept": _SIMPLE_ACCEPT}
+        headers = {"Accept": simple_accept_header(self._serialization)}
         if policy.etag is not None:
             headers["If-None-Match"] = policy.etag
         response = await self._transport.get(url, headers=headers)
@@ -235,7 +240,9 @@ class CachedAsyncSimpleClient:
             self._cache.put_negative(package, self._negative_policy(response))
             return []
         raise_unless_ok(response, url)
-        new_body = _listing_body(response, self._index_url, package)
+        new_body = _listing_body(
+            response, self._index_url, package, self._serialization
+        )
 
         # Parse before caching so a bad body never poisons the cache.
         files = self._parse_listing(new_body, package)
@@ -250,12 +257,13 @@ class CachedAsyncSimpleClient:
 
     async def _fetch_simple(self, package: str) -> list[WheelFile | SdistFile]:
         url = f"{self._index_url}{package}/"
-        response = await self._transport.get(url, headers={"Accept": _SIMPLE_ACCEPT})
+        accept = simple_accept_header(self._serialization)
+        response = await self._transport.get(url, headers={"Accept": accept})
         if response.status_code == _HTTP_NOT_FOUND:
             self._cache.put_negative(package, self._negative_policy(response))
             return []
         raise_unless_ok(response, url)
-        body = _listing_body(response, self._index_url, package)
+        body = _listing_body(response, self._index_url, package, self._serialization)
 
         # Parse before caching so a bad body never poisons the cache.
         files = self._parse_listing(body, package)

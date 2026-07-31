@@ -28,6 +28,7 @@ from packaging.utils import (
 from packaging.version import InvalidVersion, Version
 
 from ._pep503 import json_listing
+from .serialization import SimpleSerialization, simple_accept_header
 from .transport import IDENTITY_HEADERS, HttpError, raise_unless_ok
 
 if TYPE_CHECKING:
@@ -208,13 +209,6 @@ def is_readable_filename(filename: str) -> bool:
     )
 
 
-# PEP 691: advertise every serialization we can read, because an index that
-# cannot honour the header may answer with a type we did not ask for.
-_SIMPLE_ACCEPT = (
-    "application/vnd.pypi.simple.v1+json, "
-    "application/vnd.pypi.simple.v1+html;q=0.2, "
-    "text/html;q=0.01"
-)
 _HTTP_NOT_FOUND = 404
 
 DEFAULT_INDEX = "https://pypi.org/simple/"
@@ -248,15 +242,45 @@ def _is_html_listing(content_type: str | None) -> bool:
     return media_type == "text/html" or media_type.endswith("+html")
 
 
-def _listing_body(response: HttpResponse, index_url: str, package: str) -> bytes:
+def _listing_body(
+    response: HttpResponse,
+    index_url: str,
+    package: str,
+    serialization: SimpleSerialization,
+) -> bytes:
     """Return a listing response's body as PEP 691 JSON bytes.
 
     The served Content-Type picks the decoder. An HTML page is re-serialized
     so the parser and the cache only ever see one shape; any other body is
-    passed through untouched.
+    passed through untouched. A pinned index that answers in the other
+    serialization raises instead.
     """
     body = response.content
-    if not _is_html_listing(_header(response, "content-type")):
+    content_type = _header(response, "content-type")
+    is_html = _is_html_listing(content_type)
+
+    if serialization is not SimpleSerialization.NEGOTIATE and is_html != (
+        serialization is SimpleSerialization.HTML
+    ):
+        served = (
+            f"Content-Type {content_type!r}"
+            if content_type is not None
+            else "no Content-Type"
+        )
+        instead = (
+            f" set serialization = {SimpleSerialization.HTML.value!r},"
+            if is_html
+            else ""
+        )
+        msg = (
+            f"{index_url} served {package!r} with {served}, but this index is"
+            f" pinned to serialization = {serialization.value!r}."
+            f"  Drop the pin,{instead} or set url to an endpoint that serves"
+            f" {serialization.value}."
+        )
+        raise MalformedSimpleResponseError(msg)
+
+    if not is_html:
         return body
 
     try:
@@ -370,11 +394,14 @@ class AsyncSimpleClient:
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
         """Fetch all distribution files for a package."""
         url = f"{self._index_url}{package}/"
-        response = await self._transport.get(url, headers={"Accept": _SIMPLE_ACCEPT})
+        accept = simple_accept_header(SimpleSerialization.NEGOTIATE)
+        response = await self._transport.get(url, headers={"Accept": accept})
         if response.status_code == _HTTP_NOT_FOUND:
             return []
         raise_unless_ok(response, url)
-        body = _listing_body(response, self._index_url, package)
+        body = _listing_body(
+            response, self._index_url, package, SimpleSerialization.NEGOTIATE
+        )
         return _parse_files(json.loads(body), self._index_url, package)
 
     async def get_metadata_text(self, metadata_url: str) -> str:

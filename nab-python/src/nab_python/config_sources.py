@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 import tomli
 
 from nab_index.multi_index import IndexConfig
+from nab_index.serialization import SimpleSerialization
 
 from ._toml import tool_nab_section
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
@@ -547,7 +548,7 @@ def _parse_default_groups(value: Any, where: str) -> tuple[str, ...]:
 
 
 def _parse_indexes(value: Any, where: str) -> tuple[IndexConfig, ...]:
-    # One file's array-of-tables (name, url): config._parse_indexes validates
+    # One file's array-of-tables: config._parse_indexes validates
     # shape, keys, and the within-file same-name check into IndexConfig
     # entries.  The across-file same-name check runs over the concatenation
     # via merge_check (_revalidate_index_names).
@@ -756,7 +757,13 @@ def _render_index_overrides(value: Mapping[str, Any]) -> str:
 def _render_index_list(value: Sequence[IndexConfig]) -> str:
     if not value:
         return "<none>"
-    return ", ".join(f"{i.name}={i.url}" for i in value)
+    return ", ".join(f"{i.name}={i.url}{_render_index_pin(i)}" for i in value)
+
+
+def _render_index_pin(index: IndexConfig) -> str:
+    if index.serialization is SimpleSerialization.NEGOTIATE:
+        return ""
+    return f" serialization={index.serialization.value}"
 
 
 def _render_local_sources(value: Sequence[LocalSource]) -> str:
@@ -978,7 +985,7 @@ OPTIONS: tuple[OptionSpec, ...] = (
     OptionSpec(
         key="indexes",
         scope=Scope.PROJECT,
-        type_label="array-of-tables(name,url)",
+        type_label="array-of-tables(name,url,serialization)",
         default=(IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),),
         env_var=None,
         cli_flag=None,
