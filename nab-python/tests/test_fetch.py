@@ -2069,6 +2069,21 @@ class TestMultiIndexCoordinator:
                 ],
             )
 
+    def test_explicit_cache_backend_with_a_pin_raises(self) -> None:
+        """cache_backend + a pinned serialization is a config error."""
+        with pytest.raises(ValueError, match="pinned serialization"):
+            FetchCoordinator(
+                transport=HttpxAsyncTransport(),
+                cache_backend=NullCache(),
+                indexes=[
+                    IndexConfig(
+                        "art",
+                        "https://art.example/",
+                        serialization=SimpleSerialization.JSON,
+                    )
+                ],
+            )
+
     def test_default_indexes_is_pypi(self) -> None:
         """Without explicit indexes, the coordinator defaults to PyPI."""
         coord = FetchCoordinator(transport=HttpxAsyncTransport())

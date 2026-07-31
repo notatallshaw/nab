@@ -27,6 +27,7 @@ from nab_index.client import SdistFile, WheelFile
 from nab_index.lazy_wheel import RangeCapabilityMemo, RangeOutcome
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
 from nab_index.multi_index import IndexConfig, MultiIndexClient
+from nab_index.serialization import SimpleSerialization
 from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
 
 from ._vendor.packaging.utils import canonicalize_name
@@ -691,10 +692,8 @@ class FetchCoordinator:
         otherwise ``cache_dir`` enables a per-index :class:`OnDiskCache`
         and ``None`` falls back to a :class:`NullCache`.  Passing an
         explicit ``cache_backend`` together with more than one entry in
-        ``indexes`` is rejected: each index needs its own cache.  An
-        explicit backend is used as passed, so a caller that pins an
-        index's ``serialization`` is responsible for building the
-        backend with the same pin.
+        ``indexes``, or with an index that pins its ``serialization``, is
+        rejected: each of those needs its own cache.
         """
         if indexes is None:
             indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
@@ -714,6 +713,15 @@ class FetchCoordinator:
             msg = (
                 "explicit cache_backend is incompatible with more than one"
                 " index: pass cache_dir so each index gets its own cache."
+            )
+            raise ValueError(msg)
+        if cache_backend is not None and any(
+            idx.serialization is not SimpleSerialization.NEGOTIATE for idx in indexes
+        ):
+            msg = (
+                "explicit cache_backend is incompatible with a pinned"
+                " serialization: pass cache_dir so the pinned index gets a"
+                " cache of its own."
             )
             raise ValueError(msg)
         if cache_backend is not None:
