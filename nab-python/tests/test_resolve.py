@@ -4070,25 +4070,62 @@ class _RecordingSink:
 class TestProgressReporting:
     """The progress sink is threaded to the coordinator and the resolver."""
 
-    def test_sink_records_pins_and_reaches_coordinator(self, tmp_path: Path) -> None:
+    @staticmethod
+    def _serve(name: str, requires: str = "") -> None:
+        """Serve ``name`` 1.0 as one wheel with a sidecar metadata file."""
+        wheel = f"{name}-1.0-py3-none-any.whl"
+        respx.get(f"https://pypi.org/simple/{name}/").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "meta": {"api-version": "1.0"},
+                    "name": name,
+                    "files": [
+                        {
+                            "filename": wheel,
+                            "url": f"https://files.example.com/{wheel}",
+                            "core-metadata": True,
+                        }
+                    ],
+                },
+            )
+        )
+
+        respx.get(f"https://files.example.com/{wheel}.metadata").mock(
+            return_value=httpx.Response(
+                200,
+                text=f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n{requires}",
+            )
+        )
+
+    @respx.mock
+    def test_sink_counts_one_fetch_per_listing_and_records_pins(
+        self, tmp_path: Path
+    ) -> None:
+        """A real coordinator fires ``on_fetch`` once per listing it reads."""
+        self._serve("foo", requires="Requires-Dist: bar\n")
+        self._serve("bar")
+
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            '[project]\nname = "proj"\ndependencies = ["foo"]\n', encoding="utf-8"
+            '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo"]\n',
+            encoding="utf-8",
         )
-        coordinator = make_coordinator(
-            listings={"foo": _index_wheels("foo", "1.0")},
-            metadata_by_version={"1.0": _metadata("foo", "1.0")},
-        )
+
         sink = _RecordingSink()
-        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
-            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
-            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+        transport = HttpxAsyncTransport()
+        try:
             result = _resolved(
-                pyproject, _FAKE_TRANSPORT, python_version="3.12.0", progress=sink
+                pyproject, transport, python_version="3.12.0", progress=sink
             )
-        assert result.success
-        assert sink.pins
-        assert mock_coord_cls.call_args.kwargs["on_fetch"] is not None
+        finally:
+            asyncio.run(transport.aclose())
+
+        assert _pins(result) == {"foo": V("1.0"), "bar": V("1.0")}
+        assert sink.fetches == 2
+
+        # The root project is decided as well, so the pin gauge reads three.
+        assert sink.pins[-1] == 3
 
     def test_observer_reports_decision_and_backjump_levels(self) -> None:
         sink = _RecordingSink()
