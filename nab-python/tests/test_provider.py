@@ -6258,6 +6258,80 @@ class TestExtras:
         version = provider.choose_version("foo[security]", spec.to_range())
         assert version == V("2.0")
 
+    @staticmethod
+    def _user_extra_provider(
+        extras_mode: ExtrasMode,
+        root_spec: str = "",
+        extra: str = "security",
+    ) -> Provider:
+        """A provider whose ``foo`` declares ``security`` only at 2.0.
+
+        ``root_spec`` is the specifier the root requirement put on ``foo``.
+        """
+        wheels = [make_wheel(v) for v in ("3.0", "2.1", "2.0", "1.0")]
+        coordinator = make_coordinator(
+            wheels,
+            package="foo",
+            metadata_by_version={
+                "3.0": make_metadata("foo", "3.0"),
+                "2.1": make_metadata("foo", "2.1"),
+                "2.0": make_metadata("foo", "2.0") + "Provides-Extra: security\n",
+                "1.0": make_metadata("foo", "1.0"),
+            },
+        )
+        return Provider(
+            coordinator,
+            extras_mode=extras_mode,
+            root_extras={("foo", extra)},
+            root_requirements={"foo": SpecifierSet(root_spec).to_range()},
+        )
+
+    @pytest.mark.parametrize(
+        "extras_mode", [ExtrasMode.ERROR_USER, ExtrasMode.BACKTRACK]
+    )
+    def test_user_extra_reports_no_version_when_range_drops_the_provider(
+        self, extras_mode: ExtrasMode
+    ) -> None:
+        """A narrowed range holding no provider of a user extra has no version.
+
+        Pinning one would commit the resolver to a version the extra
+        cannot be expanded from, aborting the resolve instead of
+        backjumping off whatever narrowed the range.
+        """
+        provider = self._user_extra_provider(extras_mode)
+        spec = SpecifierSet(">=2.1")
+        assert provider.choose_version("foo[security]", spec.to_range()) is None
+
+    def test_user_extra_keeps_the_first_version_over_an_older_provider(self) -> None:
+        """A user extra pins the first in-range version, not an older provider."""
+        provider = self._user_extra_provider(ExtrasMode.ERROR_USER)
+        spec = SpecifierSet(">=2.0")
+        assert provider.choose_version("foo[security]", spec.to_range()) == V("3.0")
+
+    def test_user_extra_keeps_the_first_version_when_the_root_excludes_it(self) -> None:
+        """A root range with no provider of its own stays the user's error.
+
+        Pinning the first version reports the miss against it, rather
+        than reporting no version and losing the error naming the extra.
+        """
+        provider = self._user_extra_provider(ExtrasMode.ERROR_USER, root_spec=">=2.1")
+        spec = SpecifierSet(">=2.1")
+        assert provider.choose_version("foo[security]", spec.to_range()) == V("3.0")
+
+    def test_user_extra_keeps_the_first_version_when_no_version_declares_it(
+        self,
+    ) -> None:
+        """An extra no version of the package declares stays the user's error."""
+        provider = self._user_extra_provider(ExtrasMode.ERROR_USER, extra="nonexistent")
+        spec = SpecifierSet(">=2.1")
+        assert provider.choose_version("foo[nonexistent]", spec.to_range()) == V("3.0")
+
+    def test_warn_mode_user_extra_keeps_the_first_version(self) -> None:
+        """WARN mode pins the first in-range version whatever the range."""
+        provider = self._user_extra_provider(ExtrasMode.WARN)
+        spec = SpecifierSet(">=2.1")
+        assert provider.choose_version("foo[security]", spec.to_range()) == V("3.0")
+
     def test_extra_dep_with_arbitrary_equality_is_literal_range(self) -> None:
         """Extra deps using ``===`` round-trip as a literal-only range."""
         metadata = (

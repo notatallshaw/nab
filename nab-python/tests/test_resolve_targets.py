@@ -1596,6 +1596,101 @@ class TestResolveWithCoordinator:
         with pytest.raises(MissingExtraError):
             resolve_with_coordinator(coordinator, _one_target(), _reqs("pkg[missing]"))
 
+    @staticmethod
+    def _extra_backtrack_coordinator() -> MagicMock:
+        """An index where only ``aa==3.0`` provides the ``y`` extra.
+
+        ``aa[y]`` pulls in ``cc<3.0``, so a resolve that decides ``cc``
+        at 3.0 first has to backjump off that decision to keep the extra.
+        """
+        aa_wheels = [_make_wheel(v, package="aa") for v in ("1.0", "2.0", "2.1", "3.0")]
+        coordinator = make_coordinator(
+            listings={
+                "aa": aa_wheels,
+                "cc": [_make_wheel(v, package="cc") for v in ("1.1", "2.1", "3.0")],
+            },
+            auto_metadata=True,
+        )
+        coordinator.index.store_metadata(
+            "aa",
+            "3.0",
+            "Metadata-Version: 2.1\nName: aa\nVersion: 3.0\n"
+            "Provides-Extra: y\n"
+            'Requires-Dist: cc<3.0; extra == "y"\n\n',
+            aa_wheels[-1].metadata_url,
+        )
+        return coordinator
+
+    @pytest.mark.parametrize(
+        "texts",
+        [("aa[y]>=2.0", "cc>1.0"), ("cc>1.0", "aa[y]>=2.0")],
+    )
+    def test_root_extra_resolves_under_either_root_order(
+        self, texts: tuple[str, str]
+    ) -> None:
+        """A root extra resolves the same however the roots are ordered.
+
+        Root order seeds the decision tiebreak, so deciding ``cc`` first
+        narrows ``aa[y]`` onto versions that do not declare ``y``; the
+        proxy has to report no version there rather than pin one and
+        error out.
+        """
+        result = resolve_with_coordinator(
+            self._extra_backtrack_coordinator(), _one_target(), _reqs(*texts)
+        )
+        assert result.success
+        assert result.target_results[0].pins == {
+            "aa": Version("3.0"),
+            "cc": Version("2.1"),
+        }
+
+    @staticmethod
+    def _narrowed_base_coordinator() -> MagicMock:
+        """An index where only ``aa==3.0`` provides the ``y`` extra.
+
+        ``bb==2.0`` requires ``aa<3.0``, so a resolve that takes it
+        narrows ``aa`` off the extra's only provider before ``aa[y]``
+        is ever asked for a version.
+        """
+        aa_wheels = [_make_wheel(v, package="aa") for v in ("1.0", "2.0", "2.1", "3.0")]
+        bb_wheels = [_make_wheel(v, package="bb") for v in ("1.0", "2.0")]
+        coordinator = make_coordinator(
+            listings={"aa": aa_wheels, "bb": bb_wheels},
+            auto_metadata=True,
+        )
+        coordinator.index.store_metadata(
+            "aa",
+            "3.0",
+            "Metadata-Version: 2.1\nName: aa\nVersion: 3.0\nProvides-Extra: y\n\n",
+            aa_wheels[-1].metadata_url,
+        )
+        coordinator.index.store_metadata(
+            "bb",
+            "2.0",
+            "Metadata-Version: 2.1\nName: bb\nVersion: 2.0\nRequires-Dist: aa<3.0\n\n",
+            bb_wheels[-1].metadata_url,
+        )
+        return coordinator
+
+    @pytest.mark.parametrize("texts", [("bb", "aa[y]"), ("aa[y]", "bb")])
+    def test_root_extra_resolves_when_its_base_is_narrowed_first(
+        self, texts: tuple[str, str]
+    ) -> None:
+        """A root extra survives its base being decided before it is asked.
+
+        Whichever root order runs, ``aa`` is narrowed to ``<3.0`` before
+        ``aa[y]`` picks a version, so the proxy only sees versions that
+        lack ``y`` and has to report none, dropping ``bb==2.0``.
+        """
+        result = resolve_with_coordinator(
+            self._narrowed_base_coordinator(), _one_target(), _reqs(*texts)
+        )
+        assert result.success
+        assert result.target_results[0].pins == {
+            "aa": Version("3.0"),
+            "bb": Version("1.0"),
+        }
+
     def test_constraints_passed_through(self) -> None:
         """The config's constraints reach the resolver."""
         coordinator = _make_coordinator(

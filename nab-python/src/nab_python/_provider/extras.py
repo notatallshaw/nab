@@ -64,6 +64,11 @@ def choose_extra_version(
         candidates = list(reversed(candidates))
 
     chosen = _pick_in_mode(provider, base, extra, candidates)
+    if chosen is not None and (normalized, extra) in provider.root_extras:
+        chosen = _pick_for_user_extra(
+            provider, base, extra, chosen, candidates, all_versions
+        )
+
     # Enumerate pre-releases too: default filtering buffers a pre-release
     # behind any matching final and would drop one that the base's bounds
     # exclude, so it would never be recorded and the proxy would keep a
@@ -125,6 +130,46 @@ def _pick_in_mode(
         if metadata is None or extra in provided:
             return version
     return None
+
+
+def _pick_for_user_extra(
+    provider: Provider,
+    base: str,
+    extra: str,
+    chosen: Version,
+    candidates: list[Version],
+    all_versions: list[Version],
+) -> Version | None:
+    """Keep or drop ``chosen`` when the root asked for ``extra``.
+
+    A root extra pins the first in-range version even when that version
+    lacks the extra, so the miss is reported against it rather than
+    against an older version that declares it.  The exception is a range
+    the search narrowed off every version declaring the extra: reporting
+    no version there leaves a clause the search can backjump on.  The
+    check runs against the root requirement's range, so the answer
+    follows the index rather than the metadata fetched so far.
+    """
+    # Late import: ``provider`` imports this module at module load.
+    from ..provider import ExtrasMode
+
+    if provider.extras_mode == ExtrasMode.WARN:
+        return chosen
+
+    _, _, normalized = provider.split_and_normalize(base)
+    root_range = provider.root_requirements.get(normalized, VersionRange.full())
+    outside = [v for v in root_range.filter(all_versions) if v not in candidates]
+    if not outside:
+        return chosen
+
+    if any(version_provides_extra(provider, base, extra, v) for v in candidates):
+        return chosen
+
+    # Declared outside the narrowed range but not inside it: the
+    # narrowing is what lost the extra, so let it be backjumped away.
+    if any(version_provides_extra(provider, base, extra, v) for v in outside):
+        return None
+    return chosen
 
 
 def version_provides_extra(
