@@ -130,6 +130,10 @@ member of two or more engaged sets at once, its marker is the
 conjunction across those sets; this stays correct for one set, the
 common case.
 
+A dependency a member shares with a selection outside the set names
+both in its marker (`"cpu" in extras or "docs" in extras`), so
+selecting the member on its own still installs it.
+
 The lockfile stays within PEP 751: the membership markers use the
 standard `extras` and `dependency_groups` variables, and each fork's
 marker negates the co-members of every conflict set it draws from

@@ -683,12 +683,16 @@ def _build_marker(
     A package a selected extra or group reaches while the project's own
     dependencies do not carries that selection's gate (see
     :attr:`~nab_python.lockfile.TargetLock.package_gates`), which is
-    joined by ``and`` onto each contribution.  An env collapses only when
-    its forks agree on the gate, since one entry cannot carry two.  When the
-    package covers every target, every env collapsed, and every target
-    gates it the same way, the env clauses are dropped and the gate
-    stands alone: a selection is a property of the install context, not
-    of the platform, so ``"cli" in extras`` is the whole marker.
+    joined by ``and`` onto each contribution.  A fork whose gate names
+    its own selection needs no gate: its marker already asserts that
+    member.  An env collapses only when its forks agree on the rest of
+    the gate, and the collapsed entry carries their union, so a package
+    one fork reaches through its own member and another through a
+    non-conflicting extra installs for either.  When the package covers
+    every target, every env collapsed, and every env gates it the same
+    way, the env clauses are dropped and the gate stands alone: a
+    selection is a property of the install context, not of the platform,
+    so ``"cli" in extras`` is the whole marker.
     """
     by_env: defaultdict[tuple[tuple[str, str], ...], list[str]] = defaultdict(list)
     for label in labels:
@@ -701,6 +705,7 @@ def _build_marker(
     # dep present in all forks of an env keeps the membership OR, so it
     # is not unconditional even at full coverage.
     contributions: list[Marker] = []
+    collapsed_gates: set[tuple[tuple[str, str], ...]] = set()
     unconditional = len(labels) >= len(targets)
     for signature, env_labels in by_env.items():
         base_names = env_base_names.get(signature)
@@ -714,15 +719,26 @@ def _build_marker(
             if base_names is not None
             else (env_fork_counts[signature] == 1)
         )
-        agreed_gate = len({gates[label] for label in env_labels}) == 1
+        agreed_gate = (
+            len({_shared_gate(targets[label], gates[label]) for label in env_labels})
+            == 1
+        )
+
         if len(env_labels) >= env_fork_counts[signature] and is_base and agreed_gate:
             head = targets[env_labels[0]].target
+            merged = _merge_gates(gates[label] for label in env_labels)
+            collapsed_gates.add(merged)
             contributions.append(
-                Marker(_with_gate(head.environment_marker_string, gates[env_labels[0]]))
+                Marker(_with_gate(head.environment_marker_string, merged))
             )
         else:
             contributions.extend(
-                Marker(_with_gate(selection_markers[label], gates[label]))
+                Marker(
+                    _with_gate(
+                        selection_markers[label],
+                        _fork_gate(targets[label], gates[label]),
+                    )
+                )
                 for label in env_labels
             )
             unconditional = False
@@ -732,13 +748,54 @@ def _build_marker(
 
     # Every env collapsed at full coverage: the environment is not what
     # selects this package, so only the gate can, and only when every
-    # target agrees on it.
-    common = set(gates.values())
-    if common == {()}:
+    # env agrees on it.
+    if collapsed_gates == {()}:
         return None
-    if len(common) == 1:
-        return Marker(_gate_clause(next(iter(common))))
+    if len(collapsed_gates) == 1:
+        return Marker(_gate_clause(next(iter(collapsed_gates))))
     return _or_markers(contributions)
+
+
+def _shared_gate(
+    lock: TargetLock, gate: tuple[tuple[str, str], ...]
+) -> tuple[tuple[str, str], ...]:
+    """Return the part of a gate the fork's own selection does not supply.
+
+    Two forks of one environment gate a package the same way when these
+    agree; each fork's own member necessarily differs, and
+    :func:`_merge_gates` folds it back in.
+    """
+    return tuple(sorted(set(gate) - set(lock.target.selection)))
+
+
+def _fork_gate(
+    lock: TargetLock, gate: tuple[tuple[str, str], ...]
+) -> tuple[tuple[str, str], ...]:
+    """Return the gate to conjoin onto one fork's own membership marker.
+
+    A gate that names a member of the fork's selection is already
+    satisfied there, so it drops whole rather than narrowing the fork's
+    marker to the gate's other selections.
+    """
+    if set(gate) & set(lock.target.selection):
+        return ()
+    return gate
+
+
+def _merge_gates(
+    gates: Iterable[tuple[tuple[str, str], ...]],
+) -> tuple[tuple[str, str], ...]:
+    """OR the per-fork gates of one collapsing environment into one gate.
+
+    A fork with an empty gate installs the package whenever its own
+    member is selected, so the merged gate is empty too.
+    """
+    merged: set[tuple[str, str]] = set()
+    for gate in gates:
+        if not gate:
+            return ()
+        merged |= set(gate)
+    return tuple(sorted(merged))
 
 
 def _selection_marker(

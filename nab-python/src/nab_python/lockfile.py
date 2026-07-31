@@ -372,7 +372,8 @@ class TargetLock:
 
     ``package_gates`` maps a package this target locked to the selected
     extras and groups that reach it while the project's own dependencies
-    do not, as ``(kind, name)`` members.  The writer emits each one as a
+    do not, as ``(kind, name)`` members, including the conflict fork's
+    own selection.  The writer emits each one as a
     ``'name' in extras`` / ``'name' in dependency_groups`` clause on that
     package's marker, so a default install (no extras, the default
     groups) leaves it out.  A package the project's dependencies reach is

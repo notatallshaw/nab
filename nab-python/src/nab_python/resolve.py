@@ -165,8 +165,9 @@ class InstallContexts:
     it (see :attr:`~nab_python.lockfile.TargetLock.package_gates`) and a
     default install leaves it out.
 
-    A member of the fork's own ``selection`` is not a selector here: its
-    clause is already on every pin of the fork.
+    The fork's own ``selection`` is one of those selectors, so a package
+    it shares with another active selection names both members and
+    installs for either.
     """
 
     project: tuple[Requirement, ...] = ()
@@ -1081,28 +1082,27 @@ def _plan_forks(
 def _selector_requirements(
     path: Path, tables: _ProjectTables, fork: ConflictFork
 ) -> dict[tuple[str, str], tuple[Requirement, ...]]:
-    """Split a fork's selection into one requirement list per member.
+    """Split a fork's active extras and groups into one requirement list each.
 
     The lock writer walks the resolved graph from each of them to gate
     the packages only that extra or group reaches.  A member of the
-    fork's own ``selection`` is left out: every pin of the fork already
-    carries its clause, so gating it again would only repeat it.
+    fork's own ``selection`` is a selector like any other: a package it
+    shares with another active selection has to name both, or the lock
+    carries only the other one's clause and an install that selects the
+    member alone misses the package.
 
     A group named in ``default-groups`` is here like any other: PEP 751
     seeds ``dependency_groups`` from ``default-groups`` when the
     installer selects none, so the gate still holds for a default
     install.
     """
-    chosen = set(fork.selection)
     selectors: dict[tuple[str, str], tuple[Requirement, ...]] = {}
     for extra in fork.active_extras:
         member = (ConflictKind.EXTRA.value, str(canonicalize_name(extra)))
-        if member not in chosen:
-            selectors[member] = tuple(_extra_requirements(tables, [extra], path))
+        selectors[member] = tuple(_extra_requirements(tables, [extra], path))
     for group in fork.active_groups:
         member = (ConflictKind.GROUP.value, str(canonicalize_name(group)))
-        if member not in chosen:
-            selectors[member] = tuple(_group_requirements(tables.groups, [group], path))
+        selectors[member] = tuple(_group_requirements(tables.groups, [group], path))
     return selectors
 
 

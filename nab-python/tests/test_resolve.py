@@ -1353,6 +1353,43 @@ class TestResolveUniversalPyproject:
             "torch==2.0+gpu",
         ]
 
+    @patch("nab_python.resolve.resolve_with_coordinator")
+    def test_fork_selects_on_its_own_member_too(
+        self, mock_engine: MagicMock, tmp_path: Path
+    ) -> None:
+        """A fork's own member is one of the selections its lock gates on.
+
+        ``shared`` is required by the conflicting ``cpu`` extra and by the
+        non-conflicting ``docs`` extra, so the cpu fork has to attribute it
+        to both or the lock names only ``docs``.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["shared", "cpu-only"]\n'
+            'gpu = ["gpu-only"]\n'
+            'docs = ["shared", "sphinx"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        _resolved(pyproject, extras=["cpu", "gpu", "docs"])
+        forks = mock_engine.call_args.kwargs["forks"]
+        cpu = next(f for f in forks if f.selection == (("extra", "cpu"),))
+        assert cpu.contexts is not None
+        selectors = {
+            member: [str(r) for r in reqs]
+            for member, reqs in cpu.contexts.selectors.items()
+        }
+        assert selectors == {
+            ("extra", "cpu"): ["shared", "cpu-only"],
+            ("extra", "docs"): ["shared", "sphinx"],
+        }
+
     def test_exactly_one_with_no_member_raises(self, tmp_path: Path) -> None:
         """A universal exactly-one set with no active member raises."""
         pyproject = tmp_path / "pyproject.toml"
@@ -3895,6 +3932,72 @@ class TestExtraAndGroupMembershipMarkers:
             "mytool": '"cli" in extras',
             "subtool": '"cli" in extras',
         }
+
+
+class TestConflictMemberMembershipMarkers:
+    """A conflict fork's own extra gates the packages only it reaches.
+
+    End to end from ``pyproject.toml`` to the emitted lock, for
+    ``nab lock --extra cpu --extra gpu --extra docs`` over an
+    ``at-most-one`` cpu/gpu set.  ``shared-lib`` is a direct requirement
+    of both ``cpu`` and ``docs``, so its ``packages.marker`` has to name
+    both selections.
+    """
+
+    _NAMES: ClassVar[tuple[str, ...]] = (
+        "core",
+        "shared-lib",
+        "cpu-only",
+        "gpu-only",
+        "sphinx",
+    )
+
+    _MEMBERS: ClassVar[dict[str, str]] = {
+        name: f'[project]\nname = "{name}"\nversion = "1.0"\n' for name in _NAMES
+    }
+
+    _ROOT: ClassVar[str] = (
+        '[project]\nname = "app"\nversion = "1.0"\ndependencies = ["core"]\n'
+        "[project.optional-dependencies]\n"
+        'cpu = ["shared-lib", "cpu-only"]\n'
+        'gpu = ["gpu-only"]\n'
+        'docs = ["shared-lib", "sphinx"]\n'
+        "[tool.nab]\n"
+        'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+        + "".join(
+            f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
+            for name in _NAMES
+        )
+    )
+
+    def _lock(self, tmp_path: Path) -> Pylock:
+        return TestExtraAndGroupMembershipMarkers._lock(
+            tmp_path,
+            extras=("cpu", "gpu", "docs"),
+            root=self._ROOT,
+            members=self._MEMBERS,
+        )
+
+    def test_shared_package_names_both_selections_that_reach_it(
+        self, tmp_path: Path
+    ) -> None:
+        markers = TestExtraAndGroupMembershipMarkers._markers(self._lock(tmp_path))
+
+        assert markers["shared-lib"] == '"cpu" in extras or "docs" in extras'
+        assert markers["sphinx"] == '"docs" in extras'
+        assert markers["core"] is None
+
+    def test_selecting_the_member_alone_installs_what_it_requires(
+        self, tmp_path: Path
+    ) -> None:
+        """``shared-lib`` is a direct requirement of the ``cpu`` extra."""
+        pylock = self._lock(tmp_path)
+        selected = TestExtraAndGroupMembershipMarkers._selected
+
+        assert selected(pylock, extras=["cpu"]) == {"core", "cpu-only", "shared-lib"}
+        assert selected(pylock, extras=["gpu"]) == {"core", "gpu-only"}
+        assert selected(pylock, extras=["docs"]) == {"core", "shared-lib", "sphinx"}
+        assert selected(pylock) == {"core"}
 
 
 class TestSidecarFetchFailure:
