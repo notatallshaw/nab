@@ -35,7 +35,9 @@ requires-python = ">=3.10"
 # Reproducibility cutoff.  Distributions uploaded after this timestamp
 # are ignored.  Accepts ISO 8601 strings, native TOML datetimes, or a
 # "P<n>D" duration relative to the resolve anchor.  Artifacts from a
-# local file:// index carry no upload time and are always kept.
+# local file:// index carry no upload time and are always kept.  An
+# HTML listing rarely carries one, and a file without an upload time
+# is excluded; see "Serialization" below.
 uploaded-prior-to = "2026-05-01T00:00:00Z"
 
 # Version selection within an allowed range.  Mirrors uv's --resolution.
@@ -148,10 +150,47 @@ url  = "https://pypi.org/simple/"
 [[tool.nab.indexes]]
 name = "torch-cpu"
 url  = "https://download.pytorch.org/whl/cpu"
+
+[[tool.nab.indexes]]
+name = "internal"
+url  = "https://artifactory.example.com/api/pypi/pypi/simple/"
+# Which Simple-API serialization to ask this index for.
+serialization = "html"   # "negotiate" (default) | "json" | "html"
 ```
 
 When `[[tool.nab.indexes]]` is omitted entirely, nab defaults to a
 single PyPI entry.
+
+### Serialization
+
+By default nab negotiates: it advertises the PEP 691 JSON listing, the
+PEP 691 HTML listing and PEP 503 `text/html`, and decodes whichever one
+the index serves.  `serialization` pins a single choice, for an index
+that does not answer both reliably.
+
+The pin covers the `Accept` header and the decoder together.  A pinned
+index that answers in the other serialization is an error: a pin nab
+quietly read past would leave the divergence it was set to stop.  An
+index that holds only the other serialization and negotiates strictly
+answers 406, which fails the same way.  Either error ends the resolve
+rather than falling through to the next index in the list.
+
+Listings fetched under one setting are not reused under another: a
+pinned index keeps its own listing cache.
+
+`serialization` is not settable on a `file://` index, `"negotiate"`
+included.  A local index is read from disk with no `Accept`
+negotiation, so the key is rejected rather than accepted and ignored.
+
+Pinning `html` costs the data PEP 700 defines for the JSON listing
+only, and two of the losses bite:
+
+* A PEP 503 page carries no upload time.  Unless the index emits the
+  non-standard `data-upload-time` attribute, every file it serves is
+  excluded once `uploaded-prior-to` applies.
+* A page carries at most one hash, in the URL fragment.  A file whose
+  only fragment digest is md5 gives `nab lock` nothing to record, and
+  the PEP 751 and requirements writers then fail on the missing hash.
 
 ## Overrides
 

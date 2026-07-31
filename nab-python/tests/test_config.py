@@ -90,6 +90,22 @@ def universal_mode_section() -> str:
     return match.group(0)
 
 
+def indexes_doc_example() -> str:
+    """Return the first fenced TOML block of the config reference's Indexes section.
+
+    ``first_tool_nab_example`` only returns blocks that open with
+    ``[tool.nab]``, so the indexes example needs its own reader.
+    """
+    text = DOCS_CONFIGURATION.read_text()
+    section = re.search(r"^## Indexes.*?(?=^## )", text, flags=re.DOTALL | re.MULTILINE)
+    if section is None:
+        raise AssertionError("no indexes section in configuration.md")
+    blocks = re.findall(r"```toml\n(.*?)```", section.group(0), re.DOTALL)
+    if not blocks:
+        raise AssertionError("no TOML example in configuration.md's indexes section")
+    return blocks[0]
+
+
 def default_groups_doc_comment() -> str:
     """Return the comment above ``default-groups`` in the config reference."""
     lines = first_tool_nab_example().splitlines()
@@ -2086,6 +2102,12 @@ class TestIndexSerialization:
         assert positional == keyword
         assert hash(positional) == hash(keyword)
         assert positional.serialization is SimpleSerialization.NEGOTIATE
+
+    def test_reference_example_parses(self, tmp_path: Path) -> None:
+        path = write(tmp_path, indexes_doc_example())
+        pins = {i.name: i.serialization for i in read_pyproject_config(path).indexes}
+        assert pins["pypi"] is SimpleSerialization.NEGOTIATE
+        assert pins["internal"] is SimpleSerialization.HTML
 
 
 class TestVcs:
