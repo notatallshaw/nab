@@ -564,6 +564,68 @@ class TestLocalIndexArtefacts:
             )
 
 
+class TestOffline:
+    """``offline=True`` refuses every artefact that needs an HTTP fetch."""
+
+    def test_refuses_before_touching_the_transport(self, tmp_path: Path) -> None:
+        wheel_bytes = b"WHEELDATA"
+        pin = _index_pin(wheel_sha=hashlib.sha256(wheel_bytes).hexdigest())
+        transport = _FakeTransport({"https://example.com/foo-1.0.whl": wheel_bytes})
+        with pytest.raises(
+            DownloadError,
+            match=(
+                r"foo==1\.0: artefact fetch unavailable in offline mode"
+                r" \(foo-1\.0-py3-none-any\.whl\)"
+            ),
+        ):
+            download_lock(
+                LockInput(targets=_one({"foo": pin})),
+                transport,  # type: ignore[arg-type]
+                tmp_path,
+                offline=True,
+            )
+        assert transport.requested == []
+        assert list(tmp_path.iterdir()) == []
+
+    def test_already_present_file_still_succeeds(self, tmp_path: Path) -> None:
+        wheel_bytes = b"BYTES"
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(wheel_bytes)
+        pin = _index_pin(wheel_sha=hashlib.sha256(wheel_bytes).hexdigest())
+        transport = _FakeTransport({})
+        result = download_lock(
+            LockInput(targets=_one({"foo": pin})),
+            transport,  # type: ignore[arg-type]
+            tmp_path,
+            offline=True,
+        )
+        assert len(result.skipped) == 1
+        assert result.written == ()
+        assert transport.requested == []
+
+    def test_local_path_artefact_still_succeeds(self, tmp_path: Path) -> None:
+        src = tmp_path / "wheelhouse"
+        src.mkdir()
+        out = tmp_path / "out"
+        wheel_bytes = b"WHEELDATA"
+        wheel_file = src / "foo-1.0-py3-none-any.whl"
+        wheel_file.write_bytes(wheel_bytes)
+        wheel = WheelArtifact(
+            filename="foo-1.0-py3-none-any.whl",
+            url=wheel_file.as_uri(),
+            hashes=(("sha256", hashlib.sha256(wheel_bytes).hexdigest()),),
+            local_path=wheel_file,
+        )
+        pin = IndexPin(name="foo", version="1.0", index="local", wheels=(wheel,))
+        result = download_lock(
+            LockInput(targets=_one({"foo": pin})),
+            _FakeTransport({}),  # type: ignore[arg-type]
+            out,
+            offline=True,
+        )
+        assert (out / "foo-1.0-py3-none-any.whl").read_bytes() == wheel_bytes
+        assert len(result.written) == 1
+
+
 def test_download_entry_is_a_dataclass() -> None:
     e = DownloadEntry(
         package="foo",

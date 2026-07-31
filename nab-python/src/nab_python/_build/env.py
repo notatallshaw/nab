@@ -146,6 +146,10 @@ class NabBuildEnv:
     marker overlay) before the inner resolve so the build env is
     computed against PyPI alone.
 
+    ``offline`` refuses to populate the env at all, since every build
+    requirement would have to come off the network.  An empty
+    ``requires`` needs nothing fetched and is still served.
+
     The venv is created from the host interpreter and the PEP 517
     hooks run in it, so the build requirements resolve for the host
     and not for any ``--python`` retarget: a wheel for another
@@ -160,11 +164,13 @@ class NabBuildEnv:
         requires: list[str],
         *,
         config: NabProjectConfig,
+        offline: bool = False,
         transport_factory: Callable[[], AsyncHttpTransport] = Urllib3AsyncTransport,
     ) -> None:
         """Capture inputs; the venv and inner resolve happen in __enter__."""
         self._requires = list(requires)
         self._config = config
+        self._offline = offline
         self._transport_factory = transport_factory
 
         self._tmpdir: tempfile.TemporaryDirectory[str] | None = None
@@ -330,6 +336,11 @@ class NabBuildEnv:
         requires = list(self._requires)
         if extra:
             requires.extend(extra)
+
+        if self._offline:
+            joined = ", ".join(requires)
+            msg = f"build requirements unavailable in offline mode: {joined}"
+            raise BuildEnvError(msg)
 
         synthetic_dir = wheel_dir.parent / "_inner_project"
         synthetic_dir.mkdir(parents=True, exist_ok=True)

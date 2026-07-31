@@ -191,6 +191,10 @@ wheel shared across tuples is fetched once.
 lock` uses, so a `NAB_*` variable or a system/user/project `nab.toml` is
 read for `nab download` as for `nab lock`.
 
+Offline covers the artefacts too: an artefact that is neither already in
+the output directory with a matching digest nor readable from a local
+`file://` path fails the run instead of being fetched.
+
 A summary of how many files were written and how many were
 already present is printed to stderr.
 
@@ -247,6 +251,9 @@ Both subcommands accept the same runtime knobs:
 
 A name absent from the index is remembered for a short window, so a
 repeated lookup is answered from cache, offline included.
+
+Offline refuses rather than fetches. A PEP 517 build environment with
+`[build-system].requires` to install fails the run.
 
 `urllib3` is the only backend pulled in by the base install. The
 others surface a helpful `ImportError` if selected without the

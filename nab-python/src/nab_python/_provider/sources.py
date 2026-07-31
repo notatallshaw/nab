@@ -118,7 +118,11 @@ def extract_source_metadata(
         )
         raise UnsupportedSdistError(msg)
     try:
-        return build_backend.extract_metadata(path, config=provider.build_config)
+        return build_backend.extract_metadata(
+            path,
+            config=provider.build_config,
+            offline=provider.coordinator.offline,
+        )
     except BuildBackendError as exc:
         msg = f"{descriptor}: {exc}"
         raise UnsupportedSdistError(msg) from exc

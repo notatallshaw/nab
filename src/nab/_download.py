@@ -144,6 +144,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
             download_transport,
             output,
             max_concurrency=settings.max_concurrency,
+            offline=settings.offline,
         )
     except DownloadError as e:
         _cli.printer().error(f"download failed: {e}")

@@ -184,6 +184,7 @@ def download_lock(
     output_dir: Path,
     *,
     max_concurrency: int = 8,
+    offline: bool = False,
 ) -> DownloadResult:
     """Download every artefact in ``lock_input`` into ``output_dir``.
 
@@ -192,12 +193,18 @@ def download_lock(
     Mismatched files are re-fetched and overwritten.  HTTP failures
     and post-download hash mismatches both raise
     :class:`DownloadError` after the fetcher has shut down.
+
+    ``offline`` refuses any artefact that would need an HTTP fetch;
+    already-present files and local ``file://`` artefacts are still
+    served.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     artefacts = list(iter_artifacts(lock_input))
     _reject_colliding_targets(artefacts)
     return asyncio.run(
-        _run_downloads(artefacts, transport, output_dir, max_concurrency)
+        _run_downloads(
+            artefacts, transport, output_dir, max_concurrency, offline=offline
+        )
     )
 
 
@@ -206,6 +213,8 @@ async def _run_downloads(
     transport: AsyncHttpTransport,
     output_dir: Path,
     max_concurrency: int,
+    *,
+    offline: bool,
 ) -> DownloadResult:
     sem = asyncio.Semaphore(max_concurrency)
     client = AsyncSimpleClient(transport)
@@ -228,7 +237,7 @@ async def _run_downloads(
                 skipped.append(target)
                 logger.info("skip %s (%s matches)", entry.filename, entry.hash_algo)
                 return
-            data = await _fetch_bytes(entry, client)
+            data = await _fetch_bytes(entry, client, offline=offline)
             actual = hashlib.new(entry.hash_algo, data).hexdigest()
             if actual != entry.digest:
                 msg = (
@@ -255,8 +264,13 @@ async def _run_downloads(
     return DownloadResult(written=tuple(written), skipped=tuple(skipped))
 
 
-async def _fetch_bytes(entry: DownloadEntry, client: AsyncSimpleClient) -> bytes:
-    """Read a local artefact from disk, else fetch it over HTTP."""
+async def _fetch_bytes(
+    entry: DownloadEntry, client: AsyncSimpleClient, *, offline: bool
+) -> bytes:
+    """Read a local artefact from disk, else fetch it over HTTP.
+
+    ``offline`` refuses the HTTP half rather than fetching.
+    """
     if entry.local_path is not None:
         try:
             return entry.local_path.read_bytes()
@@ -266,6 +280,12 @@ async def _fetch_bytes(entry: DownloadEntry, client: AsyncSimpleClient) -> bytes
                 f" {entry.filename} from {entry.local_path}: {exc}"
             )
             raise DownloadError(msg) from exc
+    if offline:
+        msg = (
+            f"{entry.package}=={entry.version}: artefact fetch unavailable"
+            f" in offline mode ({entry.filename})"
+        )
+        raise DownloadError(msg)
     try:
         return await client.download(entry.url)
     except HttpError as exc:

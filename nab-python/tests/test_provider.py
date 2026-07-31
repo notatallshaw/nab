@@ -2863,7 +2863,43 @@ class TestLocalSources:
             build_policy=BuildPolicy.BUILD_LOCAL,
         )
         assert len(provider.fetch_versions("foo")) == 1
-        assert captured == {"config": provider.build_config}
+        assert captured == {"config": provider.build_config, "offline": False}
+
+    def test_local_source_build_refused_under_an_offline_coordinator(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The build env's own fetches obey ``--offline`` too."""
+        self._write_local(
+            tmp_path,
+            """
+            [project]
+            name = "foo"
+            version = "1.0"
+            dynamic = ["dependencies"]
+
+            [build-system]
+            requires = ["hatchling"]
+            build-backend = "hatchling.build"
+            """,
+        )
+
+        def _boom(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("offline must not reach the network")
+
+        monkeypatch.setattr("nab_python.resolve.resolve_for_targets", _boom)
+        coordinator = make_coordinator([], package="foo")
+        coordinator.offline = True
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            local_sources=[LocalSource("foo", str(tmp_path))],
+            build_policy=BuildPolicy.BUILD_LOCAL,
+            build_config=NabProjectConfig(),
+        )
+        with pytest.raises(UnsupportedSdistError, match="offline mode"):
+            provider.fetch_versions("foo")
 
     def test_priority_does_not_shadow_local_source_with_pypi_listing(
         self,
@@ -8306,7 +8342,10 @@ class TestEffectiveBuildPolicy:
         assert captured["bytes"] == archive_bytes
         # The backend runs on the host interpreter, so the resolve
         # target's Python must not reach the build env.
-        assert captured["kwargs"] == {"config": provider.build_config}
+        assert captured["kwargs"] == {
+            "config": provider.build_config,
+            "offline": False,
+        }
 
     def test_resolve_dynamic_sdist_reuses_cross_tuple_cache(self) -> None:
         """A second call for the same sdist returns the cached metadata.
@@ -8838,7 +8877,7 @@ class TestStaticSdistMetadata:
 
         coordinator.request_sdist_archive.side_effect = _request_archive
 
-        def _naive_build(_path: object, *, config: object) -> WheelMetadata:
+        def _naive_build(_path: object, **_kwargs: object) -> WheelMetadata:
             raise InvalidUploadTimeError(
                 "setuptools 68.0.0 has a timezone-naive upload time"
                 " '2025-06-01T00:00:00'; the Simple API requires"

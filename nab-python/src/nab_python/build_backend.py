@@ -202,6 +202,7 @@ def extract_metadata(
     source_dir: Path,
     *,
     config: NabProjectConfig | None = None,
+    offline: bool = False,
 ) -> WheelMetadata:
     """Extract metadata for a source directory.
 
@@ -210,7 +211,8 @@ def extract_metadata(
     the project's PEP 517 backend is invoked in an isolated venv
     via :func:`nab_python._build.runner.run_build_backend`.  That
     needs a :class:`NabProjectConfig`; callers that cannot provide
-    one get a :class:`BuildBackendError` instead.
+    one get a :class:`BuildBackendError` instead.  ``offline`` bars
+    that path from fetching the backend's build requirements.
 
     The build env owns its own HTTP transport (see
     :class:`~nab_python._build.env.NabBuildEnv` for why); callers
@@ -231,4 +233,4 @@ def extract_metadata(
     # which we should not pay for in static-only callers.
     from ._build.runner import run_build_backend  # noqa: PLC0415
 
-    return run_build_backend(source_dir, config=config)
+    return run_build_backend(source_dir, config=config, offline=offline)
