@@ -1656,6 +1656,115 @@ class TestSerializationPin:
             )
 
 
+class TestSerializationCacheFlip:
+    """A body fetched under one pin never answers a request under the other."""
+
+    _INDEX = "https://pypi.org/simple/"
+    _PAGE = b'<a href="pkg-1.0-py3-none-any.whl#sha256=' + b"d" * 64 + b'">pkg</a>'
+    _JSON_BYTES = json.dumps(
+        {
+            "meta": {"api-version": "1.0"},
+            "name": "pkg",
+            "files": [
+                {
+                    "filename": "pkg-1.0-py3-none-any.whl",
+                    "url": "https://files.example.com/pkg-1.0-py3-none-any.whl",
+                    "hashes": {"sha256": "e" * 64},
+                    "size": 4321,
+                    "upload-time": "2026-01-02T03:04:05Z",
+                }
+            ],
+        }
+    ).encode()
+
+    def _cache(self, tmp_path: Path, serialization: SimpleSerialization) -> OnDiskCache:
+        return OnDiskCache(tmp_path, self._INDEX, serialization=serialization)
+
+    def _get(
+        self,
+        tmp_path: Path,
+        serialization: SimpleSerialization,
+        transport: _FakeTransport,
+    ) -> list:
+        cache = self._cache(tmp_path, serialization)
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(
+                transport, cache, self._INDEX, serialization=serialization
+            )
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        return asyncio.run(go())
+
+    def _warm_html(self, tmp_path: Path, cache_control: str | None = None) -> None:
+        headers = {"content-type": "text/html"}
+        if cache_control is not None:
+            headers["cache-control"] = cache_control
+        self._get(
+            tmp_path,
+            SimpleSerialization.HTML,
+            _FakeTransport([_FakeResponse(self._PAGE, headers=headers)]),
+        )
+
+    def _json_transport(self) -> _FakeTransport:
+        return _FakeTransport(
+            [
+                _FakeResponse(
+                    self._JSON_BYTES,
+                    headers={"content-type": "application/vnd.pypi.simple.v1+json"},
+                )
+            ]
+        )
+
+    def test_fresh_entry_from_the_other_pin_is_refetched(self, tmp_path: Path) -> None:
+        self._warm_html(tmp_path, cache_control="max-age=86400")
+        transport = self._json_transport()
+        files = self._get(tmp_path, SimpleSerialization.JSON, transport)
+        assert len(transport.calls) == 1
+        sent = transport.calls[0][1]
+        assert sent is not None
+        assert "If-None-Match" not in sent
+        (wheel,) = files
+        assert wheel.hashes == (("sha256", "e" * 64),)
+        assert wheel.size == 4321
+        assert wheel.upload_time == "2026-01-02T03:04:05Z"
+
+    def test_stale_entry_from_the_other_pin_is_not_revalidated(
+        self, tmp_path: Path
+    ) -> None:
+        self._warm_html(tmp_path)
+        html_cache = self._cache(tmp_path, SimpleSerialization.HTML)
+        cached = html_cache.get_simple("pkg")
+        assert cached is not None
+        html_cache.put_simple(
+            "pkg", cached[0], CachePolicy(fetched_at=0, max_age=1, etag="html-etag")
+        )
+
+        transport = self._json_transport()
+        files = self._get(tmp_path, SimpleSerialization.JSON, transport)
+        sent = transport.calls[0][1]
+        assert sent is not None
+        assert "If-None-Match" not in sent
+        (wheel,) = files
+        assert wheel.hashes == (("sha256", "e" * 64),)
+
+    def test_negative_sentinel_from_the_other_pin_is_not_served(
+        self, tmp_path: Path
+    ) -> None:
+        self._cache(tmp_path, SimpleSerialization.JSON).put_negative(
+            "pkg", CachePolicy(fetched_at=int(time.time()), max_age=600, etag=None)
+        )
+        transport = _FakeTransport(
+            [_FakeResponse(self._PAGE, headers={"content-type": "text/html"})]
+        )
+        files = self._get(tmp_path, SimpleSerialization.HTML, transport)
+        assert len(transport.calls) == 1
+        assert [f.filename for f in files] == ["pkg-1.0-py3-none-any.whl"]
+
+
 class TestGetMetadataText:
     def test_cold_cache_fetches_and_stores(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)

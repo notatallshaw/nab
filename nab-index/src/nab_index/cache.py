@@ -7,11 +7,15 @@ before any HTTP transport call.
 
 Layout under ``root``:
 
-    simple-v1/<index>/<package>.json       <- PEP 691 JSON body
-    simple-v1/<index>/<package>.policy     <- {fetched_at, max_age, etag}
-    simple-neg-v0/<index>/<package>.neg    <- {fetched_at, max_age, etag}
+    simple-v1/<index>[-<serialization>]/<package>.json    <- PEP 691 JSON body
+    simple-v1/<index>[-<serialization>]/<package>.policy  <- {fetched_at, max_age, etag}
+    simple-neg-v0/<index>[-<serialization>]/<package>.neg <- {fetched_at, max_age, etag}
     metadata-v1/<index>/<package>/<url digest>.metadata
     sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
+
+An index pinned to one serialization gets its own listings directory,
+because a body fetched under one serialization is not an answer to a
+request for the other.
 
 A versioned bucket name (``simple-v1``) gives zero-cost schema
 migration: when the on-disk format changes, bump the suffix and the
@@ -42,6 +46,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from .atomic import atomic_write
+from .serialization import SimpleSerialization
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -165,12 +170,23 @@ def _make_removable(root: Path) -> None:
 class OnDiskCache:
     """File-per-key cache for Simple API and wheel metadata."""
 
-    def __init__(self, root: Path, index_url: str) -> None:
+    def __init__(
+        self,
+        root: Path,
+        index_url: str,
+        *,
+        serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE,
+    ) -> None:
         """Create a cache rooted at ``root`` for ``index_url``."""
         self._root = root
         self._index = _index_dirname(index_url)
-        self._simple_dir = root / f"simple-{CACHE_VERSION_SIMPLE}" / self._index
-        self._neg_dir = root / f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}" / self._index
+        simple_index = (
+            self._index
+            if serialization is SimpleSerialization.NEGOTIATE
+            else f"{self._index}-{serialization.value}"
+        )
+        self._simple_dir = root / f"simple-{CACHE_VERSION_SIMPLE}" / simple_index
+        self._neg_dir = root / f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}" / simple_index
         self._metadata_dir = root / f"metadata-{CACHE_VERSION_METADATA}" / self._index
         self._sdist_dir = root / f"sdist-{CACHE_VERSION_SDIST}" / self._index
 

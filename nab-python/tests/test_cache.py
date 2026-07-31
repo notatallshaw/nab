@@ -14,7 +14,10 @@ import pytest
 
 from nab_index.atomic import atomic_write_text
 from nab_index.cache import (
+    CACHE_VERSION_METADATA,
+    CACHE_VERSION_SDIST,
     CACHE_VERSION_SIMPLE,
+    CACHE_VERSION_SIMPLE_NEG,
     VCS_BUCKET,
     CachePolicy,
     NullCache,
@@ -25,10 +28,14 @@ from nab_index.cache import (
     _encode_policy,
     _index_dirname,
 )
+from nab_index.serialization import SimpleSerialization
 from nab_index.vcs import VcsRequest, prepare_clone
 
 # Derived so a bucket-version bump does not need every path updated.
 SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
+NEG_BUCKET = f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}"
+METADATA_BUCKET = f"metadata-{CACHE_VERSION_METADATA}"
+SDIST_BUCKET = f"sdist-{CACHE_VERSION_SDIST}"
 
 # Two wheels of one version, each with its own PEP 658 sidecar.
 METADATA_URLS = (
@@ -792,6 +799,54 @@ class TestAddOwnerMode:
         monkeypatch.setattr(Path, "is_symlink", lambda _self: True)
         _add_owner_mode(target, stat.S_IWUSR)
         assert not target.stat().st_mode & stat.S_IWUSR
+
+
+class TestSerializationPartition:
+    """A pinned index gets its own Simple buckets, sharing the rest."""
+
+    _URL = "https://pypi.org/simple/"
+
+    def test_unpinned_layout_is_unchanged(self, tmp_path: Path) -> None:
+        # The warm caches every existing user already has on disk.
+        cache = OnDiskCache(tmp_path, self._URL)
+        cache.put_simple("foo", b"{}", _FRESH)
+        cache.put_negative("bar", _FRESH)
+        assert (tmp_path / SIMPLE_BUCKET / "pypi" / "foo.json").exists()
+        assert (tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy").exists()
+        assert (tmp_path / NEG_BUCKET / "pypi" / "bar.neg").exists()
+
+    @pytest.mark.parametrize(
+        ("serialization", "dirname"),
+        [
+            (SimpleSerialization.JSON, "pypi-json"),
+            (SimpleSerialization.HTML, "pypi-html"),
+        ],
+    )
+    def test_pin_gets_its_own_listing_directory(
+        self, tmp_path: Path, serialization: SimpleSerialization, dirname: str
+    ) -> None:
+        cache = OnDiskCache(tmp_path, self._URL, serialization=serialization)
+        cache.put_simple("foo", b"{}", _FRESH)
+        cache.put_negative("bar", _FRESH)
+        assert (tmp_path / SIMPLE_BUCKET / dirname / "foo.json").exists()
+        assert (tmp_path / NEG_BUCKET / dirname / "bar.neg").exists()
+        assert not (tmp_path / SIMPLE_BUCKET / "pypi").exists()
+
+    def test_metadata_and_sdist_records_are_shared(self, tmp_path: Path) -> None:
+        # The same bytes at the same URL however the listing that named
+        # them was serialized, so a flip must not re-download them.
+        unpinned = OnDiskCache(tmp_path, self._URL)
+        unpinned.put_metadata("foo", METADATA_URLS[0], "Name: foo\n")
+        unpinned.put_sdist_files("foo", "1.0", "Name: foo\n", None)
+
+        pinned = OnDiskCache(
+            tmp_path, self._URL, serialization=SimpleSerialization.HTML
+        )
+        pinned.put_metadata("foo", METADATA_URLS[1], "Name: foo\n")
+        assert pinned.get_metadata("foo", METADATA_URLS[0]) == "Name: foo\n"
+        assert pinned.get_sdist_files("foo", "1.0") == ("Name: foo\n", None)
+        assert [p.name for p in (tmp_path / METADATA_BUCKET).iterdir()] == ["pypi"]
+        assert [p.name for p in (tmp_path / SDIST_BUCKET).iterdir()] == ["pypi"]
 
 
 class TestNullCacheEnumeration:
