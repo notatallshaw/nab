@@ -7,8 +7,10 @@ fail-closed verify on the emitted bytes.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from functools import reduce
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -44,6 +46,15 @@ from nab_python.target import ResolveTarget, environment_declaration
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+_spec = importlib.util.spec_from_file_location(
+    "simplify_corpus_fixtures",
+    Path(__file__).with_name("simplify_corpus_fixtures.py"),
+)
+assert _spec is not None
+assert _spec.loader is not None
+corpus = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(corpus)
 
 
 def _target(python_version: str, platform: str = "linux_x86_64") -> ResolveTarget:
@@ -356,6 +367,40 @@ class TestEmissionUniverse:
         result = _finalize_marker(tautology, universe, "foo")
         assert result is not None
         assert str(result) == str(tautology)
+
+
+class TestCorpusEmitterBudget:
+    """What the emitter delivers on the corpus, next to what the operator computes.
+
+    The verify complements the whole matrix in one shot, so it overruns before
+    the operator does: on the corpus's widest universes three markers simplify
+    and are then discarded, and the lock carries the raw bytes.
+    """
+
+    def test_verify_budget_discards_three_corpus_simplifications(self) -> None:
+        raw_bytes = operator_bytes = emitted_bytes = 0
+        discarded: list[tuple[str, str]] = []
+        for fixture in corpus.FIXTURES:
+            within = _union([Marker(e) for e in fixture["environments"]])
+            raw = Marker(fixture["marker"])
+            operator = (
+                MarkerSet.from_marker(raw).simplify(within=within).to_marker_string()
+                or ""
+            )
+            finalized = _finalize_marker(raw, within, fixture["package"])
+            emitted = str(finalized) if finalized is not None else ""
+            raw_bytes += len(fixture["marker"])
+            operator_bytes += len(operator)
+            emitted_bytes += len(emitted)
+            if emitted != operator:
+                assert emitted == fixture["marker"]
+                discarded.append((fixture["lock"], fixture["package"]))
+        assert discarded == [
+            ("max-25-tuples", "colorama"),
+            ("max-25-tuples", "importlib-metadata"),
+            ("max-25-tuples", "zipp"),
+        ]
+        assert (raw_bytes, operator_bytes, emitted_bytes) == (9742, 1010, 3992)
 
 
 class TestDeterminism:
