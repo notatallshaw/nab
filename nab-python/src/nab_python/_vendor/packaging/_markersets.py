@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import re
 import sys
+import threading
 from itertools import pairwise, product
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from ._parser import Op, Variable, parse_marker
 from ._tokenizer import ParserSyntaxError
@@ -973,14 +974,50 @@ def partition_boolean_axis(atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
     return _reduce_cells((False, True), atoms, max_cells)
 
 
-def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
-    """Partition one axis's domain into cells on which every atom is constant."""
+def _partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
     kind = axis[0]
     if kind == AXIS_VALUE:
         return partition_value_axis(axis[1], atoms, max_cells)
     if kind == AXIS_SET:
         return partition_set_axis(atoms, max_cells)
     return partition_boolean_axis(atoms, max_cells)
+
+
+# One simplify re-partitions the same axes with the same atoms over and over.
+# The cache lives only for that span and is thread-local, so a concurrent
+# simplify never shares a store.
+_partition_cache = threading.local()
+
+# ``max_cells`` bounds one decision, and the greedy fixpoint issues one per
+# clause and per atom per universe row, so the meter is what bounds the run:
+# every cell enumeration charges the work it is about to do. Thread-local, and
+# unset outside a simplify so every other decision stays unmetered.
+_work_meter = threading.local()
+
+
+def charge_work(units: int) -> None:
+    """Charge ``units`` of cell work to the running simplify's meter, if any."""
+    remaining = getattr(_work_meter, "remaining", None)
+    if remaining is None:
+        return
+    remaining -= units
+    _work_meter.remaining = remaining
+    if remaining < 0:
+        msg = "simplification work exceeds max_work"
+        raise IntractableMarkerSet(msg)
+
+
+def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
+    """Partition one axis's domain into cells on which every atom is constant."""
+    store: dict | None = getattr(_partition_cache, "store", None)
+    if store is None:
+        return _partition_axis(axis, atoms, max_cells)
+    key = (axis, tuple(atoms), max_cells)
+    cached = store.get(key)
+    if cached is None:
+        cached = _partition_axis(axis, atoms, max_cells)
+        store[key] = cached
+    return cached
 
 
 def guarded_product_size(sizes: Iterable[int], max_cells: int) -> int:
@@ -1134,8 +1171,10 @@ def _satisfying_cells(
     # product times the leaf-occurrence count: a marker that repeats atoms inflates
     # the walk without inflating the distinct-atom count or the cell product.
     leaf_occurrences = len(atoms)
-    guarded_product_size(
-        (*(len(part) for part in partitions), leaf_occurrences), max_cells
+    charge_work(
+        guarded_product_size(
+            (*(len(part) for part in partitions), leaf_occurrences), max_cells
+        )
     )
 
     for combo in product(*partitions):
@@ -1390,3 +1429,263 @@ def describe(node: Formula) -> str:
         return serialize(to_nnf(node))
     except UnserializableMarkerSet:
         return "unrepresentable"
+
+
+# ------------------------------------------------------------------- simplify
+
+
+def _atom_key(atom: Atom) -> tuple[str, str, str, bool, bool, str, str, bool]:
+    """A total order over atoms, for a deterministic factored serialisation."""
+    return (
+        atom.origin,
+        atom.op,
+        atom.literal,
+        atom.swapped,
+        atom.positive,
+        atom.kind,
+        atom.variable,
+        atom.derive_mm,
+    )
+
+
+def _clause_key(clause: frozenset[Atom]) -> tuple:
+    return tuple(_atom_key(atom) for atom in sorted(clause, key=_atom_key))
+
+
+def _to_clauses(node: Formula, max_cells: int) -> list[frozenset[Atom]]:
+    """Distribute an NNF tree into a disjunction of atom-set clauses (DNF).
+
+    An AND of ORs expands multiplicatively, so the running clause count is held
+    to ``max_cells`` and a pathological non-DNF input raises
+    :class:`IntractableMarkerSet`.
+    """
+    if isinstance(node, BoolConst):
+        return [frozenset()] if node.value else []
+    if isinstance(node, AtomLeaf):
+        return [frozenset((node.atom,))]
+    if isinstance(node, OrNode):
+        clauses: list[frozenset[Atom]] = []
+        for child in node.children:
+            clauses.extend(_to_clauses(child, max_cells))
+        return clauses
+    and_node = cast("AndNode", node)
+    product: list[frozenset[Atom]] = [frozenset()]
+    for child in and_node.children:
+        child_clauses = _to_clauses(child, max_cells)
+        product = [left | right for left in product for right in child_clauses]
+        if len(product) > max_cells:
+            msg = f"DNF clause count exceeds max_cells={max_cells}"
+            raise IntractableMarkerSet(msg)
+    return product
+
+
+def _clause_formula(clause: Iterable[Atom]) -> Formula:
+    return make_and(AtomLeaf(atom) for atom in clause)
+
+
+def _disjunction(clauses: Iterable[frozenset[Atom]]) -> Formula:
+    return make_or(_clause_formula(clause) for clause in clauses)
+
+
+def _equivalent_within(
+    left: Formula, right: Formula, universe: Formula, max_cells: int
+) -> bool:
+    """Whether two trees denote the same set on every point of ``universe``.
+
+    The whole-matrix reference oracle: it complements ``universe`` in one shot,
+    so it overruns ``max_cells`` on a wide multi-platform universe.
+    :func:`equivalent_within_rows` decides the same verdict per row instead.
+    """
+    return is_empty(
+        make_and((left, universe, make_not(right))), max_cells
+    ) and is_empty(make_and((right, universe, make_not(left))), max_cells)
+
+
+class _Row(NamedTuple):
+    """One universe row: its entailed pins and residual bound."""
+
+    pins: dict[str, str]
+    bound: Formula
+
+
+def _row_pins(disjunct: Formula) -> dict[str, str]:
+    """The exact-string equality pins a universe row entails.
+
+    Only a top-level ``==`` value conjunct pins; a nested or negated atom never
+    does.  Only a :data:`DOMAIN_STRING` variable pins: on a version-dispatch
+    variable ``==`` is PEP 440 equality, so ``platform_release == "5.10"`` still
+    admits ``"5.10.0"``, and substituting the literal would answer that
+    variable's string-reading atoms at the wrong point.  Those stay in the
+    residual bound.
+    """
+    if isinstance(disjunct, AtomLeaf):
+        conjuncts: tuple[Formula, ...] = (disjunct,)
+    elif isinstance(disjunct, AndNode):
+        conjuncts = disjunct.children
+    else:
+        conjuncts = ()
+    pins: dict[str, str] = {}
+    for child in conjuncts:
+        if not isinstance(child, AtomLeaf):
+            continue
+        atom = child.atom
+        if (
+            atom.kind == AXIS_VALUE
+            and atom.op == "=="
+            and not atom.swapped
+            and _domain(atom.variable) == DOMAIN_STRING
+        ):
+            pins[atom.variable] = atom.literal
+    return pins
+
+
+def _decompose_rows(universe: Formula) -> list[_Row]:
+    """Split a universe into rows: the top-level disjuncts of its NNF.
+
+    Each row keeps its entailed pins and the residual bound left after
+    restricting the disjunct by them. Purely structural, no algebra.
+    """
+    nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
+    disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
+    rows: list[_Row] = []
+    for disjunct in disjuncts:
+        pins = _row_pins(disjunct)
+        rows.append(_Row(pins, restrict_tree(disjunct, pins)))
+    return rows
+
+
+def _rows_equivalent(
+    left: Formula,
+    rows: Sequence[_Row],
+    right_by_row: Sequence[Formula],
+    max_cells: int,
+) -> bool:
+    """Whether ``left`` agrees with the per-row restriction of the constant right.
+
+    Restricting each operand to a row's pins complements over that row's residual
+    rather than the whole-matrix product.
+    """
+    for row, right in zip(rows, right_by_row, strict=True):
+        left_r = restrict_tree(left, row.pins)
+        if not is_empty(make_and((left_r, row.bound, make_not(right))), max_cells):
+            return False
+        if not is_empty(make_and((right, row.bound, make_not(left_r))), max_cells):
+            return False
+    return True
+
+
+def universe_is_empty(universe: Formula, max_cells: int) -> bool:
+    """Whether a universe admits no environment, decided per row.
+
+    A union is empty iff every top-level disjunct is, so each is tested alone,
+    staying on one row's product instead of the whole-matrix complement.
+    """
+    nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
+    disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
+    return all(is_empty(disjunct, max_cells) for disjunct in disjuncts)
+
+
+def equivalent_within_rows(
+    left: Formula, right: Formula, universe: Formula, max_cells: int
+) -> bool:
+    """Whether two trees agree on every point of ``universe``, decided per row.
+
+    The row-restricted dual of :func:`_equivalent_within`, deciding the same
+    verdict but staying decidable on wide multi-platform universes. A universe of
+    ``TRUE`` reduces it to plain global equivalence.
+    """
+    rows = _decompose_rows(universe)
+    right_by_row = [restrict_tree(right, row.pins) for row in rows]
+    return _rows_equivalent(left, rows, right_by_row, max_cells)
+
+
+def _dedupe(clauses: list[frozenset[Atom]]) -> list[frozenset[Atom]]:
+    seen: set[frozenset[Atom]] = set()
+    out: list[frozenset[Atom]] = []
+    for clause in clauses:
+        if clause not in seen:
+            seen.add(clause)
+            out.append(clause)
+    return out
+
+
+def _drop_clauses(
+    clauses: list[frozenset[Atom]],
+    rows: Sequence[_Row],
+    original_by_row: Sequence[Formula],
+    max_cells: int,
+) -> list[frozenset[Atom]]:
+    kept = list(clauses)
+    for clause in sorted(clauses, key=_clause_key):
+        trial = [other for other in kept if other != clause]
+        if _rows_equivalent(_disjunction(trial), rows, original_by_row, max_cells):
+            kept = trial
+    return kept
+
+
+def _drop_atoms(
+    clauses: list[frozenset[Atom]],
+    rows: Sequence[_Row],
+    original_by_row: Sequence[Formula],
+    max_cells: int,
+) -> list[frozenset[Atom]]:
+    working = [set(clause) for clause in clauses]
+    for clause in working:
+        for atom in sorted(clause, key=_atom_key):
+            clause.discard(atom)
+            trial = _disjunction(frozenset(current) for current in working)
+            if not _rows_equivalent(trial, rows, original_by_row, max_cells):
+                clause.add(atom)
+    return [frozenset(clause) for clause in working]
+
+
+def _canonical(clauses: list[frozenset[Atom]]) -> tuple:
+    return tuple(sorted(_clause_key(clause) for clause in clauses))
+
+
+def simplify_within(
+    node: Formula, universe: Formula, max_cells: int, max_work: int
+) -> Formula:
+    """Return the smallest tree equivalent to ``node`` on every point of ``universe``.
+
+    Greedy: drop each clause, then each atom, whose removal preserves
+    within-universe equivalence, to a fixpoint, then factor the atoms common to
+    every surviving clause into a leading conjunction, verifying each removal
+    per universe row so a wide multi-platform universe stays decidable. A
+    universe of ``TRUE`` reduces it to a context-free factoring, and a total
+    atom order fixes the output.
+
+    ``max_cells`` bounds one decision and ``max_work`` bounds the whole run,
+    because a wide matrix runs many cheap decisions where a large membership
+    powerset runs few expensive ones. Either overrun raises
+    :class:`IntractableMarkerSet`.
+    """
+    nnf = node if isinstance(node, BoolConst) else to_nnf(node)
+    clauses = _dedupe(_to_clauses(nnf, max_cells))
+    original = _disjunction(clauses)
+    rows = _decompose_rows(universe)
+    original_by_row = [restrict_tree(original, row.pins) for row in rows]
+    previous_store = getattr(_partition_cache, "store", None)
+    previous_work = getattr(_work_meter, "remaining", None)
+    _partition_cache.store = {}
+    _work_meter.remaining = max_work
+    try:
+        while True:
+            before = _canonical(clauses)
+            clauses = _drop_clauses(clauses, rows, original_by_row, max_cells)
+            clauses = _dedupe(_drop_atoms(clauses, rows, original_by_row, max_cells))
+            if _canonical(clauses) == before:
+                break
+    finally:
+        _partition_cache.store = previous_store
+        _work_meter.remaining = previous_work
+    if not clauses:
+        return FALSE
+    clauses = sorted(clauses, key=_clause_key)
+    common = frozenset.intersection(*clauses)
+    residual = sorted((clause - common for clause in clauses), key=_clause_key)
+    lead = [AtomLeaf(atom) for atom in sorted(common, key=_atom_key)]
+    inner = make_or(
+        _clause_formula(sorted(clause, key=_atom_key)) for clause in residual
+    )
+    return make_and([*lead, inner])

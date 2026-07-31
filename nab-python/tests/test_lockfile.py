@@ -669,7 +669,10 @@ class TestPerTargetMarkerSimplification:
         )
         data = tomllib.loads(text)
         assert len(data["packages"]) == 1
-        assert data["packages"][0]["marker"] == str(Marker(py310.marker_string))
+        assert data["packages"][0]["marker"] == (
+            'platform_machine == "x86_64" and python_version == "3.10"'
+            ' and sys_platform == "linux"'
+        )
 
     def test_package_in_two_of_four_targets_gets_or_marker(self) -> None:
         # ``foo`` resolves on py3.10 and py3.11 only with the same pin.
@@ -729,7 +732,10 @@ class TestPerTargetMarkerSimplification:
         assert len(data["packages"]) == 2
         v1_marker = next(p["marker"] for p in data["packages"] if p["version"] == "1.0")
         v2_marker = next(p["marker"] for p in data["packages"] if p["version"] == "2.0")
-        assert v1_marker == str(Marker(py310.marker_string))
+        assert v1_marker == (
+            'platform_machine == "x86_64" and python_version == "3.10"'
+            ' and sys_platform == "linux"'
+        )
         assert 'python_version == "3.11"' in v2_marker
         assert 'python_version == "3.12"' in v2_marker
         assert 'python_version == "3.13"' not in v2_marker
@@ -4630,7 +4636,7 @@ class TestMembershipGates:
         )
         pylock = build_pylock(_lock_from(lock))
         (package,) = pylock.packages
-        assert str(package.marker) == ('"cli" in extras or "dev" in dependency_groups')
+        assert str(package.marker) == ('"dev" in dependency_groups or "cli" in extras')
 
     def test_extras_proxy_gates_only_what_the_extra_adds(self) -> None:
         """The project requires ``foo``; the extra requires ``foo[fancy]``.
@@ -4789,10 +4795,9 @@ class TestMembershipGates:
         }
         assert markers["core"] is None
         assert markers["mytool"] == (
-            '(python_version == "3.10" and sys_platform == "linux"'
-            ' and platform_machine == "x86_64" and "cli" in extras)'
-            ' or (python_version == "3.11" and sys_platform == "linux"'
-            ' and platform_machine == "x86_64")'
+            'platform_machine == "x86_64" and sys_platform == "linux"'
+            ' and (("cli" in extras and python_version == "3.10")'
+            ' or python_version == "3.11")'
         )
 
 
@@ -5337,7 +5342,31 @@ class TestConflictForkNegatedEmission:
         )
         pylock = Pylock.from_dict(tomllib.loads(text))
 
-        torch_versions = {
-            str(p.version) for p in pylock.packages if str(p.name) == "torch"
+        torch_markers = {
+            str(p.version): str(p.marker)
+            for p in pylock.packages
+            if str(p.name) == "torch"
         }
-        assert torch_versions == {"2.5.0", "2.6.0"}
+        assert set(torch_markers) == {"2.5.0", "2.6.0"}
+
+        # simplify overruns the cell budget on this fork, so the emitter
+        # passes the raw marker through unchanged: base env, the fork's three
+        # drawn members, then the 12 negated co-members by set in declaration
+        # order.
+        base = (
+            'python_version == "3.12" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64"'
+        )
+
+        def raw_marker(drawn: tuple[str, str, str]) -> str:
+            positives = " and ".join(f'"{name}" in extras' for name in drawn)
+            negatives = " and ".join(
+                f'"{name}" not in extras'
+                for members in sets
+                for name in members
+                if name not in drawn
+            )
+            return f"{base} and {positives} and {negatives}"
+
+        assert torch_markers["2.5.0"] == raw_marker(("a0", "b0", "c0"))
+        assert torch_markers["2.6.0"] == raw_marker(("a1", "b1", "c1"))

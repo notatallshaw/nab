@@ -42,6 +42,11 @@ if TYPE_CHECKING:
 # IntractableMarkerSet.
 _MAX_CELLS = 100_000
 
+# The total cell work one `simplify` may spend. `_MAX_CELLS` bounds a single
+# decision, this bounds the greedy loop that issues them. A runaway guard rather
+# than a tuning knob: the widest marker in nab's own CI locks spends 4.1 million.
+_MAX_WORK = 100_000_000
+
 __all__ = [
     "IntractableMarkerSet",
     "MarkerSet",
@@ -220,6 +225,19 @@ class MarkerSet:
             _MAX_CELLS,
         )
 
+    @_bounded
+    def equivalent_within(self, other: MarkerSet, within: MarkerSet) -> bool:
+        """Whether the two sets denote the same environments on every point of ``within``.
+
+        The row-restricted counterpart of :meth:`equivalent`, deciding each of
+        ``within``'s rows under its pins so it stays decidable on wide
+        multi-platform universes. A universe of :meth:`full` reduces it to plain
+        :meth:`equivalent`.
+        """
+        return _markersets.equivalent_within_rows(
+            self._tree, other._tree, within._tree, _MAX_CELLS
+        )
+
     # ---- restriction and projection
 
     @_bounded
@@ -285,6 +303,31 @@ class MarkerSet:
         axis, so those constraints can sit on different variables.
         """
         return _markersets.witness(self._tree, _MAX_CELLS)
+
+    # ---- simplification
+
+    @_bounded
+    def simplify(self, *, within: MarkerSet) -> MarkerSet:
+        """Return the smallest set equivalent to this one on every point of ``within``.
+
+        ``within`` is the universe the result must agree with this set over: pass
+        the union of a lock's declared environments for universe-aware
+        simplification, or :meth:`full` for a context-free factoring.
+
+        :raises ValueError: if ``within`` is the empty set, which makes every set
+            vacuously equivalent.
+        :raises IntractableMarkerSet: if deciding a removal exceeds the internal
+            cell budget, if the whole run exceeds the internal work budget, or
+            if the marker nests past the stack.
+        """
+        if _markersets.universe_is_empty(within._tree, _MAX_CELLS):
+            msg = "within must not be the empty set"
+            raise ValueError(msg)
+        return self._wrap(
+            _markersets.simplify_within(
+                self._tree, within._tree, _MAX_CELLS, _MAX_WORK
+            )
+        )
 
     # ---- serialisation
 

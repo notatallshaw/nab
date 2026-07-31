@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter, defaultdict
+from functools import reduce
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +22,11 @@ from nab_index.atomic import atomic_write_text
 
 from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.markers import Marker
+from .._vendor.packaging.markersets import (
+    IntractableMarkerSet,
+    MarkerSet,
+    UnserializableMarkerSet,
+)
 from .._vendor.packaging.pylock import (
     Package,
     PackageArchive,
@@ -53,9 +59,19 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DivergentBaseDependencyError",
+    "UnsoundSimplificationError",
     "build_pylock",
     "write_lock",
 ]
+
+
+class UnsoundSimplificationError(ValueError):
+    """A simplified per-package marker disagrees with the original over the universe.
+
+    Checked on the serialised and reparsed bytes at emission, so a mismatch is a
+    bug in the algebra and emission refuses rather than ship a marker that would
+    install differently.
+    """
 
 
 class DivergentBaseDependencyError(ValueError):
@@ -127,7 +143,8 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
 
     base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
     exclusion_groups = conflict_exclusion_groups(lock_input.conflicts)
-    package_records = _build_packages(lock_input, base, exclusion_groups)
+    universe = _emission_universe(lock_input)
+    package_records = _build_packages(lock_input, base, exclusion_groups, universe)
     package_records.sort(key=_package_sort_key)
     validate_marker_disjointness(
         package_records,
@@ -335,10 +352,106 @@ def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
     )
 
 
+def _emission_universe(lock_input: LockInput) -> MarkerSet:
+    """Return the environment universe simplification must agree over.
+
+    The union of the declared ``environments`` rows, or the full set when none
+    are declared.  PEP 751 step 4 has a conforming installer read a per-package
+    marker only in an environment some row admits, so within-universe
+    equivalence is the sound contract.
+
+    A union admitting no environment makes every set vacuously equivalent to
+    every other, so the full set stands in for it: a simplification sound in
+    every environment is sound inside an empty one too.  A union is empty
+    exactly when every row is, so rows are tested one at a time rather than as a
+    whole-matrix product, and a row too wide to decide counts as inhabited.
+    """
+    if not lock_input.environments:
+        return MarkerSet.full()
+    rows = [MarkerSet.from_marker(m) for m in lock_input.environments]
+    try:
+        uninhabited = all(row.is_empty() for row in rows)
+    except IntractableMarkerSet:
+        uninhabited = False
+    if uninhabited:
+        return MarkerSet.full()
+    return reduce(MarkerSet.union, rows, MarkerSet.empty())
+
+
+def _finalize_marker(
+    raw: Marker | None, within: MarkerSet, name: str = ""
+) -> Marker | None:
+    """Return ``raw`` in its shortest form equivalent over ``within``.
+
+    ``None`` passes through, and a set full over the universe serialises back to
+    ``None``.  The simplified set is serialised, reparsed, and checked equivalent
+    to ``raw`` over ``within``; a mismatch raises
+    :class:`UnsoundSimplificationError`.
+
+    Simplification is only a compaction, so every way the algebra can decline to
+    answer ships ``raw`` instead: :class:`IntractableMarkerSet` when a decision
+    overruns the cell budget or the marker nests past the stack, and
+    :class:`UnserializableMarkerSet` when the simplified set has no marker
+    spelling, which is what a marker selecting nothing inside ``within``
+    collapses to.
+    """
+    if raw is None:
+        return None
+    try:
+        simplified = MarkerSet.from_marker(raw).simplify(within=within)
+        text = simplified.to_marker_string()
+        rebuilt = None if text is None else Marker(text)
+        emitted = (
+            MarkerSet.full() if rebuilt is None else MarkerSet.from_marker(rebuilt)
+        )
+        shown = "no marker" if rebuilt is None else str(rebuilt)
+        sound = _sound_within_universe(raw, emitted, within)
+    except (IntractableMarkerSet, UnserializableMarkerSet):
+        return raw
+    if not sound:
+        msg = (
+            f"{name}: emitted marker {shown!r} is not equivalent to"
+            f" {str(raw)!r} over the declared environments"
+        )
+        raise UnsoundSimplificationError(msg)
+    return rebuilt
+
+
+def _finalize_cached(
+    raw: Marker | None,
+    within: MarkerSet,
+    name: str,
+    memo: dict[str, Marker | None],
+) -> Marker | None:
+    """:func:`_finalize_marker` memoised for the span of one lock.
+
+    ``within`` is fixed for a whole build, so two packages carrying the same raw
+    marker have the same shortest form, and a universal lock repeats one
+    platform or python gate across many packages.
+    """
+    if raw is None:
+        return None
+    key = str(raw)
+    if key not in memo:
+        memo[key] = _finalize_marker(raw, within, name)
+    return memo[key]
+
+
+def _sound_within_universe(raw: Marker, emitted: MarkerSet, within: MarkerSet) -> bool:
+    """Whether ``emitted`` and ``raw`` agree on every environment in ``within``.
+
+    ``emitted`` is what the lock ships: the reparsed marker bytes, or
+    :meth:`MarkerSet.full` when no marker field is emitted.  Decided per universe
+    row, under the same budget as the operator it checks.
+    """
+    return MarkerSet.from_marker(raw).equivalent_within(emitted, within)
+
+
 def _build_packages(
     lock_input: LockInput,
     lock_dir: Path,
     exclusion_groups: Sequence[AbstractSet[tuple[str, str]]],
+    universe: MarkerSet,
 ) -> list[Package]:
     """Collapse the per-target pins into Package entries with markers.
 
@@ -353,8 +466,8 @@ def _build_packages(
       unioned across the contributing targets so target-specific
       wheels (e.g. cp310-manylinux vs cp311-macos) survive.
 
-    The emitted marker is the raw OR of the per-target marker
-    expressions; no Boolean minimisation runs.
+    Each emitted marker is finalised to its shortest form equivalent over
+    the declared environments (:func:`_finalize_marker`).
 
     A package a selected extra or group reaches while the project's own
     dependencies do not is gated on that selection, so a default install
@@ -391,6 +504,7 @@ def _build_packages(
         label: _selection_marker(lock.target, exclusion_groups)
         for label, lock in targets.items()
     }
+    shortened: dict[str, Marker | None] = {}
 
     for canonical_name, per_target in by_name.items():
         groups = _group_pins_by_pin(per_target)
@@ -413,6 +527,7 @@ def _build_packages(
                 base_names,
                 selection_markers,
             )
+            marker = _finalize_cached(marker, universe, canonical_name, shortened)
             out.append(
                 _pin_to_package(
                     _merge_pins_in_group(pins),
