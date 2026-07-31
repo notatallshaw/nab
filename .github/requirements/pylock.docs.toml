@@ -148,62 +148,62 @@ sha256 = "13f3eecb844759ab66efec90ca17639bbf14dc06cb2fdf37a9010322d9c50a6f"
 
 [[packages]]
 name = "certifi"
-version = "2026.6.17"
+version = "2026.7.22"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "certifi-2026.6.17.tar.gz"
-upload-time = 2026-06-17 10:31:07.894439+00:00
-url = "https://files.pythonhosted.org/packages/c9/c7/424b75da314c1045981bd9777432fad05a9e0c69daa4ed7e308bbaffe405/certifi-2026.6.17.tar.gz"
-size = 134594
+name = "certifi-2026.7.22.tar.gz"
+upload-time = 2026-07-22 03:35:12.644458+00:00
+url = "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz"
+size = 138112
 
 [packages.sdist.hashes]
-sha256 = "024c88eeec92ca068db80f02b8b07c9cef7b9fe261d1d535abfd5abd6f6af432"
+sha256 = "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55"
 
 [[packages.wheels]]
-name = "certifi-2026.6.17-py3-none-any.whl"
-upload-time = 2026-06-17 10:31:06.348672+00:00
-url = "https://files.pythonhosted.org/packages/ef/2f/c5464532e965badff2f4c4c1a3a83f5697f0d7c407ed0cda44aaa99bb451/certifi-2026.6.17-py3-none-any.whl"
-size = 133289
+name = "certifi-2026.7.22-py3-none-any.whl"
+upload-time = 2026-07-22 03:35:11.276376+00:00
+url = "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl"
+size = 136983
 
 [packages.wheels.hashes]
-sha256 = "2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db"
+sha256 = "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
 
 [[packages]]
 name = "charset-normalizer"
-version = "3.4.7"
+version = "3.4.9"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "charset_normalizer-3.4.7.tar.gz"
-upload-time = 2026-04-02 09:28:39.342869+00:00
-url = "https://files.pythonhosted.org/packages/e7/a1/67fe25fac3c7642725500a3f6cfe5821ad557c3abb11c9d20d12c7008d3e/charset_normalizer-3.4.7.tar.gz"
-size = 144271
+name = "charset_normalizer-3.4.9.tar.gz"
+upload-time = 2026-07-07 14:34:58.454748+00:00
+url = "https://files.pythonhosted.org/packages/bd/2a/23f34ec9d04624958e137efdc394888716353190e75f25dd22c7a2c7a8aa/charset_normalizer-3.4.9.tar.gz"
+size = 152439
 
 [packages.sdist.hashes]
-sha256 = "ae89db9e5f98a11a4bf50407d4363e7b09b31e55bc117b4f7d80aab97ba009e5"
+sha256 = "673611bbd43f0810bec0b0f028ddeaaa501190339cac411f347ac76917c3ae7b"
 
 [[packages.wheels]]
-name = "charset_normalizer-3.4.7-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2026-04-02 09:26:50.915844+00:00
-url = "https://files.pythonhosted.org/packages/fa/07/330e3a0dda4c404d6da83b327270906e9654a24f6c546dc886a0eb0ffb23/charset_normalizer-3.4.7-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 215595
+name = "charset_normalizer-3.4.9-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-07-07 14:33:41.631371+00:00
+url = "https://files.pythonhosted.org/packages/ea/f8/72eb13dcabe7257035cea8aefd922caad2f110d252bf9f67c4c2ca763aee/charset_normalizer-3.4.9-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 223149
 
 [packages.wheels.hashes]
-sha256 = "e044c39e41b92c845bc815e5ae4230804e8e7bc29e399b0437d64222d92809dd"
+sha256 = "84fd18bcc17526fc2b3c1af7d2b9217d32c9c04448c16ec693b9b4f1985c3d33"
 
 [[packages.wheels]]
-name = "charset_normalizer-3.4.7-py3-none-any.whl"
-upload-time = 2026-04-02 09:28:37.794693+00:00
-url = "https://files.pythonhosted.org/packages/db/8f/61959034484a4a7c527811f4721e75d02d653a35afb0b6054474d8185d4c/charset_normalizer-3.4.7-py3-none-any.whl"
-size = 61958
+name = "charset_normalizer-3.4.9-py3-none-any.whl"
+upload-time = 2026-07-07 14:34:56.993397+00:00
+url = "https://files.pythonhosted.org/packages/98/2b/f97f1c193fb855c345d678f5077d6926034db0722df74c8f057020e05a25/charset_normalizer-3.4.9-py3-none-any.whl"
+size = 64538
 
 [packages.wheels.hashes]
-sha256 = "3dce51d0f5e7951f8bb4900c257dad282f49190fdbebecd4ba99bcc41fef404d"
+sha256 = "68e5f26a1ad57ded6d1cfb85331d1c1a195314756471d97758c48498bb4dcdf5"
 
 [[packages]]
 name = "docstring-parser"
@@ -736,28 +736,28 @@ sha256 = "7e207fa178741da09cdee59d3ecec3827ad5f92b1fc5c9ff3755b639f71f5752"
 
 [[packages]]
 name = "soupsieve"
-version = "2.8.4"
+version = "2.9.1"
 marker = "\"docs\" in dependency_groups"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "soupsieve-2.8.4.tar.gz"
-upload-time = 2026-05-24 13:55:57.154773+00:00
-url = "https://files.pythonhosted.org/packages/47/2c/0a5f6f8ee0d5589e48c7640213ed5175d52cf540a06725b628cc1a45d6ce/soupsieve-2.8.4.tar.gz"
-size = 121110
+name = "soupsieve-2.9.1.tar.gz"
+upload-time = 2026-07-21 16:57:17.452293+00:00
+url = "https://files.pythonhosted.org/packages/d9/38/e12680bbe6b4f8f3d17adcaf38d26850aa756c85cf4a80e79fc12a018fe8/soupsieve-2.9.1.tar.gz"
+size = 122261
 
 [packages.sdist.hashes]
-sha256 = "e121fd02e975c695e4e9e8774a5ee35d74714b59307868dcc5319ad2d9e3328e"
+sha256 = "c33e6605bbc71dd628b00c632d58ae607c22bade247e52553928f83bbb75b4ba"
 
 [[packages.wheels]]
-name = "soupsieve-2.8.4-py3-none-any.whl"
-upload-time = 2026-05-24 13:55:55.406808+00:00
-url = "https://files.pythonhosted.org/packages/5e/f5/0c41cb68dcae6b7de4fac4188a3a9589e21fb31df21ea3a2e888db95e6c9/soupsieve-2.8.4-py3-none-any.whl"
-size = 37304
+name = "soupsieve-2.9.1-py3-none-any.whl"
+upload-time = 2026-07-21 16:57:16.421373+00:00
+url = "https://files.pythonhosted.org/packages/0f/2c/437fe806897c2d6cfdc3ee43a18da8bf8e568530a4ae9bac781541ca9896/soupsieve-2.9.1-py3-none-any.whl"
+size = 37404
 
 [packages.wheels.hashes]
-sha256 = "e7e6b0769c8f51ed59acab6e994b00621096cfb1c640a7509295987388fbaf65"
+sha256 = "4f4477399246b7a0c720a88ca2454b11cd6bb9ae4c9d170140786e916776c14c"
 
 [[packages]]
 name = "sphinx"
@@ -1247,8 +1247,8 @@ size = 131087
 sha256 = "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
 
 [tool.nab]
-nab-version = "0.0.10.dev0"
-created-at = 2026-07-12 21:09:20.266433+00:00
+nab-version = "0.0.12.dev0"
+created-at = 2026-07-31 17:59:15.510783+00:00
 command-line = [
     "nab",
     "lock",

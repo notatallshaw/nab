@@ -148,7 +148,7 @@ sha256 = "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"
 
 [[packages]]
 name = "colorlog"
-version = "6.10.1"
+version = "6.12.0"
 marker = "\"nox\" in dependency_groups"
 requires-python = ">=3.6"
 dependencies = [
@@ -157,22 +157,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "colorlog-6.10.1.tar.gz"
-upload-time = 2025-10-16 16:14:11.978851+00:00
-url = "https://files.pythonhosted.org/packages/a2/61/f083b5ac52e505dfc1c624eafbf8c7589a0d7f32daa398d2e7590efa5fda/colorlog-6.10.1.tar.gz"
-size = 17162
+name = "colorlog-6.12.0.tar.gz"
+upload-time = 2026-07-23 13:40:40.710514+00:00
+url = "https://files.pythonhosted.org/packages/8c/55/ba79756cb90c8d69d599d57785398ac87bba7b19c80e87f4e8a562197c93/colorlog-6.12.0.tar.gz"
+size = 18151
 
 [packages.sdist.hashes]
-sha256 = "eb4ae5cb65fe7fec7773c2306061a8e63e02efc2c72eba9d27b0fa23c94f1321"
+sha256 = "2a7924c1dadf18b22a0eb8b06d1c7b01d5341707ec1641eb6fcc4fde0c3e8e5f"
 
 [[packages.wheels]]
-name = "colorlog-6.10.1-py3-none-any.whl"
-upload-time = 2025-10-16 16:14:10.512866+00:00
-url = "https://files.pythonhosted.org/packages/6d/c1/e419ef3723a074172b68aaa89c9f3de486ed4c2399e2dbd8113a4fdcaf9e/colorlog-6.10.1-py3-none-any.whl"
-size = 11743
+name = "colorlog-6.12.0-py3-none-any.whl"
+upload-time = 2026-07-23 13:40:39.562968+00:00
+url = "https://files.pythonhosted.org/packages/d4/19/0b6647bf5e331521e55d2b63bfbdc210bd9cd605189273f03614a05f702d/colorlog-6.12.0-py3-none-any.whl"
+size = 12239
 
 [packages.wheels.hashes]
-sha256 = "2d7e8348291948af66122cff006c9f8da6255d224e7cf8e37d8de2df3bad8c9c"
+sha256 = "30d392604e9110045a2c2aeefc27d7a017abbab63f3a8aee594eac0801df784e"
 
 [[packages]]
 name = "dependency-groups"
@@ -253,28 +253,28 @@ sha256 = "b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b"
 
 [[packages]]
 name = "filelock"
-version = "3.29.7"
+version = "3.32.0"
 marker = "\"nox\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "filelock-3.29.7.tar.gz"
-upload-time = 2026-07-08 05:46:58.716948+00:00
-url = "https://files.pythonhosted.org/packages/35/94/00f2059e4835eace3ae8fde680b932c496f8ec7bdc99168dfa53fb2e6b79/filelock-3.29.7.tar.gz"
-size = 71521
+name = "filelock-3.32.0.tar.gz"
+upload-time = 2026-07-21 13:17:42.898348+00:00
+url = "https://files.pythonhosted.org/packages/c0/80/8232b582c4b318b817cf1274ba74976b07b34d35ef439b3eb948f98645a1/filelock-3.32.0.tar.gz"
+size = 213757
 
 [packages.sdist.hashes]
-sha256 = "5b481979797ae69e72f0b389d89a80bdd585c260c5b3f1fb9c0a5ba9bb3f195d"
+sha256 = "7be2ad23a14607ccc71808e68fe30848aeace7058ace17852f68e2a68e310402"
 
 [[packages.wheels]]
-name = "filelock-3.29.7-py3-none-any.whl"
-upload-time = 2026-07-08 05:46:57.530856+00:00
-url = "https://files.pythonhosted.org/packages/60/02/be4a57b60c7149b55b9e3b3c13f609cd8eb5307c751f22bd8fb8d262e75b/filelock-3.29.7-py3-none-any.whl"
-size = 46036
+name = "filelock-3.32.0-py3-none-any.whl"
+upload-time = 2026-07-21 13:17:41.550913+00:00
+url = "https://files.pythonhosted.org/packages/06/79/b4c714bef36bc4ec2beeae1e0c124f0223888cd8c6feb1cdc56038116920/filelock-3.32.0-py3-none-any.whl"
+size = 97732
 
 [packages.wheels.hashes]
-sha256 = "987db6f789a3a2a59f55081801b2b3697cb97e2a736b5f1a9e99b559285fbc51"
+sha256 = "d396bea984af47333ef05e50eae7eff88c84256de6112aea0ec48a233c064fe3"
 
 [[packages]]
 name = "humanize"
@@ -355,9 +355,9 @@ sha256 = "011d045df8b954ced7dde3a7e42ae4418da40ecda7990f2d11d5ed7c146fd98b"
 
 [[packages]]
 name = "nox"
-version = "2026.4.10"
+version = "2026.7.11"
 marker = "\"nox\" in dependency_groups"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     { name = "argcomplete" },
     { name = "attrs" },
@@ -371,22 +371,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "nox-2026.4.10.tar.gz"
-upload-time = 2026-04-10 17:42:42.209122+00:00
-url = "https://files.pythonhosted.org/packages/e7/6b/e672c862a43cfca704d32359221fa3780226daa1e5db5dfc401bcc8be9c9/nox-2026.4.10.tar.gz"
-size = 4034839
+name = "nox-2026.7.11.tar.gz"
+upload-time = 2026-07-12 00:32:19.859182+00:00
+url = "https://files.pythonhosted.org/packages/75/bf/aafe066019cb1bcd3e1c22957412d6eb560bd6553c1afd28502168a51418/nox-2026.7.11.tar.gz"
+size = 4042267
 
 [packages.sdist.hashes]
-sha256 = "2d0af5374f3f37a295428c927d1b04a8182aa01762897d172446dda2f1ce9692"
+sha256 = "dec9bd2c854540a2d5c0b841eaaf1d23a7c26cd90af36d9f1f1668b34524bfd9"
 
 [[packages.wheels]]
-name = "nox-2026.4.10-py3-none-any.whl"
-upload-time = 2026-04-10 17:42:40.664366+00:00
-url = "https://files.pythonhosted.org/packages/7f/95/4df134a100b5a9a12378d5301b934366686ef6fbdaffcd21211d5654970e/nox-2026.4.10-py3-none-any.whl"
-size = 75536
+name = "nox-2026.7.11-py3-none-any.whl"
+upload-time = 2026-07-12 00:32:18.070783+00:00
+url = "https://files.pythonhosted.org/packages/a0/70/4b459b66bbd7c9be3c9b15f2cf1605bbe10f58c6395fd99a59a21f3c0777/nox-2026.7.11-py3-none-any.whl"
+size = 77265
 
 [packages.wheels.hashes]
-sha256 = "082c117627590d9b90aa21f86df89b310b07c5842539524203bcb3c719f116c1"
+sha256 = "f5e811693ee8374d269396204eb39990d2084da67ed968239f94301805c9a169"
 
 [[packages]]
 name = "packaging"
@@ -414,28 +414,28 @@ sha256 = "5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"
 
 [[packages]]
 name = "platformdirs"
-version = "4.10.0"
+version = "4.11.0"
 marker = "\"nox\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "platformdirs-4.10.0.tar.gz"
-upload-time = 2026-05-28 03:32:53.587772+00:00
-url = "https://files.pythonhosted.org/packages/d7/47/e4501f49c178ae1d9f4a75073fda4204f52647993f075a9db4d14930e0c5/platformdirs-4.10.0.tar.gz"
-size = 31224
+name = "platformdirs-4.11.0.tar.gz"
+upload-time = 2026-07-21 13:09:36.565916+00:00
+url = "https://files.pythonhosted.org/packages/78/9b/560e4be8e26f6fd133a03630a8df0c663b9e8d61b4ade152b72005aec83b/platformdirs-4.11.0.tar.gz"
+size = 31953
 
 [packages.sdist.hashes]
-sha256 = "31e761a6a0ca04faf7353ea759bdba55652be214725111e5aac52dfa29d4bef7"
+sha256 = "0555d18370482847566ffabcaa53ad7c6c1c29f195989ae1ed634a05f76ea1e0"
 
 [[packages.wheels]]
-name = "platformdirs-4.10.0-py3-none-any.whl"
-upload-time = 2026-05-28 03:32:52.175593+00:00
-url = "https://files.pythonhosted.org/packages/81/e6/cd9575ac904136b3cbf7aa7ee819ef86eedb7274e46f230e94ea4342e729/platformdirs-4.10.0-py3-none-any.whl"
-size = 22743
+name = "platformdirs-4.11.0-py3-none-any.whl"
+upload-time = 2026-07-21 13:09:35.422952+00:00
+url = "https://files.pythonhosted.org/packages/7d/68/d8d58938dfb1370b266a1a729e6d77a985be23689a0496498ee17b2cbf90/platformdirs-4.11.0-py3-none-any.whl"
+size = 23247
 
 [packages.wheels.hashes]
-sha256 = "fb516cdb12eb0d857d0cd85a7c57cea4d060bee4578d6cf5a14dfdf8cbf8784a"
+sha256 = "360ccded2b7fce0af0ff80cc8f5942a1c5d99b0e856033acb030bfc634709e74"
 
 [[packages]]
 name = "pyproject-hooks"
@@ -463,7 +463,7 @@ sha256 = "9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913"
 
 [[packages]]
 name = "python-discovery"
-version = "1.4.4"
+version = "1.5.0"
 marker = "\"nox\" in dependency_groups"
 requires-python = ">=3.8"
 dependencies = [
@@ -473,22 +473,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "python_discovery-1.4.4.tar.gz"
-upload-time = 2026-07-08 23:06:50.691727+00:00
-url = "https://files.pythonhosted.org/packages/4c/81/58c70036dffeccb7fe7d79d6260c69f7a28272bbd3909c29a01ea9422744/python_discovery-1.4.4.tar.gz"
-size = 72212
+name = "python_discovery-1.5.0.tar.gz"
+upload-time = 2026-07-21 13:14:14.641434+00:00
+url = "https://files.pythonhosted.org/packages/f1/51/276f964496a5714ab9f320896195639086881c2b39c03b5ad13de84acbb8/python_discovery-1.5.0.tar.gz"
+size = 72483
 
 [packages.sdist.hashes]
-sha256 = "5cad33982d412c1f3ffb8f9ca4ea292c9680bca3942451d30b69c37fce53a4a3"
+sha256 = "3e014c6327154d3dda27939a9a0dc9c5c000439f1906d3f303b48f984bd2ecef"
 
 [[packages.wheels]]
-name = "python_discovery-1.4.4-py3-none-any.whl"
-upload-time = 2026-07-08 23:06:49.402423+00:00
-url = "https://files.pythonhosted.org/packages/9d/ae/84bc0d2440c95772272bb6f4b3d09ccf08b2898fce89b3d4f969a9fc74e9/python_discovery-1.4.4-py3-none-any.whl"
-size = 34181
+name = "python_discovery-1.5.0-py3-none-any.whl"
+upload-time = 2026-07-21 13:14:13.398336+00:00
+url = "https://files.pythonhosted.org/packages/c7/7b/14882602ddee241d7984a742fcb423cb4a30fb0d6efc546ac3129fba475a/python_discovery-1.5.0-py3-none-any.whl"
+size = 34205
 
 [packages.wheels.hashes]
-sha256 = "abebe9120b43453b68c908acfb1e72a19d1a959ed2cb620ad38fc57d08056dbe"
+sha256 = "70c4fc61b4e7404e44f01d6fc44a715c4d685ca6cea83d295922f05891877c98"
 
 [[packages]]
 name = "tomli"
@@ -848,7 +848,7 @@ sha256 = "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
 
 [[packages]]
 name = "virtualenv"
-version = "21.6.1"
+version = "21.7.0"
 marker = "\"nox\" in dependency_groups"
 requires-python = ">=3.9"
 dependencies = [
@@ -861,22 +861,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "virtualenv-21.6.1.tar.gz"
-upload-time = 2026-07-10 19:33:53.312699+00:00
-url = "https://files.pythonhosted.org/packages/34/d9/b477fddb68840b570af8b22afe9b035cbc277b5fb7b33dea390617a8b10f/virtualenv-21.6.1.tar.gz"
-size = 5526620
+name = "virtualenv-21.7.0.tar.gz"
+upload-time = 2026-07-21 13:12:14.109349+00:00
+url = "https://files.pythonhosted.org/packages/fe/25/e367a7229b0914772ca8d81b41fde012d9feda68523b52644a571bb21ce8/virtualenv-21.7.0.tar.gz"
+size = 5527510
 
 [packages.sdist.hashes]
-sha256 = "15f978b7cd329f24855ff4a0c4b4899cc7678589f49adbdcbbb4d3232e641128"
+sha256 = "7f9519b9432ff11b6e1a3e94061664efc2ff99ea21780e3cf4f6bd0a5da8b37c"
 
 [[packages.wheels]]
-name = "virtualenv-21.6.1-py3-none-any.whl"
-upload-time = 2026-07-10 19:33:51.629569+00:00
-url = "https://files.pythonhosted.org/packages/c1/7c/4e7225d46d634a0d8d534dd8a6ce0c319d09b4d0cf0337eb314ca4789d8c/virtualenv-21.6.1-py3-none-any.whl"
-size = 5506392
+name = "virtualenv-21.7.0-py3-none-any.whl"
+upload-time = 2026-07-21 13:12:12.136616+00:00
+url = "https://files.pythonhosted.org/packages/a5/7a/ae29312b1e88a22e81f5d21fc11526d2a114089776c2550d2b205b6c2a47/virtualenv-21.7.0-py3-none-any.whl"
+size = 5507078
 
 [packages.wheels.hashes]
-sha256 = "afe991df855715a2b2f60edfcc0107ef95a79fdfd8cb4cdaa71603d1c12e463b"
+sha256 = "a8370c1c5530fbabf955e40b8fbbc68a431648b10f9433faa587db30a06e51dd"
 
 [[packages]]
 name = "zipp"
@@ -904,8 +904,8 @@ size = 10238
 sha256 = "25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f"
 
 [tool.nab]
-nab-version = "0.0.10.dev0"
-created-at = 2026-07-18 20:36:13.161143+00:00
+nab-version = "0.0.12.dev0"
+created-at = 2026-07-31 17:59:16.285265+00:00
 command-line = [
     "nab",
     "lock",
