@@ -150,6 +150,8 @@ class InMemoryIndex:
         self._listing_indexes: dict[str, str] = {}
         # Packages whose empty listing stands for an index skipped offline.
         self._offline_listing_misses: set[str] = set()
+        # Packages whose empty listing stands for a page of formats nab cannot read.
+        self._unreadable_only_listings: set[str] = set()
         # Metadata text is keyed by the artifact it came from: the sidecar URL
         # for a wheel's METADATA, or None for text that stands for the version
         # itself (sdist PKG-INFO, an injected override).  Two wheels of one
@@ -196,6 +198,7 @@ class InMemoryIndex:
         data: Sequence[WheelFile | SdistFile],
         *,
         offline_miss: bool = False,
+        unreadable_only: bool = False,
     ) -> None:
         """Cache the listing for ``package`` and unblock any waiter.
 
@@ -204,7 +207,8 @@ class InMemoryIndex:
         internal ``list[WheelFile | SdistFile]`` cache.
 
         ``offline_miss`` marks the empty listing as an index skipped offline
-        rather than one that served no files.
+        rather than one that served no files.  ``unreadable_only`` marks it
+        as a page whose every file is in a format nab does not read.
         """
         key = f"listing:{package}"
         materialised = list(data)
@@ -212,6 +216,8 @@ class InMemoryIndex:
             self._listings[package] = materialised
             if offline_miss:
                 self._offline_listing_misses.add(package)
+            if unreadable_only:
+                self._unreadable_only_listings.add(package)
             pending = self._pending.get(key)
         if pending is not None:
             pending.result = materialised
@@ -222,11 +228,16 @@ class InMemoryIndex:
         with self._lock:
             return package in self._offline_listing_misses
 
+    def is_unreadable_only_listing(self, package: str) -> bool:
+        """Whether ``package``'s empty listing held only unreadable formats."""
+        with self._lock:
+            return package in self._unreadable_only_listings
+
     def store_listing_error(self, package: str, error: BaseException) -> None:
         """Record a failed listing fetch and unblock any waiter.
 
         Distinct from ``store_listing([])``: an empty listing means the
-        index served no files (a 404), while an error means the fetch
+        index served nothing nab could read, while an error means the fetch
         itself failed. ``fetch_versions`` re-raises the error instead of
         reporting the package as having no candidates.
         """
@@ -1264,7 +1275,11 @@ class FetchCoordinator:
         # further synchronisation to apply per-index policy to the listing
         # filter (mirrors the sdist pyproject store-before-fire ordering).
         self._record_serving_index(client, req.package)
-        self.index.store_listing(req.package, files)
+        self.index.store_listing(
+            req.package,
+            files,
+            unreadable_only=client.served_unreadable_only(req.package),
+        )
         logger.debug("fetched listing: %s (%d files)", req.package, len(files))
         if self._on_fetch is not None:
             self._on_fetch()

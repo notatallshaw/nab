@@ -66,6 +66,9 @@ class Stub:
             return [_wheel(canonical(package), self.idx_name)]
         return []
 
+    def served_unreadable_only(self, package: str) -> bool:
+        return False
+
     async def get_metadata_text(
         self,
         package: str,

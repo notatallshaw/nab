@@ -58,6 +58,10 @@ class IndexClient(Protocol):
         """Return the listing for ``package``."""
         ...
 
+    def served_unreadable_only(self, package: str) -> bool:
+        """Whether a listing for ``package`` held only files nab cannot read."""
+        ...
+
     async def get_metadata_text(
         self,
         package: str,
@@ -232,6 +236,17 @@ class MultiIndexClient:
         if skipped_offline is not None:
             raise skipped_offline
         return []
+
+    def served_unreadable_only(self, package: str) -> bool:
+        """Whether any walked index listed ``package`` in unreadable formats.
+
+        An empty walk routes ``package`` to the first index, which need not
+        be the one that served the unreadable page, so every client is asked
+        rather than the routed one.
+        """
+        return any(
+            client.served_unreadable_only(package) for client in self._clients.values()
+        )
 
     async def get_metadata_text(
         self,

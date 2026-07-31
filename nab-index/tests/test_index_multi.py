@@ -42,6 +42,9 @@ class _RecordingClient:
     async def get_files(self, package: str) -> list[WheelFile]:
         return list(self._listing.get(canonical(package), []))
 
+    def served_unreadable_only(self, package: str) -> bool:
+        return False
+
     async def get_sdist_archive(
         self,
         package: str,

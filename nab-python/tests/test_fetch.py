@@ -1443,10 +1443,20 @@ class TestFetchCoordinator:
 
         class RecordingIndex(InMemoryIndex):
             def store_listing(
-                self, package: str, data: Sequence[WheelFile | SdistFile]
+                self,
+                package: str,
+                data: Sequence[WheelFile | SdistFile],
+                *,
+                offline_miss: bool = False,
+                unreadable_only: bool = False,
             ) -> None:
                 serving_at_event.append(self.get_listing_index(package))
-                super().store_listing(package, data)
+                super().store_listing(
+                    package,
+                    data,
+                    offline_miss=offline_miss,
+                    unreadable_only=unreadable_only,
+                )
 
         with _coord() as coord:
             coord.index = RecordingIndex()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import tarfile
 import threading
 import zipfile
@@ -1145,6 +1146,120 @@ class TestNoVersionsReasons:
         assert (
             provider.get_no_versions_reason("foo")
             == "package not found on any configured index"
+        )
+
+    def test_unreadable_formats_only_reports_format_not_absence(
+        self, tmp_path: Path
+    ) -> None:
+        """A page of formats nab does not read is not reported as absence."""
+        body = json.dumps(
+            {
+                "files": [
+                    {
+                        "filename": "foo-1.0.zip",
+                        "url": "https://pypi.example/foo-1.0.zip",
+                    },
+                    {
+                        "filename": "foo-1.0.win32.exe",
+                        "url": "https://pypi.example/foo-1.0.win32.exe",
+                    },
+                ]
+            }
+        ).encode()
+        OnDiskCache(tmp_path, DEFAULT_INDEX_URL).put_simple(
+            "foo", body, CachePolicy(fetched_at=0, max_age=1, etag=None)
+        )
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            cache_dir=tmp_path,
+            offline=True,
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+        assert provider.get_no_versions_reason("foo") == (
+            "found on index but no file is a wheel or a .tar.gz sdist"
+            " (the formats nab reads)"
+        )
+
+    def test_unreadable_formats_on_second_index_reports_format(
+        self, tmp_path: Path
+    ) -> None:
+        """The router names the format when any walked index served one."""
+        body = json.dumps(
+            {"files": [{"filename": "foo-1.0.zip", "url": "https://e.example/f.zip"}]}
+        ).encode()
+        stale = CachePolicy(fetched_at=0, max_age=1, etag=None)
+        OnDiskCache(tmp_path, DEFAULT_INDEX_URL).put_negative("foo", stale)
+        OnDiskCache(tmp_path, "https://extra.example/simple/").put_simple(
+            "foo", body, stale
+        )
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            cache_dir=tmp_path,
+            offline=True,
+            indexes=[
+                IndexConfig("pypi", DEFAULT_INDEX_URL),
+                IndexConfig("extra", "https://extra.example/simple/"),
+            ],
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+        assert provider.get_no_versions_reason("foo") == (
+            "found on index but no file is a wheel or a .tar.gz sdist"
+            " (the formats nab reads)"
+        )
+
+    def test_local_wheelhouse_zip_only_reports_format_not_absence(
+        self, tmp_path: Path
+    ) -> None:
+        """A find-links directory holding only a ``.zip`` sdist names the format."""
+        (tmp_path / "foo-1.0.zip").write_bytes(b"")
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            indexes=[IndexConfig("local", tmp_path.as_uri())],
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+        assert provider.get_no_versions_reason("foo") == (
+            "found on index but no file is a wheel or a .tar.gz sdist"
+            " (the formats nab reads)"
+        )
+
+    def test_local_wheelhouse_other_package_zip_still_reports_absence(
+        self, tmp_path: Path
+    ) -> None:
+        """Another package's ``.zip`` in the directory does not name the format."""
+        (tmp_path / "bar-1.0.zip").write_bytes(b"")
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            indexes=[IndexConfig("local", tmp_path.as_uri())],
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+        assert (
+            provider.get_no_versions_reason("foo")
+            == "package not found on any configured index"
+        )
+
+    def test_local_pep503_page_zip_only_reports_format_not_absence(
+        self, tmp_path: Path
+    ) -> None:
+        """A local PEP 503 page listing only a ``.zip`` names the format."""
+        package_dir = tmp_path / "foo"
+        package_dir.mkdir()
+        (package_dir / "index.html").write_text(
+            '<a href="foo-1.0.zip">foo-1.0.zip</a>', encoding="utf-8"
+        )
+        (package_dir / "foo-1.0.zip").write_bytes(b"")
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            indexes=[IndexConfig("local", tmp_path.as_uri())],
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+        assert provider.get_no_versions_reason("foo") == (
+            "found on index but no file is a wheel or a .tar.gz sdist"
+            " (the formats nab reads)"
         )
 
     def test_no_match_in_range_records_no_match_reason(self) -> None:
