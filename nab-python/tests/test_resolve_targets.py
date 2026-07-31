@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import io
+import itertools
 import logging
 import subprocess
 import tarfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -68,6 +69,7 @@ from nab_python.requirements_file import (
     read_pyproject_optional_dependencies,
 )
 from nab_python.resolve import (
+    InstallContexts,
     ResolveFork,
     ResolveResult,
     TargetResult,
@@ -633,6 +635,112 @@ class TestConflictForkBaseNames:
                 config=_no_build(),
             )
         assert any("Base attribution skipped" in rec.message for rec in caplog.records)
+
+
+class TestTwoConflictSetsPartialInstall:
+    """Two engaged conflict sets serve an install that draws from one.
+
+    ``at-most-one`` lets an install pick no member of a set, so the lock of a
+    four-fork resolve has to install the a1 packages for ``--extra a1`` alone,
+    not only for a full ``(a, b)`` pair. The resolve runs through the engine so
+    the gates come from the resolved graph rather than a hand-written
+    ``package_gates``.
+    """
+
+    _GRAPH: ClassVar[dict[str, tuple[str, ...]]] = {
+        "base": (),
+        "pkga1": ("shared==1.0",),
+        "pkga2": ("shared==2.0",),
+        "pkgb1": (),
+        "pkgb2": (),
+    }
+
+    def _coordinator(self) -> MagicMock:
+        listings = {name: [_make_wheel("1.0", package=name)] for name in self._GRAPH}
+        listings["shared"] = [
+            _make_wheel(version, package="shared") for version in ("1.0", "2.0")
+        ]
+
+        metadata: dict[str, str | None] = {}
+        for name, wheels in listings.items():
+            for wheel in wheels:
+                assert wheel.metadata_url is not None
+                requires = "".join(
+                    f"Requires-Dist: {dep}\n" for dep in self._GRAPH.get(name, ())
+                )
+                metadata[wheel.metadata_url] = (
+                    "Metadata-Version: 2.1\n"
+                    f"Name: {name}\nVersion: {wheel.version}\n{requires}\n"
+                )
+
+        return make_coordinator(listings=listings, metadata_by_url=metadata)
+
+    def _forks(self) -> list[ResolveFork]:
+        return [
+            ResolveFork(
+                selection=(("extra", first), ("extra", second)),
+                requirements=tuple(_reqs("base", f"pkg{first}", f"pkg{second}")),
+                contexts=InstallContexts(
+                    project=tuple(_reqs("base")),
+                    selectors={
+                        ("extra", first): tuple(_reqs(f"pkg{first}")),
+                        ("extra", second): tuple(_reqs(f"pkg{second}")),
+                    },
+                ),
+            )
+            for first, second in itertools.product(("a1", "a2"), ("b1", "b2"))
+        ]
+
+    def _installed(self, extras: list[str]) -> set[str]:
+        """Lock all four extras, then select ``extras`` from the emitted lock."""
+        result = resolve_with_coordinator(
+            self._coordinator(),
+            _one_target(),
+            forks=self._forks(),
+            base_requirements=_reqs("base"),
+            config=_no_build(),
+        )
+        assert result.success
+
+        pylock = build_pylock(
+            build_lock_input(
+                result,
+                config=_no_build(
+                    conflicts=(_extra_set("a1", "a2"), _extra_set("b1", "b2"))
+                ),
+                extras=("a1", "a2", "b1", "b2"),
+            )
+        )
+
+        return {
+            f"{pkg.name}=={pkg.version}"
+            for pkg, _ in pylock.select(
+                environment=dict(result.target_results[0].target.marker_env),  # type: ignore[arg-type]
+                extras=extras,
+                dependency_groups=(),
+            )
+        }
+
+    def test_one_member_installs_its_own_packages(self) -> None:
+        assert self._installed(["a1"]) == {
+            "base==1.0",
+            "pkga1==1.0",
+            "shared==1.0",
+        }
+
+    def test_a_member_of_the_other_set_installs_alone(self) -> None:
+        assert self._installed(["b1"]) == {"base==1.0", "pkgb1==1.0"}
+
+    def test_one_member_of_each_set_installs_both(self) -> None:
+        assert self._installed(["a1", "b1"]) == {
+            "base==1.0",
+            "pkga1==1.0",
+            "pkgb1==1.0",
+            "shared==1.0",
+        }
+
+    def test_no_extras_installs_the_base_alone(self) -> None:
+        assert self._installed([]) == {"base==1.0"}
 
 
 class TestDroppedRootMarkerWarnedOnce:
