@@ -854,6 +854,64 @@ class TestConflictForkBaseDepMarkers:
         assert universal.marker is None
 
 
+class TestConflictForkGateMerge:
+    """Forks of one environment merge their gates on a collapsing entry.
+
+    A base dep present in every fork drops its membership clause, so
+    only the selections that reach it still gate the entry, and those
+    differ per fork: a fork reaches it through its own member as well as
+    through the non-conflicting selections every fork shares.
+    """
+
+    _LINUX: ClassVar[ResolveTarget] = _target()
+    _CPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "cpu"),)
+    _GPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "gpu"),)
+
+    def _marker(
+        self,
+        cpu_gate: tuple[tuple[str, str], ...],
+        gpu_gate: tuple[tuple[str, str], ...],
+    ) -> Marker | None:
+        pins: dict[str, PinShape] = {"shared": _index_pin(name="shared", version="1.0")}
+        cpu = self._LINUX.with_selection(self._CPU)
+        gpu = self._LINUX.with_selection(self._GPU)
+        lock_input = LockInput(
+            targets={
+                cpu.label: TargetLock(
+                    target=cpu, pins=dict(pins), package_gates={"shared": cpu_gate}
+                ),
+                gpu.label: TargetLock(
+                    target=gpu, pins=dict(pins), package_gates={"shared": gpu_gate}
+                ),
+            },
+            env_base_names={_env_signature(self._LINUX): frozenset({"shared"})},
+            extras=("cpu", "gpu", "docs"),
+            conflicts=(
+                ConflictSet(
+                    members=(
+                        ConflictMember(ConflictKind.EXTRA, "cpu"),
+                        ConflictMember(ConflictKind.EXTRA, "gpu"),
+                    ),
+                    policy=ConflictPolicy.AT_MOST_ONE,
+                ),
+            ),
+        )
+        pylock = build_pylock(lock_input)
+        shared = next(p for p in pylock.packages if str(p.name) == "shared")
+        return shared.marker
+
+    def test_own_member_disjoins_with_the_shared_selection(self) -> None:
+        """cpu and docs both reach it; either one on its own installs it."""
+        marker = self._marker(
+            (("extra", "cpu"), ("extra", "docs")), (("extra", "docs"),)
+        )
+        assert str(marker) == '"cpu" in extras or "docs" in extras'
+
+    def test_an_ungated_fork_leaves_the_entry_unconditional(self) -> None:
+        """The cpu fork's own dependencies reach it, so no gate holds."""
+        assert self._marker((), (("extra", "gpu"),)) is None
+
+
 class TestConflictForkBaseDepDivergence:
     """A base dep pinned differently across the conflict forks of one
     environment cannot drop the membership clause on any entry, so no
