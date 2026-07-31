@@ -26,15 +26,13 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import cache, cached_property, lru_cache
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol, TypeVar
 
 from ._vendor.packaging import tags as ptags
 from ._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-
-    from nab_index.client import WheelFile
 
     from ._vendor.packaging.tags import Tag
 
@@ -511,6 +509,22 @@ def _cpython_abi(py_version: tuple[int, int], *, free_threaded: bool) -> str:
     return abi
 
 
+class _NamedWheel(Protocol):
+    """A record carrying a wheel's filename.
+
+    Both an index listing's wheel and a lockfile's wheel artefact
+    satisfy it, so :meth:`TagSet.pick` orders either.
+    """
+
+    @property
+    def filename(self) -> str:
+        """The wheel's PEP 427 filename."""
+        ...
+
+
+_WheelT = TypeVar("_WheelT", bound=_NamedWheel)
+
+
 @dataclass(frozen=True)
 class TagSet:
     """The wheel tags one target accepts, in install-preference order.
@@ -560,7 +574,7 @@ class TagSet:
             return None
         return (rank_index, _build_tag_sort_key(wheel_filename))
 
-    def pick(self, wheels: Iterable[WheelFile]) -> WheelFile | None:
+    def pick(self, wheels: Iterable[_WheelT]) -> _WheelT | None:
         """Pick the most-specific compatible wheel for the target, or None.
 
         Implements PEP 425 preference: wheels matching earlier
@@ -568,9 +582,12 @@ class TagSet:
         later (more-generic) tags.  Within the same tag rank, the wheel
         with the highest PEP 427 build tag wins (an absent tag sorts
         lowest); exact ties keep input order.
+
+        ``wheels`` is anything carrying a ``filename``: an index
+        listing's wheel or a lockfile's wheel artefact.
         """
         best_key: tuple[int, tuple[int, str]] | None = None
-        best_wheel: WheelFile | None = None
+        best_wheel: _WheelT | None = None
         for wheel in wheels:
             key = self.wheel_rank(wheel.filename)
             if key is None:
