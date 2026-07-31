@@ -421,11 +421,10 @@ def _sound_within_universe(raw: Marker, emitted: MarkerSet, within: MarkerSet) -
     """Whether ``emitted`` and ``raw`` agree on every environment in ``within``.
 
     ``emitted`` is what the lock ships: the reparsed marker bytes, or
-    :meth:`MarkerSet.full` when no marker field is emitted.  Complementing the
-    whole matrix in one shot costs more than the operator it checks, so on a
-    wide multi-platform universe this overruns first.
+    :meth:`MarkerSet.full` when no marker field is emitted.  Decided per universe
+    row, under the same budget as the operator it checks.
     """
-    return (MarkerSet.from_marker(raw) & within).equivalent(emitted & within)
+    return MarkerSet.from_marker(raw).equivalent_within(emitted, within)
 
 
 def _build_packages(

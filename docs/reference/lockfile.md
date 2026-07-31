@@ -235,9 +235,11 @@ with PEP 508 markers built from each target's `python_version`,
 the same terms as the `environments` declarations above. Each such
 marker is emitted in its shortest form equivalent over the lock's
 declared environments, and the emitted bytes are checked against the
-original over those environments before the lock is written. A marker
-whose shortening or check runs out of budget is emitted unsimplified,
-as is one that selects nothing inside the declared environments.
+original over those environments before the lock is written, one
+declared environment at a time so that a matrix spanning many platforms
+stays decidable. A marker whose shortening or check runs out of budget
+is emitted unsimplified, as is one that selects nothing inside the
+declared environments.
 
 `environments` carries a declaration per target, built the same way a
 single-environment lock builds its one: from the markers that target's

@@ -1658,10 +1658,10 @@ index c78fd5d..0d7ee1d 100644
      """
 diff --git a/nab-python/src/nab_python/_vendor/packaging/markersets.py b/nab-python/src/nab_python/_vendor/packaging/markersets.py
 new file mode 100644
-index 0000000..4dc6255
+index 0000000..a539f29
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/markersets.py
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,351 @@
 +"""The public :class:`MarkerSet`: a marker's denotation as a set of environments.
 +
 +A :class:`MarkerSet` is the denotation of a PEP 508 marker as a set of
@@ -1882,6 +1882,19 @@ index 0000000..4dc6255
 +        ) and _markersets.is_empty(
 +            _markersets.make_and((other._tree, _markersets.make_not(self._tree))),
 +            _MAX_CELLS,
++        )
++
++    @_bounded
++    def equivalent_within(self, other: MarkerSet, within: MarkerSet) -> bool:
++        """Whether the two sets denote the same environments on every point of ``within``.
++
++        The row-restricted counterpart of :meth:`equivalent`, deciding each of
++        ``within``'s rows under its pins so it stays decidable on wide
++        multi-platform universes. A universe of :meth:`full` reduces it to plain
++        :meth:`equivalent`.
++        """
++        return _markersets.equivalent_within_rows(
++            self._tree, other._tree, within._tree, _MAX_CELLS
 +        )
 +
 +    # ---- restriction and projection
