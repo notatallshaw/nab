@@ -1349,6 +1349,54 @@ class TestResolveAndDownload:
             env._resolve_and_download(wheel_dir)
 
 
+def _no_network(*_a: object, **_k: object) -> object:
+    """Stand in for anything an offline build env must not call."""
+    raise AssertionError("offline must not reach the network")
+
+
+class TestBuildEnvOffline:
+    """``offline`` bars the build env from fetching its requirements."""
+
+    @pytest.fixture(autouse=True)
+    def _offline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("nab_python.resolve.resolve_for_targets", _no_network)
+        monkeypatch.setattr("nab_python._build.env.download_lock", _no_network)
+
+    def test_refuses_before_the_inner_resolve(self, tmp_path: Path) -> None:
+        env = NabBuildEnv(
+            requires=["foo"],
+            config=NabProjectConfig(),
+            offline=True,
+            transport_factory=_no_network,  # type: ignore[arg-type]
+        )
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        with pytest.raises(BuildEnvError, match=r"unavailable in offline mode: foo"):
+            env._resolve_and_download(wheel_dir)
+
+    def test_backend_with_build_requirements_is_refused(self, tmp_path: Path) -> None:
+        source = _write_fake_backend_project(tmp_path)
+        (source / "pyproject.toml").write_text(
+            "[build-system]\n"
+            'requires = ["hatchling"]\n'
+            'build-backend = "nab_test_backend"\n'
+            'backend-path = ["."]\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(
+            BuildBackendError, match=r"unavailable in offline mode: hatchling"
+        ):
+            run_build_backend(source, config=NabProjectConfig(), offline=True)
+
+    def test_backend_with_no_build_requirements_still_builds(
+        self, tmp_path: Path, config: NabProjectConfig
+    ) -> None:
+        """Nothing to fetch, so the offline run is served."""
+        source = _write_fake_backend_project(tmp_path)
+        metadata = run_build_backend(source, config=config, offline=True)
+        assert metadata.name == "fake-pkg"
+
+
 class TestResolveAndDownloadSiblingWheels:
     """``_resolve_and_download`` narrows a pin to the one wheel PEP 425
     prefers, so the build venv never gets two wheels of a version.

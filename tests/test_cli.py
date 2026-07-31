@@ -4344,6 +4344,21 @@ class TestDownloadCommand:
             download(pyproject, output=out)
         mock_dl.assert_called_once()
 
+    @pytest.mark.parametrize("offline", [True, False])
+    def test_threads_offline_into_the_artefact_fetch(
+        self, tmp_path: Path, offline: bool
+    ) -> None:
+        """``--offline`` must reach the download, not just the resolve."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "vendor"
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
+            patch("nab.cli.download_lock", return_value=download_result) as mock_dl,
+        ):
+            download(pyproject, output=out, offline=offline)
+        assert mock_dl.call_args.kwargs["offline"] is offline
+
     def test_project_override_uses_download_wording(
         self,
         tmp_path: Path,

@@ -65,6 +65,7 @@ def run_build_backend(
     source_dir: Path,
     *,
     config: NabProjectConfig,
+    offline: bool = False,
 ) -> WheelMetadata:
     """Extract wheel metadata for ``source_dir`` via the build backend.
 
@@ -72,7 +73,8 @@ def run_build_backend(
     the ``METADATA`` file the backend produces.  Raises
     :class:`BuildBackendError` on any failure: backend import
     error, hook crash, malformed METADATA, an unreadable built
-    wheel, or sdist-only build deps.
+    wheel, sdist-only build deps, or build requirements ``offline``
+    bars from being fetched.
 
     The build runs in an isolated venv driven by
     :class:`NabBuildEnv`; nothing in the user's main environment is
@@ -100,7 +102,9 @@ def run_build_backend(
     skip_prepare = _should_skip_prepare(backend, data)
 
     try:
-        with NabBuildEnv(requires=list(requires), config=config) as env:
+        with NabBuildEnv(
+            requires=list(requires), config=config, offline=offline
+        ) as env:
             project = build.ProjectBuilder.from_isolated_env(
                 env,
                 source_dir=str(source_dir),
