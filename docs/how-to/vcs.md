@@ -87,10 +87,11 @@ reaching the remote.  An unpinned ref fails even with a warm
 cache, because resolving a branch or tag to a commit needs
 `git ls-remote`.
 
-A `git+file` repo is on local disk rather than the network, so it
-still clones, as long as its URL names no host.
-`git+file:///srv/repo.git` clones offline;
-`git+file://server/srv/repo.git` is a UNC share and does not.
+A `git+file` repo is reached through the filesystem rather than
+the network, so it still clones offline, and a floating ref on
+one still resolves.  Where that path leads is left to the
+operating system, exactly as it is for a `file:` index: a `git+file`
+URL under an NFS or SMB mount clones offline too.
 
 ## `pkg @ git+...` at the project root
 

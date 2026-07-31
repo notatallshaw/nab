@@ -155,14 +155,17 @@ def _repo_key(repo_url: str) -> str:
 
 
 def _is_local_repo(repo_url: str) -> bool:
-    """Return True when ``repo_url`` names a repo on this machine's disk.
+    """Return True when ``repo_url`` reaches its repo through the filesystem.
 
-    Matches what :func:`nab_index.local_index.parse_file_url` does for
-    artifact URLs: an empty or ``localhost`` authority (RFC 8089) is the
-    local machine; any other host is a UNC share.
+    Offline means nab issues no network request of its own.  A ``file``
+    URL is read by path, so it stays available offline whatever the
+    authority says: git drops the authority outright on POSIX, and on
+    Windows turns it into a UNC path, which is a filesystem call like
+    any other.  Whether that path is backed by a local disk, NFS, or SMB
+    is the operating system's business, the same as it is for a
+    ``file:`` index.
     """
-    split = urlsplit(repo_url)
-    return split.scheme == "file" and split.netloc in ("", "localhost")
+    return urlsplit(repo_url).scheme == "file"
 
 
 def prepare_clone(
@@ -182,8 +185,8 @@ def prepare_clone(
 
     ``offline`` withholds every git call that would reach the remote: a
     complete cached clone is still served; anything else raises
-    :class:`VcsCloneError`.  A ``file://`` repo on this machine's disk
-    still clones.
+    :class:`VcsCloneError`.  A ``file://`` repo is read through the
+    filesystem rather than the network, so it still clones.
 
     Idempotent: a destination carrying the completion marker is reused
     without a fetch.  A fresh clone lands in a temporary sibling

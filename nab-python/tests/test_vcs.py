@@ -652,7 +652,7 @@ class TestOfflineClone:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A ``file://`` repo is local disk, like a ``file:`` archive URL."""
+        """A ``file://`` repo is read by path, like a ``file:`` archive URL."""
         sha = "d" * 40
         commands: list[str] = []
 
@@ -669,16 +669,32 @@ class TestOfflineClone:
         assert clone.commit_sha == sha
         assert commands == ["init", "fetch", "checkout"]
 
-    def test_file_url_with_a_host_is_refused(
+    def test_file_url_with_a_host_still_clones(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A ``file://`` URL naming a host is a UNC share, not local disk."""
-        monkeypatch.setattr(subprocess, "run", _refuse_git)
-        req = VcsRequest("git", "file://server/share/repo.git", "f" * 40, "")
-        with pytest.raises(VcsCloneError, match="offline"):
-            prepare_clone(tmp_path, req, require_pin=True, offline=True)
+        """An authority does not make a ``file://`` repo a network fetch.
+
+        git drops it on POSIX and reads a UNC path on Windows, both
+        filesystem calls.  Offline gates the requests nab issues, not
+        what the mount behind a path happens to do.
+        """
+        sha = "f" * 40
+        commands: list[str] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            commands.append(cmd[1])
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "file://server/share/repo.git", sha, "")
+        clone = prepare_clone(tmp_path, req, require_pin=True, offline=True)
+        assert clone.commit_sha == sha
+        assert commands == ["init", "fetch", "checkout"]
 
     def test_file_url_floating_ref_still_resolves(
         self,
