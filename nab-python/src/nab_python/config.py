@@ -2544,12 +2544,14 @@ def _parse_archive_sources(value: object) -> tuple[ArchiveSource, ...]:
 
 
 def _validate_archive_url(index: int, url: str) -> None:
-    """Reject an archive URL with no hash or an unsupported format.
+    """Reject an archive URL that is malformed, has no hash, or is not a .tar.gz.
 
     PEP 751 ``packages.archive.hashes`` is required, so nab requires the
     hash in the URL fragment and verifies the download against it.  Only
     ``.tar.gz`` source archives are supported today; wheels and zips are
-    refused loudly rather than mis-handled.
+    refused loudly rather than mis-handled.  :func:`urlsplit` raises
+    ValueError on an authority it cannot parse, such as an unterminated
+    IPv6 bracket, so that surfaces as a ConfigError here too.
     """
     try:
         request = ArchiveRequest.parse(url)
@@ -2564,7 +2566,13 @@ def _validate_archive_url(index: int, url: str) -> None:
         )
         raise ConfigError(msg)
 
-    if not urlsplit(request.url).path.endswith(".tar.gz"):
+    try:
+        path = urlsplit(request.url).path
+    except ValueError as exc:
+        msg = f"archive-sources[{index}] url {url!r} does not parse: {exc}"
+        raise ConfigError(msg) from exc
+
+    if not path.endswith(".tar.gz"):
         msg = (
             f"archive-sources[{index}] url {url!r} is not a .tar.gz archive;"
             " only .tar.gz source archives are supported"
