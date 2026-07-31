@@ -17,7 +17,7 @@ from __future__ import annotations
 import enum
 import posixpath
 from dataclasses import dataclass
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from nab_index.vcs import FULL_GIT_SHA_RE
 
@@ -142,7 +142,7 @@ _REPO_BOUNDARY_CHARS: frozenset[str] = frozenset({"/", "@", "#"})
 
 
 def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
-    """Return True if ``inner_url`` names a repo under ``prefix``.
+    r"""Return True if ``inner_url`` names a repo under ``prefix``.
 
     A bare :meth:`str.startswith` would admit a sibling repo whose URL
     merely begins with an allowed entry (``.../airflow.git`` would admit
@@ -157,9 +157,17 @@ def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
 
     A path git would rewrite is refused first: git applies RFC 3986
     dot-segment removal at fetch time, so a raw ``..`` path could pass the
-    string match while git fetches a repo outside the prefix.
+    string match while git fetches a repo outside the prefix.  That check
+    reads the whole post-authority remainder, query included since
+    :meth:`nab_index.vcs.VcsRequest.parse` keeps it, decoded once so an
+    encoded ``%2e%2e`` cannot slip past, and with ``\`` folded to ``/``
+    because Windows resolves it as a separator.  The prefix comparison
+    below is on the raw URL.
     """
-    path = urlsplit(inner_url).path
+    parts = urlsplit(inner_url)
+    remainder = f"{parts.path}?{parts.query}" if parts.query else parts.path
+    path = unquote(remainder).replace("\\", "/")
+
     if path and posixpath.normpath(path) != path:
         return False
 

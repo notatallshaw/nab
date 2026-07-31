@@ -19,13 +19,16 @@ Invariants:
 * admission/clone agreement: a URL admitted under
   ``require_pin=True`` must parse (``VcsRequest.parse``) to a ref
   that IS a full commit sha, i.e. the admission layer's "pinned"
-  promise holds at clone time.
+  promise holds at clone time;
+* containment: a path that normalises above where it is written is
+  refused however permissive the allowlists are, whether written raw,
+  percent-encoded, or with backslashes.
 """
 
 from __future__ import annotations
 
 import posixpath
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 import pytest
 from hypothesis import given
@@ -94,7 +97,20 @@ def structured_urls(draw: st.DrawFn) -> str:
     host = draw(st.sampled_from(["github.com", "example.org", "h"]))
     segments = draw(
         st.lists(
-            st.sampled_from(["org", "orgx", "repo.git", "repo.gitx", "repo", "a"]),
+            st.sampled_from(
+                [
+                    "org",
+                    "orgx",
+                    "repo.git",
+                    "repo.gitx",
+                    "repo",
+                    "a",
+                    "..",
+                    "%2e%2e",
+                    "..%2f..",
+                    "..\\..",
+                ]
+            ),
             max_size=3,
         )
     )
@@ -122,6 +138,16 @@ def structured_urls(draw: st.DrawFn) -> str:
     return f"{scheme}://{user}{host}{path}{ref}{frag}"
 
 
+@st.composite
+def escaping_urls(draw: st.DrawFn) -> str:
+    """A pinned URL whose path resolves one level above where it is written."""
+    scheme = draw(st.sampled_from(VALID_SCHEMES))
+    host = draw(st.sampled_from(["github.com", "h"]))
+    escape = draw(st.sampled_from(["..", "%2e%2e", "%2E%2E", "..%2f..", "..\\.."]))
+    tail = draw(st.sampled_from(["other", "other/repo", "repo"]))
+    return f"{scheme}://{host}/org/repo/{escape}/{tail}@{SHA}"
+
+
 def _decision(url: str, config: VcsConfig) -> tuple[str, str]:
     try:
         return ("admit", admit_vcs_url(url, config))
@@ -138,17 +164,21 @@ def _drop_login(url: str) -> str:
 
 
 def _prefix_under_repo(inner: str, prefix: str) -> bool:
-    """Boundary-aware repo-prefix check, transcribed from the documented policy.
+    r"""Boundary-aware repo-prefix check, transcribed from the documented policy.
 
     A candidate is under an allowed prefix only when the prefix ends at a
     path-segment boundary, so a sibling repo whose URL merely begins with
     the prefix (``.../airflow.git`` vs ``.../airflow.git.other``) is refused.
     Git's optional ``.git`` suffix is stripped from the prefix and skipped
     once on the candidate so an exact-repo prefix and the ``.git`` clone URL
-    match either way round.  A candidate whose path git would rewrite (its
-    dot-segment-normalised form differs from the raw path) is refused first.
+    match either way round.  A candidate whose path git would rewrite is
+    refused first: the whole post-authority remainder, decoded once and with
+    ``\`` folded to ``/``, must equal its dot-segment-normalised form.
     """
-    path = urlsplit(inner).path
+    parts = urlsplit(inner)
+    remainder = f"{parts.path}?{parts.query}" if parts.query else parts.path
+    path = unquote(remainder).replace("\\", "/")
+
     if path and posixpath.normpath(path) != path:
         return False
 
@@ -205,6 +235,22 @@ def test_total_partition_and_determinism_arbitrary_text(
 @given(url=structured_urls(), config=configs)
 def test_matches_documented_oracle(url: str, config: VcsConfig) -> None:
     assert _decision(url, config)[0] == _oracle(url, config)
+
+
+@PROPERTY_SETTINGS
+@given(url=escaping_urls())
+def test_escaping_path_refused_under_allow_all(url: str) -> None:
+    """An allow-all config still refuses a path that resolves above itself.
+
+    ``""`` is a prefix of every URL, so only the containment check can
+    refuse these.
+    """
+    config = VcsConfig(
+        policy=VcsPolicy.ALLOW,
+        allowed_schemes=frozenset(VALID_SCHEMES),
+        allowed_repos=("",),
+    )
+    assert _decision(url, config)[0] == "refuse"
 
 
 @PROPERTY_SETTINGS
