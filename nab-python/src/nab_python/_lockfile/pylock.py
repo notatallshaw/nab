@@ -417,6 +417,26 @@ def _finalize_marker(
     return rebuilt
 
 
+def _finalize_cached(
+    raw: Marker | None,
+    within: MarkerSet,
+    name: str,
+    memo: dict[str, Marker | None],
+) -> Marker | None:
+    """:func:`_finalize_marker` memoised for the span of one lock.
+
+    ``within`` is fixed for a whole build, so two packages carrying the same raw
+    marker have the same shortest form, and a universal lock repeats one
+    platform or python gate across many packages.
+    """
+    if raw is None:
+        return None
+    key = str(raw)
+    if key not in memo:
+        memo[key] = _finalize_marker(raw, within, name)
+    return memo[key]
+
+
 def _sound_within_universe(raw: Marker, emitted: MarkerSet, within: MarkerSet) -> bool:
     """Whether ``emitted`` and ``raw`` agree on every environment in ``within``.
 
@@ -484,6 +504,7 @@ def _build_packages(
         label: _selection_marker(lock.target, exclusion_groups)
         for label, lock in targets.items()
     }
+    shortened: dict[str, Marker | None] = {}
 
     for canonical_name, per_target in by_name.items():
         groups = _group_pins_by_pin(per_target)
@@ -506,7 +527,7 @@ def _build_packages(
                 base_names,
                 selection_markers,
             )
-            marker = _finalize_marker(marker, universe, canonical_name)
+            marker = _finalize_cached(marker, universe, canonical_name, shortened)
             out.append(
                 _pin_to_package(
                     _merge_pins_in_group(pins),

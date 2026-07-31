@@ -20,10 +20,12 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from nab_python._lockfile import pylock
 from nab_python._lockfile.disjointness import validate_marker_disjointness
 from nab_python._lockfile.pylock import (
     UnsoundSimplificationError,
     _emission_universe,
+    _finalize_cached,
     _finalize_marker,
     build_pylock,
     render_lock,
@@ -538,3 +540,43 @@ class TestWorkBudget:
         result = _finalize_marker(raw, within, "foo")
         assert result is not None
         assert str(result) == str(raw)
+
+
+class TestFinalizeMemo:
+    """Packages sharing one raw marker are finalised once per lock.
+
+    The universe is fixed for a whole build, so the shortest form of a marker
+    does not depend on which package carries it.
+    """
+
+    def test_repeated_marker_finalises_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+        real = pylock._finalize_marker
+
+        def counting(
+            raw: Marker | None, within: MarkerSet, name: str = ""
+        ) -> Marker | None:
+            calls.append(name)
+            return real(raw, within, name)
+
+        monkeypatch.setattr(pylock, "_finalize_marker", counting)
+        targets: dict[str, TargetLock] = {}
+        for t in (*_LINUX, *_WIN):
+            pins: dict[str, IndexPin] = {"bar": _index_pin("bar")}
+            if t in _LINUX:
+                for i in range(5):
+                    pins[f"foo{i}"] = _index_pin(f"foo{i}")
+            targets[t.label] = TargetLock(target=t, pins=pins)
+        lock_input = LockInput(targets=targets, environments=list(_ENVS))
+        emitted = _emitted(lock_input)
+        assert [emitted[f"foo{i}"]["marker"] for i in range(5)] == [
+            'sys_platform == "linux"'
+        ] * 5
+        assert calls == ["foo0"]
+
+    def test_memo_passes_none_through(self) -> None:
+        memo: dict[str, Marker | None] = {}
+        assert _finalize_cached(None, MarkerSet.full(), "foo", memo) is None
+        assert memo == {}
