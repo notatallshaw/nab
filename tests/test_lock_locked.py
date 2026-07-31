@@ -274,6 +274,26 @@ def test_non_sticky_stale_falls_through_out_of_date(
     mock.assert_called_once()
 
 
+def test_prerelease_pin_falls_through(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The pin satisfies the direct specifier and the constraint, so neither fires.
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\ndependencies = ["foo>=2.0b1"]\n'
+        '[tool.nab]\nconstraints = ["foo<3"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "2.0b1"}))
+    capsys.readouterr()
+
+    mock = _locked_mock(_result({"foo": "2.0b1"}))
+    _run_locked(pyproject, out, mock)
+
+    assert "is up to date" in capsys.readouterr().err
+    mock.assert_called_once()
+
+
 def test_marker_inactive_absent_requirement_falls_through(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

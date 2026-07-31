@@ -310,6 +310,34 @@ def test_direct_marker_true_applies_and_fires() -> None:
     assert result.reason.startswith("[project].dependencies requires foo>=2.0")
 
 
+def test_direct_prerelease_pin_inside_specifier_does_not_fire() -> None:
+    """A pre-release pin is not on its own a reason to disqualify the lock."""
+    committed = pylock_of(index_pin("foo", "2.0b1"))
+    assert (
+        check_direct_requirements(committed, [root("foo>=2.0b1")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_direct_prerelease_pin_under_bare_requirement_does_not_fire() -> None:
+    committed = pylock_of(index_pin("foo", "2.0b1"))
+    assert (
+        check_direct_requirements(committed, [root("foo")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_direct_prerelease_pin_outside_specifier_fires() -> None:
+    committed = pylock_of(index_pin("foo", "1.0b1"))
+    result = check_direct_requirements(
+        committed, [root("foo>=2.0")], marker_env=LINUX_ENV
+    )
+    assert result is not None
+    assert result.reason == (
+        "[project].dependencies requires foo>=2.0 but the lock pins foo 1.0b1"
+    )
+
+
 def test_direct_versionless_pin_skipped() -> None:
     committed = pylock_of(directory_pin("foo"))
     assert (
@@ -414,6 +442,22 @@ def test_constraint_violated_fires() -> None:
     result = check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
     assert result is not None
     assert result.reason == ("the constraint baz<3 is violated by the pinned baz 3.1")
+
+
+def test_constraint_satisfied_by_prerelease_pin_does_not_fire() -> None:
+    """A constraint bounds the version without excluding pre-releases."""
+    committed = pylock_of(index_pin("baz", "2.0b1"))
+    assert (
+        check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
+def test_constraint_violated_by_prerelease_pin_fires() -> None:
+    committed = pylock_of(index_pin("baz", "3.1b1"))
+    result = check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
+    assert result is not None
+    assert result.reason == "the constraint baz<3 is violated by the pinned baz 3.1b1"
 
 
 def test_constraint_marker_false_skipped() -> None:
