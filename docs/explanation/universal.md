@@ -170,14 +170,16 @@ environments = [
 ```
 
 The two rows are identical but for the last clause. `some-backport` is
-pinned only on the lower slice, so it carries that slice's marker and is
-absent from the other:
+pinned only on the lower slice, so its marker names that slice and it is
+absent from the other. The rows agree on everything but
+`python_full_version`, and a per-package marker only has to be right
+inside the declared environments, so that is all the marker says:
 
 ```toml
 [[packages]]
 name = "some-backport"
 version = "1.2.0"
-marker = 'python_version == "3.11" and sys_platform == "linux" and platform_machine == "x86_64" and python_full_version < "3.11.4"'
+marker = 'python_full_version < "3.11.4"'
 ```
 
 The two slices meet at `3.11.4.dev0`, not at `3.11.4`. The lower slice
