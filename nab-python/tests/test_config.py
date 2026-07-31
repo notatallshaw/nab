@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from nab_index.multi_index import IndexConfig
+from nab_index.serialization import SimpleSerialization
 from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
@@ -159,6 +161,7 @@ class TestDefaults:
         # Default index is PyPI
         assert config.indexes[0].name == DEFAULT_INDEX_NAME
         assert config.indexes[0].url == DEFAULT_INDEX_URL
+        assert config.indexes[0].serialization is SimpleSerialization.NEGOTIATE
         assert config.mode is ResolveMode.SPECIFIC
         assert config.dist_policy is DistPolicy.WHEEL_OR_SDIST
         assert config.build_policy is BuildPolicy.BUILD_LOCAL
@@ -1980,8 +1983,109 @@ class TestIndexes:
             tmp_path,
             '[[tool.nab.indexes]]\nname = "x"\nurl = "https://a/"\nbogus = 1\n',
         )
-        with pytest.raises(ConfigError, match="unknown indexes"):
+        with pytest.raises(
+            ConfigError,
+            match=re.escape("expected ['name', 'serialization', 'url']"),
+        ):
             read_pyproject_config(path)
+
+
+class TestIndexSerialization:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("negotiate", SimpleSerialization.NEGOTIATE),
+            ("json", SimpleSerialization.JSON),
+            ("html", SimpleSerialization.HTML),
+        ],
+    )
+    def test_each_value_parses(
+        self, tmp_path: Path, value: str, expected: SimpleSerialization
+    ) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "x"\n'
+            'url = "https://a/simple/"\n'
+            f'serialization = "{value}"\n',
+        )
+        assert read_pyproject_config(path).indexes[0].serialization is expected
+
+    def test_omitted_key_negotiates(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.indexes]]\nname = "x"\nurl = "https://a/simple/"\n',
+        )
+        idx = read_pyproject_config(path).indexes[0]
+        assert idx.serialization is SimpleSerialization.NEGOTIATE
+
+    def test_unknown_value_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "x"\n'
+            'url = "https://a/simple/"\n'
+            'serialization = "xml"\n',
+        )
+        with pytest.raises(
+            ConfigError, match=r"indexes\[0\]\.serialization must be one of"
+        ):
+            read_pyproject_config(path)
+
+    def test_non_string_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "x"\n'
+            'url = "https://a/simple/"\n'
+            "serialization = 1\n",
+        )
+        with pytest.raises(ConfigError, match="must be a string, got int"):
+            read_pyproject_config(path)
+
+    @pytest.mark.parametrize("url", ["file:/x", "file://localhost/x", "file:///x"])
+    def test_rejected_on_a_file_index(self, tmp_path: Path, url: str) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "local"\n'
+            f'url = "{url}"\n'
+            'serialization = "html"\n',
+        )
+        with pytest.raises(
+            ConfigError, match="not settable on a file:// index"
+        ) as caught:
+            read_pyproject_config(path)
+        assert "index 'local'" in str(caught.value)
+
+    def test_rejected_on_a_file_index_even_when_default(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "local"\n'
+            'url = "file:///x"\n'
+            'serialization = "negotiate"\n',
+        )
+        with pytest.raises(ConfigError, match="not settable on a file:// index"):
+            read_pyproject_config(path)
+
+    def test_accepted_on_an_unparseable_authority(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "bad"\n'
+            'url = "https://[::1/simple/"\n'
+            'serialization = "json"\n',
+        )
+        idx = read_pyproject_config(path).indexes[0]
+        assert idx.serialization is SimpleSerialization.JSON
+
+    def test_positional_construction_still_defaults(self) -> None:
+        positional = IndexConfig("pypi", "https://pypi.org/simple/")
+        keyword = IndexConfig(name="pypi", url="https://pypi.org/simple/")
+        assert positional == keyword
+        assert hash(positional) == hash(keyword)
+        assert positional.serialization is SimpleSerialization.NEGOTIATE
 
 
 class TestVcs:

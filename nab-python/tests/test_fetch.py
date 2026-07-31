@@ -21,7 +21,7 @@ import httpx
 import pytest
 import respx
 
-from nab_index.cache import NullCache, OfflineError
+from nab_index.cache import NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import (
     MalformedSimpleResponseError,
@@ -34,6 +34,7 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.lazy_wheel import RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
+from nab_index.serialization import SimpleSerialization
 from nab_index.transport import HttpError
 from nab_python.fetch import (
     FetchCoordinator,
@@ -2184,6 +2185,57 @@ class TestMultiIndexCoordinator:
         try:
             client = coord._build_client()
             assert isinstance(client, CachedAsyncSimpleClient)
+        finally:
+            coord.shutdown()
+
+    def test_pin_reaches_the_client_and_its_cache(self, tmp_path: Path) -> None:
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path,
+            indexes=[
+                IndexConfig(
+                    "custom",
+                    "https://custom.example/",
+                    serialization=SimpleSerialization.JSON,
+                )
+            ],
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, CachedAsyncSimpleClient)
+            assert client._serialization is SimpleSerialization.JSON
+            backend = client._cache
+            assert isinstance(backend, OnDiskCache)
+            assert backend._simple_dir.name.endswith("-json")
+        finally:
+            coord.shutdown()
+
+    def test_each_index_keeps_its_own_pin(self, tmp_path: Path) -> None:
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path,
+            indexes=[
+                IndexConfig(
+                    "a", "https://a.example/", serialization=SimpleSerialization.JSON
+                ),
+                IndexConfig(
+                    "b", "https://b.example/", serialization=SimpleSerialization.HTML
+                ),
+            ],
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, MultiIndexClient)
+            first, second = client._clients["a"], client._clients["b"]
+            assert isinstance(first, CachedAsyncSimpleClient)
+            assert isinstance(second, CachedAsyncSimpleClient)
+            assert first._serialization is SimpleSerialization.JSON
+            assert second._serialization is SimpleSerialization.HTML
+            first_cache, second_cache = first._cache, second._cache
+            assert isinstance(first_cache, OnDiskCache)
+            assert isinstance(second_cache, OnDiskCache)
+            assert first_cache._simple_dir.name.endswith("-json")
+            assert second_cache._simple_dir.name.endswith("-html")
         finally:
             coord.shutdown()
 

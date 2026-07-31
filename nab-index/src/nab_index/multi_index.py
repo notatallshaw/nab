@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from ._naming import canonical as _normalise_name
 from .cache import OfflineError
+from .serialization import SimpleSerialization
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -115,11 +116,13 @@ class IndexConfig:
     ``name`` is the index identifier used by overrides and lockfile
     output.  ``url`` is the Simple API root (HTTPS or ``file://``).
     Order is significant: callers walk the list left-to-right and
-    presence-based first-index applies.
+    presence-based first-index applies.  ``serialization`` pins the
+    Simple-API serialization this index is asked for and decoded from.
     """
 
     name: str
     url: str
+    serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE
 
 
 class MultiIndexClient:

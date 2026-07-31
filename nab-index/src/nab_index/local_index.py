@@ -28,7 +28,7 @@ import zlib
 from email.parser import BytesParser, Parser
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse, urlsplit
 from urllib.request import url2pathname
 
 from packaging.utils import InvalidSdistFilename, parse_sdist_filename
@@ -56,6 +56,7 @@ __all__ = [
     "MalformedLocalListingError",
     "NonLocalArtifactError",
     "UnsupportedWheelError",
+    "is_file_url",
     "parse_file_url",
     "read_wheel_metadata",
     "wheel_metadata_member",
@@ -91,6 +92,18 @@ class NonLocalArtifactError(HttpError):
     the fetch fails through the same path as a remote index error rather than a
     raw :class:`ValueError` from :func:`parse_file_url`.
     """
+
+
+def is_file_url(url: str) -> bool:
+    """Whether ``url`` names a local index in either RFC 8089 spelling.
+
+    An authority :func:`urlsplit` cannot parse, such as an unterminated
+    IPv6 bracket, is not a ``file:`` URL.
+    """
+    try:
+        return urlsplit(url).scheme == "file"
+    except ValueError:
+        return False
 
 
 def parse_file_url(url: str) -> Path:

@@ -16,7 +16,10 @@ from pathlib import Path
 
 import pytest
 
+from nab_index.multi_index import IndexConfig
+from nab_index.serialization import SimpleSerialization
 from nab_python.config import (
+    _INDEX_KEYS,
     ConflictKind,
     ConflictMember,
     ConflictPolicy,
@@ -1701,6 +1704,75 @@ class TestArrayOfTablesSources:
         assert spec.render(()) == "<none>"
         rendered = spec.render(spec.default)
         assert rendered == "pypi=https://pypi.org/simple/"
+
+    def test_indexes_render_shows_a_pin(self) -> None:
+        spec = next(s for s in OPTIONS if s.key == "indexes")
+        value = (
+            IndexConfig("pypi", "https://pypi.org/simple/"),
+            IndexConfig(
+                "internal",
+                "https://internal/simple/",
+                serialization=SimpleSerialization.JSON,
+            ),
+        )
+        assert spec.render(value) == (
+            "pypi=https://pypi.org/simple/,"
+            " internal=https://internal/simple/ serialization=json"
+        )
+
+    def test_indexes_type_label_lists_every_accepted_key(self) -> None:
+        spec = next(s for s in OPTIONS if s.key == "indexes")
+        listed = spec.type_label.partition("(")[2].rstrip(")").split(",")
+        assert set(listed) == _INDEX_KEYS
+
+    def test_indexes_bad_serialization_keeps_message(self, tmp_path: Path) -> None:
+        _project(tmp_path)
+        _write(
+            tmp_path / "nab.toml",
+            '[[indexes]]\nname = "x"\nurl = "https://a/"\nserialization = "xml"\n',
+        )
+        with pytest.raises(SourceConfigError, match="must be one of"):
+            _resolve(SourceRoots(project_dir=tmp_path))
+
+    def test_indexes_file_url_pin_keeps_message(self, tmp_path: Path) -> None:
+        _project(tmp_path)
+        _write(
+            tmp_path / "nab.toml",
+            '[[indexes]]\nname = "local"\nurl = "file:///x"\nserialization = "html"\n',
+        )
+        with pytest.raises(SourceConfigError, match="not settable on a file:// index"):
+            _resolve(SourceRoots(project_dir=tmp_path))
+
+    def test_indexes_pin_survives_the_across_file_concat(self, tmp_path: Path) -> None:
+        _project(
+            tmp_path,
+            '[[tool.nab.indexes]]\nname = "pypi"\nurl = "https://pypi.org/simple/"\n',
+        )
+        _write(
+            tmp_path / "nab.toml",
+            '[[indexes]]\nname = "extra"\nurl = "https://extra/simple/"\n'
+            'serialization = "html"\n',
+        )
+        value = _resolve(SourceRoots(project_dir=tmp_path))["indexes"].value
+        assert [i.name for i in value] == ["pypi", "extra"]
+        assert value[0].serialization is SimpleSerialization.NEGOTIATE
+        assert value[1].serialization is SimpleSerialization.HTML
+
+    def test_indexes_pin_cannot_be_added_to_an_index_declared_elsewhere(
+        self, tmp_path: Path
+    ) -> None:
+        # A same-name entry is a duplicate, not an amendment.
+        _project(
+            tmp_path,
+            '[[tool.nab.indexes]]\nname = "pypi"\nurl = "https://pypi.org/simple/"\n',
+        )
+        _write(
+            tmp_path / "nab.toml",
+            '[[indexes]]\nname = "pypi"\nurl = "https://pypi.org/simple/"\n'
+            'serialization = "json"\n',
+        )
+        with pytest.raises(SourceConfigError, match="duplicate index name"):
+            _resolve(SourceRoots(project_dir=tmp_path))
 
     def test_local_sources_from_pyproject(self, tmp_path: Path) -> None:
         _project(
