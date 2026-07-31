@@ -396,6 +396,103 @@ class TestAdmitVcsUrlRepo:
                 config,
             )
 
+    @pytest.mark.parametrize(
+        "escape",
+        [
+            "/%2e%2e/%2e%2e/other/repo",
+            "/%2E%2E/%2E%2E/other/repo",
+            "/..%2f..%2fother/repo",
+            "/..\\..\\other/repo",
+            "/..%5c..%5cother/repo",
+            "/%2e%2e\\%2e%2e/other/repo",
+        ],
+    )
+    def test_encoded_dot_segment_escape_refused(self, escape: str) -> None:
+        r"""An encoded escape is refused like the raw ``../`` form.
+
+        A percent-encoded ``..`` decodes at fetch time, and Windows
+        resolves ``\`` as a separator.
+        """
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+file"}),
+            allowed_repos=("file:///srv/repos/trusted/repo",),
+        )
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url(
+                f"git+file:///srv/repos/trusted/repo{escape}@{_FORTY}",
+                config,
+            )
+
+    def test_backslash_escape_over_ssh_refused(self) -> None:
+        r"""The ``\`` escape is refused on a remote scheme too."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+ssh"}),
+            allowed_repos=("ssh://host/srv/trusted/repo",),
+        )
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url(
+                f"git+ssh://host/srv/trusted/repo/..\\..\\other@{_FORTY}",
+                config,
+            )
+
+    def test_query_dot_segment_escape_refused(self) -> None:
+        """A ``?query`` carrying the escape is refused.
+
+        ``VcsRequest.parse`` keeps the query in the URL it hands git, so the
+        rewrite check covers the whole post-authority remainder.
+        """
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+file"}),
+            allowed_repos=("file:///srv/repos/trusted/",),
+        )
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url(
+                f"git+file:///srv/repos/trusted/repo?/../../other/repo@{_FORTY}",
+                config,
+            )
+
+    def test_percent_encoded_repo_name_still_admits(self) -> None:
+        """Encoding that decodes to no dot-segment leaves the repo admitted."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+file"}),
+            allowed_repos=("file:///srv/repos/trusted",),
+        )
+        scheme = admit_vcs_url(
+            f"git+file:///srv/repos/trusted/my%20repo@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+file"
+
+    def test_double_encoded_dot_segment_still_admits(self) -> None:
+        """Decoding runs once, so ``%252e%252e`` stays the directory ``%2e%2e``."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+file"}),
+            allowed_repos=("file:///srv/repos/trusted",),
+        )
+        scheme = admit_vcs_url(
+            f"git+file:///srv/repos/trusted/repo/%252e%252e/other@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+file"
+
+    def test_literal_backslash_in_repo_name_still_admits(self) -> None:
+        r"""A ``\`` that is not a dot-segment escape leaves the repo admitted."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+file"}),
+            allowed_repos=("file:///srv/repos/trusted",),
+        )
+        scheme = admit_vcs_url(
+            f"git+file:///srv/repos/trusted/my\\repo@{_FORTY}",
+            config,
+        )
+        assert scheme == "git+file"
+
     def test_plain_repo_under_same_prefix_still_admits(self) -> None:
         """A plain in-repo URL under that prefix still admits."""
         config = VcsConfig(
