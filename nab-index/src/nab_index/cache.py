@@ -14,8 +14,7 @@ Layout under ``root``:
     sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
 
 An index pinned to one serialization gets its own listings directory,
-because a body fetched under one serialization is not an answer to a
-request for the other.
+since a stored body records nothing about which serialization it came from.
 
 A versioned bucket name (``simple-v1``) gives zero-cost schema
 migration: when the on-disk format changes, bump the suffix and the

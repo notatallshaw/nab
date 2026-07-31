@@ -1536,7 +1536,7 @@ class TestHtmlListing:
 
 
 class TestSerializationPin:
-    """A pin fixes the Accept header and the decoder nab will accept."""
+    """A pin fixes both the Accept header and the decoder."""
 
     _INDEX = "https://pypi.org/simple/"
     _PAGE = b'<a href="pkg-1.0-py3-none-any.whl">pkg</a>'

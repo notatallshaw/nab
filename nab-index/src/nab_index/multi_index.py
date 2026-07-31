@@ -116,8 +116,8 @@ class IndexConfig:
     ``name`` is the index identifier used by overrides and lockfile
     output.  ``url`` is the Simple API root (HTTPS or ``file://``).
     Order is significant: callers walk the list left-to-right and
-    presence-based first-index applies.  ``serialization`` pins the
-    Simple-API serialization this index is asked for and decoded from.
+    presence-based first-index applies.  ``serialization`` pins which
+    Simple-API serialization this index is asked for and read as.
     """
 
     name: str

@@ -93,8 +93,7 @@ def universal_mode_section() -> str:
 def indexes_doc_example() -> str:
     """Return the first fenced TOML block of the config reference's Indexes section.
 
-    ``first_tool_nab_example`` only returns blocks that open with
-    ``[tool.nab]``, so the indexes example needs its own reader.
+    ``first_tool_nab_example`` only returns blocks that open with ``[tool.nab]``.
     """
     text = DOCS_CONFIGURATION.read_text()
     section = re.search(r"^## Indexes.*?(?=^## )", text, flags=re.DOTALL | re.MULTILINE)

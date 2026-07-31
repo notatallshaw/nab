@@ -807,7 +807,6 @@ class TestSerializationPartition:
     _URL = "https://pypi.org/simple/"
 
     def test_unpinned_layout_is_unchanged(self, tmp_path: Path) -> None:
-        # The warm caches every existing user already has on disk.
         cache = OnDiskCache(tmp_path, self._URL)
         cache.put_simple("foo", b"{}", _FRESH)
         cache.put_negative("bar", _FRESH)
@@ -833,8 +832,7 @@ class TestSerializationPartition:
         assert not (tmp_path / SIMPLE_BUCKET / "pypi").exists()
 
     def test_metadata_and_sdist_records_are_shared(self, tmp_path: Path) -> None:
-        # The same bytes at the same URL however the listing that named
-        # them was serialized, so a flip must not re-download them.
+        # Same bytes at the same URL either way, so a flip must not refetch.
         unpinned = OnDiskCache(tmp_path, self._URL)
         unpinned.put_metadata("foo", METADATA_URLS[0], "Name: foo\n")
         unpinned.put_sdist_files("foo", "1.0", "Name: foo\n", None)

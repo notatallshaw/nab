@@ -36,8 +36,8 @@ requires-python = ">=3.10"
 # are ignored.  Accepts ISO 8601 strings, native TOML datetimes, or a
 # "P<n>D" duration relative to the resolve anchor.  Artifacts from a
 # local file:// index carry no upload time and are always kept.  An
-# HTML listing rarely carries one, and a file without an upload time
-# is excluded; see "Serialization" below.
+# HTML listing rarely carries one either, and those files are then
+# excluded; see "Serialization" below.
 uploaded-prior-to = "2026-05-01T00:00:00Z"
 
 # Version selection within an allowed range.  Mirrors uv's --resolution.
@@ -169,11 +169,11 @@ the index serves.  `serialization` pins a single choice, for an index
 that does not answer both reliably.
 
 The pin covers the `Accept` header and the decoder together.  A pinned
-index that answers in the other serialization is an error: a pin nab
-quietly read past would leave the divergence it was set to stop.  An
-index that holds only the other serialization and negotiates strictly
-answers 406, which fails the same way.  Either error ends the resolve
-rather than falling through to the next index in the list.
+index that answers in the other serialization is an error: reading it
+anyway would hide the behaviour the pin was set to stop.  An index that
+holds only the other serialization and negotiates strictly answers 406,
+which fails the same way.  Either error ends the resolve rather than
+falling through to the next index in the list.
 
 Listings fetched under one setting are not reused under another: a
 pinned index keeps its own listing cache.
@@ -182,8 +182,8 @@ pinned index keeps its own listing cache.
 included.  A local index is read from disk with no `Accept`
 negotiation, so the key is rejected rather than accepted and ignored.
 
-Pinning `html` costs the data PEP 700 defines for the JSON listing
-only, and two of the losses bite:
+Pinning `html` gives up the extra data PEP 700 defines for the JSON
+listing.  Two of those losses matter:
 
 * A PEP 503 page carries no upload time.  Unless the index emits the
   non-standard `data-upload-time` attribute, every file it serves is

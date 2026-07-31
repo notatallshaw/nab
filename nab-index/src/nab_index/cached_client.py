@@ -91,8 +91,8 @@ class CachedAsyncSimpleClient:
         it. A fresh memo is built when none is passed, so a stand-alone client
         still learns each host's range behaviour within its own lifetime.
 
-        ``serialization`` pins the Simple-API serialization this index is
-        asked for and the one nab will decode from it.
+        ``serialization`` pins which Simple-API serialization this index is
+        asked for and read as.
         """
         self._transport = transport
         self._cache = cache

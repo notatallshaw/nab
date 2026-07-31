@@ -252,14 +252,13 @@ def _listing_body(
 
     The served Content-Type picks the decoder. An HTML page is re-serialized
     so the parser and the cache only ever see one shape; any other body is
-    passed through untouched.
-
-    Under a pin, nab accepts exactly what it advertised, so a body in the
-    other serialization raises rather than being read anyway.
+    passed through untouched. A pinned index that answers in the other
+    serialization raises instead.
     """
     body = response.content
     content_type = _header(response, "content-type")
     is_html = _is_html_listing(content_type)
+
     if serialization is not SimpleSerialization.NEGOTIATE and is_html != (
         serialization is SimpleSerialization.HTML
     ):
@@ -280,6 +279,7 @@ def _listing_body(
             f" {serialization.value}."
         )
         raise MalformedSimpleResponseError(msg)
+
     if not is_html:
         return body
 

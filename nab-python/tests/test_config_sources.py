@@ -1762,7 +1762,6 @@ class TestArrayOfTablesSources:
     def test_indexes_pin_cannot_be_added_to_an_index_declared_elsewhere(
         self, tmp_path: Path
     ) -> None:
-        # A same-name entry is a duplicate, not an amendment.
         _project(
             tmp_path,
             '[[tool.nab.indexes]]\nname = "pypi"\nurl = "https://pypi.org/simple/"\n',

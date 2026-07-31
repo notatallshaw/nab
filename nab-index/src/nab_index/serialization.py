@@ -1,7 +1,8 @@
 """Simple-API serialization vocabulary for nab-index.
 
-A leaf module: the enum and the ``Accept`` header each of its members asks
-for, importable from the client, the cache and the config layer alike.
+The enum and the ``Accept`` header each of its members asks for.  Kept free
+of nab-index imports so the client, the cache, and the config layer can all
+reach it.
 """
 
 from __future__ import annotations
@@ -22,10 +23,10 @@ class SimpleSerialization(enum.Enum):
     HTML = "html"
 
 
-# PEP 691: advertise every serialization we can read, because an index that
-# cannot honour the header may answer with a type we did not ask for.  The
-# HTML entry names text/html as well because PEP 691 makes it an alias for
-# the pre-691 spelling, not a second format.
+# PEP 691: negotiation advertises every serialization we can read, because an
+# index that cannot honour the header may answer with a type we did not ask
+# for.  The HTML pin names text/html too, which PEP 691 treats as an alias for
+# the pre-691 spelling rather than a second format.
 _ACCEPT: dict[SimpleSerialization, str] = {
     SimpleSerialization.NEGOTIATE: (
         "application/vnd.pypi.simple.v1+json, "

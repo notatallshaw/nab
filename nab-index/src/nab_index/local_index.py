@@ -95,10 +95,10 @@ class NonLocalArtifactError(HttpError):
 
 
 def is_file_url(url: str) -> bool:
-    """Whether ``url`` names a local index in either RFC 8089 spelling.
+    """Return True when ``url`` is a ``file:`` URL in either RFC 8089 spelling.
 
-    An authority :func:`urlsplit` cannot parse, such as an unterminated
-    IPv6 bracket, is not a ``file:`` URL.
+    An authority :func:`urlsplit` cannot parse, such as an unterminated IPv6
+    bracket, is not one.
     """
     try:
         return urlsplit(url).scheme == "file"
