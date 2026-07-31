@@ -71,11 +71,9 @@ _MIN_WHEEL_FILENAME_PARTS = 5
 _MAX_WHEEL_TAGS = 4096
 
 # PEP 427: a build tag adds a sixth dash-separated segment at index 2, and
-# starts with a digit (captured here for ordering).  The digit run is bounded
-# because the index names it and int() raises above 4300 digits, so an absurd
-# one is malformed and sorts lowest, like any other unreadable build tag.
+# starts with a digit (captured here for ordering).
 _WHEEL_PARTS_WITH_BUILD = 6
-_BUILD_TAG_RE = re.compile(r"(\d{1,9})(\D.*)?$", re.ASCII)
+_BUILD_TAG_RE = re.compile(r"(\d+)(.*)", re.ASCII)
 
 # runs-on-libc (or runs-on-macos) names a system the lock must run on.  A
 # wheel is a member iff it runs there: the target accepts every
@@ -496,7 +494,14 @@ def _build_tag_sort_key(filename: str) -> tuple[int, str]:
     match = _BUILD_TAG_RE.match(parts[2])
     if match is None:
         return (-1, "")
-    return (int(match.group(1)), match.group(2) or "")
+
+    # int() refuses a digit run past CPython's conversion limit.
+    try:
+        build_number = int(match.group(1))
+    except ValueError:
+        return (-1, "")
+
+    return (build_number, match.group(2))
 
 
 def _cpython_abi(py_version: tuple[int, int], *, free_threaded: bool) -> str:
