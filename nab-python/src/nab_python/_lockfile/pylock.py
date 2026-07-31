@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import os
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from functools import reduce
+from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import tomli_w
 
@@ -63,6 +65,64 @@ __all__ = [
     "build_pylock",
     "write_lock",
 ]
+
+# A hashable environment (see _env_signatures), a set of (kind, name)
+# selection members, and the key a fork is indexed under.
+_EnvSignature: TypeAlias = "tuple[tuple[str, str], ...]"
+_Members: TypeAlias = "frozenset[tuple[str, str]]"
+_ForkKey: TypeAlias = "tuple[_EnvSignature, _Members]"
+
+_NO_MEMBERS: _Members = frozenset()
+
+
+@dataclass(frozen=True, slots=True)
+class _ForkAxes:
+    """The declared conflict sets a lock's forks vary along.
+
+    ``exclusion_groups`` are the ``(kind, name)`` member sets an install
+    context may activate at most one member of.  ``forks`` indexes every
+    target by its environment and its selection, which is how
+    :func:`_project_fork` walks one set's members with the other sets
+    held fixed.  ``markers`` is each fork's unprojected selection marker,
+    which does not vary by package, and ``gates`` each fork's
+    :attr:`~nab_python.lockfile.TargetLock.package_gates` as sets.
+    """
+
+    exclusion_groups: tuple[AbstractSet[tuple[str, str]], ...]
+    forks: Mapping[_ForkKey, str]
+    targets: Mapping[str, TargetLock]
+    env_signatures: Mapping[str, _EnvSignature]
+    markers: Mapping[str, str]
+    gates: Mapping[tuple[str, str], _Members]
+
+
+@dataclass(frozen=True, slots=True)
+class _Projection:
+    """One package's marker shape at one fork.
+
+    ``dropped`` are the selection members whose clauses fall away, and
+    ``gate`` is the membership gate that stands in for the fork's own
+    once they do (:func:`_merged_fork_gate`).
+    """
+
+    dropped: _Members
+    gate: _Members
+
+
+def _fork_index(
+    targets: Mapping[str, TargetLock],
+    env_signatures: Mapping[str, _EnvSignature],
+) -> dict[_ForkKey, str]:
+    """Index every target by its environment and its selection.
+
+    A conflict-forked environment holds one target per point of the
+    cartesian product across the engaged sets, so this is the lookup that
+    answers "which fork agrees with this one everywhere but here".
+    """
+    return {
+        (env_signatures[label], frozenset(lock.target.selection)): label
+        for label, lock in targets.items()
+    }
 
 
 class UnsoundSimplificationError(ValueError):
@@ -499,18 +559,33 @@ def _build_packages(
     base_names = _close_base_names(
         targets, env_signatures, env_fork_counts, lock_input.env_base_names
     )
-    # One selection marker per label; it does not vary by package.
-    selection_markers = {
-        label: _selection_marker(lock.target, exclusion_groups)
-        for label, lock in targets.items()
+    pin_groups = {
+        canonical_name: _group_pins_by_pin(per_target)
+        for canonical_name, per_target in by_name.items()
     }
     shortened: dict[str, Marker | None] = {}
+    axes = _ForkAxes(
+        exclusion_groups=tuple(exclusion_groups),
+        forks=_fork_index(targets, env_signatures),
+        targets=targets,
+        env_signatures=env_signatures,
+        # One selection marker per label; it does not vary by package.
+        markers={
+            label: _selection_marker(lock.target, exclusion_groups)
+            for label, lock in targets.items()
+        },
+        gates={
+            (name, label): frozenset(gate)
+            for label, lock in targets.items()
+            for name, gate in lock.package_gates.items()
+        },
+    )
+    projections = _fork_projections(axes, pin_groups, env_fork_counts, base_names)
 
-    for canonical_name, per_target in by_name.items():
-        groups = _group_pins_by_pin(per_target)
+    for canonical_name, groups in pin_groups.items():
         _check_base_fork_agreement(
             canonical_name,
-            per_target,
+            by_name[canonical_name],
             groups,
             env_signatures,
             env_fork_counts,
@@ -521,11 +596,10 @@ def _build_packages(
             marker = _build_marker(
                 canonical_name,
                 labels,
-                targets,
-                env_signatures,
                 env_fork_counts,
                 base_names,
-                selection_markers,
+                axes,
+                projections,
             )
             marker = _finalize_cached(marker, universe, canonical_name, shortened)
             out.append(
@@ -765,11 +839,10 @@ def _check_base_fork_agreement(
 def _build_marker(
     name: str,
     labels: Sequence[str],
-    targets: Mapping[str, TargetLock],
-    env_signatures: Mapping[str, tuple[tuple[str, str], ...]],
     env_fork_counts: Mapping[tuple[tuple[str, str], ...], int],
     env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]],
-    selection_markers: Mapping[str, str],
+    axes: _ForkAxes,
+    projections: Mapping[tuple[str, str], _Projection],
 ) -> Marker | None:
     """Return the marker selecting ``labels``, or ``None`` if unconditional.
 
@@ -795,6 +868,13 @@ def _build_marker(
     reads ``[tool.nab].conflicts`` still installs at most one fork.  See
     :func:`_selection_marker`.
 
+    The selection is projected per package first: a conflict set the
+    package does not vary over contributes no clause, so with two sets
+    engaged a dep reached through one of them names only that one and
+    still installs for a selection that leaves the other set empty.  See
+    :func:`_fork_projections`.  The projection makes several forks render
+    the same contribution, which is emitted once.
+
     A package a selected extra or group reaches while the project's own
     dependencies do not carries that selection's gate (see
     :attr:`~nab_python.lockfile.TargetLock.package_gates`), which is
@@ -809,9 +889,10 @@ def _build_marker(
     selection is a property of the install context, not of the platform,
     so ``"cli" in extras`` is the whole marker.
     """
+    targets = axes.targets
     by_env: defaultdict[tuple[tuple[str, str], ...], list[str]] = defaultdict(list)
     for label in labels:
-        by_env[env_signatures[label]].append(label)
+        by_env[axes.env_signatures[label]].append(label)
 
     gates = {label: targets[label].package_gates.get(name, ()) for label in labels}
 
@@ -823,17 +904,7 @@ def _build_marker(
     collapsed_gates: set[tuple[tuple[str, str], ...]] = set()
     unconditional = len(labels) >= len(targets)
     for signature, env_labels in by_env.items():
-        base_names = env_base_names.get(signature)
-
-        # When no base pass ran for an env (``base_names is None``),
-        # treat the dep as base only if no fork ran either; with forks
-        # but no base attribution, base status is unknowable and the
-        # safe answer is to keep the membership OR.
-        is_base = (
-            (name in base_names)
-            if base_names is not None
-            else (env_fork_counts[signature] == 1)
-        )
+        is_base = _is_base(name, signature, env_fork_counts, env_base_names)
         agreed_gate = (
             len({_shared_gate(targets[label], gates[label]) for label in env_labels})
             == 1
@@ -848,13 +919,8 @@ def _build_marker(
             )
         else:
             contributions.extend(
-                Marker(
-                    _with_gate(
-                        selection_markers[label],
-                        _fork_gate(targets[label], gates[label]),
-                    )
-                )
-                for label in env_labels
+                Marker(text)
+                for text in _fork_contributions(axes, projections, name, env_labels)
             )
             unconditional = False
 
@@ -871,6 +937,221 @@ def _build_marker(
     return _or_markers(contributions)
 
 
+def _fork_contributions(
+    axes: _ForkAxes,
+    projections: Mapping[tuple[str, str], _Projection],
+    name: str,
+    env_labels: Sequence[str],
+) -> list[str]:
+    """Render one environment's per-fork markers, projected and deduped.
+
+    Each fork drops the clauses of the conflict sets the package does not
+    vary over (:func:`_fork_projections`), which leaves the forks of a
+    dropped set rendering the same text; the duplicates are folded into
+    one contribution, in first-seen order.
+    """
+    seen: dict[str, None] = {}
+    for label in env_labels:
+        target = axes.targets[label].target
+        projection = projections[name, label]
+        text = (
+            axes.markers[label]
+            if not projection.dropped
+            else _selection_marker(target, axes.exclusion_groups, projection.dropped)
+        )
+        kept = frozenset(target.selection) - projection.dropped
+        seen[_with_gate(text, _fork_gate(kept, projection.gate))] = None
+    return list(seen)
+
+
+def _fork_projections(
+    axes: _ForkAxes,
+    pin_groups: Mapping[str, Sequence[tuple[list[PinShape], list[str]]]],
+    env_fork_counts: Mapping[_EnvSignature, int],
+    env_base_names: Mapping[_EnvSignature, frozenset[str]],
+) -> dict[tuple[str, str], _Projection]:
+    """Return, per (package, fork), the selection clauses its marker can drop.
+
+    Every fork starts free to drop its whole selection and
+    :func:`_project_fork` keeps only what the fork space justifies.  The
+    dependency edges then narrow it: an entry that fires where one of its
+    own dependencies does not is a lock that cannot be installed, so a
+    package keeps every member its dependencies at that fork keep.  The
+    allowances only shrink, so the loop settles.
+    """
+    same_pin: dict[tuple[str, str], frozenset[str]] = {}
+    edges: dict[tuple[str, str], frozenset[str]] = {}
+    for name, groups in pin_groups.items():
+        for _, labels in groups:
+            group = frozenset(labels)
+            declared = frozenset(
+                dep
+                for peer in labels
+                for dep in axes.targets[peer].dependencies.get(name, ())
+            )
+            for label in labels:
+                same_pin[name, label] = group
+                edges[name, label] = declared
+
+    limits = {key: frozenset(axes.targets[key[1]].target.selection) for key in same_pin}
+    projections: dict[tuple[str, str], _Projection] = {}
+    stale = set(same_pin)
+    while stale:
+        for name, label in stale:
+            projections[name, label] = _project_fork(
+                axes,
+                name,
+                label,
+                limits[name, label],
+                same_pin[name, label],
+                is_base=_is_base(
+                    name, axes.env_signatures[label], env_fork_counts, env_base_names
+                ),
+            )
+        narrowed = {
+            (name, label): limit
+            & _dependency_drops(axes, projections, label, edges[name, label])
+            for (name, label), limit in limits.items()
+        }
+        stale = {key for key, limit in narrowed.items() if limit != limits[key]}
+        limits = narrowed
+    return projections
+
+
+def _dependency_drops(
+    axes: _ForkAxes,
+    projections: Mapping[tuple[str, str], _Projection],
+    label: str,
+    declared: AbstractSet[str],
+) -> _Members:
+    """Return the members every dependency an entry declares drops at one fork.
+
+    :func:`_dependency_entries` unions the edges over the entry's forks,
+    so an edge only one fork has still rides on the whole entry; a fork
+    that does not carry that dependency at all can drop nothing.
+    """
+    shared = frozenset(axes.targets[label].target.selection)
+    for dep in declared:
+        projection = projections.get((dep, label))
+        shared &= projection.dropped if projection is not None else _NO_MEMBERS
+    return shared
+
+
+def _project_fork(
+    axes: _ForkAxes,
+    name: str,
+    label: str,
+    limit: _Members,
+    same_pin: AbstractSet[str],
+    *,
+    is_base: bool,
+) -> _Projection:
+    """Return the clauses one fork's entry for ``name`` can drop.
+
+    A declared conflict set is irrelevant to a package when swapping the
+    fork's member of that set for any other member, every other set held
+    fixed, leaves the package at the same pin reached the same way.
+    Conjoining such a set's clauses narrows the entry to the forks that
+    vary something the package does not depend on, so a selection naming
+    a member of one set alone matches no entry and the package silently
+    does not install.
+
+    Sets are folded in one at a time and each candidate is checked over
+    the whole sub-cube of the sets folded in so far rather than one axis
+    at a time.  Two axes that are each flat through this fork can still
+    meet at a fork with a different pin; dropping both would leave two
+    entries of one package overlapping, and the forks have to stay
+    mutually exclusive in the marker itself.
+    """
+    own_gate = axes.gates.get((name, label), _NO_MEMBERS)
+    selection = frozenset(axes.targets[label].target.selection)
+    signature = axes.env_signatures[label]
+
+    dropped: _Members = frozenset()
+    gate = own_gate
+    varying: list[AbstractSet[tuple[str, str]]] = []
+    for group in axes.exclusion_groups:
+        member = group & selection & limit
+        if len(member) != 1:
+            continue
+
+        candidate = [*varying, group]
+        erased = _NO_MEMBERS.union(*candidate)
+        held = selection - erased
+        keys = [
+            (signature, held | frozenset(swap))
+            for swap in product(*(sorted(members) for members in candidate))
+        ]
+        peers = [axes.forks[key] for key in keys if key in axes.forks]
+        if len(peers) != len(keys) or not same_pin.issuperset(peers):
+            continue
+
+        merged = _merged_fork_gate(axes, name, peers, erased)
+        if merged is None:
+            continue
+        varying = candidate
+        dropped |= member
+        gate = merged
+
+    # A member-only package with nothing left to name would fire in the
+    # no-member install context, where a dep the base does not require
+    # must not install.
+    if not is_base and not gate and not selection - dropped:
+        return _Projection(frozenset(), own_gate)
+    return _Projection(dropped, gate)
+
+
+def _merged_fork_gate(
+    axes: _ForkAxes,
+    name: str,
+    peers: Sequence[str],
+    erased: _Members,
+) -> _Members | None:
+    """Return the gate the sub-cube's forks share, or ``None`` when they do not.
+
+    Dropping a set replaces the fork's own gate with one that holds at
+    every point of the sub-cube: the part naming nothing in the dropped
+    sets, plus every dropped member that reaches the package in the forks
+    that select it.  The forks share such a gate only when each one's is
+    exactly that, so a member that reaches the package under one fork of
+    the other dropped sets but not another refuses the drop rather than
+    guessing which way the projected entry should fire.
+    """
+    gates = {peer: axes.gates.get((name, peer), _NO_MEMBERS) for peer in peers}
+
+    # An empty gate means that fork installs the package whichever of its
+    # members are selected (:func:`_merge_gates`), which no clause stands
+    # in for, so a sub-cube mixing the two does not project.
+    if len({bool(gate) for gate in gates.values()}) != 1:
+        return None
+
+    residual = gates[peers[0]] - erased
+    carried = frozenset(member for gate in gates.values() for member in gate & erased)
+    for peer, gate in gates.items():
+        if gate != residual | (carried & set(axes.targets[peer].target.selection)):
+            return None
+    return residual | carried
+
+
+def _is_base(
+    name: str,
+    signature: _EnvSignature,
+    env_fork_counts: Mapping[_EnvSignature, int],
+    env_base_names: Mapping[_EnvSignature, frozenset[str]],
+) -> bool:
+    """Say whether an environment's base pass reached ``name``.
+
+    When no base pass ran for the env (the signature is missing), treat
+    the dep as base only if no fork ran either; with forks but no base
+    attribution, base status is unknowable and the safe answer is to keep
+    the membership OR.
+    """
+    base_names = env_base_names.get(signature)
+    if base_names is None:
+        return env_fork_counts[signature] == 1
+    return name in base_names
+
+
 def _shared_gate(
     lock: TargetLock, gate: tuple[tuple[str, str], ...]
 ) -> tuple[tuple[str, str], ...]:
@@ -884,17 +1165,18 @@ def _shared_gate(
 
 
 def _fork_gate(
-    lock: TargetLock, gate: tuple[tuple[str, str], ...]
+    kept: AbstractSet[tuple[str, str]], gate: AbstractSet[tuple[str, str]]
 ) -> tuple[tuple[str, str], ...]:
     """Return the gate to conjoin onto one fork's own membership marker.
 
-    A gate that names a member of the fork's selection is already
+    A gate that names a member the fork's marker still asserts is already
     satisfied there, so it drops whole rather than narrowing the fork's
-    marker to the gate's other selections.
+    marker to the gate's other selections.  A member whose clause the
+    projection dropped asserts nothing, so it does not count.
     """
-    if set(gate) & set(lock.target.selection):
+    if gate & kept:
         return ()
-    return gate
+    return tuple(sorted(gate))
 
 
 def _merge_gates(
@@ -916,24 +1198,35 @@ def _merge_gates(
 def _selection_marker(
     target: ResolveTarget,
     exclusion_groups: Sequence[AbstractSet[tuple[str, str]]],
+    dropped: AbstractSet[tuple[str, str]] = frozenset(),
 ) -> str:
     """Return the fork's per-package marker with its co-members negated.
 
-    Starts from the target's
-    :attr:`~nab_python.target.ResolveTarget.marker_string` and conjoins
-    ``'name' not in <variable>`` for every other member of every conflict
-    set the selection draws from, so at most one fork installs.  A
-    selection drawing from no exclusion group returns ``marker_string``
-    unchanged.
+    Conjoins ``'name' in <variable>`` for every member of the selection
+    onto the target's environment marker, then ``'name' not in
+    <variable>`` for every other member of every conflict set the
+    selection draws from, so at most one fork installs.  With no
+    ``dropped`` members this is the target's
+    :attr:`~nab_python.target.ResolveTarget.marker_string` plus the
+    negations, and a selection drawing from no exclusion group is
+    ``marker_string`` unchanged.
+
+    ``dropped`` are the members of conflict sets the package does not
+    vary over (:func:`_project_fork`); both their positive clause and
+    their set's negations fall away, since a set nothing is kept from is
+    no longer drawn from.
     """
-    selected = set(target.selection)
+    selected = set(target.selection) - set(dropped)
 
     co_members: set[tuple[str, str]] = set()
     for group in exclusion_groups:
         if group & selected:
             co_members |= group - selected
 
-    marker = target.marker_string
+    marker = target.environment_marker_string
+    for kind, name in sorted(selected):
+        variable = MARKER_VARIABLE_FOR_KIND[kind]
+        marker += f' and "{name}" in {variable}'
     for kind, name in sorted(co_members):
         variable = MARKER_VARIABLE_FOR_KIND[kind]
         marker += f' and "{name}" not in {variable}'

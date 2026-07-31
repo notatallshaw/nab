@@ -366,9 +366,10 @@ class TargetLock:
     conflict environment's no-member base-name set over these edges only.
 
     ``target`` is the environment the pins hold for.  The writer reads
-    its markers (see :attr:`~nab_python.target.ResolveTarget.marker_string`)
-    rather than being handed a projection of them, so a lock entry and
-    the environment it was resolved for cannot drift apart.
+    its markers and its
+    :attr:`~nab_python.target.ResolveTarget.selection` rather than being
+    handed a projection of them, so a lock entry and the environment it
+    was resolved for cannot drift apart.
 
     ``package_gates`` maps a package this target locked to the selected
     extras and groups that reach it while the project's own dependencies

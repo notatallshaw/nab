@@ -663,9 +663,9 @@ class ResolveTarget:
     ``(kind, name)`` members (``kind`` is ``"extra"`` or ``"group"``)
     active in this fork's resolve, empty for an unforked one.  When set,
     it adds a ``'name' in extras`` / ``'name' in dependency_groups``
-    clause to :attr:`marker_string`; the lockfile emitter derives the
-    per-package marker, which also negates the co-members of the conflict
-    sets that forbid co-selection, from it.
+    clause to :attr:`marker_string`; the lockfile emitter builds the
+    per-package marker from the members themselves, keeping only the sets
+    the package varies over and negating their co-members.
 
     ``platform_spec`` is set on a declared (matrix) target and names the
     tag knobs it was expanded from; a host target has none.

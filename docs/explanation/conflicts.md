@@ -125,10 +125,16 @@ selection, which is how the writer tells the two apart. When the
 forks of one environment pin a base dependency at different versions,
 no single entry can serve the no-member context; the writer raises a
 `DivergentBaseDependencyError` rather than emit a lock that silently
-skips the dependency. When a single dependency is required by every
-member of two or more engaged sets at once, its marker is the
-conjunction across those sets; this stays correct for one set, the
-common case.
+skips the dependency.
+
+With two or more sets engaged, each entry names only the sets its
+package varies over. A dependency one member of one set pulls in at the
+same version in every fork of the other sets contributes no clause for
+them, so selecting that member on its own installs it, and a dependency
+a member of each of two sets reaches is selected by either alone. A
+package whose version does depend on the combination keeps the
+conjunction, and so does anything that requires it: an entry never
+fires where one of its own dependencies would not.
 
 A dependency a member shares with a selection outside the set names
 both in its marker (`"cpu" in extras or "docs" in extras`), so
