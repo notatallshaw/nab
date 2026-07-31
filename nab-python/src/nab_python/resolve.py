@@ -78,6 +78,7 @@ from .requirements_file import (
     read_pyproject_name,
     read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
+    self_extra_markers,
 )
 from .target import (
     UNBOUNDABLE_MARKER_VARIABLES,
@@ -1224,21 +1225,46 @@ def _validate_conflict_members_exist(
         raise ConfigError(msg)
 
 
+def _conflict_check_targets(
+    tables: _ProjectTables,
+    selected_extras: Sequence[str],
+    targets: Sequence[ResolveTarget],
+) -> list[ResolveTarget]:
+    """Return ``targets`` split at the micros a self-ref marker cuts them at.
+
+    A bare-minor target's ``python_full_version`` is the synthesized
+    ``{minor}.0`` floor, so a self reference gated on ``python_full_version
+    >= "3.10.4"`` read there answers for the whole minor by how its floor
+    happens to read it.  The resolve does not work that way:
+    :func:`_resolve_with_micro_narrowing` splits the minor at that boundary
+    and runs the upper slice with both extras active, so the checks split it
+    the same way and read the closure once per slice.
+    """
+    markers = self_extra_markers(tables.optional, tables.project_name, selected_extras)
+    return [
+        sliced
+        for target in targets
+        for sliced in slices_from_points(target, micro_boundary_points(target, markers))
+    ]
+
+
 def _check_conflict_minimums(
     conflicts: Sequence[ConflictSet],
     tables: _ProjectTables,
     selected_extras: Sequence[str],
     active_groups: Sequence[str],
-    targets: Sequence[ResolveTarget],
+    planned: Sequence[ResolveTarget],
 ) -> None:
     """Run the require-one minimums check per target, marker-aware.
 
     A member reached only through a marker-gated self reference is active
     only on the targets whose environment satisfies that marker, so the
-    check expands the self-extra closure against each target's
-    environment.  A target on which no member is active fails the policy
-    even when another target satisfies it.
+    check expands the self-extra closure against each environment the
+    ``planned`` targets cover (see :func:`_conflict_check_targets`).  An
+    environment on which no member is active fails the policy even when
+    another one satisfies it.
     """
+    targets = _conflict_check_targets(tables, selected_extras, planned)
     for target in targets:
         active_extras = expand_self_extras(
             tables.optional, tables.project_name, selected_extras, target.marker_env
@@ -1254,15 +1280,15 @@ def _check_conflict_exclusions(
     tables: _ProjectTables,
     active_extras: Sequence[str],
     active_groups: Sequence[str],
-    targets: Sequence[ResolveTarget],
+    planned: Sequence[ResolveTarget],
 ) -> None:
     """Run the at-most-one exclusion check per target, marker-aware.
 
-    A self reference reaches its target only on the targets whose
-    environment satisfies its marker, so the self-extra closure is
-    expanded against each one.  Members reached under disjoint markers
-    never share a target and pass; two that co-activate on one target
-    fail.
+    A self reference reaches its extra only where its marker holds, so the
+    self-extra closure is expanded against each environment the ``planned``
+    targets cover (see :func:`_conflict_check_targets`).  Members reached
+    under disjoint markers never share an environment and pass; two that
+    co-activate on one fail.
 
     This runs once per fork, where each fork holds at most one member of
     an engaged set, so it only catches co-selection an umbrella extra or
@@ -1272,6 +1298,7 @@ def _check_conflict_exclusions(
     instead of raising here.
     """
     expanded_groups = expand_group_includes(tables.groups, active_groups)
+    targets = _conflict_check_targets(tables, active_extras, planned)
     for target in targets:
         expanded_extras = expand_self_extras(
             tables.optional, tables.project_name, active_extras, target.marker_env

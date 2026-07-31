@@ -18,7 +18,7 @@ from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 from ._vendor.packaging.utils import InvalidName, canonicalize_name
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
     from pathlib import Path
 
     from ._vendor.packaging.ranges import VersionRange
@@ -35,6 +35,7 @@ __all__ = [
     "read_pyproject_name",
     "read_pyproject_optional_dependencies",
     "resolve_groups_to_requirements",
+    "self_extra_markers",
 ]
 
 
@@ -255,13 +256,7 @@ def expand_self_extras(
             continue
         seen.add(extra)
         out.append(extra)
-        for req_str in canonical_deps.get(extra, ()):
-            try:
-                req = Requirement(req_str)
-            except (ValueError, TypeError):
-                continue
-            if canonicalize_name(req.name) != canonical_project:
-                continue
+        for req in _self_references(canonical_deps, canonical_project, extra):
             if (
                 environment is not None
                 and req.marker is not None
@@ -276,6 +271,49 @@ def expand_self_extras(
                 if canonicalize_name(sub) not in seen
             )
     return out
+
+
+def _self_references(
+    canonical_deps: Mapping[str, Sequence[str]],
+    canonical_project: str,
+    extra: str,
+) -> Iterator[Requirement]:
+    """Yield the requirements of ``extra`` that name the project itself.
+
+    An unparseable requirement is skipped rather than raised on: this walk
+    only decides which extras are reachable.
+    """
+    for req_str in canonical_deps.get(extra, ()):
+        try:
+            req = Requirement(req_str)
+        except (ValueError, TypeError):
+            continue
+        if canonicalize_name(req.name) == canonical_project:
+            yield req
+
+
+def self_extra_markers(
+    optional_deps: Mapping[str, Sequence[str]],
+    project_name: str | None,
+    selected: Sequence[str],
+) -> list[Marker]:
+    """Return the markers gating the self-references ``selected`` reaches.
+
+    The closure is walked without an environment, so the result holds every
+    clause :func:`expand_self_extras` could read under any of them.  A
+    caller deciding which environments to expand the closure under needs the
+    clauses before it has an environment to read them with.
+    """
+    if project_name is None:
+        return []
+    canonical_project = canonicalize_name(project_name)
+    canonical_deps = _canonicalize_optional_deps(optional_deps)
+    return [
+        req.marker
+        for extra in expand_self_extras(optional_deps, project_name, selected)
+        for req in _self_references(canonical_deps, canonical_project, extra)
+        if req.marker is not None
+    ]
 
 
 def _and_markers(marker: Marker | None, gates: frozenset[str]) -> Marker:
