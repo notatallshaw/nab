@@ -22,6 +22,7 @@ from nab_python.requirements_file import (
     read_pyproject_name,
     read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
+    self_extra_markers,
 )
 from nab_resolver.errors import ResolutionError
 
@@ -521,6 +522,42 @@ class TestExpandSelfExtras:
         }
         env = {"python_version": "3.11", "python_full_version": "3.11.0"}
         assert expand_self_extras(opt, "mypkg", ["gpu"], env) == ["gpu", "fast"]
+
+
+class TestSelfExtraMarkers:
+    def test_unknown_project_name_has_no_markers(self) -> None:
+        """Without a project name nothing is a self-reference."""
+        opt = {"all": ["mypkg[a]; python_version < '3.10'"], "a": ["depA"]}
+        assert self_extra_markers(opt, None, ["all"]) == []
+
+    def test_unmarked_self_reference_contributes_nothing(self) -> None:
+        opt = {"all": ["mypkg[a]", "plain; python_version < '3.10'"], "a": ["depA"]}
+        assert self_extra_markers(opt, "mypkg", ["all"]) == []
+
+    def test_marker_collected_from_reachable_extras(self) -> None:
+        """The walk follows the closure, so a nested gate is collected too."""
+        opt = {
+            "all": ["mypkg[mid]; python_full_version >= '3.10.4'"],
+            "mid": ["mypkg[leaf]; sys_platform == 'win32'"],
+            "leaf": ["depL"],
+        }
+        assert [str(m) for m in self_extra_markers(opt, "mypkg", ["all"])] == [
+            'python_full_version >= "3.10.4"',
+            'sys_platform == "win32"',
+        ]
+
+    def test_marker_collected_regardless_of_outer_gate(self) -> None:
+        """A nested gate counts even where the gate above it reads false:
+        the environments the caller has to check are not chosen yet."""
+        opt = {
+            "all": ["mypkg[mid]; python_version < '3.0'"],
+            "mid": ["mypkg[leaf]; python_full_version >= '3.10.4'"],
+            "leaf": ["depL"],
+        }
+        assert [str(m) for m in self_extra_markers(opt, "mypkg", ["all"])] == [
+            'python_version < "3.0"',
+            'python_full_version >= "3.10.4"',
+        ]
 
 
 class TestExpandExtraRequirements:
