@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import errno
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -250,6 +252,15 @@ class TestTopLevelKeys:
         path = tmp_path / "pyproject.toml"
         path.write_bytes(b'[project]\nname = "demo"\ndescription = "\xe9"\n')
         with pytest.raises(ConfigError, match="not valid TOML"):
+            read_pyproject_config(path)
+
+    def test_unreadable_rejected(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[project]\nname = "demo"\n')
+        denied = PermissionError(errno.EACCES, "Permission denied", str(path))
+        with (
+            patch.object(Path, "open", side_effect=denied),
+            pytest.raises(ConfigError, match="cannot read .*Permission denied"),
+        ):
             read_pyproject_config(path)
 
     @pytest.mark.parametrize("user_key", ["offline = true", 'cache-dir = "x"'])

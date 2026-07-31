@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import re
+from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -21,6 +25,18 @@ def _write(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
     return path
+
+
+def _deny_open(target: Path) -> AbstractContextManager[Any]:
+    """Patch ``Path.open`` to refuse ``target`` and pass everything else through."""
+    real = Path.open
+
+    def opener(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == target:
+            raise PermissionError(errno.EACCES, "Permission denied", str(target))
+        return real(self, *args, **kwargs)
+
+    return patch.object(Path, "open", opener)
 
 
 class TestDiscoverWorkspaceRoot:
@@ -364,6 +380,26 @@ class TestReadWorkspaceMembers:
         with pytest.raises(
             WorkspaceDiscoveryError,
             match=rf"{re.escape(str(member))} is not valid TOML",
+        ):
+            read_workspace_members(root)
+
+    def test_member_unreadable_raises(self, tmp_path: Path) -> None:
+        root = _write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n',
+        )
+        member = _write(
+            tmp_path / "pkg" / "pyproject.toml",
+            '[project]\nname = "pkg"\nversion = "0"\n',
+        )
+        with (
+            _deny_open(member),
+            pytest.raises(
+                WorkspaceDiscoveryError,
+                match=rf"cannot read {re.escape(str(member))}.*Permission denied",
+            ),
         ):
             read_workspace_members(root)
 

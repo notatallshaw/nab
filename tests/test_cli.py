@@ -1038,6 +1038,26 @@ class TestLockCommandSpecific:
             lock(pyproject, output=Path("-"))
         assert "is not valid TOML" in capsys.readouterr().err
 
+    def test_unreadable_toml_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An unreadable pyproject reports a clean message, not a traceback."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\nname = "demo"\ndependencies = []\n')
+        denied = PermissionError(errno.EACCES, "Permission denied", str(pyproject))
+        with (
+            patch.object(Path, "open", side_effect=denied),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=Path("-"))
+        err = capsys.readouterr().err
+        # OSError renders its filename with repr, which doubles the
+        # backslashes of a Windows path.
+        assert err.splitlines() == [
+            f"error: in [tool.nab]: cannot read {pyproject}:"
+            f" [Errno {errno.EACCES}] Permission denied: {str(pyproject)!r}"
+        ]
+
     def test_pylock_passed_as_the_project_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
