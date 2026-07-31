@@ -1356,6 +1356,13 @@ class TestHtmlListing:
         files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
         assert [f.filename for f in files] == ["torch-2.7.0-py3-none-any.whl"]
 
+    def test_href_wrapped_in_whitespace_is_read(self, tmp_path: Path) -> None:
+        # HTML allows a URL attribute's value to be surrounded by whitespace.
+        page = b'<a href="\n      torch-2.7.0-py3-none-any.whl\n    ">torch</a>'
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert [f.filename for f in files] == ["torch-2.7.0-py3-none-any.whl"]
+        assert files[0].url == f"{self._INDEX}torch/torch-2.7.0-py3-none-any.whl"
+
     def test_malformed_base_href_fails_the_listing(self, tmp_path: Path) -> None:
         # Every relative anchor resolves against <base href>, so one that
         # cannot be parsed leaves the page's targets unknown.

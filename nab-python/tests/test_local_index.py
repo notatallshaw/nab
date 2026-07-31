@@ -258,6 +258,10 @@ class TestParseFileUrl:
         with pytest.raises(ValueError, match="expected file:// URL"):
             parse_file_url("https://example.com/")
 
+    def test_rejects_null_character(self) -> None:
+        with pytest.raises(ValueError, match="null character"):
+            parse_file_url("file:///srv/sub%00dir/foo-1.0-py3-none-any.whl")
+
     def test_localhost_authority_is_local(self, tmp_path: Path) -> None:
         # RFC 8089: a "localhost" authority resolves like an empty one.
         with_host = tmp_path.as_uri().replace("file://", "file://localhost", 1)
@@ -568,6 +572,35 @@ class TestPep503Directory:
         assert len(result) == 1
         assert result[0].local_path == wheel_path.resolve()
 
+    def test_relative_href_with_query_names_the_artifact(self, tmp_path: Path) -> None:
+        # RFC 3986 puts the query outside the path, so a cache-busting query
+        # on a relative link is not part of the filename.
+        digest = "b" * 64
+        body = f'<a href="foo-1.0-py3-none-any.whl?rev=7#sha256={digest}">foo</a>'
+        package_dir = self._make_index(tmp_path, body)
+        wheel_path = package_dir / "foo-1.0-py3-none-any.whl"
+        wheel_path.write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        (record,) = run(client.get_files("foo"))
+        assert record.filename == "foo-1.0-py3-none-any.whl"
+        assert record.version == "1.0"
+        assert record.local_path == wheel_path.resolve()
+        assert parse_file_url(record.url) == wheel_path.resolve()
+        assert record.hashes == (("sha256", digest),)
+
+    def test_relative_href_wrapped_in_whitespace_names_the_artifact(
+        self, tmp_path: Path
+    ) -> None:
+        # HTML allows a URL attribute's value to be surrounded by whitespace.
+        body = '<a href="\n      foo-1.0-py3-none-any.whl\n    ">foo</a>'
+        package_dir = self._make_index(tmp_path, body)
+        wheel_path = package_dir / "foo-1.0-py3-none-any.whl"
+        wheel_path.write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        (record,) = run(client.get_files("foo"))
+        assert record.filename == "foo-1.0-py3-none-any.whl"
+        assert record.local_path == wheel_path.resolve()
+
     def test_base_href_redirects_relative_anchor(self, tmp_path: Path) -> None:
         # An absolute <base href> moves the resolution base off the page
         # directory; the relative anchor must land on the real wheel there.
@@ -717,9 +750,22 @@ class TestPep503Directory:
         result = run(client.get_files("foo"))
         assert [r.version for r in result] == ["2.0"]
 
+    def test_pep503_null_byte_directory_href_dropped(self, tmp_path: Path) -> None:
+        # The null byte need not sit in the filename: the guard covers the
+        # whole path, not just its last segment.
+        body = (
+            '<a href="sub%00dir/foo-1.0-py3-none-any.whl">foo-bad</a>'
+            '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert [r.version for r in result] == ["2.0"]
+
     def test_pep503_malformed_ipv6_href_dropped(self, tmp_path: Path) -> None:
-        # An unterminated IPv6 bracket makes urlparse raise ValueError before
-        # the scheme is even known; drop that anchor and keep the sibling.
+        # An unterminated IPv6 bracket makes the href join raise ValueError
+        # before the scheme is known; drop that anchor and keep the sibling.
         body = (
             '<a href="http://[bad">foo-bad</a>'
             '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'
@@ -733,9 +779,8 @@ class TestPep503Directory:
     def test_pep503_malformed_ipv6_href_under_valid_base_dropped(
         self, tmp_path: Path
     ) -> None:
-        # Under a usable <base href> the join is what raises, one call earlier
-        # than urlparse. Both sit under the same guard, so the anchor is dropped
-        # and its good sibling is kept.
+        # A usable <base href> does not turn one unparseable anchor into a
+        # page failure: the anchor is dropped and its sibling kept.
         body = (
             '<base href="https://mirror.example/simple/foo/">'
             '<a href="http://[bad">foo-bad</a>'
