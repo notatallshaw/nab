@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import logging
+import sys
 import tarfile
 import tempfile
 import threading
@@ -14,6 +15,7 @@ import time
 import zipfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import NoReturn
 
 import httpx
 import pytest
@@ -899,8 +901,8 @@ class TestFetchCoordinator:
 
     def test_crashed_raises(self) -> None:
         coord = _coord()
-        coord._crashed = True
-        with pytest.raises(RuntimeError, match="crashed"):
+        coord._record_crash(ValueError("boom"))
+        with pytest.raises(RuntimeError, match="crashed: boom"):
             coord.request_listing("foo")
 
     @respx.mock
@@ -990,8 +992,59 @@ class TestFetchCoordinator:
         with pytest.raises(RuntimeError, match="crashed"):
             request_from_crashed_fetcher()
 
-    def _crashed_coord_in_race_window(self) -> FetchCoordinator:
-        """Return a crashed coordinator caught before _crashed is visible."""
+    def test_start_holds_until_client_is_built(self) -> None:
+        """start() does not return while the index client is still being built."""
+        building = threading.Event()
+        release = threading.Event()
+        started = threading.Event()
+
+        class _BlockingBuildCoordinator(FetchCoordinator):
+            def _build_client(self) -> NoReturn:
+                building.set()
+                release.wait(timeout=5)
+                msg = "index client build failed"
+                raise ValueError(msg)
+
+        coord = _BlockingBuildCoordinator(transport=HttpxAsyncTransport())
+
+        def _start() -> None:
+            coord.start()
+            started.set()
+
+        starter = threading.Thread(target=_start)
+        starter.start()
+
+        try:
+            assert building.wait(timeout=5)
+            assert not coord._queue_ready.is_set()
+
+            release.set()
+            assert started.wait(timeout=5)
+            assert coord._crashed
+            assert coord._async_q is None
+            with pytest.raises(RuntimeError, match="index client build failed"):
+                coord.request_listing("foo")
+        finally:
+            release.set()
+            starter.join(timeout=5)
+            coord.shutdown()
+
+    def test_non_local_file_index_error_names_the_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rejected index URL reaches the caller in the crash error."""
+        monkeypatch.setattr(sys, "platform", "linux")
+        coord = _coord(indexes=[IndexConfig("local", "file://wheels")])
+        try:
+            coord.start()
+            assert coord._crashed
+            with pytest.raises(RuntimeError, match="file://wheels"):
+                coord.request_listing("foo")
+        finally:
+            coord.shutdown()
+
+    def _dead_loop_coord(self) -> FetchCoordinator:
+        """Return a coordinator whose loop is dead, crash flag cleared."""
         coord = _coord(index_routes=[IndexRoute(name="foo", index="missing")])
         coord.start()
         assert coord._thread is not None
@@ -1001,14 +1054,14 @@ class TestFetchCoordinator:
 
     def test_refused_listing_submit_releases_waiter(self) -> None:
         """A listing request refused by a closed loop fails instead of hanging."""
-        coord = self._crashed_coord_in_race_window()
+        coord = self._dead_loop_coord()
         event = coord.request_listing("foo")
         assert event.is_set()
         assert isinstance(coord.index.get_listing_error("foo"), RuntimeError)
 
     def test_refused_submit_releases_all_request_kinds(self) -> None:
         """Refused metadata, sdist, archive, and batch requests all fail loudly."""
-        coord = self._crashed_coord_in_race_window()
+        coord = self._dead_loop_coord()
         meta = coord.request_metadata("a", "1.0", "https://f.com/a")
         sdist = coord.request_sdist("b", "1.0", "https://f.com/b.tar.gz")
         archive = coord.request_sdist_archive("c", "1.0", "https://f.com/c.tar.gz")
@@ -1025,6 +1078,37 @@ class TestFetchCoordinator:
         assert isinstance(coord.index.get_metadata_error("b", "1.0"), RuntimeError)
         assert isinstance(coord.index.get_sdist_archive_error("c", "1.0"), RuntimeError)
         assert isinstance(batch_error, RuntimeError)
+
+    def test_submit_to_closed_loop_releases_waiter(self) -> None:
+        """A request reaching the loop after it closed fails instead of hanging."""
+
+        class _DispatchFailureCoordinator(FetchCoordinator):
+            def _dispatch(
+                self,
+                item: FetchRequest | list[FetchRequest],
+                client: object,
+                sem: asyncio.Semaphore,
+                tasks: set[asyncio.Task],
+            ) -> NoReturn:
+                msg = "dispatch failed"
+                raise RuntimeError(msg)
+
+        coord = _DispatchFailureCoordinator(transport=HttpxAsyncTransport())
+        coord.start()
+        coord.request_listing("foo")
+
+        assert coord._thread is not None
+        coord._thread.join(timeout=5)
+        assert coord._crashed
+        assert coord._loop is not None
+
+        # Clear the flag so the next request gets past _check_alive to _submit.
+        coord._crashed = False
+        event = coord.request_listing("bar")
+        assert event.is_set()
+        assert isinstance(coord.index.get_listing_error("bar"), RuntimeError)
+
+        coord.shutdown()
 
     @respx.mock
     def test_drain_queue_empty_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2387,7 +2471,7 @@ class TestRangeMetadataIndex:
 
 
 def _crashed_range_coord() -> FetchCoordinator:
-    """Return a crashed coordinator caught before _crashed is visible."""
+    """Return a coordinator whose loop is dead, crash flag cleared."""
     coord = _coord(index_routes=[IndexRoute(name="foo", index="missing")])
     coord.start()
     assert coord._thread is not None

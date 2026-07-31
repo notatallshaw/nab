@@ -721,6 +721,7 @@ class FetchCoordinator:
         self._thread: threading.Thread | None = None
         self._started = False
         self._crashed = False
+        self._crash_error: BaseException | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._async_q: asyncio.Queue[_QueueItem] | None = None
         self._queue_ready = threading.Event()
@@ -805,10 +806,16 @@ class FetchCoordinator:
             else:
                 self.index.store_sdist_archive_error(req.package, req.version, error)
 
+    def _record_crash(self, error: BaseException) -> None:
+        """Record the failure that killed the fetcher thread."""
+        self._crash_error = error
+        self._crashed = True
+
     def _check_alive(self) -> None:
-        if self._crashed:
-            msg = "Fetcher thread crashed, see log for details"
-            raise RuntimeError(msg)
+        if not self._crashed:
+            return
+        msg = f"Fetcher thread crashed: {self._crash_error}"
+        raise RuntimeError(msg)
 
     def request_listing(self, package: str) -> threading.Event:
         """Request a listing fetch; return an event set when the result lands."""
@@ -1008,8 +1015,8 @@ class FetchCoordinator:
     def _run_loop(self) -> None:
         try:
             asyncio.run(self._async_fetcher())
-        except Exception:
-            self._crashed = True
+        except Exception as exc:
+            self._record_crash(exc)
             logger.exception("Fetcher thread crashed")
 
     def _build_client(
@@ -1072,18 +1079,26 @@ class FetchCoordinator:
         )
 
     async def _async_fetcher(self) -> None:
-        self._loop = asyncio.get_running_loop()
         # Fresh per-run memo, owned on this single loop thread, injected into
         # every client _build_client constructs below.
         self._range_memo = RangeCapabilityMemo()
-        queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
-        self._async_q = queue
-        self._queue_ready.set()
 
+        queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         sem = asyncio.Semaphore(self._max_concurrency)
         tasks: set[asyncio.Task] = set()
 
-        client = self._build_client()
+        try:
+            client = self._build_client()
+            self._loop = asyncio.get_running_loop()
+            self._async_q = queue
+        except BaseException as exc:
+            # _loop and _async_q stay unset, so _submit refuses the request.
+            self._record_crash(exc)
+            raise
+        finally:
+            # start() waits on this event, so every path has to set it.
+            self._queue_ready.set()
+
         try:
             stopping = False
             while not stopping:
