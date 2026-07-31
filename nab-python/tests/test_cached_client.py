@@ -40,6 +40,7 @@ from nab_index.client import (
     _select_artifact_hash,
 )
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
+from nab_index.serialization import SimpleSerialization
 from nab_index.transport import HttpError
 from nab_python.metadata import parse_metadata
 
@@ -1532,6 +1533,127 @@ class TestHtmlListing:
             self._fetch(_make_cache(tmp_path), page, "text/html")
         assert isinstance(caught.value, HttpError)
         assert _make_cache(tmp_path).get_simple("torch") is None
+
+
+class TestSerializationPin:
+    """A pin fixes the Accept header and the decoder nab will accept."""
+
+    _INDEX = "https://pypi.org/simple/"
+    _PAGE = b'<a href="pkg-1.0-py3-none-any.whl">pkg</a>'
+    _JSON_TYPE = "application/vnd.pypi.simple.v1+json"
+
+    def _fetch(
+        self,
+        cache: OnDiskCache,
+        serialization: SimpleSerialization,
+        body: bytes = LISTING_BYTES,
+        content_type: str | None = _JSON_TYPE,
+    ) -> tuple[list, _FakeTransport]:
+        headers = {} if content_type is None else {"content-type": content_type}
+        transport = _FakeTransport([_FakeResponse(body, headers=headers)])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(
+                transport, cache, self._INDEX, serialization=serialization
+            )
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        return (asyncio.run(go()), transport)
+
+    def test_json_pin_asks_for_json_only(self, tmp_path: Path) -> None:
+        _, transport = self._fetch(_make_cache(tmp_path), SimpleSerialization.JSON)
+        sent = transport.calls[0][1]
+        assert sent is not None
+        assert sent["Accept"] == "application/vnd.pypi.simple.v1+json"
+
+    def test_html_pin_asks_for_both_html_spellings(self, tmp_path: Path) -> None:
+        _, transport = self._fetch(
+            _make_cache(tmp_path),
+            SimpleSerialization.HTML,
+            self._PAGE,
+            "text/html",
+        )
+        sent = transport.calls[0][1]
+        assert sent is not None
+        assert sent["Accept"] == (
+            "application/vnd.pypi.simple.v1+html, text/html;q=0.01"
+        )
+
+    def test_revalidation_sends_the_pinned_accept_with_the_etag(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=1, etag="old-etag"),
+        )
+        _, transport = self._fetch(cache, SimpleSerialization.JSON)
+        sent = transport.calls[0][1]
+        assert sent is not None
+        assert sent["Accept"] == "application/vnd.pypi.simple.v1+json"
+        assert sent["If-None-Match"] == "old-etag"
+
+    def test_json_pin_rejects_an_html_body(self, tmp_path: Path) -> None:
+        with pytest.raises(MalformedSimpleResponseError) as caught:
+            self._fetch(
+                _make_cache(tmp_path),
+                SimpleSerialization.JSON,
+                self._PAGE,
+                "text/html",
+            )
+        message = str(caught.value)
+        assert "Content-Type 'text/html'" in message
+        assert "pinned to serialization = 'json'" in message
+        assert "set serialization = 'html'" in message
+
+    def test_html_pin_rejects_a_json_body(self, tmp_path: Path) -> None:
+        with pytest.raises(MalformedSimpleResponseError) as caught:
+            self._fetch(_make_cache(tmp_path), SimpleSerialization.HTML)
+        message = str(caught.value)
+        assert f"Content-Type {self._JSON_TYPE!r}" in message
+        assert "pinned to serialization = 'html'" in message
+
+    def test_json_pin_decodes_a_json_body(self, tmp_path: Path) -> None:
+        files, _ = self._fetch(_make_cache(tmp_path), SimpleSerialization.JSON)
+        assert [f.filename for f in files] == ["pkg-1.0-py3-none-any.whl"]
+
+    @pytest.mark.parametrize(
+        "content_type",
+        ["text/html", "application/vnd.pypi.simple.v1+html"],
+    )
+    def test_html_pin_decodes_both_html_content_types(
+        self, tmp_path: Path, content_type: str
+    ) -> None:
+        files, _ = self._fetch(
+            _make_cache(tmp_path),
+            SimpleSerialization.HTML,
+            self._PAGE,
+            content_type,
+        )
+        assert [f.filename for f in files] == ["pkg-1.0-py3-none-any.whl"]
+
+    def test_missing_content_type_reads_as_json_under_a_json_pin(
+        self, tmp_path: Path
+    ) -> None:
+        files, _ = self._fetch(
+            _make_cache(tmp_path), SimpleSerialization.JSON, content_type=None
+        )
+        assert [f.filename for f in files] == ["pkg-1.0-py3-none-any.whl"]
+
+    def test_missing_content_type_is_rejected_under_an_html_pin(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(MalformedSimpleResponseError, match="no Content-Type"):
+            self._fetch(
+                _make_cache(tmp_path),
+                SimpleSerialization.HTML,
+                self._PAGE,
+                content_type=None,
+            )
 
 
 class TestGetMetadataText:
