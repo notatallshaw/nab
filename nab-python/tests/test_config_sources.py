@@ -11,8 +11,10 @@ renderers.  Search roots are injected so nothing reads the real
 
 from __future__ import annotations
 
+import errno
 import logging
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -572,6 +574,15 @@ class TestLoadTomlLayerDirect:
         path.write_bytes(b'[project]\ndescription = "\xe9"\n')
         with pytest.raises(SourceConfigError, match="not valid TOML"):
             _load_toml_layer(path, SourceKind.PYPROJECT)
+
+    def test_unreadable_file_errors(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "nab.toml", 'resolution = "lowest"\n')
+        denied = PermissionError(errno.EACCES, "Permission denied", str(path))
+        with (
+            patch.object(Path, "open", side_effect=denied),
+            pytest.raises(SourceConfigError, match="cannot read .*Permission denied"),
+        ):
+            _load_toml_layer(path, SourceKind.USER_TOML)
 
     def test_pyproject_without_tool_nab_is_empty(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "pyproject.toml", '[project]\nname = "x"\n')

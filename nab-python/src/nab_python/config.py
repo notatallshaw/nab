@@ -883,6 +883,9 @@ def _reject_unknown_pyproject_keys(path: Path) -> None:
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{path} is not valid TOML: {exc}"
         raise ConfigError(msg) from exc
+    except OSError as exc:
+        msg = f"cannot read {path}: {exc}"
+        raise ConfigError(msg) from exc
     raw = tool_nab_section(data)
     if not isinstance(raw, dict):
         msg = f"[tool.nab] must be a table, got {type(raw).__name__}"

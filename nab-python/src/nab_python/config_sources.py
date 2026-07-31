@@ -1342,6 +1342,9 @@ def _read_raw_table(path: Path, kind: SourceKind) -> Mapping[str, Any]:
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{path} is not valid TOML: {exc}"
         raise SourceConfigError(msg) from exc
+    except OSError as exc:
+        msg = f"cannot read {path}: {exc}"
+        raise SourceConfigError(msg) from exc
     if kind is SourceKind.PYPROJECT:
         section = tool_nab_section(data)
         # A non-table [tool.nab] is malformed, not an empty config.

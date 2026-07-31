@@ -55,17 +55,20 @@ _PROJECT_TOML = "nab.toml"
 
 
 def _load_member_toml(pyproject: Path) -> dict[str, Any]:
-    """Parse ``pyproject``, raising :class:`WorkspaceDiscoveryError` on bad TOML.
+    """Parse ``pyproject``, raising :class:`WorkspaceDiscoveryError` on a bad read.
 
-    :func:`discover_workspace_root` swallows parse errors while walking,
-    but a chosen root and its declared members must parse, so malformed
-    TOML here is a hard error.
+    :func:`discover_workspace_root` swallows read and parse errors while
+    walking, but a chosen root and its declared members must parse, so an
+    unreadable or malformed file here is a hard error.
     """
     try:
         with pyproject.open("rb") as f:
             return tomli.load(f)
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{pyproject} is not valid TOML: {exc}"
+        raise WorkspaceDiscoveryError(msg) from exc
+    except OSError as exc:
+        msg = f"cannot read {pyproject}: {exc}"
         raise WorkspaceDiscoveryError(msg) from exc
 
 
