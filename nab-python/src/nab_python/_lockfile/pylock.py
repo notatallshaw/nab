@@ -22,7 +22,11 @@ from nab_index.atomic import atomic_write_text
 
 from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.markers import Marker
-from .._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
+from .._vendor.packaging.markersets import (
+    IntractableMarkerSet,
+    MarkerSet,
+    UnserializableMarkerSet,
+)
 from .._vendor.packaging.pylock import (
     Package,
     PackageArchive,
@@ -355,14 +359,23 @@ def _emission_universe(lock_input: LockInput) -> MarkerSet:
     are declared.  PEP 751 step 4 has a conforming installer read a per-package
     marker only in an environment some row admits, so within-universe
     equivalence is the sound contract.
+
+    A union admitting no environment makes every set vacuously equivalent to
+    every other, so the full set stands in for it: a simplification sound in
+    every environment is sound inside an empty one too.  A union is empty
+    exactly when every row is, so rows are tested one at a time rather than as a
+    whole-matrix product, and a row too wide to decide counts as inhabited.
     """
     if not lock_input.environments:
         return MarkerSet.full()
-    return reduce(
-        MarkerSet.union,
-        (MarkerSet.from_marker(m) for m in lock_input.environments),
-        MarkerSet.empty(),
-    )
+    rows = [MarkerSet.from_marker(m) for m in lock_input.environments]
+    try:
+        uninhabited = all(row.is_empty() for row in rows)
+    except IntractableMarkerSet:
+        uninhabited = False
+    if uninhabited:
+        return MarkerSet.full()
+    return reduce(MarkerSet.union, rows, MarkerSet.empty())
 
 
 def _finalize_marker(
@@ -370,47 +383,49 @@ def _finalize_marker(
 ) -> Marker | None:
     """Return ``raw`` in its shortest form equivalent over ``within``.
 
-    ``None`` passes through.  The simplified set is serialised, reparsed, and
-    checked equivalent to ``raw`` over ``within`` before return; a mismatch
-    raises :class:`UnsoundSimplificationError`.  A set full over the universe
-    serialises to ``None``.
+    ``None`` passes through, and a set full over the universe serialises back to
+    ``None``.  The simplified set is serialised, reparsed, and checked equivalent
+    to ``raw`` over ``within``; a mismatch raises
+    :class:`UnsoundSimplificationError`.
 
-    A marker whose membership powerset overruns the cell budget cannot be
-    decided, so it ships unsimplified: the raw marker is already correct and
-    gated, and simplification is only a compaction.
+    Simplification is only a compaction, so every way the algebra can decline to
+    answer ships ``raw`` instead: :class:`IntractableMarkerSet` when a decision
+    overruns the cell budget or the marker nests past the stack, and
+    :class:`UnserializableMarkerSet` when the simplified set has no marker
+    spelling, which is what a marker selecting nothing inside ``within``
+    collapses to.
     """
     if raw is None:
         return None
     try:
         simplified = MarkerSet.from_marker(raw).simplify(within=within)
         text = simplified.to_marker_string()
-        if text is None:
-            _verify_within_universe(raw, MarkerSet.full(), "no marker", within, name)
-            return None
-        rebuilt = Marker(text)
-        _verify_within_universe(
-            raw, MarkerSet.from_marker(rebuilt), str(rebuilt), within, name
+        rebuilt = None if text is None else Marker(text)
+        emitted = (
+            MarkerSet.full() if rebuilt is None else MarkerSet.from_marker(rebuilt)
         )
-    except IntractableMarkerSet:
+        shown = "no marker" if rebuilt is None else str(rebuilt)
+        sound = _sound_within_universe(raw, emitted, within)
+    except (IntractableMarkerSet, UnserializableMarkerSet):
         return raw
-    return rebuilt
-
-
-def _verify_within_universe(
-    raw: Marker, emitted: MarkerSet, shown: str, within: MarkerSet, name: str
-) -> None:
-    """Raise if ``emitted`` and ``raw`` differ on any environment in ``within``.
-
-    ``emitted`` is what the lock ships: the reparsed marker bytes, or
-    :meth:`MarkerSet.full` when no marker field is emitted.
-    """
-    raw_set = MarkerSet.from_marker(raw)
-    if not (raw_set & within).equivalent(emitted & within):
+    if not sound:
         msg = (
             f"{name}: emitted marker {shown!r} is not equivalent to"
             f" {str(raw)!r} over the declared environments"
         )
         raise UnsoundSimplificationError(msg)
+    return rebuilt
+
+
+def _sound_within_universe(raw: Marker, emitted: MarkerSet, within: MarkerSet) -> bool:
+    """Whether ``emitted`` and ``raw`` agree on every environment in ``within``.
+
+    ``emitted`` is what the lock ships: the reparsed marker bytes, or
+    :meth:`MarkerSet.full` when no marker field is emitted.  Complementing the
+    whole matrix in one shot costs more than the operator it checks, so on a
+    wide multi-platform universe this overruns first.
+    """
+    return (MarkerSet.from_marker(raw) & within).equivalent(emitted & within)
 
 
 def _build_packages(

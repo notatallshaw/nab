@@ -1,8 +1,8 @@
 """Emission-time per-package marker simplification.
 
 Covers the ``build_pylock`` wiring that finalises each per-package marker
-to its shortest within-universe form before the disjointness and coverage
-gates, plus the fail-closed verify on the emitted bytes.
+to its shortest within-universe form before the disjointness gate, plus the
+fail-closed verify on the emitted bytes.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ else:
 from nab_python._lockfile.disjointness import validate_marker_disjointness
 from nab_python._lockfile.pylock import (
     UnsoundSimplificationError,
+    _emission_universe,
     _finalize_marker,
     build_pylock,
     render_lock,
@@ -265,6 +266,96 @@ class TestFinalizeMarker:
         result = _finalize_marker(raw, _union(_ENVS), "torch")
         assert result is not None
         assert str(result) == str(raw)
+
+
+def _non_covering_lock() -> LockInput:
+    """A lock whose declared rows cover the linux targets only.
+
+    ``build_lock_input`` derives the rows from the same targets it locked, so
+    this shape needs a hand-built :class:`LockInput`; ``LockInput.environments``
+    is public and takes any markers.
+    """
+    targets: dict[str, TargetLock] = {}
+    for t in (*_LINUX, *_WIN):
+        pins: dict[str, IndexPin] = {"bar": _index_pin("bar")}
+        if t in _WIN:
+            pins["pywin32"] = _index_pin("pywin32")
+        targets[t.label] = TargetLock(target=t, pins=pins)
+    return LockInput(targets=targets, environments=[_row(t) for t in _LINUX])
+
+
+class TestNonCoveringEnvironments:
+    """A package selecting nothing inside the declared universe ships raw.
+
+    Its simplification is the empty set, which has no marker spelling, so there
+    is nothing shorter to emit.
+    """
+
+    def test_uncovered_package_ships_raw_marker(self) -> None:
+        emitted = _emitted(_non_covering_lock())["pywin32"]["marker"]
+        expected = " or ".join(f"({t.environment_marker_string})" for t in _WIN)
+        assert emitted == str(Marker(expected))
+
+    def test_covered_packages_still_finalise(self) -> None:
+        assert "marker" not in _emitted(_non_covering_lock())["bar"]
+
+    def test_direct_empty_within_universe_ships_raw(self) -> None:
+        raw = Marker('sys_platform == "aix"')
+        result = _finalize_marker(raw, _union(_ENVS), "aixonly")
+        assert result is not None
+        assert str(result) == str(raw)
+
+    def test_globally_contradictory_marker_ships_raw(self) -> None:
+        raw = Marker('sys_platform == "linux" and sys_platform != "linux"')
+        result = _finalize_marker(raw, MarkerSet.full(), "never")
+        assert result is not None
+        assert str(result) == str(raw)
+
+
+class TestEmissionUniverse:
+    """The universe the emitter simplifies against.
+
+    These declarations are hand-built; nab's own resolve never produces them.
+    """
+
+    def _with_environments(self, environments: Sequence[Marker]) -> LockInput:
+        host = _target("3.11")
+        return LockInput(
+            targets={
+                host.label: TargetLock(target=host, pins={"foo": _index_pin("foo")})
+            },
+            environments=list(environments),
+        )
+
+    def test_no_environments_is_the_full_set(self) -> None:
+        assert _emission_universe(self._with_environments([])).is_full()
+
+    def test_uninhabited_rows_fall_back_to_the_full_set(self) -> None:
+        rows = [Marker('sys_platform == "linux" and sys_platform == "win32"')]
+        assert _emission_universe(self._with_environments(rows)).is_full()
+
+    def test_one_inhabited_row_keeps_the_declared_union(self) -> None:
+        rows = [
+            Marker('sys_platform == "linux" and sys_platform == "win32"'),
+            Marker('sys_platform == "linux"'),
+        ]
+        universe = _emission_universe(self._with_environments(rows))
+        assert universe.equivalent(MarkerSet.from_marker('sys_platform == "linux"'))
+
+    def test_uninhabited_lock_still_emits(self) -> None:
+        rows = [Marker('sys_platform == "linux" and sys_platform == "win32"')]
+        data = tomllib.loads(render_lock(self._with_environments(rows)))
+        assert [p["name"] for p in data["packages"]] == ["foo"]
+
+    def test_undecidable_row_counts_as_inhabited(self) -> None:
+        wide = Marker(" and ".join(f'"e{i}" in extras' for i in range(20)))
+        universe = _emission_universe(self._with_environments([wide]))
+        # The full set would drop a tautology; an undecidable universe decides
+        # nothing, so the marker ships raw.
+        tautology = Marker('python_version == "3.11" or python_version != "3.11"')
+        result = _finalize_marker(tautology, universe, "foo")
+        assert result is not None
+        assert str(result) == str(tautology)
 
 
 class TestDeterminism:
