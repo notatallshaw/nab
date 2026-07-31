@@ -160,6 +160,11 @@ class InMemoryIndex:
         # artifact its own target would install.
         self._metadata: dict[tuple[str, str, str | None], str | None] = {}
         self._metadata_errors: dict[tuple[str, str, str | None], BaseException] = {}
+        # Empty metadata slots that stand for a rung skipped offline, keyed by
+        # that rung's URL.
+        self._offline_metadata_misses: set[tuple[str, str, str]] = set()
+        # Packages whose offline skips have already been warned about.
+        self._offline_metadata_warned: set[str] = set()
         # Versions whose version-level slot was written from an sdist PKG-INFO;
         # readers need the origin because only sdist deps go through the
         # PEP 643 gate.
@@ -408,6 +413,38 @@ class InMemoryIndex:
                 if error is not None:
                     return error
             return self._metadata_errors.get((package, version, None))
+
+    def record_offline_metadata_miss(
+        self, package: str, version: str, url: str
+    ) -> None:
+        """Mark the metadata fetch at ``url`` as one offline mode skipped.
+
+        The skip writes the same empty slot a metadata-less artifact writes, so
+        without the mark the two read alike.  ``url`` keys it to one rung of the
+        ladder: a rung skipped is no claim about an artifact a later rung read.
+        """
+        with self._lock:
+            self._offline_metadata_misses.add((package, version, url))
+
+    def is_offline_metadata_miss(
+        self, package: str, version: str, url: str | None
+    ) -> bool:
+        """Whether the metadata fetch at ``url`` was skipped offline."""
+        with self._lock:
+            return (package, version, url) in self._offline_metadata_misses
+
+    def claim_offline_metadata_warning(self, package: str) -> bool:
+        """Whether the caller owns ``package``'s one offline-skip warning.
+
+        True for the first caller only.  The targets of a run share this index
+        but each builds its own :class:`~nab_python.provider.Provider`, so the
+        state lives here to hold the report to one per package.
+        """
+        with self._lock:
+            if package in self._offline_metadata_warned:
+                return False
+            self._offline_metadata_warned.add(package)
+            return True
 
     def store_sdist_metadata(
         self, package: str, version: str, data: str | None
@@ -1249,10 +1286,17 @@ class FetchCoordinator:
         A declared archive is the exception: it is the package's only
         candidate, so there is nothing to degrade to and an offline miss is
         recorded as an error.
+
+        A metadata rung marks the skip before it stores, so a waiter released
+        by the store reads the mark and not a bare empty slot.
         """
         assert req.version is not None
         if req.kind is FetchKind.METADATA:
             if offline:
+                assert req.url is not None
+                self.index.record_offline_metadata_miss(
+                    req.package, req.version, req.url
+                )
                 self.index.store_metadata(req.package, req.version, None, req.url)
             else:
                 self.index.store_metadata_error(req.package, req.version, exc, req.url)
@@ -1260,6 +1304,9 @@ class FetchCoordinator:
             assert req.url is not None
             if offline:
                 # A cold offline miss is a rung miss: fall through to the sdist.
+                self.index.record_offline_metadata_miss(
+                    req.package, req.version, req.url
+                )
                 self.index.store_range_absent(req.package, req.version, req.url)
             else:
                 # A malformed blob or an unserveable advertised wheel fails
@@ -1267,6 +1314,10 @@ class FetchCoordinator:
                 self.index.store_range_error(req.package, req.version, req.url, exc)
         elif req.kind is FetchKind.SDIST:
             if offline:
+                assert req.url is not None
+                self.index.record_offline_metadata_miss(
+                    req.package, req.version, req.url
+                )
                 self.index.store_sdist_metadata(req.package, req.version, None)
             else:
                 self.index.store_sdist_metadata_error(req.package, req.version, exc)

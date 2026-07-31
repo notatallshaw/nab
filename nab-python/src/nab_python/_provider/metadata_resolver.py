@@ -8,6 +8,7 @@ each ``Requires-Dist`` entry into base deps vs per-extra deps.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, TypeGuard
 from urllib.parse import urlsplit
 
@@ -50,6 +51,10 @@ TargetDepSignature = tuple[
     dict[str, dict[str, VersionRange]],
     dict[str | None, set[tuple[str, frozenset[str], str]]],
 ]
+
+logger = logging.getLogger(__name__)
+
+_OFFLINE_METADATA_MISS = "offline mode skipped a metadata fetch with no cached metadata"
 
 
 def resolve_metadata(
@@ -120,15 +125,35 @@ def resolve_metadata(
     if metadata_text is not None:
         return (metadata_text, from_sdist)
 
-    # A fetched sdist with no PKG-INFO is a distinct failure from no sdist at all.
-    reason = (
-        "the sdist has no readable PKG-INFO"
-        if sdist is not None
-        else "no sdist available"
-    )
+    # Only the rung the ladder gave up on can name the reason: an earlier rung
+    # skipped offline says nothing about what this one read.
+    last_url = sdist.url if sdist is not None else metadata_url
 
-    msg = f"No metadata for {package}=={version}: no PEP 658 metadata and {reason}"
+    if index.is_offline_metadata_miss(normalized, ver_str, last_url):
+        reason = _OFFLINE_METADATA_MISS
+        _report_offline_skip(index, normalized, package, version)
+    elif sdist is not None:
+        # A fetched sdist with no PKG-INFO is distinct from no sdist at all.
+        reason = "no PEP 658 metadata and the sdist has no readable PKG-INFO"
+    else:
+        reason = "no PEP 658 metadata and no sdist available"
+
+    msg = f"No metadata for {package}=={version}: {reason}"
     raise MetadataError(msg)
+
+
+def _report_offline_skip(
+    index: InMemoryIndex, normalized: str, package: str, version: Version
+) -> None:
+    """Report a release skipped for want of cached metadata.
+
+    The resolver drops the version and can still succeed on an older one, so
+    the drop has to be visible.  A cold cache drops as many releases as the
+    listing holds, hence one warning per package and an info line per release.
+    """
+    if index.claim_offline_metadata_warning(normalized):
+        logger.warning("Skipping releases of %s: %s", package, _OFFLINE_METADATA_MISS)
+    logger.info("Skipping %s==%s: %s", package, version, _OFFLINE_METADATA_MISS)
 
 
 def _read_direct_wheel_metadata(
