@@ -97,7 +97,9 @@ def parse_file_url(url: str) -> Path:
     paths (``file:///C:/...``) and percent-encoded characters round-trip
     cleanly across platforms. An empty or ``localhost`` authority (RFC
     8089) means the local machine; any other host becomes a UNC share on
-    Windows and is rejected elsewhere.
+    Windows and is rejected elsewhere.  :mod:`pathlib` accepts a decoded
+    null character, which names no file on any platform, so it raises
+    :class:`ValueError` here instead.
     """
     parsed = urlparse(url)
     if parsed.scheme != "file":
@@ -113,7 +115,12 @@ def parse_file_url(url: str) -> Path:
         msg = f"non-local file:// URL is not supported on this platform: {url!r}"
         raise ValueError(msg)
 
-    return Path(url2pathname(netloc + parsed.path))
+    path = url2pathname(netloc + parsed.path)
+    if "\x00" in path:
+        msg = f"file:// URL decodes to a path containing a null character: {url!r}"
+        raise ValueError(msg)
+
+    return Path(path)
 
 
 def _resolve_served_path(url: str) -> Path:
@@ -163,14 +170,14 @@ def _scan_pep503_directory(
         raise MalformedLocalListingError(msg) from exc
 
     anchors, base_href = read_page(text)
-    base_url: str | None = None
+    base_url = (package_dir.resolve() / "index.html").as_uri()
     if base_href is not None:
         # A base href every relative anchor resolves against, so one that
         # cannot be parsed leaves the whole page's targets unknown. Fail
-        # loudly rather than fall back to the package directory, which
-        # would resolve each link to a different file than the page names.
+        # loudly rather than fall back to the page URL, which would resolve
+        # each link to a different file than the page names.
         try:
-            base_url = urljoin(index_html.as_uri(), base_href)
+            base_url = urljoin(base_url, base_href)
         except ValueError as exc:
             msg = f"{index_html} has an unparseable <base href>: {exc}"
             raise MalformedLocalListingError(msg) from exc
@@ -182,7 +189,7 @@ def _scan_pep503_directory(
             continue
 
         filename, file_url, local_path, hashes = _resolve_local_link(
-            anchor.href, package_dir, base_url
+            anchor.href, base_url
         )
         if filename is None:
             continue
@@ -202,14 +209,15 @@ def _scan_pep503_directory(
 
 def _resolve_local_link(
     href: str,
-    package_dir: Path,
-    base_url: str | None,
+    base_url: str,
 ) -> tuple[str | None, str, Path | None, tuple[tuple[str, str], ...]]:
     """Resolve an anchor href to ``(filename, url, local_path, hashes)``.
 
-    ``base_url`` is the page's ``<base href>`` when it carries one, else
-    ``None``.  A relative href joins against it; an absolute href ignores
-    it per RFC 3986.
+    ``base_url`` is the page's ``<base href>`` when it carries one, else the
+    ``index.html`` URL.  An href is a URL reference, so only its path
+    component names the artefact, and the target may sit outside the package
+    directory: the standard mirror layout links to a shared
+    ``../../packages/`` tree.
 
     The href's hash fragment is surfaced as the file record's ``hashes``
     tuple so the lockfile writer has something to round-trip.
@@ -225,29 +233,22 @@ def _resolve_local_link(
     # these raise, so the drop guard has to start here rather than at the
     # path resolution below.
     try:
-        if base_url is not None:
-            href_no_frag = urljoin(base_url, href_no_frag)
-        parsed = urlparse(href_no_frag)
+        url = urljoin(base_url, href_no_frag)
+        parsed = urlparse(url)
     except ValueError:
         return (None, href_no_frag, None, hashes)
 
     if parsed.scheme in {"http", "https"}:
         filename = unquote(parsed.path.rsplit("/", 1)[-1]) or None
-        return (filename, href_no_frag, None, hashes)
+        return (filename, url, None, hashes)
 
-    # Drop an anchor we cannot turn into a path (non-local file:// authority,
-    # or a percent-encoded null byte) rather than fail the whole listing.
+    # Drop an anchor naming no local file rather than fail the whole listing.
     try:
-        if parsed.scheme == "file":
-            path = parse_file_url(href_no_frag)
-            return (path.name, href_no_frag, path, hashes)
-        # Without a base href a relative link resolves against the package page;
-        # the standard mirror layout links to a shared ../../packages/ tree, so
-        # the target legitimately sits outside the package directory.
-        target = (package_dir.resolve() / unquote(href_no_frag)).resolve()
+        path = parse_file_url(url)
     except ValueError:
-        return (None, href_no_frag, None, hashes)
-    return (target.name, target.as_uri(), target, hashes)
+        return (None, url, None, hashes)
+
+    return (path.name, url, path, hashes)
 
 
 def _scan_flat_wheelhouse(

@@ -27,6 +27,9 @@ _LEGACY_METADATA_ATTR = "data-dist-info-metadata"
 _UPLOAD_TIME_ATTR = "data-upload-time"
 _REPOSITORY_VERSION_META = "pypi:repository-version"
 
+# HTML's ASCII whitespace set: a URL attribute's value may be surrounded by it.
+_HTML_WHITESPACE = "\t\n\f\r "
+
 
 @dataclass(frozen=True, slots=True)
 class Anchor:
@@ -77,7 +80,9 @@ def _anchor(attrs: list[tuple[str, str | None]]) -> Anchor | None:
         return None
 
     metadata = core_metadata if core_metadata is not None else legacy_metadata
-    return Anchor(href, requires_python, metadata, yanked, upload_time)
+    return Anchor(
+        href.strip(_HTML_WHITESPACE), requires_python, metadata, yanked, upload_time
+    )
 
 
 class _ProjectPageParser(HTMLParser):
