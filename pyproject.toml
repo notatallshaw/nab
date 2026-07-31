@@ -16,6 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -48,10 +49,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.sdist]
 only-include = ["src/nab", "tests", "conftest.py"]
 
-# test_build_dists.py and test_release.py cover the repo-level release tooling
-# in tasks/, not the shipped CLI, so they stay out of the package sdist.
-# (hatchling always ships pyproject.toml, hatch.toml, and .gitignore itself.)
-exclude = ["tests/test_build_dists.py", "tests/test_release.py"]
+# These cover repo-level tooling and manifests, not the shipped CLI, and they
+# read files the sdist does not carry, so they stay out of it. (hatchling
+# always ships pyproject.toml, hatch.toml, and .gitignore itself.)
+exclude = [
+    "tests/test_build_dists.py",
+    "tests/test_classifiers.py",
+    "tests/test_release.py",
+]
 
 # Dependency groups feed `nab lock` for CI lockfiles; regenerate via
 # tasks/refresh-locks.sh. Local dev uses hatch envs from hatch.toml.
