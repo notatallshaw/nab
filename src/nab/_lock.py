@@ -432,11 +432,9 @@ def _check_locked(lock_input: LockInput, *, output: Path | None) -> None:
     lock is never read back into the resolve.
     """
     target = _locked_target_path(output)
-    try:
-        new_text = _cli.render_lock(lock_input, lock_dir=target.parent)
-    except _cli.MissingHashError as e:
-        _cli.printer().error(f"cannot lock: {e}")
-        sys.exit(1)
+    new_text = _render_or_exit(
+        lambda: _cli.render_lock(lock_input, lock_dir=target.parent)
+    )
     committed = _packages_only(target.read_text(encoding="utf-8"))
     if _packages_only(new_text) == committed:
         _cli.printer().done(f"Lockfile {target} is up to date.")
@@ -450,7 +448,7 @@ def _check_locked(lock_input: LockInput, *, output: Path | None) -> None:
 def _emit_pylock(lock_input: LockInput, *, output: Path | None) -> None:
     """Write the PEP 751 lock to a file, or print it."""
     if _cli.is_stdout(output):
-        sys.stdout.write(_render_lock_or_exit(lock_input, target=None))
+        sys.stdout.write(_write_lock_or_exit(lock_input, target=None))
         return
 
     target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
@@ -458,14 +456,19 @@ def _emit_pylock(lock_input: LockInput, *, output: Path | None) -> None:
     prior = read_lockfile_packages(target)
     # Pass the target so wheel/sdist/directory paths are written relative
     # to the lockfile's own directory, not the cwd.
-    _render_lock_or_exit(lock_input, target=target)
+    _write_lock_or_exit(lock_input, target=target)
     _cli.printer().done(f"Wrote {target} ({summarize_lock(lock_input, prior)})")
 
 
-def _render_lock_or_exit(lock_input: LockInput, *, target: Path | None) -> str:
-    """Render the lock, mapping every emit-time refusal to a clean exit."""
+def _write_lock_or_exit(lock_input: LockInput, *, target: Path | None) -> str:
+    """Write the lock, mapping every render-time refusal to a clean exit."""
+    return _render_or_exit(lambda: _cli.write_lock(lock_input, output_path=target))
+
+
+def _render_or_exit(render: Callable[[], str]) -> str:
+    """Run a lock render, mapping every refusal it raises to a clean exit."""
     try:
-        return _cli.write_lock(lock_input, output_path=target)
+        return render()
     except _cli.MissingHashError as e:
         _cli.printer().error(f"cannot lock: {e}")
         sys.exit(1)
