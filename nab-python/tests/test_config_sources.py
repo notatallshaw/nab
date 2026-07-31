@@ -1722,6 +1722,7 @@ class TestArrayOfTablesSources:
 
     def test_indexes_type_label_lists_every_accepted_key(self) -> None:
         spec = next(s for s in OPTIONS if s.key == "indexes")
+        assert spec.type_label == "array-of-tables(name,url,serialization)"
         listed = spec.type_label.partition("(")[2].rstrip(")").split(",")
         assert set(listed) == _INDEX_KEYS
 
