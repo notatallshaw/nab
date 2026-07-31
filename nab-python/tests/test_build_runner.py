@@ -27,6 +27,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import build
+import pyproject_hooks
 import pytest
 from installer.utils import SCHEME_NAMES, Scheme
 
@@ -871,6 +872,108 @@ class TestRunBuildBackendCorruptBuiltWheel:
                 "foo-1.0-py3-none-any.whl", _unreadable_metadata_wheel(kind)
             ),
         )
+
+
+_HOOK_MISSING = object()
+
+
+class TestRunBuildBackendNonStringHookPath:
+    """PEP 517's path-returning hooks return the basename of what they wrote.
+    ``build`` joins that onto the output directory outside its own hook-error
+    wrapper, so a non-string basename arrives as a bare ``TypeError`` from
+    ``os.path.join`` rather than a ``BuildBackendException``.
+    """
+
+    def _pyproject(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            "[build-system]\n"
+            "requires = []\n"
+            'build-backend = "nab_test_backend"\n'
+            'backend-path = ["."]\n',
+            encoding="utf-8",
+        )
+
+    def _stub_hooks(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        prepare: object = _HOOK_MISSING,
+        build_wheel: object = "foo-1.0-py3-none-any.whl",
+    ) -> None:
+        """Answer the wheel hooks in-process, so no backend subprocess runs.
+
+        A ``prepare`` of ``_HOOK_MISSING`` raises ``HookMissing``, which is what
+        sends ``build.ProjectBuilder.metadata_path`` down its ``build_wheel``
+        fallback.
+        """
+
+        def _prepare(*_a: object, **_k: object) -> object:
+            if prepare is _HOOK_MISSING:
+                raise pyproject_hooks.HookMissing("prepare_metadata_for_build_wheel")
+            return prepare
+
+        monkeypatch.setattr(
+            pyproject_hooks.BuildBackendHookCaller,
+            "get_requires_for_build_wheel",
+            lambda *_a, **_k: [],
+        )
+        monkeypatch.setattr(
+            pyproject_hooks.BuildBackendHookCaller,
+            "prepare_metadata_for_build_wheel",
+            _prepare,
+        )
+        monkeypatch.setattr(
+            pyproject_hooks.BuildBackendHookCaller,
+            "build_wheel",
+            lambda *_a, **_k: build_wheel,
+        )
+
+    def _run(self, tmp_path: Path, config: NabProjectConfig) -> None:
+        env = MagicMock()
+        env.__enter__ = MagicMock(return_value=env)
+        env.__exit__ = MagicMock(return_value=None)
+        with (
+            patch("nab_python._build.runner.NabBuildEnv", return_value=env),
+            pytest.raises(BuildBackendError, match="non-string path"),
+        ):
+            run_build_backend(tmp_path, config=config)
+
+    @pytest.mark.parametrize("value", [None, 1, ["foo-1.0.dist-info"]])
+    def test_prepare_hook_non_string_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+        value: object,
+    ) -> None:
+        self._pyproject(tmp_path)
+        self._stub_hooks(monkeypatch, prepare=value)
+        self._run(tmp_path, config)
+
+    def test_build_wheel_fallback_non_string_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With no prepare hook, ``build.metadata_path`` falls back to
+        ``build_wheel``, whose return hits the same join.
+        """
+        self._pyproject(tmp_path)
+        self._stub_hooks(monkeypatch, build_wheel=1)
+        self._run(tmp_path, config)
+
+    def test_skip_prepare_non_string_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The skip-prepare path calls ``build_wheel`` from the runner itself."""
+        self._pyproject(tmp_path)
+        monkeypatch.setattr(runner_mod, "_should_skip_prepare", lambda *_a: True)
+        self._stub_hooks(monkeypatch, build_wheel=None)
+        self._run(tmp_path, config)
 
 
 class TestRunBuildBackendDefaults:

@@ -122,27 +122,12 @@ def run_build_backend(
                 env.install(extra)
 
             with tempfile.TemporaryDirectory(prefix="nab-build-meta-") as out_str:
-                output_dir = Path(out_str)
-                try:
-                    if skip_prepare:
-                        metadata_dir = _build_wheel_and_extract(project, output_dir)
-                    else:
-                        metadata_dir = Path(project.metadata_path(output_dir))
-                # build raises a bare ValueError for a wheel whose name will not
-                # parse; a member zipfile cannot decompress surfaces as zlib.error,
-                # lzma.LZMAError, or NotImplementedError (a RuntimeError subclass).
-                except (
-                    zipfile.BadZipFile,
-                    ValueError,
-                    OSError,
-                    zlib.error,
-                    lzma.LZMAError,
-                    RuntimeError,
-                ) as exc:
-                    msg = (
-                        f"build backend {backend!r} produced an unreadable wheel: {exc}"
-                    )
-                    raise BuildBackendError(msg) from exc
+                metadata_dir = _extract_metadata_dir(
+                    project,
+                    Path(out_str),
+                    backend=backend,
+                    skip_prepare=skip_prepare,
+                )
                 return _parse_metadata(metadata_dir / "METADATA")
     except (
         build.BuildException,
@@ -209,6 +194,46 @@ def _should_skip_prepare(backend: str, data: dict) -> bool:
         return False
     dyn = {d for d in dynamic if isinstance(d, str)}
     return bool(dyn & {"dependencies", "optional-dependencies"})
+
+
+def _extract_metadata_dir(
+    project: build.ProjectBuilder,
+    output_dir: Path,
+    *,
+    backend: str,
+    skip_prepare: bool,
+) -> Path:
+    """Return the dist-info directory the backend produced.
+
+    ``build`` lets two faults through raw, outside its own hook-error
+    wrapper: reading back a wheel it just built, and joining a
+    path-returning hook's result onto ``output_dir``.
+    """
+    try:
+        if skip_prepare:
+            return _build_wheel_and_extract(project, output_dir)
+        return Path(project.metadata_path(output_dir))
+    # build raises a bare ValueError for a wheel whose name will not parse; a
+    # member zipfile cannot decompress surfaces as zlib.error, lzma.LZMAError,
+    # or NotImplementedError (a RuntimeError subclass).
+    except (
+        zipfile.BadZipFile,
+        ValueError,
+        OSError,
+        zlib.error,
+        lzma.LZMAError,
+        RuntimeError,
+    ) as exc:
+        msg = f"build backend {backend!r} produced an unreadable wheel: {exc}"
+        raise BuildBackendError(msg) from exc
+    # PEP 517's path-returning hooks must return a basename string, so a
+    # non-string reaches os.path.join as-is.
+    except TypeError as exc:
+        msg = (
+            f"build backend {backend!r} returned a non-string path"
+            f" from a build hook: {exc}"
+        )
+        raise BuildBackendError(msg) from exc
 
 
 def _build_wheel_and_extract(
