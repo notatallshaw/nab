@@ -74,7 +74,7 @@ from nab_python.provider import (
     UnsupportedVcsError,
 )
 from nab_python.requirements_file import InvalidProjectRequirementError
-from nab_python.resolve import ResolveResult, TargetResult
+from nab_python.resolve import ResolveResult, TargetResult, env_signature
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
 from nab_resolver.resolver import ResolutionError
@@ -3277,17 +3277,70 @@ def _hashed_resolve_result(*, sha: str) -> ResolveResult:
     )
 
 
+_CONFLICT_PROJECT = (
+    '[project]\nname = "demo"\nversion = "0.1.0"\ndependencies = ["shared"]\n'
+    "[project.optional-dependencies]\n"
+    "cpu = []\n"
+    "gpu = []\n"
+    "[tool.nab]\n"
+    'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+)
+
+
+def _conflict_fork_result(*, shared: tuple[str, str]) -> ResolveResult:
+    """Two conflict forks of the host environment, each pinning ``shared``.
+
+    ``shared`` is a base dependency of both forks, so equal pins collapse to
+    one entry and divergent pins are a refusal.
+    """
+    host = ResolveTarget.for_host()
+    forks = tuple(
+        host.with_selection((("extra", member),)) for member in ("cpu", "gpu")
+    )
+
+    return ResolveResult(
+        targets=forks,
+        target_results=[
+            _resolved(fork, {"shared": V(version)})
+            for fork, version in zip(forks, shared, strict=True)
+        ],
+        env_base_names={env_signature(forks[0]): frozenset({"shared"})},
+    )
+
+
 class TestLockedFlag:
     """``nab lock --locked`` re-resolves and verifies the committed pylock."""
 
-    def _write_lock(self, pyproject: Path, out: Path, result: ResolveResult) -> None:
-        with patch("nab.cli.resolve_for_targets", return_value=result):
-            app.cli(args=["lock", str(pyproject), "--output", str(out)], prog="nab")
-
-    def _run_locked(self, pyproject: Path, out: Path, result: ResolveResult) -> None:
+    def _write_lock(
+        self,
+        pyproject: Path,
+        out: Path,
+        result: ResolveResult,
+        *extra_args: str,
+    ) -> None:
         with patch("nab.cli.resolve_for_targets", return_value=result):
             app.cli(
-                args=["lock", str(pyproject), "--output", str(out), "--locked"],
+                args=["lock", str(pyproject), "--output", str(out), *extra_args],
+                prog="nab",
+            )
+
+    def _run_locked(
+        self,
+        pyproject: Path,
+        out: Path,
+        result: ResolveResult,
+        *extra_args: str,
+    ) -> None:
+        with patch("nab.cli.resolve_for_targets", return_value=result):
+            app.cli(
+                args=[
+                    "lock",
+                    str(pyproject),
+                    "--output",
+                    str(out),
+                    "--locked",
+                    *extra_args,
+                ],
                 prog="nab",
             )
 
@@ -3369,6 +3422,54 @@ class TestLockedFlag:
             )
         assert exc.value.code == 1
         assert "cannot lock" in capsys.readouterr().err
+        assert out.read_bytes() == before
+
+    def test_divergent_base_dep_during_render_exits_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The forks agreed when the lock was committed and now pin the shared
+        # base dependency differently.
+        pyproject = _make_pyproject(tmp_path, _CONFLICT_PROJECT)
+        out = tmp_path / "pylock.toml"
+        agreed = _conflict_fork_result(shared=("1.0", "1.0"))
+        self._write_lock(pyproject, out, agreed, "--extras", "cpu", "gpu")
+        capsys.readouterr()
+        before = out.read_bytes()
+
+        diverged = _conflict_fork_result(shared=("1.0", "2.0"))
+        with pytest.raises(SystemExit) as exc:
+            self._run_locked(pyproject, out, diverged, "--extras", "cpu", "gpu")
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "error: shared: the conflict forks of one environment pin" in err
+        assert out.read_bytes() == before
+
+    def test_disjointness_during_render_exits_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        self._write_lock(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
+        capsys.readouterr()
+        before = out.read_bytes()
+
+        hint = "foo: 2 entries fire under env='py311-linux_x86_64'"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_stub_resolve_result(pins={"foo": V("1.0")}),
+            ),
+            patch("nab.cli.render_lock", side_effect=DisjointnessError(hint)),
+            pytest.raises(SystemExit) as exc,
+        ):
+            app.cli(
+                args=["lock", str(pyproject), "--output", str(out), "--locked"],
+                prog="nab",
+            )
+
+        assert exc.value.code == 1
+        assert f"error: {hint}\n" in capsys.readouterr().err
         assert out.read_bytes() == before
 
     def test_malformed_committed_lock_exits_one(
