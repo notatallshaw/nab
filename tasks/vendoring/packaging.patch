@@ -1,9 +1,9 @@
 diff --git a/nab-python/src/nab_python/_vendor/packaging/_markersets.py b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
 new file mode 100644
-index 0000000..0380f6d
+index 0000000..fe5c0c9
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
-@@ -0,0 +1,1626 @@
+@@ -0,0 +1,1649 @@
 +"""Marker algebra engine: reason about PEP 508 markers as sets of environments.
 +
 +The private engine behind :class:`~packaging.markersets.MarkerSet`. Parses a
@@ -22,6 +22,7 @@ index 0000000..0380f6d
 +
 +import re
 +import sys
++import threading
 +from itertools import pairwise, product
 +from typing import TYPE_CHECKING, NamedTuple, cast
 +
@@ -979,14 +980,32 @@ index 0000000..0380f6d
 +    return _reduce_cells((False, True), atoms, max_cells)
 +
 +
-+def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
-+    """Partition one axis's domain into cells on which every atom is constant."""
++def _partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
 +    kind = axis[0]
 +    if kind == AXIS_VALUE:
 +        return partition_value_axis(axis[1], atoms, max_cells)
 +    if kind == AXIS_SET:
 +        return partition_set_axis(atoms, max_cells)
 +    return partition_boolean_axis(atoms, max_cells)
++
++
++# One simplify re-partitions the same axes with the same atoms over and over.
++# The cache lives only for that span and is thread-local, so a concurrent
++# simplify never shares a store.
++_partition_cache = threading.local()
++
++
++def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
++    """Partition one axis's domain into cells on which every atom is constant."""
++    store: dict | None = getattr(_partition_cache, "store", None)
++    if store is None:
++        return _partition_axis(axis, atoms, max_cells)
++    key = (axis, tuple(atoms), max_cells)
++    cached = store.get(key)
++    if cached is None:
++        cached = _partition_axis(axis, atoms, max_cells)
++        store[key] = cached
++    return cached
 +
 +
 +def guarded_product_size(sizes: Iterable[int], max_cells: int) -> int:
@@ -1614,12 +1633,16 @@ index 0000000..0380f6d
 +    original = _disjunction(clauses)
 +    rows = _decompose_rows(universe)
 +    original_by_row = [restrict_tree(original, row.pins) for row in rows]
-+    while True:
-+        before = _canonical(clauses)
-+        clauses = _drop_clauses(clauses, rows, original_by_row, max_cells)
-+        clauses = _dedupe(_drop_atoms(clauses, rows, original_by_row, max_cells))
-+        if _canonical(clauses) == before:
-+            break
++    _partition_cache.store = {}
++    try:
++        while True:
++            before = _canonical(clauses)
++            clauses = _drop_clauses(clauses, rows, original_by_row, max_cells)
++            clauses = _dedupe(_drop_atoms(clauses, rows, original_by_row, max_cells))
++            if _canonical(clauses) == before:
++                break
++    finally:
++        _partition_cache.store = None
 +    if not clauses:
 +        return FALSE
 +    clauses = sorted(clauses, key=_clause_key)

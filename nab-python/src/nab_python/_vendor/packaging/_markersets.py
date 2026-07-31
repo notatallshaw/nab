@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import sys
+import threading
 from itertools import pairwise, product
 from typing import TYPE_CHECKING, NamedTuple, cast
 
@@ -973,14 +974,32 @@ def partition_boolean_axis(atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
     return _reduce_cells((False, True), atoms, max_cells)
 
 
-def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
-    """Partition one axis's domain into cells on which every atom is constant."""
+def _partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
     kind = axis[0]
     if kind == AXIS_VALUE:
         return partition_value_axis(axis[1], atoms, max_cells)
     if kind == AXIS_SET:
         return partition_set_axis(atoms, max_cells)
     return partition_boolean_axis(atoms, max_cells)
+
+
+# One simplify re-partitions the same axes with the same atoms over and over.
+# The cache lives only for that span and is thread-local, so a concurrent
+# simplify never shares a store.
+_partition_cache = threading.local()
+
+
+def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
+    """Partition one axis's domain into cells on which every atom is constant."""
+    store: dict | None = getattr(_partition_cache, "store", None)
+    if store is None:
+        return _partition_axis(axis, atoms, max_cells)
+    key = (axis, tuple(atoms), max_cells)
+    cached = store.get(key)
+    if cached is None:
+        cached = _partition_axis(axis, atoms, max_cells)
+        store[key] = cached
+    return cached
 
 
 def guarded_product_size(sizes: Iterable[int], max_cells: int) -> int:
@@ -1608,12 +1627,16 @@ def simplify_within(node: Formula, universe: Formula, max_cells: int) -> Formula
     original = _disjunction(clauses)
     rows = _decompose_rows(universe)
     original_by_row = [restrict_tree(original, row.pins) for row in rows]
-    while True:
-        before = _canonical(clauses)
-        clauses = _drop_clauses(clauses, rows, original_by_row, max_cells)
-        clauses = _dedupe(_drop_atoms(clauses, rows, original_by_row, max_cells))
-        if _canonical(clauses) == before:
-            break
+    _partition_cache.store = {}
+    try:
+        while True:
+            before = _canonical(clauses)
+            clauses = _drop_clauses(clauses, rows, original_by_row, max_cells)
+            clauses = _dedupe(_drop_atoms(clauses, rows, original_by_row, max_cells))
+            if _canonical(clauses) == before:
+                break
+    finally:
+        _partition_cache.store = None
     if not clauses:
         return FALSE
     clauses = sorted(clauses, key=_clause_key)
