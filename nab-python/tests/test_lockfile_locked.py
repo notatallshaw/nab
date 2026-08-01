@@ -18,6 +18,7 @@ from nab_python.lockfile import (
     WheelArtifact,
     check_locked,
     drop_workspace_pins,
+    read_lockfile_packages,
     render_lock,
     summarize_lock,
 )
@@ -81,6 +82,17 @@ def _write_lock(path: Path, pins: Mapping[str, IndexPin]) -> Path:
     return path
 
 
+def _write_foreign_lock(path: Path, packages: str) -> Path:
+    """Write a lock from raw TOML, as another tool would have produced it."""
+    path.write_text(
+        "lock-version = '1.0'\n"
+        "created-by = 'other-tool'\n"
+        "requires-python = '>=3.10'\n" + packages,
+        encoding="utf-8",
+    )
+    return path
+
+
 class TestReadErrors:
     """A committed lock that cannot be parsed raises a typed error."""
 
@@ -118,6 +130,128 @@ class TestReadErrors:
                 dependency_groups=(),
                 default_groups=(),
             )
+
+
+class TestArtifactUrlFilenames:
+    """With ``name`` omitted, the file name comes from the percent-decoded URL."""
+
+    def test_encoded_wheel_url_is_accepted(self, tmp_path: Path) -> None:
+        target = _write_foreign_lock(
+            tmp_path / "pylock.toml",
+            "[[packages]]\n"
+            "name = 'torch'\n"
+            "version = '2.0.0+cu118'\n"
+            "[[packages.wheels]]\n"
+            "url = 'https://example.com/cu118/"
+            "torch-2.0.0%2Bcu118-cp310-cp310-linux_x86_64.whl'\n"
+            "[packages.wheels.hashes]\n"
+            f"sha256 = '{'0' * 64}'\n",
+        )
+
+        assert (
+            check_locked(
+                target,
+                requires_python=">=3.10",
+                extras=(),
+                dependency_groups=(),
+                default_groups=(),
+                roots=[RootRequirement(Requirement("torch"), "[project].dependencies")],
+                marker_env=LINUX_ENV,
+            )
+            is None
+        )
+
+    def test_encoded_sdist_url_is_accepted(self, tmp_path: Path) -> None:
+        target = _write_foreign_lock(
+            tmp_path / "pylock.toml",
+            "[[packages]]\n"
+            "name = 'spam'\n"
+            "version = '1.0+cpu'\n"
+            "[packages.sdist]\n"
+            "url = 'https://example.com/files/spam-1.0%2Bcpu.tar.gz'\n"
+            "[packages.sdist.hashes]\n"
+            f"sha256 = '{'0' * 64}'\n",
+        )
+
+        assert (
+            check_locked(
+                target,
+                requires_python=">=3.10",
+                extras=(),
+                dependency_groups=(),
+                default_groups=(),
+                roots=[RootRequirement(Requirement("spam"), "[project].dependencies")],
+                marker_env=LINUX_ENV,
+            )
+            is None
+        )
+
+    def test_decoded_wheel_version_is_still_checked(self, tmp_path: Path) -> None:
+        target = _write_foreign_lock(
+            tmp_path / "pylock.toml",
+            "[[packages]]\n"
+            "name = 'torch'\n"
+            "version = '2.0.0+cu118'\n"
+            "[[packages.wheels]]\n"
+            "url = 'https://example.com/cu117/"
+            "torch-2.0.0%2Bcu117-cp310-cp310-linux_x86_64.whl'\n"
+            "[packages.wheels.hashes]\n"
+            f"sha256 = '{'0' * 64}'\n",
+        )
+
+        with pytest.raises(InvalidLockfileError) as caught:
+            check_locked(
+                target,
+                requires_python=None,
+                extras=(),
+                dependency_groups=(),
+                default_groups=(),
+            )
+
+        assert "torch-2.0.0+cu117-cp310-cp310-linux_x86_64.whl" in str(caught.value)
+        assert "not consistent" in str(caught.value)
+
+    def test_literal_plus_in_the_url_path_is_left_alone(self, tmp_path: Path) -> None:
+        """A ``+`` in a URL path is a plus, not a space."""
+        target = _write_foreign_lock(
+            tmp_path / "pylock.toml",
+            "[[packages]]\n"
+            "name = 'torch'\n"
+            "version = '2.0.0+cu118'\n"
+            "[[packages.wheels]]\n"
+            "url = 'https://example.com/cu118/"
+            "torch-2.0.0+cu118-cp310-cp310-linux_x86_64.whl'\n"
+            "[packages.wheels.hashes]\n"
+            f"sha256 = '{'0' * 64}'\n",
+        )
+
+        assert (
+            check_locked(
+                target,
+                requires_python=">=3.10",
+                extras=(),
+                dependency_groups=(),
+                default_groups=(),
+                roots=[RootRequirement(Requirement("torch"), "[project].dependencies")],
+                marker_env=LINUX_ENV,
+            )
+            is None
+        )
+
+    def test_prior_pins_survive_an_encoded_url(self, tmp_path: Path) -> None:
+        target = _write_foreign_lock(
+            tmp_path / "pylock.toml",
+            "[[packages]]\n"
+            "name = 'torch'\n"
+            "version = '2.0.0+cu118'\n"
+            "[[packages.wheels]]\n"
+            "url = 'https://example.com/cu118/"
+            "torch-2.0.0%2Bcu118-cp310-cp310-linux_x86_64.whl'\n"
+            "[packages.wheels.hashes]\n"
+            f"sha256 = '{'0' * 64}'\n",
+        )
+
+        assert read_lockfile_packages(target) == {"torch": Version("2.0.0+cu118")}
 
 
 class TestCheckLocked:
