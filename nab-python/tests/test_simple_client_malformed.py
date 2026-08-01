@@ -8,6 +8,8 @@ result means "package absent" to the multi-index router.  A malformed
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from nab_index.client import (
@@ -18,6 +20,9 @@ from nab_index.client import (
 from nab_index.transport import HttpError
 
 _INDEX = "https://example.com/"
+
+# A version digit run past CPython's int-from-string limit.
+_OVERSIZED = "1" * (sys.get_int_max_str_digits() + 1)
 
 
 def _good_file() -> dict[str, object]:
@@ -101,6 +106,19 @@ def test_bad_entry_dropped_good_entry_kept(bad_entry: object) -> None:
     files = _parse_files(data, _INDEX, "foo")
     assert len(files) == 1
     assert files[0].filename == "foo-1.0-py3-none-any.whl"
+
+
+@pytest.mark.parametrize(
+    "bad_filename",
+    [
+        pytest.param(f"foo-{_OVERSIZED}-py3-none-any.whl", id="wheel"),
+        pytest.param(f"foo-{_OVERSIZED}.tar.gz", id="sdist"),
+    ],
+)
+def test_entry_with_oversized_version_is_skipped(bad_filename: str) -> None:
+    entry = {"filename": bad_filename, "url": f"{_INDEX}foo/{bad_filename}"}
+    files = _parse_files({"files": [entry, _good_file()]}, _INDEX, "foo")
+    assert [f.filename for f in files] == ["foo-1.0-py3-none-any.whl"]
 
 
 @pytest.mark.parametrize(

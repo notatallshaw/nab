@@ -1,14 +1,17 @@
-"""Differential tests for nab_index's wheel-filename parser.
+"""Differential tests for nab_index's filename parsers.
 
 ``_parse_wheel_filename`` reproduces packaging's name/version validation
 while skipping the discarded tag-set parse and interning the version, its
 canonical string, and the canonical name. These tests assert it
 accepts/rejects exactly what packaging does and that the interners return
 byte-identical results to the uncached functions, so the optimization stays
-output-invariant even if packaging is re-vendored.
+output-invariant even if packaging is re-vendored. Neither parser raises: a
+filename it cannot read comes back as ``None``.
 """
 
 from __future__ import annotations
+
+import sys
 
 import pytest
 from packaging.utils import (
@@ -22,8 +25,13 @@ from nab_index.client import (
     _canonical_version,
     _intern_name,
     _intern_version,
+    _parse_sdist_filename,
     _parse_wheel_filename,
 )
+
+# Version digit runs at and just past CPython's int-from-string limit.
+AT_LIMIT = "1" * sys.get_int_max_str_digits()
+OVERSIZED = AT_LIMIT + "1"
 
 CORPUS = [
     # valid, no build tag
@@ -79,6 +87,31 @@ EMPTY_TAG_COMPONENT = [
 @pytest.mark.parametrize("filename", EMPTY_TAG_COMPONENT)
 def test_rejects_empty_tag_component(filename: str) -> None:
     assert _parse_wheel_filename(filename) is None
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        pytest.param(f"foo-{OVERSIZED}-py3-none-any.whl", id="release"),
+        pytest.param(f"foo-{OVERSIZED}!1.0-py3-none-any.whl", id="epoch"),
+        pytest.param(f"foo-1.0.dev{OVERSIZED}-py3-none-any.whl", id="dev"),
+        pytest.param(f"foo-1.0.post{OVERSIZED}-py3-none-any.whl", id="post"),
+        pytest.param(f"foo-{OVERSIZED}-1-py3-none-any.whl", id="build-tag"),
+    ],
+)
+def test_rejects_oversized_wheel_version(filename: str) -> None:
+    assert _parse_wheel_filename(filename) is None
+
+
+def test_rejects_oversized_sdist_version() -> None:
+    assert _parse_sdist_filename(f"foo-{OVERSIZED}.tar.gz") is None
+
+
+def test_accepts_version_at_int_limit() -> None:
+    assert _parse_wheel_filename(f"foo-{AT_LIMIT}-py3-none-any.whl") == (
+        canonicalize_name("foo"),
+        AT_LIMIT,
+    )
 
 
 def test_canonical_form_and_trailing_zeros() -> None:

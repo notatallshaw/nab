@@ -19,6 +19,7 @@ from nab_index.local_index import (
     LocalIndexClient,
     MalformedLocalListingError,
     UnsupportedWheelError,
+    _is_zip_sdist,
     _make_record,
     _read_sdist_requires_python,
     parse_file_url,
@@ -326,6 +327,15 @@ class TestFlatWheelhouse:
         client = LocalIndexClient(tmp_path.as_uri())
         assert run(client.get_files("foo")) == []
         assert not client.served_unreadable_only("foo")
+
+    def test_zip_sdist_check_rejects_oversized_version(self) -> None:
+        """An oversized version answers False instead of raising.
+
+        Called directly because the filename is longer than any filesystem
+        allows, so it cannot arrive from a directory scan.
+        """
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        assert not _is_zip_sdist(f"foo-{oversized}.zip", "foo")
 
     def test_zip_beside_readable_wheel_is_not_unreadable_only(
         self, tmp_path: Path

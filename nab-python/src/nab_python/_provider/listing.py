@@ -585,10 +585,10 @@ def excluded_by_python(
         try:
             spec = SpecifierSet(effective)
             cached = not provider.target.admits_requires_python(spec)
-        except InvalidSpecifier:
-            # Malformed Requires-Python on the dist: treat as
-            # not-excluded, let downstream logic decide.  Our own
-            # python_version is validated at Provider construction.
+        except ValueError:
+            # Malformed Requires-Python on the dist, or a digit run int()
+            # refuses: treat as not-excluded, let downstream logic decide.
+            # Our own python_version is validated at Provider construction.
             cached = False
         provider.requires_python_cache[effective] = cached
     if cached:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from nab_index.client import (
@@ -9,6 +11,9 @@ from nab_index.client import (
     holds_unreadable_format,
     is_readable_filename,
 )
+
+# A version digit run past CPython's int-from-string limit.
+OVERSIZED = "1" * (sys.get_int_max_str_digits() + 1)
 
 
 @pytest.mark.parametrize(
@@ -27,8 +32,27 @@ def test_unreadable_filenames(filename: str) -> None:
     assert not is_readable_filename(filename)
 
 
+@pytest.mark.parametrize(
+    "filename",
+    [
+        pytest.param(f"foo-{OVERSIZED}-py3-none-any.whl", id="wheel"),
+        pytest.param(f"foo-{OVERSIZED}.tar.gz", id="sdist"),
+        pytest.param(f"foo-{OVERSIZED}!1.0-py3-none-any.whl", id="epoch"),
+        pytest.param(f"foo-1.0.dev{OVERSIZED}-py3-none-any.whl", id="dev"),
+    ],
+)
+def test_oversized_version_is_unreadable(filename: str) -> None:
+    assert not is_readable_filename(filename)
+
+
 def test_holds_unreadable_format_finds_zip_sdist() -> None:
     data = {"files": [{"filename": "foo-1.0.zip", "url": "https://e.example/f"}]}
+    assert holds_unreadable_format(data)
+
+
+def test_holds_unreadable_format_finds_oversized_version() -> None:
+    filename = f"foo-{OVERSIZED}-py3-none-any.whl"
+    data = {"files": [{"filename": filename, "url": "https://e.example/f"}]}
     assert holds_unreadable_format(data)
 
 

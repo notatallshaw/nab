@@ -20,12 +20,8 @@ from functools import lru_cache
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-from packaging.utils import (
-    InvalidSdistFilename,
-    canonicalize_name,
-    parse_sdist_filename,
-)
-from packaging.version import InvalidVersion, Version
+from packaging.utils import canonicalize_name, parse_sdist_filename
+from packaging.version import Version
 
 from ._pep503 import json_listing
 from .serialization import SimpleSerialization, simple_accept_header
@@ -116,7 +112,9 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     """Parse a wheel filename per PEP 427.
 
     Returns ``(canonical_name, version_string)`` or ``None`` for any
-    filename packaging rejects (wrong extension, malformed, etc.).
+    filename packaging rejects (wrong extension, malformed, etc.) and
+    for a version digit run past CPython's int-from-string limit.
+    Never raises.
     The version string is the canonical form produced by
     :class:`packaging.version.Version`, so trailing-zero handling
     matches what packaging records on the file; e.g. a wheel
@@ -143,7 +141,8 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
 
     try:
         version = _canonical_version(parts[1])
-    except InvalidVersion:
+    except ValueError:
+        # InvalidVersion, or int() refusing a digit run past CPython's limit.
         return None
 
     bad_build = (
@@ -160,9 +159,10 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
 def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
     """Parse a ``.tar.gz`` sdist filename to ``(canonical_name, version)``.
 
-    Returns ``None`` for anything packaging rejects and for ``.zip``
-    sdists, which nab does not support (gzip-tar only, and not part of
-    the PEP 625 standard).
+    Returns ``None`` for anything packaging rejects, for a version digit
+    run past CPython's int-from-string limit, and for ``.zip`` sdists,
+    which nab does not support (gzip-tar only, and not part of the PEP 625
+    standard).  Never raises.
 
     Legacy filenames with embedded build tags (e.g. ``cffi-1.0.2-2.tar.gz``)
     parse to a surprising ``(name="cffi-1-0-2", version="2")``, so callers
@@ -174,7 +174,8 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
 
     try:
         name, version = parse_sdist_filename(filename)
-    except InvalidSdistFilename:
+    except ValueError:
+        # InvalidSdistFilename, or int() refusing a digit run past CPython's limit.
         return None
     return (name, str(version))
 

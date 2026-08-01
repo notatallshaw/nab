@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import unquote, urljoin, urlparse, urlsplit
 from urllib.request import url2pathname
 
-from packaging.utils import InvalidSdistFilename, parse_sdist_filename
+from packaging.utils import parse_sdist_filename
 
 from ._naming import canonical as _canonical
 from ._pep503 import hash_fragment, metadata_declaration, read_page
@@ -321,7 +321,8 @@ def _is_zip_sdist(filename: str, canonical: str) -> bool:
         return False
     try:
         name, _ = parse_sdist_filename(filename)
-    except InvalidSdistFilename:
+    except ValueError:
+        # InvalidSdistFilename, or int() refusing a digit run past CPython's limit.
         return False
     return name == canonical
 

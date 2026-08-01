@@ -11,9 +11,10 @@ Upstream packaging is the oracle for both.
 from __future__ import annotations
 
 import string
+import sys
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 from packaging.utils import (
     InvalidSdistFilename,
@@ -84,6 +85,8 @@ extensions = st.sampled_from(
     [".whl", ".WHL", ".tar.gz", ".zip", "", ".whl ", ".whl.whl"]
 )
 
+OVERSIZED_VERSION = "1" * (sys.get_int_max_str_digits() + 1)
+
 
 @st.composite
 def wheelish_filenames(draw: st.DrawFn) -> str:
@@ -150,10 +153,15 @@ def test_wheel_parse_matches_upstream_fuzz(filename: str) -> None:
         assert result == oracle_wheel(filename + ".whl")
 
 
+@example(filename=f"foo-{OVERSIZED_VERSION}-py3-none-any.whl")
 @given(filename=st.text(min_size=0, max_size=40))
 @DEEP_SETTINGS
 def test_wheel_parse_never_crashes(filename: str) -> None:
-    """Malformed input is rejected with ``None``, never an exception."""
+    """Malformed input is rejected with ``None``, never an exception.
+
+    Hypothesis draws text far shorter than the int-from-string limit, so an
+    oversized version comes in as an explicit example.
+    """
     result = _parse_wheel_filename(filename)
     assert result is None or isinstance(result, tuple)
 
@@ -181,3 +189,16 @@ def test_sdist_parse_matches_upstream_fuzz(filename: str) -> None:
     """Arbitrary text with a ``.tar.gz`` suffix parses exactly like upstream."""
     fn = filename + ".tar.gz"
     assert _parse_sdist_filename(fn) == oracle_sdist(fn)
+
+
+@example(filename=f"foo-{OVERSIZED_VERSION}.tar.gz")
+@given(filename=st.text(min_size=0, max_size=40))
+@DEEP_SETTINGS
+def test_sdist_parse_never_crashes(filename: str) -> None:
+    """Malformed input is rejected with ``None``, never an exception.
+
+    Hypothesis draws text far shorter than the int-from-string limit, so an
+    oversized version comes in as an explicit example.
+    """
+    result = _parse_sdist_filename(filename)
+    assert result is None or isinstance(result, tuple)
