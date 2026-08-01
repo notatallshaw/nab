@@ -25,6 +25,7 @@ from .._toml import tool_nab_section
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
+from ..paths import path_state
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -184,7 +185,7 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
     for symmetry with the writer; this is informational provenance, so
     a missing offset is recoverable rather than fatal.
     """
-    if not path.is_file():
+    if not path_state(path).should_read:
         return None
     try:
         with path.open("rb") as f:
@@ -215,7 +216,7 @@ def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
     or is not a spec-compliant PEP 751 lockfile; the caller falls back
     to a no-diff summary line.
     """
-    if not path.is_file():
+    if not path_state(path).should_read:
         return None
     try:
         with path.open("rb") as f:

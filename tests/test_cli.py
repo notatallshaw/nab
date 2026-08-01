@@ -3718,6 +3718,25 @@ class TestGroupAndExtraSelection:
         assert "not found" not in err
         assert "Permission denied" in err
 
+    def test_all_extras_unsearchable_parent_surfaces_error(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        """An unsearchable parent must not fail the is-a-directory check.
+
+        EACCES lands on the stat behind that check as well as on the read,
+        so classifying the path has to be raise-free or the handler throws
+        a second error out of itself.
+        """
+        pyproject = _make_pyproject(tmp_path)
+        with deny_access(pyproject), pytest.raises(SystemExit, match="1"):
+            resolve_extra_selection(pyproject, extras=(), all_extras=True)
+        err = capsys.readouterr().err
+        assert "cannot read" in err
+        assert "Permission denied" in err
+
     def test_all_groups_reads_defined_groups(self, tmp_path: Path) -> None:
         """Selection equals the keys of ``[dependency-groups]``.
 

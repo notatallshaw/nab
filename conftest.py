@@ -15,8 +15,8 @@ The property suite under ``nab-*/tests/property*/`` uses explicit
 ``PROPERTY_SETTINGS``/``DEEP_SETTINGS``/``BRUTE_FORCE_SETTINGS``
 decorators so its example budget is independent of the profile.
 
-``cap_writes`` is here rather than in one suite's conftest because both the
-``nab-python`` suite and the CLI suite use it.
+``cap_writes`` and ``deny_access`` are here rather than in one suite's
+conftest because both the ``nab-python`` suite and the CLI suite use them.
 """
 
 from __future__ import annotations
@@ -25,7 +25,9 @@ import errno
 import io
 import os
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 from hypothesis import HealthCheck, settings
@@ -107,6 +109,38 @@ def _cap_writes(budget: int) -> Iterator[None]:
         yield
     finally:
         io.open = real_open  # type: ignore[assignment]
+
+
+@contextmanager
+def _deny_access(target: Path) -> Iterator[None]:
+    real_stat, real_open = Path.stat, Path.open
+
+    def refuse(self: Path, real: Any, *args: Any, **kwargs: Any) -> Any:
+        if self == target:
+            raise PermissionError(errno.EACCES, "Permission denied", str(target))
+        return real(self, *args, **kwargs)
+
+    with (
+        patch.object(
+            Path, "stat", lambda self, *a, **k: refuse(self, real_stat, *a, **k)
+        ),
+        patch.object(
+            Path, "open", lambda self, *a, **k: refuse(self, real_open, *a, **k)
+        ),
+    ):
+        yield
+
+
+@pytest.fixture
+def deny_access() -> Callable[[Path], AbstractContextManager[None]]:
+    """Simulate a directory the running user cannot search.
+
+    Inside ``deny_access(p)`` every stat and open of ``p`` raises ``EACCES``,
+    which is what a parent directory without the search bit does to both
+    halves of a read.  chmod cannot express that on Windows, so the state is
+    simulated rather than created.
+    """
+    return _deny_access
 
 
 @pytest.fixture

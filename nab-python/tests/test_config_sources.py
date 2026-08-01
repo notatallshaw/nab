@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import errno
 import logging
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -624,6 +626,22 @@ class TestDiscoverAndMissing:
         _project(tmp_path)
         (tmp_path / "nab.toml").mkdir()
         with pytest.raises(SourceConfigError, match="not a regular file"):
+            discover_layers(SourceRoots(project_dir=tmp_path))
+
+    def test_unsearchable_parent_reports_the_errno(
+        self,
+        tmp_path: Path,
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        # An unsearchable parent directory lands EACCES on the stat the
+        # presence check runs, before the read.  The source is present, so
+        # it must reach the read and be reported by name, neither skipped
+        # as absent nor escaping as a raw PermissionError.
+        pyproject = _project(tmp_path)
+        with (
+            deny_access(pyproject),
+            pytest.raises(SourceConfigError, match="cannot read .*Permission denied"),
+        ):
             discover_layers(SourceRoots(project_dir=tmp_path))
 
     def test_read_pyproject_false_keeps_project_nab_toml(self, tmp_path: Path) -> None:

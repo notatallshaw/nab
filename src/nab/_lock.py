@@ -51,6 +51,7 @@ from nab_python.lockfile import (
     read_lockfile_packages,
     summarize_lock,
 )
+from nab_python.paths import PathState, path_state
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
@@ -828,7 +829,7 @@ def _read_selection_table_or_exit(
     except OSError as e:
         if e.errno == errno.ENOENT:
             _cli.printer().error(f"{path} not found")
-        elif path.is_dir():
+        elif path_state(path) is PathState.DIRECTORY:
             _cli.printer().error(f"{path} is a directory")
         else:
             _cli.printer().error(f"cannot read {path}: {e}")

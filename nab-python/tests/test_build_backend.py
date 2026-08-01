@@ -9,6 +9,8 @@ dynamic dispatch in ``extract_metadata``, including the
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -81,6 +83,17 @@ class TestExtractStaticMetadata:
 
     def test_missing_pyproject_returns_none(self, tmp_path: Path) -> None:
         assert extract_static_metadata(tmp_path) is None
+
+    def test_unsearchable_parent_returns_none(
+        self,
+        tmp_path: Path,
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        # EACCES on the presence check's stat means no static metadata,
+        # the same as an unreadable file, so the caller falls back to a build.
+        _write_pyproject(tmp_path, '[project]\nname = "foo"\nversion = "1.0"\n')
+        with deny_access(tmp_path / "pyproject.toml"):
+            assert extract_static_metadata(tmp_path) is None
 
     def test_malformed_toml_returns_none(self, tmp_path: Path) -> None:
         _write_pyproject(tmp_path, "this is not toml [")
