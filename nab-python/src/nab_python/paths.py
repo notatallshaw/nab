@@ -12,12 +12,20 @@ if TYPE_CHECKING:
 
 __all__ = [
     "PathState",
+    "is_absent_error",
     "path_state",
 ]
 
-# ENOTDIR is a non-directory component part-way along the path, which leaves
-# nothing at the path just as surely as ENOENT does.
 _ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR})
+
+
+def is_absent_error(exc: OSError) -> bool:
+    """Whether ``exc`` from a stat or an open means nothing is at the path.
+
+    ``ENOTDIR`` is a non-directory component part-way along the path,
+    which leaves nothing at the path just as surely as ``ENOENT`` does.
+    """
+    return exc.errno in _ABSENT_ERRNOS
 
 
 class PathState(Enum):
@@ -33,8 +41,8 @@ class PathState(Enum):
     def should_read(self) -> bool:
         """Whether the caller should go on and open the path.
 
-        True for a regular file, and for one whose stat failed: opening
-        it is what turns that failure into a message naming the errno.
+        True for a regular file, and for one whose stat failed: what an
+        unreadable path means is the reader's call.
         """
         return self in (PathState.FILE, PathState.UNREADABLE)
 
@@ -42,20 +50,25 @@ class PathState(Enum):
 def path_state(path: Path) -> PathState:
     """Classify ``path`` without raising, keeping the stat failures apart.
 
-    ``Path.exists``/``is_file``/``is_dir`` answer with a bool, so the two
-    ways a stat can fail collapse into one.  When the parent directory is
-    not searchable the stat fails with ``EACCES``, which those methods
+    ``Path.exists``/``is_file``/``is_dir`` answer with a bool, so an absent
+    path and a stat that failed collapse into one answer.  An unsearchable
+    parent directory fails the stat with ``EACCES``, which those methods
     re-raise on Python 3.13 and below and report as absent on 3.14.
-    :data:`PathState.UNREADABLE` keeps that case its own, so a caller can
-    hand the path to the read that names the real errno instead of
-    calling a file that is there missing.
+    :data:`PathState.UNREADABLE` keeps that case separate, so the caller
+    can hand the path to the read that names the errno.
     """
     try:
         st = path.stat()
+    except ValueError:
+        # A name the OS cannot carry (an embedded NUL, an unencodable
+        # character) is nothing on disk, which is how pathlib's own
+        # predicates report it too.
+        return PathState.ABSENT
     except OSError as exc:
-        if exc.errno in _ABSENT_ERRNOS:
+        if is_absent_error(exc):
             return PathState.ABSENT
         return PathState.UNREADABLE
+
     if stat.S_ISREG(st.st_mode):
         return PathState.FILE
     if stat.S_ISDIR(st.st_mode):

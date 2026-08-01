@@ -1664,7 +1664,7 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(tmp_path / "missing.toml") is None
 
     def test_returns_none_when_file_is_directory(self, tmp_path: Path) -> None:
-        # ``is_file`` returns False for directories; the helper skips.
+        # A directory is not a readable file; the helper skips.
         assert read_lockfile_anchor(tmp_path) is None
 
     def test_returns_none_when_unsearchable_parent(

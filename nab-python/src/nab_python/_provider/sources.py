@@ -93,15 +93,25 @@ def extract_source_metadata(
     for :class:`VcsSource` clones and ``"archive"`` for extracted
     :class:`ArchiveSource` trees both build only at
     :attr:`BuildPolicy.BUILD_REMOTE`, like a remote sdist.
+
+    An unreadable ``pyproject.toml`` is reported as a read failure at
+    every policy level: the build path cannot read it either, so calling
+    it dynamic metadata would blame the policy for a permission error.
     """
     # Imported in-function so tests can patch the module attribute.
     from .. import build_backend
     from ..build_backend import BuildBackendError, extract_static_metadata
     from ..provider import BuildPolicy, UnsupportedSdistError
 
-    metadata = extract_static_metadata(path)
+    try:
+        metadata = extract_static_metadata(path)
+    except BuildBackendError as exc:
+        msg = f"{descriptor}: {exc}"
+        raise UnsupportedSdistError(msg) from exc
+
     if metadata is not None:
         return metadata
+
     effective = provider.effective_build_policy_for_source(package)
     if kind == "local":
         allowed = {BuildPolicy.BUILD_LOCAL, BuildPolicy.BUILD_REMOTE}

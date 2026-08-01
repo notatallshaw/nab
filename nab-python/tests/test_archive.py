@@ -51,7 +51,8 @@ from nab_python.provider import (
 from nab_python.target import ResolveTarget
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from nab_python.lockfile import PinShape
@@ -1032,6 +1033,28 @@ class TestArchiveBuildPolicyLevels:
         metadata = self._extract(policy, tmp_path)
         assert metadata.name == "pkg"
         assert [str(r) for r in metadata.requires_dist] == ["requests>=2"]
+
+    @pytest.mark.parametrize("policy", [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL])
+    def test_unreadable_pyproject_reports_the_errno(
+        self,
+        policy: BuildPolicy,
+        tmp_path: Path,
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        """An unreadable pyproject is reported as a read failure.
+
+        Under a policy that bars the build, the fall-through would call the
+        source dynamic, which is a claim about a file nothing has read.
+        """
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "pkg"\nversion = "1.0.0"\n', encoding="utf-8"
+        )
+        with (
+            deny_access(tmp_path / "pyproject.toml"),
+            pytest.raises(UnsupportedSdistError, match="Permission denied") as caught,
+        ):
+            self._extract(policy, tmp_path)
+        assert "dynamic metadata" not in str(caught.value)
 
     @pytest.mark.parametrize("policy", [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL])
     def test_dynamic_archive_raises_below_build_remote(

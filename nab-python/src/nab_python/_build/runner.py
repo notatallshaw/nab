@@ -43,6 +43,7 @@ from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 from .._vendor.packaging.version import Version
 from ..metadata import WheelMetadata, validate_specifier_versions
+from ..paths import path_state
 from .env import BuildEnvError, NabBuildEnv
 from .errors import BuildBackendError
 
@@ -82,13 +83,13 @@ def run_build_backend(
     :class:`NabBuildEnv` for why) so callers do not pass one in.
     """
     pyproject = source_dir / "pyproject.toml"
-    if pyproject.is_file():
+    if path_state(pyproject).should_read:
         try:
             data = tomli.loads(pyproject.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
             msg = f"could not read pyproject.toml at {source_dir}: {exc}"
             raise BuildBackendError(msg) from exc
-    elif (source_dir / "setup.py").is_file():
+    elif path_state(source_dir / "setup.py").should_read:
         # PEP 517 fallback for legacy setup.py projects: treat the
         # missing ``[build-system]`` as the documented default
         # (setuptools.build_meta:__legacy__).

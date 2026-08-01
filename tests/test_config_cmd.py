@@ -398,8 +398,8 @@ class TestConfigErrors:
         deny_access: Callable[[Path], AbstractContextManager[None]],
     ) -> None:
         # An unsearchable parent lands EACCES on the presence check's stat.
-        # The file is there, so the guard must neither raise nor call it
-        # missing: the read reports it, naming the errno.
+        # The file is there, so the guard must not call it missing: the
+        # read reports it, naming the errno.
         path = _project(hermetic_roots)
         with deny_access(path), pytest.raises(SystemExit):
             config_command("list", path=path)

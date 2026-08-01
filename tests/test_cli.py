@@ -3727,7 +3727,7 @@ class TestGroupAndExtraSelection:
         """An unsearchable parent must not fail the is-a-directory check.
 
         EACCES lands on the stat behind that check as well as on the read,
-        so classifying the path has to be raise-free or the handler throws
+        so classifying the path has to be raise-free or the handler raises
         a second error out of itself.
         """
         pyproject = _make_pyproject(tmp_path)

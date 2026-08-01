@@ -446,16 +446,19 @@ def _require_pyproject_file(path: Path) -> None:
     Shared by ``_load_config`` (the run path) and ``nab config`` so the
     not-found/directory wording lives in one place.  A missing or
     directory ``--path`` is a hard error, not a silently-skipped source.
-    A path that is there but cannot be stat'd passes: the config read
-    reports it, naming the errno.
+    A path whose stat fails passes: the config read reports it, naming
+    the errno.
     """
     state = path_state(path)
+
     if state is PathState.DIRECTORY:
         printer().error(f"{path} is a directory")
         sys.exit(1)
+
     if not state.should_read:
         printer().error(f"{path} not found")
         sys.exit(1)
+
     if _is_pylock(path):
         printer().error(
             f"{path} is a PEP 751 lockfile, not a pyproject.  nab resolves"

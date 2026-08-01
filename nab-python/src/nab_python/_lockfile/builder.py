@@ -179,9 +179,9 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
     re-locks: the anchor used for the previous resolve is read back
     and reused unless the user passes ``--upgrade``.
 
-    Returns ``None`` when ``path`` does not exist, is not valid TOML,
-    is not a PEP 751-shaped pylock, or is missing the ``[tool.nab]``
-    block.  Naive timestamps (no timezone offset) are coerced to UTC
+    Returns ``None`` when ``path`` does not exist, cannot be read, is
+    not valid TOML, is not a PEP 751-shaped pylock, or is missing the
+    ``[tool.nab]`` block.  Naive timestamps (no offset) are coerced to UTC
     for symmetry with the writer; this is informational provenance, so
     a missing offset is recoverable rather than fatal.
     """
@@ -212,9 +212,9 @@ def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
     Packages without a recorded version (direct-reference entries that
     omit it) are skipped.
 
-    Returns ``None`` when ``path`` does not exist, is not valid TOML,
-    or is not a spec-compliant PEP 751 lockfile; the caller falls back
-    to a no-diff summary line.
+    Returns ``None`` when ``path`` does not exist, cannot be read, is
+    not valid TOML, or is not a spec-compliant PEP 751 lockfile; the
+    caller falls back to a no-diff summary line.
     """
     if not path_state(path).should_read:
         return None

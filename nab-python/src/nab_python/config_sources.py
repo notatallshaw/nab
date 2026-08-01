@@ -1523,7 +1523,8 @@ def discover_layers(
             # A path that exists but is not a regular file (e.g. an
             # accidental `mkdir nab.toml`) would be silently ignored by an
             # is_file() filter, so crash naming it rather than dropping the
-            # config source.
+            # config source.  A failed stat goes to the read instead, which
+            # names the errno.
             msg = f"{path} exists but is not a regular file"
             raise SourceConfigError(msg)
         layers.append(_load_toml_layer(path, kind, rejections=rejections))

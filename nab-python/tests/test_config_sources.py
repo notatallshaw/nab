@@ -633,10 +633,10 @@ class TestDiscoverAndMissing:
         tmp_path: Path,
         deny_access: Callable[[Path], AbstractContextManager[None]],
     ) -> None:
-        # An unsearchable parent directory lands EACCES on the stat the
-        # presence check runs, before the read.  The source is present, so
-        # it must reach the read and be reported by name, neither skipped
-        # as absent nor escaping as a raw PermissionError.
+        # An unsearchable parent directory lands EACCES on the presence
+        # check's stat.  The source is present, so it must reach the read
+        # and be named there, neither skipped as absent nor escaping as a
+        # raw PermissionError.
         pyproject = _project(tmp_path)
         with (
             deny_access(pyproject),
