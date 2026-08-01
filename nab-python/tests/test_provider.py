@@ -182,11 +182,10 @@ def _done_event() -> threading.Event:
     return ev
 
 
-def _make_sdist_targz() -> bytes:
+def _make_sdist_targz(body: bytes = b"[project]\nname = 'pkg'\n") -> bytes:
     """Return .tar.gz bytes for a one-file sdist rooted at pkg-1.0."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        body = b"[project]\nname = 'pkg'\n"
         info = tarfile.TarInfo(name="pkg-1.0/pyproject.toml")
         info.size = len(body)
         tar.addfile(info, io.BytesIO(body))
@@ -194,6 +193,13 @@ def _make_sdist_targz() -> bytes:
 
 
 _SDIST_TARGZ = _make_sdist_targz()
+
+# Dynamic deps take the PEP 517 build path, and the build requirement gives
+# the build env something to fetch.
+_DYNAMIC_SDIST_TARGZ = _make_sdist_targz(
+    b'[project]\nname = "pkg"\nversion = "1.0"\ndynamic = ["dependencies"]\n\n'
+    b'[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+)
 
 
 class TestPrefetchListings:
@@ -8612,17 +8618,19 @@ class TestEffectiveBuildPolicy:
             is BuildPolicy.BUILD_LOCAL
         )
 
+    @pytest.mark.parametrize("offline", [False, True])
     def test_dynamic_sdist_path_under_build_remote_invokes_backend(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        offline: bool,
     ) -> None:
         """``BUILD_REMOTE`` routes a dynamic-deps sdist through the build path.
 
         Under ``BUILD_LOCAL`` (or no override at NEVER) the path raises
         :class:`UnsupportedSdistError`; under the ``BUILD_REMOTE``
         override the archive is fetched, extracted, and handed to the
-        build backend (mocked here).  The previous silent-passthrough
-        behaviour (return dynamic metadata as-is) is gone.
+        build backend (mocked here) along with the run's ``--offline``
+        flag.
         """
         from nab_python._vendor.packaging.version import Version as _Version
 
@@ -8631,6 +8639,7 @@ class TestEffectiveBuildPolicy:
             sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
             package="pkg",
         )
+        coordinator.offline = offline
         provider = Provider(
             coordinator,
             target=_PY312,
@@ -8693,7 +8702,7 @@ class TestEffectiveBuildPolicy:
         # target's Python must not reach the build env.
         assert captured["kwargs"] == {
             "config": provider.build_config,
-            "offline": False,
+            "offline": offline,
         }
 
     def test_resolve_dynamic_sdist_reuses_cross_tuple_cache(self) -> None:
@@ -9305,6 +9314,7 @@ class TestBuildRemoteFailureModes:
         with_sdist: bool,
         overrides: tuple[PackageOverride, ...] = (),
         target: ResolveTarget = _PY312,
+        build_config: NabProjectConfig | None = None,
     ) -> Provider:
         files = [make_sdist("1.0")] if with_sdist else [make_wheel("1.0")]
         coordinator = make_coordinator(files, package="pkg")
@@ -9314,6 +9324,7 @@ class TestBuildRemoteFailureModes:
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_REMOTE,
             package_overrides=overrides,
+            build_config=build_config,
         )
 
     def test_missing_sdist_in_listing_raises(self) -> None:
@@ -9449,6 +9460,38 @@ class TestBuildRemoteFailureModes:
 
         monkeypatch.setattr("nab_python.build_backend.extract_metadata", _boom)
         with pytest.raises(UnsupportedSdistError, match="backend explosion"):
+            build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+
+    def test_offline_coordinator_refuses_build(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An offline run refuses the build instead of fetching build requirements."""
+
+        def _no_network(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("offline must not reach the network")
+
+        monkeypatch.setattr("nab_python.resolve.resolve_for_targets", _no_network)
+
+        provider = self._provider(with_sdist=True, build_config=NabProjectConfig())
+        cast("MagicMock", provider.coordinator).offline = True
+        provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
+
+        def _ok_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...] = (),
+        ) -> threading.Event:
+            provider.coordinator.index.store_sdist_archive(
+                pkg, ver, _DYNAMIC_SDIST_TARGZ
+            )
+            return _done_event()
+
+        cast(
+            "MagicMock", provider.coordinator
+        ).request_sdist_archive.side_effect = _ok_fetch
+
+        with pytest.raises(UnsupportedSdistError, match="offline mode"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
     def test_find_sdist_skips_non_matching_versions(self) -> None:
