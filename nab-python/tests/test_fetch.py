@@ -107,6 +107,36 @@ class TestInMemoryIndex:
         idx.store_metadata("foo", "1.0", None)
         assert idx.has_metadata("foo", "1.0")
 
+    def test_offline_metadata_miss_roundtrip(self) -> None:
+        idx = InMemoryIndex()
+        url = "https://files.example.com/foo-1.0.whl"
+        assert not idx.is_offline_metadata_miss("foo", "1.0", url)
+        idx.record_offline_metadata_miss("foo", "1.0", url)
+        assert idx.is_offline_metadata_miss("foo", "1.0", url)
+        assert not idx.is_offline_metadata_miss("foo", "2.0", url)
+
+    def test_an_offline_miss_is_keyed_to_the_rung_that_skipped(self) -> None:
+        idx = InMemoryIndex()
+        idx.record_offline_metadata_miss(
+            "foo", "1.0", "https://files.example.com/foo-1.0.whl"
+        )
+        assert not idx.is_offline_metadata_miss(
+            "foo", "1.0", "https://files.example.com/foo-1.0.tar.gz"
+        )
+        assert not idx.is_offline_metadata_miss("foo", "1.0", None)
+
+    def test_empty_metadata_slot_is_not_an_offline_miss(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_metadata("foo", "1.0", None)
+        idx.store_sdist_metadata("foo", "1.0", None)
+        assert not idx.is_offline_metadata_miss("foo", "1.0", None)
+
+    def test_only_the_first_caller_claims_the_offline_warning(self) -> None:
+        idx = InMemoryIndex()
+        assert idx.claim_offline_metadata_warning("foo")
+        assert not idx.claim_offline_metadata_warning("foo")
+        assert idx.claim_offline_metadata_warning("bar")
+
     def test_metadata_error_roundtrip(self) -> None:
         idx = InMemoryIndex()
         assert idx.get_metadata_error("foo", "1.0") is None
@@ -1770,7 +1800,8 @@ class TestFetchCoordinatorCache:
         """Offline with a cache miss records the artifact absent, not as an error.
 
         Offline is the one failure the resolver works around: it resolves from
-        what the cache holds, so an uncached artifact is skipped.
+        what the cache holds, so an uncached artifact is skipped.  Each
+        metadata rung marks the skip alongside the empty slot.
         """
         with FetchCoordinator(
             transport=HttpxAsyncTransport(),
@@ -1796,6 +1827,12 @@ class TestFetchCoordinatorCache:
             assert coord.index.get_metadata_error("pkg", "2.0") is None
             assert coord.index.get_sdist_archive("pkg", "3.0") is None
             assert coord.index.get_sdist_archive_error("pkg", "3.0") is None
+            assert coord.index.is_offline_metadata_miss(
+                "pkg", "1.0", "https://files.example.com/pkg-1.0.whl.metadata"
+            )
+            assert coord.index.is_offline_metadata_miss(
+                "pkg", "2.0", "https://files.example.com/pkg-2.0.tar.gz"
+            )
         assert not coord._crashed
 
     @respx.mock

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import tarfile
 import threading
 import zipfile
@@ -1640,6 +1641,196 @@ class TestNoVersionsReasons:
             f"requires bar in {dep_range} but solution has it in {pos_range}" in reason
         )
         assert "disjoint with current solution range" not in reason
+
+
+def _sdist_entry(version: str) -> dict[str, object]:
+    """A Simple-API file record for ``foo``'s sdist at ``version``."""
+    return {
+        "filename": f"foo-{version}.tar.gz",
+        "url": f"https://pypi.example/foo-{version}.tar.gz",
+    }
+
+
+def _wheel_entry(version: str, *, sidecar: bool) -> dict[str, object]:
+    """A Simple-API file record for ``foo``'s wheel at ``version``."""
+    return {
+        "filename": f"foo-{version}-py3-none-any.whl",
+        "url": f"https://pypi.example/foo-{version}-py3-none-any.whl",
+        "core-metadata": sidecar,
+    }
+
+
+def _skipped_release_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The per-release offline-skip lines logged for ``foo``."""
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO and r.getMessage().startswith("Skipping foo==")
+    ]
+
+
+def _seed_listing(cache_dir: Path, files: list[dict[str, object]]) -> OnDiskCache:
+    """Write a cached Simple listing for ``foo`` and return the cache."""
+    cache = OnDiskCache(cache_dir, DEFAULT_INDEX_URL)
+    cache.put_simple(
+        "foo",
+        json.dumps({"files": files}).encode(),
+        CachePolicy(fetched_at=0, max_age=1, etag=None),
+    )
+    return cache
+
+
+class TestOfflineMetadataMiss:
+    """A version whose metadata is uncached is named as an offline miss.
+
+    Offline still degrades by skipping the version, but what the user is told
+    must not name an artifact nab never requested.
+    """
+
+    _PKG_INFO = "Metadata-Version: 2.2\nName: foo\nVersion: {ver}\n\n"
+
+    @pytest.mark.parametrize(
+        "files",
+        [
+            pytest.param([_sdist_entry("1.0")], id="sdist-only"),
+            pytest.param(
+                [_wheel_entry("1.0", sidecar=True), _sdist_entry("1.0")],
+                id="sidecar-and-sdist",
+            ),
+            pytest.param([_wheel_entry("1.0", sidecar=False)], id="bare-wheel"),
+        ],
+    )
+    def test_cold_metadata_names_offline_not_the_artifact(
+        self, tmp_path: Path, files: list[dict[str, object]]
+    ) -> None:
+        """Each metadata rung reports the offline miss it actually hit."""
+        _seed_listing(tmp_path, files)
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            cache_dir=tmp_path,
+            offline=True,
+        ) as coordinator:
+            provider = Provider(coordinator, target=_PY312)
+            with pytest.raises(MetadataError) as excinfo:
+                provider.get_dependencies("foo", V("1.0"))
+
+        message = str(excinfo.value)
+        assert "offline mode" in message
+        assert "no cached metadata" in message
+        assert "PKG-INFO" not in message
+        assert "no sdist available" not in message
+        assert "no PEP 658 metadata" not in message
+
+    def test_a_read_sdist_is_not_reported_as_an_offline_miss(
+        self, tmp_path: Path
+    ) -> None:
+        """An earlier rung skipped does not speak for the sdist nab did read."""
+        cache = _seed_listing(
+            tmp_path, [_wheel_entry("1.0", sidecar=False), _sdist_entry("1.0")]
+        )
+        cache.put_sdist_files("foo", "1.0", None, None)
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            cache_dir=tmp_path,
+            offline=True,
+        ) as coordinator:
+            provider = Provider(coordinator, target=_PY312)
+            with pytest.raises(MetadataError) as excinfo:
+                provider.get_dependencies("foo", V("1.0"))
+
+        assert "the sdist has no readable PKG-INFO" in str(excinfo.value)
+        assert "offline mode" not in str(excinfo.value)
+
+    def test_one_warning_covers_the_package_across_targets(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """One warning covers a package's skipped releases across every target.
+
+        A cold cache skips as many releases as the listing holds, and each
+        target rescans them with its own provider, so a warning per release
+        would bury the one fact worth reading.
+        """
+        versions = ("1.0", "2.0", "3.0")
+        _seed_listing(tmp_path, [_sdist_entry(v) for v in versions])
+        with (
+            caplog.at_level(logging.INFO),
+            FetchCoordinator(
+                transport=Urllib3AsyncTransport(),
+                cache_dir=tmp_path,
+                offline=True,
+            ) as coordinator,
+        ):
+            for target in (_PY312, _LINUX311):
+                provider = Provider(coordinator, target=target)
+                for version in versions:
+                    with pytest.raises(MetadataError):
+                        provider.get_dependencies("foo", V(version))
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "Skipping releases of foo" in warnings[0].getMessage()
+
+        skipped = _skipped_release_messages(caplog)
+        assert len(skipped) == len(versions) * 2
+        assert {m.split(":")[0] for m in skipped} == {
+            f"Skipping foo=={v}" for v in versions
+        }
+
+    def test_a_dropped_version_is_reported_when_an_older_one_pins(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A newer version dropped for a cold slot is not dropped in silence."""
+        cache = _seed_listing(tmp_path, [_sdist_entry("1.0"), _sdist_entry("2.0")])
+        cache.put_sdist_files("foo", "1.0", self._PKG_INFO.format(ver="1.0"), None)
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
+        with (
+            caplog.at_level(logging.INFO),
+            FetchCoordinator(
+                transport=Urllib3AsyncTransport(),
+                cache_dir=tmp_path,
+                offline=True,
+            ) as coordinator,
+        ):
+            provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+            resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+            pins = resolver.resolve(root_reqs)
+
+        assert pins["foo"] == V("1.0")
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "Skipping releases of foo" in warnings[0].getMessage()
+        assert "offline mode" in warnings[0].getMessage()
+
+        skipped = _skipped_release_messages(caplog)
+        assert len(skipped) == 1
+        assert "foo==2.0" in skipped[0]
+
+    def test_warm_metadata_offline_pins_the_newest_and_stays_quiet(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The control: with both slots warm, offline pins 2.0 and logs nothing."""
+        cache = _seed_listing(tmp_path, [_sdist_entry("1.0"), _sdist_entry("2.0")])
+        for version in ("1.0", "2.0"):
+            cache.put_sdist_files(
+                "foo", version, self._PKG_INFO.format(ver=version), None
+            )
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
+        with (
+            caplog.at_level(logging.INFO),
+            FetchCoordinator(
+                transport=Urllib3AsyncTransport(),
+                cache_dir=tmp_path,
+                offline=True,
+            ) as coordinator,
+        ):
+            provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+            resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+            pins = resolver.resolve(root_reqs)
+
+        assert pins["foo"] == V("2.0")
+        assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+        assert _skipped_release_messages(caplog) == []
 
 
 class TestMetadataBlockerCount:
