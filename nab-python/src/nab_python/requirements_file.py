@@ -15,7 +15,8 @@ from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.markersets import MarkerSet
 from ._vendor.packaging.requirements import InvalidRequirement, Requirement
-from ._vendor.packaging.utils import InvalidName, canonicalize_name
+from ._vendor.packaging.utils import canonicalize_name
+from .metadata import validate_specifier_versions
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -92,16 +93,19 @@ def _parse_project_requirement(
     """Parse one PEP 508 dependency string, raising if it is malformed.
 
     An ``extra`` name is folded in as an ``extra == "name"`` marker. A string
-    that is not valid PEP 508 raises :class:`InvalidProjectRequirementError`,
-    so a candidate declaring one malformed dependency is rejected whole rather
+    that is not valid PEP 508, or one whose specifier carries a version that
+    will not convert, raises :class:`InvalidProjectRequirementError`, so a
+    candidate declaring one malformed dependency is rejected whole rather
     than resolved with the dependency silently dropped.
     """
     try:
         text = _add_extra_marker(dep_str, extra) if extra is not None else dep_str
-        return Requirement(text)
-    except (InvalidRequirement, InvalidName) as exc:
+        req = Requirement(text)
+        validate_specifier_versions(req.specifier)
+    except ValueError as exc:
         msg = f"invalid requirement in {source}: {exc}"
         raise InvalidProjectRequirementError(msg) from exc
+    return req
 
 
 def _require_string_list(value: object, source: str) -> list[str]:

@@ -189,6 +189,31 @@ class TestExtractStaticMetadata:
         ):
             extract_static_metadata(tmp_path)
 
+    def test_oversized_requires_python_raises(self, tmp_path: Path) -> None:
+        """A specifier parses fine and only fails when something compares it."""
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        _write_pyproject(
+            tmp_path,
+            f'[project]\nname = "foo"\nversion = "1.0"\n'
+            f'requires-python = ">={oversized}"\n',
+        )
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"invalid \[project\]\.requires-python",
+        ):
+            extract_static_metadata(tmp_path)
+
+    def test_oversized_dependency_version_raises(self, tmp_path: Path) -> None:
+        """The same deferred conversion applies to a dependency's specifier."""
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        _write_pyproject(
+            tmp_path,
+            f'[project]\nname = "foo"\nversion = "1.0"\n'
+            f'dependencies = ["bar>={oversized}"]\n',
+        )
+        with pytest.raises(InvalidProjectRequirementError, match="invalid requirement"):
+            extract_static_metadata(tmp_path)
+
     def test_invalid_requires_python_raises(self, tmp_path: Path) -> None:
         """A bare "3.11" has no operator, so it is not a valid specifier; raise."""
         _write_pyproject(

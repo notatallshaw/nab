@@ -680,6 +680,34 @@ class TestParseMetadata:
         with pytest.raises(BuildBackendError, match="invalid Requires-Dist"):
             _parse_metadata(path)
 
+    def test_oversized_requires_python_raises(self, tmp_path: Path) -> None:
+        """A specifier parses fine and only fails when something compares it."""
+        from nab_python._build.runner import _parse_metadata
+
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        path = tmp_path / "METADATA"
+        path.write_text(
+            f"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+            f"Requires-Python: >={oversized}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="invalid Requires-Python"):
+            _parse_metadata(path)
+
+    def test_oversized_requires_dist_version_raises(self, tmp_path: Path) -> None:
+        """The same deferred conversion applies to a Requires-Dist specifier."""
+        from nab_python._build.runner import _parse_metadata
+
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        path = tmp_path / "METADATA"
+        path.write_text(
+            f"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+            f"Requires-Dist: click>={oversized}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="invalid Requires-Dist"):
+            _parse_metadata(path)
+
     def test_provides_extra_whitespace_stripped(self, tmp_path: Path) -> None:
         """Surrounding whitespace on a Provides-Extra value is insignificant
         per RFC 822; canonicalize_name does not strip it, so strip first."""
