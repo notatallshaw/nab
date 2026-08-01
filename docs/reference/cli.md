@@ -138,10 +138,12 @@ A project option can be overridden for one run with a `--project-<key>`
 flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
 `--project-uploaded-prior-to`, `--project-dist-policy`,
 `--project-build-policy`, and the repeatable `--project-constraint` and
-`--project-default-group`. Each changes the resolved set, so passing one
-prints a reproducibility notice on stderr and records the override in the
-lockfile's `[tool.nab]` block, since the lock no longer derives from the
-committed files alone.
+`--project-default-group`. Every one of them replaces the file value
+outright; repeating `--project-constraint` builds up that run's whole
+constraint list rather than adding to the declared one. Each changes the
+resolved set, so passing one prints a reproducibility notice on stderr
+and records the override in the lockfile's `[tool.nab]` block, since the
+lock no longer derives from the committed files alone.
 
 `--locked` re-resolves and checks that the committed `pylock.toml` is
 already up to date, writing nothing. It exits non-zero if the lock would
@@ -206,11 +208,10 @@ actions:
 * `nab config list` prints every option with its value, scope, and
   the source it came from.
 * `nab config get <key>` prints one effective value.
-* `nab config explain <key>` prints the full source stack for one
-  key, the winning source marked with a `>`. Array options concatenate
-  every layer instead of one winning, so each source is shown as a
-  contribution and the merged effective value is printed on a trailing
-  `= effective:` line.
+* `nab config explain <key>` prints the full source stack for one key.
+  The winning row carries a `>` gutter and the status `winner`, and
+  every source it beats is `shadowed`. A shadowed source contributes
+  nothing to the value, whatever the key's type.
 
 `--include-rejected` is a flag on `nab config` itself, so every action
 takes it. Without it, a config file that sets an unknown key or a key

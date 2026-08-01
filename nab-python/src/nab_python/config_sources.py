@@ -13,8 +13,9 @@ Everything else is derived by iterating :data:`OPTIONS`:
   not allowed in that source kind (the category gate).
 * :func:`read_env_layer` reads ``NAB_*`` for the rows that declare an
   env var, and warns on any ``NAB_*`` name it does not recognize.
-* :func:`resolve_config` merges the discovered layers low-to-high and
-  attaches ``(scope, origin)`` provenance to each effective value.
+* :func:`resolve_config` ranks the discovered layers low-to-high, takes
+  each option's whole value from the highest source that bound it, and
+  attaches ``(scope, origin)`` provenance to it.
 * :func:`render_list` / :func:`render_get` / :func:`render_explain`
   back ``nab config``.
 
@@ -266,27 +267,6 @@ class OptionSpec:
     cli_param: str | None
     parse: Callable[[Any, str], Any]
     render: Callable[[Any], str]
-    # How bindings from different sources combine.  The default is scalar
-    # last-wins: the highest-precedence source's value is the effective one,
-    # and the same key set to different values in the two project files is a
-    # conflict error.
-    #
-    # ``is_array`` concatenates every binding's items low-to-high into one
-    # value, so the two project files contribute additively rather than
-    # conflicting; the concatenated whole is then re-validated (see
-    # ``merge_check``).
-    is_array: bool = False
-    # ``is_mapping`` is a name-keyed table (``index``, ``marker-environment``)
-    # whose sub-keys merge across sources, folded low-to-high, so the two
-    # project files contribute disjoint sub-keys additively and only the same
-    # sub-key set differently is a conflict.  Mutually exclusive with
-    # ``is_array``.
-    is_mapping: bool = False
-    # For an ``is_array`` row whose items are already-built objects (not
-    # plain strings), the check to run over the concatenated whole; it
-    # returns the validated tuple.  A plain-string array leaves this ``None``
-    # and is re-validated by re-running ``parse`` over the concatenation.
-    merge_check: Callable[[Sequence[Any]], tuple[Any, ...]] | None = None
 
     def allowed_in_toml(self, kind: SourceKind) -> bool:
         """Whether a TOML source of ``kind`` may set this option.
@@ -525,10 +505,7 @@ def _parse_workspace(value: Any, where: str) -> Any:
 def _parse_constraints(value: Any, where: str) -> tuple[str, ...]:
     # Array of PEP 508 strings.  Delegates to config._parse_constraints so
     # the list-of-strings shape check and the per-item PEP 508 validation
-    # (and their messages) are identical to the pyproject parse path.  Runs
-    # both per-layer (each file's own list) and again over the concatenated
-    # whole (the array merge re-validates the result), which is why the
-    # delegate must accept any tuple as well as a list.
+    # (and their messages) are identical to the pyproject parse path.
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_constraints as _impl,
@@ -552,35 +529,19 @@ def _parse_default_groups(value: Any, where: str) -> tuple[str, ...]:
 
 
 def _parse_indexes(value: Any, where: str) -> tuple[IndexConfig, ...]:
-    # One file's array-of-tables: config._parse_indexes validates
-    # shape, keys, and the within-file same-name check into IndexConfig
-    # entries.  The across-file same-name check runs over the concatenation
-    # via merge_check (_revalidate_index_names).
+    # One file's array-of-tables: config._parse_indexes validates shape,
+    # keys, and the same-name check into IndexConfig entries.
     del where
     from .config import _parse_indexes as _impl  # noqa: PLC0415 (config import cycle)
 
     return _delegate(lambda: _impl(value))
 
 
-def _revalidate_index_names(indexes: Sequence[Any]) -> tuple[IndexConfig, ...]:
-    # Re-run the same-name check over the concatenated indexes, re-typing the
-    # error so its message matches the single-file path.
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _check_index_name_uniqueness as _impl,
-    )
-
-    merged = tuple(indexes)
-    _delegate(lambda: _impl(merged))
-    return merged
-
-
 def _parse_local_sources(value: Any, where: str) -> tuple[LocalSource, ...]:
     # One file's array-of-tables (name, path, editable, subdirectory).  Paths
     # resolve relative to the declaring file's directory (both legal sources
-    # share the project dir).  There is no within-key duplicate check (the
-    # cross-source local/vcs/archive name check is a whole-config pass on the
-    # resolve path), so the concatenation passes through unchanged
-    # (merge_check=tuple).
+    # share the project dir).  The cross-source local/vcs/archive name check
+    # is a whole-config pass on the resolve path.
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_local_sources as _impl,
@@ -602,9 +563,7 @@ def _declaring_dir() -> Path:
 
 
 def _parse_vcs_sources(value: Any, where: str) -> tuple[VcsSource, ...]:
-    # One file's array-of-tables (name, url).  Like local-sources there is no
-    # within-key duplicate check, so the concatenation passes through
-    # (merge_check=tuple).
+    # One file's array-of-tables (name, url); same shape as local-sources.
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_vcs_sources as _impl,
@@ -614,8 +573,7 @@ def _parse_vcs_sources(value: Any, where: str) -> tuple[VcsSource, ...]:
 
 
 def _parse_archive_sources(value: Any, where: str) -> tuple[ArchiveSource, ...]:
-    # One file's array-of-tables (name, url); same passthrough shape as
-    # vcs-sources (merge_check=tuple).
+    # One file's array-of-tables (name, url); same shape as vcs-sources.
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_archive_sources as _impl,
@@ -645,18 +603,18 @@ def _override_anchor() -> datetime:
 # ``packages`` (name-keyed sugar) and ``package-rules`` (array-of-tables) are
 # two rows that both desugar into one PackageOverride tuple, so each parses
 # only its own surface and config validates the body and the within-surface
-# same-field overlap.  The across-file overlap runs over the concatenation
-# via merge_check (_revalidate_override_overlap).  The cross-surface
-# packages-vs-package-rules overlap and the route-names-a-declared-index
-# check both need the merged whole, so they run on the resolve path in
-# config._config_from_effective, not here.
+# same-field overlap.  The cross-surface packages-vs-package-rules overlap
+# and the route-names-a-declared-index check both need the merged whole, so
+# they run on the resolve path in config._config_from_effective, not here.
 def _parse_packages(value: Any, where: str) -> tuple[Any, ...]:
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_packages_sugar as _impl,
     )
 
-    return _delegate(lambda: tuple(_impl(value, anchor=_override_anchor())))
+    return _delegate(
+        lambda: _checked_overrides(_impl(value, anchor=_override_anchor()))
+    )
 
 
 def _parse_package_rules(value: Any, where: str) -> tuple[Any, ...]:
@@ -665,28 +623,32 @@ def _parse_package_rules(value: Any, where: str) -> tuple[Any, ...]:
         _parse_package_rules as _impl,
     )
 
-    return _delegate(lambda: tuple(_impl(value, anchor=_override_anchor())))
-
-
-def _revalidate_override_overlap(overrides: Sequence[Any]) -> tuple[Any, ...]:
-    # Re-run the per-package same-field overlap check over the concatenation,
-    # re-typing the error to the registry's SourceConfigError.
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _check_package_override_overlap as _impl,
+    return _delegate(
+        lambda: _checked_overrides(_impl(value, anchor=_override_anchor()))
     )
 
-    merged = tuple(overrides)
-    _delegate(lambda: _impl(merged))
-    return merged
+
+def _checked_overrides(overrides: Iterable[Any]) -> tuple[Any, ...]:
+    """Reject a same-field overlap among one surface's desugared overrides.
+
+    The cross-surface packages-vs-package-rules overlap needs both rows
+    merged, so it runs on the resolve path; this is the within-surface half,
+    run here so ``nab config`` refuses the same file the resolve refuses.
+    """
+    from .config import (  # noqa: PLC0415 (config import cycle)
+        _check_package_override_overlap as _check,
+    )
+
+    built = tuple(overrides)
+    _check(built)
+    return built
 
 
 def _parse_index_overrides(value: Any, where: str) -> Mapping[str, Any]:
     # Name-keyed table (``[tool.nab.index.<name>]``).  The body (policy
     # fields) is validated as on the pyproject path; the
     # key-names-a-declared-index check needs the merged indexes and so runs on
-    # the resolve path.  As a mapping row the two project files contribute
-    # disjoint index names additively, and only the same index name set
-    # differently across them is a conflict.
+    # the resolve path.
     del where
     from .config import (  # noqa: PLC0415 (config import cycle)
         _parse_index_overrides as _impl,
@@ -697,9 +659,7 @@ def _parse_index_overrides(value: Any, where: str) -> Mapping[str, Any]:
 
 def _parse_conflicts(value: Any, where: str) -> tuple[Any, ...]:
     # One file's array-of-tables (member list/table + policy): config validates
-    # shape, members, and policy and runs the within-file member-uniqueness
-    # check.  The across-file member-uniqueness check runs over the
-    # concatenation via merge_check (_revalidate_conflict_members).  The
+    # shape, members, and policy and runs the member-uniqueness check.  The
     # default-groups-vs-conflicts check needs both merged values, so it runs
     # on the resolve path.
     del where
@@ -708,25 +668,12 @@ def _parse_conflicts(value: Any, where: str) -> tuple[Any, ...]:
     return _delegate(lambda: _impl(value))
 
 
-def _revalidate_conflict_members(conflicts: Sequence[Any]) -> tuple[Any, ...]:
-    # Re-run the member-uniqueness check over the concatenation, re-typing the
-    # error so its message matches the single-file path.
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _check_conflict_member_uniqueness as _impl,
-    )
-
-    merged = tuple(conflicts)
-    _delegate(lambda: _impl(merged))
-    return merged
-
-
 def _parse_matrix(value: Any, where: str) -> Any:
     # Nested table (python, platforms, python-order, python-patches,
-    # implementations).  Scalar last-wins, compared by value (a frozen
-    # MatrixConfig or None).  Delegates to config._parse_matrix so axis
-    # validation and eager expansion are identical to the pyproject path.
-    # The mode/matrix mutual-requirement check needs both merged values, so
-    # it runs over the merged config rather than in this row.
+    # implementations).  Delegates to config._parse_matrix so axis validation
+    # and eager expansion are identical to the pyproject path.  The
+    # mode/matrix mutual-requirement check needs both merged values, so it
+    # runs over the merged config rather than in this row.
     del where
     from .config import _parse_matrix as _impl  # noqa: PLC0415 (config import cycle)
 
@@ -882,7 +829,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param="project_constraint",
         parse=_parse_constraints,
         render=_render_string_tuple,
-        is_array=True,
     ),
     OptionSpec(
         key="default-groups",
@@ -894,7 +840,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param="project_default_group",
         parse=_parse_default_groups,
         render=_render_string_tuple,
-        is_array=True,
     ),
     OptionSpec(
         key="requires-python",
@@ -950,7 +895,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_environment,
         render=_render_environment,
-        is_mapping=True,
     ),
     OptionSpec(
         key="marker-environment",
@@ -962,7 +906,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_marker_environment,
         render=_render_marker_environment,
-        is_mapping=True,
     ),
     OptionSpec(
         key="vcs",
@@ -996,8 +939,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_indexes,
         render=_render_index_list,
-        is_array=True,
-        merge_check=_revalidate_index_names,
     ),
     OptionSpec(
         key="local-sources",
@@ -1009,8 +950,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_local_sources,
         render=_render_local_sources,
-        is_array=True,
-        merge_check=tuple,
     ),
     OptionSpec(
         key="vcs-sources",
@@ -1022,8 +961,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_vcs_sources,
         render=_render_vcs_sources,
-        is_array=True,
-        merge_check=tuple,
     ),
     OptionSpec(
         key="archive-sources",
@@ -1035,8 +972,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_archive_sources,
         render=_render_archive_sources,
-        is_array=True,
-        merge_check=tuple,
     ),
     OptionSpec(
         key="packages",
@@ -1048,8 +983,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_packages,
         render=_render_package_overrides,
-        is_array=True,
-        merge_check=_revalidate_override_overlap,
     ),
     OptionSpec(
         key="package-rules",
@@ -1061,8 +994,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_package_rules,
         render=_render_package_overrides,
-        is_array=True,
-        merge_check=_revalidate_override_overlap,
     ),
     OptionSpec(
         key="index",
@@ -1074,7 +1005,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_index_overrides,
         render=_render_index_overrides,
-        is_mapping=True,
     ),
     OptionSpec(
         key="conflicts",
@@ -1086,8 +1016,6 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param=None,
         parse=_parse_conflicts,
         render=_render_conflicts,
-        is_array=True,
-        merge_check=_revalidate_conflict_members,
     ),
     OptionSpec(
         key="matrix",
@@ -1549,20 +1477,20 @@ def resolve_config(
     every registry row, each carrying its winner ``(scope, origin)`` and
     the full shadowed stack.  ``rejected`` (category-gate casualties) is
     attached per key for ``explain --include-rejected``.
+
+    Whatever the row's type, the highest source that binds the key
+    supplies the whole value: a list or table from a higher source
+    replaces the one below rather than adding to it.
     """
     all_layers = [*layers, env_layer, cli_layer]
     out: dict[str, EffectiveValue] = {}
     for spec in OPTIONS:
         stack = _stack_for(spec, all_layers)
         rejected_for_key = tuple(r for r in rejected if r.key == spec.key)
-        if not stack:
-            origin, value = Origin(SourceKind.DEFAULT, "builtin-default"), spec.default
-        elif spec.is_array:
-            origin, value = stack[-1][0], _merge_array(spec, stack)
-        elif spec.is_mapping:
-            origin, value = stack[-1][0], _merge_mapping(stack)
-        else:
+        if stack:
             origin, value = stack[-1]
+        else:
+            origin, value = Origin(SourceKind.DEFAULT, "builtin-default"), spec.default
         out[spec.key] = EffectiveValue(
             spec=spec,
             value=value,
@@ -1600,45 +1528,6 @@ def _stack_for(
     return found
 
 
-def _merge_array(
-    spec: OptionSpec, stack: Sequence[tuple[Origin, Any]]
-) -> tuple[Any, ...]:
-    """Concatenate an array option's bindings low-to-high, then re-validate.
-
-    Bindings concatenate in precedence order, so the two project files
-    contribute additively and a higher source appends rather than replaces.
-    A row whose items are already-built objects re-validates the whole
-    through ``merge_check`` (the index-name, override-overlap, and
-    conflict-member checks); a plain-string row re-runs ``parse`` over the
-    concatenation, so ``constraints`` is re-checked as PEP 508 as a whole.
-    """
-    merged: list[Any] = []
-    for _origin, value in stack:
-        merged.extend(value)
-    if spec.merge_check is not None:
-        return spec.merge_check(merged)
-    return spec.parse(merged, f"config {spec.key!r}")
-
-
-def _merge_mapping(stack: Sequence[tuple[Origin, Any]]) -> Mapping[str, Any]:
-    """Fold a name-keyed table's bindings sub-key by sub-key, low-to-high.
-
-    Each layer in ``stack`` already holds a per-layer-validated mapping (its
-    own file's ``[tool.nab.index.<name>]`` / ``[marker-environment]`` table
-    parsed by the row).  The two project files contribute disjoint sub-keys
-    additively; a sub-key present in more than one layer takes the
-    highest-precedence binding (and across the two same-rung project files a
-    differing sub-key is already an error, caught by
-    :func:`_check_project_file_conflict`).  Returned as a plain dict; the
-    per-entry body is already validated, and the check that an index name is
-    declared runs over the merged config.
-    """
-    merged: dict[str, Any] = {}
-    for _origin, value in stack:
-        merged.update(value)
-    return merged
-
-
 def _check_project_file_conflict(
     spec: OptionSpec, found: Sequence[tuple[Origin, Any]]
 ) -> None:
@@ -1649,26 +1538,15 @@ def _check_project_file_conflict(
     :class:`SourceConfigError`, not a silent last-wins.  Identical values
     are fine.
 
-    An array option (``is_array``) is exempt: its two project-file
-    bindings concatenate additively, so differing lists are a merge, not a
-    conflict.  The concat is order-stable (pyproject before project-dir
-    nab.toml) so the result is deterministic.
-
-    A name-keyed table (``is_mapping``) merges sub-key by sub-key, so the
-    two project files contribute disjoint sub-keys additively; only the
-    same sub-key set to different values across them is a conflict
-    (handled below), mirroring the additive array exemption.
+    Every row is compared as one whole value, lists and tables included,
+    so two project files declaring different constraints or different
+    sub-keys of one table conflict rather than combining.
     """
-    if spec.is_array:
-        return
     by_kind = {origin.kind: value for origin, value in found}
     if SourceKind.PYPROJECT not in by_kind or SourceKind.PROJECT_TOML not in by_kind:
         return
     pyproject_value = by_kind[SourceKind.PYPROJECT]
     project_value = by_kind[SourceKind.PROJECT_TOML]
-    if spec.is_mapping:
-        _check_mapping_subkey_conflict(spec, pyproject_value, project_value)
-        return
     if pyproject_value == project_value:
         return
     msg = (
@@ -1679,28 +1557,6 @@ def _check_project_file_conflict(
         " same value."
     )
     raise SourceConfigError(msg)
-
-
-def _check_mapping_subkey_conflict(
-    spec: OptionSpec,
-    pyproject_value: Mapping[str, Any],
-    project_value: Mapping[str, Any],
-) -> None:
-    """For a name-keyed table, only a shared sub-key set differently errors.
-
-    Disjoint sub-keys across the two project files merge (additive, like an
-    array row); a sub-key present in both with a differing value is the hard
-    conflict.  Sorted so the message is deterministic.
-    """
-    for sub_key in sorted(set(pyproject_value) & set(project_value)):
-        if pyproject_value[sub_key] != project_value[sub_key]:
-            msg = (
-                f"config {spec.key!r}.{sub_key} is set to conflicting values in"
-                " pyproject [tool.nab] and project-dir nab.toml.  Both files sit"
-                " at the same precedence level; set the sub-key in only one, or"
-                " set them to the same value."
-            )
-            raise SourceConfigError(msg)
 
 
 # ----- nab config renderers (all derived from the effective map) -----
@@ -1784,32 +1640,22 @@ def render_explain(
 ) -> str:
     """Render the full shadowed stack for ``key``.
 
-    The winner is marked with a ``>`` gutter, every other source is
-    ``shadowed``.  With ``include_rejected`` the category-rejected
-    sources (a source that tried to set ``key`` but was not allowed) are
-    listed too, labelled ``rejected``.
+    The highest source is the ``winner`` and carries a ``>`` gutter;
+    every source it beats is ``shadowed``.  With ``include_rejected`` the
+    category-rejected sources (a source that tried to set ``key`` but was
+    not allowed) are listed too, labelled ``rejected``.
     """
     ev = _require_key(effective, key)
     lines = [f"{key} ({ev.spec.scope.value}, {ev.spec.type_label})"]
     winner_index = len(ev.stack) - 1
-    merged = ev.spec.is_array or ev.spec.is_mapping
     for i, (origin, value) in enumerate(ev.stack):
-        # Array / name-keyed-table options merge every layer low-to-high
-        # (concat for arrays, sub-key union for mappings), so no single
-        # layer's binding is the effective value; the per-layer rows are
-        # contributions and the merged value is rendered separately below.
-        if merged:
-            gutter, status = " ", "contributes"
-        else:
-            gutter = ">" if i == winner_index else " "
-            status = "winner" if i == winner_index else "shadowed"
+        gutter = ">" if i == winner_index else " "
+        status = "winner" if i == winner_index else "shadowed"
         rendered = ev.spec.render(value)
         lines.append(
             f"{gutter} {origin.scope:<{_LIST_SCOPE_W}} {rendered:<{_LIST_VALUE_W}}"
             f" {status:<{_EXPLAIN_STATUS_W}} {origin.label}"
         )
-    if merged:
-        lines.append(f"= effective: {ev.spec.render(ev.value)}")
     if include_rejected:
         lines.extend(
             f"  {rej.origin.scope:<{_LIST_SCOPE_W}} {'-':<{_LIST_VALUE_W}}"
@@ -1833,8 +1679,8 @@ def build_cli_overrides(locals_by_param: Mapping[str, Any]) -> dict[str, Any]:
 
     Iterates :data:`OPTIONS`, reads each row's ``cli_param`` out of
     ``locals_by_param``, and keeps only the keys the user actually set.
-    An unset scalar flag is ``None`` and an unset array flag is an empty
-    tuple (the append-action default); both are omitted so they do not
+    An unset scalar flag is ``None`` and an unset repeatable flag is an
+    empty tuple (the append-action default); both are omitted so they do not
     shadow the file ladder.  A file-only row (``cli_param`` is ``None``)
     has no CLI flag, so it is skipped entirely.  Both the run subcommands
     and ``nab config`` build their override dict through this single
@@ -1862,9 +1708,9 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
     parsed: dict[str, Any] = {}
     for key, value in values.items():
         spec = _BY_KEY[key]
-        # An array flag arrives as a tuple from tyro's append action; the
+        # A repeatable flag arrives as a tuple from tyro's append action; the
         # parse hooks expect a TOML list, so normalise it here.
-        raw = list(value) if spec.is_array and isinstance(value, tuple) else value
+        raw = list(value) if isinstance(value, tuple) else value
         parsed[key] = spec.parse(raw, f"cli:{spec.cli_flag}")
     return Layer(Origin(SourceKind.CLI, "cli"), parsed)
 

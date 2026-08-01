@@ -813,8 +813,11 @@ nab lock [PATH]
 A project option can be overridden for a single run with a
 `--project-<key>` flag (for example `--project-resolution`,
 `--project-dist-policy`, or the repeatable `--project-constraint`); the
-structured table options stay file-only. A `--project-*` override changes
-the resolved set, so it prints a notice and is recorded in the lockfile.
+structured table options stay file-only. The flag replaces the file
+value, list flags included: passing `--project-constraint` twice
+resolves against exactly those two constraints, whatever `constraints`
+the files declare. A `--project-*` override changes the resolved set, so
+it prints a notice and is recorded in the lockfile.
 `--project-dist-policy` takes a bare policy, so it replaces the whole
 `dist-policy` value and resets `trust-unverified-deps`; set the table form
 in a file to keep that flag.
@@ -851,11 +854,25 @@ Sources are consulted low to high; a higher source wins:
 3. user `nab.toml` (`$XDG_CONFIG_HOME/nab/nab.toml`, else
    `~/.config/nab/nab.toml`)
 4. `pyproject.toml` `[tool.nab]` and the project-directory `nab.toml`
-   (same precedence; setting one key to conflicting values across the two
-   files is a hard error, identical values are fine, and array options
-   from both files concatenate)
+   (same precedence; setting one key in both files is covered below)
 5. `NAB_*` environment variables
 6. the CLI flag
+
+Winning is all-or-nothing. Whatever the key's type, the highest source
+that sets it supplies the whole value and nothing from a lower source
+survives: a `constraints` list on the CLI is the entire constraint set
+for that run, and an `[environment]` table in a file is the entire
+environment. No source adds to the one beneath it, so the value the
+resolve uses is the one you can read in a single place. To extend a
+list, edit the file that declares it.
+
+Rung 4 is two files at one precedence, so neither can win. Setting one
+key in both is allowed only if the two values are identical; different
+values are a hard error naming both files. That applies to every key:
+two `constraints` lists, two `[[indexes]]` arrays, and `python` under
+`[tool.nab.environment]` against `platform` under `[environment]` in the
+project `nab.toml` are all the same conflict, one key set twice. Set the
+key in one of the two files.
 
 The standalone `nab.toml` files use the same key names as
 `[tool.nab]`, but at the top level (no `[tool.nab]` table):
