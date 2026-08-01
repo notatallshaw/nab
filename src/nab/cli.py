@@ -172,7 +172,16 @@ def _make_transport(backend: HttpBackend) -> AsyncHttpTransport:
         except ImportError:
             printer().error("httpx is not installed; run `pip install nab[httpx]`")
             sys.exit(1)
-        return HttpxAsyncTransport()
+
+        # httpx raises ImportError from its client constructor when h2 is missing.
+        try:
+            return HttpxAsyncTransport()
+        except ImportError:
+            printer().error(
+                "httpx is installed without HTTP/2 support; "
+                "run `pip install nab[httpx]`"
+            )
+            sys.exit(1)
 
     return Urllib3AsyncTransport()
 

@@ -38,8 +38,9 @@ is `uv` on recent pipx; the `pip` backend works equivalently.
 uv tool install 'nab[httpx]'
 ```
 
-Pick it at run-time with `--http-backend httpx`. Selecting a backend
-that was not installed surfaces a helpful `ImportError`.
+Pick it at run-time with `--http-backend httpx`. The extra installs
+httpx along with the `h2` package the backend needs. If either is
+missing, selecting the backend exits with an install hint.
 
 Both backends send the same `User-Agent`, `nab-index/<version>`.
 
