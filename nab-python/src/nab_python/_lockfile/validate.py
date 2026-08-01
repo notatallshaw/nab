@@ -13,7 +13,11 @@ writer computes straight from the inputs: ``requires-python``, ``extras``,
 ``dependency-groups`` and ``default-groups``. The validity checks
 (:func:`check_direct_requirements`, :func:`check_constraints`) cover what
 every successful resolve renders: each active direct requirement is present
-and its specifier met, and each pin satisfies every active constraint.
+and its specifier met, and each pin satisfies every active constraint. A
+pre-release pin is never disqualified for being a pre-release: the resolver
+picks from the intersection of every requirement on a name, so a fresh
+resolve can land on a pre-release the requirement checked here does not opt
+into on its own.
 
 :func:`check_locked` is the entry point the CLI calls: it reads the committed
 lock and runs both stages, so a caller never handles a parsed lock itself.
