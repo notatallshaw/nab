@@ -4223,6 +4223,47 @@ class TestLockDeclaresItsEnvironment:
         assert Marker(rows["above"]).evaluate(high)
         assert not Marker(rows["above"]).evaluate(low)
 
+    def test_a_literal_first_prerelease_marker_splits_above_the_floor(
+        self, tmp_path: Path
+    ) -> None:
+        """PEP 508 lets the literal come first, and the order changes the truth.
+
+        packaging builds the specifier from the right operand, so
+        ``"3.12.0rc1" < python_full_version`` is False on 3.12.0 (a ``<``
+        specifier excludes prereleases of its own release) and True on every
+        later micro.  Answering the whole minor at its 3.12.0 floor would drop
+        ``bar`` for every real 3.12, so the minor splits at 3.12.1.
+        """
+        coordinator = make_coordinator(
+            listings={
+                "foo": _index_wheels("foo", "1.0"),
+                "bar": _index_wheels("bar", "2.0"),
+            },
+            metadata_by_version={
+                "1.0": (
+                    "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+                    'Requires-Dist: bar ; "3.12.0rc1" < python_full_version\n'
+                ),
+                "2.0": "Metadata-Version: 2.1\nName: bar\nVersion: 2.0\n",
+            },
+        )
+        lock_input = self._resolve(tmp_path, self._PYPROJECT, coordinator)
+
+        assert set(lock_input.targets["py312-linux_x86_64-pf3120"].pins) == {"foo"}
+        assert set(lock_input.targets["py312-linux_x86_64-pf3121"].pins) == {
+            "foo",
+            "bar",
+        }
+
+        above = next(
+            row
+            for row in lock_input.environments
+            if 'python_full_version >= "3.12.1.dev0"' in str(row)
+        )
+        assert Marker(str(above)).evaluate(
+            {**_PY312_ENV, "python_full_version": "3.12.1"}
+        )
+
 
 class TestExtraAndGroupMembershipMarkers:
     """A selected extra or group gates the packages only it reaches.

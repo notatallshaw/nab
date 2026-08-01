@@ -201,7 +201,9 @@ operators (`<`, `<=`, `>`, `>=`) and the ones naming a region (`==`,
 into an interval is a loud error rather than a silent guess: a
 membership test (`in`, `not in`), a verbatim `===`, a non-version
 comparison, a comparison against another marker variable, or certain
-prerelease literals strictly inside the minor.
+prerelease literals strictly inside the minor. PEP 508 also allows the
+literal first (`"3.11.4rc1" < python_full_version`), and packaging reads
+that order differently, so nab tiles it from the order as written.
 
 To resolve a minor as one real release rather than split it, name the
 patch you deploy on:

@@ -1201,17 +1201,116 @@ class TestMicroBoundarySplitting:
             ('"3.12.4" != python_full_version', ["3.12.4", "3.12.5"]),
         ],
     )
-    def test_a_literal_on_the_left_mirrors_the_operator(
+    def test_a_plain_release_literal_reads_the_same_in_either_order(
         self, marker: str, points: list[str]
     ) -> None:
         """PEP 508 allows the literal first, and packaging keeps that order.
-        An ordered or symmetric operator is mirrored back to variable-on-left
-        form, so each literal-first clause cuts at the same release as its
-        variable-first equivalent: ``"3.12.4" > python_full_version`` reads
-        like ``< "3.12.4"``.
+        A plain release literal has no prerelease, post, or local part to
+        shift the comparison, so ``"3.12.4" > python_full_version`` cuts at
+        the same release as ``python_full_version < "3.12.4"``.
         """
         found = micro_boundary_points(self._target(), [Marker(marker)])
         assert [str(point) for point in found] == points
+
+    @pytest.mark.parametrize(
+        ("marker", "points"),
+        [
+            ('"3.12.0rc1" < python_full_version', ["3.12.1"]),
+            ('"3.12.4rc1" < python_full_version', ["3.12.5"]),
+            ('"3.12.4a1" < python_full_version', ["3.12.5"]),
+            ('"3.12.4.dev0" < python_full_version', ["3.12.5"]),
+            ('"3.12.4rc1" <= python_full_version', ["3.12.4"]),
+            ('"3.12.4rc1" > python_full_version', ["3.12.4"]),
+            ('"3.12.4rc1" >= python_full_version', ["3.12.4"]),
+            ('"3.12.4rc1" == python_full_version', []),
+            ('"3.12.4rc1" != python_full_version', []),
+            ('"3.12.4.post1" < python_full_version', ["3.12.5"]),
+            ('"3.12.4.post1" <= python_full_version', ["3.12.5"]),
+            ('"3.12.4.post1" > python_full_version', ["3.12.4"]),
+            ('"3.12.4.post1" >= python_full_version', ["3.12.5"]),
+            ('"3.12.4.post1" == python_full_version', []),
+            ('"3.12.0.post1" <= python_full_version', ["3.12.1"]),
+            ('"3.12.0.post1" > python_full_version', []),
+            ('"3.12.4+local" < python_full_version', ["3.12.5"]),
+            ('"3.12.4+local" <= python_full_version', ["3.12.4"]),
+            ('"3.12.4+local" > python_full_version', ["3.12.4"]),
+            ('"3.12.4+local" >= python_full_version', ["3.12.5"]),
+            ('"3.12.4+local" == python_full_version', ["3.12.4", "3.12.5"]),
+            ('"3.12.4+local" != python_full_version', ["3.12.4", "3.12.5"]),
+        ],
+    )
+    def test_a_literal_first_clause_cuts_where_the_evaluator_flips(
+        self, marker: str, points: list[str]
+    ) -> None:
+        """packaging builds the specifier from the right operand and tests the
+        left against it, so PEP 440's exclusive-comparison exclusions land on
+        the literal here, not on the interpreter's version.  Reversing the
+        operator is only sound for a plain release literal: on 3.12.4 the
+        clause ``"3.12.4rc1" < python_full_version`` is False, so it cuts at
+        3.12.5 where ``python_full_version > "3.12.4rc1"`` cuts at 3.12.4.
+        """
+        found = micro_boundary_points(self._target(), [Marker(marker)])
+        assert [str(point) for point in found] == points
+
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            '"3.12.0rc1" < python_full_version',
+            '"3.12.4rc1" < python_full_version',
+            '"3.12.4.dev0" < python_full_version',
+            '"3.12.4rc1" <= python_full_version',
+            '"3.12.4rc1" > python_full_version',
+            '"3.12.4rc1" >= python_full_version',
+            '"3.12.4.post1" > python_full_version',
+            '"3.12.4.post1" >= python_full_version',
+            '"3.12.0.post1" <= python_full_version',
+            '"3.12.4+local" == python_full_version',
+            '"3.12.4+local" != python_full_version',
+            '"3.12.4+local" >= python_full_version',
+        ],
+    )
+    def test_every_real_micro_reads_a_literal_first_clause_like_its_slice(
+        self, marker: str
+    ) -> None:
+        """The tiling invariant: a slice resolves at its representative, so
+        every real micro its environment row admits has to read the consulted
+        clause the way that representative did.
+        """
+        parsed = Marker(marker)
+        target = self._target()
+        slices = slices_from_points(target, micro_boundary_points(target, [parsed]))
+        for sliced in slices:
+            row = Marker(environment_declaration(sliced, [parsed]))
+            answer = parsed.evaluate(self._probe(sliced.python_full_version))
+            covered = [
+                micro
+                for micro in (f"3.12.{n}" for n in range(8))
+                if row.evaluate(self._probe(micro))
+            ]
+            assert covered
+            assert all(
+                parsed.evaluate(self._probe(micro)) == answer for micro in covered
+            )
+
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            '"3.12.4.*" == python_full_version',
+            '"3.12.4.*" != python_full_version',
+            '"3.12.4.*" < python_full_version',
+            '"3.12.4.*" ~= python_full_version',
+            '"wat" < python_full_version',
+        ],
+    )
+    def test_a_literal_first_non_version_splits_nothing(self, marker: str) -> None:
+        """The literal is the operand being tested here, and a standard
+        operator never matches an operand packaging cannot parse, so a
+        literal-first ``.*`` wildcard or non-version string reads False on
+        every micro and names no boundary.
+        """
+        parsed = Marker(marker)
+        assert micro_boundary_points(self._target(), [parsed]) == []
+        assert not any(parsed.evaluate(self._probe(f"3.12.{n}")) for n in range(8))
 
     @pytest.mark.parametrize(
         ("marker", "points"),
@@ -1343,7 +1442,8 @@ class TestMicroBoundarySplitting:
             'python_full_version == "3.12.4rc1"',
             'python_full_version ~= "3.12.4b1"',
             '"3.12.4" ~= python_full_version',
-            '"3.12.4rc1" == python_full_version',
+            '"3.12.4" === python_full_version',
+            "python_version < python_full_version",
         ],
     )
     def test_an_untileable_marker_crashes(self, marker: str) -> None:

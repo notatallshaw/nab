@@ -226,6 +226,17 @@ prerelease-version literal strictly inside the minor on an operator that
 fixes the boundary at the literal (`<`, `>=`, `==`, `!=`, `~=`). On `<=`
 or `>` a prerelease literal lands at the next release and tiles cleanly.
 
+Those literal rules are for the variable-on-left form. PEP 508 also
+allows `"3.11.4rc1" < python_full_version`, which packaging reads by
+building the specifier from the interpreter's version and testing the
+literal against it, so PEP 440's same-release exclusions land on the
+literal: that clause is False on 3.11.4 and cuts at 3.11.5. nab reads
+each order as written, and with the literal first a prerelease is never
+the obstacle, though `~=`, `===`, and the membership operators still
+are. A literal that is not a version, such as a `.*` wildcard, is the
+operand being tested there and never matches, so the clause is False on
+every micro and splits nothing.
+
 `platform_release` and `platform_version` are never declared: they
 name one machine's kernel build, so a lock carrying the resolving
 machine's value would refuse every other machine. A non-CPython target

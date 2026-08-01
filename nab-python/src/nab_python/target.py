@@ -373,21 +373,9 @@ _NON_INTERVAL_OPERATORS = frozenset({"===", "in", "not in"})
 # release, so a prerelease there maps cleanly to that release.
 _AT_LITERAL_OPERATORS = frozenset({"<", ">=", "==", "!=", "~="})
 
-# PEP 508 lets either operand be the variable, and packaging preserves the
-# written order, so ``python_full_version < "3.10.2"`` and its literal-first
-# equivalent ``"3.10.2" > python_full_version`` both reach the scanner.  When
-# the literal is on the left, an ordered or symmetric operator is mirrored back
-# to the variable-on-left form; ``~=``/``===`` and the membership operators are
-# absent because they cannot be mirrored, so a literal-first one of those is not
-# tileable.
-_MIRRORED_OPERATOR: dict[str, str] = {
-    "<": ">",
-    ">": "<",
-    "<=": ">=",
-    ">=": "<=",
-    "==": "==",
-    "!=": "!=",
-}
+# The literal-first operators :func:`_literal_first_clause` rewrites.  ``~=`` is
+# not one of them, so a literal-first ``~=`` crashes.
+_LITERAL_FIRST_OPERATORS = frozenset({"<", ">", "<=", ">=", "==", "!="})
 
 
 class NonIntervalMarkerError(ValueError):
@@ -499,7 +487,10 @@ def micro_boundary_points(
     :meth:`~packaging.ranges.VersionRange.release_intervals`:
     ``<``/``>=`` at the literal, ``<=``/``>`` at the release just after it, and
     ``==``/``!=``/``~=``/``== V.*`` at each edge of the region they name.  A
-    boundary outside the minor or at its floor cuts nothing.
+    boundary outside the minor or at its floor cuts nothing.  PEP 508 also
+    allows the literal first, which packaging reads differently (see
+    :func:`_literal_first_clause`), so such a clause is rewritten to
+    variable-on-left form before its boundary is taken.
 
     An operator that cannot tile the interval raises
     :class:`NonIntervalMarkerError` (see there); with the whole-minor pin gone,
@@ -582,41 +573,88 @@ def _clause_interval_literal(
 ) -> tuple[str, SpecifierSet, Version] | None:
     """Return ``(op, specifier, version)`` for a version-boundary clause.
 
-    ``None`` when the clause names no scanned version variable.  Raises
-    :class:`NonIntervalMarkerError` when it names one but cannot tile an
-    interval.  A literal-first clause has an ordered or symmetric operator
-    mirrored back to variable-on-left form; ``~=``/``===`` and the membership
-    operators cannot be mirrored, so a literal-first one of those is untileable.
+    ``None`` when the clause names no scanned version variable, or when a
+    literal-first clause reads the same on every real micro.  Raises
+    :class:`NonIntervalMarkerError` when the clause names a scanned variable
+    but cannot tile an interval.
 
     The specifier is built here rather than by the caller because PEP 508
     accepts literals PEP 440 refuses under the operator they are written with.
     A ``.*`` suffix is a specifier only under ``==``/``!=``, and ``~=`` needs
     two release components, so ``< "3.12.*"`` and ``~= "3"`` are valid markers
     with no specifier form; building it is what tells them from the clauses
-    that have one.
+    that have one.  A literal-first clause is rewritten first, so its
+    specifier comes from the rewritten operator and release.
     """
     lhs, op, rhs = parts
     if lhs in scanned:
-        literal = rhs
+        literal, literal_first = rhs, False
     elif rhs in scanned:
-        literal = lhs
-        mirrored = _MIRRORED_OPERATOR.get(op)
-        if mirrored is None:
-            raise _non_interval(parts, target)
-        op = mirrored
+        literal, literal_first = lhs, True
     else:
         return None
 
     if op in _NON_INTERVAL_OPERATORS or not literal.startswith('"'):
         raise _non_interval(parts, target)
     raw = literal.strip('"')
-    base = raw.removesuffix(".*")
+
+    if not literal_first:
+        try:
+            version = Version(raw.removesuffix(".*"))
+            specifier = SpecifierSet(f"{op}{raw}")
+        except (InvalidVersion, InvalidSpecifier):
+            raise _non_interval(parts, target) from None
+        return op, specifier, version
+
     try:
-        version = Version(base)
-        specifier = SpecifierSet(f"{op}{raw}")
-    except (InvalidVersion, InvalidSpecifier):
-        raise _non_interval(parts, target) from None
-    return op, specifier, version
+        written = Version(raw)
+    except InvalidVersion:
+        # The literal is the tested operand here, so one packaging cannot parse
+        # matches nothing and the clause is False on every micro.
+        return None
+
+    if op not in _LITERAL_FIRST_OPERATORS:
+        raise _non_interval(parts, target)
+
+    rewritten = _literal_first_clause(op, written)
+    if rewritten is None:
+        return None
+    op, version = rewritten
+    return op, SpecifierSet(f"{op}{version}"), version
+
+
+def _literal_first_clause(op: str, literal: Version) -> tuple[str, Version] | None:
+    """Rewrite ``"<literal>" op python_full_version`` to variable-on-left form.
+
+    packaging builds the specifier from the right operand and tests the left
+    against it, so PEP 440's exclusive-comparison exclusions land on the
+    literal rather than on the interpreter's version.  On 3.13.4 the clause
+    ``"3.13.4rc1" < python_full_version`` is False where
+    ``python_full_version > "3.13.4rc1"`` is True, so reversing the operator
+    alone is sound only for a plain release literal.
+
+    A micro line is all plain releases, and over those the clause reads as a
+    comparison against the literal's own release, with the operator taken from
+    where the literal's public form sits relative to that release.  ``None``
+    when the public form is not that release, so an ``==``/``!=`` clause
+    matches no real micro and splits nothing.
+    """
+    release = Version(literal.base_version)
+    public = Version(literal.public)
+
+    if op == "<":
+        return ">", release
+    if op == ">":
+        return "<", release
+
+    if op == "<=":
+        return (">" if public > release else ">="), release
+    if op == ">=":
+        return ("<=" if public >= release else "<"), release
+
+    if public != release:
+        return None
+    return op, release
 
 
 def host_environment(
