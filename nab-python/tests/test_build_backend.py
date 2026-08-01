@@ -8,6 +8,7 @@ dynamic dispatch in ``extract_metadata``, including the
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -174,6 +175,43 @@ class TestExtractStaticMetadata:
             InvalidProjectRequirementError,
             match=r"invalid \[project\]\.version 'not.a.version!'",
         ):
+            extract_static_metadata(tmp_path)
+
+    def test_oversized_version_raises(self, tmp_path: Path) -> None:
+        """A release segment past the int-from-string limit is corrupt too."""
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        _write_pyproject(
+            tmp_path, f'[project]\nname = "foo"\nversion = "{oversized}"\n'
+        )
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"invalid \[project\]\.version",
+        ):
+            extract_static_metadata(tmp_path)
+
+    def test_oversized_requires_python_raises(self, tmp_path: Path) -> None:
+        """A specifier parses fine and only fails when something compares it."""
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        _write_pyproject(
+            tmp_path,
+            f'[project]\nname = "foo"\nversion = "1.0"\n'
+            f'requires-python = ">={oversized}"\n',
+        )
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"invalid \[project\]\.requires-python",
+        ):
+            extract_static_metadata(tmp_path)
+
+    def test_oversized_dependency_version_raises(self, tmp_path: Path) -> None:
+        """The same deferred conversion applies to a dependency's specifier."""
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        _write_pyproject(
+            tmp_path,
+            f'[project]\nname = "foo"\nversion = "1.0"\n'
+            f'dependencies = ["bar>={oversized}"]\n',
+        )
+        with pytest.raises(InvalidProjectRequirementError, match="invalid requirement"):
             extract_static_metadata(tmp_path)
 
     def test_invalid_requires_python_raises(self, tmp_path: Path) -> None:

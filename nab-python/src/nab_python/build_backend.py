@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING
 from ._build.errors import (
     BuildBackendError as BuildBackendError,  # noqa: PLC0414  (public re-export)
 )
-from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
-from ._vendor.packaging.version import InvalidVersion, Version
-from .metadata import WheelMetadata, load_static_project
+from ._vendor.packaging.version import Version
+from .metadata import WheelMetadata, load_static_project, validate_specifier_versions
 from .requirements_file import (
     InvalidProjectRequirementError,
     _parse_project_requirement,
@@ -53,10 +53,11 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     Raises :class:`InvalidProjectRequirementError` when a present,
     non-dynamic field is corrupt: a structurally wrong ``dependencies`` /
     ``optional-dependencies`` (not an array of strings / not a table), a
-    ``version`` string that is not valid :pep:`440`, or a
-    ``requires-python`` that is not a string or not a valid specifier.  A
-    corrupt static value is not something the build backend can compute,
-    so it raises rather than deferring to a build of the same broken file.
+    ``version`` string that does not parse as :pep:`440`, or a
+    ``requires-python`` that is not a string or does not parse as a
+    specifier.  A corrupt static value is not something the build backend
+    can compute, so it raises rather than deferring to a build of the same
+    broken file.
 
     The returned ``provides_extra`` includes both the lower-cased
     keys of ``project.optional-dependencies`` and any extras declared
@@ -106,7 +107,8 @@ def _project_to_metadata(project: dict) -> WheelMetadata | None:
     # raises instead of returning None.
     try:
         version = Version(version_raw)
-    except InvalidVersion as exc:
+    except ValueError as exc:
+        # InvalidVersion, or int() refusing a digit run past CPython's limit.
         msg = f"invalid [project].version {version_raw!r}: {exc}"
         raise InvalidProjectRequirementError(msg) from exc
 
@@ -134,10 +136,12 @@ def _static_requires_python(raw: object) -> SpecifierSet | None:
         msg = f"[project].requires-python must be a string, got {type(raw).__name__}"
         raise InvalidProjectRequirementError(msg)
     try:
-        return SpecifierSet(raw)
-    except InvalidSpecifier as exc:
+        specifier_set = SpecifierSet(raw)
+        validate_specifier_versions(specifier_set)
+    except ValueError as exc:
         msg = f"invalid [project].requires-python {raw!r}: {exc}"
         raise InvalidProjectRequirementError(msg) from exc
+    return specifier_set
 
 
 def _collect_requires_dist(project: dict) -> list[Requirement]:

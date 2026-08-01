@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
-from nab_python.metadata import metadata_deps_are_static, parse_metadata
+from nab_python.metadata import (
+    metadata_deps_are_static,
+    parse_metadata,
+    validate_specifier_versions,
+)
 
 
 def test_parses_minimal_metadata() -> None:
@@ -191,3 +197,46 @@ class TestMetadataDepsAreStatic:
     def test_unparseable_metadata_version_is_not_static(self) -> None:
         md = parse_metadata("Metadata-Version: 2.x\nName: foo\nVersion: 1.0\n")
         assert metadata_deps_are_static(md) is False
+
+
+_AT_LIMIT = "1" * sys.get_int_max_str_digits()
+_OVERSIZED = _AT_LIMIT + "1"
+
+
+class TestValidateSpecifierVersions:
+    """A clause ``SpecifierSet`` accepts can still fail to convert later."""
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            ">=3.8",
+            "==1.0.*",
+            "!=2.*",
+            "~=1.4.2",
+            "===lolwat",
+            "==1.0+abc",
+            "<4,>=3.9",
+            ">1!2.0",
+            "==1.0.0.dev1",
+            f"=={_AT_LIMIT}",
+        ],
+    )
+    def test_accepts_every_legal_clause(self, spec: str) -> None:
+        """Including a run of exactly the limit, which int() still converts."""
+        assert validate_specifier_versions(SpecifierSet(spec)) is None
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            pytest.param(f">={_OVERSIZED}", id="release"),
+            pytest.param(f">={_OVERSIZED}!1.0", id="epoch"),
+            pytest.param(f">=1.0rc{_OVERSIZED}", id="pre"),
+            pytest.param(f">=1.0.post{_OVERSIZED}", id="post"),
+            pytest.param(f">=1.0.dev{_OVERSIZED}", id="dev"),
+            pytest.param(f"==1.0+{_OVERSIZED}", id="local"),
+            pytest.param(f"=={_OVERSIZED}.*", id="wildcard"),
+        ],
+    )
+    def test_rejects_oversized_digit_run(self, spec: str) -> None:
+        with pytest.raises(ValueError, match="Exceeds the limit"):
+            validate_specifier_versions(SpecifierSet(spec))

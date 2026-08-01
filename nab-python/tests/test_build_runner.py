@@ -641,6 +641,19 @@ class TestParseMetadata:
         with pytest.raises(BuildBackendError, match="invalid Version"):
             _parse_metadata(path)
 
+    def test_oversized_version_raises(self, tmp_path: Path) -> None:
+        """A release segment past the int-from-string limit is corrupt too."""
+        from nab_python._build.runner import _parse_metadata
+
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        path = tmp_path / "METADATA"
+        path.write_text(
+            f"Metadata-Version: 2.1\nName: foo\nVersion: {oversized}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="invalid Version"):
+            _parse_metadata(path)
+
     def test_invalid_requires_python_raises(self, tmp_path: Path) -> None:
         from nab_python._build.runner import _parse_metadata
 
@@ -662,6 +675,34 @@ class TestParseMetadata:
             "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
             "Requires-Dist: bad junk @@@\n"
             "Requires-Dist: click>=8\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="invalid Requires-Dist"):
+            _parse_metadata(path)
+
+    def test_oversized_requires_python_raises(self, tmp_path: Path) -> None:
+        """A specifier parses fine and only fails when something compares it."""
+        from nab_python._build.runner import _parse_metadata
+
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        path = tmp_path / "METADATA"
+        path.write_text(
+            f"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+            f"Requires-Python: >={oversized}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="invalid Requires-Python"):
+            _parse_metadata(path)
+
+    def test_oversized_requires_dist_version_raises(self, tmp_path: Path) -> None:
+        """The same deferred conversion applies to a Requires-Dist specifier."""
+        from nab_python._build.runner import _parse_metadata
+
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        path = tmp_path / "METADATA"
+        path.write_text(
+            f"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+            f"Requires-Dist: click>={oversized}\n",
             encoding="utf-8",
         )
         with pytest.raises(BuildBackendError, match="invalid Requires-Dist"):

@@ -38,11 +38,11 @@ import tomli
 
 from nab_resolver.resolver import ResolutionError
 
-from .._vendor.packaging.requirements import InvalidRequirement, Requirement
-from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from .._vendor.packaging.requirements import Requirement
+from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
-from .._vendor.packaging.version import InvalidVersion, Version
-from ..metadata import WheelMetadata
+from .._vendor.packaging.version import Version
+from ..metadata import WheelMetadata, validate_specifier_versions
 from .env import BuildEnvError, NabBuildEnv
 from .errors import BuildBackendError
 
@@ -297,29 +297,33 @@ def _parse_metadata(metadata_path: Path) -> WheelMetadata:
         raise BuildBackendError(msg)
     try:
         version = Version(version_raw)
-    except InvalidVersion as exc:
+    except ValueError as exc:
+        # InvalidVersion, or int() refusing a digit run past CPython's limit.
         msg = f"backend METADATA has invalid Version {version_raw!r}: {exc}"
         raise BuildBackendError(msg) from exc
 
     requires_python_raw = msg_obj.get("Requires-Python")
-    try:
-        requires_python = (
-            SpecifierSet(requires_python_raw) if requires_python_raw else None
-        )
-    except InvalidSpecifier as exc:
-        msg = (
-            f"backend METADATA has invalid Requires-Python "
-            f"{requires_python_raw!r}: {exc}"
-        )
-        raise BuildBackendError(msg) from exc
+    requires_python = None
+    if requires_python_raw:
+        try:
+            requires_python = SpecifierSet(requires_python_raw)
+            validate_specifier_versions(requires_python)
+        except ValueError as exc:
+            msg = (
+                f"backend METADATA has invalid Requires-Python "
+                f"{requires_python_raw!r}: {exc}"
+            )
+            raise BuildBackendError(msg) from exc
 
-    try:
-        requires_dist: list[Requirement] = [
-            Requirement(raw) for raw in msg_obj.get_all("Requires-Dist") or ()
-        ]
-    except InvalidRequirement as exc:
-        msg = f"backend METADATA has an invalid Requires-Dist: {exc}"
-        raise BuildBackendError(msg) from exc
+    requires_dist: list[Requirement] = []
+    for raw in msg_obj.get_all("Requires-Dist") or ():
+        try:
+            req = Requirement(raw)
+            validate_specifier_versions(req.specifier)
+        except ValueError as exc:
+            msg = f"backend METADATA has an invalid Requires-Dist: {exc}"
+            raise BuildBackendError(msg) from exc
+        requires_dist.append(req)
 
     provides_extra: list[str] = sorted(
         {

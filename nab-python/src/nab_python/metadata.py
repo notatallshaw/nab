@@ -30,6 +30,7 @@ __all__ = [
     "load_static_project",
     "metadata_deps_are_static",
     "parse_metadata",
+    "validate_specifier_versions",
 ]
 
 
@@ -61,6 +62,21 @@ def load_static_project(text: str) -> dict[str, Any] | None:
         if _DYNAMIC_FIELD_BLOCKERS & dynamic_set:
             return None
     return project
+
+
+def validate_specifier_versions(specifier_set: SpecifierSet) -> None:
+    """Convert every clause's version, raising when one will not parse.
+
+    A :class:`SpecifierSet` keeps its clause versions as strings and
+    converts them only when something compares against it, so a digit run
+    past CPython's int-from-string limit is accepted here and raises a
+    bare ``ValueError`` from the comparison much later.  Arbitrary
+    equality (``===``) compares as a string, so its version is never
+    converted.
+    """
+    for clause in specifier_set:
+        if clause.operator != "===":
+            Version(clause.version.removesuffix(".*"))
 
 
 # PEP 643 dependency-affecting METADATA fields, lowercased.
