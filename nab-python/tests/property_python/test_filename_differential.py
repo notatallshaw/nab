@@ -159,8 +159,8 @@ def test_wheel_parse_matches_upstream_fuzz(filename: str) -> None:
 def test_wheel_parse_never_crashes(filename: str) -> None:
     """Malformed input is rejected with ``None``, never an exception.
 
-    The drawn text is far shorter than the int-from-string limit, so the
-    version int() refuses comes in as an explicit example.
+    Hypothesis draws text far shorter than the int-from-string limit, so an
+    oversized version comes in as an explicit example.
     """
     result = _parse_wheel_filename(filename)
     assert result is None or isinstance(result, tuple)
@@ -189,3 +189,16 @@ def test_sdist_parse_matches_upstream_fuzz(filename: str) -> None:
     """Arbitrary text with a ``.tar.gz`` suffix parses exactly like upstream."""
     fn = filename + ".tar.gz"
     assert _parse_sdist_filename(fn) == oracle_sdist(fn)
+
+
+@example(filename=f"foo-{OVERSIZED_VERSION}.tar.gz")
+@given(filename=st.text(min_size=0, max_size=40))
+@DEEP_SETTINGS
+def test_sdist_parse_never_crashes(filename: str) -> None:
+    """Malformed input is rejected with ``None``, never an exception.
+
+    Hypothesis draws text far shorter than the int-from-string limit, so an
+    oversized version comes in as an explicit example.
+    """
+    result = _parse_sdist_filename(filename)
+    assert result is None or isinstance(result, tuple)

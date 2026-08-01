@@ -12,7 +12,7 @@ from nab_index.client import (
     is_readable_filename,
 )
 
-# A version digit run past the int-from-string limit, which int() refuses.
+# A version digit run past CPython's int-from-string limit.
 OVERSIZED = "1" * (sys.get_int_max_str_digits() + 1)
 
 

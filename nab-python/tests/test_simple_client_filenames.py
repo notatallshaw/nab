@@ -5,8 +5,8 @@ while skipping the discarded tag-set parse and interning the version, its
 canonical string, and the canonical name. These tests assert it
 accepts/rejects exactly what packaging does and that the interners return
 byte-identical results to the uncached functions, so the optimization stays
-output-invariant even if packaging is re-vendored. Both parsers are total:
-a filename they cannot read comes back as ``None``.
+output-invariant even if packaging is re-vendored. Neither parser raises: a
+filename it cannot read comes back as ``None``.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from nab_index.client import (
     _parse_wheel_filename,
 )
 
-# Version digit runs at and just past the int-from-string limit int() enforces.
+# Version digit runs at and just past CPython's int-from-string limit.
 AT_LIMIT = "1" * sys.get_int_max_str_digits()
 OVERSIZED = AT_LIMIT + "1"
 

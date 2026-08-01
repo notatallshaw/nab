@@ -21,7 +21,7 @@ from nab_index.transport import HttpError
 
 _INDEX = "https://example.com/"
 
-# A version digit run past the int-from-string limit, which int() refuses.
+# A version digit run past CPython's int-from-string limit.
 _OVERSIZED = "1" * (sys.get_int_max_str_digits() + 1)
 
 

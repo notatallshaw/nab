@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 import logging
+import sys
 import tarfile
 import threading
 import zipfile
@@ -498,6 +499,39 @@ class TestFetchVersions:
         assert files[0].requires_python is None
         coordinator = make_coordinator(files, package="foo")
         provider = Provider(coordinator, target=_PY312)
+        assert len(provider.fetch_versions("foo")) == 1
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            pytest.param(_PY312, id="minor-interval"),
+            pytest.param(ResolveTarget.for_host_python("3.12.4"), id="whole-target"),
+        ],
+    )
+    def test_oversized_requires_python_admitted_without_crash(
+        self, target: ResolveTarget
+    ) -> None:
+        """An oversized requires-python admits the wheel instead of crashing.
+
+        The entry is a string, so it passes the parser's isinstance guard and
+        SpecifierSet accepts it; the ValueError only lands when the target
+        compares against it, on either branch of admits_requires_python.
+        """
+        oversized = ">=" + "1" * (sys.get_int_max_str_digits() + 1)
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": "https://example.com/foo/foo-1.0-py3-none-any.whl",
+                    "requires-python": oversized,
+                }
+            ]
+        }
+
+        files = _parse_files(data, "https://example.com/", "foo")
+        coordinator = make_coordinator(files, package="foo")
+        provider = Provider(coordinator, target=target)
+
         assert len(provider.fetch_versions("foo")) == 1
 
     def test_requires_python_cache_hit_exercises_cached_branch(self) -> None:
