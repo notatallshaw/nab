@@ -20,12 +20,8 @@ from functools import lru_cache
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-from packaging.utils import (
-    InvalidSdistFilename,
-    canonicalize_name,
-    parse_sdist_filename,
-)
-from packaging.version import InvalidVersion, Version
+from packaging.utils import canonicalize_name, parse_sdist_filename
+from packaging.version import Version
 
 from ._pep503 import json_listing
 from .serialization import SimpleSerialization, simple_accept_header
@@ -143,7 +139,8 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
 
     try:
         version = _canonical_version(parts[1])
-    except InvalidVersion:
+    except ValueError:
+        # InvalidVersion, and int() refusing a digit run past CPython's limit.
         return None
 
     bad_build = (
@@ -174,7 +171,8 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
 
     try:
         name, version = parse_sdist_filename(filename)
-    except InvalidSdistFilename:
+    except ValueError:
+        # InvalidSdistFilename, and int() refusing a digit run past CPython's limit.
         return None
     return (name, str(version))
 
