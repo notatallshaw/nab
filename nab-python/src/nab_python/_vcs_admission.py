@@ -127,15 +127,34 @@ def _without_userinfo(url: str) -> str:
     return urlunsplit(parts._replace(netloc=host))
 
 
+def _drop_ref(remainder: str) -> str:
+    """Return ``remainder`` without a trailing ``@<ref>``, split on the last ``@``."""
+    return remainder.rpartition("@")[0] if "@" in remainder else remainder
+
+
 def _repo_path(inner_url: str) -> str:
     """Return the path of ``inner_url`` with any trailing ``@<ref>`` dropped.
 
-    The ref is whatever follows the last ``@`` of the path component, the
-    same split :class:`nab_index.vcs.VcsRequest` makes at clone time.  An
-    empty result means the URL names no repo.
+    An empty result means the URL names no repo.
     """
-    path = urlsplit(inner_url).path
-    return path.rpartition("@")[0] if "@" in path else path
+    return _drop_ref(urlsplit(inner_url).path)
+
+
+def _rewritten_by_git(path: str) -> bool:
+    r"""Return True if git would rewrite ``path`` before it fetches.
+
+    Git applies RFC 3986 dot-segment removal at fetch time.  ``path`` is
+    decoded once so an encoded ``%2e%2e`` cannot slip past, and ``\`` is
+    folded to ``/`` because Windows resolves it as a separator.  A trailing
+    ``/`` is put back: RFC 3986 keeps it and :func:`posixpath.normpath`
+    does not.
+    """
+    decoded = unquote(path).replace("\\", "/")
+    normalised = posixpath.normpath(decoded)
+    if decoded.endswith("/") and not normalised.endswith("/"):
+        normalised += "/"
+
+    return bool(decoded) and normalised != decoded
 
 
 _REPO_BOUNDARY_CHARS: frozenset[str] = frozenset({"/", "@", "#"})
@@ -155,20 +174,21 @@ def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
     Both URLs have their authority ``user[:pass]@`` / ``git@`` stripped
     by the caller.
 
-    A path git would rewrite is refused first: git applies RFC 3986
-    dot-segment removal at fetch time, so a raw ``..`` path could pass the
-    string match while git fetches a repo outside the prefix.  That check
-    reads the whole post-authority remainder, query included since
-    :meth:`nab_index.vcs.VcsRequest.parse` keeps it, decoded once so an
-    encoded ``%2e%2e`` cannot slip past, and with ``\`` folded to ``/``
-    because Windows resolves it as a separator.  The prefix comparison
-    below is on the raw URL.
+    A path git would rewrite is refused first, since a ``..`` could pass
+    the string match while git fetches a repo outside the prefix.  The ref
+    is dropped before that check, off the whole post-authority remainder
+    rather than the path alone, matching the split :mod:`nab_index.vcs`
+    makes at clone time; otherwise a ``..`` in the final segment hides as
+    the ordinary name ``..@<ref>``.  The prefix comparison below is on the
+    raw URL.
     """
     parts = urlsplit(inner_url)
     remainder = f"{parts.path}?{parts.query}" if parts.query else parts.path
-    path = unquote(remainder).replace("\\", "/")
+    repo = _drop_ref(remainder)
 
-    if path and posixpath.normpath(path) != path:
+    # An http URL ends its path at the "?"; a file URL keeps it as a path
+    # character, and either way the query reaches git.
+    if any(_rewritten_by_git(part) for part in (repo, repo.partition("?")[0])):
         return False
 
     prefix = prefix.removesuffix(".git")
