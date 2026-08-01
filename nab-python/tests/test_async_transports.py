@@ -9,6 +9,7 @@ import io
 import itertools
 import json
 import ssl
+import sys
 import tarfile
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -26,7 +27,11 @@ import urllib3
 
 from nab_index.cache import NullCache
 from nab_index.cached_client import CachedAsyncSimpleClient
-from nab_index.client import AsyncSimpleClient, _extract_sdist_files
+from nab_index.client import (
+    AsyncSimpleClient,
+    MalformedSimpleResponseError,
+    _extract_sdist_files,
+)
 from nab_index.httpx_async_transport import HttpxAsyncTransport, _HttpxResponse
 from nab_index.retry import (
     GET_RETRY,
@@ -1607,6 +1612,35 @@ class TestAsyncSimpleClient:
         assert [f.url for f in files] == [
             "https://pypi.org/simple/pkg/pkg-1.0-py3-none-any.whl"
         ]
+
+    def test_get_files_oversized_int_raises_clean(self) -> None:
+        """A ``size`` too long to convert must not escape as a raw ValueError."""
+        oversized = "9" * (sys.get_int_max_str_digits() + 1)
+        listing = {
+            "meta": {"api-version": "1.1"},
+            "name": "pkg",
+            "files": [
+                {
+                    "filename": "pkg-1.0-py3-none-any.whl",
+                    "url": "https://files.example.com/pkg-1.0-py3-none-any.whl",
+                    "size": "PLACEHOLDER",
+                },
+            ],
+        }
+
+        # json.dumps hits the same limit writing the int out, so splice it in.
+        body = json.dumps(listing).replace('"PLACEHOLDER"', oversized).encode()
+        transport = self._FakeTransport(body)
+
+        async def go() -> list:
+            async with AsyncSimpleClient(transport, "https://pypi.org/simple/") as c:
+                return await c.get_files("pkg")
+
+        with pytest.raises(
+            MalformedSimpleResponseError, match="malformed Simple-API"
+        ) as caught:
+            asyncio.run(go())
+        assert isinstance(caught.value, HttpError)
 
     def test_get_files_404_returns_empty(self) -> None:
         transport = self._FakeTransport(b"not found", status=404)

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 _META = b"Metadata-Version: 2.1\nName: widget\nVersion: 1.0\n\nBody text.\n"
 _URL = "https://files.example.org/packages/widget-1.0-py3-none-any.whl"
 
-# Byte-count digit runs at and just past CPython's int-from-string limit.
+# Digit runs at and just past CPython's int-from-string limit.
 _AT_LIMIT_DIGITS = "9" * sys.get_int_max_str_digits()
 _OVERSIZED_DIGITS = _AT_LIMIT_DIGITS + "9"
 
@@ -560,10 +560,11 @@ def test_absolute_probe_200_gzip_is_unsupported() -> None:
 def test_absolute_probe_206_without_total_falls_back_to_plain_get(
     probe_headers: dict[str, str],
 ) -> None:
-    """An honoured probe that reports no length steps down to the plain GET.
+    """An honoured probe that reports no usable length steps down to the plain GET.
 
-    RFC 9110 section 14.4 allows ``*`` as the complete-length. It leaves
-    nothing to range against, and says nothing about fetching the wheel whole.
+    RFC 9110 section 14.4 allows ``*`` as the complete-length, and a digit run
+    too long to convert reads the same way. Either leaves nothing to range
+    against, and says nothing about fetching the wheel whole.
     """
 
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:

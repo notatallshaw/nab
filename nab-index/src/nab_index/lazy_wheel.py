@@ -277,16 +277,17 @@ def _non_identity(response: HttpResponse) -> bool:
 
 
 def _parse_content_range(value: str | None) -> tuple[int, int, int] | None:
-    """Parse ``bytes start-end/total`` into a tuple, or ``None``. Never raises."""
+    """Parse ``bytes start-end/total`` into a tuple, or ``None``."""
     if value is None:
         return None
     match = _CONTENT_RANGE_RE.match(value.strip())
     if match is None:
         return None
+
     try:
         return (int(match[1]), int(match[2]), int(match[3]))
     except ValueError:
-        # int() refuses a digit run past CPython's conversion limit.
+        # \d+ still matches a run past CPython's int-from-string limit.
         return None
 
 

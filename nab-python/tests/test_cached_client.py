@@ -9,6 +9,7 @@ import io
 import json
 import logging
 import re
+import sys
 import tarfile
 import time
 import zipfile
@@ -57,6 +58,9 @@ LISTING = {
     ],
 }
 LISTING_BYTES = json.dumps(LISTING).encode()
+
+# A digit run just past CPython's int-from-string limit.
+OVERSIZED_DIGITS = "9" * (sys.get_int_max_str_digits() + 1)
 
 
 class _FakeResponse:
@@ -3299,6 +3303,64 @@ class TestCorruptCachedListing:
                 json.loads(self._WRONG_SHAPE), "https://pypi.org/simple/", "pkg"
             )
         assert str(caught.value) == str(wire.value)
+
+
+class TestOversizedListingInt:
+    """A listing integer too long to convert reads as an undecodable body.
+
+    ``json.loads`` builds a JSON integer with ``int()``, so a numeric literal
+    past CPython's conversion limit raises a bare :class:`ValueError` rather
+    than a :class:`json.JSONDecodeError`. PEP 700 makes ``size`` a required
+    field, so every api-version 1.1 listing carries one.
+    """
+
+    # json.dumps hits the same limit writing the int out, so splice it in.
+    _BODY = (
+        json.dumps(
+            {
+                "meta": {"api-version": "1.1"},
+                "name": "pkg",
+                "files": [
+                    {
+                        "filename": "pkg-1.0-py3-none-any.whl",
+                        "url": "https://files.example.com/pkg-1.0-py3-none-any.whl",
+                        "size": "PLACEHOLDER",
+                    },
+                ],
+            }
+        )
+        .replace('"PLACEHOLDER"', OVERSIZED_DIGITS)
+        .encode()
+    )
+
+    def test_wire_body_raises_clean_and_skips_cache(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(self._BODY, status=200)])
+
+        with pytest.raises(
+            MalformedSimpleResponseError, match="malformed Simple-API"
+        ) as caught:
+            _run_get_files(transport, cache, "pkg")
+
+        assert isinstance(caught.value, HttpError)
+        assert cache.get_simple("pkg") is None
+
+    def test_cached_body_self_heals_online(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", self._BODY, _fresh_policy())
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
+
+        with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
+            files = _run_get_files(transport, cache, "pkg")
+
+        assert len(files) == 1
+        assert len(transport.calls) == 1
+        healed = cache.get_simple("pkg")
+        assert healed is not None
+        assert healed[0] == LISTING_BYTES
+        assert len(_cached_warnings(caplog)) == 1
 
 
 class TestModuleDocstring:

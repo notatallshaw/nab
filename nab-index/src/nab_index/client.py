@@ -393,7 +393,11 @@ class AsyncSimpleClient:
         await self.aclose()
 
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
-        """Fetch all distribution files for a package."""
+        """Fetch all distribution files for a package.
+
+        A body ``json.loads`` rejects becomes a
+        :class:`MalformedSimpleResponseError`, not a raw decode error.
+        """
         url = f"{self._index_url}{package}/"
         accept = simple_accept_header(SimpleSerialization.NEGOTIATE)
         response = await self._transport.get(url, headers={"Accept": accept})
@@ -403,7 +407,16 @@ class AsyncSimpleClient:
         body = _listing_body(
             response, self._index_url, package, SimpleSerialization.NEGOTIATE
         )
-        return _parse_files(json.loads(body), self._index_url, package)
+
+        try:
+            data = json.loads(body)
+        except ValueError as exc:
+            msg = (
+                f"{self._index_url} served a malformed Simple-API response for "
+                f"{package!r}: body is not valid JSON"
+            )
+            raise MalformedSimpleResponseError(msg) from exc
+        return _parse_files(data, self._index_url, package)
 
     async def get_metadata_text(self, metadata_url: str) -> str:
         """Fetch metadata text from a known PEP 658/714 metadata URL."""
