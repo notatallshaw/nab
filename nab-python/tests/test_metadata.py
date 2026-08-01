@@ -214,6 +214,8 @@ class TestValidateSpecifierVersions:
             "!=2.*",
             "~=1.4.2",
             "===lolwat",
+            "===1.0-bananas",
+            "===1.0",
             "==1.0+abc",
             "<4,>=3.9",
             ">1!2.0",
@@ -235,8 +237,10 @@ class TestValidateSpecifierVersions:
             pytest.param(f">=1.0.dev{_OVERSIZED}", id="dev"),
             pytest.param(f"==1.0+{_OVERSIZED}", id="local"),
             pytest.param(f"=={_OVERSIZED}.*", id="wildcard"),
+            pytest.param(f"==={_OVERSIZED}", id="arbitrary"),
         ],
     )
     def test_rejects_oversized_digit_run(self, spec: str) -> None:
+        """``===`` is included: ``to_range`` converts its literal too."""
         with pytest.raises(ValueError, match="Exceeds the limit"):
             validate_specifier_versions(SpecifierSet(spec))

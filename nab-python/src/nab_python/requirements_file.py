@@ -14,7 +14,7 @@ from ._vendor.packaging.dependency_groups import resolve_dependency_groups
 from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.markersets import MarkerSet
-from ._vendor.packaging.requirements import InvalidRequirement, Requirement
+from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
 from .metadata import validate_specifier_versions
 
@@ -52,15 +52,6 @@ class InvalidProjectTableError(TypeError):
     specifically so an unrelated internal ``TypeError`` is not mislabelled
     as a user-file error.
     """
-
-
-def _parse_requirements(strings: Sequence[str], source: str) -> list[Requirement]:
-    """Parse PEP 508 strings, naming ``source`` if one is malformed."""
-    try:
-        return [Requirement(s) for s in strings]
-    except InvalidRequirement as exc:
-        msg = f"invalid requirement in {source}: {exc}"
-        raise InvalidProjectRequirementError(msg) from exc
 
 
 def _add_extra_marker(dep_str: str, extra_name: str) -> str:
@@ -106,6 +97,11 @@ def _parse_project_requirement(
         msg = f"invalid requirement in {source}: {exc}"
         raise InvalidProjectRequirementError(msg) from exc
     return req
+
+
+def _parse_requirements(strings: Sequence[str], source: str) -> list[Requirement]:
+    """Parse PEP 508 strings, naming ``source`` if one is malformed."""
+    return [_parse_project_requirement(s, source) for s in strings]
 
 
 def _require_string_list(value: object, source: str) -> list[str]:
@@ -510,7 +506,7 @@ def resolve_groups_to_requirements(
             raise LookupError(detail) from group
         msg = f"invalid [dependency-groups]: {detail}"
         raise InvalidProjectRequirementError(msg) from group
-    return [Requirement(s) for s in resolved]
+    return _parse_requirements(resolved, "[dependency-groups]")
 
 
 def raise_for_unsatisfiable(
