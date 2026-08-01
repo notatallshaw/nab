@@ -8,6 +8,7 @@ dynamic dispatch in ``extract_metadata``, including the
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -173,6 +174,18 @@ class TestExtractStaticMetadata:
         with pytest.raises(
             InvalidProjectRequirementError,
             match=r"invalid \[project\]\.version 'not.a.version!'",
+        ):
+            extract_static_metadata(tmp_path)
+
+    def test_oversized_version_raises(self, tmp_path: Path) -> None:
+        """A release segment past the int-from-string limit is corrupt too."""
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        _write_pyproject(
+            tmp_path, f'[project]\nname = "foo"\nversion = "{oversized}"\n'
+        )
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"invalid \[project\]\.version",
         ):
             extract_static_metadata(tmp_path)
 

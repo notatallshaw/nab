@@ -17,7 +17,7 @@ from ._build.errors import (
 )
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
-from ._vendor.packaging.version import InvalidVersion, Version
+from ._vendor.packaging.version import Version
 from .metadata import WheelMetadata, load_static_project
 from .requirements_file import (
     InvalidProjectRequirementError,
@@ -53,7 +53,7 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     Raises :class:`InvalidProjectRequirementError` when a present,
     non-dynamic field is corrupt: a structurally wrong ``dependencies`` /
     ``optional-dependencies`` (not an array of strings / not a table), a
-    ``version`` string that is not valid :pep:`440`, or a
+    ``version`` string that does not parse as :pep:`440`, or a
     ``requires-python`` that is not a string or not a valid specifier.  A
     corrupt static value is not something the build backend can compute,
     so it raises rather than deferring to a build of the same broken file.
@@ -106,7 +106,8 @@ def _project_to_metadata(project: dict) -> WheelMetadata | None:
     # raises instead of returning None.
     try:
         version = Version(version_raw)
-    except InvalidVersion as exc:
+    except ValueError as exc:
+        # InvalidVersion, or int() refusing a digit run past CPython's limit.
         msg = f"invalid [project].version {version_raw!r}: {exc}"
         raise InvalidProjectRequirementError(msg) from exc
 

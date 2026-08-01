@@ -641,6 +641,19 @@ class TestParseMetadata:
         with pytest.raises(BuildBackendError, match="invalid Version"):
             _parse_metadata(path)
 
+    def test_oversized_version_raises(self, tmp_path: Path) -> None:
+        """A release segment past the int-from-string limit is corrupt too."""
+        from nab_python._build.runner import _parse_metadata
+
+        oversized = "1" * (sys.get_int_max_str_digits() + 1)
+        path = tmp_path / "METADATA"
+        path.write_text(
+            f"Metadata-Version: 2.1\nName: foo\nVersion: {oversized}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="invalid Version"):
+            _parse_metadata(path)
+
     def test_invalid_requires_python_raises(self, tmp_path: Path) -> None:
         from nab_python._build.runner import _parse_metadata
 

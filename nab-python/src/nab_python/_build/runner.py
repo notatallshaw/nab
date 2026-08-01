@@ -41,7 +41,7 @@ from nab_resolver.resolver import ResolutionError
 from .._vendor.packaging.requirements import InvalidRequirement, Requirement
 from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
-from .._vendor.packaging.version import InvalidVersion, Version
+from .._vendor.packaging.version import Version
 from ..metadata import WheelMetadata
 from .env import BuildEnvError, NabBuildEnv
 from .errors import BuildBackendError
@@ -297,7 +297,8 @@ def _parse_metadata(metadata_path: Path) -> WheelMetadata:
         raise BuildBackendError(msg)
     try:
         version = Version(version_raw)
-    except InvalidVersion as exc:
+    except ValueError as exc:
+        # InvalidVersion, or int() refusing a digit run past CPython's limit.
         msg = f"backend METADATA has invalid Version {version_raw!r}: {exc}"
         raise BuildBackendError(msg) from exc
 
