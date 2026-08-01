@@ -483,9 +483,6 @@ def _resolve_with_micro_narrowing(
     result = _resolve_passes(
         targets, fork_list, constraints, settings, preferences, base_requirements
     )
-    seed = _threaded_preferences(
-        dict(preferences or {}), result.target_results, align=settings.align
-    )
     points: list[list[Version]] = [[] for _ in targets]
     combined = result
     for _ in range(_MAX_MICRO_SPLIT_PASSES):
@@ -498,14 +495,15 @@ def _resolve_with_micro_narrowing(
             for target, target_points in zip(targets, points, strict=True)
             if target_points
         }
-        slices = [
-            sliced
-            for target, target_points in zip(targets, points, strict=True)
-            if target_points
-            for sliced in slices_from_points(target, target_points)
-        ]
-        slice_result = _resolve_passes(
-            slices, fork_list, constraints, settings, seed, base_requirements
+        slice_result = _resolve_slices(
+            targets,
+            points,
+            fork_list,
+            constraints,
+            settings,
+            preferences,
+            base_requirements,
+            result,
         )
         combined = _merge_micro_results(targets, result, slice_result, split_sigs)
     msg = (
@@ -513,6 +511,73 @@ def _resolve_with_micro_narrowing(
         f" {_MAX_MICRO_SPLIT_PASSES} passes"
     )
     raise ResolutionError(msg)
+
+
+def _resolve_slices(
+    targets: Sequence[ResolveTarget],
+    points: Sequence[Sequence[Version]],
+    fork_list: Sequence[ResolveFork],
+    constraints: Sequence[Requirement],
+    settings: _EngineSettings,
+    preferences: Mapping[str, Version] | None,
+    base_requirements: Sequence[Requirement] | None,
+    first_pass: ResolveResult,
+) -> ResolveResult:
+    """Resolve every split target's slices, one pass per fork.
+
+    A fork's pass walks the whole matrix in order: a split target has its
+    slices resolved, and an unsplit target folds its first-pass pins in where
+    it sits rather than resolving a second time.  Alignment therefore threads
+    through the slices in matrix order, as it does in the first pass.
+    """
+    sliced = [
+        slices_from_points(target, target_points) if target_points else []
+        for target, target_points in zip(targets, points, strict=True)
+    ]
+
+    accumulated = dict(preferences or {})
+    results: list[TargetResult] = []
+    for index, fork in enumerate(fork_list):
+        # first_pass holds one contiguous run of results per fork, in order.
+        fork_first = first_pass.target_results[
+            index * len(targets) : (index + 1) * len(targets)
+        ]
+
+        for target_slices, first_result in zip(sliced, fork_first, strict=True):
+            if not target_slices:
+                accumulated = _threaded_preferences(
+                    accumulated, [first_result], align=settings.align
+                )
+                continue
+
+            fork_slices = [
+                t.with_selection(fork.selection) if fork.selection else t
+                for t in target_slices
+            ]
+            pass_results = _run_pass(
+                fork_slices,
+                fork.requirements,
+                constraints,
+                settings,
+                accumulated,
+                fork.contexts,
+            )
+
+            results.extend(pass_results)
+            accumulated = _threaded_preferences(
+                accumulated, pass_results, align=settings.align
+            )
+
+    all_slices = [t for group in sliced for t in group]
+    base_results, env_base_names = _base_pass(
+        all_slices, base_requirements, constraints, settings, preferences or {}
+    )
+    return ResolveResult(
+        targets=tuple(all_slices),
+        target_results=results,
+        base_results=base_results,
+        env_base_names=env_base_names,
+    )
 
 
 def _grow_micro_points(
@@ -608,33 +673,50 @@ def _resolve_passes(
             accumulated, pass_results, align=settings.align
         )
 
-    # A base (no-member) pass names the deps that install regardless of
-    # which member is chosen, so the writer keeps the membership clause
-    # on a dep required only by members.
-    base_results: list[TargetResult] = []
-    env_base_names: dict[EnvSignature, frozenset[str]] = {}
-    if base_requirements is not None:
-        base_results = _run_pass(
-            list(targets), base_requirements, constraints, settings, preferences or {}
-        )
-        for tr in base_results:
-            if tr.success:
-                env_base_names[env_signature(tr.target)] = frozenset(
-                    canonicalize_name(name) for name in tr.pins
-                )
-            else:
-                _logger.warning(
-                    "Base attribution skipped for tuple %s: %s",
-                    tr.target.label,
-                    tr.error,
-                )
-
+    base_results, env_base_names = _base_pass(
+        targets, base_requirements, constraints, settings, preferences or {}
+    )
     return ResolveResult(
         targets=tuple(targets),
         target_results=results,
         base_results=base_results,
         env_base_names=env_base_names,
     )
+
+
+def _base_pass(
+    targets: Sequence[ResolveTarget],
+    base_requirements: Sequence[Requirement] | None,
+    constraints: Sequence[Requirement],
+    settings: _EngineSettings,
+    preferences: Mapping[str, Version],
+) -> tuple[list[TargetResult], dict[EnvSignature, frozenset[str]]]:
+    """Resolve the no-member requirements per target, if there are any.
+
+    The pass names the deps that install regardless of which member is chosen,
+    so the writer keeps the membership clause on a dep required only by members.
+    """
+    if base_requirements is None:
+        return [], {}
+
+    results = _run_pass(
+        list(targets), base_requirements, constraints, settings, preferences
+    )
+
+    env_base_names: dict[EnvSignature, frozenset[str]] = {}
+    for tr in results:
+        if tr.success:
+            env_base_names[env_signature(tr.target)] = frozenset(
+                canonicalize_name(name) for name in tr.pins
+            )
+        else:
+            _logger.warning(
+                "Base attribution skipped for tuple %s: %s",
+                tr.target.label,
+                tr.error,
+            )
+
+    return results, env_base_names
 
 
 def build_lock_input(
