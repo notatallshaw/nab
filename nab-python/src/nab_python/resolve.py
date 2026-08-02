@@ -1389,8 +1389,11 @@ def _find_group_conflicts(
     """Return the direct group-vs-group conflicts under ``environment``.
 
     Only direct conflicts are caught; one that emerges through a shared
-    transitive dependency falls through to the resolver. The result is
-    sorted by ``(left_group, right_group, package)``.
+    transitive dependency falls through to the resolver.  A group whose
+    own requirements on a package already leave no version is left out
+    of the pairing, since nothing another group requires can be the
+    cause; :func:`raise_for_unsatisfiable` names those requirements.
+    The result is sorted by ``(left_group, right_group, package)``.
     """
     # Invert to: package -> the groups that name it directly, each with
     # its folded range and the requirement strings behind it. Visiting
@@ -1401,6 +1404,8 @@ def _find_group_conflicts(
     for group in sorted(per_group):
         ranges, sources = _group_package_ranges(per_group[group], environment)
         for package, package_range in ranges.items():
+            if package_range.is_empty:
+                continue
             requirers[package].append((group, package_range, sources[package]))
 
     # Two groups conflict on a package when their ranges cannot both

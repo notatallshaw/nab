@@ -2662,6 +2662,45 @@ class TestCheckGroupDisjointness:
         }
         _check_group_disjointness(per_group, [_target({})])
 
+    def test_self_empty_group_does_not_blame_an_unversioned_group(self) -> None:
+        """A group that cannot hold alone is not a conflict with anyone.
+
+        ``beta`` pins nothing, so no range it could carry would clash;
+        ``alpha`` folds to empty on its own.
+        """
+        per_group = {
+            "alpha": [Requirement("sphinx>=7"), Requirement("sphinx<6")],
+            "beta": [Requirement("sphinx")],
+        }
+        _check_group_disjointness(per_group, [_target({})])
+
+    def test_self_empty_group_does_not_blame_an_overlapping_group(self) -> None:
+        """Every other group naming the package stays unaccused."""
+        per_group = {
+            "alpha": [Requirement("sphinx>=7"), Requirement("sphinx<6")],
+            "beta": [Requirement("sphinx")],
+            "gamma": [Requirement("sphinx>=2")],
+        }
+        _check_group_disjointness(per_group, [_target({})])
+
+    def test_umbrella_group_is_not_blamed_for_the_pair_it_includes(self) -> None:
+        """An umbrella group only reports the pair underneath it.
+
+        ``dev`` is ``lint`` plus ``test`` expanded, so its own fold is
+        empty; the one real conflict is ``lint`` against ``test``.
+        """
+        per_group = {
+            "dev": [Requirement("sphinx<6"), Requirement("sphinx>=7")],
+            "lint": [Requirement("sphinx>=7")],
+            "test": [Requirement("sphinx<6")],
+        }
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, [_target({})])
+        assert str(info.value) == (
+            "Dependency groups 'lint' and 'test' conflict on 'sphinx':"
+            " group 'lint' requires sphinx>=7 but group 'test' requires sphinx<6."
+        )
+
 
 class TestFindGroupConflictsManyGroups:
     """``_find_group_conflicts`` only compares groups sharing a package.
@@ -2704,6 +2743,15 @@ class TestFindGroupConflictsManyGroups:
         per_group[self._RIGHT].append(Requirement("shared<5"))
         assert _find_group_conflicts(per_group, environment={}) == []
 
+    def test_self_empty_group_pairs_with_nobody(self) -> None:
+        """One group's own contradiction stays out of the pairwise walk."""
+        per_group = self._disjoint_groups()
+        per_group[self._LEFT].extend(
+            [Requirement("shared>=2"), Requirement("shared<1")]
+        )
+        per_group[self._RIGHT].append(Requirement("shared>=1"))
+        assert _find_group_conflicts(per_group, environment={}) == []
+
 
 class TestResolvePyprojectGroupConflict:
     """End-to-end: a two-group direct conflict names the groups."""
@@ -2731,6 +2779,32 @@ class TestResolvePyprojectGroupConflict:
         assert "'docs'" in message
         assert "'test'" in message
         assert "sphinx" in message
+
+    def test_self_empty_group_reports_its_own_requirements(
+        self, tmp_path: Path
+    ) -> None:
+        """A group that cannot hold alone is reported as unsatisfiable."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = []\n'
+            "[dependency-groups]\n"
+            'alpha = ["sphinx>=7", "sphinx<6"]\n'
+            'beta = ["sphinx"]\n'
+        )
+        with (
+            patch("nab_python.resolve.FetchCoordinator"),
+            pytest.raises(ResolutionError) as info,
+        ):
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                groups=["alpha", "beta"],
+            )
+        message = str(info.value)
+        assert "Dependency groups" not in message
+        assert "conflicting requirements leave no satisfiable version" in message
+        assert "sphinx>=7, sphinx<6" in message
 
     @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
