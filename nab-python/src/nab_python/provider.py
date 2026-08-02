@@ -1295,7 +1295,9 @@ class Provider:
         no_lookahead = not self.root_requirements and not self.solution_decisions
         if no_lookahead or not candidates:
             if not candidates:
-                self._record_no_versions_reason(package, all_versions)
+                self._record_no_versions_reason(
+                    package, all_versions, version_range=version_range
+                )
             return candidates[0] if candidates else None
 
         skip = self._try_abort_skip(normalized, candidates[0])
@@ -1668,6 +1670,7 @@ class Provider:
         all_versions: list[Version],
         *,
         blockers: list[str] | None = None,
+        version_range: VersionRange | None = None,
     ) -> None:
         """Record why ``choose_version`` returned ``None`` for ``package``.
 
@@ -1682,6 +1685,11 @@ class Provider:
         missing from the index when in fact it is the resolver's
         transitive constraints (or a too-strict build policy) that
         excluded every candidate.
+
+        ``version_range`` is passed only when no surviving version fell
+        inside it.  A version the listing filter dropped that does fall
+        inside it is the release the requirement asked for, so the reason
+        names the filter rather than reporting no match.
 
         ``all_versions`` is post-filter, so an empty one means either the
         index served no files or every file it served was dropped by the
@@ -1703,8 +1711,8 @@ class Provider:
         nothing falls in.  That second ask has no blockers of its own, so
         its no-match reason must not overwrite the one naming the blocker.
         """
+        _, _, normalized = self.split_and_normalize(package)
         if not all_versions:
-            _, _, normalized = self.split_and_normalize(package)
             raw_listing = self.coordinator.index.get_listing(normalized)
             tag_excluded = self.tag_excluded_wheels.get(normalized, 0)
             if not raw_listing:
@@ -1749,6 +1757,14 @@ class Provider:
         elif package in self._no_versions_reasons:
             # The weakest reason: keep whatever is already recorded.
             return
+        elif version_range is not None and _listing.has_filtered_in_range_release(
+            self, normalized, version_range, all_versions
+        ):
+            reason = (
+                "found on index but every version matching the requirement"
+                " was filtered (by requires-python, wheel tags, dist-policy,"
+                " or upload-time)"
+            )
         else:
             reason = "no version matches the requirement"
         self._no_versions_reasons[package] = reason

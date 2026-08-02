@@ -10,6 +10,7 @@ import sys
 import tarfile
 import threading
 import zipfile
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar, cast
@@ -1302,6 +1303,124 @@ class TestNoVersionsReasons:
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(coordinator)
         provider.choose_version("foo", SpecifierSet(">=5.0").to_range())
+        assert (
+            provider.get_no_versions_reason("foo")
+            == "no version matches the requirement"
+        )
+
+    @pytest.mark.parametrize(
+        ("listing", "build"),
+        [
+            pytest.param(
+                [make_wheel("2.0", requires_python=">=3.13"), make_wheel("1.0")],
+                lambda coordinator: Provider(
+                    coordinator, target=ResolveTarget.for_host_python("3.9.0")
+                ),
+                id="requires-python",
+            ),
+            pytest.param(
+                [
+                    WheelFile(
+                        filename="pkg-2.0-cp311-cp311-win_amd64.whl",
+                        url="https://example.com/pkg-2.0-cp311-cp311-win_amd64.whl",
+                        version="2.0",
+                        requires_python=None,
+                        has_metadata=True,
+                        upload_time=None,
+                    ),
+                    make_wheel("1.0"),
+                ],
+                lambda coordinator: Provider(coordinator, target=_LINUX311),
+                id="wheel-tags",
+            ),
+            pytest.param(
+                [make_sdist("2.0"), make_wheel("1.0")],
+                lambda coordinator: Provider(
+                    coordinator, dist_policy=DistPolicy.WHEEL_ONLY
+                ),
+                id="dist-policy",
+            ),
+            pytest.param(
+                [
+                    make_wheel("2.0", upload_time="2024-06-01T00:00:00Z"),
+                    make_wheel("1.0", upload_time="2024-01-01T00:00:00Z"),
+                ],
+                lambda coordinator: Provider(
+                    coordinator,
+                    uploaded_prior_to=datetime(2024, 3, 1, tzinfo=timezone.utc),
+                ),
+                id="upload-time",
+            ),
+        ],
+    )
+    def test_filtered_in_range_release_reports_the_filter(
+        self,
+        listing: list[WheelFile | SdistFile],
+        build: Callable[[MagicMock], Provider],
+    ) -> None:
+        """An in-range release a filter dropped is not reported as no such version.
+
+        Each listing keeps an out-of-range 1.0, so the package still has a
+        surviving version and only the 2.0 the requirement asks for was
+        filtered away.
+        """
+        coordinator = make_coordinator(listing, package="foo")
+        provider = build(coordinator)
+        assert provider.choose_version("foo", SpecifierSet(">=2").to_range()) is None
+        assert provider.get_no_versions_reason("foo") == (
+            "found on index but every version matching the requirement was"
+            " filtered (by requires-python, wheel tags, dist-policy, or"
+            " upload-time)"
+        )
+
+    def test_unparseable_listing_version_is_not_read_as_a_filtered_match(self) -> None:
+        """A version nab cannot parse cannot be the in-range release."""
+        unparseable = WheelFile(
+            filename="pkg-not-a-version-py3-none-any.whl",
+            url="https://example.com/pkg-not-a-version-py3-none-any.whl",
+            version="not-a-version",
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+        )
+        coordinator = make_coordinator([unparseable, make_wheel("1.0")], package="foo")
+        provider = Provider(coordinator)
+        assert provider.choose_version("foo", SpecifierSet(">=2").to_range()) is None
+        assert (
+            provider.get_no_versions_reason("foo")
+            == "no version matches the requirement"
+        )
+
+    def test_another_spelling_of_a_kept_version_is_not_a_filtered_match(self) -> None:
+        """A release that survived under another spelling was not filtered.
+
+        The wheel's ``1.0`` and the sdist's ``1.0.0`` are one release, which
+        the listing collapses onto the ``1.0`` representative.  ``===``
+        compares the string, so ``1.0.0`` falls in range while the kept
+        representative does not, and no filter dropped anything.
+        """
+        coordinator = make_coordinator(
+            [make_wheel("1.0"), make_sdist("1.0.0")], package="foo"
+        )
+        provider = Provider(coordinator)
+        assert (
+            provider.choose_version("foo", SpecifierSet("===1.0.0").to_range()) is None
+        )
+        assert (
+            provider.get_no_versions_reason("foo")
+            == "no version matches the requirement"
+        )
+
+    def test_local_source_out_of_range_reports_no_match(self, tmp_path: Path) -> None:
+        """A local source has no index listing to have filtered anything."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "1.2.3"\n', encoding="utf-8"
+        )
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator, local_sources=[LocalSource("foo", str(tmp_path))]
+        )
+        assert provider.choose_version("foo", SpecifierSet(">=5").to_range()) is None
         assert (
             provider.get_no_versions_reason("foo")
             == "no version matches the requirement"

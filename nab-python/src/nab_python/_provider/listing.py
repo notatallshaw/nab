@@ -488,6 +488,45 @@ def excluded_by_wheel_tags(
     return True
 
 
+def _parsed_version(raw: str) -> Version | None:
+    """Return the interned version, or None when it is not a PEP 440 version."""
+    try:
+        return _intern_version(raw)
+    except InvalidVersion:
+        return None
+
+
+def has_filtered_in_range_release(
+    provider: Provider,
+    normalized: str,
+    version_range: VersionRange,
+    kept: Sequence[Version],
+) -> bool:
+    """Whether a filter dropped a release inside ``version_range``.
+
+    Callers ask only when no surviving version falls in the range, so a
+    dropped one that does is the release the requirement asked for.  A
+    dropped version equal to one in ``kept`` survived under another
+    spelling instead: :func:`filter_distributions` collapses equal
+    versions onto one representative, and ``===`` compares its string
+    form.  Filtering through ``version_range`` keeps the pre-release
+    semantics candidate selection uses.
+    """
+    files = provider.coordinator.index.get_listing(normalized)
+    if not files:
+        return False
+
+    surviving = set(kept)
+    dropped = (
+        version
+        for dist in files
+        if (version := _parsed_version(dist.version)) is not None
+        and version not in surviving
+    )
+
+    return any(version_range.filter(dropped))
+
+
 def _drop_sdist_install_wheel_only(
     result: list[tuple[Version, DistFile]],
     policy_by_version: Mapping[Version, DistPolicy],
