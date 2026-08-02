@@ -27,6 +27,7 @@ import tomli
 
 from ._toml import tool_nab_section
 from ._vendor.packaging.utils import canonicalize_name
+from .paths import path_state
 from .provider import LocalSource
 
 if TYPE_CHECKING:
@@ -165,7 +166,7 @@ def workspace_local_sources(
 
         member_dir = (root_dir / entry).resolve()
         member_pyproject = member_dir / "pyproject.toml"
-        if not member_pyproject.is_file():
+        if not path_state(member_pyproject).should_read:
             msg = (
                 f"{declared_in}: workspace member {entry!r} has no"
                 f" pyproject.toml at {member_pyproject}"

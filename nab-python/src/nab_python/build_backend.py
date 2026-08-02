@@ -19,6 +19,7 @@ from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import Version
 from .metadata import WheelMetadata, load_static_project, validate_specifier_versions
+from .paths import is_absent_error, path_state
 from .requirements_file import (
     InvalidProjectRequirementError,
     _parse_project_requirement,
@@ -50,6 +51,10 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     authoritative, populating ``name``, ``version``,
     ``requires_python``, ``requires_dist``, and ``provides_extra``.
 
+    Raises :class:`BuildBackendError` when the file is there but cannot
+    be read.  Its contents are unknown, so it is neither "no static
+    metadata" nor a missing file; the message names the errno.
+
     Raises :class:`InvalidProjectRequirementError` when a present,
     non-dynamic field is corrupt: a structurally wrong ``dependencies`` /
     ``optional-dependencies`` (not an array of strings / not a table), a
@@ -71,13 +76,15 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     as read-only.
     """
     pyproject = source_dir / "pyproject.toml"
-    if not pyproject.is_file():
+    if not path_state(pyproject).should_read:
         return None
     try:
         text = pyproject.read_text(encoding="utf-8")
-    except OSError:
-        # ``is_file`` is racy: the file may vanish or become unreadable
-        # between the check and the read.  Treat it the same as missing.
+    except OSError as exc:
+        if not is_absent_error(exc):
+            msg = f"could not read pyproject.toml at {source_dir}: {exc}"
+            raise BuildBackendError(msg) from exc
+        # The presence check is racy: the file may vanish before the read.
         return None
     except UnicodeDecodeError:
         # TOML is UTF-8, so a file that will not decode has no static metadata.

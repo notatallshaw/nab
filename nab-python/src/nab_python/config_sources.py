@@ -43,6 +43,7 @@ from nab_index.serialization import SimpleSerialization
 
 from ._toml import tool_nab_section
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
+from .paths import PathState, path_state
 from .provider import (
     ArchiveSource,
     BuildPolicy,
@@ -1513,13 +1514,17 @@ def discover_layers(
         ),
     ]
     for path, kind in plan:
-        if path is None or not path.exists():
+        if path is None:
             continue
-        if not path.is_file():
-            # A genuinely-absent file is skipped above; a path that exists
-            # but is not a regular file (e.g. an accidental `mkdir
-            # nab.toml`) would be silently ignored by an is_file() filter,
-            # so crash naming it rather than dropping the config source.
+        state = path_state(path)
+        if state is PathState.ABSENT:
+            continue
+        if not state.should_read:
+            # A path that exists but is not a regular file (e.g. an
+            # accidental `mkdir nab.toml`) would be silently ignored by an
+            # is_file() filter, so crash naming it rather than dropping the
+            # config source.  A failed stat goes to the read instead, which
+            # names the errno.
             msg = f"{path} exists but is not a regular file"
             raise SourceConfigError(msg)
         layers.append(_load_toml_layer(path, kind, rejections=rejections))

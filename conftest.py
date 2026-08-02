@@ -15,8 +15,8 @@ The property suite under ``nab-*/tests/property*/`` uses explicit
 ``PROPERTY_SETTINGS``/``DEEP_SETTINGS``/``BRUTE_FORCE_SETTINGS``
 decorators so its example budget is independent of the profile.
 
-``cap_writes`` is here rather than in one suite's conftest because both the
-``nab-python`` suite and the CLI suite use it.
+``cap_writes`` and ``deny_access`` are here rather than in one suite's
+conftest because both the ``nab-python`` suite and the CLI suite use them.
 """
 
 from __future__ import annotations
@@ -25,7 +25,9 @@ import errno
 import io
 import os
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 from hypothesis import HealthCheck, settings
@@ -107,6 +109,44 @@ def _cap_writes(budget: int) -> Iterator[None]:
         yield
     finally:
         io.open = real_open  # type: ignore[assignment]
+
+
+@contextmanager
+def _deny_access(target: Path) -> Iterator[None]:
+    real_stat, real_open = os.stat, Path.open
+    denied = os.fspath(target)
+
+    def refuse(candidate: Any) -> None:
+        if isinstance(candidate, (str, os.PathLike)) and os.fspath(candidate) == denied:
+            raise PermissionError(errno.EACCES, "Permission denied", denied)
+
+    def denying_stat(path: Any, *args: Any, **kwargs: Any) -> Any:
+        refuse(path)
+        return real_stat(path, *args, **kwargs)
+
+    def denying_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        refuse(self)
+        return real_open(self, *args, **kwargs)
+
+    with (
+        patch.object(os, "stat", denying_stat),
+        patch.object(Path, "open", denying_open),
+    ):
+        yield
+
+
+@pytest.fixture
+def deny_access() -> Callable[[Path], AbstractContextManager[None]]:
+    """Simulate a directory the running user cannot search.
+
+    Inside ``deny_access(p)`` every stat and open of ``p`` raises ``EACCES``,
+    which is what a parent directory without the search bit does to both
+    halves of a read. chmod cannot express that on Windows, so the state is
+    simulated rather than created. ``os.stat`` is the patch point rather than
+    ``Path.stat`` because every presence check ends up there, whether it went
+    through ``pathlib`` or ``os.path``.
+    """
+    return _deny_access
 
 
 @pytest.fixture

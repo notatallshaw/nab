@@ -1665,8 +1665,20 @@ class TestReadLockfileAnchor:
         assert read_lockfile_anchor(tmp_path / "missing.toml") is None
 
     def test_returns_none_when_file_is_directory(self, tmp_path: Path) -> None:
-        # ``is_file`` returns False for directories; the helper skips.
+        # A directory is not a readable file; the helper skips.
         assert read_lockfile_anchor(tmp_path) is None
+
+    def test_returns_none_when_unsearchable_parent(
+        self,
+        tmp_path: Path,
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        # EACCES on the presence check's stat leaves the anchor unknown,
+        # which is a no-op for the caller, not a crash.
+        path = tmp_path / "pylock.toml"
+        path.write_text("[tool.nab]\ncreated-at = 2026-05-01T00:00:00+00:00\n")
+        with deny_access(path):
+            assert read_lockfile_anchor(path) is None
 
     def test_returns_none_when_toml_invalid(self, tmp_path: Path) -> None:
         path = tmp_path / "broken.toml"
@@ -1753,6 +1765,18 @@ class TestReadLockfilePackages:
 
     def test_returns_none_when_file_is_directory(self, tmp_path: Path) -> None:
         assert read_lockfile_packages(tmp_path) is None
+
+    def test_returns_none_when_unsearchable_parent(
+        self,
+        tmp_path: Path,
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        # EACCES on the presence check's stat leaves the prior pins
+        # unknown, so the caller falls back to a no-diff summary.
+        path = tmp_path / "pylock.toml"
+        path.write_text('lock-version = "1.0"\n')
+        with deny_access(path):
+            assert read_lockfile_packages(path) is None
 
     def test_returns_none_when_toml_invalid(self, tmp_path: Path) -> None:
         path = tmp_path / "pylock.toml"

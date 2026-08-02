@@ -15,8 +15,13 @@ from __future__ import annotations
 import inspect
 import io
 import logging
-from collections.abc import Mapping
-from contextlib import redirect_stderr, redirect_stdout, suppress
+from collections.abc import Callable, Mapping
+from contextlib import (
+    AbstractContextManager,
+    redirect_stderr,
+    redirect_stdout,
+    suppress,
+)
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -385,6 +390,23 @@ class TestConfigErrors:
             config_command("list", path=hermetic_roots)
         err = capsys.readouterr().err
         assert "is a directory" in err
+
+    def test_unsearchable_parent_reports_the_errno(
+        self,
+        hermetic_roots: Path,
+        capsys: pytest.CaptureFixture[str],
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        # An unsearchable parent lands EACCES on the presence check's stat.
+        # The file is there, so the guard must not call it missing: the
+        # read reports it, naming the errno.
+        path = _project(hermetic_roots)
+        with deny_access(path), pytest.raises(SystemExit):
+            config_command("list", path=path)
+        err = capsys.readouterr().err
+        assert "not found" not in err
+        assert "cannot read" in err
+        assert "Permission denied" in err
 
     def test_gate_error_exits(
         self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]

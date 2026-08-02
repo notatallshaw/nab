@@ -8,7 +8,10 @@ dynamic dispatch in ``extract_metadata``, including the
 
 from __future__ import annotations
 
+import errno
 import sys
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -81,6 +84,20 @@ class TestExtractStaticMetadata:
 
     def test_missing_pyproject_returns_none(self, tmp_path: Path) -> None:
         assert extract_static_metadata(tmp_path) is None
+
+    def test_unsearchable_parent_reports_the_errno(
+        self,
+        tmp_path: Path,
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        # EACCES leaves the contents unknown, so it is neither "no static
+        # metadata" nor a missing file: the errno is reported.
+        _write_pyproject(tmp_path, '[project]\nname = "foo"\nversion = "1.0"\n')
+        with (
+            deny_access(tmp_path / "pyproject.toml"),
+            pytest.raises(BuildBackendError, match="could not read.*Permission denied"),
+        ):
+            extract_static_metadata(tmp_path)
 
     def test_malformed_toml_returns_none(self, tmp_path: Path) -> None:
         _write_pyproject(tmp_path, "this is not toml [")
@@ -352,20 +369,35 @@ class TestExtractStaticMetadata:
         ):
             extract_static_metadata(tmp_path)
 
-    def test_pyproject_unreadable_returns_none(self, tmp_path: Path) -> None:
-        # A directory in place of pyproject.toml: ``is_file`` is False so
+    def test_pyproject_is_a_directory_returns_none(self, tmp_path: Path) -> None:
+        # A directory in place of pyproject.toml is not a readable file, so
         # the static reader bails before the read.
         (tmp_path / "pyproject.toml").mkdir()
         assert extract_static_metadata(tmp_path) is None
 
-    def test_pyproject_read_oserror_returns_none(self, tmp_path: Path) -> None:
-        # An OSError raised between ``is_file`` and ``read_text`` (the
-        # races a regular file becoming unreadable mid-call) falls
-        # through to the same "treat as missing" branch.
+    def test_pyproject_vanishing_before_the_read_returns_none(
+        self, tmp_path: Path
+    ) -> None:
+        # The presence check is racy: a file deleted between the stat and
+        # the read is missing.
         _write_pyproject(tmp_path, '[project]\nname = "foo"\nversion = "1.0"\n')
+        gone = FileNotFoundError(errno.ENOENT, "No such file or directory")
         extract_static_metadata.cache_clear()
-        with patch.object(Path, "read_text", side_effect=PermissionError("locked")):
+        with patch.object(Path, "read_text", side_effect=gone):
             assert extract_static_metadata(tmp_path) is None
+        extract_static_metadata.cache_clear()
+
+    def test_pyproject_read_oserror_reports_the_errno(self, tmp_path: Path) -> None:
+        # Any other read failure leaves the contents unknown, so it is
+        # reported rather than reduced to "no static metadata".
+        _write_pyproject(tmp_path, '[project]\nname = "foo"\nversion = "1.0"\n')
+        broken = OSError(errno.EIO, "Input/output error")
+        extract_static_metadata.cache_clear()
+        with (
+            patch.object(Path, "read_text", side_effect=broken),
+            pytest.raises(BuildBackendError, match="could not read.*Input/output"),
+        ):
+            extract_static_metadata(tmp_path)
         extract_static_metadata.cache_clear()
 
     def test_extra_marker_combined_with_existing(self, tmp_path: Path) -> None:

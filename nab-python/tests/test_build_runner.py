@@ -22,6 +22,8 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from importlib.util import cache_from_source
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -250,6 +252,40 @@ class TestRunBuildBackend:
         self, tmp_path: Path, config: NabProjectConfig
     ) -> None:
         with pytest.raises(BuildBackendError, match="no pyproject.toml or setup.py"):
+            run_build_backend(tmp_path, config=config)
+
+    def test_unsearchable_pyproject_reports_the_errno(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        # The presence check must not read EACCES as absence: the file is
+        # there, so the tree is not the no-pyproject.toml-or-setup.py case.
+        (tmp_path / "pyproject.toml").write_text("[build-system]\n", encoding="utf-8")
+        with (
+            deny_access(tmp_path / "pyproject.toml"),
+            pytest.raises(BuildBackendError, match="could not read.*Permission denied"),
+        ):
+            run_build_backend(tmp_path, config=config)
+
+    def test_unsearchable_setup_py_takes_the_legacy_branch(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        # Same for the setup.py fallback: an unreadable one is a legacy
+        # project whose build fails, not a tree with no build inputs.
+        (tmp_path / "setup.py").write_text("from setuptools import setup\n")
+        with (
+            deny_access(tmp_path / "setup.py"),
+            patch(
+                "nab_python._build.runner.NabBuildEnv",
+                side_effect=BuildEnvError("no venv"),
+            ),
+            pytest.raises(BuildBackendError, match="build env setup"),
+        ):
             run_build_backend(tmp_path, config=config)
 
     def test_legacy_setup_py_uses_default_backend(
