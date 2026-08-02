@@ -66,8 +66,11 @@ reject it: it forks the resolve. For example `nab lock --extras cpu gpu`,
 or `nab lock --all-groups` over the `black*` groups above, resolves each
 member separately and writes every result into one lockfile. This is the
 same in specific and universal mode; the resolve mode does not change how
-a conflict is handled. Each fork's pins carry a marker selecting that
-member:
+a conflict is handled. Two cases are refused rather than forked, both
+covered below: a selection that reaches both members through one
+umbrella, and a `default-groups` that activates two members on its own.
+
+Each fork's pins carry a marker selecting that member:
 
 ```toml
 [[packages]]
@@ -102,12 +105,12 @@ error: in [tool.nab]: extra 'cpu', extra 'gpu' cannot be selected together: decl
 
 This happens when an umbrella extra self-references both members
 (`all = ["proj[cpu]", "proj[gpu]"]`) or an umbrella group includes both
-member groups. Co-selecting the members directly still forks; only the
-all-in-one umbrella, which cannot resolve disjointly, is rejected.
+member groups. Co-selecting the members directly still forks. The
+all-in-one umbrella cannot resolve disjointly, so it is rejected.
 
 The require-one policies still raise. Declaring `exactly-one` or
 `at-least-one` and selecting none of its members is rejected before the
-resolve, regardless of mode; only the co-selection case forks.
+resolve, regardless of mode; co-selection forks instead.
 
 Groups named in `[tool.nab].default-groups` count as part of the
 selection for every conflict check. A project with
@@ -116,6 +119,21 @@ groups `a` and `b`
 satisfies the minimum without passing `--groups`, and a `--groups b`
 on top of that default activates two members of an exclusive set,
 which then forks into two.
+
+Defaults have one restriction of their own. Naming two members of the
+same `at-most-one` or `exactly-one` set as defaults is refused when the
+config is read, before any command-line selection applies:
+
+```console
+$ nab lock
+error: in [tool.nab]: default-groups activates 'black22', 'black23', which are declared mutually exclusive in [tool.nab].conflicts
+```
+
+A default install activates every default group at once. The emit-time
+disjointness check prunes any context that activates two members of an
+exclusive set, so that install is never checked against the declared
+conflict. `at-least-one` permits co-selection, so all of its members
+may be defaults.
 
 A dependency required by every member of a set but not by the base
 keeps its membership marker, so it does not install when no member is

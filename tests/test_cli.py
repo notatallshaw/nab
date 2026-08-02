@@ -2931,14 +2931,19 @@ _CONFLICTS_DOC = (
 )
 
 
-def _console_block(text: str) -> list[str]:
-    lines = text.splitlines()
-    start = lines.index("```console")
-    return lines[start + 1 : lines.index("```", start + 1)]
+def _console_block(text: str, command: str) -> list[str]:
+    """The output lines of the ``console`` block whose first line is ``command``."""
+    for body in re.findall(r"```console\n(.*?)\n```", text, re.DOTALL):
+        lines = body.splitlines()
+        if lines[0] == command:
+            return lines[1:]
+
+    msg = f"no console block for {command!r}"
+    raise AssertionError(msg)
 
 
 class TestConflictsDocTranscript:
-    """The conflicts page quotes the refusal line the CLI prints."""
+    """The conflicts page quotes the refusal lines the CLI prints."""
 
     _UMBRELLA = (
         '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
@@ -2950,6 +2955,16 @@ class TestConflictsDocTranscript:
         'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
     )
 
+    _DEFAULT_GROUPS = (
+        '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
+        "[dependency-groups]\n"
+        'black22 = ["black==22.1.0"]\n'
+        'black23 = ["black==23.12.0"]\n'
+        "[tool.nab]\n"
+        'default-groups = ["black22", "black23"]\n'
+        'conflicts = [[{ group = "black22" }, { group = "black23" }]]\n'
+    )
+
     def test_umbrella_refusal_matches_documented_transcript(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -2959,9 +2974,20 @@ class TestConflictsDocTranscript:
             lock(pyproject, cache_dir=tmp_path / "cache", extras=("all",))
         printed = capsys.readouterr().err.strip()
 
-        block = _console_block(_CONFLICTS_DOC.read_text(encoding="utf-8"))
-        assert block[0] == "$ nab lock --extras all"
-        assert printed in block[1:]
+        doc = _CONFLICTS_DOC.read_text(encoding="utf-8")
+        assert printed in _console_block(doc, "$ nab lock --extras all")
+
+    def test_default_groups_refusal_matches_documented_transcript(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Two default groups in one exclusive set print the page's line."""
+        pyproject = _make_pyproject(tmp_path, self._DEFAULT_GROUPS)
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, cache_dir=tmp_path / "cache")
+        printed = capsys.readouterr().err.strip()
+
+        doc = _CONFLICTS_DOC.read_text(encoding="utf-8")
+        assert printed in _console_block(doc, "$ nab lock")
 
 
 _CLI_REFERENCE_DOC = (
