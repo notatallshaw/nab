@@ -210,8 +210,29 @@ actions:
   key, the winning source marked with a `>`. Array options concatenate
   every layer instead of one winning, so each source is shown as a
   contribution and the merged effective value is printed on a trailing
-  `= effective:` line. Add `--include-rejected` to also list sources
-  that tried to set the key but were rejected by the category gate.
+  `= effective:` line.
+
+`--include-rejected` is a flag on `nab config` itself, so every action
+takes it. Without it, a config file that sets an unknown key or a key
+its scope does not allow is a config error: the inspector writes the
+message to stderr, prints no configuration, and exits 1. With the flag
+the run succeeds, and each action shows the refused sources differently:
+
+* `nab config list --include-rejected` prints the option table, then a
+  `rejected:` section with one line per refused source: a key set
+  outside its scope, an unknown key, and a `NAB_*` variable that is
+  unknown or names a project-scope option. Without the flag those
+  variables are stderr warnings instead.
+* `nab config explain <key> --include-rejected` adds a `rejected` row
+  for every source that tried to set that key and was not allowed. A
+  refusal that names no option (an unknown key, or an unrecognised
+  `NAB_*` variable) belongs under no key, so only `nab config list`
+  shows it: on `explain` such a variable loses its stderr warning and
+  gains no row.
+* `nab config get <key> --include-rejected` prints the value and nothing
+  else. `get` renders no refusal at all, so the flag only decides
+  whether the command runs, and takes those `NAB_*` warnings off stderr
+  without printing anything in their place.
 
 The same per-option override flags the run commands accept (the
 `--project-*` overrides and the user knobs `--offline`, `--cache-dir`,

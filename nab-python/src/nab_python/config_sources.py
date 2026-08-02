@@ -1229,12 +1229,12 @@ class Layer:
 
 @dataclass(frozen=True, slots=True)
 class RejectedLayer:
-    """A source that tried to set a key it is not allowed to set.
+    """A source refused by the registry: a key outside its scope, or unknown.
 
-    Captured (not raised) by :func:`discover_layers` only when the caller
-    asks to collect rejections for ``nab config explain
-    --include-rejected``.  The normal load path raises a
-    :class:`SourceConfigError` instead.
+    Captured (not raised) by :func:`discover_layers` for the TOML sources and
+    :func:`read_env_layer` for the ``NAB_*`` ones, only when the caller asks
+    to collect rejections for ``nab config --include-rejected``.  The normal
+    load path raises :class:`SourceConfigError` for TOML and warns for env.
     """
 
     origin: Origin
@@ -1288,8 +1288,8 @@ def _load_toml_layer(
     ``[tool.nab]``; the standalone ``nab.toml`` sources read top-level
     keys.  Every registry key is parsed by its row.  A key that names an
     option not allowed in ``kind`` (the category gate) raises
-    :class:`SourceConfigError`, unless ``rejections`` is supplied, in
-    which case it is appended there and skipped (for explain).
+    :class:`SourceConfigError`, unless ``rejections`` is supplied, in which
+    case it is appended there and skipped (for ``--include-rejected``).
     """
     raw = _read_raw_table(path, kind)
     origin = Origin(kind, str(path))
@@ -1378,8 +1378,8 @@ def read_env_layer(
     ``reserved_env`` names the ``NAB_*`` vars other layers own (nab's
     output layer consumes ``NAB_VERBOSITY`` and ``NAB_NO_PROGRESS``), so
     the guard skips them silently.  When ``rejections`` is supplied
-    (``nab config explain --include-rejected``) those env casualties are
-    recorded there instead of warned, mirroring the TOML loader.
+    (``nab config --include-rejected``) those env casualties are recorded
+    there instead of warned, mirroring the TOML loader.
     """
     _warn_renamed_env(environ, rejections=rejections)
     _warn_unknown_env(environ, reserved_env=reserved_env, rejections=rejections)

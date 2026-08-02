@@ -69,8 +69,13 @@ def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
 
     ``nab config list`` lists every option with value/scope/origin.
     ``nab config get <key>`` prints one effective value.  ``nab config
-    explain <key>`` prints the full shadowed source stack;
-    ``--include-rejected`` also lists category-rejected sources.
+    explain <key>`` prints the full shadowed source stack.
+
+    ``--include-rejected`` sits on the command, so every action takes it.
+    It turns a refused source (a key set outside its scope, an unknown key,
+    an unknown or renamed ``NAB_*`` var) from a fatal config error into a
+    collected rejection, which ``list`` prints as a trailing section and
+    ``explain`` as a ``rejected`` row under the key it names.
 
     The same per-option flags the run commands accept (the USER
     ``--offline`` / ``--cache-dir`` / ``--http-backend`` /
