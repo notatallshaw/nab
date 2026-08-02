@@ -111,7 +111,9 @@ def run_build_backend(
                 runner=pyproject_hooks.quiet_subprocess_runner,
             )
 
-            extra = list(project.get_requires_for_build("wheel"))
+            # build returns the hook's result as a set, so sort for a stable
+            # order. key=str keeps a non-string item from raising here.
+            extra = sorted(project.get_requires_for_build("wheel"), key=str)
             if extra:
                 # PEP 517 requires the hook to return a list of strings.
                 non_str = [item for item in extra if not isinstance(item, str)]

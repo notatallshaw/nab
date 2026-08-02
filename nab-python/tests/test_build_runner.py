@@ -1395,6 +1395,16 @@ def _no_network(*_a: object, **_k: object) -> object:
     raise AssertionError("offline must not reach the network")
 
 
+class _StubEnvBuilder:
+    """Stand in for ``venv.EnvBuilder``: makes the directory, runs nothing."""
+
+    def __init__(self, **_kw: object) -> None:
+        pass
+
+    def create(self, path: Path) -> None:
+        path.mkdir(parents=True, exist_ok=True)
+
+
 class TestBuildEnvOffline:
     """``offline`` bars the build env from fetching its requirements."""
 
@@ -1436,6 +1446,49 @@ class TestBuildEnvOffline:
         source = _write_fake_backend_project(tmp_path)
         metadata = run_build_backend(source, config=config, offline=True)
         assert metadata.name == "fake-pkg"
+
+    def test_hook_extras_named_in_a_stable_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refusal names the wheel hook's extras in sorted order.
+
+        ``build.ProjectBuilder.get_requires_for_build`` returns a ``set``, so
+        the order the extras arrive in varies with the hash seed. Both orders
+        must give the one message.
+        """
+        monkeypatch.setattr("venv.EnvBuilder", _StubEnvBuilder)
+        monkeypatch.setattr(
+            "nab_python._build.env._venv_scheme_paths",
+            lambda _python: {"purelib": str(tmp_path)},
+        )
+
+        (tmp_path / "pyproject.toml").write_text(
+            '[build-system]\nrequires = []\nbuild-backend = "setuptools.build_meta"\n',
+            encoding="utf-8",
+        )
+
+        messages = set()
+        for arrival in (
+            ["wheel", "setuptools>=61", "cython"],
+            ["cython", "wheel", "setuptools>=61"],
+        ):
+            project = MagicMock()
+            project.get_requires_for_build.return_value = arrival
+            with (
+                patch(
+                    "nab_python._build.runner.build.ProjectBuilder.from_isolated_env",
+                    return_value=project,
+                ),
+                pytest.raises(BuildBackendError) as excinfo,
+            ):
+                run_build_backend(tmp_path, config=NabProjectConfig(), offline=True)
+            messages.add(str(excinfo.value))
+
+        assert messages == {
+            "build env setup for 'setuptools.build_meta' failed: build"
+            " requirements unavailable in offline mode:"
+            " cython, setuptools>=61, wheel"
+        }
 
 
 class TestResolveAndDownloadSiblingWheels:
