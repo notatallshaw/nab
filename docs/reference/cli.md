@@ -273,8 +273,12 @@ Both subcommands accept the same runtime knobs:
 A name absent from the index is remembered for a short window, so a
 repeated lookup is answered from cache, offline included.
 
-Offline refuses rather than fetches. A PEP 517 build environment with
-`[build-system].requires` to install fails the run.
+Offline refuses rather than fetches, so a PEP 517 build environment
+that has anything to install cannot be created and the build fails.
+At `build-remote` that rejects only the sdist version, and the
+resolve tries the next candidate. A declared local, VCS, or archive
+source, or a workspace member, is the only candidate for its name, so
+the same refusal ends the run. See [Build policy](build-policy.md).
 
 `urllib3` is the only backend pulled in by the base install. The
 others surface a helpful `ImportError` if selected without the
