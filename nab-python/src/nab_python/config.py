@@ -3076,7 +3076,9 @@ def _parse_matrix(value: object) -> MatrixConfig | None:
     # marker, which has no libc or free-threading variable, so two targets
     # sharing an id would render the same marker.
     _reject_duplicates("matrix.platforms", tuple(p.platform_id for p in platforms))
-    python_order = value.get("python-order", "asc")
+    python_order = _parse_string_value(
+        "matrix.python-order", value.get("python-order", "asc")
+    )
     if python_order not in {"asc", "desc"}:
         msg = f"matrix.python-order must be 'asc' or 'desc', got {python_order!r}"
         raise ConfigError(msg)

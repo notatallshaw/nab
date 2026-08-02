@@ -2463,6 +2463,16 @@ class TestCrossFieldProjectOptions:
         ):
             _resolve(SourceRoots(project_dir=tmp_path))
 
+    def test_matrix_python_order_bad_type_keeps_message(self, tmp_path: Path) -> None:
+        _project(tmp_path)
+        _write(
+            tmp_path / "nab.toml", _MATRIX_PROJECT_TOML + 'python-order = ["desc"]\n'
+        )
+        with pytest.raises(
+            SourceConfigError, match="matrix.python-order must be a string, got list"
+        ):
+            _resolve(SourceRoots(project_dir=tmp_path))
+
     def test_matrix_cross_file_conflict(self, tmp_path: Path) -> None:
         _project(tmp_path, _MATRIX_PYPROJECT)
         _write(

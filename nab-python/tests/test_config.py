@@ -3938,6 +3938,28 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="python-order must be 'asc' or 'desc'"):
             read_pyproject_config(path)
 
+    @pytest.mark.parametrize(
+        ("literal", "type_name"),
+        [('["desc"]', "list"), ("[]", "list"), ("{}", "dict")],
+    )
+    def test_non_string_python_order(
+        self, tmp_path: Path, literal: str, type_name: str
+    ) -> None:
+        """An unhashable value is rejected before the membership test."""
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+            f"python-order = {literal}\n",
+        )
+        with pytest.raises(
+            ConfigError, match=f"matrix.python-order must be a string, got {type_name}"
+        ):
+            read_pyproject_config(path)
+
     def test_unknown_platform_rejected(self, tmp_path: Path) -> None:
         body = self._matrix_body()
         body = body.replace('["linux_x86_64", "macos_arm64"]', '["frobnicate"]')
