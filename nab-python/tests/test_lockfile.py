@@ -45,6 +45,7 @@ from nab_python.config import (
     ConflictMember,
     ConflictPolicy,
     ConflictSet,
+    IndexOverride,
     NabProjectConfig,
     conflict_exclusion_groups,
     conflict_member_groups,
@@ -2732,7 +2733,7 @@ class _FakeProvider:
         archive_sources: dict[str, ArchiveSource] | None = None,
         vcs_pins: dict[str, str] | None = None,
         listing_indexes: dict[str, str] | None = None,
-        dist_policy_overrides: dict[str, DistPolicy] | None = None,
+        dist_policy_by_package_index: dict[tuple[str, str], DistPolicy] | None = None,
         requires_python_overrides: dict[str, str] | None = None,
         deps_cache: dict[tuple[str, Version], dict[str, object]] | None = None,
         extra_deps_map: (
@@ -2745,7 +2746,7 @@ class _FakeProvider:
         self._vcs = vcs_sources or {}
         self._archive = archive_sources or {}
         self._vcs_pins = vcs_pins or {}
-        self._dist_policy_overrides = dist_policy_overrides or {}
+        self._dist_policy_by_package_index = dist_policy_by_package_index or {}
         self._requires_python_overrides = requires_python_overrides or {}
         self.coordinator = _FakeCoordinator(listing_indexes)
         self.deps_cache = deps_cache or {}
@@ -2772,7 +2773,11 @@ class _FakeProvider:
     def effective_dist_policy(
         self, canonical: str, version: Version, index_name: str | None = None
     ) -> DistPolicy:
-        return self._dist_policy_overrides.get(canonical, DistPolicy.WHEEL_OR_SDIST)
+        if index_name is None:
+            return DistPolicy.WHEEL_OR_SDIST
+        return self._dist_policy_by_package_index.get(
+            (canonical, index_name), DistPolicy.WHEEL_OR_SDIST
+        )
 
     def effective_requires_python(self, canonical: str, version: Version) -> str | None:
         return self._requires_python_overrides.get(canonical)
@@ -3018,28 +3023,58 @@ class TestBuildTargetLock:
         only the sdist so an installer downloads (and builds) that
         archive.  Mirrors what
         :attr:`nab_python.provider.DistPolicy.SDIST_INSTALL` is for.
+
+        The policy comes from the index that served the listing, so
+        ``foo`` loses its wheel under ``internal`` while ``bar`` keeps
+        its own under the default index.
         """
-        provider = _FakeProvider(
+        coordinator = make_coordinator(
             listings={
-                "foo": [
-                    (Version("1.0"), _wheel_file()),
-                    (Version("1.0"), _sdist_file()),
-                ]
-            },
-            dist_policy_overrides={"foo": DistPolicy.SDIST_INSTALL},
+                "foo": [_wheel_file(), _sdist_file()],
+                "bar": [_wheel_file("bar"), _sdist_file("bar")],
+            }
         )
-        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        coordinator.index.store_listing_index("foo", "internal")
+
+        provider = Provider(
+            coordinator,
+            target=_HOST,
+            index_overrides={
+                "internal": IndexOverride(dist_policy=DistPolicy.SDIST_INSTALL)
+            },
+        )
+        provider.fetch_versions("foo")
+        provider.fetch_versions("bar")
+
+        lock = build_target_lock(
+            provider,
+            _HOST,
+            {"foo": Version("1.0"), "bar": Version("1.0")},
+            indexes=(
+                *coordinator.indexes,
+                IndexConfig("internal", "https://internal.example/simple/"),
+            ),
+        )
+
         pin = lock.pins["foo"]
         assert isinstance(pin, IndexPin)
+        assert pin.index == "https://internal.example/simple/"
         assert pin.wheels == ()
         assert pin.sdist is not None
         assert pin.sdist.hashes == (("sha256", "b" * 64),)
+
+        bar_pin = lock.pins["bar"]
+        assert isinstance(bar_pin, IndexPin)
+        assert [w.filename for w in bar_pin.wheels] == ["bar-1.0-py3-none-any.whl"]
 
     def test_index_pin_sdist_install_without_sdist_raises(self) -> None:
         """A wheel-only version under sdist-install has nothing to pin."""
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file())]},
-            dist_policy_overrides={"foo": DistPolicy.SDIST_INSTALL},
+            listing_indexes={"foo": "internal"},
+            dist_policy_by_package_index={
+                ("foo", "internal"): DistPolicy.SDIST_INSTALL
+            },
         )
         with pytest.raises(MissingSdistError, match="foo==1.0 has no sdist"):
             build_target_lock(provider, _HOST, {"foo": Version("1.0")})
