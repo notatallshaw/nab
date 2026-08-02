@@ -36,6 +36,9 @@ from nab_index.retry import (
     next_delay,
 )
 from nab_index.transport import (
+    DEFAULT_HEADERS,
+    IDENTITY_HEADERS,
+    USER_AGENT,
     AsyncHttpTransport,
     ContentDecodingError,
     HttpError,
@@ -203,6 +206,41 @@ def _artifact_stub_index(body: bytes) -> Iterator[_ArtifactStubIndex]:
     server = _ArtifactStubIndex(("127.0.0.1", 0), _ArtifactStubIndexHandler)
     server.body = body
     server.accept_encoding = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+class _UserAgentStubIndex(ThreadingHTTPServer):
+    """Loopback index that records each request's User-Agent."""
+
+    user_agents: list[str | None]
+
+
+class _UserAgentStubIndexHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        assert isinstance(self.server, _UserAgentStubIndex)
+        self.server.user_agents.append(self.headers.get("User-Agent"))
+
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        """Drop the handler's stderr access log."""
+
+
+@contextmanager
+def _user_agent_stub_index() -> Iterator[_UserAgentStubIndex]:
+    server = _UserAgentStubIndex(("127.0.0.1", 0), _UserAgentStubIndexHandler)
+    server.user_agents = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -1007,7 +1045,7 @@ class TestUrllib3AsyncTransport:
         pool.request.assert_called_once_with(
             "GET",
             "https://example.com/",
-            headers={"Accept-Encoding": "gzip", "k": "v"},
+            headers={**DEFAULT_HEADERS, "k": "v"},
             timeout=5.0,
             retries=GET_RETRY,
             decode_content=False,
@@ -1087,7 +1125,7 @@ class TestUrllib3AsyncTransport:
         pool.request.assert_called_once_with(
             "GET",
             "https://example.com/",
-            headers={"Accept-Encoding": "gzip"},
+            headers=DEFAULT_HEADERS,
             timeout=5.0,
             retries=GET_RETRY,
             decode_content=False,
@@ -1116,7 +1154,7 @@ class TestUrllib3AsyncTransport:
         pool.request.assert_called_once_with(
             "GET",
             "https://example.com/",
-            headers={"Accept-Encoding": "identity"},
+            headers={**DEFAULT_HEADERS, **IDENTITY_HEADERS},
             timeout=5.0,
             retries=GET_RETRY,
             decode_content=False,
@@ -1739,6 +1777,46 @@ class TestUnfollowedRedirectAcrossBackends:
 
             with pytest.raises(HttpError, match="300"):
                 asyncio.run(go())
+
+
+class TestUserAgentAcrossBackends:
+    """Both backends send the same User-Agent."""
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_get_sends_the_user_agent(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _user_agent_stub_index() as index:
+            url = f"http://127.0.0.1:{index.server_port}/simple/pkg/"
+
+            async def go() -> None:
+                transport = make_transport()
+                try:
+                    await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            asyncio.run(go())
+
+        assert index.user_agents == [USER_AGENT]
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_accept_encoding_override_keeps_the_user_agent(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _user_agent_stub_index() as index:
+            url = f"http://127.0.0.1:{index.server_port}/files/pkg-1.0.whl"
+
+            async def go() -> None:
+                transport = make_transport()
+                try:
+                    await transport.get(url, headers=IDENTITY_HEADERS)
+                finally:
+                    await transport.aclose()
+
+            asyncio.run(go())
+
+        assert index.user_agents == [USER_AGENT]
 
 
 class TestExtractSdistFiles:
