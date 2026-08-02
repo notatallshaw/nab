@@ -1824,6 +1824,82 @@ class TestResolveWithCoordinator:
         assert result.success
         assert result.target_results[0].pins == {"pkg": Version("1.0")}
 
+    @staticmethod
+    def _dropped_extra_coordinator() -> MagicMock:
+        """An index whose newest ``aaa`` no longer declares the ``x`` extra.
+
+        1.0 and 2.0 declare ``x`` and pull ``bbb`` through it; 3.0
+        provides no extras at all.
+        """
+        aaa_wheels = [_make_wheel(v, package="aaa") for v in ("1.0", "2.0", "3.0")]
+        coordinator = make_coordinator(
+            listings={"aaa": aaa_wheels, "bbb": [_make_wheel("1.0", package="bbb")]},
+            auto_metadata=True,
+        )
+        for wheel in aaa_wheels[:-1]:
+            coordinator.index.store_metadata(
+                "aaa",
+                wheel.version,
+                f"Metadata-Version: 2.1\nName: aaa\nVersion: {wheel.version}\n"
+                "Provides-Extra: x\n"
+                'Requires-Dist: bbb; extra == "x"\n\n',
+                wheel.metadata_url,
+            )
+        return coordinator
+
+    @pytest.mark.parametrize(
+        "constraint", ["aaa==2.0", "aaa<=2.0", "aaa<3.0", "aaa!=3.0"]
+    )
+    def test_constraint_bounds_an_extras_proxy(self, constraint: str) -> None:
+        """A constraint on the base bounds ``aaa[x]`` as well.
+
+        The proxy decides before its base, so a constraint it cannot see
+        lets it pin ``aaa==3.0`` and abort on the extra 3.0 dropped.
+        """
+        result = resolve_with_coordinator(
+            self._dropped_extra_coordinator(),
+            _one_target(),
+            _reqs("aaa[x]"),
+            config=NabProjectConfig(constraints=(constraint,)),
+        )
+        assert result.success
+        assert result.target_results[0].pins == {
+            "aaa": Version("2.0"),
+            "bbb": Version("1.0"),
+        }
+
+    def test_constraint_that_empties_an_extras_proxy_is_blamed(self) -> None:
+        """A constraint that leaves the proxy nothing is named in the failure.
+
+        Three versions of ``aaa`` exist, so blaming the proxy's own
+        listing would be wrong.
+        """
+        result = resolve_with_coordinator(
+            self._dropped_extra_coordinator(),
+            _one_target(),
+            _reqs("aaa[x]"),
+            config=NabProjectConfig(constraints=("aaa<0.5",)),
+        )
+        assert not result.success
+        message = str(result.target_results[0].error)
+        assert "the user constrained aaa[x]" in message
+        assert "0.5" in message
+        assert "no versions of aaa[x]" not in message
+
+    def test_constraint_off_the_extra_still_reports_the_miss(self) -> None:
+        """A constraint pinning a version without the extra reports it.
+
+        The constraint leaves ``aaa==3.0`` the only candidate, so the
+        proxy pins it and the miss is reported against it.
+        """
+        with pytest.raises(MissingExtraError, match="aaa==3.0"):
+            resolve_with_coordinator(
+                self._dropped_extra_coordinator(),
+                _one_target(),
+                _reqs("aaa[x]"),
+                config=NabProjectConfig(constraints=("aaa==3.0",)),
+            )
+
     def test_resolution_strategy_overrides_the_config(self) -> None:
         """An explicit strategy wins over the config's ``resolution``."""
         coordinator = _make_coordinator(

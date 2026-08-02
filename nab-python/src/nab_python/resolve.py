@@ -851,11 +851,14 @@ def _resolve_one_target(
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
 
+    _extend_constraints_to_proxies(resolver_constraints, root_extras)
+
     source_root = settings.source_root
     provider = Provider(
         settings.coordinator,
         target=target,
         root_requirements=resolver_requirements,
+        constraints=resolver_constraints,
         root_extras=root_extras,
         uploaded_prior_to=config.uploaded_prior_to,
         dist_policy=config.dist_policy,
@@ -1548,6 +1551,24 @@ def _build_resolver_inputs(
             root_extras.add((name, normalized_extra))
     raise_for_unsatisfiable(resolver_requirements, sources, kind=kind)
     return resolver_requirements, root_extras
+
+
+def _extend_constraints_to_proxies(
+    constraints: dict[str, VersionRange],
+    root_extras: set[tuple[str, str]],
+) -> None:
+    """Copy each base package's constraint onto its extras proxies.
+
+    The resolver keys constraints by the package it is deciding, and an
+    extras proxy decides under its own ``name[extra]`` key, so the base's
+    constraint does not otherwise reach it.  Sharing the key also keeps
+    the proxy on the constraint-attribution path, so a constraint that
+    leaves it nothing is named in the failure.
+    """
+    for name, extra in root_extras:
+        constraint = constraints.get(name)
+        if constraint is not None:
+            constraints[join_extra(name, extra)] = constraint
 
 
 def _raise_for_source_python(

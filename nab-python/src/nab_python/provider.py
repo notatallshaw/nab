@@ -485,6 +485,11 @@ class Provider:
     and neither filter runs, since nothing has said which machine the
     resolve targets.
 
+    ``constraints`` are the user's version bounds, keyed as the resolver
+    keys packages, so an extras proxy carries its base's bound under its
+    own ``name[extra]`` key.  The provider reads them when deciding
+    whether a missing root extra is worth reporting.
+
     ``preferences`` are versions another resolve already decided, tried
     first when they are usable here.  A multi-target resolve passes the
     pins of an already-resolved target, which aligns the matrix on one
@@ -573,6 +578,7 @@ class Provider:
         preferences: Mapping[str, Version] | None = None,
         listing_filter_cache: ListingFilterCache | None = None,
         *,
+        constraints: Mapping[str, VersionRange] | None = None,
         trust_unverified_sdist_deps: bool = False,
     ) -> None:
         """Construct the provider; see the class docstring for parameters."""
@@ -687,6 +693,7 @@ class Provider:
         self.base_filtered_packages: set[str] = set()
 
         self.root_requirements = root_requirements or {}
+        self.constraints: Mapping[str, VersionRange] = constraints or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
         self.deps_cache: dict[tuple[str, Version], dict[str, VersionRange]] = {}
         # Unbounded by design and never evicted mid-resolve: it keeps every
