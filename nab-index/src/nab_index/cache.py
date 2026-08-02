@@ -92,7 +92,11 @@ class OfflineError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class CachePolicy:
-    """RFC 9111-style freshness policy for one Simple API entry."""
+    """RFC 9111-style freshness policy for one Simple API entry.
+
+    ``fetched_at`` is the start of the freshness window: when nab received the
+    response, less any Age a relaying shared cache reported.
+    """
 
     fetched_at: int
     max_age: int

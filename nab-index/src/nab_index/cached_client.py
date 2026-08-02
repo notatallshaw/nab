@@ -56,6 +56,23 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_AGE = 600
 _HTTP_NOT_MODIFIED = 304
 _MAX_AGE_RE = re.compile(r"max-age\s*=\s*(\d+)")
+_AGE_RE = re.compile(r"\A\s*(\d+)\s*\Z")
+_SECONDS_CEILING = 2**31
+_SECONDS_CEILING_DIGITS = len(str(_SECONDS_CEILING))
+
+
+def _parse_seconds(digits: str) -> int:
+    """Return a ``delta-seconds`` digit run as an int.
+
+    RFC 9110 5.6.7 allows leading zeros, sets no length limit on the run, and
+    caps a value too large to represent at 2**31. ``int`` refuses a string past
+    4300 digits, so the padding is stripped before the run is measured.
+    """
+    trimmed = digits.lstrip("0")
+
+    if len(trimmed) > _SECONDS_CEILING_DIGITS:
+        return _SECONDS_CEILING
+    return min(int(trimmed or "0"), _SECONDS_CEILING)
 
 
 def _parse_max_age(cache_control: str | None) -> int:
@@ -64,7 +81,31 @@ def _parse_max_age(cache_control: str | None) -> int:
     match = _MAX_AGE_RE.search(cache_control)
     if match is None:
         return _DEFAULT_MAX_AGE
-    return int(match.group(1))
+    return _parse_seconds(match.group(1))
+
+
+def _parse_age(age: str | None) -> int:
+    """Return the seconds a response spent in caches before nab received it.
+
+    An absent header, or one that is not a bare run of digits, reads as 0.
+    """
+    if age is None:
+        return 0
+    match = _AGE_RE.match(age)
+    if match is None:
+        return 0
+    return _parse_seconds(match.group(1))
+
+
+def _freshness_start(response: HttpResponse) -> int:
+    """Return when ``response`` opened its freshness window.
+
+    A shared cache reports as Age how long ago the origin generated the
+    representation, so a relayed response arrives that far into its window.
+    Only the Age term of RFC 9111 4.2.3 is applied; the apparent age computed
+    from the Date header is not.
+    """
+    return int(time.time()) - _parse_age(_header(response, "age"))
 
 
 class CachedAsyncSimpleClient:
@@ -163,7 +204,9 @@ class CachedAsyncSimpleClient:
         max_age = min(
             _parse_max_age(_header(response, "cache-control")), _DEFAULT_MAX_AGE
         )
-        return CachePolicy(fetched_at=int(time.time()), max_age=max_age, etag=None)
+        return CachePolicy(
+            fetched_at=_freshness_start(response), max_age=max_age, etag=None
+        )
 
     def _decode_cached_listing(self, body: bytes, package: str) -> object | None:
         """Return the parsed JSON of a cached Simple body, or ``None``.
@@ -225,7 +268,7 @@ class CachedAsyncSimpleClient:
             # A 304 without cache-control keeps the stored max-age.
             cache_control = _header(response, "cache-control")
             new_policy = CachePolicy(
-                fetched_at=int(time.time()),
+                fetched_at=_freshness_start(response),
                 max_age=(
                     _parse_max_age(cache_control)
                     if cache_control is not None
@@ -248,7 +291,7 @@ class CachedAsyncSimpleClient:
         files = self._parse_listing(new_body, package)
 
         new_policy = CachePolicy(
-            fetched_at=int(time.time()),
+            fetched_at=_freshness_start(response),
             max_age=_parse_max_age(_header(response, "cache-control")),
             etag=_header(response, "etag"),
         )
@@ -269,7 +312,7 @@ class CachedAsyncSimpleClient:
         files = self._parse_listing(body, package)
 
         policy = CachePolicy(
-            fetched_at=int(time.time()),
+            fetched_at=_freshness_start(response),
             max_age=_parse_max_age(_header(response, "cache-control")),
             etag=_header(response, "etag"),
         )

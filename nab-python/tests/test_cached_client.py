@@ -26,6 +26,7 @@ from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     _header,
+    _parse_age,
     _parse_max_age,
 )
 from nab_index.client import (
@@ -733,6 +734,47 @@ class TestParseMaxAge:
     def test_extracts_value_with_spaces(self) -> None:
         assert _parse_max_age("public, max-age = 1200") == 1200
 
+    def test_leading_zeros_ignored(self) -> None:
+        assert _parse_max_age("max-age=00000000900") == 900
+
+    def test_above_ceiling_clamped(self) -> None:
+        assert _parse_max_age("max-age=9999999999") == 2**31
+
+    def test_digit_run_too_long_to_convert_clamped(self) -> None:
+        assert _parse_max_age("max-age=" + "9" * 9000) == 2**31
+
+
+class TestParseAge:
+    def test_absent_is_zero(self) -> None:
+        assert _parse_age(None) == 0
+
+    def test_extracts_value(self) -> None:
+        assert _parse_age("472") == 472
+
+    def test_surrounding_space_tolerated(self) -> None:
+        assert _parse_age(" 472 ") == 472
+
+    def test_non_numeric_is_zero(self) -> None:
+        assert _parse_age("a while") == 0
+
+    def test_negative_is_zero(self) -> None:
+        assert _parse_age("-5") == 0
+
+    def test_above_ceiling_clamped(self) -> None:
+        assert _parse_age("9999999999") == 2**31
+
+    def test_digit_run_too_long_to_convert_clamped(self) -> None:
+        assert _parse_age("9" * 9000) == 2**31
+
+    def test_leading_zeros_ignored(self) -> None:
+        assert _parse_age("00000000472") == 472
+
+    def test_all_zeros_is_zero(self) -> None:
+        assert _parse_age("0" * 9000) == 0
+
+    def test_padded_value_above_ceiling_clamped(self) -> None:
+        assert _parse_age("0" * 9000 + "9" * 20) == 2**31
+
 
 class TestHeader:
     def test_lowercase_lookup(self) -> None:
@@ -1146,6 +1188,198 @@ class TestGetFiles:
 
         files = asyncio.run(go())
         assert len(files) == 1
+
+
+class TestResponseAge:
+    """An Age header counts toward the entry's age (RFC 9111 4.2.3).
+
+    A shared cache in front of the index reports how long ago the origin
+    generated the representation, so the window opened before nab's receipt.
+    """
+
+    def test_cold_fetch_opens_window_at_origin_generation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES,
+                    headers={
+                        "etag": "v1",
+                        "cache-control": "max-age=600, must-revalidate",
+                        "age": "472",
+                    },
+                )
+            ]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        _, policy = cached
+        assert policy.fetched_at == 528
+        assert policy.is_fresh(now=1127) is True
+        assert policy.is_fresh(now=1128) is False
+
+    def test_relayed_entry_revalidates_before_receipt_window_ends(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cold = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES,
+                    headers={
+                        "etag": "v1",
+                        "cache-control": "max-age=600",
+                        "age": "472",
+                    },
+                )
+            ]
+        )
+        assert len(_run_get_files(cold, cache, "pkg")) == 1
+
+        monkeypatch.setattr(time, "time", lambda: 1300.0)
+        warm = _FakeTransport([_FakeResponse(b"", status=304, headers={"etag": "v1"})])
+        assert len(_run_get_files(warm, cache, "pkg")) == 1
+
+        assert len(warm.calls) == 1
+        sent_headers = warm.calls[0][1]
+        assert sent_headers is not None
+        assert sent_headers.get("If-None-Match") == "v1"
+
+    def test_no_age_header_opens_window_at_receipt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES,
+                    headers={"etag": "v1", "cache-control": "max-age=600"},
+                )
+            ]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        _, policy = cached
+        assert policy.fetched_at == 1000
+
+    def test_304_refresh_backdates_by_age(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 5000.0)
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=60, etag="v1"),
+        )
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=304, headers={"etag": "v1", "age": "30"})]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        _, policy = cached
+        assert policy.fetched_at == 4970
+        assert policy.max_age == 60
+
+    def test_revalidated_200_backdates_by_age(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 5000.0)
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=60, etag="v1"),
+        )
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES,
+                    headers={
+                        "etag": "v2",
+                        "cache-control": "max-age=600",
+                        "age": "90",
+                    },
+                )
+            ]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        _, policy = cached
+        assert policy.fetched_at == 4910
+        assert policy.etag == "v2"
+
+    def test_404_sentinel_backdates_by_age(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    b"",
+                    status=404,
+                    headers={"cache-control": "max-age=600", "age": "500"},
+                )
+            ]
+        )
+
+        assert _run_get_files(transport, cache, "absent") == []
+
+        neg = cache.get_negative("absent")
+        assert neg is not None
+        assert neg.fetched_at == 500
+        assert neg.is_fresh(now=1099) is True
+        assert neg.is_fresh(now=1100) is False
+
+    def test_age_at_max_age_is_stale_on_arrival(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        cold = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES,
+                    headers={
+                        "etag": "v1",
+                        "cache-control": "max-age=600",
+                        "age": "600",
+                    },
+                )
+            ]
+        )
+        assert len(_run_get_files(cold, cache, "pkg")) == 1
+
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        _, policy = cached
+        assert policy.is_fresh(now=1000) is False
+
+        warm = _FakeTransport([_FakeResponse(b"", status=304, headers={"etag": "v1"})])
+        assert len(_run_get_files(warm, cache, "pkg")) == 1
+
+        assert len(warm.calls) == 1
+        sent_headers = warm.calls[0][1]
+        assert sent_headers is not None
+        assert sent_headers.get("If-None-Match") == "v1"
 
 
 class TestNonJsonListingBody:
