@@ -1016,3 +1016,123 @@ class TestDownloadLadder:
         with pytest.raises(SystemExit):
             download(hermetic_roots / "pyproject.toml", output=hermetic_roots / "out")
         assert "config error" in capsys.readouterr().err
+
+
+_CLI_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
+
+_FLAG = "--include-rejected"
+
+
+def _config_reference_section() -> str:
+    text = _CLI_REFERENCE.read_text(encoding="utf-8")
+    return text.partition("\n## `nab config`\n")[2].partition("\n## ")[0]
+
+
+def _prose_chunks(section: str) -> list[str]:
+    """Split a reference section into one string per paragraph and bullet."""
+    chunks: list[str] = []
+    current: list[str] = []
+    for raw in section.splitlines():
+        line = raw.strip()
+        if current and (not line or raw.startswith("* ")):
+            chunks.append(" ".join(current))
+            current = []
+        if line:
+            current.append(line)
+
+    if current:
+        chunks.append(" ".join(current))
+    return chunks
+
+
+def _include_rejected_chunks() -> list[str]:
+    return [c for c in _prose_chunks(_config_reference_section()) if _FLAG in c]
+
+
+def _action_bullet(action: str) -> str:
+    """The ``--include-rejected`` bullet for one ``nab config`` action."""
+    prefix = f"* `nab config {action}"
+    return next(c for c in _include_rejected_chunks() if c.startswith(prefix))
+
+
+class TestCliReferenceDocumentsIncludeRejected:
+    """The CLI reference describes ``--include-rejected`` as it behaves.
+
+    The flag sits on ``nab config`` itself: it decides whether a refused
+    source is fatal, and ``list`` is the only action that shows a refusal
+    naming no option.
+    """
+
+    def test_list_shows_a_rejection_explain_cannot_reach(
+        self,
+        hermetic_roots: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        _project(hermetic_roots)
+        monkeypatch.setenv("NAB_OFLINE", "1")
+        path = str(hermetic_roots / "pyproject.toml")
+
+        listed = _run_config(["list", _FLAG, "--path", path])
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
+            _run_config(["explain", "offline", "--path", path])
+            warned = caplog.text
+            caplog.clear()
+            explained = _run_config(["explain", "offline", _FLAG, "--path", path])
+            silenced = caplog.text
+
+        assert "NAB_OFLINE" in listed
+        assert "NAB_OFLINE" not in explained
+        assert "NAB_OFLINE" in warned
+        assert "NAB_OFLINE" not in silenced
+        assert "stderr" in _action_bullet("explain")
+
+    def test_rejected_section_is_documented(
+        self, hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _project(hermetic_roots)
+        monkeypatch.setenv("NAB_OFLINE", "1")
+        out = _run_config(
+            ["list", _FLAG, "--path", str(hermetic_roots / "pyproject.toml")]
+        )
+
+        label = "rejected:"
+        assert any(line.strip() == label for line in out.splitlines())
+        assert f"`{label}`" in _config_reference_section()
+
+    def test_exit_without_the_flag_is_documented(self, hermetic_roots: Path) -> None:
+        _project(hermetic_roots)
+        _write(hermetic_roots / "nab.toml", 'resolutionn = "lowest"\n')
+        path = str(hermetic_roots / "pyproject.toml")
+
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            redirect_stdout(out),
+            redirect_stderr(err),
+            pytest.raises(SystemExit) as exc,
+        ):
+            app.cli(args=["config", "list", "--path", path], prog="nab")
+
+        assert out.getvalue() == ""
+        assert "config error" in err.getvalue()
+        assert "resolutionn" in _run_config(["list", _FLAG, "--path", path])
+        assert f"exits {exc.value.code}" in _config_reference_section()
+
+    def test_get_renders_no_rejection(
+        self,
+        hermetic_roots: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        _project(hermetic_roots)
+        _write(hermetic_roots / "nab.toml", 'resolutionn = "lowest"\n')
+        monkeypatch.setenv("NAB_OFLINE", "1")
+        path = str(hermetic_roots / "pyproject.toml")
+
+        with caplog.at_level(logging.WARNING, logger="nab_python"):
+            out = _run_config(["get", "resolution", _FLAG, "--path", path])
+
+        assert out == "highest\n"
+        # The flag silences the NAB_* warning and prints nothing in its place.
+        assert "NAB_OFLINE" not in caplog.text
+        assert "stderr" in _action_bullet("get")
