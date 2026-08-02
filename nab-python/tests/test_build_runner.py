@@ -55,6 +55,7 @@ from nab_python.lockfile import (
     TargetLock,
     WheelArtifact,
 )
+from nab_python.provider import MissingExtraError
 from nab_python.resolve import ResolveResult, TargetResult
 from nab_python.tags import PlatformSpec, TagSet
 from nab_python.target import ResolveTarget
@@ -1431,6 +1432,12 @@ def _no_network(*_a: object, **_k: object) -> object:
     raise AssertionError("offline must not reach the network")
 
 
+def _raise_missing_extra(*_a: object, **_k: object) -> object:
+    """Stand in for an inner resolve whose build dep lacks the named extra."""
+    msg = "dummyreq==1.0 does not provide extra 'nope'"
+    raise MissingExtraError(msg)
+
+
 class _StubEnvBuilder:
     """Stand in for ``venv.EnvBuilder``: makes the directory, runs nothing."""
 
@@ -1439,6 +1446,59 @@ class _StubEnvBuilder:
 
     def create(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
+
+
+class TestBuildEnvMissingExtra:
+    """A build requirement naming an undeclared extra fails the build env."""
+
+    def test_wrapped_as_build_env_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "nab_python.resolve.resolve_for_targets", _raise_missing_extra
+        )
+
+        env = NabBuildEnv(requires=["dummyreq[nope]"], config=NabProjectConfig())
+        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
+        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
+        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+
+        with pytest.raises(
+            BuildEnvError,
+            match=r"build env resolve failed: dummyreq==1\.0 does not provide"
+            r" extra 'nope'",
+        ):
+            env._resolve_and_download(wheel_dir)
+
+    def test_run_build_backend_names_the_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("venv.EnvBuilder", _StubEnvBuilder)
+        monkeypatch.setattr(
+            "nab_python._build.env._venv_scheme_paths",
+            lambda _python: {"purelib": str(tmp_path)},
+        )
+        monkeypatch.setattr(
+            "nab_python.resolve.resolve_for_targets", _raise_missing_extra
+        )
+
+        source = tmp_path / "src"
+        source.mkdir()
+        (source / "pyproject.toml").write_text(
+            "[build-system]\n"
+            'requires = ["dummyreq[nope]"]\n'
+            'build-backend = "dummyreq.backend"\n',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(
+            BuildBackendError,
+            match=r"build env setup for 'dummyreq\.backend' failed: build env"
+            r" resolve failed: dummyreq==1\.0 does not provide extra 'nope'",
+        ):
+            run_build_backend(source, config=NabProjectConfig())
 
 
 class TestBuildEnvOffline:
