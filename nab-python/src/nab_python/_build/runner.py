@@ -36,11 +36,12 @@ import build
 import pyproject_hooks
 import tomli
 
+from nab_index.local_index import UnsupportedWheelError, wheel_metadata_member
 from nab_resolver.resolver import ResolutionError
 
 from .._vendor.packaging.requirements import Requirement
 from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name
+from .._vendor.packaging.utils import canonicalize_name, parse_wheel_filename
 from .._vendor.packaging.version import Version
 from ..metadata import WheelMetadata, validate_specifier_versions
 from ..paths import path_state
@@ -220,9 +221,9 @@ def _extract_metadata_dir(
         if skip_prepare:
             return _build_wheel_and_extract(project, output_dir)
         return Path(project.metadata_path(output_dir))
-    # build raises a bare ValueError for a wheel whose name will not parse; a
-    # member zipfile cannot decompress surfaces as zlib.error, lzma.LZMAError,
-    # or NotImplementedError (a RuntimeError subclass).
+    # A wheel whose name will not parse raises a bare ValueError on either
+    # branch; a member zipfile cannot decompress surfaces as zlib.error,
+    # lzma.LZMAError, or NotImplementedError (a RuntimeError subclass).
     except (
         zipfile.BadZipFile,
         ValueError,
@@ -246,35 +247,37 @@ def _extract_metadata_dir(
 def _build_wheel_and_extract(
     project: build.ProjectBuilder, output_directory: Path
 ) -> Path:
-    """Build a wheel and extract its dist-info directory.
+    """Build a wheel and extract its own dist-info directory.
 
-    The built wheel ends up in ``output_directory``; this helper
-    pulls out its ``*.dist-info/`` and returns the path so the
-    caller can read ``METADATA``.  Mirrors what
-    :meth:`build.ProjectBuilder.metadata_path` does internally
-    when the prepare hook is missing; we just call it
-    unconditionally for the hatchling+dynamic-deps case.
+    The built wheel ends up in ``output_directory``; this helper pulls
+    out the ``*.dist-info/`` for the distribution the wheel's filename
+    names and returns the path so the caller can read ``METADATA``.
+    Selection goes through
+    :func:`nab_index.local_index.wheel_metadata_member` so a built wheel
+    and an indexed one agree on what a wheel's own metadata is.
     """
     wheel = project.build("wheel", str(output_directory))
     wheel_path = Path(wheel)
+    expected = parse_wheel_filename(wheel_path.name)[0]
+
     with zipfile.ZipFile(wheel_path) as zf:
-        dist_info_members = [
-            n
-            for n in zf.namelist()
-            if "/" in n and n.split("/")[0].endswith(".dist-info")
-        ]
-        if not dist_info_members:
-            msg = f"built wheel {wheel_path.name} has no .dist-info directory"
+        names = zf.namelist()
+
+        try:
+            member = wheel_metadata_member(names, expected)
+        except UnsupportedWheelError as exc:
+            msg = f"built wheel {wheel_path.name} is unusable: {exc}"
+            raise BuildBackendError(msg) from exc
+        if member is None:
+            msg = f"built wheel {wheel_path.name} has no .dist-info/METADATA"
             raise BuildBackendError(msg)
-        distinfo_dir = dist_info_members[0].split("/")[0]
+
+        distinfo_dir = member.partition("/")[0]
         zf.extractall(
             output_directory,
-            (
-                m
-                for m in zf.namelist()
-                if m == distinfo_dir or m.startswith(distinfo_dir + "/")
-            ),
+            (m for m in names if m.startswith(distinfo_dir + "/")),
         )
+
     return output_directory / distinfo_dir
 
 

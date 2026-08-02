@@ -43,7 +43,11 @@ from nab_python._build.env import (
     _picked_wheel_pin,
     _venv_scheme_paths,
 )
-from nab_python._build.runner import BuildBackendError, run_build_backend
+from nab_python._build.runner import (
+    BuildBackendError,
+    _build_wheel_and_extract,
+    run_build_backend,
+)
 from nab_python._provider.metadata_resolver import pick_dist
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
@@ -113,7 +117,8 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
 
     name = "fake-dyn"
     version = "9.9.9"
-    distinfo = f"{name}-{version}.dist-info"
+    escaped = name.replace("-", "_")
+    distinfo = f"{escaped}-{version}.dist-info"
     metadata = (
         "Metadata-Version: 2.1\\n"
         f"Name: {name}\\n"
@@ -121,7 +126,7 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
         "Requires-Python: >=3.10\\n"
         "Requires-Dist: click>=8\\n"
     )
-    wheel_name = f"{name}-{version}-py3-none-any.whl"
+    wheel_name = f"{escaped}-{version}-py3-none-any.whl"
     target = os.path.join(wheel_directory, wheel_name)
     with zipfile.ZipFile(target, "w") as zf:
         zf.writestr(f"{distinfo}/METADATA", metadata)
@@ -760,26 +765,83 @@ class TestParseMetadata:
 
 
 class TestBuildWheelExtraction:
-    """``_build_wheel_and_extract`` raises when the built wheel has
-    no .dist-info directory.  The happy path is exercised end-to-end
-    through the hatchling-quirk-skip test in ``TestRunBuildBackend``.
+    """``_build_wheel_and_extract`` reads the dist-info directory the built
+    wheel's own filename names, and refuses one that does not match.
     """
 
-    def test_wheel_without_dist_info_raises(self, tmp_path: Path) -> None:
-        import zipfile
-
-        from nab_python._build.runner import _build_wheel_and_extract
-
-        wheel_path = tmp_path / "fake-1.0-py3-none-any.whl"
-        with zipfile.ZipFile(wheel_path, "w") as zf:
-            zf.writestr("loose-file.txt", "hi")
-
+    def _builder(self, wheel_path: Path) -> build.ProjectBuilder:
         class _Builder:
             def build(self, _kind: str, _outdir: str) -> str:
                 return str(wheel_path)
 
+        return _Builder()  # type: ignore[return-value]
+
+    def _metadata(self, name: str, version: str, requires: str) -> str:
+        return (
+            "Metadata-Version: 2.1\n"
+            f"Name: {name}\n"
+            f"Version: {version}\n"
+            f"Requires-Dist: {requires}\n"
+        )
+
+    def test_wheel_without_dist_info_raises(self, tmp_path: Path) -> None:
+        wheel_path = tmp_path / "fake-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as zf:
+            zf.writestr("loose-file.txt", "hi")
+
         with pytest.raises(BuildBackendError, match="no .dist-info"):
-            _build_wheel_and_extract(_Builder(), tmp_path)  # type: ignore[arg-type]
+            _build_wheel_and_extract(self._builder(wheel_path), tmp_path)
+
+    def test_leftover_dist_info_from_another_release_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """A stale ``<name>-<oldver>.dist-info/`` left in the source tree can
+        get swept into the built wheel alongside the real one.
+        """
+        wheel_path = tmp_path / "bar-2.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as zf:
+            zf.writestr(
+                "bar-1.9.dist-info/METADATA", self._metadata("bar", "1.9", "old-dep==1")
+            )
+            zf.writestr(
+                "bar-2.0.dist-info/METADATA", self._metadata("bar", "2.0", "new-dep>=2")
+            )
+            zf.writestr("bar/__init__.py", "")
+
+        with pytest.raises(BuildBackendError, match="multiple .dist-info"):
+            _build_wheel_and_extract(self._builder(wheel_path), tmp_path)
+
+    def test_dist_info_for_another_distribution_raises(self, tmp_path: Path) -> None:
+        wheel_path = tmp_path / "bar-2.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as zf:
+            zf.writestr(
+                "aaa-1.0.dist-info/METADATA", self._metadata("aaa", "1.0", "old-dep==1")
+            )
+            zf.writestr("bar/__init__.py", "")
+
+        with pytest.raises(BuildBackendError, match="different distribution"):
+            _build_wheel_and_extract(self._builder(wheel_path), tmp_path)
+
+    def test_extracts_dist_info_named_by_filename(self, tmp_path: Path) -> None:
+        """Members ahead of the dist-info do not hide it, and an escaped name
+        (``zope.interface`` as ``zope_interface``) still matches.
+        """
+        wheel_path = tmp_path / "zope_interface-5.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as zf:
+            zf.writestr("zope/interface/__init__.py", "")
+            zf.writestr(
+                "zope_interface-5.0.dist-info/METADATA",
+                self._metadata("zope.interface", "5.0", "new-dep>=2"),
+            )
+            zf.writestr("zope_interface-5.0.dist-info/WHEEL", "Wheel-Version: 1.0\n")
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        result = _build_wheel_and_extract(self._builder(wheel_path), out_dir)
+
+        assert result == out_dir / "zope_interface-5.0.dist-info"
+        assert (result / "WHEEL").is_file()
+        assert "Version: 5.0" in (result / "METADATA").read_text(encoding="utf-8")
 
 
 _UNREADABLE_DIST_INFO = "foo-1.0.dist-info"
@@ -932,6 +994,25 @@ class TestRunBuildBackendCorruptBuiltWheel:
         monkeypatch.setattr(runner_mod, "_should_skip_prepare", lambda *_a: True)
         self._run(
             tmp_path, config, self._corrupt_building_project("foo-1.0-py3-none-any.whl")
+        )
+
+    def test_skip_prepare_invalid_wheel_name_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The skip-prepare path parses the wheel filename too, so a readable
+        zip under a name that does not parse is refused there as well.
+        """
+        self._pyproject(tmp_path)
+        monkeypatch.setattr(runner_mod, "_should_skip_prepare", lambda *_a: True)
+        self._run(
+            tmp_path,
+            config,
+            self._corrupt_building_project(
+                "garbage.whl", _wheel_zip(zipfile.ZIP_DEFLATED)
+            ),
         )
 
     @pytest.mark.parametrize("skip_prepare", [False, True])
