@@ -1369,6 +1369,15 @@ def _group_package_ranges(
 
 
 @dataclass(frozen=True, slots=True)
+class _SelfEmptyGroup:
+    """One group whose own requirements on a package leave no version."""
+
+    group: str
+    package: str
+    reqs: str
+
+
+@dataclass(frozen=True, slots=True)
 class _GroupConflict:
     """One direct group-vs-group conflict on a single package.
 
@@ -1382,6 +1391,29 @@ class _GroupConflict:
     right_req: str
 
 
+def _find_self_empty_groups(
+    per_group: Mapping[str, list[Requirement]],
+    environment: Mapping[str, str],
+) -> list[_SelfEmptyGroup]:
+    """Return the groups whose own requirements on a package leave no version.
+
+    The result is sorted by ``(group, package)``.
+    """
+    self_empty: list[_SelfEmptyGroup] = []
+    for group in sorted(per_group):
+        ranges, sources = _group_package_ranges(per_group[group], environment)
+        self_empty.extend(
+            _SelfEmptyGroup(
+                group=group,
+                package=package,
+                reqs=", ".join(sources[package]),
+            )
+            for package in sorted(ranges)
+            if ranges[package].is_empty
+        )
+    return self_empty
+
+
 def _find_group_conflicts(
     per_group: Mapping[str, list[Requirement]],
     environment: Mapping[str, str],
@@ -1389,11 +1421,11 @@ def _find_group_conflicts(
     """Return the direct group-vs-group conflicts under ``environment``.
 
     Only direct conflicts are caught; one that emerges through a shared
-    transitive dependency falls through to the resolver.  A group whose
-    own requirements on a package already leave no version is left out
-    of the pairing, since nothing another group requires can be the
-    cause; :func:`raise_for_unsatisfiable` names those requirements.
-    The result is sorted by ``(left_group, right_group, package)``.
+    transitive dependency falls through to the resolver.  A group that
+    already leaves no version on a package is left out of the pairing,
+    since no other group can be the cause; it is reported by name from
+    :func:`_find_self_empty_groups` instead.  The result is sorted by
+    ``(left_group, right_group, package)``.
     """
     # Invert to: package -> the groups that name it directly, each with
     # its folded range and the requirement strings behind it. Visiting
@@ -1432,38 +1464,55 @@ def _find_group_conflicts(
     return conflicts
 
 
+def _tuple_scope(labels: set[str], targets: Sequence[ResolveTarget]) -> str:
+    """Name the tuples a finding holds on, when there is more than one."""
+    if len(targets) == 1:
+        return ""
+    return f" for tuple(s) {', '.join(sorted(labels))}"
+
+
 def _check_group_disjointness(
     per_group: Mapping[str, list[Requirement]],
     targets: Sequence[ResolveTarget],
 ) -> None:
-    """Raise on a direct conflict between two selected groups, naming them.
+    """Raise on a group that cannot hold on its own, or on a conflicting pair.
 
-    A conflict is reported when it holds on any target; the offending
-    tuples are named when there is more than one to name.  A no-op below
-    two groups.
+    A finding is reported when it holds on any target; the offending
+    tuples are named when there is more than one to name.  A group that
+    leaves no version on its own is named alone, since no other group
+    can be the cause.
     """
+    self_empty: dict[_SelfEmptyGroup, set[str]] = defaultdict(set)
     affected: dict[_GroupConflict, set[str]] = defaultdict(set)
     for target in targets:
+        for empty in _find_self_empty_groups(per_group, target.marker_env):
+            self_empty[empty].add(target.label)
         for conflict in _find_group_conflicts(per_group, target.marker_env):
             affected[conflict].add(target.label)
-    if not affected:
+
+    if not self_empty and not affected:
         return
+
     clauses: list[str] = []
+    for empty in sorted(self_empty, key=lambda e: (e.group, e.package)):
+        where = _tuple_scope(self_empty[empty], targets)
+        clauses.append(
+            f"Dependency group {empty.group!r} has conflicting requirements on"
+            f" {empty.package!r}{where}: {empty.reqs}."
+        )
+
     for conflict in sorted(
         affected,
         key=lambda c: (c.left_group, c.right_group, c.package),
     ):
-        where = (
-            f" for tuple(s) {', '.join(sorted(affected[conflict]))}"
-            if len(targets) > 1
-            else ""
-        )
+        where = _tuple_scope(affected[conflict], targets)
         clauses.append(
             f"Dependency groups {conflict.left_group!r} and"
             f" {conflict.right_group!r} conflict on {conflict.package!r}{where}:"
             f" group {conflict.left_group!r} requires {conflict.left_req} but group"
             f" {conflict.right_group!r} requires {conflict.right_req}."
         )
+
     raise ResolutionError("; ".join(clauses))
 
 

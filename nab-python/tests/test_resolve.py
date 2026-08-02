@@ -2603,9 +2603,19 @@ class TestCheckGroupDisjointness:
         }
         _check_group_disjointness(per_group, [_target({})])
 
-    def test_single_group_is_noop(self) -> None:
-        per_group = {"docs": [Requirement("sphinx<7"), Requirement("sphinx>=7")]}
+    def test_single_group_pairs_with_nobody(self) -> None:
+        per_group = {"docs": [Requirement("sphinx<7")]}
         _check_group_disjointness(per_group, [_target({})])
+
+    def test_single_group_that_cannot_hold_is_named(self) -> None:
+        """One group contradicting itself is reported without a partner."""
+        per_group = {"docs": [Requirement("sphinx<7"), Requirement("sphinx>=7")]}
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, [_target({})])
+        assert str(info.value) == (
+            "Dependency group 'docs' has conflicting requirements on 'sphinx':"
+            " sphinx<7, sphinx>=7."
+        )
 
     def test_empty_mapping_is_noop(self) -> None:
         _check_group_disjointness({}, [_target({})])
@@ -2663,31 +2673,51 @@ class TestCheckGroupDisjointness:
         _check_group_disjointness(per_group, [_target({})])
 
     def test_self_empty_group_does_not_blame_an_unversioned_group(self) -> None:
-        """A group that cannot hold alone is not a conflict with anyone.
-
-        ``beta`` pins nothing, so no range it could carry would clash;
-        ``alpha`` folds to empty on its own.
-        """
+        """A group that cannot hold alone is named, and nobody else is."""
         per_group = {
             "alpha": [Requirement("sphinx>=7"), Requirement("sphinx<6")],
             "beta": [Requirement("sphinx")],
         }
-        _check_group_disjointness(per_group, [_target({})])
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, [_target({})])
+        assert str(info.value) == (
+            "Dependency group 'alpha' has conflicting requirements on 'sphinx':"
+            " sphinx>=7, sphinx<6."
+        )
 
     def test_self_empty_group_does_not_blame_an_overlapping_group(self) -> None:
-        """Every other group naming the package stays unaccused."""
+        """The other groups naming the package are not reported."""
         per_group = {
             "alpha": [Requirement("sphinx>=7"), Requirement("sphinx<6")],
             "beta": [Requirement("sphinx")],
             "gamma": [Requirement("sphinx>=2")],
         }
-        _check_group_disjointness(per_group, [_target({})])
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, [_target({})])
+        message = str(info.value)
+        assert "'alpha'" in message
+        assert "'beta'" not in message
+        assert "'gamma'" not in message
+
+    def test_self_empty_group_on_one_package_still_pairs_on_another(self) -> None:
+        """The self-empty skip is per package, not per group."""
+        per_group = {
+            "a": [Requirement("x>=2"), Requirement("x<1"), Requirement("y<3")],
+            "b": [Requirement("y>=4")],
+        }
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, [_target({})])
+        assert str(info.value) == (
+            "Dependency group 'a' has conflicting requirements on 'x':"
+            " x>=2, x<1.;"
+            " Dependency groups 'a' and 'b' conflict on 'y':"
+            " group 'a' requires y<3 but group 'b' requires y>=4."
+        )
 
     def test_umbrella_group_is_not_blamed_for_the_pair_it_includes(self) -> None:
-        """An umbrella group only reports the pair underneath it.
+        """An umbrella group is named alone, not paired with its members.
 
-        ``dev`` is ``lint`` plus ``test`` expanded, so its own fold is
-        empty; the one real conflict is ``lint`` against ``test``.
+        ``dev`` here is ``lint`` plus ``test`` expanded.
         """
         per_group = {
             "dev": [Requirement("sphinx<6"), Requirement("sphinx>=7")],
@@ -2697,7 +2727,33 @@ class TestCheckGroupDisjointness:
         with pytest.raises(ResolutionError) as info:
             _check_group_disjointness(per_group, [_target({})])
         assert str(info.value) == (
-            "Dependency groups 'lint' and 'test' conflict on 'sphinx':"
+            "Dependency group 'dev' has conflicting requirements on 'sphinx':"
+            " sphinx<6, sphinx>=7.;"
+            " Dependency groups 'lint' and 'test' conflict on 'sphinx':"
+            " group 'lint' requires sphinx>=7 but group 'test' requires sphinx<6."
+        )
+
+    def test_umbrella_group_through_include_group_is_named_alone(
+        self, tmp_path: Path
+    ) -> None:
+        """The same shape read through a real ``include-group`` table."""
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            "[project]\nname = 'x'\n"
+            "[dependency-groups]\n"
+            "dev = [{ include-group = 'lint' }, { include-group = 'test' }]\n"
+            "lint = ['sphinx>=7']\n"
+            "test = ['sphinx<6']\n"
+        )
+        per_group = _group_requirements_by_group(
+            read_pyproject_groups(path), ["dev", "lint", "test"], path
+        )
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, [_target({})])
+        assert str(info.value) == (
+            "Dependency group 'dev' has conflicting requirements on 'sphinx':"
+            " sphinx>=7, sphinx<6.;"
+            " Dependency groups 'lint' and 'test' conflict on 'sphinx':"
             " group 'lint' requires sphinx>=7 but group 'test' requires sphinx<6."
         )
 
@@ -2780,10 +2836,8 @@ class TestResolvePyprojectGroupConflict:
         assert "'test'" in message
         assert "sphinx" in message
 
-    def test_self_empty_group_reports_its_own_requirements(
-        self, tmp_path: Path
-    ) -> None:
-        """A group that cannot hold alone is reported as unsatisfiable."""
+    def test_self_empty_group_names_only_itself(self, tmp_path: Path) -> None:
+        """A group that cannot hold alone is named without its neighbour."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\nname = "x"\ndependencies = []\n'
@@ -2795,16 +2849,16 @@ class TestResolvePyprojectGroupConflict:
             patch("nab_python.resolve.FetchCoordinator"),
             pytest.raises(ResolutionError) as info,
         ):
-            _resolved(
+            resolve_for_targets(
                 pyproject,
                 _FAKE_TRANSPORT,
                 python_version="3.12.0",
                 groups=["alpha", "beta"],
             )
-        message = str(info.value)
-        assert "Dependency groups" not in message
-        assert "conflicting requirements leave no satisfiable version" in message
-        assert "sphinx>=7, sphinx<6" in message
+        assert str(info.value) == (
+            "Dependency group 'alpha' has conflicting requirements on 'sphinx':"
+            " sphinx>=7, sphinx<6."
+        )
 
     @patch("nab_python.resolve.build_target_lock")
     @patch("nab_python.resolve.Resolver")
@@ -3236,10 +3290,17 @@ class TestCheckGroupDisjointnessAcrossTuples:
         tuples = [_tuple_for_python("3.10"), _tuple_for_python("3.12")]
         _check_group_disjointness(per_group, tuples)
 
-    def test_single_group_is_noop(self) -> None:
+    def test_single_group_that_cannot_hold_names_its_tuples(self) -> None:
+        """A self-contradictory group is named per tuple, like a pair."""
         per_group = {"a": [Requirement("foo<2"), Requirement("foo>=2")]}
         tuples = [_tuple_for_python("3.10"), _tuple_for_python("3.12")]
-        _check_group_disjointness(per_group, tuples)
+        with pytest.raises(ResolutionError) as info:
+            _check_group_disjointness(per_group, tuples)
+        assert str(info.value) == (
+            "Dependency group 'a' has conflicting requirements on 'foo'"
+            " for tuple(s) py310-linux_x86_64, py312-linux_x86_64:"
+            " foo<2, foo>=2."
+        )
 
     def test_empty_mapping_is_noop(self) -> None:
         tuples = [_tuple_for_python("3.12")]
