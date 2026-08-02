@@ -63,6 +63,19 @@ _LS_REMOTE_TIMEOUT_SECONDS = 120
 # builds a large repo's pack.
 _FETCH_TIMEOUT_SECONDS = 1800
 
+# git reads these to pick which repository, and which of its refs, a command
+# acts on, and they outrank ``cwd``.  git sets them itself around hooks, so an
+# inherited one is not always deliberate.
+_REPO_SELECTION_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+)
+
 
 class VcsCloneError(Exception):
     """Raised when a clone or ref resolution fails."""
@@ -328,30 +341,32 @@ def _shallow_clone(repo_url: str, sha: str, dest: Path) -> None:
     :func:`tempfile.mkdtemp`, so it already exists.
     """
     dest.mkdir(parents=True, exist_ok=True)
+    env = _git_env()
+
     init_args = ["git", "init", "--quiet"]
     fetch_args = ["git", "fetch", "--quiet", "--depth", "1", repo_url, sha]
     checkout_args = ["git", "checkout", "--quiet", "FETCH_HEAD"]
+
     try:
         subprocess.run(  # noqa: S603 - git is a runtime dep
             init_args,
             check=True,
             cwd=dest,
-            env=_git_env(),
+            env=env,
         )
         subprocess.run(  # noqa: S603 - URL admission upstream
             fetch_args,
             check=True,
             cwd=dest,
-            env=_git_env(),
+            env=env,
             timeout=_FETCH_TIMEOUT_SECONDS,
         )
         subprocess.run(  # noqa: S603 - git is a runtime dep
             checkout_args,
             check=True,
             cwd=dest,
-            env=_git_env(),
+            env=env,
         )
-        (dest / ".git" / _COMPLETE_MARKER).touch()
     except (
         FileNotFoundError,
         subprocess.CalledProcessError,
@@ -362,15 +377,26 @@ def _shallow_clone(repo_url: str, sha: str, dest: Path) -> None:
         msg = f"failed to clone {repo_url} @ {sha}: {exc}"
         raise VcsCloneError(msg) from exc
 
+    try:
+        (dest / ".git" / _COMPLETE_MARKER).touch()
+    except OSError as exc:
+        shutil.rmtree(dest, ignore_errors=True)
+        msg = f"clone of {repo_url} @ {sha} could not be marked complete: {exc}"
+        raise VcsCloneError(msg) from exc
+
 
 def _git_env() -> dict[str, str]:
     """Return an environment for git subprocesses.
 
-    Disables interactive prompts and any auto-detected user config
-    so the clone fails fast on unauthenticated repos rather than
-    hanging.
+    Disables interactive prompts and any auto-detected user config so
+    the clone fails fast on unauthenticated repos rather than hanging,
+    and drops the inherited repo-selection variables so every call acts
+    on the directory nab passes as ``cwd``.
     """
     env = dict(os.environ)
+    for name in _REPO_SELECTION_VARS:
+        env.pop(name, None)
+
     env["GIT_TERMINAL_PROMPT"] = "0"
     env.setdefault("GIT_CONFIG_GLOBAL", "/dev/null")
     env.setdefault("GIT_CONFIG_SYSTEM", "/dev/null")
