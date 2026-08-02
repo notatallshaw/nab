@@ -23,7 +23,9 @@ constraints = ["urllib3<2"]
 # PEP 735 dependency groups activated on every resolve, unioned
 # with any --groups selection: their dependencies are resolved
 # and pinned into the lock.  The names are also recorded in the
-# lockfile's default-groups array.
+# lockfile's default-groups array.  Two members of the same
+# at-most-one or exactly-one set in [tool.nab].conflicts cannot
+# both be defaults.
 default-groups = ["dev"]
 
 # The Python range this project supports.  A declaration: it is
