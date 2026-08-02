@@ -20,6 +20,7 @@ import urllib3
 
 from .retry import GET_RETRY, MAX_RETRIES, next_delay
 from .transport import (
+    DEFAULT_HEADERS,
     ContentDecodingError,
     HttpError,
     accepts_gzip,
@@ -183,12 +184,15 @@ class Urllib3AsyncTransport:
     ) -> _Urllib3Response:
         """Send a GET request, off-loaded to a worker thread.
 
-        Requests gzip; without it urllib3's stdlib base sends
-        ``Accept-Encoding: identity``, which disables compression. A caller
-        can override that with :data:`~nab_index.transport.IDENTITY_HEADERS`
-        to get the body undecoded.
+        ``headers`` overrides entries of
+        :data:`~nab_index.transport.DEFAULT_HEADERS`, so a caller can pass
+        :data:`~nab_index.transport.IDENTITY_HEADERS` to get the body
+        undecoded. Requesting gzip matters here: without it urllib3's stdlib
+        base sends ``Accept-Encoding: identity``, which disables compression.
+        The defaults go on the request rather than on the pool because urllib3
+        replaces the pool's headers with a request's own instead of merging.
         """
-        request_headers = {"Accept-Encoding": "gzip"}
+        request_headers = dict(DEFAULT_HEADERS)
         if headers is not None:
             request_headers.update(headers)
         try:

@@ -12,6 +12,7 @@ import truststore
 
 from .retry import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES, next_delay
 from .transport import (
+    DEFAULT_HEADERS,
     ContentDecodingError,
     HttpError,
     accepts_gzip,
@@ -92,12 +93,12 @@ class HttpxAsyncTransport:
         httpx has no retry machinery beyond reconnecting, so the shared policy
         runs in this loop rather than in the client. The body is read raw and
         decoded with ``decode_body``, so a truncated gzip stream is retried
-        instead of returned as if complete. Only gzip is advertised, and a
-        caller can override that with
+        instead of returned as if complete. ``headers`` overrides entries of
+        :data:`~nab_index.transport.DEFAULT_HEADERS`, so a caller can pass
         :data:`~nab_index.transport.IDENTITY_HEADERS` to get the body
         undecoded.
         """
-        request_headers = {"Accept-Encoding": "gzip"}
+        request_headers = dict(DEFAULT_HEADERS)
         if headers is not None:
             request_headers.update(headers)
 

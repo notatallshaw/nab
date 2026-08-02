@@ -41,6 +41,8 @@ uv tool install 'nab[httpx]'
 Pick it at run-time with `--http-backend httpx`. Selecting a backend
 that was not installed surfaces a helpful `ImportError`.
 
+Both backends send the same `User-Agent`, `nab-index/<version>`.
+
 ## Throw-away invocations
 
 ```bash

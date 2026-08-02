@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import gzip
 import zlib
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 __all__ = [
+    "DEFAULT_HEADERS",
     "IDENTITY_HEADERS",
+    "USER_AGENT",
     "AsyncHttpTransport",
     "ContentDecodingError",
     "HttpError",
@@ -25,6 +28,23 @@ __all__ = [
     "raise_for_error_status",
     "raise_unless_ok",
 ]
+
+
+def _user_agent() -> str:
+    """Return the ``nab-index/<version>`` name PyPI's API guidelines ask for."""
+    try:
+        return f"nab-index/{version('nab-index')}"
+    except PackageNotFoundError:
+        return "nab-index/0.0.0+unknown"
+
+
+USER_AGENT: Final[str] = _user_agent()
+
+# Sent on every request unless the caller overrides an entry.
+DEFAULT_HEADERS: Final[dict[str, str]] = {
+    "Accept-Encoding": "gzip",
+    "User-Agent": USER_AGENT,
+}
 
 # For a caller that needs the body exactly as stored, undecoded.
 IDENTITY_HEADERS: Final[dict[str, str]] = {"Accept-Encoding": "identity"}
