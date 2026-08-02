@@ -3052,6 +3052,51 @@ class TestAugmentResolutionError:
         assert "bar" in diagnostics
         assert "foo: no version matches the requirement" not in diagnostics
 
+    def test_filtered_release_is_not_reported_as_a_missing_version(
+        self, tmp_path: Path
+    ) -> None:
+        """A filtered release reads as filtered rather than as absent.
+
+        ``foo`` 2.0 matches ``foo>=2`` and only its ``Requires-Python``
+        keeps it off a 3.12 target.  Its 1.0 survives, so the package has a
+        version and the whole-listing wording does not fire.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo>=2"]\n',
+            encoding="utf-8",
+        )
+
+        newer = WheelFile(
+            filename="foo-2.0-py3-none-any.whl",
+            url="https://example.com/foo-2.0-py3-none-any.whl",
+            version="2.0",
+            requires_python=">=3.13",
+            has_metadata=True,
+            upload_time=None,
+        )
+        coordinator = make_coordinator(
+            listings={"foo": [newer, *_index_wheels("foo", "1.0")]},
+            metadata_by_version={
+                "2.0": _metadata("foo", "2.0"),
+                "1.0": _metadata("foo", "1.0"),
+            },
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        diagnostics = str(info.value).split("Diagnostics:")[1]
+        assert (
+            "foo: found on index but every version matching the requirement was"
+            " filtered (by requires-python, wheel tags, dist-policy, or"
+            " upload-time)" in diagnostics
+        )
+        assert "no version matches the requirement" not in diagnostics
+
     def test_constraint_does_not_hide_the_transitive_blocker(
         self, tmp_path: Path
     ) -> None:
