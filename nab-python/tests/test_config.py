@@ -63,7 +63,9 @@ from nab_python.workspace import WorkspaceConfig
 
 def write(tmp_path: Path, body: str) -> Path:
     p = tmp_path / "pyproject.toml"
-    p.write_text(body)
+    # TOML is UTF-8 by spec and nab reads the file in binary, so the fixture
+    # must not pick up the platform default (cp1252 on Windows).
+    p.write_text(body, encoding="utf-8")
     return p
 
 
