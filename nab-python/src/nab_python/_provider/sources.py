@@ -248,7 +248,10 @@ def materialize_vcs_source(
         msg = f"vcs source {source.name!r}: {exc}"
         raise UnsupportedSdistError(msg) from exc
     provider.vcs_pins[canonicalize_name(source.name)] = clone.commit_sha
-    path = clone.path / clone.subdirectory if clone.subdirectory else clone.path
+
+    # The cache dir can be relative, and a file URI needs an absolute path.
+    root = clone.path.resolve()
+    path = root / clone.subdirectory if clone.subdirectory else root
     descriptor = f"vcs source {source.name!r}"
     metadata = extract_source_metadata(
         provider,

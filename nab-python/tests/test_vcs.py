@@ -790,6 +790,44 @@ class TestProviderVcsIntegration:
         # Unknown package returns None.
         assert provider.vcs_pin_for("missing") is None
 
+    def test_relative_cache_dir_yields_an_absolute_clone_uri(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cwd-relative cache dir still yields an absolute ``file:`` URI.
+
+        ``cache-dir`` is cwd-relative, so the provider can be handed a
+        relative clone root.
+        """
+        sha = "a" * 40
+        monkeypatch.chdir(tmp_path)
+        clone_dir = tmp_path / "cache" / "vcs" / "k" / sha
+        _mark_complete(clone_dir)
+        (clone_dir / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "1.0.0"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "k")
+
+        provider = Provider(
+            self.coordinator(),
+            vcs_config=VcsConfig(
+                policy=VcsPolicy.ALLOW,
+                allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
+                require_pin=True,
+            ),
+            vcs_sources=[
+                VcsSource(name="foo", url=f"git+https://example.com/foo.git@{sha}"),
+            ],
+            vcs_cache_dir=Path("cache"),
+            build_policy=BuildPolicy.NEVER,
+        )
+        versions = provider.fetch_versions("foo")
+        assert len(versions) == 1
+        assert versions[0][1].url == clone_dir.resolve().as_uri()
+
     def test_floating_ref_lock_records_resolved_sha(
         self,
         tmp_path: Path,
