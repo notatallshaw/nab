@@ -7,6 +7,9 @@ the one running the suite.  One smoke test uses the live sources.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from nab_python._vendor.packaging.markers import InvalidMarker, Marker
@@ -990,6 +993,68 @@ class TestUnboundableVariables:
         assert unboundable_variables(target) == (
             UNBOUNDABLE_MARKER_VARIABLES | {"implementation_version"}
         )
+
+
+class TestEnvironmentDeclarationDocumented:
+    """The lockfile reference names every variable an ``environments`` row
+    singles out: one it never pins by value, and one it carries as a slice
+    bound.
+    """
+
+    def _documented_names(self) -> set[str]:
+        doc = Path(__file__).resolve().parents[2] / "docs" / "reference" / "lockfile.md"
+        text = doc.read_text(encoding="utf-8")
+
+        start = text.index("### The environments the lock is for")
+        end = text.index("\n### ", start + 1)
+        section = text[start:end]
+
+        # Backticks wrap whole clauses, so split each span into bare names.
+        return {
+            token
+            for span in re.findall(r"`([^`]+)`", section)
+            for token in re.findall(r"[a-z_]+", span)
+        }
+
+    def _target(self, implementation: str) -> ResolveTarget:
+        return ResolveTarget.for_declared(
+            python_version="3.11",
+            spec=PlatformSpec("linux_x86_64"),
+            implementation=implementation,
+        )
+
+    def _never_pinned(self, target: ResolveTarget) -> set[str]:
+        """Return the variables a consulted marker does not pin by value."""
+        never: set[str] = set()
+        for name in PEP508_MARKER_VARIABLES:
+            value = target.marker_env[name]
+            row = environment_declaration(target, [Marker(f'{name} == "{value}"')])
+            if f'{name} == "{value}"' not in row:
+                never.add(name)
+
+        return never
+
+    @pytest.mark.parametrize("implementation", ["cpython", "pypy"])
+    def test_a_variable_the_row_never_pins_is_documented(
+        self, implementation: str
+    ) -> None:
+        missing = self._never_pinned(self._target(implementation))
+        missing -= self._documented_names()
+
+        assert not missing, f"undocumented on {implementation}: {sorted(missing)}"
+
+    def test_a_slice_bound_the_row_carries_is_documented(self) -> None:
+        target = self._target("cpython")
+        consulted = [Marker('implementation_version >= "3.11.4"')]
+
+        carried: set[str] = set()
+        for slice_ in slices_from_points(
+            target, micro_boundary_points(target, consulted)
+        ):
+            carried |= marker_variables(environment_declaration(slice_, consulted))
+
+        missing = carried - self._documented_names()
+        assert not missing, f"undocumented clause variables: {sorted(missing)}"
 
 
 class TestMicroBoundarySplitting:
