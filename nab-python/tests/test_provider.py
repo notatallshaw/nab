@@ -7622,7 +7622,7 @@ class TestPrefetchWalkAhead:
         # An empty fetch (no sidecar served) still marks the slot fetched.
         two = make_wheel("2.0")
         assert two.metadata_url is not None
-        coordinator.request_metadata("foo", "2.0", two.metadata_url)
+        coordinator.request_metadata("foo", "2.0", two.metadata_url, None)
         coordinator.reset_mock()
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
@@ -9369,16 +9369,17 @@ class TestBuildRemoteFailureModes:
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
     @respx.mock
-    def test_listing_hashes_are_checked_against_the_served_archive(self) -> None:
-        """The listing's digests decide whether the served bytes reach a build.
+    def test_archive_hash_checked_over_real_fetch(self) -> None:
+        """A tampered archive is refused against the listing's published sha256.
 
-        Runs the fetch for real, so the archive is only refused if the
-        listing's hashes travel with the request.
+        Fetches for real, so the refusal only happens if the provider
+        forwards the listing's hashes.
         """
         sdist = make_sdist("1.0", hashes=(("sha256", "0" * 64),))
         respx.get(sdist.url).mock(
             return_value=httpx.Response(200, content=b"tampered bytes")
         )
+
         with FetchCoordinator(transport=HttpxAsyncTransport()) as coordinator:
             provider = Provider(
                 coordinator,

@@ -5,6 +5,9 @@ around a real :class:`~nab_python.fetch.InMemoryIndex`.  The mock's
 request methods write to the index and return an already-set
 :class:`threading.Event`, so the synchronous provider code under test
 sees fetches resolve immediately.
+
+Unlike the real coordinator, the request methods take the published hashes
+as required arguments, so a caller that stops forwarding them fails.
 """
 
 from __future__ import annotations
@@ -100,7 +103,7 @@ def _wire_metadata_side_effects(
         index.store_metadata(pkg, ver, text, url)
 
     def _request_metadata(
-        pkg: str, ver: str, url: str, _hash: tuple[str, str] | None = None
+        pkg: str, ver: str, url: str, _hash: tuple[str, str] | None
     ) -> threading.Event:
         _fetch_metadata(pkg, ver, url)
         return _done_event()
@@ -127,12 +130,7 @@ def _wire_sdist_side_effects(
     sdist_pkg_info_by_version: Mapping[str, str | None] | None,
     sdist_pyproject_toml: str | None,
 ) -> None:
-    """Attach the ``request_sdist`` side effect.
-
-    The published hashes have no default here: the real fetcher verifies the
-    archive against them, so a call site that stops forwarding them fails
-    loudly instead of quietly resolving from an unverified sdist.
-    """
+    """Attach the ``request_sdist`` side effect."""
 
     def _request_sdist(
         pkg: str,

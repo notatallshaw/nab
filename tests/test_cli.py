@@ -970,8 +970,7 @@ class TestLockCommandSpecific:
         """An sdist failing its published hash exits 1, not a traceback.
 
         Drives a real resolve against a fake index whose only file for ``foo``
-        is an sdist published with a sha256 the served archive does not match,
-        so the archive's PKG-INFO never reaches the resolve.
+        is an sdist published with a sha256 the served archive does not match.
         """
         monkeypatch.setattr(
             "nab.cli._config_search_roots",
