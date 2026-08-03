@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import ClassVar, cast
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+import respx
 
 from nab_index.cache import CachePolicy, OnDiskCache
 from nab_index.client import (
@@ -27,6 +29,7 @@ from nab_index.client import (
     WheelFile,
     _parse_files,
 )
+from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig
@@ -151,6 +154,7 @@ def make_sdist(
     requires_python: str | None = None,
     upload_time: str | None = None,
     local_path: Path | None = None,
+    hashes: tuple[tuple[str, str], ...] = (),
 ) -> SdistFile:
     """Build a SdistFile for testing."""
     return SdistFile(
@@ -160,6 +164,7 @@ def make_sdist(
         requires_python=requires_python,
         upload_time=upload_time,
         local_path=local_path,
+        hashes=hashes,
     )
 
 
@@ -2122,7 +2127,7 @@ class TestGetDependencies:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             coordinator.index.store_sdist_metadata_error(
                 pkg, ver, SdistHashMismatchError("sdist sha256 mismatch")
@@ -7617,7 +7622,7 @@ class TestPrefetchWalkAhead:
         # An empty fetch (no sidecar served) still marks the slot fetched.
         two = make_wheel("2.0")
         assert two.metadata_url is not None
-        coordinator.request_metadata("foo", "2.0", two.metadata_url)
+        coordinator.request_metadata("foo", "2.0", two.metadata_url, None)
         coordinator.reset_mock()
         provider.prefetch_walk_ahead("foo")
         items = coordinator.request_metadata_batch.call_args[0][0]
@@ -8643,7 +8648,7 @@ class TestEffectiveBuildPolicy:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             coordinator.index.store_sdist_archive(pkg, ver, archive_bytes)
             return _done_event()
@@ -9103,7 +9108,7 @@ class TestStaticSdistMetadata:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             coordinator.index.store_sdist_archive(pkg, ver, archive_bytes)
             return _done_event()
@@ -9147,7 +9152,7 @@ class TestStaticSdistMetadata:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             coordinator.index.store_sdist_archive_error(
                 pkg, ver, SdistHashMismatchError("sdist sha256 mismatch")
@@ -9180,7 +9185,7 @@ class TestStaticSdistMetadata:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             coordinator.index.store_sdist_archive_error(
                 pkg, ver, HttpError("503 Server Error fetching sdist archive")
@@ -9214,7 +9219,7 @@ class TestStaticSdistMetadata:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             coordinator.index.store_sdist_archive(pkg, ver, b"sdist-archive-bytes")
             return _done_event()
@@ -9263,7 +9268,7 @@ class TestStaticSdistMetadata:
             pkg: str,
             ver: str,
             url: str,
-            hashes: tuple[tuple[str, str], ...] = (),
+            hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             coordinator.index.store_sdist_metadata(
                 pkg,
@@ -9326,7 +9331,7 @@ class TestBuildRemoteFailureModes:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, None)
             return _done_event()
@@ -9350,7 +9355,7 @@ class TestBuildRemoteFailureModes:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive_error(
                 pkg, ver, SdistHashMismatchError("sdist sha256 mismatch")
@@ -9362,6 +9367,29 @@ class TestBuildRemoteFailureModes:
         ).request_sdist_archive.side_effect = _tampered_fetch
         with pytest.raises(SdistHashMismatchError):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+
+    @respx.mock
+    def test_archive_hash_checked_over_real_fetch(self) -> None:
+        """A tampered archive is refused against the listing's published sha256.
+
+        Fetches for real, so the refusal only happens if the provider
+        forwards the listing's hashes.
+        """
+        sdist = make_sdist("1.0", hashes=(("sha256", "0" * 64),))
+        respx.get(sdist.url).mock(
+            return_value=httpx.Response(200, content=b"tampered bytes")
+        )
+
+        with FetchCoordinator(transport=HttpxAsyncTransport()) as coordinator:
+            provider = Provider(
+                coordinator,
+                target=_PY312,
+                dist_policy=DistPolicy.WHEEL_OR_SDIST,
+                build_policy=BuildPolicy.BUILD_REMOTE,
+            )
+            provider.versions_cache["pkg"] = [(V("1.0"), sdist)]
+            with pytest.raises(SdistHashMismatchError, match="0" * 64):
+                build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
     @pytest.mark.parametrize(
         "data",
@@ -9381,7 +9409,7 @@ class TestBuildRemoteFailureModes:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, data)
             return _done_event()
@@ -9404,7 +9432,7 @@ class TestBuildRemoteFailureModes:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
             return _done_event()
@@ -9435,7 +9463,7 @@ class TestBuildRemoteFailureModes:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
             return _done_event()
@@ -9462,7 +9490,7 @@ class TestBuildRemoteFailureModes:
             pkg: str,
             ver: str,
             _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
+            _hashes: tuple[tuple[str, str], ...],
         ) -> threading.Event:
             provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
             return _done_event()

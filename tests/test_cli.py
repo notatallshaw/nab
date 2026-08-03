@@ -15,6 +15,7 @@ import re
 import runpy
 import stat
 import sys
+import tarfile
 import zipfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -46,7 +47,6 @@ from nab.cli import (
     main,
 )
 from nab.output import Printer, Verbosity
-from nab_index.client import SdistHashMismatchError
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
@@ -200,6 +200,20 @@ def _hashless_resolve_result() -> ResolveResult:
             )
         ],
     )
+
+
+def _sdist_archive(name: str = "foo", version: str = "1.0") -> bytes:
+    """Build sdist bytes whose PKG-INFO declares one dependency."""
+    pkg_info = (
+        f"Metadata-Version: 2.2\nName: {name}\nVersion: {version}\n"
+        "Requires-Dist: tampered-dep\n"
+    ).encode()
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        info = tarfile.TarInfo(f"{name}-{version}/PKG-INFO")
+        info.size = len(pkg_info)
+        tar.addfile(info, io.BytesIO(pkg_info))
+    return buf.getvalue()
 
 
 def _sidecarless_wheel(name: str = "foo", version: str = "1.0") -> bytes:
@@ -948,24 +962,49 @@ class TestLockCommandSpecific:
         assert "Traceback" not in err
 
     def test_sdist_hash_mismatch_exits(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """An sdist archive failing its published hash exits 1, not a traceback."""
+        """An sdist failing its published hash exits 1, not a traceback.
+
+        Drives a real resolve against a fake index whose only file for ``foo``
+        is an sdist published with a sha256 the served archive does not match.
+        """
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
         pyproject = _make_pyproject(tmp_path)
+
+        sdist_url = "https://files.example.com/foo-1.0.tar.gz"
+        listing = {
+            "files": [
+                {
+                    "filename": "foo-1.0.tar.gz",
+                    "url": sdist_url,
+                    "hashes": {"sha256": "0" * 64},
+                }
+            ]
+        }
+        transport = _SidecarTransport(
+            {
+                "https://pypi.org/simple/foo/": json.dumps(listing).encode(),
+                sdist_url: _sdist_archive(),
+            }
+        )
+
         with (
-            patch(
-                "nab.cli.resolve_for_targets",
-                side_effect=SdistHashMismatchError(
-                    f"sdist sha256 mismatch: expected {'0' * 64}, got abc123"
-                ),
-            ),
+            patch("nab.cli._make_transport", return_value=transport),
             pytest.raises(SystemExit, match="1"),
         ):
-            lock(pyproject)
+            lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
 
         err = capsys.readouterr().err
         assert "cannot lock" in err
         assert "sdist sha256 mismatch" in err
+        assert "0" * 64 in err
         assert "Traceback" not in err
 
     def test_dynamic_local_source_forbidden_build_exits(
