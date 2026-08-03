@@ -556,7 +556,7 @@ class TestEncodePolicy:
     def test_policy_without_a_page_url_decodes(self, tmp_path: Path) -> None:
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
         cache.put_simple("foo", b"{}", _FRESH)
-        path = tmp_path / "simple-v0" / "pypi" / "foo.policy"
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
         path.write_bytes(b'{"fetched_at":1,"max_age":600,"etag":"x"}')
 
         entry = cache.get_simple("foo")
@@ -570,7 +570,7 @@ class TestEncodePolicy:
     ) -> None:
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
         cache.put_simple("foo", b"{}", _FRESH)
-        path = tmp_path / "simple-v0" / "pypi" / "foo.policy"
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
         path.write_bytes(
             json.dumps(
                 {"fetched_at": 1, "max_age": 600, "etag": "x", "page_url": page_url}
