@@ -169,10 +169,10 @@ consulted: a dependency, root requirement, or constraint marker on
 `platform_system` pins `platform_system`. This is deliberately narrow.
 A marker nab evaluated is a question whose answer changed the package
 set, so an installer that answers it differently must not use this
-lock.
+lock. The variables below are the exceptions.
 
-`python_full_version` is the exception: it is never declared by
-value. A target that names a minor (a matrix target, a declared
+`python_full_version` and `implementation_version` are never declared
+by value. A target that names a minor (a matrix target, a declared
 environment, or a `--python <minor>` target) stands for every micro
 of that minor, so pinning one micro would refuse every other real
 one. Instead the minor covers all its micros, and a consulted
@@ -192,6 +192,17 @@ PEP 440 keeps them out of both; snapping the lower edge to
 `>= "3.13.4.dev0"` puts them on the upper side, so a user on a
 prerelease of 3.13.4 gets the pins intended for 3.13.4.
 
+On CPython `implementation_version` is the same release as
+`python_full_version` (it comes from `sys.implementation.version`), so
+it is read the same way: a consulted marker on it names an in-minor
+boundary and splits the minor there, and a slice whose resolve consulted
+it carries the slice bounds under that name as well. Reaching the 3.13.4
+split above through `pytest ; implementation_version >= "3.13.4"` leaves
+the lower slice with `python_full_version < "3.13.4"` and
+`implementation_version < "3.13.4"`, and the upper with the matching
+`>= "3.13.4.dev0"` pair. A slice whose resolve never read the variable
+carries the `python_full_version` bounds alone.
+
 A minor no marker split reverts to a plain `python_version == "3.13"`
 row with no `python_full_version` clause: a marker whose boundary lies
 outside the minor, or a prerelease of the minor's floor
@@ -204,19 +215,30 @@ real micro, and a `[tool.nab.matrix.python-patches]` pin names one
 concrete deployment micro. Both resolve at that single micro and emit
 the plain `python_version == "X.Y"` row.
 
-A consulted `python_full_version` marker that cannot be tiled into an
-interval is a loud error rather than a pin of the whole minor to one
-answer: a membership (`in` / `not in`), a verbatim `===`, a non-version
-string comparison, a comparison against another variable, or a
+A consulted `python_full_version` marker, or on CPython an
+`implementation_version` one, that cannot be tiled into an interval is
+a loud error rather than a pin of the whole minor to one answer: a
+membership (`in` / `not in`), a verbatim `===`, a non-version string
+comparison, a comparison against another variable, or a
 prerelease-version literal strictly inside the minor on an operator that
 fixes the boundary at the literal (`<`, `>=`, `==`, `!=`, `~=`). On `<=`
 or `>` a prerelease literal lands at the next release and tiles cleanly.
 
-Two variables are never declared: `platform_release` and
-`platform_version` name one machine's kernel build, so a lock
-carrying the resolving machine's value would refuse every other
-machine. A marker that consults one is reported as a warning at
-lock time; the lock stays open on that axis.
+`platform_release` and `platform_version` are never declared: they
+name one machine's kernel build, so a lock carrying the resolving
+machine's value would refuse every other machine. A non-CPython target
+drops `implementation_version` the same way. nab models it there as the
+target's Python level, while a released PyPy reports its own release
+(7.3.x), so a bound built from the modelled value would refuse the
+interpreter the lock was resolved for. Nothing splits such a target's
+minor on that axis either, so its rows carry no
+`implementation_version` clause.
+
+A marker that consults a dropped axis is reported as a warning at lock
+time, one for the kernel pair and one for `implementation_version` on a
+non-CPython target. The lock stays open on that axis: an installer
+whose value differs still accepts the lock, and misses the dependencies
+that marker gated.
 
 `requires-python` is the project's declaration
 (`[tool.nab].requires-python`, or `[project].requires-python`), not
@@ -243,9 +265,9 @@ declared environments.
 
 `environments` carries a declaration per target, built the same way a
 single-environment lock builds its one: from the markers that target's
-resolve consulted. A target whose minor an in-minor `python_full_version`
-boundary splits carries one declaration per slice, so a target can
-contribute more than one entry (see
+resolve consulted. A target whose minor an in-minor micro boundary
+splits carries one declaration per slice, so a target can contribute
+more than one entry (see
 [Universal resolution](../explanation/universal.md)). A target's
 `packages.dependencies` edges are the union across the targets an entry
 covers.
