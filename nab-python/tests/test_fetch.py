@@ -3107,6 +3107,43 @@ class TestWarmSyncListingPath:
         finally:
             coord.shutdown()
 
+    def test_eligibility_off_for_bare_file_url(self, tmp_path: Path) -> None:
+        """The other RFC 8089 spelling is a file index too, so the gate is off."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        coord = _coord(
+            cache_dir=tmp_path / "cache",
+            indexes=[IndexConfig("local", f"file:{wheelhouse}")],
+        )
+        try:
+            assert coord._sync_listing_enabled is False
+        finally:
+            coord.shutdown()
+
+    def test_probe_cache_matches_a_pinned_serializations_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """The probe reads the serialization-partitioned dir the client writes."""
+        cfg = IndexConfig("pypi", _PYPI, serialization=SimpleSerialization.HTML)
+        coord = _coord(cache_dir=tmp_path, indexes=[cfg])
+        try:
+            pinned = OnDiskCache(tmp_path, _PYPI, serialization=cfg.serialization)
+            _warm_parsed(pinned, "pkg", [_sync_sdist("1.0")])
+            assert coord._sync_listing_enabled is True
+            assert coord._try_listing_sync("pkg") is not None
+        finally:
+            coord.shutdown()
+
+    def test_probe_ignores_the_unpinned_dir_under_a_pin(self, tmp_path: Path) -> None:
+        """A negotiated entry never answers for an index pinned to one form."""
+        cfg = IndexConfig("pypi", _PYPI, serialization=SimpleSerialization.HTML)
+        coord = _coord(cache_dir=tmp_path, indexes=[cfg])
+        try:
+            _warm_parsed(OnDiskCache(tmp_path, _PYPI), "pkg", [_sync_sdist("1.0")])
+            assert coord._try_listing_sync("pkg") is None
+        finally:
+            coord.shutdown()
+
     def test_eligibility_off_for_routed(self, tmp_path: Path) -> None:
         coord = _coord(
             cache_dir=tmp_path,

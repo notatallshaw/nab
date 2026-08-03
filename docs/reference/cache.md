@@ -14,13 +14,17 @@ harmless and `nab cache clear` reclaims it.
 
 | Bucket | Holds |
 | ------ | ----- |
-| `simple-v0/` | the raw Simple-API JSON body and a `.policy` sidecar |
+| `simple-v1/` | the Simple-API listing body and a `.policy` sidecar |
 | `simple-parsed-v0/` | the parsed listing, an accelerator for the body |
 | `simple-neg-v0/` | a short-lived record that a name returned a 404 |
 | `metadata-v1/` | PEP 658 metadata and recovered wheel `METADATA`, immutable |
 | `sdist-v1/` | an sdist's `PKG-INFO` and `pyproject.toml`, immutable |
 
-Buckets are keyed per index, so two indexes never share an entry.
+Buckets are keyed per index, so two indexes never share an entry. A
+listing body is stored as PEP 691 JSON; when the index answers in PEP 503
+HTML the stored body is nab's own JSON rendering of the page. An index
+pinned to one `serialization` gets its own listing directories, since the
+stored body records nothing about which form it came from.
 
 ## Freshness
 

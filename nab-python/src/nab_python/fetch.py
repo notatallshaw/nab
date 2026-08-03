@@ -137,6 +137,8 @@ class WarmSyncStats:
     declined_ineligible: int = 0
     declined_no_policy: int = 0
     declined_stale_online: int = 0
+    # No blob, or one the read helper would not serve: a foreign build, a
+    # non-binding digest, corruption, or a blob holding no records.
     declined_no_blob: int = 0
     declined_small_blob: int = 0
 
@@ -799,7 +801,12 @@ class FetchCoordinator:
         if cache_backend is not None:
             self._cache: CacheBackend = cache_backend
         elif cache_dir is not None:
-            self._cache = OnDiskCache(cache_dir, indexes[0].url)
+            # Serialization-partitioned like the per-index backend
+            # _build_index_client builds, so the warm-sync probe reads the same
+            # directory the fetcher's client writes.
+            self._cache = OnDiskCache(
+                cache_dir, indexes[0].url, serialization=indexes[0].serialization
+            )
         else:
             self._cache = NullCache()
         self._cache_dir = cache_dir
@@ -812,7 +819,7 @@ class FetchCoordinator:
         self._sync_listing_enabled = (
             len(self.indexes) == 1
             and not self._index_routes
-            and not self.indexes[0].url.startswith("file://")
+            and not is_file_url(self.indexes[0].url)
             and isinstance(self._cache, OnDiskCache)
         )
         # Progress hook: fired once per successful listing fetch, from the
