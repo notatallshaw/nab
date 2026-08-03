@@ -22,6 +22,7 @@ else:
     import tomli as tomllib  # type: ignore[no-redef]
 
 from nab_python._lockfile import pylock
+from nab_python._lockfile.coverage import CoverageError
 from nab_python._lockfile.disjointness import validate_marker_disjointness
 from nab_python._lockfile.pylock import (
     UnsoundSimplificationError,
@@ -283,6 +284,18 @@ class TestFinalizeMarker:
         assert str(result) == str(raw)
 
 
+@pytest.fixture
+def ungated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand the coverage gate down for a hand-built declaration.
+
+    ``build_pylock`` refuses a lock whose ``environments`` leave a resolved
+    target uncovered, so a non-covering shape never reaches the simplification
+    layer through the public entry point.  The tests that ask what that layer
+    does with one drive it with the gate stood down.
+    """
+    monkeypatch.setattr(pylock, "validate_marker_coverage", lambda *_, **__: None)
+
+
 def _non_covering_lock() -> LockInput:
     """A lock whose declared rows cover the linux targets only.
 
@@ -306,13 +319,19 @@ class TestNonCoveringEnvironments:
     is nothing shorter to emit.
     """
 
+    @pytest.mark.usefixtures("ungated")
     def test_uncovered_package_ships_raw_marker(self) -> None:
         emitted = _emitted(_non_covering_lock())["pywin32"]["marker"]
         expected = " or ".join(f"({t.environment_marker_string})" for t in _WIN)
         assert emitted == str(Marker(expected))
 
+    @pytest.mark.usefixtures("ungated")
     def test_covered_packages_still_finalise(self) -> None:
         assert "marker" not in _emitted(_non_covering_lock())["bar"]
+
+    def test_the_coverage_gate_refuses_the_shape(self) -> None:
+        with pytest.raises(CoverageError, match="win32"):
+            render_lock(_non_covering_lock())
 
     def test_direct_empty_within_universe_ships_raw(self) -> None:
         raw = Marker('sys_platform == "aix"')
@@ -357,10 +376,16 @@ class TestEmissionUniverse:
         universe = _emission_universe(self._with_environments(rows))
         assert universe.equivalent(MarkerSet.from_marker('sys_platform == "linux"'))
 
+    @pytest.mark.usefixtures("ungated")
     def test_uninhabited_lock_still_emits(self) -> None:
         rows = [Marker('sys_platform == "linux" and sys_platform == "win32"')]
         data = tomllib.loads(render_lock(self._with_environments(rows)))
         assert [p["name"] for p in data["packages"]] == ["foo"]
+
+    def test_uninhabited_rows_do_not_get_past_the_coverage_gate(self) -> None:
+        rows = [Marker('sys_platform == "linux" and sys_platform == "win32"')]
+        with pytest.raises(CoverageError):
+            render_lock(self._with_environments(rows))
 
     def test_undecidable_row_counts_as_inhabited(self) -> None:
         wide = Marker(" and ".join(f'"e{i}" in extras' for i in range(20)))
