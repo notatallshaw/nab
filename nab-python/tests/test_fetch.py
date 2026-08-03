@@ -2208,6 +2208,23 @@ class TestMultiIndexCoordinator:
             assert listing is not None
             assert [f.filename for f in listing] == ["foo-1.0-py3-none-any.whl"]
 
+    def test_local_index_with_relative_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A relative ``file:`` index URL lists a flat wheelhouse."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        wheel = wheelhouse / "foo-1.0-py3-none-any.whl"
+        wheel.write_bytes(b"")
+        monkeypatch.chdir(tmp_path)
+
+        with _coord(indexes=[IndexConfig("local", "file:wheelhouse")]) as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            listing = coord.index.get_listing("foo")
+            assert coord.index.get_listing_error("foo") is None
+            assert listing is not None
+            assert [f.url for f in listing] == [wheel.as_uri()]
+
     def test_unparseable_index_url_is_not_local(self, tmp_path: Path) -> None:
         """An index URL urlsplit cannot parse falls through to the remote client."""
         wheelhouse = tmp_path / "wheelhouse"

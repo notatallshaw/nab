@@ -511,8 +511,11 @@ class LocalIndexClient:
     """
 
     def __init__(self, index_url: str) -> None:
-        """Hold the resolved root path for ``index_url``."""
-        self._root = parse_file_url(index_url)
+        """Hold the resolved root path for ``index_url``.
+
+        A ``file:`` URL may be cwd-relative; artefact URLs have to be absolute.
+        """
+        self._root = parse_file_url(index_url).resolve()
         self._unreadable_only: set[str] = set()
 
     async def aclose(self) -> None:
