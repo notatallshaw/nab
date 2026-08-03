@@ -4587,6 +4587,26 @@ class TestMakeTransport:
         assert info.value.code == 1
         assert "nab[httpx]" in capsys.readouterr().err
 
+    def test_httpx_without_h2_exits_with_hint(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """When httpx is installed without ``h2``, the CLI exits with a hint."""
+        original_import = builtins.__import__
+
+        def fake_import(name: str, *args: object, **kwargs: object) -> object:
+            if name == "h2":
+                raise ImportError(name)
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        with pytest.raises(SystemExit) as info:
+            _make_transport("httpx")
+        assert info.value.code == 1
+        err = capsys.readouterr().err
+        assert "nab[httpx]" in err
+        assert "HTTP/2" in err
+        assert "httpx is not installed" not in err
+
 
 class TestDownloadCommand:
     """Tests for the download subcommand."""
