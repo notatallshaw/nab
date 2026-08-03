@@ -381,6 +381,33 @@ class TestFlatWheelhouse:
         client = LocalIndexClient(missing.as_uri())
         assert run(client.get_files("foo")) == []
 
+    def test_relative_root_lists_both_layouts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cwd-relative ``file:`` root names artefacts by absolute URI."""
+        root = tmp_path / "idx"
+        (root / "foo").mkdir(parents=True)
+        (root / "foo" / "index.html").write_text(
+            '<a href="foo-1.0-py3-none-any.whl">foo-1.0-py3-none-any.whl</a>',
+            encoding="utf-8",
+        )
+        listed = root / "foo" / "foo-1.0-py3-none-any.whl"
+        listed.write_bytes(b"")
+
+        flat = root / "bar-2.0-py3-none-any.whl"
+        flat.write_bytes(b"")
+
+        monkeypatch.chdir(tmp_path)
+        client = LocalIndexClient("file:idx")
+
+        pep503 = run(client.get_files("foo"))
+        assert [f.url for f in pep503] == [listed.as_uri()]
+        assert [f.local_path for f in pep503] == [listed]
+
+        wheelhouse = run(client.get_files("bar"))
+        assert [f.url for f in wheelhouse] == [flat.as_uri()]
+        assert [f.local_path for f in wheelhouse] == [flat]
+
     def test_listing_order_independent_of_readdir_order(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
