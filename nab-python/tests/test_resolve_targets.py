@@ -691,8 +691,14 @@ class TestTwoConflictSetsPartialInstall:
             for first, second in itertools.product(("a1", "a2"), ("b1", "b2"))
         ]
 
-    def _installed(self, extras: list[str]) -> set[str]:
-        """Lock all four extras, then select ``extras`` from the emitted lock."""
+    def _installed(
+        self, extras: list[str], *, b_members: tuple[str, ...] = ("b1", "b2")
+    ) -> set[str]:
+        """Lock all four extras, then select ``extras`` from the emitted lock.
+
+        ``b_members`` is what the b-set declares; only b1 and b2 are ever
+        selected, so a longer tuple names a member no fork carries.
+        """
         result = resolve_with_coordinator(
             self._coordinator(),
             _one_target(),
@@ -706,7 +712,7 @@ class TestTwoConflictSetsPartialInstall:
             build_lock_input(
                 result,
                 config=_no_build(
-                    conflicts=(_extra_set("a1", "a2"), _extra_set("b1", "b2"))
+                    conflicts=(_extra_set("a1", "a2"), _extra_set(*b_members))
                 ),
                 extras=("a1", "a2", "b1", "b2"),
             )
@@ -741,6 +747,16 @@ class TestTwoConflictSetsPartialInstall:
 
     def test_no_extras_installs_the_base_alone(self) -> None:
         assert self._installed([]) == {"base==1.0"}
+
+    def test_a_declared_member_no_fork_carries_gates_nothing(self) -> None:
+        # b3 is declared conflicting but never selected, so the resolve
+        # never forked over it and the lock does not offer it; the a1
+        # packages install for a1 alone just as they do without it.
+        assert self._installed(["a1"], b_members=("b1", "b2", "b3")) == {
+            "base==1.0",
+            "pkga1==1.0",
+            "shared==1.0",
+        }
 
 
 class TestDroppedRootMarkerWarnedOnce:

@@ -5357,28 +5357,24 @@ class TestConflictForkNegatedEmission:
         assert self._select(pylock, ["cpu", "mkl"]) == {"onnxruntime"}
 
     def test_three_large_sets_write_lock_within_budget(self) -> None:
-        # Three declared 5-member at-most-one sets, each fork drawing one
-        # member per set, so every per-package marker negates 12
-        # co-members.  The disjointness gate binds them through the
-        # selection instead of the full membership powerset, so the lock
-        # is written rather than raising IntractableMarkerSet.
+        # Three declared 5-member at-most-one sets, one fork per member
+        # index, so every per-package marker negates 12 co-members.  The
+        # disjointness gate binds them through the selection instead of
+        # the full membership powerset, so the lock is written rather
+        # than raising IntractableMarkerSet.
         sets = [tuple(f"{letter}{i}" for i in range(5)) for letter in ("a", "b", "c")]
         all_names = tuple(name for members in sets for name in members)
+        drawn = [tuple(members[i] for members in sets) for i in range(5)]
 
-        fork_one = self._BASE.with_selection(
-            (("extra", "a0"), ("extra", "b0"), ("extra", "c0"))
-        )
-        fork_two = self._BASE.with_selection(
-            (("extra", "a1"), ("extra", "b1"), ("extra", "c1"))
-        )
-
+        forks = [
+            self._BASE.with_selection(tuple(("extra", name) for name in names))
+            for names in drawn
+        ]
         targets = {
-            fork_one.label: TargetLock(
-                target=fork_one, pins={"torch": _selection_pin("torch", "2.5.0")}
-            ),
-            fork_two.label: TargetLock(
-                target=fork_two, pins={"torch": _selection_pin("torch", "2.6.0")}
-            ),
+            fork.label: TargetLock(
+                target=fork, pins={"torch": _selection_pin("torch", f"2.{5 + i}.0")}
+            )
+            for i, fork in enumerate(forks)
         }
 
         conflicts = tuple(
@@ -5394,7 +5390,7 @@ class TestConflictForkNegatedEmission:
         text = write_lock(
             LockInput(
                 targets=targets,
-                env_base_names={_env_signature(fork_one): frozenset()},
+                env_base_names={_env_signature(forks[0]): frozenset()},
                 extras=all_names,
                 conflicts=conflicts,
             )
@@ -5406,7 +5402,7 @@ class TestConflictForkNegatedEmission:
             for p in pylock.packages
             if str(p.name) == "torch"
         }
-        assert set(torch_markers) == {"2.5.0", "2.6.0"}
+        assert set(torch_markers) == {f"2.{5 + i}.0" for i in range(len(drawn))}
 
         # simplify overruns the cell budget on this fork, so the emitter
         # passes the raw marker through unchanged: base env, the fork's three
@@ -5417,18 +5413,18 @@ class TestConflictForkNegatedEmission:
             ' and platform_machine == "x86_64"'
         )
 
-        def raw_marker(drawn: tuple[str, str, str]) -> str:
-            positives = " and ".join(f'"{name}" in extras' for name in drawn)
+        def raw_marker(names: tuple[str, ...]) -> str:
+            positives = " and ".join(f'"{name}" in extras' for name in names)
             negatives = " and ".join(
                 f'"{name}" not in extras'
                 for members in sets
                 for name in members
-                if name not in drawn
+                if name not in names
             )
             return f"{base} and {positives} and {negatives}"
 
-        assert torch_markers["2.5.0"] == raw_marker(("a0", "b0", "c0"))
-        assert torch_markers["2.6.0"] == raw_marker(("a1", "b1", "c1"))
+        for i, names in enumerate(drawn):
+            assert torch_markers[f"2.{5 + i}.0"] == raw_marker(names)
 
 
 class TestConflictSetCrossGating:
@@ -5732,3 +5728,95 @@ class TestConflictSetCrossGating:
         assert self._select(pylock, ["a1", "b1"]) == {"attrs 24.0"}
         assert self._select(pylock, ["b1"]) == set()
         assert self._select(pylock, ["a1"]) == set()
+
+
+class TestConflictSetDeclaredMemberWithNoFork:
+    """A declared member the selection omits has no fork to swap it for.
+
+    ``conflicts`` names ``b1``/``b2``/``b3`` while the lock ran with only
+    ``b1`` and ``b2`` selected, so nothing forked over ``b3`` and the
+    lock's ``dependency-groups`` array does not offer it.  The b-set is
+    still flat through ``six``, so ``six`` names the a-set alone and
+    selecting ``a1`` on its own installs it.
+    """
+
+    _BASE: ClassVar[ResolveTarget] = _target(python_version="3.12")
+    _ENV: ClassVar[dict[str, str]] = dict(_target(python_version="3.12").marker_env)
+    _A: ClassVar[dict[str, str]] = {"a1": "1.16.0", "a2": "1.15.0"}
+    _B: ClassVar[dict[str, str]] = {"b1": "3.7", "b2": "3.6"}
+    _UNSELECTED: ClassVar[str] = "b3"
+
+    def _lock(self) -> Pylock:
+        """Emit the 2x2 product of the selected members, with b3 declared only."""
+        targets: dict[str, TargetLock] = {}
+        for a, b in itertools.product(self._A, self._B):
+            fork = self._BASE.with_selection((("group", a), ("group", b)))
+            targets[fork.label] = TargetLock(
+                target=fork,
+                pins={
+                    "packaging": _selection_pin("packaging", "24.0"),
+                    "six": _selection_pin("six", self._A[a]),
+                    "idna": _selection_pin("idna", self._B[b]),
+                },
+                package_gates={"six": (("group", a),), "idna": (("group", b),)},
+            )
+        conflicts = tuple(
+            ConflictSet(
+                members=tuple(ConflictMember(ConflictKind.GROUP, m) for m in members),
+                policy=ConflictPolicy.AT_MOST_ONE,
+            )
+            for members in (tuple(self._A), (*self._B, self._UNSELECTED))
+        )
+        text = write_lock(
+            LockInput(
+                targets=targets,
+                env_base_names={_env_signature(self._BASE): frozenset({"packaging"})},
+                dependency_groups=(*self._A, *self._B),
+                conflicts=conflicts,
+            )
+        )
+        return Pylock.from_dict(tomllib.loads(text))
+
+    def _select(self, pylock: Pylock, groups: Sequence[str]) -> set[str]:
+        return {
+            f"{pkg.name} {pkg.version}"
+            for pkg, _ in pylock.select(
+                environment=self._ENV,  # type: ignore[arg-type]
+                extras=(),
+                dependency_groups=groups,
+            )
+        }
+
+    def test_marker_names_only_the_set_the_package_varies_over(self) -> None:
+        six = next(
+            str(p.marker)
+            for p in self._lock().packages
+            if str(p.name) == "six" and str(p.version) == "1.16.0"
+        )
+        assert '"a1" in dependency_groups' in six
+        assert '"a2" not in dependency_groups' in six
+        for member in (*self._B, self._UNSELECTED):
+            assert member not in six
+
+    def test_marker_does_not_name_a_member_the_lock_cannot_offer(self) -> None:
+        idna = next(
+            str(p.marker)
+            for p in self._lock().packages
+            if str(p.name) == "idna" and str(p.version) == "3.7"
+        )
+        assert '"b1" in dependency_groups' in idna
+        assert '"b2" not in dependency_groups' in idna
+        assert self._UNSELECTED not in idna
+
+    @pytest.mark.parametrize("a", [None, "a1", "a2"])
+    @pytest.mark.parametrize("b", [None, "b1", "b2"])
+    def test_every_legal_selection_installs_what_it_asked_for(
+        self, a: str | None, b: str | None
+    ) -> None:
+        groups = [name for name in (a, b) if name is not None]
+        expected = {"packaging 24.0"}
+        if a is not None:
+            expected.add(f"six {self._A[a]}")
+        if b is not None:
+            expected.add(f"idna {self._B[b]}")
+        assert self._select(self._lock(), groups) == expected
