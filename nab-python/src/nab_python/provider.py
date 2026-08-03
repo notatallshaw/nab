@@ -17,13 +17,14 @@ from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, cast
 
 from nab_index.client import (
+    MalformedSimpleResponseError,
     MetadataHashMismatchError,
     SdistFile,
     SdistHashMismatchError,
     WheelFile,
     WheelHashMismatchError,
 )
-from nab_index.transport import HttpError
+from nab_index.transport import HttpError, UnserveableUrlError
 
 from ._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from ._provider import extras as _extras
@@ -1383,10 +1384,17 @@ class Provider:
         The un-narrowed range spans versions the constraint clipped away, so
         look-ahead can reach one whose metadata raises a hard error the narrowed
         resolve never touched (a failed integrity check, a tie-ranked-wheel
-        divergence, or an advertised sidecar the index cannot serve).  The probe
-        catches those and returns ``False`` rather than aborting; the crash still
-        fires when the version is pinned for real.  The ``finally`` restores the
-        snapshot either way.
+        divergence, or an advertised sidecar the index answered it will not
+        serve).  Each names a fault of that one version, so the probe catches
+        them and returns ``False`` rather than aborting; the crash still fires
+        when the version is pinned for real.
+
+        A transient transport failure is deliberately not in that tuple.  A 5xx
+        that outlived the retry budget, or a dropped connection, says nothing
+        about the version, and swallowing it would report "no satisfying
+        candidate" for a version that has one and hand back a different
+        resolution instead of failing.  The ``finally`` restores the snapshot
+        either way.
         """
         # Late import: config imports provider at module load.
         from .config import OverrideConflictError  # noqa: PLC0415
@@ -1408,7 +1416,8 @@ class Provider:
             OverrideConflictError,
             SiblingMetadataDivergenceError,
             NotImplementedError,
-            HttpError,
+            MalformedSimpleResponseError,
+            UnserveableUrlError,
         ):
             return False
         finally:

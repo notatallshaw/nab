@@ -48,8 +48,10 @@ from nab_index.transport import (
     ContentDecodingError,
     HttpError,
     HttpResponse,
+    UnserveableUrlError,
     accepts_gzip,
     decode_body,
+    raise_for_error_status,
 )
 from nab_index.urllib3_async_transport import (
     Urllib3AsyncTransport,
@@ -402,6 +404,41 @@ def _urllib3_response(status: int, retry_after: str | None) -> urllib3.BaseHTTPR
     response.status = status
     response.headers = {} if retry_after is None else {"Retry-After": retry_after}
     return response
+
+
+class TestRaiseForErrorStatus:
+    """Which statuses name the URL, and which only name the moment."""
+
+    @pytest.mark.parametrize("status", [200, 203, 204, 301, 304, 399])
+    def test_status_under_400_does_not_raise(self, status: int) -> None:
+        assert raise_for_error_status(status, "https://example.com/") is None
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404, 410, 451])
+    def test_non_retried_client_error_is_a_verdict_on_the_url(
+        self, status: int
+    ) -> None:
+        """A 4xx the retry policy leaves alone raises the narrow subclass."""
+        assert status not in RETRY_STATUSES
+        with pytest.raises(UnserveableUrlError, match=f"HTTP {status} for"):
+            raise_for_error_status(status, "https://example.com/pkg.metadata")
+
+    @pytest.mark.parametrize("status", sorted(RETRY_STATUSES))
+    def test_retried_status_stays_a_bare_http_error(self, status: int) -> None:
+        """A status the retry policy calls a blip must not read as a verdict.
+
+        Includes the two transient client errors, 408 and 429, which are 4xx
+        but say nothing about the URL.
+        """
+        with pytest.raises(HttpError) as excinfo:
+            raise_for_error_status(status, "https://example.com/pkg.metadata")
+        assert not isinstance(excinfo.value, UnserveableUrlError)
+
+    @pytest.mark.parametrize("status", [501, 505])
+    def test_unretried_server_error_stays_a_bare_http_error(self, status: int) -> None:
+        """A 5xx is the server's state, never a verdict on the URL."""
+        with pytest.raises(HttpError) as excinfo:
+            raise_for_error_status(status, "https://example.com/pkg.metadata")
+        assert not isinstance(excinfo.value, UnserveableUrlError)
 
 
 class TestDecodeBody:

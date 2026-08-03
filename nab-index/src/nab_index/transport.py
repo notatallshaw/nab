@@ -12,6 +12,8 @@ import zlib
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
+from .retry import RETRY_STATUSES
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -23,6 +25,7 @@ __all__ = [
     "ContentDecodingError",
     "HttpError",
     "HttpResponse",
+    "UnserveableUrlError",
     "accepts_gzip",
     "decode_body",
     "raise_for_error_status",
@@ -50,6 +53,7 @@ DEFAULT_HEADERS: Final[dict[str, str]] = {
 IDENTITY_HEADERS: Final[dict[str, str]] = {"Accept-Encoding": "identity"}
 
 _HTTP_BAD_REQUEST: Final = 400
+_HTTP_SERVER_ERROR: Final = 500
 _CONTENT_STATUSES: Final[frozenset[int]] = frozenset({200, 203})
 
 # RFC 9110 8.4.1.3: "x-gzip" is the same coding as "gzip".
@@ -61,6 +65,20 @@ class HttpError(Exception):
 
     Transports raise this from ``get`` and ``raise_for_status`` so callers
     can handle index failures without importing a specific HTTP backend.
+    """
+
+
+class UnserveableUrlError(HttpError):
+    """The index reached a verdict that it will not serve this URL.
+
+    Raised for a client-error status the retry policy does not treat as a
+    blip, so not a 408 or a 429: a 404 on an advertised PEP 658 sidecar, a
+    403, a 410.  The status is a property of the URL, so asking again gets
+    the same answer, and a caller may treat the artifact as unavailable.
+
+    A 5xx that outlived the retry budget, and a connection that failed,
+    stay a bare :class:`HttpError`.  Those say nothing about the URL, so a
+    caller must not read them as a verdict.
     """
 
 
@@ -186,10 +204,18 @@ class AsyncHttpTransport(Protocol):
 
 
 def raise_for_error_status(status: int, url: str) -> None:
-    """Raise :class:`HttpError` for a 4xx/5xx ``status``."""
-    if status >= _HTTP_BAD_REQUEST:
-        msg = f"HTTP {status} for {url}"
-        raise HttpError(msg)
+    """Raise :class:`HttpError` for a 4xx/5xx ``status``.
+
+    A client error outside :data:`~nab_index.retry.RETRY_STATUSES` raises the
+    :class:`UnserveableUrlError` subclass: the retry policy calls those the
+    index's answer rather than a blip, so they name the URL, not the moment.
+    """
+    if status < _HTTP_BAD_REQUEST:
+        return
+    msg = f"HTTP {status} for {url}"
+    if status < _HTTP_SERVER_ERROR and status not in RETRY_STATUSES:
+        raise UnserveableUrlError(msg)
+    raise HttpError(msg)
 
 
 def raise_unless_ok(response: HttpResponse, url: str) -> None:
