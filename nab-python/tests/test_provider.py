@@ -201,6 +201,13 @@ _DYNAMIC_SDIST_TARGZ = _make_sdist_targz(
     b'[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
 )
 
+# Extraction requires the tar data filter (PEP 706), so skip the paths that
+# actually extract on a Python that lacks it (before 3.10.12 / 3.11.4 / 3.12).
+requires_data_filter = pytest.mark.skipif(
+    not hasattr(tarfile, "data_filter"),
+    reason="sdist extraction requires the tar data filter (PEP 706)",
+)
+
 
 class TestPrefetchListings:
     def test_root_requirements_prefetched(self) -> None:
@@ -9462,6 +9469,7 @@ class TestBuildRemoteFailureModes:
         with pytest.raises(UnsupportedSdistError, match="backend explosion"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
+    @requires_data_filter
     def test_offline_coordinator_refuses_build(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
