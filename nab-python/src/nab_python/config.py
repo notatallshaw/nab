@@ -104,6 +104,7 @@ __all__ = [
     "conflict_forks",
     "conflict_member_groups",
     "enforce_build_policy_for_targets",
+    "index_cache_floors_from_config",
     "index_routes_from_config",
     "matrix_from_config",
     "plan_targets",
@@ -338,10 +339,11 @@ class IndexOverride:
 
     Keyed by a declared index name.  The body sets any combination of
     ``dist_policy`` (with ``dist_trust_unverified_deps``),
-    ``build_policy``, and the ``uploaded_prior_to`` cutoff (or
-    ``uploaded_prior_to_disabled`` for the ``false`` form).  It applies
-    to every package served from that index; it carries no routing and
-    no version scope.
+    ``build_policy``, the ``uploaded_prior_to`` cutoff (or
+    ``uploaded_prior_to_disabled`` for the ``false`` form), and
+    ``assume_fresh_seconds``, a read-time freshness floor on the index's
+    Simple listing.  It applies to every package served from that index;
+    it carries no routing and no version scope.
     """
 
     dist_policy: DistPolicy | None = None
@@ -349,6 +351,7 @@ class IndexOverride:
     build_policy: BuildPolicy | None = None
     uploaded_prior_to: datetime | None = None
     uploaded_prior_to_disabled: bool = False
+    assume_fresh_seconds: int | None = None
 
 
 # Two active selections engage the set's exclusivity, forcing a fork.
@@ -1316,6 +1319,15 @@ def index_routes_from_config(config: NabProjectConfig) -> list[IndexRoute]:
     ]
 
 
+def index_cache_floors_from_config(config: NabProjectConfig) -> dict[str, int]:
+    """Project per-index cache-freshness floors, keyed by index name."""
+    return {
+        name: override.assume_fresh_seconds
+        for name, override in config.index_overrides.items()
+        if override.assume_fresh_seconds is not None
+    }
+
+
 def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime:
     """Parse ``uploaded-prior-to`` (ISO datetime, TOML datetime, or ``P<n>D``).
 
@@ -1810,7 +1822,9 @@ _PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
 )
 # A [[tool.nab.package-rules]] entry carries a ``match`` selector plus body keys.
 _PACKAGE_RULE_KEYS = frozenset({"match"}) | _PACKAGE_OVERRIDE_BODY_KEYS
-_INDEX_OVERRIDE_KEYS = frozenset({"dist-policy", "build-policy", "uploaded-prior-to"})
+_INDEX_OVERRIDE_KEYS = frozenset(
+    {"dist-policy", "build-policy", "uploaded-prior-to", "assume-fresh-seconds"}
+)
 # Override-body keys not supported yet; rejected so nothing inert ships.
 # ``metadata`` is the nested-table form the flat body keys replace.
 _OVERRIDE_DEFERRED_KEYS = frozenset(
@@ -2160,12 +2174,16 @@ def _parse_index_override_body(
         anchor=anchor,
         present="uploaded-prior-to" in body,
     )
+    assume_fresh_seconds = _parse_index_assume_fresh(
+        body.get("assume-fresh-seconds"), where
+    )
     has_body = (
         dist_policy is not None
         or dist_trust is not None
         or build_policy is not None
         or uploaded_prior_to is not None
         or uploaded_disabled
+        or assume_fresh_seconds is not None
     )
     if not has_body:
         msg = (
@@ -2179,6 +2197,7 @@ def _parse_index_override_body(
         build_policy=build_policy,
         uploaded_prior_to=uploaded_prior_to,
         uploaded_prior_to_disabled=uploaded_disabled,
+        assume_fresh_seconds=assume_fresh_seconds,
     )
 
 
@@ -2262,6 +2281,19 @@ def _parse_override_uploaded_prior_to(
         msg = f"{where}.uploaded-prior-to: {exc}"
         raise ConfigError(msg) from exc
     return (cutoff, False)
+
+
+def _parse_index_assume_fresh(value: object, where: str) -> int | None:
+    """Parse ``assume-fresh-seconds``: a positive integer number of seconds."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        msg = (
+            f"{where}.assume-fresh-seconds must be a positive integer number of"
+            f" seconds, got {value!r}"
+        )
+        raise ConfigError(msg)
+    return value
 
 
 def _parse_override_requires_python(value: object, where: str) -> str | None:

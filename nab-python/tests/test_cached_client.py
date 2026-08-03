@@ -3365,3 +3365,253 @@ class TestModuleDocstring:
         cache_type = annotations["cache"].split(".")[-1]
         assert transport_type in referenced
         assert cache_type in referenced
+
+
+def _run_get_files_floor(
+    transport: object,
+    cache: object,
+    package: str,
+    *,
+    min_fresh_seconds: int | None = None,
+    offline: bool = False,
+) -> list:
+    async def go() -> list:
+        client = CachedAsyncSimpleClient(
+            transport,  # type: ignore[arg-type]
+            cache,  # type: ignore[arg-type]
+            offline=offline,
+            min_fresh_seconds=min_fresh_seconds,
+        )
+        try:
+            return await client.get_files(package)
+        finally:
+            await client.aclose()
+
+    return asyncio.run(go())
+
+
+def _debug_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and r.name == "nab_index.cached_client"
+    ]
+
+
+class TestAssumeFreshFloor:
+    """Read-time freshness floor: extend, never shorten, and never rewrite disk."""
+
+    def test_stale_positive_within_floor_serves_cached_no_transport(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg", LISTING_BYTES, CachePolicy(fetched_at=500, max_age=1, etag="e")
+        )
+        transport = _FakeTransport()  # raises on any call
+
+        with caplog.at_level(logging.DEBUG, logger="nab_index.cached_client"):
+            files = _run_get_files_floor(
+                transport, cache, "pkg", min_fresh_seconds=3600
+            )
+
+        assert len(files) == 1
+        assert transport.calls == []
+        records = _debug_records(caplog)
+        assert len(records) == 1
+        assert "listing" in records[0].getMessage()
+
+    def test_stale_positive_past_floor_revalidates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 200.0)
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg", LISTING_BYTES, CachePolicy(fetched_at=0, max_age=1, etag="old")
+        )
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=304, headers={"etag": "old"})]
+        )
+
+        files = _run_get_files_floor(transport, cache, "pkg", min_fresh_seconds=100)
+        assert len(files) == 1
+        assert len(transport.calls) == 1
+
+    def test_no_floor_revalidates_and_no_debug_line(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg", LISTING_BYTES, CachePolicy(fetched_at=0, max_age=1, etag="old")
+        )
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=304, headers={"etag": "old"})]
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="nab_index.cached_client"):
+            files = _run_get_files_floor(
+                transport, cache, "pkg", min_fresh_seconds=None
+            )
+        assert len(files) == 1
+        assert len(transport.calls) == 1
+        assert _debug_records(caplog) == []
+
+    def test_stale_sentinel_within_floor_answers_empty_no_transport(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        cache.put_negative("absent", CachePolicy(fetched_at=500, max_age=1, etag=None))
+        transport = _FakeTransport()
+
+        with caplog.at_level(logging.DEBUG, logger="nab_index.cached_client"):
+            result = _run_get_files_floor(
+                transport, cache, "absent", min_fresh_seconds=3600
+            )
+
+        assert result == []
+        assert transport.calls == []
+        records = _debug_records(caplog)
+        assert len(records) == 1
+        assert "absent-name sentinel" in records[0].getMessage()
+
+    def test_stale_sentinel_past_floor_reprobes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        cache.put_negative("absent", CachePolicy(fetched_at=0, max_age=1, etag=None))
+        transport = _FakeTransport([_FakeResponse(b"gone", status=404)])
+
+        result = _run_get_files_floor(transport, cache, "absent", min_fresh_seconds=100)
+        assert result == []
+        assert len(transport.calls) == 1
+
+    def test_floor_smaller_than_stored_window_is_noop(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1300.0)
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg", LISTING_BYTES, CachePolicy(fetched_at=1000, max_age=600, etag="e")
+        )
+        transport = _FakeTransport()  # raises on any call
+
+        with caplog.at_level(logging.DEBUG, logger="nab_index.cached_client"):
+            files = _run_get_files_floor(transport, cache, "pkg", min_fresh_seconds=100)
+
+        assert len(files) == 1
+        assert transport.calls == []
+        assert _debug_records(caplog) == []
+
+    def test_offline_with_floor_serves_cached_no_helper_no_debug(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg", LISTING_BYTES, CachePolicy(fetched_at=0, max_age=1, etag="old")
+        )
+        transport = _FakeTransport()  # raises on any call
+
+        with caplog.at_level(logging.DEBUG, logger="nab_index.cached_client"):
+            files = _run_get_files_floor(
+                transport, cache, "pkg", min_fresh_seconds=3600, offline=True
+            )
+
+        assert len(files) == 1
+        assert transport.calls == []
+        assert _debug_records(caplog) == []
+
+    def test_stored_policy_unchanged_after_floor_suppressed_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        stored = CachePolicy(fetched_at=500, max_age=1, etag="e")
+        cache.put_simple("pkg", LISTING_BYTES, stored)
+        transport = _FakeTransport()
+
+        _run_get_files_floor(transport, cache, "pkg", min_fresh_seconds=3600)
+
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        body, policy = cached
+        assert body == LISTING_BYTES
+        assert policy == stored
+
+    def test_stored_sentinel_unchanged_after_floor_suppressed_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        stored = CachePolicy(fetched_at=500, max_age=1, etag=None)
+        cache.put_negative("absent", stored)
+        transport = _FakeTransport()
+
+        _run_get_files_floor(transport, cache, "absent", min_fresh_seconds=3600)
+
+        assert cache.get_negative("absent") == stored
+
+    def test_immutable_metadata_text_warm_hit_with_floor(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_metadata("pkg", "https://x/pkg.metadata", "stored")
+        transport = _FakeTransport()
+
+        async def go() -> str:
+            client = CachedAsyncSimpleClient(transport, cache, min_fresh_seconds=3600)
+            try:
+                return await client.get_metadata_text(
+                    "pkg", "1.0", "https://x/pkg.metadata"
+                )
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == "stored"
+        assert transport.calls == []
+
+    def test_immutable_range_metadata_warm_hit_with_floor(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_metadata("pkg", _WHEEL_URL, _RANGE_META.decode())
+        transport = _FakeTransport()
+
+        async def go() -> RangeMetadataResult:
+            client = CachedAsyncSimpleClient(transport, cache, min_fresh_seconds=3600)
+            try:
+                return await client.get_range_metadata(
+                    "pkg", "1.0", _WHEEL_URL, canonicalize_name("pkg")
+                )
+            finally:
+                await client.aclose()
+
+        result = asyncio.run(go())
+        assert result.text == _RANGE_META.decode()
+        assert transport.calls == []
+
+    def test_immutable_sdist_files_warm_hit_with_floor(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_sdist_files("pkg", "1.0", "Name: cached\n", None)
+        transport = _FakeTransport()
+
+        async def go() -> tuple[str | None, str | None]:
+            client = CachedAsyncSimpleClient(transport, cache, min_fresh_seconds=3600)
+            try:
+                return await client.get_sdist_files(
+                    "pkg", "1.0", "https://x/pkg.tar.gz"
+                )
+            finally:
+                await client.aclose()
+
+        pkg_info, pyproject = asyncio.run(go())
+        assert pkg_info == "Name: cached\n"
+        assert pyproject is None
+        assert transport.calls == []

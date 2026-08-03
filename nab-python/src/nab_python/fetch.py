@@ -33,7 +33,7 @@ from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
 from ._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from typing_extensions import Self
 
@@ -701,7 +701,7 @@ class FetchCoordinator:
 
     PREFETCH_METADATA_COUNT = 10
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the per-index knobs a coordinator wires up
         self,
         transport: AsyncHttpTransport,
         *,
@@ -711,6 +711,7 @@ class FetchCoordinator:
         cache_backend: CacheBackend | None = None,
         offline: bool = False,
         index_routes: list[IndexRoute] | None = None,
+        index_cache_floors: Mapping[str, int] | None = None,
         on_fetch: Callable[[], None] | None = None,
     ) -> None:
         """Create a coordinator that wraps ``transport``.
@@ -724,6 +725,11 @@ class FetchCoordinator:
         ``index_routes`` adds per-package routing rules; an entry's
         ``index`` field names one of the configured indexes and pins that
         package's listing fetch to it.
+
+        ``index_cache_floors`` maps an index name to a read-time
+        freshness floor in seconds, passed to that index's cached client
+        as ``min_fresh_seconds``.  Indexes absent from the map, and the
+        ``file://`` local client, get no floor.
 
         ``cache_backend`` wins over ``cache_dir`` if both are given;
         otherwise ``cache_dir`` enables a per-index :class:`OnDiskCache`
@@ -769,6 +775,7 @@ class FetchCoordinator:
             self._cache = NullCache()
         self._cache_dir = cache_dir
         self._index_routes = list(index_routes or [])
+        self._index_cache_floors = dict(index_cache_floors or {})
         # Progress hook: fired once per successful listing fetch, from the
         # fetcher thread.  ``None`` when nothing is watching (the common case).
         self._on_fetch = on_fetch
@@ -1117,6 +1124,8 @@ class FetchCoordinator:
         :class:`LocalIndexClient` (no caching; the filesystem is the
         cache).  Everything else goes to :class:`CachedAsyncSimpleClient`
         with a per-URL :class:`OnDiskCache` when ``cache_dir`` is set.
+        Any freshness floor registered for ``cfg.name`` is passed as
+        ``min_fresh_seconds``.
         """
         if is_file_url(cfg.url):
             return LocalIndexClient(cfg.url)
@@ -1135,6 +1144,7 @@ class FetchCoordinator:
             offline=self._offline,
             range_memo=self._range_memo,
             serialization=cfg.serialization,
+            min_fresh_seconds=self._index_cache_floors.get(cfg.name),
         )
 
     async def _async_fetcher(self) -> None:

@@ -75,6 +75,11 @@ it has one, otherwise the first index in declared order that lists it. A
 per-index override therefore governs a package only through that one
 attributing index, not through every index that could also serve it.
 
+A mirror that stamps its listings short-lived makes nab revalidate them
+once per package on every warm run. Set `assume-fresh-seconds` on that
+index to skip those round trips; see the
+[configuration reference](../reference/configuration.md).
+
 ## Policy across both surfaces is an error, not a precedence
 
 The per-package and per-index surfaces are not ranked. If a per-package
