@@ -7,6 +7,8 @@ whether the tier fired: a disqualifier never calls it, a fall-through does.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -498,4 +500,27 @@ def test_unreadable_lock_precondition(
 
     assert exc.value.code == 1
     assert "cannot read lockfile" in capsys.readouterr().err
+    mock.assert_not_called()
+
+
+def test_unsearchable_parent_precondition(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    deny_access: Callable[[Path], AbstractContextManager[None]],
+) -> None:
+    # EACCES lands on the presence check's stat, before any open.
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+
+    mock = _locked_mock()
+    with deny_access(out), pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "no lockfile" not in err
+    assert "cannot read lockfile" in err
+    assert "Permission denied" in err
     mock.assert_not_called()

@@ -51,6 +51,7 @@ from nab_python.lockfile import (
     read_lockfile_packages,
     summarize_lock,
 )
+from nab_python.paths import PathState, path_state
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
@@ -313,7 +314,8 @@ def _fast_fail_locked(
     non-zero; otherwise it returns and the full resolve runs.
     """
     target = _locked_target_path(output)
-    if not target.exists():
+    # A stat that failed is not an absent lock.
+    if path_state(target) is PathState.ABSENT:
         _cli.printer().error(
             f"--locked: no lockfile at {target} to check; run `nab lock` first."
         )
