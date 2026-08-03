@@ -35,10 +35,10 @@ from .cli import (
     ResolutionFlag,
     _cli_overrides,
     _fail_config,
-    _require_pyproject_file,
     app,
     effective_config,
     printer,
+    require_pyproject_file,
 )
 
 ActionArg = Annotated[str, tyro.conf.Positional]
@@ -90,7 +90,7 @@ def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
     # Validate the pyproject path the same way the run commands do: a
     # missing or directory --path is a hard error, not a silently-skipped
     # source that prints all-built-in defaults.
-    _require_pyproject_file(path)
+    require_pyproject_file(path)
 
     cli_overrides = _cli_overrides(
         cli_resolution=project_resolution,

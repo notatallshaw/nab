@@ -221,6 +221,20 @@ def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
     return pyproject
 
 
+def _make_pylock_with_groups(tmp_path: Path) -> Path:
+    """Write a minimal PEP 751 lock.
+
+    Its ``dependency-groups`` is an array of names, a shape the PEP 735
+    table never has.
+    """
+    pylock = tmp_path / "pylock.toml"
+    pylock.write_text(
+        'lock-version = "1.0"\nrequires-python = ">=3.10"\n'
+        'dependency-groups = ["dev"]\ncreated-by = "nab"\npackages = []\n'
+    )
+    return pylock
+
+
 def _mismatched_local_source_project(tmp_path: Path) -> str:
     """Write a sibling tree named ``bar`` and declare it as local source ``foo``."""
     member = tmp_path / "bar"
@@ -3720,11 +3734,7 @@ class TestGroupAndExtraSelection:
     def test_all_groups_unreadable_file_surfaces_error(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A regular file that still raises OSError reports the real error.
-
-        Neither ``not found`` nor ``is a directory`` applies, so the errno
-        must reach the message rather than default to ``not found``.
-        """
+        """A regular file that still raises OSError reports the real error."""
         pyproject = _make_pyproject(tmp_path)
         denied = PermissionError(errno.EACCES, "Permission denied", str(pyproject))
         with (
@@ -3757,11 +3767,10 @@ class TestGroupAndExtraSelection:
         capsys: pytest.CaptureFixture[str],
         deny_access: Callable[[Path], AbstractContextManager[None]],
     ) -> None:
-        """An unsearchable parent must not fail the is-a-directory check.
+        """An unsearchable parent must not fail the is-a-directory guard.
 
-        EACCES lands on the stat behind that check as well as on the read,
-        so classifying the path has to be raise-free or the handler raises
-        a second error out of itself.
+        EACCES lands on the stat behind that guard as well as on the read,
+        so classifying the path has to be raise-free.
         """
         pyproject = _make_pyproject(tmp_path)
         with deny_access(pyproject), pytest.raises(SystemExit, match="1"):
@@ -3769,6 +3778,24 @@ class TestGroupAndExtraSelection:
         err = capsys.readouterr().err
         assert "cannot read" in err
         assert "Permission denied" in err
+
+    def test_all_groups_on_a_pylock_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A lock passed as the project is named as one, not read for groups."""
+        pylock = _make_pylock_with_groups(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            resolve_group_selection(pylock, groups=(), all_groups=True)
+        assert "is a PEP 751 lockfile" in capsys.readouterr().err
+
+    def test_all_extras_on_a_pylock_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Symmetric guard for ``--all-extras`` on a lock."""
+        pylock = _make_pylock_with_groups(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            resolve_extra_selection(pylock, extras=(), all_extras=True)
+        assert "is a PEP 751 lockfile" in capsys.readouterr().err
 
     def test_all_groups_reads_defined_groups(self, tmp_path: Path) -> None:
         """Selection equals the keys of ``[dependency-groups]``.
@@ -4742,6 +4769,32 @@ class TestDownloadCommand:
         with pytest.raises(SystemExit, match="1"):
             download(tmp_path, **kwargs)
         assert "is a directory" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {},
+            {"all_groups": True},
+            {"all_extras": True},
+            {"groups": ("dev",)},
+            {"extras": ("e",)},
+        ],
+    )
+    def test_pylock_path_exits(
+        self,
+        kwargs: dict[str, object],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """``nab download`` names a lock as one under every selection flag.
+
+        Only the bare arm reaches the guard through the config load; the
+        selection flags read the path first and have to say the same thing.
+        """
+        pylock = _make_pylock_with_groups(tmp_path)
+        with pytest.raises(SystemExit, match="1"):
+            download(pylock, **kwargs)
+        assert "is a PEP 751 lockfile" in capsys.readouterr().err
 
     def test_extras_flag_forwarded_to_resolver(self, tmp_path: Path) -> None:
         # ``--extras`` is required for ``exactly_one`` / ``at_least_one``

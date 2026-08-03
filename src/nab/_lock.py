@@ -51,7 +51,6 @@ from nab_python.lockfile import (
     read_lockfile_packages,
     summarize_lock,
 )
-from nab_python.paths import PathState, path_state
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
@@ -822,17 +821,15 @@ def _read_selection_table_or_exit(
     """Read the table a selection flag expands over, exiting 1 on a bad file.
 
     ``nab download`` selects groups and extras before it loads the config, so
-    this read is the first to touch the pyproject and reports a bad file itself.
+    this read can be the first to touch the pyproject and runs the path guards
+    itself rather than relying on the config load having run.
     """
+    _cli.require_pyproject_file(path)
+
     try:
         return reader(path)
     except OSError as e:
-        if e.errno == errno.ENOENT:
-            _cli.printer().error(f"{path} not found")
-        elif path_state(path) is PathState.DIRECTORY:
-            _cli.printer().error(f"{path} is a directory")
-        else:
-            _cli.printer().error(f"cannot read {path}: {e}")
+        _cli.printer().error(f"cannot read {path}: {e}")
         sys.exit(1)
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
         _cli.printer().error(f"{path} is not valid TOML: {e}")
