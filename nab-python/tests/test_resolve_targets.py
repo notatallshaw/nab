@@ -1504,6 +1504,38 @@ class TestVcsConfigPlumbing:
         assert len(roots) == 1
         assert not roots[0].exists()
 
+    def test_vcs_source_resolves_under_a_relative_cache_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``nab lock --cache-dir relcache`` materialises a declared VCS source.
+
+        ``cache-dir`` is cwd-relative, so the clone root can be relative.
+        """
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            if cmd[:2] == ["git", "checkout"]:
+                (cwd / "pyproject.toml").write_text(
+                    '[project]\nname = "pkg"\nversion = "1.0"\n', encoding="utf-8"
+                )
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.chdir(tmp_path)
+
+        result = resolve_with_coordinator(
+            _make_coordinator({}),
+            _one_target(),
+            _reqs("pkg"),
+            config=_no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
+            cache_dir=Path("relcache"),
+        )
+
+        assert result.success
+        assert result.target_results[0].pins == {"pkg": Version("1.0")}
+
 
 class TestRunPassSerial:
     """``_run_pass`` resolves each target in turn, covering the alignment chain."""
