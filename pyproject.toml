@@ -301,6 +301,7 @@ ignore = [
 
     # Individual rules.
     "ANN401",  # Disallows Any (needed for generic library)
+    "CPY001",  # Copyright notice per file; the licence sits at the repo root.
     "S101",    # Assert usage (needed for type narrowing and tests)
     "TID252",  # Bans relative imports; the project prefers them.
 ]

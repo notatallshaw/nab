@@ -1680,9 +1680,11 @@ class TestBuildEnvOffline:
             messages.add(str(excinfo.value))
 
         assert messages == {
-            "build env setup for 'setuptools.build_meta' failed: build"
-            " requirements unavailable in offline mode:"
-            " cython, setuptools>=61, wheel"
+            (
+                "build env setup for 'setuptools.build_meta' failed: build"
+                " requirements unavailable in offline mode:"
+                " cython, setuptools>=61, wheel"
+            )
         }
 
 

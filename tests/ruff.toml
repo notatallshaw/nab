@@ -14,7 +14,7 @@ extend-ignore = [
     # Loose-ends commonly hit by test data setup.
     "B007", "C901", "C416", "FBT001", "FBT002",
     "FURB171",
-    "PLR0124", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004",
+    "PLR0124", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004",
     "PLW0131",
     # Tests don't need perf-style refactors.
     "PERF203", "PERF401",

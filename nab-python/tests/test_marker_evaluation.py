@@ -126,8 +126,10 @@ class TestCompound:
             ('python_version >= "3.8" and sys_platform == "win32"', False),
             ('python_version < "3.8" or os_name == "posix"', True),
             (
-                '(python_version == "3.11" and sys_platform == "linux")'
-                ' or platform_machine == "arm64"',
+                (
+                    '(python_version == "3.11" and sys_platform == "linux")'
+                    ' or platform_machine == "arm64"'
+                ),
                 True,
             ),
         ],
@@ -206,20 +208,26 @@ class TestSerializationRoundTrip:
         ("text", "env", "expected"),
         [
             (
-                'python_version < "3.10" and '
-                '((sys_platform == "linux" or sys_platform == "darwin"))',
+                (
+                    'python_version < "3.10" and '
+                    '((sys_platform == "linux" or sys_platform == "darwin"))'
+                ),
                 {"python_version": "3.12", "sys_platform": "darwin"},
                 False,
             ),
             (
-                'python_version < "3.10" and '
-                '((sys_platform == "linux" or sys_platform == "darwin"))',
+                (
+                    'python_version < "3.10" and '
+                    '((sys_platform == "linux" or sys_platform == "darwin"))'
+                ),
                 {"python_version": "3.9", "sys_platform": "darwin"},
                 True,
             ),
             (
-                'extra != "c" or ((python_version > "3.8") and extra != "c") '
-                'and ((python_version != "3.10" or (extra != "a")))',
+                (
+                    'extra != "c" or ((python_version > "3.8") and extra != "c") '
+                    'and ((python_version != "3.10" or (extra != "a")))'
+                ),
                 {"python_version": "3.8", "extra": "c"},
                 False,
             ),

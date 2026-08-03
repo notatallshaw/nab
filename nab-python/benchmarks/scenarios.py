@@ -221,7 +221,7 @@ def _alarm_handler(_signum: int, _frame: object) -> None:
 CACHE_DIR = BENCHMARKS_DIR / "cache"
 
 
-def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
+def resolve_scenario(  # noqa: PLR0913, PLR0917 - one wrapper per scenario knob
     requirements: dict[str, VersionRange],
     python_version: str,
     uploaded_prior_to: datetime | None = None,
@@ -327,7 +327,7 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
         }
 
 
-def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
+def _expected_input(  # noqa: PLR0913, PLR0917 - assembling the JSON dump key
     commit: str,
     python_version: str,
     requirement_strings: list[str],

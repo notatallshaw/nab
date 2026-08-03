@@ -554,7 +554,7 @@ class Provider:
     CONFLICT_THRESHOLD = _priority.CONFLICT_THRESHOLD
     CULPRIT_DEMOTE_THRESHOLD = _priority.CULPRIT_DEMOTE_THRESHOLD
 
-    def __init__(  # noqa: PLR0913, PLR0915 - resolver config is wide; bundling all flags into one bag is worse for callers
+    def __init__(  # noqa: PLR0913, PLR0915, PLR0917 - resolver config is wide; bundling all flags into one bag is worse for callers
         self,
         coordinator: FetchCoordinator,
         target: ResolveTarget | None = None,
