@@ -10,6 +10,7 @@ import importlib
 import inspect
 import io
 import json
+import logging
 import re
 import runpy
 import stat
@@ -26,6 +27,7 @@ import pytest
 import tomli
 
 from nab import _version as nab_version
+from nab import cli
 from nab._download import download
 from nab._lock import (
     _determine_lock_anchor,
@@ -43,6 +45,7 @@ from nab.cli import (
     app,
     main,
 )
+from nab.output import Printer, Verbosity
 from nab_index.client import SdistHashMismatchError
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.transport import HttpError
@@ -80,6 +83,10 @@ from nab_python.target import ResolveTarget
 from nab_resolver.resolver import ResolutionError
 
 V = Version
+
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RESET = "\033[0m"
 
 
 def _target(
@@ -4336,6 +4343,146 @@ class TestMain:
                 failure_prefix="cannot lock",
             )
         assert result.success
+
+
+class _TtyStderr(io.StringIO):
+    """A stderr stand-in that claims to be a terminal, so progress is allowed."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+class TestMainWiresOutputOptions:
+    """main() turns the parsed global output flags into the run's output state.
+
+    test_output.py covers the flags and the ``NAB_*`` variables on their own.
+    These run the real entry point, so which parsed option reaches the printer
+    and the log handler is pinned too.
+    """
+
+    def _run_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *flags: str
+    ) -> tuple[Printer, _TtyStderr]:
+        """Run ``main()`` over a stubbed lock; return its printer and stderr."""
+        pyproject = _make_pyproject(tmp_path)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "nab",
+                *flags,
+                "lock",
+                str(pyproject),
+                "--output",
+                str(tmp_path / "pylock.toml"),
+            ],
+        )
+
+        stderr = _TtyStderr()
+        monkeypatch.setattr(sys, "stderr", stderr)
+
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_stub_resolve_result(pins={}),
+            ),
+            patch("nab.cli.write_lock"),
+        ):
+            main()
+
+        assert cli._printer is not None
+        return cli._printer, stderr
+
+    def test_default_run_reports_the_written_lockfile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no flags the run summary reaches stderr at the normal level."""
+        printer, stderr = self._run_lock(tmp_path, monkeypatch)
+        assert printer.verbosity is Verbosity.NORMAL
+        assert "Wrote" in stderr.getvalue()
+
+    def test_quiet_drops_the_run_summary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``-q`` puts the printer below the level ``done()`` writes at."""
+        printer, stderr = self._run_lock(tmp_path, monkeypatch, "-q")
+        assert printer.verbosity is Verbosity.QUIET
+        assert "Wrote" not in stderr.getvalue()
+
+    def test_default_run_keeps_the_engine_at_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without ``-v`` an engine INFO record is dropped and a WARNING shows."""
+        _printer, stderr = self._run_lock(tmp_path, monkeypatch)
+        logger = logging.getLogger("nab_python")
+        logger.info("engine detail")
+        logger.warning("engine note")
+        assert "engine detail" not in stderr.getvalue()
+        assert "warning: engine note" in stderr.getvalue()
+
+    def test_debug_verbosity_lowers_the_engine_log_level(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``-vv`` reaches the log handler, not just the printer."""
+        printer, _stderr = self._run_lock(tmp_path, monkeypatch, "-vv")
+        assert printer.verbosity is Verbosity.DEBUG
+        assert logging.getLogger("nab_python").getEffectiveLevel() == logging.DEBUG
+
+    def test_color_always_paints_the_run_summary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--color always`` reaches the printer and overrides ``NO_COLOR``."""
+        printer, stderr = self._run_lock(tmp_path, monkeypatch, "--color", "always")
+        assert printer.color_enabled is True
+        assert f"{GREEN}Wrote{RESET}" in stderr.getvalue()
+
+    def test_color_always_reaches_the_log_handler(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The handler is installed with the printer's colour decision."""
+        _printer, stderr = self._run_lock(tmp_path, monkeypatch, "--color", "always")
+        logging.getLogger("nab_python").warning("engine note")
+        assert f"{YELLOW}warning:{RESET} engine note" in stderr.getvalue()
+
+    def test_log_records_stay_plain_with_color_off(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With colour off the handler emits a plain ``warning:`` token."""
+        _printer, stderr = self._run_lock(tmp_path, monkeypatch)
+        logging.getLogger("nab_python").warning("engine note")
+        assert "warning: engine note" in stderr.getvalue()
+        assert "\033[" not in stderr.getvalue()
+
+    def test_progress_allowed_on_a_terminal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A normal-level run against a tty stderr allows the progress line."""
+        printer, _stderr = self._run_lock(tmp_path, monkeypatch)
+        assert printer.progress_allowed is True
+
+    def test_no_progress_flag_blocks_progress(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--no-progress`` reaches the printer that gates the progress line."""
+        printer, _stderr = self._run_lock(tmp_path, monkeypatch, "--no-progress")
+        assert printer.progress_allowed is False
+
+    def test_env_verbosity_reaches_the_printer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``NAB_VERBOSITY`` applies, so ``main`` reads the real environment."""
+        monkeypatch.setenv("NAB_VERBOSITY", "debug")
+        printer, _stderr = self._run_lock(tmp_path, monkeypatch)
+        assert printer.verbosity is Verbosity.DEBUG
+        assert logging.getLogger("nab_python").getEffectiveLevel() == logging.DEBUG
+
+    def test_env_no_progress_blocks_progress(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``NAB_NO_PROGRESS`` blocks the progress line without a flag."""
+        monkeypatch.setenv("NAB_NO_PROGRESS", "1")
+        printer, _stderr = self._run_lock(tmp_path, monkeypatch)
+        assert printer.progress_allowed is False
 
 
 class TestMakeTransport:
