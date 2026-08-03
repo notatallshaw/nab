@@ -275,6 +275,24 @@ class TestRunBuildBackend:
         ):
             run_build_backend(tmp_path, config=config)
 
+    def test_directory_pyproject_reports_not_a_regular_file(
+        self, tmp_path: Path, config: NabProjectConfig
+    ) -> None:
+        (tmp_path / "pyproject.toml").mkdir()
+
+        # setup.py is here so a fall-through would take the legacy branch.
+        (tmp_path / "setup.py").write_text("from setuptools import setup\n")
+
+        env = MagicMock()
+        env.__enter__ = MagicMock(return_value=env)
+        env.__exit__ = MagicMock(return_value=None)
+
+        with (
+            patch("nab_python._build.runner.NabBuildEnv", return_value=env),
+            pytest.raises(BuildBackendError, match="not a regular file"),
+        ):
+            run_build_backend(tmp_path, config=config)
+
     def test_unsearchable_setup_py_takes_the_legacy_branch(
         self,
         tmp_path: Path,
