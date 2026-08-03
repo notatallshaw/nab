@@ -1114,8 +1114,10 @@ class TestLockCommandSpecific:
         # OSError renders its filename with repr, which doubles the
         # backslashes of a Windows path.
         assert err.splitlines() == [
-            f"error: in [tool.nab]: cannot read {pyproject}:"
-            f" [Errno {errno.EACCES}] Permission denied: {str(pyproject)!r}"
+            (
+                f"error: in [tool.nab]: cannot read {pyproject}:"
+                f" [Errno {errno.EACCES}] Permission denied: {str(pyproject)!r}"
+            )
         ]
 
     def test_pylock_passed_as_the_project_exits(

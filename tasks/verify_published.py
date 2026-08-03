@@ -96,7 +96,7 @@ def _published_sha256(pypi_name: str, version: str, filename: str) -> str:
     url = f"https://pypi.org/pypi/{pypi_name}/{version}/json"
     try:
         # Host and scheme are fixed above; the request only varies by name.
-        with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310
+        with urllib.request.urlopen(url, timeout=30) as response:
             data = json.load(response)
     except urllib.error.HTTPError as error:
         if error.code == _HTTP_NOT_FOUND:

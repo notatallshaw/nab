@@ -728,8 +728,10 @@ class TestExpandExtraRequirements:
         it stays parseable, not collapse to two adjacent comparisons."""
         opt = {
             "all": [
-                'mypkg[fast]; extra == "all" and python_version < "3.10"'
-                ' and sys_platform == "linux"'
+                (
+                    'mypkg[fast]; extra == "all" and python_version < "3.10"'
+                    ' and sys_platform == "linux"'
+                )
             ],
             "fast": ["some-dep"],
         }
@@ -753,9 +755,11 @@ class TestExpandExtraRequirements:
         both surviving OR branches."""
         opt = {
             "all": [
-                'mypkg[fast]; (extra == "all" and python_version < "3.10"'
-                ' and sys_platform == "linux") or (extra == "all"'
-                ' and python_version >= "3.12" and sys_platform == "win32")'
+                (
+                    'mypkg[fast]; (extra == "all" and python_version < "3.10"'
+                    ' and sys_platform == "linux") or (extra == "all"'
+                    ' and python_version >= "3.12" and sys_platform == "win32")'
+                )
             ],
             "fast": ["some-dep"],
         }
@@ -779,8 +783,10 @@ class TestExpandExtraRequirements:
         the ``and`` between them, so the residual is ``env and (a or b)``."""
         opt = {
             "all": [
-                'mypkg[fast]; extra == "all" and python_version < "3.10"'
-                ' and (sys_platform == "linux" or sys_platform == "darwin")'
+                (
+                    'mypkg[fast]; extra == "all" and python_version < "3.10"'
+                    ' and (sys_platform == "linux" or sys_platform == "darwin")'
+                )
             ],
             "fast": ["some-dep"],
         }
@@ -844,8 +850,10 @@ class TestExpandExtraRequirements:
         disjunction after the satisfied extra clause drops."""
         opt = {
             "all": [
-                'mypkg[fast]; extra == "all" and '
-                '(python_version < "3.10" or sys_platform == "win32")'
+                (
+                    'mypkg[fast]; extra == "all" and '
+                    '(python_version < "3.10" or sys_platform == "win32")'
+                )
             ],
             "fast": ["some-dep"],
         }
@@ -897,8 +905,10 @@ class TestExpandExtraRequirements:
         contradiction, so the self-reference does not activate."""
         opt = {
             "all": [
-                'mypkg[fast]; (extra == "other" or extra == "x") '
-                'and python_version < "3.10"'
+                (
+                    'mypkg[fast]; (extra == "other" or extra == "x") '
+                    'and python_version < "3.10"'
+                )
             ],
             "fast": ["some-dep"],
         }
