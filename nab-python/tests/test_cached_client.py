@@ -2040,6 +2040,29 @@ class TestHtmlListing:
         files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
         assert files[0].hashes == (("sha256", self._DIGEST), ("sha512", sha512))
 
+    def test_relative_href_resolves_against_the_redirect_target(
+        self, tmp_path: Path
+    ) -> None:
+        """A moved HTML page is the base for its own relative hrefs."""
+        moved = "https://mirror.example.com/whl/cpu/torch/"
+        page = b'<a href="torch-2.7.0-py3-none-any.whl">torch</a>'
+        transport = _FakeTransport(
+            [_FakeResponse(page, headers={"content-type": "text/html"}, url=moved)]
+        )
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(
+                transport, _make_cache(tmp_path), self._INDEX
+            )
+            try:
+                return await client.get_files("torch")
+            finally:
+                await client.aclose()
+
+        (wheel,) = asyncio.run(go())
+
+        assert wheel.url == f"{moved}torch-2.7.0-py3-none-any.whl"
+
     def test_malformed_ipv6_href_is_dropped(self, tmp_path: Path) -> None:
         # An unterminated IPv6 bracket makes the href join and split raise;
         # that anchor is dropped and its good sibling still resolves.
