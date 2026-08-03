@@ -743,6 +743,15 @@ class TestParseMaxAge:
     def test_digit_run_too_long_to_convert_clamped(self) -> None:
         assert _parse_max_age("max-age=" + "9" * 9000) == 2**31
 
+    def test_directive_name_is_case_insensitive(self) -> None:
+        assert _parse_max_age("Max-Age=0") == 0
+
+    def test_uppercase_directive_among_others(self) -> None:
+        assert _parse_max_age("public, MAX-AGE = 30, must-revalidate") == 30
+
+    def test_quoted_value_extracted(self) -> None:
+        assert _parse_max_age('max-age="300"') == 300
+
 
 class TestParseAge:
     def test_absent_is_zero(self) -> None:
@@ -940,6 +949,26 @@ class TestGetFiles:
         assert cached is not None
         _, new_policy = cached
         assert new_policy.max_age == 120
+
+    def test_uppercase_max_age_directive_is_stored(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES,
+                    headers={"etag": "v1", "cache-control": "public, Max-Age=0"},
+                ),
+                _FakeResponse(b"", status=304, headers={"etag": "v1"}),
+            ]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+        stored = _make_cache(tmp_path).get_simple("pkg")
+        assert stored is not None
+        assert stored[1].max_age == 0
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+        assert len(transport.calls) == 2
 
     def test_stale_revalidates_304_with_new_etag_replaces_etag(
         self, tmp_path: Path
@@ -3003,6 +3032,23 @@ class TestNegativeCaching:
         neg = cache.get_negative("absent")
         assert neg is not None
         assert neg.max_age == 120
+
+    def test_404_uppercase_max_age_directive_is_stored(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(b"", status=404, headers={"cache-control": "Max-Age=0"}),
+                _FakeResponse(b"", status=404, headers={"cache-control": "Max-Age=0"}),
+            ]
+        )
+
+        assert _run_get_files(transport, cache, "absent") == []
+        neg = _make_cache(tmp_path).get_negative("absent")
+        assert neg is not None
+        assert neg.max_age == 0
+
+        assert _run_get_files(transport, cache, "absent") == []
+        assert len(transport.calls) == 2
 
     def test_404_no_cache_control_defaults_600(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)

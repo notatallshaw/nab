@@ -55,7 +55,8 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_AGE = 600
 _HTTP_NOT_MODIFIED = 304
-_MAX_AGE_RE = re.compile(r"max-age\s*=\s*(\d+)")
+# RFC 9111 5.2: directive names are case-insensitive and the argument may be quoted.
+_MAX_AGE_RE = re.compile(r'max-age\s*=\s*"?(\d+)', re.IGNORECASE)
 _AGE_RE = re.compile(r"\A\s*(\d+)\s*\Z")
 _SECONDS_CEILING = 2**31
 _SECONDS_CEILING_DIGITS = len(str(_SECONDS_CEILING))
