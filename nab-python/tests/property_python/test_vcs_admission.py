@@ -163,6 +163,20 @@ def _drop_login(url: str) -> str:
     return urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[1]))
 
 
+def _git_would_rewrite(path: str) -> bool:
+    r"""Dot-segment removal, transcribed from the documented policy.
+
+    Read off ``path`` decoded once and with ``\`` folded to ``/``.  A
+    trailing ``/`` survives RFC 3986, so it is put back after
+    :func:`posixpath.normpath` drops it.
+    """
+    decoded = unquote(path).replace("\\", "/")
+    normalised = posixpath.normpath(decoded)
+    if decoded.endswith("/") and not normalised.endswith("/"):
+        normalised += "/"
+    return bool(decoded) and normalised != decoded
+
+
 def _prefix_under_repo(inner: str, prefix: str) -> bool:
     r"""Boundary-aware repo-prefix check, transcribed from the documented policy.
 
@@ -172,14 +186,15 @@ def _prefix_under_repo(inner: str, prefix: str) -> bool:
     Git's optional ``.git`` suffix is stripped from the prefix and skipped
     once on the candidate so an exact-repo prefix and the ``.git`` clone URL
     match either way round.  A candidate whose path git would rewrite is
-    refused first: the whole post-authority remainder, decoded once and with
-    ``\`` folded to ``/``, must equal its dot-segment-normalised form.
+    refused first: the post-authority remainder, minus the trailing ``@<ref>``
+    the clone splits off, must equal its dot-segment-normalised form both
+    whole and cut at the first ``?``.
     """
     parts = urlsplit(inner)
     remainder = f"{parts.path}?{parts.query}" if parts.query else parts.path
-    path = unquote(remainder).replace("\\", "/")
+    repo = remainder.rpartition("@")[0] if "@" in remainder else remainder
 
-    if path and posixpath.normpath(path) != path:
+    if any(_git_would_rewrite(part) for part in (repo, repo.partition("?")[0])):
         return False
 
     prefix = prefix.removesuffix(".git")
