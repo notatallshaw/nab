@@ -440,10 +440,10 @@ def _is_pylock(path: Path) -> bool:
     return "lock-version" in data and "project" not in data
 
 
-def _require_pyproject_file(path: Path) -> None:
+def require_pyproject_file(path: Path) -> None:
     """Exit 1 if ``path`` is not a readable pyproject file.
 
-    Shared by ``_load_config`` (the run path) and ``nab config`` so the
+    Shared by every command that takes a project path, so the
     not-found/directory wording lives in one place.  A missing or
     directory ``--path`` is a hard error, not a silently-skipped source.
     A path whose stat fails passes: the config read reports it, naming
@@ -492,7 +492,7 @@ def _load_config(
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, object] | None = None,
 ) -> NabProjectConfig:
-    _require_pyproject_file(path)
+    require_pyproject_file(path)
 
     try:
         return read_pyproject_config(
