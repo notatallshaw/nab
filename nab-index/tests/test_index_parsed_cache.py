@@ -23,6 +23,7 @@ from typing import Any, TypeVar
 import pytest
 
 from nab_index.cache import (
+    CACHE_VERSION_SIMPLE,
     CACHE_VERSION_SIMPLE_PARSED,
     CachePolicy,
     NullCache,
@@ -35,6 +36,9 @@ from nab_index.cache import (
 from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
 from nab_index.client import _parse_files
 from nab_index.parsed_listing import corruption_reason, decode, encode
+
+# Derived so a bucket-version bump does not need every path updated.
+_SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
@@ -187,7 +191,7 @@ class TestGetSimplePolicy:
         cache.put_simple("foo", body, CachePolicy(fetched_at=5, max_age=9, etag="t"))
         # The body is gone; a policy-only read must still hit, carrying the
         # digest put_simple stamped from the body.
-        (tmp_path / "simple-v0" / "pypi" / "foo.json").unlink()
+        (tmp_path / _SIMPLE_BUCKET / "pypi" / "foo.json").unlink()
         got = cache.get_simple_policy("foo")
         assert got == CachePolicy(
             fetched_at=5,
@@ -203,7 +207,7 @@ class TestGetSimplePolicy:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _cache(tmp_path)
-        path = tmp_path / "simple-v0" / "pypi" / "foo.policy"
+        path = tmp_path / _SIMPLE_BUCKET / "pypi" / "foo.policy"
         path.parent.mkdir(parents=True)
         path.write_bytes(b"not json")
         with caplog.at_level(logging.WARNING):
@@ -250,6 +254,18 @@ class TestNullCacheParsed:
         assert NullCache().put_simple_parsed("foo", b"blob") is None
 
 
+class _CountingNullCache(NullCache):
+    """A disabled cache that records whether a parsed blob was offered to it."""
+
+    def __init__(self) -> None:
+        self.parsed_writes = 0
+
+    def put_simple_parsed(self, package: str, blob: bytes) -> None:
+        """Count the discarded write."""
+        del package, blob
+        self.parsed_writes += 1
+
+
 class TestPutSimpleDigest:
     def test_returns_and_stores_body_digest(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
@@ -268,10 +284,67 @@ class TestPutSimpleDigest:
         digest = cache.put_simple("foo", body, stale)
         assert digest == hashlib.sha256(body).hexdigest()
 
-    def test_null_cache_returns_body_digest(self) -> None:
-        assert NullCache().put_simple("foo", b"abc", _FRESH) == (
-            hashlib.sha256(b"abc").hexdigest()
-        )
+    def test_null_cache_returns_none(self) -> None:
+        # Nothing was stored, so there is no body for a parsed blob to describe.
+        assert NullCache().put_simple("foo", b"abc", _FRESH) is None
+
+    def test_null_cache_fetch_writes_no_parsed_blob(self) -> None:
+        cache = _CountingNullCache()
+        transport = _FakeTransport([_FakeResponse(_LISTING_BYTES)])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        _run(client.get_files("pkg"))
+
+        assert cache.parsed_writes == 0
+
+
+class _DroppingCache(OnDiskCache):
+    """A store whose body write is refused, so ``put_simple`` hands back nothing.
+
+    Models a cache root that cannot take the write (read-only, full disk).
+    Reads keep answering from whatever landed before.
+    """
+
+    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> None:
+        """Drop the write and report that nothing was stored."""
+        del package, body, policy
+
+
+class TestDroppedBodyWrite:
+    """A body the store refused must leave no parsed blob claiming to describe it."""
+
+    def test_cold_fetch_writes_no_parsed_blob(self, tmp_path: Path) -> None:
+        cache = _DroppingCache(tmp_path, _INDEX)
+        transport = _FakeTransport([_FakeResponse(_LISTING_BYTES)])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        files = _run(client.get_files("pkg"))
+
+        assert files == _PARSED
+        assert cache.get_simple_parsed("pkg") is None
+
+    def test_revalidation_keeps_the_blob_bound_to_the_stored_body(
+        self, tmp_path: Path
+    ) -> None:
+        warm = _cache(tmp_path)
+        _warm_bound(warm, fresh=False)
+        before = warm.get_simple_parsed("pkg")
+        new_body = json.dumps({**_LISTING, "files": []}).encode()
+        cache = _DroppingCache(tmp_path, _INDEX)
+        transport = _FakeTransport([_FakeResponse(new_body, headers={"etag": "v2"})])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        _run(client.get_files("pkg"))
+
+        # The refused body never landed, so the old body, its policy, and the
+        # blob bound to it stay coherent instead of being retired for a body
+        # that is not there.
+        assert cache.get_simple_parsed("pkg") == before
+        result = cache.get_simple("pkg")
+        assert result is not None
+        body, policy = result
+        assert body == _LISTING_BYTES
+        assert decode(before, policy) is not None
 
 
 class TestWritePathParsedBlob:
@@ -347,7 +420,7 @@ class TestWritePathParsedBlob:
 
 _PARSED = _parse_files(json.loads(_LISTING_BYTES), _INDEX_NORM, "pkg")
 
-_JSON_PATH_PARTS = ("simple-v0", "pypi", "pkg.json")
+_JSON_PATH_PARTS = (_SIMPLE_BUCKET, "pypi", "pkg.json")
 
 
 def _warm_bound(
@@ -823,3 +896,65 @@ class TestParsedCacheStats:
             "pkg-1.0-py3-none-any.whl",
             "pkg-1.0.tar.gz",
         ]
+
+
+_ZIP_ONLY_LISTING = {
+    "meta": {"api-version": "1.0"},
+    "name": "pkg",
+    "files": [
+        {
+            "filename": "pkg-1.0.zip",
+            "url": "https://files.example.com/pkg-1.0.zip",
+            "hashes": {"sha256": "deadbeef"},
+        }
+    ],
+}
+_ZIP_ONLY_BYTES = json.dumps(_ZIP_ONLY_LISTING).encode()
+
+
+class TestReadPathEmptyListing:
+    """A blob holding no records declines, so the raw body reclassifies it.
+
+    A page of formats nab does not read parses to zero files, and only the raw
+    body says whether that emptiness means "no such package" or "nothing nab
+    reads". The blob carries records alone, so an empty rehydration goes back to
+    the body rather than answering from the blob.
+    """
+
+    def test_empty_blob_reparses_and_keeps_the_format_report(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache, body=_ZIP_ONLY_BYTES)
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        got = _run(client.get_files("pkg"))
+
+        assert got == []
+        assert transport.calls == []
+        assert client.served_unreadable_only("pkg")
+
+    def test_empty_blob_counts_a_rebuild(self, tmp_path: Path) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache, body=_ZIP_ONLY_BYTES)
+        stats = ParsedCacheStats()
+        client = CachedAsyncSimpleClient(
+            _FakeTransport([]), cache, _INDEX, parsed_stats=stats
+        )
+
+        _run(client.get_files("pkg"))
+
+        assert (stats.hit, stats.miss, stats.rebuild) == (0, 0, 1)
+
+    def test_empty_blob_does_not_warn(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache, body=_ZIP_ONLY_BYTES)
+        client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)
+
+        with caplog.at_level(logging.WARNING):
+            _run(client.get_files("pkg"))
+
+        assert "Corrupt parsed-listing" not in caplog.text

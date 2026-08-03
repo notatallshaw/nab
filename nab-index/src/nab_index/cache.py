@@ -289,7 +289,8 @@ class OnDiskCache:
         freshness window.  The sha256 of ``body`` is stamped into the stored
         policy, overriding any value the caller passed, and returned as the
         binding key for the parsed blob the caller writes next.  A write that
-        did not land returns ``None``: there is no stored body to bind to.
+        did not land returns ``None``, so no parsed blob is ever bound to a
+        body the store does not hold.
         """
         body_path, policy_path = self._simple_paths(package)
         if not self._store(body_path, body):
@@ -616,11 +617,14 @@ class CacheBackend(Protocol):
         """Return ``(body_bytes, policy)`` if cached, else ``None``."""
         ...
 
-    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> str:
+    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> str | None:
         """Store a Simple API body and its freshness policy; return the digest.
 
-        The returned value is the sha256 hex of ``body``, the binding key for
-        the parsed-listing blob the caller writes next.
+        The returned value is the sha256 hex of the body the backend stored,
+        the binding key for the parsed-listing blob the caller writes next, or
+        ``None`` when the backend stored nothing. A caller writes a parsed blob
+        only for a digest it was given, so no derived entry ever claims to
+        describe a body the store does not hold.
         """
         ...
 
@@ -706,14 +710,13 @@ class NullCache:
     def get_simple(self, package: str) -> tuple[bytes, CachePolicy] | None:
         """Return ``None`` (always a miss)."""
 
-    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> str:
-        """Discard the entry; return the body digest for the parsed binding.
+    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> None:
+        """Discard the entry; return ``None`` since no body was stored.
 
-        The digest is a pure function of ``body``, so a caller building a parsed
-        blob gets the same key a real backend would return.
+        A disabled cache holds nothing for a parsed blob to describe, so the
+        caller skips building one rather than encoding records into a store
+        that would drop them.
         """
-        del package, policy  # stored nowhere; only body determines the digest
-        return hashlib.sha256(body).hexdigest()
 
     def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Discard the policy refresh."""

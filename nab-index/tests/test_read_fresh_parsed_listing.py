@@ -18,7 +18,7 @@ from typing import Any, TypeVar
 
 import pytest
 
-from nab_index.cache import CachePolicy, OnDiskCache
+from nab_index.cache import CACHE_VERSION_SIMPLE, CachePolicy, OnDiskCache
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     read_fresh_parsed_listing,
@@ -51,7 +51,24 @@ _LISTING = {
 }
 _LISTING_BYTES = json.dumps(_LISTING).encode()
 _PARSED = _parse_files(json.loads(_LISTING_BYTES), _INDEX_NORM, "pkg")
-_JSON_PATH_PARTS = ("simple-v0", "pypi", "pkg.json")
+
+# A page of only formats nab does not read, so it parses to zero files.
+_ZIP_ONLY_BYTES = json.dumps(
+    {
+        "meta": {"api-version": "1.0"},
+        "name": "pkg",
+        "files": [
+            {
+                "filename": "pkg-1.0.zip",
+                "url": "https://files.example.com/pkg-1.0.zip",
+                "hashes": {"sha256": "deadbeef"},
+            }
+        ],
+    }
+).encode()
+
+# Derived so a bucket-version bump does not need every path updated.
+_JSON_PATH_PARTS = (f"simple-{CACHE_VERSION_SIMPLE}", "pypi", "pkg.json")
 
 
 def _run(coro: Coroutine[Any, Any, _T]) -> _T:
@@ -173,6 +190,14 @@ class TestReadFreshParsedListing:
         cache.put_simple_parsed("pkg", blob)
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
+    def test_empty_listing_returns_none(self, tmp_path: Path) -> None:
+        # A page of formats nab does not read parses to zero files; the blob
+        # cannot say so, so the helper declines and the async path reclassifies.
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache, body=_ZIP_ONLY_BYTES)
+        assert files == []
+        assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
+
     def test_hit_does_not_write(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)
@@ -235,6 +260,16 @@ class TestIdenticalByConstruction:
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
         client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)
         assert _run(client.get_files("pkg")) == files
+
+    def test_empty_listing_declines_while_get_files_reports_the_format(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache, body=_ZIP_ONLY_BYTES)
+        assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
+        client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)
+        assert _run(client.get_files("pkg")) == []
+        assert client.served_unreadable_only("pkg")
 
     def test_stale_online_declines_while_get_files_revalidates(
         self, tmp_path: Path

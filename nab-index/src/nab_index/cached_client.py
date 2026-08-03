@@ -218,9 +218,15 @@ def read_fresh_parsed_listing(
     branch: same policy, same ``is_fresh() or offline`` test, same blob, same
     :func:`parsed_listing.decode`, so on a hit it returns the records
     ``get_files`` would. Every other case (no policy, stale-online, no blob, a
-    non-binding digest, a corrupt blob) declines to ``None`` and, unlike
-    ``get_files``, never reads the raw body, revalidates, rebuilds, writes, or
-    logs. It never raises, so a caller's pending is never stranded.
+    non-binding digest, a corrupt blob, a blob holding no records) declines to
+    ``None`` and, unlike ``get_files``, never reads the raw body, revalidates,
+    rebuilds, writes, or logs. It never raises, so a caller's pending is never
+    stranded.
+
+    A blob that rehydrates to no records declines for the same reason
+    :meth:`CachedAsyncSimpleClient._parsed_hit` does: an empty listing also has
+    to say whether the page offered only formats nab does not read, and only the
+    raw body answers that.
     """
     policy = cache.get_simple_policy(package)
     if policy is None:
@@ -230,7 +236,7 @@ def read_fresh_parsed_listing(
     blob = cache.get_simple_parsed(package)
     if blob is None:
         return None
-    return _decode_parsed(blob, policy)
+    return _decode_parsed(blob, policy) or None
 
 
 class CachedAsyncSimpleClient:
@@ -565,7 +571,8 @@ class CachedAsyncSimpleClient:
             page_url=response.url,
         )
         digest = self._cache.put_simple(package, new_body, new_policy)
-        self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
+        if digest is not None:
+            self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
         return files
 
     async def _fetch_simple(self, package: str) -> list[WheelFile | SdistFile]:
@@ -588,7 +595,8 @@ class CachedAsyncSimpleClient:
             page_url=response.url,
         )
         digest = self._cache.put_simple(package, body, policy)
-        self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
+        if digest is not None:
+            self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
         self._cache.drop_negative(package)
         return files
 

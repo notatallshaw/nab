@@ -506,10 +506,10 @@ class TestNullCache:
         assert cache.get_simple("foo") is None
         assert cache.get_metadata("foo", METADATA_URLS[0]) is None
         assert cache.get_sdist_files("foo", "1.0") is None
-        # Puts store nothing; put_simple still returns the body digest so a
-        # caller building a parsed blob gets the same key a real backend gives.
+        # Puts store nothing, so put_simple hands back no digest and the caller
+        # builds no parsed blob for a body this backend does not hold.
         policy = CachePolicy(fetched_at=0, max_age=0, etag=None)
-        assert cache.put_simple("foo", b"", policy) == hashlib.sha256(b"").hexdigest()
+        assert cache.put_simple("foo", b"", policy) is None
         assert cache.refresh_simple_policy("foo", policy) is None
         assert cache.put_metadata("foo", METADATA_URLS[0], "x") is None
         assert cache.put_sdist_files("foo", "1.0", "x", None) is None
