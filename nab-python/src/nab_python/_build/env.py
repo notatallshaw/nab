@@ -43,6 +43,7 @@ from .._vcs_admission import UnsupportedVcsError
 from ..config import NabProjectConfig
 from ..download import DownloadError, download_lock
 from ..lockfile import IndexPin
+from ..provider import MissingExtraError
 from ..requirements_file import InvalidProjectRequirementError
 
 if TYPE_CHECKING:
@@ -370,10 +371,12 @@ class NabBuildEnv:
             UnsupportedVcsError,
             NotImplementedError,
             InvalidProjectRequirementError,
+            MissingExtraError,
         ) as exc:
-            # A build requirement nab cannot resolve: a direct-URL/VCS pin, or
-            # a string that is not valid PEP 508. Wrap it so the outer resolve
-            # skips this sdist rather than aborting on the raw error.
+            # A build requirement nab cannot resolve: a direct-URL/VCS pin, an
+            # invalid PEP 508 string, or an extra the resolved version does not
+            # declare. Wrap it so the outer resolve skips this sdist rather
+            # than aborting on the raw error.
             msg = f"build env resolve failed: {exc}"
             raise BuildEnvError(msg) from exc
 
