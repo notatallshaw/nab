@@ -80,8 +80,9 @@ class _ForkAxes:
     """The declared conflict sets a lock's forks vary along.
 
     ``exclusion_groups`` are the ``(kind, name)`` member sets an install
-    context may activate at most one member of.  ``forks`` indexes every
-    target by its environment and its selection, which is how
+    context may activate at most one member of, restricted to the members
+    the resolve forked over (:func:`_forked_exclusion_groups`).  ``forks``
+    indexes every target by its environment and its selection, which is how
     :func:`_project_fork` walks one set's members with the other sets
     held fixed.  ``markers`` is each fork's unprojected selection marker,
     which does not vary by package, and ``gates`` each fork's
@@ -123,6 +124,23 @@ def _fork_index(
         (env_signatures[label], frozenset(lock.target.selection)): label
         for label, lock in targets.items()
     }
+
+
+def _forked_exclusion_groups(
+    exclusion_groups: Sequence[AbstractSet[tuple[str, str]]],
+    targets: Mapping[str, TargetLock],
+) -> tuple[AbstractSet[tuple[str, str]], ...]:
+    """Restrict each declared conflict set to the members a fork selects.
+
+    A set forks only over the members the run selected, so a declared
+    member the selection omits has no fork for :func:`_project_fork` to
+    swap in and no place in the lock's ``extras`` or ``dependency-groups``
+    arrays for an install context to activate.
+    """
+    forked = frozenset(
+        member for lock in targets.values() for member in lock.target.selection
+    )
+    return tuple(group & forked for group in exclusion_groups)
 
 
 class UnsoundSimplificationError(ValueError):
@@ -564,14 +582,15 @@ def _build_packages(
         for canonical_name, per_target in by_name.items()
     }
     shortened: dict[str, Marker | None] = {}
+    forked_groups = _forked_exclusion_groups(exclusion_groups, targets)
     axes = _ForkAxes(
-        exclusion_groups=tuple(exclusion_groups),
+        exclusion_groups=forked_groups,
         forks=_fork_index(targets, env_signatures),
         targets=targets,
         env_signatures=env_signatures,
         # One selection marker per label; it does not vary by package.
         markers={
-            label: _selection_marker(lock.target, exclusion_groups)
+            label: _selection_marker(lock.target, forked_groups)
             for label, lock in targets.items()
         },
         gates={
@@ -1048,9 +1067,9 @@ def _project_fork(
 ) -> _Projection:
     """Return the clauses one fork's entry for ``name`` can drop.
 
-    A declared conflict set is irrelevant to a package when swapping the
-    fork's member of that set for any other member, every other set held
-    fixed, leaves the package at the same pin reached the same way.
+    A conflict set is irrelevant to a package when swapping the fork's
+    member of that set for any other member, every other set held fixed,
+    leaves the package at the same pin reached the same way.
     Conjoining such a set's clauses narrows the entry to the forks that
     vary something the package does not depend on, so a selection naming
     a member of one set alone matches no entry and the package silently

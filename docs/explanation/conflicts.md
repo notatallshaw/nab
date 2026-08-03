@@ -154,13 +154,18 @@ package whose version does depend on the combination keeps the
 conjunction, and so does anything that requires it: an entry never
 fires where one of its own dependencies would not.
 
+A set forks only over the members the selection activates. The rest of
+its declared members are absent from the lock's `extras` and
+`dependency-groups` arrays and from every marker, so a set with an
+unselected member gates an entry exactly as one without it would.
+
 A dependency a member shares with a selection outside the set names
 both in its marker (`"cpu" in extras or "docs" in extras`), so
 selecting the member on its own still installs it.
 
 The lockfile stays within PEP 751: the membership markers use the
 standard `extras` and `dependency_groups` variables, and each fork's
-marker negates the co-members of every conflict set it draws from
+marker negates the other members it was forked against
 (`"cpu" in extras and "gpu" not in extras`), so the forks are mutually
 exclusive in the markers themselves. A PEP 751 consumer that never
 reads `[tool.nab].conflicts` still installs at most one fork; the two
