@@ -127,13 +127,18 @@ def _wire_sdist_side_effects(
     sdist_pkg_info_by_version: Mapping[str, str | None] | None,
     sdist_pyproject_toml: str | None,
 ) -> None:
-    """Attach the ``request_sdist`` side effect."""
+    """Attach the ``request_sdist`` side effect.
+
+    The published hashes have no default here: the real fetcher verifies the
+    archive against them, so a call site that stops forwarding them fails
+    loudly instead of quietly resolving from an unverified sdist.
+    """
 
     def _request_sdist(
         pkg: str,
         ver: str,
         _url: str,
-        _hashes: tuple[tuple[str, str], ...] = (),
+        _hashes: tuple[tuple[str, str], ...],
     ) -> threading.Event:
         pkg_info = (
             sdist_pkg_info
