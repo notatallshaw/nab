@@ -2006,6 +2006,41 @@ class TestErrorMessages:
             "so qux [5, +inf)",
         ]
 
+    def test_clause_holding_only_the_root_states_the_conclusion(self) -> None:
+        """A clause left with the virtual root alone has no package to name."""
+        # Term[Any, int] sidesteps the invariant PackageType TypeVar so
+        # ROOT and str entries can share a list.
+        root_term: Term[Any, int] = Term(ROOT, Range.singleton(0), positive=True)
+        absent_baz: Term[Any, int] = Term("baz", Range.full(), positive=False)
+        project = Incompatibility(
+            [root_term, absent_baz],
+            cause=IncompatibilityCause.ROOT,
+        )
+        terminal = Incompatibility(
+            [root_term],
+            cause=IncompatibilityCause.DERIVED,
+            cause_left=project,
+        )
+        assert format_error(terminal).splitlines() == [
+            "because your project depends on baz",
+            "so your project's requirements cannot be satisfied",
+        ]
+
+    def test_report_never_names_the_root_sentinel(self) -> None:
+        """A derived line that absorbed a project requirement drops the root term."""
+        provider = DictProvider({"a": {2: {"b": Range.at_least(2)}}, "b": {1: {}}})
+        with pytest.raises(ResolutionError) as exc_info:
+            Resolver(provider).resolve(
+                {"a": Range.singleton(2), "b": Range.between(1, 2)}
+            )
+        assert str(exc_info.value).splitlines() == [
+            "because a 2 depends on b [2, +inf)",
+            "because your project depends on b [1, 2)",
+            "so a 2",
+            "because your project depends on a 2",
+            "so your project's requirements cannot be satisfied",
+        ]
+
     def test_format_term_marks_negation(self) -> None:
         """format_term prefixes a negated term with `not` and leaves positives bare."""
         positive = format_term(Term("a", Range.at_least(1), positive=True))

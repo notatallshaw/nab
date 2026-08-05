@@ -631,7 +631,7 @@ class TestNarrowForDisplay:
         assert str(exc_info.value).splitlines() == [
             "because no versions of a are available",
             f"because your project depends on a {root_reqs['a']}",
-            "so <root> <VersionRange '[0, 0]'>",
+            "so your project's requirements cannot be satisfied",
         ]
 
     def test_promoted_parent_reads_as_all_versions(self) -> None:
