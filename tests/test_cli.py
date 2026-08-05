@@ -79,7 +79,7 @@ from nab_python.provider import (
 from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import ResolveResult, TargetResult, env_signature
 from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
+from nab_python.target import ResolveTarget, host_environment
 from nab_resolver.resolver import ResolutionError
 
 V = Version
@@ -1446,6 +1446,31 @@ class TestPythonFlag:
             download(pyproject, output=out, python="3.11")
         config = mock_resolve.call_args.kwargs["config"]
         assert config.environment.python == "3.11"
+
+    def test_retargets_a_free_threaded_platform_onto_a_new_python(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--python`` lands before the free-threaded floor is checked.
+
+        Checked against the 3.12 host instead, the floor would reject the
+        run the flag retargets onto 3.14.
+        """
+        env = {**host_environment(), "python_full_version": "3.12.11"}
+        monkeypatch.setattr("nab_python.config.host_environment", lambda: env)
+
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.environment]\n"
+            'platform = { id = "linux_x86_64", free-threaded = true }\n',
+        )
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+        ) as mock_resolve:
+            lock(pyproject, output=out, python="3.14")
+        assert mock_resolve.call_args.kwargs["config"].environment.python == "3.14"
 
     def test_download_rejects_it_in_universal_mode(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

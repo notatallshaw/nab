@@ -917,9 +917,10 @@ def plan_targets(config: NabProjectConfig) -> tuple[ResolveTarget, ...]:
     project that declares neither resolves against the running interpreter,
     like pip.
 
-    The ``requires-python`` declaration is checked here rather than at parse
-    time because ``--python`` moves the target after the config is read, and
-    it is the flag that rescues a project whose declaration excludes the host.
+    The ``requires-python`` declaration and the free-threaded floor are
+    checked here rather than at parse time because ``--python`` moves the
+    target after the config is read, and it is the flag that rescues a
+    project whose declaration excludes the host.
 
     Every target is checked, matrix included: the lock records the
     declaration at top level and the targets in ``environments``, so a
@@ -927,6 +928,12 @@ def plan_targets(config: NabProjectConfig) -> tuple[ResolveTarget, ...]:
     and that a PEP 751 installer refuses.
     """
     targets = _plan_targets(config.matrix, config.environment)
+
+    if config.environment is not None:
+        _check_free_threaded_environment(
+            config.environment, (targets[0].python_version,)
+        )
+
     for target in targets:
         _check_requires_python_admits_target(
             config.requires_python,
@@ -970,21 +977,40 @@ def _declared_target(environment: EnvironmentConfig) -> ResolveTarget:
     python = environment.python or host_environment()["python_full_version"]
     axis = python_axis_environment(python)
     implementation = environment.implementation or "cpython"
-    try:
-        check_free_threaded(
-            platforms=(environment.platform,),
-            implementations=(implementation,),
-            python_versions=(axis["python_version"],),
-        )
-    except ValueError as exc:
-        msg = f"invalid [tool.nab.environment]: {exc}"
-        raise ConfigError(msg) from exc
+
+    _check_free_threaded_environment(
+        environment, (axis["python_version"],) if environment.python else ()
+    )
+
     return ResolveTarget.for_declared(
         python_version=axis["python_version"],
         spec=environment.platform,
         implementation=implementation,
         python_full_version=axis["python_full_version"],
     )
+
+
+def _check_free_threaded_environment(
+    environment: EnvironmentConfig, python_versions: Sequence[str]
+) -> None:
+    """Hold ``[tool.nab.environment]`` to the free-threaded interpreter floor.
+
+    ``python_versions`` is empty for a table that names no python, since
+    ``--python`` can still move that axis after the parse.  The parse then
+    checks only the implementation, and :func:`plan_targets` checks the
+    python the target ended up on.
+    """
+    if environment.platform is None:
+        return
+    try:
+        check_free_threaded(
+            platforms=(environment.platform,),
+            implementations=(environment.implementation or "cpython",),
+            python_versions=python_versions,
+        )
+    except ValueError as exc:
+        msg = f"invalid [tool.nab.environment]: {exc}"
+        raise ConfigError(msg) from exc
 
 
 def matrix_from_config(matrix: MatrixConfig) -> Matrix:
