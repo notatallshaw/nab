@@ -335,17 +335,16 @@ class TestRunBuildBackend:
         env.__exit__ = MagicMock(return_value=None)
         project = MagicMock()
         project.get_requires_for_build.return_value = []
-        project.metadata_path.side_effect = lambda out: out
 
         metadata_text = "Metadata-Version: 2.1\nName: legacy-pkg\nVersion: 0.1\n"
 
-        def fake_metadata_path(out_dir: str) -> str:
+        def fake_prepare(_dist: str, out_dir: str) -> str:
             target = Path(out_dir)
             target.mkdir(parents=True, exist_ok=True)
             (target / "METADATA").write_text(metadata_text, encoding="utf-8")
             return str(target)
 
-        project.metadata_path.side_effect = fake_metadata_path
+        project.prepare.side_effect = fake_prepare
 
         with (
             patch("nab_python._build.runner.NabBuildEnv", return_value=env),
@@ -971,8 +970,8 @@ class TestRunBuildBackendCorruptBuiltWheel:
     """A ``build_wheel`` hook that succeeds but emits an unreadable wheel must
     normalize to ``BuildBackendError``, whether the wheel is not a zip, its name
     will not parse, or its dist-info member cannot be decompressed. The read-back
-    sits outside the hook-error wrapper on both the ``build.metadata_path``
-    fallback and the runner's own skip path.
+    sits outside the hook-error wrapper on both the no-prepare-hook fallback and
+    the runner's own skip path.
     """
 
     def _pyproject(self, tmp_path: Path) -> None:
@@ -994,9 +993,9 @@ class TestRunBuildBackendCorruptBuiltWheel:
         self, wheel_name: str, data: bytes = b"not a zip"
     ) -> MagicMock:
         """A project whose ``build_wheel`` writes ``data`` and returns
-        ``wheel_name``. ``prepare`` returns None so ``metadata_path`` runs
-        ``build``'s real build_wheel fallback, whose read-back hits the real
-        ``parse_wheel_filename`` and ``zipfile.ZipFile``.
+        ``wheel_name``. ``prepare`` returns None, so the runner falls back to
+        building a wheel, whose read-back hits the real ``parse_wheel_filename``
+        and ``zipfile.ZipFile``.
         """
         project = MagicMock()
         project.get_requires_for_build.return_value = []
@@ -1008,9 +1007,6 @@ class TestRunBuildBackendCorruptBuiltWheel:
             return str(path)
 
         project.build.side_effect = fake_build
-        project.metadata_path.side_effect = lambda outdir: (
-            build.ProjectBuilder.metadata_path(project, outdir)
-        )
         return project
 
     def _run(
@@ -1032,9 +1028,9 @@ class TestRunBuildBackendCorruptBuiltWheel:
     def test_default_path_corrupt_wheel_wrapped(
         self, tmp_path: Path, config: NabProjectConfig
     ) -> None:
-        """The backend has no prepare hook, so ``build.metadata_path`` builds a
-        wheel and reads it with ``zipfile.ZipFile`` after the hook wrapper; a
-        corrupt wheel raises ``BadZipFile`` there, which the runner normalizes.
+        """The backend has no prepare hook, so the runner builds a wheel and
+        reads it with ``zipfile.ZipFile`` after the hook wrapper; a corrupt
+        wheel raises ``BadZipFile`` there, which the runner normalizes.
         """
         self._pyproject(tmp_path)
         self._run(
@@ -1044,8 +1040,8 @@ class TestRunBuildBackendCorruptBuiltWheel:
     def test_invalid_wheel_name_wrapped(
         self, tmp_path: Path, config: NabProjectConfig
     ) -> None:
-        """``build.metadata_path`` raises a bare ``ValueError('Invalid wheel')``
-        when the built wheel's name does not parse; the runner normalizes it.
+        """``parse_wheel_filename`` raises a bare ``ValueError`` when the built
+        wheel's name does not parse; the runner normalizes it.
         """
         self._pyproject(tmp_path)
         self._run(tmp_path, config, self._corrupt_building_project("garbage.whl"))
@@ -1114,6 +1110,96 @@ class TestRunBuildBackendCorruptBuiltWheel:
         )
 
 
+class TestRunBuildBackendBuildTaggedWheel:
+    """A wheel filename may carry a build tag, which never appears in the
+    dist-info directory name.  Both metadata routes read METADATA out of the
+    built wheel, so neither may derive the dist-info name from the filename.
+    """
+
+    _METADATA = (
+        "Metadata-Version: 2.1\nName: probepkg\nVersion: 1.0\nRequires-Dist: attrs>=1\n"
+    )
+
+    def _pyproject(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            "[build-system]\n"
+            "requires = []\n"
+            'build-backend = "nab_test_backend"\n'
+            'backend-path = ["."]\n',
+            encoding="utf-8",
+        )
+
+    def _stub_hooks(self, monkeypatch: pytest.MonkeyPatch, wheel_name: str) -> None:
+        """Answer the wheel hooks in-process; no backend subprocess runs.
+
+        The backend implements ``build_wheel`` but not
+        ``prepare_metadata_for_build_wheel``.
+        """
+
+        def _prepare(*_a: object, **_k: object) -> object:
+            raise pyproject_hooks.HookMissing("prepare_metadata_for_build_wheel")
+
+        def _build_wheel(
+            _self: object,
+            wheel_directory: str,
+            config_settings: object = None,
+            metadata_directory: object = None,
+        ) -> str:
+            with zipfile.ZipFile(Path(wheel_directory) / wheel_name, "w") as zf:
+                zf.writestr("probepkg/__init__.py", "")
+                zf.writestr("probepkg-1.0.dist-info/METADATA", self._METADATA)
+                zf.writestr("probepkg-1.0.dist-info/WHEEL", "Wheel-Version: 1.0\n")
+            return wheel_name
+
+        monkeypatch.setattr(
+            pyproject_hooks.BuildBackendHookCaller,
+            "get_requires_for_build_wheel",
+            lambda *_a, **_k: [],
+        )
+        monkeypatch.setattr(
+            pyproject_hooks.BuildBackendHookCaller,
+            "prepare_metadata_for_build_wheel",
+            _prepare,
+        )
+        monkeypatch.setattr(
+            pyproject_hooks.BuildBackendHookCaller, "build_wheel", _build_wheel
+        )
+
+    @pytest.mark.parametrize("skip_prepare", [False, True])
+    @pytest.mark.parametrize(
+        "wheel_name",
+        [
+            "probepkg-1.0-py3-none-any.whl",
+            "probepkg-1.0-1-py3-none-any.whl",
+            "probepkg-1.0-42abc-cp312-cp312-manylinux_2_17_x86_64.whl",
+        ],
+    )
+    def test_build_tag_does_not_hide_the_dist_info(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+        wheel_name: str,
+        skip_prepare: bool,
+    ) -> None:
+        self._pyproject(tmp_path)
+        self._stub_hooks(monkeypatch, wheel_name)
+        monkeypatch.setattr(
+            runner_mod, "_should_skip_prepare", lambda *_a: skip_prepare
+        )
+
+        env = MagicMock()
+        env.__enter__ = MagicMock(return_value=env)
+        env.__exit__ = MagicMock(return_value=None)
+
+        with patch("nab_python._build.runner.NabBuildEnv", return_value=env):
+            metadata = run_build_backend(tmp_path, config=config)
+
+        assert metadata.name == "probepkg"
+        assert str(metadata.version) == "1.0"
+        assert [str(req) for req in metadata.requires_dist] == ["attrs>=1"]
+
+
 _HOOK_MISSING = object()
 
 
@@ -1143,8 +1229,7 @@ class TestRunBuildBackendNonStringHookPath:
         """Answer the wheel hooks in-process, so no backend subprocess runs.
 
         A ``prepare`` of ``_HOOK_MISSING`` raises ``HookMissing``, which is what
-        sends ``build.ProjectBuilder.metadata_path`` down its ``build_wheel``
-        fallback.
+        sends the runner down its ``build_wheel`` fallback.
         """
 
         def _prepare(*_a: object, **_k: object) -> object:
@@ -1196,8 +1281,8 @@ class TestRunBuildBackendNonStringHookPath:
         config: NabProjectConfig,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """With no prepare hook, ``build.metadata_path`` falls back to
-        ``build_wheel``, whose return hits the same join.
+        """With no prepare hook, the runner falls back to ``build_wheel``,
+        whose return hits the same join.
         """
         self._pyproject(tmp_path)
         self._stub_hooks(monkeypatch, build_wheel=1)

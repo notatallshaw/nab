@@ -9,9 +9,9 @@ contains fields nab cannot read statically, run_build_backend:
 2. Opens a :class:`~nab_python._build.env.NabBuildEnv` populated with
    those requirements.
 3. Hands the env to ``build.ProjectBuilder.from_isolated_env`` and
-   asks it for the wheel metadata via ``metadata_path()``, which
-   tries ``prepare_metadata_for_build_wheel`` and falls back to a
-   full ``build_wheel`` when the backend lacks that hook.
+   asks it for the wheel metadata via ``prepare()``, falling back to
+   a full ``build_wheel`` and reading the wheel's own dist-info when
+   the backend lacks ``prepare_metadata_for_build_wheel``.
 4. Parses the resulting ``METADATA`` file into
    :class:`~nab_python.metadata.WheelMetadata`.
 
@@ -251,17 +251,24 @@ def _extract_metadata_dir(
 ) -> Path:
     """Return the dist-info directory the backend produced.
 
-    ``build`` lets two faults through raw, outside its own hook-error
-    wrapper: reading back a wheel it just built, and joining a
+    ``prepare_metadata_for_build_wheel`` is optional; ``prepare``
+    returns ``None`` when the backend has no such hook, which takes
+    the same route as ``skip_prepare``.
+
+    Two faults arrive raw rather than as a ``BuildBackendException``:
+    reading back the built wheel, and ``build`` joining a
     path-returning hook's result onto ``output_dir``.
     """
     try:
-        if skip_prepare:
-            return _build_wheel_and_extract(project, output_dir)
-        return Path(project.metadata_path(output_dir))
-    # A wheel whose name will not parse raises a bare ValueError on either
-    # branch; a member zipfile cannot decompress surfaces as zlib.error,
-    # lzma.LZMAError, or NotImplementedError (a RuntimeError subclass).
+        if not skip_prepare:
+            prepared = project.prepare("wheel", output_dir)
+            if prepared is not None:
+                return Path(prepared)
+
+        return _build_wheel_and_extract(project, output_dir)
+    # A wheel whose name will not parse raises a bare ValueError; a member
+    # zipfile cannot decompress surfaces as zlib.error, lzma.LZMAError, or
+    # NotImplementedError (a RuntimeError subclass).
     except (
         zipfile.BadZipFile,
         ValueError,
