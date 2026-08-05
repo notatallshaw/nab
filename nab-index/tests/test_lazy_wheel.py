@@ -568,14 +568,23 @@ def test_absolute_probe_206_without_total_falls_back_to_plain_get(
     assert result.text == _META.decode("utf-8")
 
 
-def test_absolute_probe_error_raises() -> None:
+@pytest.mark.parametrize(
+    "error_headers",
+    [{}, {"content-encoding": "gzip"}],
+    ids=["identity", "encoded"],
+)
+def test_absolute_probe_error_raises(error_headers: dict[str, str]) -> None:
+    """A content-encoded error body is still an error, not a refused range."""
+
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
         if kind == "suffix":
             return _FakeResponse(501, {}, b"")
-        return _FakeResponse(404, {}, b"")
+        return _FakeResponse(404, error_headers, b"")
 
+    memo = RangeCapabilityMemo()
     with pytest.raises(HttpError):
-        _run_scripted(script)
+        _run_scripted(script, memo=memo)
+    assert memo.capability("files.example.org") is RangeCapability.UNKNOWN
 
 
 def test_range_rejected_plain_get_error_raises() -> None:
@@ -680,16 +689,23 @@ def test_absolute_tail_206_gzip_is_unsupported() -> None:
     assert result.outcome is RangeOutcome.UNSUPPORTED
 
 
-def test_absolute_tail_error_raises() -> None:
+@pytest.mark.parametrize(
+    "error_headers",
+    [{}, {"content-encoding": "gzip"}],
+    ids=["identity", "encoded"],
+)
+def test_absolute_tail_error_raises(error_headers: dict[str, str]) -> None:
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
         if kind == "suffix":
             return _FakeResponse(501, {}, b"")
         if a == 0 and b == 0:
             return t.partial(0, 0)
-        return _FakeResponse(500, {}, b"")
+        return _FakeResponse(500, error_headers, b"")
 
+    memo = RangeCapabilityMemo()
     with pytest.raises(HttpError):
-        _run_scripted(script)
+        _run_scripted(script, memo=memo)
+    assert memo.capability("files.example.org") is RangeCapability.UNKNOWN
 
 
 def test_growth_200_full_body_recovers() -> None:
