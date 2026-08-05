@@ -49,6 +49,7 @@ from .config_sources import (
     resolve_config,
 )
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
+from .paths import resolve_path
 from .provider import (
     ArchiveSource,
     BuildPolicy,
@@ -2457,57 +2458,67 @@ def _parse_vcs(value: object) -> VcsConfig:
 _LOCAL_SOURCE_KEYS = frozenset({"name", "path", "editable", "subdirectory"})
 
 
+def _parse_local_source(entry: object, i: int, *, pyproject_dir: Path) -> LocalSource:
+    if not isinstance(entry, dict):
+        msg = f"local-sources[{i}] must be a table, got {type(entry).__name__}"
+        raise ConfigError(msg)
+
+    unknown = sorted(set(entry) - _LOCAL_SOURCE_KEYS)
+    if unknown:
+        msg = (
+            f"unknown local-sources[{i}] keys: {unknown!r};"
+            f" expected {sorted(_LOCAL_SOURCE_KEYS)!r}"
+        )
+        raise ConfigError(msg)
+
+    try:
+        name = entry["name"]
+        path_value = entry["path"]
+    except KeyError as missing:
+        msg = f"local-sources[{i}] missing required key {missing!s}"
+        raise ConfigError(msg) from None
+    if not isinstance(name, str) or not isinstance(path_value, str):
+        msg = f"local-sources[{i}] name and path must be strings"
+        raise ConfigError(msg)
+
+    editable = entry.get("editable", False)
+    if not isinstance(editable, bool):
+        msg = f"local-sources[{i}] editable must be a boolean"
+        raise ConfigError(msg)
+
+    subdirectory = entry.get("subdirectory")
+    if subdirectory is not None and not isinstance(subdirectory, str):
+        msg = f"local-sources[{i}] subdirectory must be a string"
+        raise ConfigError(msg)
+    if subdirectory is not None and subdirectory_escapes(subdirectory):
+        msg = (
+            f"local-sources[{i}] subdirectory {subdirectory!r} escapes the source tree"
+        )
+        raise ConfigError(msg)
+
+    resolved = resolve_path(pyproject_dir, path_value)
+    if resolved is None:
+        msg = f"local-sources[{i}] path {path_value!r} is not a usable filesystem path"
+        raise ConfigError(msg)
+
+    return LocalSource(
+        name=name,
+        path=str(resolved),
+        editable=editable,
+        subdirectory=subdirectory,
+    )
+
+
 def _parse_local_sources(
     value: object, *, pyproject_dir: Path
 ) -> tuple[LocalSource, ...]:
     if not isinstance(value, list):
         msg = f"local-sources must be an array of tables, got {type(value).__name__}"
         raise ConfigError(msg)
-    out: list[LocalSource] = []
-    for i, entry in enumerate(value):
-        if not isinstance(entry, dict):
-            msg = f"local-sources[{i}] must be a table, got {type(entry).__name__}"
-            raise ConfigError(msg)
-        unknown = sorted(set(entry) - _LOCAL_SOURCE_KEYS)
-        if unknown:
-            msg = (
-                f"unknown local-sources[{i}] keys: {unknown!r};"
-                f" expected {sorted(_LOCAL_SOURCE_KEYS)!r}"
-            )
-            raise ConfigError(msg)
-        try:
-            name = entry["name"]
-            path_value = entry["path"]
-        except KeyError as missing:
-            msg = f"local-sources[{i}] missing required key {missing!s}"
-            raise ConfigError(msg) from None
-        if not isinstance(name, str) or not isinstance(path_value, str):
-            msg = f"local-sources[{i}] name and path must be strings"
-            raise ConfigError(msg)
-        editable = entry.get("editable", False)
-        if not isinstance(editable, bool):
-            msg = f"local-sources[{i}] editable must be a boolean"
-            raise ConfigError(msg)
-        subdirectory = entry.get("subdirectory")
-        if subdirectory is not None and not isinstance(subdirectory, str):
-            msg = f"local-sources[{i}] subdirectory must be a string"
-            raise ConfigError(msg)
-        if subdirectory is not None and subdirectory_escapes(subdirectory):
-            msg = (
-                f"local-sources[{i}] subdirectory {subdirectory!r}"
-                " escapes the source tree"
-            )
-            raise ConfigError(msg)
-        resolved = str((pyproject_dir / path_value).resolve())
-        out.append(
-            LocalSource(
-                name=name,
-                path=resolved,
-                editable=editable,
-                subdirectory=subdirectory,
-            )
-        )
-    return tuple(out)
+    return tuple(
+        _parse_local_source(entry, i, pyproject_dir=pyproject_dir)
+        for i, entry in enumerate(value)
+    )
 
 
 _VCS_SOURCE_KEYS = frozenset({"name", "url"})

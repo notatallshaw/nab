@@ -2309,6 +2309,15 @@ class TestLocalSources:
         with pytest.raises(ConfigError, match="unknown local-sources"):
             read_pyproject_config(path)
 
+    def test_path_with_nul_rejected(self, tmp_path: Path) -> None:
+        # An embedded NUL is valid TOML, so the parser hands it through.
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "x"\npath = "../\\u0000x"\n',
+        )
+        with pytest.raises(ConfigError, match="is not a usable filesystem path"):
+            read_pyproject_config(path)
+
     def test_duplicate_canonical_name_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
