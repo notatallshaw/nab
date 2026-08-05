@@ -711,8 +711,10 @@ class Provider:
             tuple[str, Version], dict[str, list[tuple[Requirement, str]]]
         ] = {}
 
-        # Memoised sdist-rejections so re-tries do not re-parse PKG-INFO.
-        self._unsupported_sdists: set[tuple[str, Version]] = set()
+        # Memoised sdist-rejections so re-tries do not re-parse PKG-INFO or
+        # rebuild.  Value is the cached error message so a re-ask raises the
+        # same rejection.
+        self._unsupported_sdists: dict[tuple[str, Version], str] = {}
 
         # Memoised metadata-parse failures (malformed Requires-Dist, etc.)
         # keyed by (canonical_name, Version).  Value is the cached error
@@ -2063,15 +2065,9 @@ class Provider:
         cache_key = (normalized, version)
         if cache_key in self.deps_cache:
             return self.deps_cache[cache_key]
-        if cache_key in self._unsupported_sdists:
-            effective = self.effective_build_policy(
-                normalized, version, self.serving_index(normalized)
-            )
-            msg = (
-                f"{normalized}=={version} sdist metadata could not be extracted"
-                f" under BuildPolicy.{effective.name} (cached prior failure)"
-            )
-            raise UnsupportedSdistError(msg)
+        cached_unsupported = self._unsupported_sdists.get(cache_key)
+        if cached_unsupported is not None:
+            raise UnsupportedSdistError(cached_unsupported)
         cached_invalid = self._invalid_metadata.get(cache_key)
         if cached_invalid is not None:
             raise MetadataError(cached_invalid)
@@ -2127,8 +2123,8 @@ class Provider:
             self.parse_and_cache_metadata(
                 cache_key, metadata_text, from_sdist=from_sdist
             )
-        except UnsupportedSdistError:
-            self._unsupported_sdists.add(cache_key)
+        except UnsupportedSdistError as exc:
+            self._unsupported_sdists[cache_key] = str(exc)
             raise
         except (ForeignMetadataError, IncompatiblePythonError) as exc:
             self._invalid_metadata[cache_key] = str(exc)

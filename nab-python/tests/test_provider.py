@@ -9698,6 +9698,53 @@ class TestBuildRemoteFailureModes:
         with pytest.raises(UnsupportedSdistError, match="does not match"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
+    def test_cached_rejection_repeats_original_message(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.BUILD_REMOTE,
+        )
+
+        def _ok_fetch(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...],
+        ) -> threading.Event:
+            coordinator.index.store_sdist_archive(pkg, ver, b"data")
+            return _done_event()
+
+        coordinator.request_sdist_archive.side_effect = _ok_fetch
+        monkeypatch.setattr(
+            build_remote, "extract_sdist_archive", lambda _d, target: target
+        )
+
+        built = WheelMetadata(
+            name="pkg",
+            version=V("1.0"),
+            requires_python=SpecifierSet(">=3.13"),
+            requires_dist=[Requirement("dep-a>=1")],
+            provides_extra=[],
+        )
+        monkeypatch.setattr(
+            "nab_python.build_backend.extract_metadata", lambda *_a, **_k: built
+        )
+
+        with pytest.raises(UnsupportedSdistError) as first:
+            provider.get_dependencies("pkg", V("1.0"))
+        with pytest.raises(UnsupportedSdistError) as second:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        assert "built sdist requires Python >=3.13" in str(first.value)
+        assert str(second.value) == str(first.value)
+
 
 class TestPublicAccessors:
     """Public read accessors used by lockfile / download tooling."""
