@@ -64,7 +64,9 @@ from nab_python.workspace import WorkspaceConfig
 
 def write(tmp_path: Path, body: str) -> Path:
     p = tmp_path / "pyproject.toml"
-    p.write_text(body)
+    # TOML is UTF-8 by spec and nab reads the file in binary, so the fixture
+    # must not pick up the platform default (cp1252 on Windows).
+    p.write_text(body, encoding="utf-8")
     return p
 
 
@@ -2465,6 +2467,34 @@ class TestArchiveSources:
         )
         with pytest.raises(ConfigError, match="unknown archive URL fragment"):
             read_pyproject_config(path)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://[::1/foo-1.0.tar.gz",
+            "https://ex.com]/foo-1.0.tar.gz",
+            "https://exa\N{ACCOUNT OF}mple.com/foo-1.0.tar.gz",
+        ],
+    )
+    def test_malformed_authority_rejected(self, tmp_path: Path, url: str) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.archive-sources]]\nname = "x"\n'
+            f'url = "{url}#sha256=' + "e" * 64 + '"\n',
+        )
+        with pytest.raises(
+            ConfigError, match=r"archive-sources\[0\] url .* does not parse"
+        ):
+            read_pyproject_config(path)
+
+    def test_bracketed_ipv6_authority_accepted(self, tmp_path: Path) -> None:
+        url = "https://[2001:db8::1]/foo-1.0.tar.gz#sha256=" + "e" * 64
+        path = write(
+            tmp_path,
+            f'[[tool.nab.archive-sources]]\nname = "x"\nurl = "{url}"\n',
+        )
+        (source,) = read_pyproject_config(path).archive_sources
+        assert source.url == url
 
     def test_duplicate_collides_with_vcs_source(self, tmp_path: Path) -> None:
         path = write(
