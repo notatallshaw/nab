@@ -190,9 +190,9 @@ listing.  Two of those losses matter:
 * A PEP 503 page carries no upload time.  Unless the index emits the
   non-standard `data-upload-time` attribute, every file it serves is
   excluded once `uploaded-prior-to` applies.
-* A page carries at most one hash, in the URL fragment.  A file whose
-  only fragment digest is md5 gives `nab lock` nothing to record, and
-  the PEP 751 and requirements writers then fail on the missing hash.
+* A page publishes its hashes in the URL fragment.  A file whose only
+  fragment digest is md5 gives `nab lock` nothing to record, and the
+  PEP 751 and requirements writers then fail on the missing hash.
 
 ## Overrides
 
