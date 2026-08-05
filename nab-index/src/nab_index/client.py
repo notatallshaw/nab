@@ -91,15 +91,9 @@ _WHEEL_DASHES_WITH_BUILD = 5
 
 
 @lru_cache(maxsize=65536)
-def _intern_version(version: str) -> Version:
-    """Construct a cached :class:`Version`."""
-    return Version(version)
-
-
-@lru_cache(maxsize=65536)
 def _canonical_version(version: str) -> str:
     """Return a cached canonical version string."""
-    return str(_intern_version(version))
+    return str(Version(version))
 
 
 @lru_cache(maxsize=65536)
