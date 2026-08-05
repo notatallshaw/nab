@@ -72,6 +72,24 @@ def build_wheel_member_front(padding: int = 20000) -> bytes:
     return buf.getvalue()
 
 
+def build_wheel_big_directory() -> bytes:
+    """Build a wheel whose central directory alone tops a megabyte.
+
+    Thousands of long-named empty members inflate the directory while a
+    stored padding blob keeps it a small slice of the whole file, so the
+    directory can only be read by growing the tail window well past a
+    megabyte.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr("widget-1.0.dist-info/METADATA", _META)
+        zf.writestr("widget-1.0.dist-info/WHEEL", b"Wheel-Version: 1.0\n")
+        zf.writestr("widget/_pad.bin", b"\x00" * 6_000_000)
+        for i in range(4400):
+            zf.writestr(f"widget/pad/{i:05d}_{'x' * 250}.py", b"")
+    return buf.getvalue()
+
+
 def build_wheel_member_last(metadata: bytes) -> bytes:
     """Build a wheel whose METADATA is the last member by offset.
 
@@ -93,6 +111,11 @@ def _parse_range(value: str) -> tuple[str, int, int]:
         return ("suffix", int(body[1:]), 0)
     start, _, end = body.partition("-")
     return ("absolute", int(start), int(end))
+
+
+def _range_span(rng: str, total: int) -> int:
+    kind, a, b = _parse_range(rng)
+    return min(a, total) if kind == "suffix" else b - a + 1
 
 
 class _FakeResponse:
@@ -341,12 +364,21 @@ def test_growth_loop_when_directory_beyond_tail() -> None:
     assert result.text == _META.decode("utf-8")
 
 
-def test_growth_cap_returns_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    import nab_index.lazy_wheel as lw
-
-    monkeypatch.setattr(lw, "_MAX_TAIL", 48)
-    wheel = build_wheel(padding=4000)
+def test_directory_over_a_megabyte_is_read_in_ranges() -> None:
+    # Real wheels carry directories this size (torch's tops 1.3 MB), so the
+    # growth loop must keep going rather than give up or fetch the body.
+    wheel = build_wheel_big_directory()
     transport = FakeRangeTransport("well_behaved", wheel)
+    result = _read(transport)
+    assert result.outcome is RangeOutcome.PARTIAL
+    assert result.text == _META.decode("utf-8")
+    assert all(rng is not None for rng, _ in transport.requests)
+    fetched = sum(_range_span(rng, len(wheel)) for rng, _ in transport.requests)
+    assert fetched < len(wheel) // 2
+
+
+def test_unreadable_bytes_exhaust_growth_and_return_missing() -> None:
+    transport = FakeRangeTransport("well_behaved", b"not a zip archive " * 300)
     result = _read(transport, tail_size=16)
     assert result.outcome is RangeOutcome.MISSING
     assert result.text is None
