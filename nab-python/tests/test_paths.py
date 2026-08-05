@@ -8,7 +8,7 @@ import stat
 from pathlib import Path
 from unittest.mock import patch
 
-from nab_python.paths import PathState, path_state
+from nab_python.paths import PathState, path_state, resolve_path
 
 
 def _fake_stat(mode: int) -> os.stat_result:
@@ -56,3 +56,20 @@ class TestPathState:
             state = path_state(path)
         assert state is PathState.UNREADABLE
         assert state.should_read
+
+
+class TestResolvePath:
+    def test_normalises_against_base(self, tmp_path: Path) -> None:
+        base = tmp_path.resolve()
+        (base / "pkg").mkdir()
+        assert resolve_path(base / "pkg", "../lib") == base / "lib"
+
+    def test_nul_in_name(self, tmp_path: Path) -> None:
+        assert resolve_path(tmp_path, "pk\x00g") is None
+
+    def test_unencodable_name(self, tmp_path: Path) -> None:
+        # A lone surrogate only fails the encode on POSIX, so the resolve is
+        # mocked to reach the arm on every platform.
+        broken = UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogates not allowed")
+        with patch.object(Path, "resolve", side_effect=broken):
+            assert resolve_path(tmp_path, "pkg") is None

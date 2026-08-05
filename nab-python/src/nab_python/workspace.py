@@ -27,7 +27,7 @@ import tomli
 
 from ._toml import tool_nab_section
 from ._vendor.packaging.utils import canonicalize_name
-from .paths import path_state
+from .paths import path_state, resolve_path
 from .provider import LocalSource
 
 if TYPE_CHECKING:
@@ -164,7 +164,14 @@ def workspace_local_sources(
             )
             raise WorkspaceDiscoveryError(msg)
 
-        member_dir = (root_dir / entry).resolve()
+        member_dir = resolve_path(root_dir, entry)
+        if member_dir is None:
+            msg = (
+                f"{declared_in}: workspace member {entry!r}"
+                " is not a usable filesystem path"
+            )
+            raise WorkspaceDiscoveryError(msg)
+
         member_pyproject = member_dir / "pyproject.toml"
         if not path_state(member_pyproject).should_read:
             msg = (

@@ -1,4 +1,4 @@
-"""Presence checks that keep an absent path apart from an unreadable one."""
+"""Path resolution, plus presence checks that tell absent from unreadable."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ __all__ = [
     "PathState",
     "is_absent_error",
     "path_state",
+    "resolve_path",
 ]
 
 _ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR})
@@ -74,3 +75,18 @@ def path_state(path: Path) -> PathState:
     if stat.S_ISDIR(st.st_mode):
         return PathState.DIRECTORY
     return PathState.OTHER
+
+
+def resolve_path(base: Path, entry: str) -> Path | None:
+    """Resolve ``entry`` against ``base``, or ``None`` for an unusable name.
+
+    An embedded NUL is checked up front because Windows keeps it in the
+    resolved path instead of raising; other unencodable names raise from
+    the resolve itself.
+    """
+    if "\x00" in entry:
+        return None
+    try:
+        return (base / entry).resolve()
+    except ValueError:
+        return None
