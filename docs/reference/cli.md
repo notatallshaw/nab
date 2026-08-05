@@ -261,7 +261,7 @@ directory uses: `cache-dir` is read off the config source ladder, so a
 
 ## Runtime flags
 
-Both subcommands accept the same runtime knobs:
+`lock` and `download` accept the same runtime knobs:
 
 | Flag | Default | Effect |
 | ---- | ------- | ------ |
