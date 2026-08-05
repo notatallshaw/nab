@@ -8,13 +8,14 @@ single-environment resolve against a shared
 :class:`~nab_python.fetch.FetchCoordinator`, so metadata is fetched once
 across them.
 
-A declared conflict is the one place the two differ, and it differs by
-what the project declared rather than by how many targets it has: a
-matrix *forks* (it resolves each conflicting member separately and marks
-the pins with a membership clause, so one lock serves both selections),
-while a project resolving for a single environment *refuses* a selection
-that activates two members of one exclusive set, because a single
-environment's lock has nowhere to put the second one.
+A declared conflict is the one place a resolve can produce more than one
+result for an environment, and it turns on what the selection reaches,
+not on how many environments the project targets.  Directly co-selecting
+two members of an exclusive set *forks*: each member gets its own resolve
+and its pins carry a membership clause, so one lock serves both
+selections.  A selection that reaches two members only transitively (an
+umbrella extra or group) has no fork to carry the second, so it is
+*refused*.  Both hold whether or not a matrix is declared.
 """
 
 from __future__ import annotations

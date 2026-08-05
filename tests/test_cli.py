@@ -367,6 +367,15 @@ def _multi_tuple_universal_result() -> ResolveResult:
     )
 
 
+def _multi_tuple_failed_result(error: ResolutionError | None) -> ResolveResult:
+    """Two tuples where the second fails with ``error``; the first resolves."""
+    ok, bad = (_target(py_minor) for py_minor in ("3.11", "3.12"))
+    return ResolveResult(
+        targets=(ok, bad),
+        target_results=[_resolved(ok, {"foo": V("1.0")}), _failed(bad, error)],
+    )
+
+
 def _forked_universal_result() -> ResolveResult:
     """One matrix tuple that ``[tool.nab].conflicts`` forked into two."""
     tuples = tuple(_target(selection=(("extra", extra),)) for extra in ("cpu", "gpu"))
@@ -580,6 +589,50 @@ class TestLockCommandSpecific:
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
         assert "resolution failed: conflict" in capsys.readouterr().err
+
+    def test_forked_specific_failure_reports_per_fork_blocks(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A conflict fork in specific mode reports every fork, not one error.
+
+        Directly co-selecting two members of a declared conflict set
+        forks a single-environment resolve into one target per member,
+        so a failed fork has a sibling that resolved.  The report labels
+        each fork and keeps the succeeded fork's pins, as a matrix does.
+        """
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "1"\ndependencies = ["torch"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["torch"]\n'
+            'gpu = ["torch"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n',
+        )
+        host = ResolveTarget.for_host()
+        cpu = host.with_selection((("extra", "cpu"),))
+        gpu = host.with_selection((("extra", "gpu"),))
+        result = ResolveResult(
+            targets=(cpu, gpu),
+            target_results=[
+                _resolved(cpu, {"torch": V("2.3.0")}),
+                _failed(gpu, ResolutionError("no compatible torch-cuda wheel")),
+            ],
+        )
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=result),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(
+                pyproject,
+                format="requirements-without-hashes",
+                extras=("cpu", "gpu"),
+            )
+        err = capsys.readouterr().err
+        assert "# host-extra-cpu" in err
+        assert "torch==2.3.0" in err
+        assert "# host-extra-gpu: FAILED" in err
+        assert "#   ResolutionError: no compatible torch-cuda wheel" in err
 
     def test_pylock_to_stdout(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1944,9 +1997,7 @@ class TestLockCommandUniversal:
         with (
             patch(
                 "nab.cli.resolve_for_targets",
-                return_value=_universal_result(
-                    success=False, error=ResolutionError("conflict")
-                ),
+                return_value=_multi_tuple_failed_result(ResolutionError("conflict")),
             ),
             pytest.raises(SystemExit, match="1"),
         ):
@@ -1964,9 +2015,7 @@ class TestLockCommandUniversal:
         with (
             patch(
                 "nab.cli.resolve_for_targets",
-                return_value=_universal_result(
-                    success=False, error=ResolutionError(multi)
-                ),
+                return_value=_multi_tuple_failed_result(ResolutionError(multi)),
             ),
             pytest.raises(SystemExit, match="1"),
         ):
@@ -1984,12 +2033,36 @@ class TestLockCommandUniversal:
         with (
             patch(
                 "nab.cli.resolve_for_targets",
-                return_value=_universal_result(success=False, error=None),
+                return_value=_multi_tuple_failed_result(None),
             ),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, format="requirements-without-hashes")
         assert "FAILED" in capsys.readouterr().err
+
+    def test_single_tuple_matrix_failure_is_single_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A one-tuple matrix failure reads as one error, not a block.
+
+        A single-tuple matrix pins under one target on every surface (see
+        ``test_per_tuple_pins_to_explicit_file_single_tuple``), so its
+        failure is the run's error, matching a single-environment resolve.
+        """
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_universal_result(
+                    success=False, error=ResolutionError("conflict")
+                ),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes")
+        err = capsys.readouterr().err
+        assert "resolution failed: conflict" in err
+        assert "FAILED" not in err
 
     def test_missing_dependencies_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

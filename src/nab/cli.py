@@ -643,22 +643,24 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
         sys.exit(1)
 
     if not result.success:
-        _report_failures(result, matrix=config.matrix is not None)
+        _report_failures(result)
         sys.exit(1)
     return result
 
 
-def _report_failures(result: ResolveResult, *, matrix: bool) -> None:
+def _report_failures(result: ResolveResult) -> None:
     """Report the targets that did not resolve.
 
-    A project resolving for one environment has one error, and it is the
-    run's error.  A matrix has one per tuple, and the pins that did
-    resolve are as informative as the failures, so each tuple gets a
-    labelled block.  Both go to stderr: a failed run exits non-zero, so
-    the report is a diagnostic, not the requested lock, and stdout stays
-    clean for a caller that piped it.
+    A resolve with one target has one error, and it is the run's error.
+    A resolve with several (a matrix's tuples, or a conflict fork's
+    members, which fork in specific mode too) has one error per target,
+    and the pins that did resolve are as informative as the failures, so
+    each target gets a labelled block.  The check keys on the target
+    count, matching the lock-emission paths.  Both go to stderr: the
+    report is a diagnostic, not the requested lock, so stdout stays clean
+    for a caller that piped it.
     """
-    if not matrix:
+    if len(result.target_results) <= 1:
         first = next(tr.error for tr in result.every_result if tr.error is not None)
         printer().error(f"resolution failed: {first}")
         return
