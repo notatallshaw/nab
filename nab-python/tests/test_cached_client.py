@@ -1610,6 +1610,31 @@ class TestHtmlListing:
         assert wheel.hashes == (("sha256", self._DIGEST),)
         assert wheel.upload_time == self._UPLOAD_TIME
 
+    def test_hash_fragment_before_an_egg_part(self, tmp_path: Path) -> None:
+        page = (
+            f'<a href="torch-2.7.0-py3-none-any.whl#sha256={self._DIGEST}'
+            '&amp;egg=torch-2.7.0">torch</a>'
+        ).encode()
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert files[0].hashes == (("sha256", self._DIGEST),)
+
+    def test_hash_fragment_after_an_egg_part(self, tmp_path: Path) -> None:
+        page = (
+            '<a href="torch-2.7.0-py3-none-any.whl#egg=torch-2.7.0'
+            f'&amp;sha256={self._DIGEST}">torch</a>'
+        ).encode()
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert files[0].hashes == (("sha256", self._DIGEST),)
+
+    def test_every_fragment_hash_is_read(self, tmp_path: Path) -> None:
+        sha512 = "f" * 128
+        page = (
+            f'<a href="torch-2.7.0-py3-none-any.whl#sha256={self._DIGEST}'
+            f'&amp;sha512={sha512}">torch</a>'
+        ).encode()
+        files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
+        assert files[0].hashes == (("sha256", self._DIGEST), ("sha512", sha512))
+
     def test_malformed_ipv6_href_is_dropped(self, tmp_path: Path) -> None:
         # An unterminated IPv6 bracket makes the href join and split raise;
         # that anchor is dropped and its good sibling still resolves.

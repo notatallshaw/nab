@@ -7,6 +7,7 @@ client both have to read the same anchor-tag shape.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -155,17 +156,26 @@ def metadata_declaration(value: str | None) -> bool | dict[str, str] | None:
 
 
 def hash_fragment(fragment: str) -> tuple[tuple[str, str], ...]:
-    """Parse one ``algo=digest`` URL fragment into the ``hashes`` tuple shape.
+    """Read a URL fragment's hash declarations into the ``hashes`` tuple shape.
 
     :pep:`503` carries the artefact's hash in the URL fragment; it is the only
     place the hash appears when the index has not opted into :pep:`691` JSON.
+    The fragment is a ``&``-separated list of ``key=value`` parts, so a hash
+    can sit beside ``egg`` or ``subdirectory`` in any order.  A part keyed by
+    a ``hashlib`` algorithm and carrying a digest is a hash; anything else is
+    not.
     """
-    if not fragment:
-        return ()
-    algo, sep, digest = fragment.partition("=")
-    if not sep or not algo or not digest:
-        return ()
-    return ((algo.lower(), digest.lower()),)
+    hashes: list[tuple[str, str]] = []
+
+    for part in fragment.split("&"):
+        algo, sep, digest = part.partition("=")
+        if not sep or not digest:
+            continue
+        algo = algo.lower()
+        if algo in hashlib.algorithms_guaranteed:
+            hashes.append((algo, digest.lower()))
+
+    return tuple(hashes)
 
 
 def _file_entry(anchor: Anchor, base_url: str) -> dict[str, object] | None:
