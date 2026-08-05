@@ -28,6 +28,7 @@ from nab_python.target import (
     ResolveTarget,
     apply_python_axis_overlay,
     declared_environment,
+    declared_range_marker,
     environment_declaration,
     host_environment,
     marker_variables,
@@ -1055,6 +1056,74 @@ class TestEnvironmentDeclarationDocumented:
 
         missing = carried - self._documented_names()
         assert not missing, f"undocumented clause variables: {sorted(missing)}"
+
+
+class TestDeclaredRangeMarker:
+    """The environment a target stands for on its whole declared range."""
+
+    def test_a_minor_interval_leaves_the_micro_open(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.13", spec=PlatformSpec("linux_x86_64")
+        )
+        assert target.is_minor_interval
+        assert declared_range_marker(target) == (
+            'implementation_name == "cpython" and os_name == "posix"'
+            ' and platform_machine == "x86_64"'
+            ' and platform_python_implementation == "CPython"'
+            ' and platform_system == "Linux" and python_version == "3.13"'
+            ' and sys_platform == "linux"'
+        )
+
+    def test_a_host_target_pins_the_full_version(self) -> None:
+        target = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        assert not target.is_minor_interval
+        assert declared_range_marker(target) == (
+            'implementation_name == "cpython" and os_name == "posix"'
+            ' and platform_machine == "x86_64"'
+            ' and platform_python_implementation == "CPython"'
+            ' and platform_system == "Linux" and python_version == "3.13"'
+            ' and sys_platform == "linux"'
+            ' and python_full_version == "3.13.2"'
+        )
+
+    def test_a_python_patches_micro_pins_the_full_version(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.13",
+            spec=PlatformSpec("linux_x86_64"),
+            python_full_version="3.13.4",
+        )
+        assert not target.is_minor_interval
+        assert declared_range_marker(target).endswith(
+            'and python_full_version == "3.13.4"'
+        )
+
+    def test_the_kernel_and_by_constraint_axes_are_never_pinned(self) -> None:
+        target = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+        marker = declared_range_marker(target)
+        assert "platform_release" not in marker
+        assert "platform_version" not in marker
+        assert "implementation_version" not in marker
+
+    def test_a_non_cpython_target_pins_its_implementation(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.11",
+            spec=PlatformSpec("linux_x86_64"),
+            implementation="pypy",
+        )
+        assert target.is_minor_interval
+        assert declared_range_marker(target) == (
+            'implementation_name == "pypy" and os_name == "posix"'
+            ' and platform_machine == "x86_64"'
+            ' and platform_python_implementation == "PyPy"'
+            ' and platform_system == "Linux" and python_version == "3.11"'
+            ' and sys_platform == "linux"'
+        )
+
+    def test_the_marker_evaluates_true_on_the_target_environment(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.13", spec=PlatformSpec("linux_x86_64")
+        )
+        assert Marker(declared_range_marker(target)).evaluate(target.marker_env)
 
 
 class TestMicroBoundarySplitting:

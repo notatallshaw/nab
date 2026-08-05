@@ -23,6 +23,10 @@ else:
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
 from nab_python._lockfile.builder import _common_requires_python
+from nab_python._lockfile.coverage import (
+    CoverageError,
+    validate_marker_coverage,
+)
 from nab_python._lockfile.disjointness import (
     validate_marker_disjointness,
 )
@@ -94,7 +98,12 @@ from nab_python.resolve import (
     resolve_with_coordinator,
 )
 from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
+from nab_python.target import (
+    ResolveTarget,
+    environment_declaration,
+    micro_boundary_points,
+    slices_from_points,
+)
 
 
 def _target(
@@ -5820,3 +5829,168 @@ class TestConflictSetDeclaredMemberWithNoFork:
         if b is not None:
             expected.add(f"idna {self._B[b]}")
         assert self._select(self._lock(), groups) == expected
+
+
+class TestMarkerCoverage:
+    def _minor(
+        self, python_version: str = "3.13", platform: str = "linux_x86_64"
+    ) -> ResolveTarget:
+        """A bare-minor target resolved as a micro interval."""
+        return ResolveTarget.for_declared(
+            python_version=python_version, spec=PlatformSpec(platform)
+        )
+
+    def _row(self, target: ResolveTarget, consulted: Sequence[str] = ()) -> Marker:
+        """The environments row the emitter renders for ``target``."""
+        markers = [Marker(text) for text in consulted]
+        return Marker(environment_declaration(target, markers))
+
+    def _split(
+        self, target: ResolveTarget, consulted: str
+    ) -> tuple[list[ResolveTarget], list[Marker]]:
+        """Split ``target``'s minor at ``consulted`` into slices and their rows."""
+        markers = [Marker(consulted)]
+        points = micro_boundary_points(target, markers)
+        slices = slices_from_points(target, points)
+        rows = [Marker(environment_declaration(s, markers)) for s in slices]
+        return slices, rows
+
+    def _full_version(self, exc: CoverageError) -> Version:
+        """The python_full_version the witness message names."""
+        match = re.search(r'python_full_version == "([^"]+)"', str(exc))
+        assert match is not None
+        return Version(match.group(1))
+
+    def test_covering_unsplit_minor_passes(self) -> None:
+        target = self._minor("3.13")
+        validate_marker_coverage([target], environments=[self._row(target)])
+
+    def test_covering_split_minor_dedups_shared_reference(self) -> None:
+        target = self._minor("3.13")
+        slices, rows = self._split(target, 'python_full_version >= "3.13.2"')
+        assert len(slices) == 2
+        validate_marker_coverage(slices, environments=rows)
+
+    def test_empty_environments_returns_early(self) -> None:
+        validate_marker_coverage([self._minor("3.13")], environments=[])
+
+    def test_prerelease_floor_slice_passes(self) -> None:
+        target = self._minor("3.13")
+        slices, rows = self._split(target, 'python_full_version >= "3.13.5"')
+        validate_marker_coverage(slices, environments=rows)
+
+    def test_two_platform_lock_passes(self) -> None:
+        linux = self._minor("3.11", "linux_x86_64")
+        windows = self._minor("3.11", "windows_amd64")
+        validate_marker_coverage(
+            [linux, windows],
+            environments=[self._row(linux), self._row(windows)],
+        )
+
+    def test_whole_target_under_minor_row_passes(self) -> None:
+        whole = ResolveTarget.for_declared(
+            python_version="3.11",
+            spec=PlatformSpec("linux_x86_64"),
+            python_full_version="3.11.4",
+        )
+        validate_marker_coverage([whole], environments=[self._row(whole)])
+
+    def test_conflict_forks_covered_by_shared_row_pass(self) -> None:
+        base = self._minor("3.11")
+        cpu = base.with_selection((("extra", "cpu"),))
+        gpu = base.with_selection((("extra", "gpu"),))
+        validate_marker_coverage([cpu, gpu], environments=[self._row(base)])
+
+    def test_cpython_iv_mirror_split_minor_passes(self) -> None:
+        target = self._minor("3.13")
+        slices, rows = self._split(target, 'implementation_version >= "3.13.2"')
+        assert len(slices) == 2
+        assert any("implementation_version" in str(row) for row in rows)
+        validate_marker_coverage(slices, environments=rows)
+
+    def test_cpython_iv_mirror_genuine_gap_fires(self) -> None:
+        target = self._minor("3.13")
+        slices = slices_from_points(target, [Version("3.13.2"), Version("3.13.5")])
+        consulted = [Marker('implementation_version >= "3.13.0"')]
+        rows = [Marker(environment_declaration(s, consulted)) for s in slices]
+        del rows[1]
+        with pytest.raises(CoverageError) as excinfo:
+            validate_marker_coverage(slices, environments=rows)
+        found = self._full_version(excinfo.value)
+        assert Version("3.13.2") <= found < Version("3.13.5")
+
+    def test_micro_narrowing_reconstruction_fires(self) -> None:
+        target = self._minor("3.13")
+        row = Marker(
+            'python_version == "3.13" and sys_platform == "linux"'
+            ' and platform_machine == "x86_64"'
+            ' and python_full_version >= "3.13.2"'
+        )
+        with pytest.raises(CoverageError) as excinfo:
+            validate_marker_coverage([target], environments=[row])
+        found = self._full_version(excinfo.value)
+        assert found.release[:2] == (3, 13)
+        assert found < Version("3.13.2")
+
+    def test_interior_slice_gap_fires(self) -> None:
+        target = self._minor("3.13")
+        rows = [
+            Marker(
+                'python_version == "3.13" and sys_platform == "linux"'
+                ' and platform_machine == "x86_64"'
+                ' and python_full_version < "3.13.2"'
+            ),
+            Marker(
+                'python_version == "3.13" and sys_platform == "linux"'
+                ' and platform_machine == "x86_64"'
+                ' and python_full_version >= "3.13.5"'
+            ),
+        ]
+        with pytest.raises(CoverageError) as excinfo:
+            validate_marker_coverage([target], environments=rows)
+        found = self._full_version(excinfo.value)
+        assert Version("3.13.2") <= found < Version("3.13.5")
+
+    def test_dropped_target_row_fires(self) -> None:
+        linux = self._minor("3.13", "linux_x86_64")
+        windows = self._minor("3.11", "windows_amd64")
+        with pytest.raises(CoverageError, match="win32"):
+            validate_marker_coverage([linux, windows], environments=[self._row(linux)])
+
+    def test_intractable_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(self: MarkerSet) -> None:
+            raise IntractableMarkerSet("patched")
+
+        monkeypatch.setattr(MarkerSet, "witness", boom)
+        target = self._minor("3.13")
+        with pytest.raises(IntractableMarkerSet, match="patched"):
+            validate_marker_coverage([target], environments=[self._row(target)])
+
+    def test_build_pylock_non_covering_raises(self) -> None:
+        target = self._minor("3.13")
+        lock_input = LockInput(
+            targets={
+                target.label: TargetLock(target=target, pins={"foo": _index_pin()})
+            },
+            environments=[
+                Marker(
+                    'python_version == "3.13" and sys_platform == "linux"'
+                    ' and platform_machine == "x86_64"'
+                    ' and python_full_version >= "3.13.2"'
+                )
+            ],
+        )
+        with pytest.raises(CoverageError) as excinfo:
+            build_pylock(lock_input)
+        assert self._full_version(excinfo.value) < Version("3.13.2")
+
+    def test_build_pylock_covering_emits_cleanly(self) -> None:
+        target = self._minor("3.11")
+        lock_input = LockInput(
+            targets={
+                target.label: TargetLock(target=target, pins={"foo": _index_pin()})
+            },
+            environments=[self._row(target)],
+        )
+        pylock = build_pylock(lock_input)
+        assert pylock.environments is not None
