@@ -31,6 +31,7 @@ from unittest.mock import MagicMock, patch
 import build
 import pyproject_hooks
 import pytest
+import tomli
 from installer.utils import SCHEME_NAMES, Scheme
 
 from nab_index.client import SdistFile, WheelFile
@@ -49,6 +50,8 @@ from nab_python._build.runner import (
     run_build_backend,
 )
 from nab_python._provider.metadata_resolver import pick_dist
+from nab_python._vendor.packaging.requirements import Requirement
+from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
 from nab_python.download import DownloadError, DownloadResult, iter_artifacts
@@ -1271,6 +1274,29 @@ class TestFastSchemeDictionaryDestination:
         ) as parent:
             destination._compile_bytecode(Scheme("purelib"), MagicMock())
         parent.assert_called_once()
+
+
+class TestDeclaredInstallerFloor:
+    """``_install_wheels`` passes ``overwrite_existing``, added in installer 1.0."""
+
+    _LAST_RELEASE_WITHOUT_OVERWRITE_EXISTING = "0.7.0"
+
+    def test_floor_excludes_releases_without_overwrite_existing(self) -> None:
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        declared = tomli.loads(pyproject.read_text(encoding="utf-8"))["project"][
+            "dependencies"
+        ]
+
+        found = [
+            requirement
+            for requirement in map(Requirement, declared)
+            if canonicalize_name(requirement.name) == "installer"
+        ]
+        assert len(found) == 1, f"expected one installer requirement, got {found}"
+
+        assert not found[0].specifier.contains(
+            self._LAST_RELEASE_WITHOUT_OVERWRITE_EXISTING
+        )
 
 
 class TestNabBuildEnvOutsideContext:

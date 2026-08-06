@@ -25,7 +25,7 @@ dependencies = [
     "tomli>=2.0",
     "tomli_w>=1.2",
     "build>=1.2",
-    "installer>=0.7",
+    "installer>=1.0",
     "pyproject_hooks>=1.2",
     "typing_extensions>=4.6",
 ]
