@@ -697,9 +697,17 @@ def prefetch_walk_ahead(
         return
     picked = wheel_by_version(provider, normalized, versions_list)
     coordinator_index = provider.coordinator.index
+
+    # Reverse out of place: ``versions_list`` is the shared cached listing.
+    ordered = (
+        list(reversed(versions_list))
+        if provider.wants_lowest(normalized)
+        else versions_list
+    )
+
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
     seen_versions: set[Version] = set()
-    for version, _ in versions_list:
+    for version, _ in ordered:
         if version in seen_versions:
             continue
         seen_versions.add(version)
