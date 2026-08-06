@@ -50,8 +50,6 @@ __all__ = [
 # Initial suffix window. pip and poetry read about 10 KiB; the growth loop
 # makes correctness independent of the exact value.
 _DEFAULT_TAIL = 10240
-# Hard ceiling on the window the growth loop will fetch before giving up.
-_MAX_TAIL = 1024 * 1024
 
 _HTTP_OK = 200
 _HTTP_PARTIAL = 206
@@ -500,9 +498,9 @@ async def _open_zip(
         if opened is not None:
             return opened
         have = total - tail_low
-        if have >= total or have >= _MAX_TAIL:
+        if have >= total:
             return None
-        new_size = min(have * 2, total, _MAX_TAIL)
+        new_size = min(have * 2, total)
         new_low = total - new_size
         response = await _range_get(transport, url, f"bytes={new_low}-{tail_low - 1}")
         low = _absorb_range(response, sparse, new_low, wheel_hash)
@@ -621,11 +619,12 @@ async def read_wheel_metadata_over_range(
 
     ``wheel_hash`` is the wheel's published ``(algorithm, hex_digest)`` from the
     Simple-API listing, or ``None`` when none was published.  Whenever the whole
-    wheel comes back, whether from a host that ignores or refuses ranges or from
-    a 200 volunteered while a partial read is growing its window, the bytes are
-    checked against ``wheel_hash`` before their METADATA is read, so bytes that
-    disagree with the published digest never drive the resolve.  A partial read
-    that holds only a slice of the wheel is left unverified.
+    wheel comes back as one body, whether from a host that ignores or refuses
+    ranges or from a 200 volunteered while a partial read is growing its window,
+    the bytes are checked against ``wheel_hash`` before their METADATA is read,
+    so bytes that disagree with the published digest never drive the resolve.  A
+    ranged read is left unverified, even one whose window grew to cover the
+    whole file.
 
     Raises :class:`~nab_index.client.WheelHashMismatchError` when a full-body
     wheel fails ``wheel_hash``, and
