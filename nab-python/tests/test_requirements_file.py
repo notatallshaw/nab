@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,9 @@ from nab_python.requirements_file import (
     self_extra_markers,
 )
 from nab_resolver.errors import ResolutionError
+
+_AT_LIMIT = "1" * sys.get_int_max_str_digits()
+_OVERSIZED = _AT_LIMIT + "1"
 
 
 class TestAddExtraMarker:
@@ -180,6 +184,25 @@ class TestReadPyprojectDependencies:
         ):
             read_pyproject_dependencies(p)
 
+    @pytest.mark.parametrize("operator", ["==", "==="])
+    def test_oversized_specifier_version_raises(
+        self, tmp_path: object, operator: str
+    ) -> None:
+        """An oversized version converts only on comparison; parsing forces it."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text(f'[project]\ndependencies = ["foo{operator}{_OVERSIZED}"]\n')
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[project\].dependencies: Exceeds the limit",
+        ):
+            read_pyproject_dependencies(p)
+
+    def test_at_limit_specifier_version_is_read(self, tmp_path: object) -> None:
+        """A run of exactly the limit converts, so it stays a legal dependency."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text(f'[project]\ndependencies = ["foo=={_AT_LIMIT}"]\n')
+        assert [d.name for d in read_pyproject_dependencies(p)] == ["foo"]
+
     def test_string_dependencies_value_raises(self, tmp_path: object) -> None:
         """A bare string is rejected, not iterated character by character."""
         p = Path(str(tmp_path)) / "pyproject.toml"
@@ -283,6 +306,22 @@ class TestResolveGroupsToRequirements:
             InvalidProjectRequirementError, match=r"\[dependency-groups\]"
         ):
             resolve_groups_to_requirements({"dev": ["pytest >= bad junk"]}, ("dev",))
+
+    @pytest.mark.parametrize("operator", ["==", "==="])
+    def test_oversized_specifier_version_raises(self, operator: str) -> None:
+        """An oversized version converts only on comparison; parsing forces it."""
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[dependency-groups\]: Exceeds the limit",
+        ):
+            resolve_groups_to_requirements(
+                {"dev": [f"foo{operator}{_OVERSIZED}"]}, ("dev",)
+            )
+
+    def test_at_limit_specifier_version_resolves(self) -> None:
+        """A run of exactly the limit converts, so it stays a legal requirement."""
+        reqs = resolve_groups_to_requirements({"dev": [f"foo=={_AT_LIMIT}"]}, ("dev",))
+        assert [r.name for r in reqs] == ["foo"]
 
 
 class TestReadPyprojectOptionalDependencies:
@@ -570,6 +609,22 @@ class TestExpandExtraRequirements:
         opt = {"all": ["mypkg[fast]", "plain"], "fast": ["some-dep"]}
         out = expand_extra_requirements(opt, None, ["all"])
         assert sorted(r.name for r in out) == ["mypkg", "plain"]
+
+    @pytest.mark.parametrize("operator", ["==", "==="])
+    def test_oversized_specifier_version_raises(self, operator: str) -> None:
+        """An oversized version converts only on comparison; parsing forces it."""
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[project.optional-dependencies\] extra 'x': Exceeds the limit",
+        ):
+            expand_extra_requirements(
+                {"x": [f"foo{operator}{_OVERSIZED}"]}, "mypkg", ["x"]
+            )
+
+    def test_at_limit_specifier_version_expands(self) -> None:
+        """A run of exactly the limit converts, so it stays a legal requirement."""
+        out = expand_extra_requirements({"x": [f"foo=={_AT_LIMIT}"]}, "mypkg", ["x"])
+        assert [r.name for r in out] == ["foo"]
 
     def test_plain_extra_requirements_keep_their_markers(self) -> None:
         opt = {"cpu": ["torch", "numpy; python_version < '3.10'"]}
