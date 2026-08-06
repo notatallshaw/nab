@@ -22,6 +22,7 @@ import typing
 from typing import (
     TYPE_CHECKING,
     Any,
+    Literal,
     TypeVar,
     Union,
 )
@@ -52,11 +53,12 @@ if TYPE_CHECKING:
     from .specifiers import SpecifierSet
 
 
-__all__ = ["VersionRange"]
+__all__ = ["SortedOrder", "VersionRange"]
 
 T = TypeVar("T")
 UnparsedVersion = Union[Version, str]
 UnparsedVersionVar = TypeVar("UnparsedVersionVar", bound=UnparsedVersion)
+SortedOrder = Literal["ascending", "descending"]
 
 
 class _SetOp(enum.Enum):
@@ -370,18 +372,23 @@ def _struct_admits(
 
 
 def _bisect_predicate(
-    versions: Sequence[Version], predicate: Callable[[Version], bool]
+    items: Sequence[Any],
+    predicate: Callable[[Version], bool],
+    project: Callable[[Any], Version] | None = None,
 ) -> int:
     """First index whose ``predicate`` is true over an ascending list.
 
     The predicate must be monotonic (false runs then true runs). Equivalent to
     ``bisect.bisect_left`` on the mapped booleans, done by hand because the
     ``key`` parameter for :mod:`bisect` only exists on Python 3.10 and later.
+    ``project`` maps a probed item to the version it sorts by; ``None`` means
+    the items are already :class:`~packaging.version.Version` instances.
     """
-    low, high = 0, len(versions)
+    low, high = 0, len(items)
     while low < high:
         mid = (low + high) // 2
-        if predicate(versions[mid]):
+        item = items[mid]
+        if predicate(item if project is None else project(item)):
             high = mid
         else:
             low = mid + 1
@@ -389,25 +396,77 @@ def _bisect_predicate(
 
 
 def _partition_indexes(
-    versions: Sequence[Version], lower: LowerBound, upper: UpperBound
+    items: Sequence[Any],
+    lower: LowerBound,
+    upper: UpperBound,
+    project: Callable[[Any], Version] | None = None,
+    *,
+    descending: bool = False,
 ) -> tuple[int, int]:
-    """Locate one interval's bounds in an ascending version list.
+    """Locate one interval's entries in a version-ordered list.
 
-    Returns ``(first_inside, first_above)``: the index of the first version at
-    or above ``lower`` and of the first version strictly above ``upper``, so
-    ``versions[first_inside:first_above]`` are the versions the interval
-    contains. The bound predicates are monotonic over an ascending list, so
-    both cuts bisect on the predicate value.
+    Returns the half-open index pair bounding the entries the interval
+    contains, so ``items[start:stop]`` are those entries in list order. On an
+    ascending list ``lower`` cuts the start and ``upper`` cuts the stop; a
+    descending list swaps which bound cuts which end. Both bound predicates
+    are monotonic over a version-ordered list either way, so each cut is one
+    bisection. ``project`` maps an item to the version it sorts by.
     """
     above = lower._above
     below = upper._below
+    start_bound, stop_bound = (below, above) if descending else (above, below)
 
-    first_inside = 0 if above is None else _bisect_predicate(versions, above)
-    if below is None:
-        first_above = len(versions)
+    start = 0 if start_bound is None else _bisect_predicate(items, start_bound, project)
+    if stop_bound is None:
+        stop = len(items)
     else:
-        first_above = _bisect_predicate(versions, lambda v: not below(v))
-    return first_inside, first_above
+        stop = _bisect_predicate(items, lambda v: not stop_bound(v), project)
+    return start, stop
+
+
+def _make_project(
+    key: Callable[[Any], Version | str] | None,
+) -> Callable[[Any], Version]:
+    """Build the item-to-:class:`~packaging.version.Version` map for a sorted walk.
+
+    The bisections compare against bound predicates that only accept a
+    :class:`~packaging.version.Version`, so every probed item is coerced. An
+    item that does not parse cannot sit in version order at all, which is a
+    broken precondition rather than a non-match, so this raises rather than
+    dropping the item the way :meth:`VersionRange.filter` drops it.
+    """
+
+    def project(item: Any) -> Version:  # noqa: ANN401
+        raw: Version | str = item if key is None else key(item)
+        parsed = raw if isinstance(raw, Version) else coerce_version(raw)
+        if parsed is None:
+            raise ValueError(
+                f"{raw!r} does not parse as a version, so the given sequence "
+                f"is not in version order"
+            )
+        return parsed
+
+    return project
+
+
+def _check_order(
+    items: Sequence[Any], project: Callable[[Any], Version], *, descending: bool
+) -> None:
+    """Reject a sequence whose endpoints contradict the declared order.
+
+    One comparison of the two ends, which catches a list handed over in the
+    opposite order to the one named. It cannot prove the whole sequence is
+    ordered, and equal endpoints are accepted under either order.
+    """
+    if len(items) < 2:
+        return
+    first = project(items[0])
+    last = project(items[-1])
+    if last < first if not descending else first < last:
+        expected = "descending" if descending else "ascending"
+        raise ValueError(
+            f"assume_sorted={expected!r} but the sequence runs from {first} to {last}"
+        )
 
 
 def _lattice_release(version: Version, parts: int, *, above: bool) -> Version:
@@ -1232,6 +1291,8 @@ class VersionRange:
         iterable: Iterable[UnparsedVersionVar],
         prereleases: bool | None = None,
         key: None = ...,
+        *,
+        assume_sorted: None = None,
     ) -> Iterator[UnparsedVersionVar]: ...
 
     @typing.overload
@@ -1240,6 +1301,28 @@ class VersionRange:
         iterable: Iterable[T],
         prereleases: bool | None = None,
         key: Callable[[T], UnparsedVersion] = ...,
+        *,
+        assume_sorted: None = None,
+    ) -> Iterator[T]: ...
+
+    @typing.overload
+    def filter(
+        self,
+        iterable: Sequence[UnparsedVersionVar],
+        prereleases: bool | None = None,
+        key: None = ...,
+        *,
+        assume_sorted: SortedOrder,
+    ) -> Iterator[UnparsedVersionVar]: ...
+
+    @typing.overload
+    def filter(
+        self,
+        iterable: Sequence[T],
+        prereleases: bool | None = None,
+        key: Callable[[T], UnparsedVersion] = ...,
+        *,
+        assume_sorted: SortedOrder,
     ) -> Iterator[T]: ...
 
     def filter(
@@ -1247,6 +1330,8 @@ class VersionRange:
         iterable: Iterable[Any],
         prereleases: bool | None = None,
         key: Callable[[Any], Version | str] | None = None,
+        *,
+        assume_sorted: SortedOrder | None = None,
     ) -> Iterator[Any]:
         """Yield items from iterable whose version falls inside the range.
 
@@ -1257,13 +1342,56 @@ class VersionRange:
         ``prereleases=True`` would yield it). A flushed buffer comes after
         every in-place yield, so the output is not version-sorted.
 
-        The signature mirrors
+        ``assume_sorted`` names the version order ``iterable`` is already in,
+        and ``iterable`` must then be a sequence in that order whose every entry
+        parses as a version. Each interval's matching entries form one
+        contiguous slice of an ordered sequence, so two bisections per interval
+        locate them and the pre-release policy runs over those alone; that is
+        ``O(intervals * log(len(iterable)))`` plus the matches, rather than a
+        bound test per entry. The yielded items, and their order, are the same
+        either way. A sequence not in the named order gives a wrong answer, in
+        the way :func:`itertools.groupby` does on unsorted input; only a
+        contradiction between the two end entries is caught. A range carrying
+        ``===`` literals decides membership for strings the bounds do not
+        describe, so it falls back to a test per entry and ignores
+        ``assume_sorted``.
+
+        The signature otherwise mirrors
         :meth:`~packaging.specifiers.SpecifierSet.filter`.
 
         >>> r = SpecifierSet(">=1.0,<2.0").to_range()
         >>> list(r.filter(["0.9", "1.5", "2.0"]))
         ['1.5']
+
+        The same listing, newest first, filtered by bisection:
+
+        >>> listing = [Version(v) for v in ("3.0", "2.0", "1.5", "1.0")]
+        >>> list(r.filter(listing, assume_sorted="descending"))
+        [<Version('1.5')>, <Version('1.0')>]
+
+        ``key`` reaches the version inside a richer entry, on either path:
+
+        >>> files = [("1.5", "b.whl"), ("1.0", "a.whl")]
+        >>> list(r.filter(files, key=lambda f: f[0], assume_sorted="descending"))
+        [('1.5', 'b.whl'), ('1.0', 'a.whl')]
+
+        :raises ValueError: if ``assume_sorted`` is neither ``"ascending"`` nor
+            ``"descending"``, or if the two end entries contradict it; both come
+            from the call rather than the iterator. An entry the walk coerces
+            that does not parse as a version raises as it is reached.
+
+        .. versionchanged:: 26.4
+            Added the ``assume_sorted`` keyword.
         """
+        if assume_sorted is not None and assume_sorted not in (
+            "ascending",
+            "descending",
+        ):
+            raise ValueError(
+                f"assume_sorted must be 'ascending' or 'descending', "
+                f"not {assume_sorted!r}"
+            )
+
         region: tuple[Interval, ...] = ()
         if prereleases is None:
             # The region applies only under the autodetect default; a configured
@@ -1271,18 +1399,92 @@ class VersionRange:
             prereleases = self._prereleases_configured
             region = self._pre_region
 
+        # A region spanning the whole bounds force-admits every in-bounds
+        # pre-release, i.e. ``prereleases=True``; take the cheaper no-buffer
+        # path. (Confined to the no-literal branches: the admission path orders
+        # arbitrary strings differently under True than under the region.)
+        whole_region = bool(region) and region == self._bounds
+
+        if assume_sorted is not None and not self._admit and not self._reject:
+            # Arbitrary admission needs no gate: it only concerns strings that
+            # do not parse as a version, which ``_make_project`` rejects.
+            descending = assume_sorted == "descending"
+            sequence = typing.cast("Sequence[Any]", iterable)
+            project = _make_project(key)
+            _check_order(sequence, project, descending=descending)
+
+            if whole_region:
+                return self._filter_sorted(
+                    sequence, project, key, True, (), descending=descending
+                )
+            return self._filter_sorted(
+                sequence, project, key, prereleases, region, descending=descending
+            )
+
         arbitrary_active = self._arbitrary_active()
         if not self._admit and not self._reject and not arbitrary_active:
-            # A region spanning the whole bounds force-admits every in-bounds
-            # pre-release, i.e. ``prereleases=True``; take the cheaper no-buffer
-            # path. (Confined to this branch: the admission path orders arbitrary
-            # strings differently under True than under the region.)
-            if region and region == self._bounds:
+            if whole_region:
                 return filter_by_ranges(self._bounds, iterable, key, True)
             return filter_by_ranges(self._bounds, iterable, key, prereleases, region)
         return self._filter_with_admission(
             iterable, key, prereleases, arbitrary_active, region
         )
+
+    def _filter_sorted(
+        self,
+        versions: Sequence[Any],
+        project: Callable[[Any], Version],
+        key: Callable[[Any], Version | str] | None,
+        prereleases: bool | None,
+        region: tuple[Interval, ...],
+        *,
+        descending: bool,
+    ) -> Iterator[Any]:
+        """Filter a version-ordered sequence by bisecting each interval.
+
+        The bounds ascend, so a descending sequence walks them backwards; either
+        way the located slices concatenate in sequence order, which is what
+        :meth:`filter` yields. An interval is located only once the previous one
+        is exhausted, so a caller taking a prefix pays for the prefix.
+        """
+        bounds = tuple(reversed(self._bounds)) if descending else self._bounds
+
+        if prereleases is True:
+            for lower, upper in bounds:
+                start, stop = _partition_indexes(
+                    versions, lower, upper, project, descending=descending
+                )
+                for index in range(start, stop):
+                    yield versions[index]
+            return
+
+        exclude_prereleases = prereleases is False
+        plain = key is None
+        buffered: list[Any] = []
+        found_final = False
+
+        for lower, upper in bounds:
+            start, stop = _partition_indexes(
+                versions, lower, upper, project, descending=descending
+            )
+            for index in range(start, stop):
+                item = versions[index]
+                parsed = item if plain and item.__class__ is Version else project(item)
+                if not parsed.is_prerelease:
+                    found_final = True
+                    yield item
+                elif exclude_prereleases:
+                    continue
+                # PEP 440 default, mirroring ``filter_by_ranges``: buffer
+                # pre-releases and flush only if no final matches. One inside
+                # the opt-in region is force-admitted in place.
+                elif region and matches_bounds_only(region, parsed):
+                    yield item
+                elif not found_final:
+                    buffered.append(item)
+
+        if not found_final:
+            yield from buffered
 
     def _filter_with_admission(
         self,

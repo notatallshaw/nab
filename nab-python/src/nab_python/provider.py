@@ -1287,7 +1287,9 @@ class Provider:
 
         version_list = self.fetch_versions(package)
         all_versions = self.versions_only(normalized, version_list)
-        candidates = list(version_range.filter(all_versions))
+        candidates = list(
+            version_range.filter(all_versions, assume_sorted="descending")
+        )
 
         # VersionRange.filter yields newest-first; reverse for LOWEST so
         # look-ahead walks oldest -> newest.
@@ -1343,7 +1345,8 @@ class Provider:
             if base_range is not None:
                 admit_range = version_range & base_range
 
-        if preferred not in set(admit_range.filter(all_versions)):
+        in_range = admit_range.filter(all_versions, assume_sorted="descending")
+        if preferred not in in_range:
             return None
 
         usable = (

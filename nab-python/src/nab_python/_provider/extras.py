@@ -56,12 +56,13 @@ def choose_extra_version(
             normalized,
             package,
         )
-        candidates = list(version_range.filter(all_versions))
+        admit_range = version_range
     else:
-        candidates = list((version_range & base_range).filter(all_versions))
+        admit_range = version_range & base_range
+    candidates = list(admit_range.filter(all_versions, assume_sorted="descending"))
 
     if provider.wants_lowest(normalized):
-        candidates = list(reversed(candidates))
+        candidates.reverse()
 
     chosen = _pick_in_mode(provider, base, extra, candidates)
     if chosen is not None and (normalized, extra) in provider.root_extras:
@@ -80,7 +81,9 @@ def choose_extra_version(
         and (
             excluded_by_base := [
                 v
-                for v in version_range.filter(all_versions, prereleases=True)
+                for v in version_range.filter(
+                    all_versions, prereleases=True, assume_sorted="descending"
+                )
                 if v not in base_range
             ]
         )

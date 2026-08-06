@@ -8,7 +8,10 @@ first inside a conflict cluster); runaway top culprits get tier 2
 
 from __future__ import annotations
 
+from operator import itemgetter
 from typing import TYPE_CHECKING
+
+from .._vendor.packaging.ranges import VersionRange
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -92,8 +95,20 @@ def compute_matching(
             provider.speculative_prefetch(normalized, versions)
 
     if normalized in provider.versions_cache:
+        assert isinstance(version_range, VersionRange)
         versions = provider.versions_cache[normalized]
-        matching = sum(1 for v, _ in versions if v in version_range)
+
+        # prereleases=True counts every in-bounds version; the default policy
+        # would buffer in-bounds pre-releases out of the count.
+        matching = sum(
+            1
+            for _ in version_range.filter(
+                versions,
+                prereleases=True,
+                key=itemgetter(0),
+                assume_sorted="descending",
+            )
+        )
     elif has_local_source:
         matching = 1
     else:

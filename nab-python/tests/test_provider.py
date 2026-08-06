@@ -713,6 +713,44 @@ class TestChooseVersion:
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) is None
 
+    _PREFERENCE_META = "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\n\n"
+
+    def _preference_provider(
+        self, preferred: str, versions: tuple[str, ...] = ("1.0", "2.0", "3.0")
+    ) -> Provider:
+        coordinator = make_coordinator(
+            [make_wheel(v) for v in versions],
+            metadata_by_version={
+                v: self._PREFERENCE_META.format(ver=v) for v in versions
+            },
+            package="foo",
+        )
+        return Provider(coordinator, target=_PY312, preferences={"foo": V(preferred)})
+
+    def test_a_preference_inside_the_range_wins(self) -> None:
+        """The membership walk stops at the preference wherever it sits."""
+        provider = self._preference_provider("1.0")
+        spec = SpecifierSet(">=1.0")
+        assert provider.choose_version("foo", spec.to_range()) == V("1.0")
+
+    def test_a_preference_outside_the_range_is_dropped(self) -> None:
+        """A preference the range excludes falls through to the strategy."""
+        provider = self._preference_provider("1.0")
+        spec = SpecifierSet(">=2.0")
+        assert provider.choose_version("foo", spec.to_range()) == V("3.0")
+
+    def test_a_preference_the_index_never_listed_is_dropped(self) -> None:
+        """A preference absent from the listing exhausts the walk and loses."""
+        provider = self._preference_provider("9.9")
+        spec = SpecifierSet(">=1.0")
+        assert provider.choose_version("foo", spec.to_range()) == V("3.0")
+
+    def test_a_preference_buffered_out_by_the_default_policy_is_dropped(self) -> None:
+        """The membership question honours the filter's pre-release policy."""
+        provider = self._preference_provider("2.0a1", ("1.0", "2.0a1", "2.0"))
+        spec = SpecifierSet(">=1.0")
+        assert provider.choose_version("foo", spec.to_range()) == V("2.0")
+
 
 class TestHasSatisfyingVersion:
     def test_true_when_a_version_is_in_range(self) -> None:
@@ -6251,6 +6289,36 @@ class TestExtras:
         assert V("2.0") in proxy_terms[0].constraint
         assert V("1.0") in base_terms[0].constraint
 
+    def test_choose_extra_version_blocks_a_prerelease_excluded_by_the_base(
+        self,
+    ) -> None:
+        """The pre-release enumeration reads the same descending listing.
+
+        The proxy range's bounds are wider than its opt-in region, so the
+        default policy buffers 2.0a1 behind 2.0 and drops it; only the
+        ``prereleases=True`` pass reaches the block recorder with it.
+        """
+        wheels = [make_wheel(v) for v in ("2.0", "2.0a1", "1.0")]
+        coordinator = make_coordinator(
+            wheels, metadata_text=EXTRA_METADATA, package="foo"
+        )
+        provider = Provider(coordinator)
+        all_versions = provider.versions_only("foo", provider.fetch_versions("foo"))
+        assert all_versions == sorted(all_versions, reverse=True)
+        provider.receive_partial_solution_hint(
+            {"foo": SpecifierSet("<1.0").to_range()},
+            {},
+        )
+        result = provider.choose_version(
+            "foo[security]", SpecifierSet(">=1.0,<3.0").to_range()
+        )
+        assert result is None
+        clauses = provider.consume_pending_clauses()
+        proxy_terms = [
+            t for c in clauses for t in c.terms if t.package == "foo[security]"
+        ]
+        assert any(V("2.0a1") in t.constraint for t in proxy_terms)
+
     def test_choose_extra_version_records_range_block_when_base_undecided(
         self,
     ) -> None:
@@ -8188,6 +8256,32 @@ class TestPrioritizeMatchingFromIndex:
         assert spec_a in per_pkg
         assert spec_b in per_pkg
 
+    def test_matching_counts_one_entry_per_file(self) -> None:
+        """versions_cache holds a row per file, so a dual-artifact release counts twice."""
+        files = [make_wheel("2.0"), make_sdist("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(files, package="foo")
+        provider = Provider(coordinator)
+        version_range = SpecifierSet(">=2.0").to_range()
+        result = provider.prioritize("foo", version_range, {})
+        cached = provider.versions_cache["foo"]
+        assert result[1] == sum(1 for v, _ in cached if v in version_range)
+        assert result[1] == 2
+
+    def test_matching_counts_an_in_bounds_prerelease(self) -> None:
+        """The count admits an in-bounds pre-release the default policy would drop.
+
+        The range's bounds are wider than its pre-release opt-in region, so the
+        default policy buffers 2.0a1 behind the matching final release and drops
+        it; only the admitting policy counts all three.
+        """
+        wheels = [make_wheel(v) for v in ("2.0", "2.0a1", "1.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        version_range = SpecifierSet(">=1.0,<3.0").to_range()
+        result = provider.prioritize("foo", version_range, {})
+        assert V("2.0a1") in version_range
+        assert result[1] == 3
+
     def test_versions_only_cache_hit(self) -> None:
         """Calling versions_only twice returns the same cached list."""
         wheels = [make_wheel(v) for v in ("1.0", "2.0")]
@@ -8197,6 +8291,32 @@ class TestPrioritizeMatchingFromIndex:
         first = provider.versions_only("foo", version_list)
         second = provider.versions_only("foo", version_list)
         assert first is second
+
+    def test_versions_only_is_descending_whatever_the_index_order(self) -> None:
+        """The listing view is newest-first, which choose_version's filter asserts.
+
+        ``filter(assume_sorted="descending")`` bisects the view rather than
+        testing every entry, so an index listing files in any other order must
+        still reach the provider sorted.
+        """
+        wheels = [make_wheel(v) for v in ("1.0", "3.0", "1.0a1", "2.0", "0.9")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        versions = provider.versions_only("foo", provider.fetch_versions("foo"))
+        assert versions == sorted(versions, reverse=True)
+        assert versions[0] == V("3.0")
+
+    def test_choose_version_candidates_match_the_entry_wise_filter(self) -> None:
+        """The bisected candidate list equals what the plain filter yields."""
+        wheels = [make_wheel(v) for v in ("0.9", "1.0a1", "1.0", "1.5", "2.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        version_list = provider.fetch_versions("foo")
+        all_versions = provider.versions_only("foo", version_list)
+        for spec in ("", ">=1.0", ">=1.0,<2.0", "!=1.0", ">=1.0a1", "===1.0"):
+            version_range = SpecifierSet(spec).to_range()
+            bisected = version_range.filter(all_versions, assume_sorted="descending")
+            assert list(bisected) == list(version_range.filter(all_versions))
 
     def test_wheel_by_version_cache_hit(self) -> None:
         """Calling _wheel_by_version twice returns the same cached dict."""
