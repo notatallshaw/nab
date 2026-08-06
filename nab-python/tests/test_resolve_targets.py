@@ -36,6 +36,7 @@ from nab_python.config import (
     ConflictSet,
     NabProjectConfig,
     conflict_forks,
+    read_pyproject_config,
 )
 from nab_python.lockfile import (
     DisjointnessError,
@@ -90,14 +91,16 @@ if TYPE_CHECKING:
     from nab_index.vcs import VcsClone, VcsRequest
 
 
-def _make_wheel(version: str, *, package: str) -> WheelFile:
+def _make_wheel(
+    version: str, *, package: str, upload_time: str | None = None
+) -> WheelFile:
     return WheelFile(
         filename=f"{package}-{version}-py3-none-any.whl",
         url=f"https://example.com/{package}-{version}.whl",
         version=version,
         requires_python=None,
         has_metadata=True,
-        upload_time=None,
+        upload_time=upload_time,
         hashes=(("sha256", "a" * 64),),
     )
 
@@ -1535,6 +1538,81 @@ class TestVcsConfigPlumbing:
 
         assert result.success
         assert result.target_results[0].pins == {"pkg": Version("1.0")}
+
+
+class TestCutoffAndOverridePlumbing:
+    """The upload cutoff and the two override tables reach the provider.
+
+    Each key is parsed from a pyproject and driven through
+    ``resolve_with_coordinator``, so the pins show whether it arrived.
+    """
+
+    _PYPROJECT = (
+        '[project]\nname = "proj"\nversion = "0"\n[tool.nab]\nbuild-policy = "never"\n'
+    )
+
+    def _coordinator(self) -> MagicMock:
+        """Two foo releases either side of March 2024, plus a bar to depend on."""
+        return _make_coordinator(
+            {
+                "foo": [
+                    _make_wheel(
+                        "2.0", package="foo", upload_time="2024-06-01T00:00:00Z"
+                    ),
+                    _make_wheel(
+                        "1.0", package="foo", upload_time="2024-01-01T00:00:00Z"
+                    ),
+                ],
+                "bar": [_make_wheel("1.0", package="bar")],
+            }
+        )
+
+    def _pins(self, tmp_path: Path, body: str = "") -> dict[str, Version]:
+        """Resolve ``foo`` under a pyproject carrying ``body``."""
+        path = tmp_path / "pyproject.toml"
+        path.write_text(self._PYPROJECT + body, encoding="utf-8")
+
+        result = resolve_with_coordinator(
+            self._coordinator(),
+            _one_target(),
+            _reqs("foo"),
+            config=read_pyproject_config(path),
+        )
+        assert result.success
+
+        return result.target_results[0].pins
+
+    def test_project_cutoff_excludes_the_newer_release(self, tmp_path: Path) -> None:
+        """``[tool.nab] uploaded-prior-to`` narrows the candidate listing."""
+        assert self._pins(tmp_path) == {"foo": Version("2.0")}
+
+        cutoff = 'uploaded-prior-to = "2024-03-01T00:00:00Z"\n'
+        assert self._pins(tmp_path, cutoff) == {"foo": Version("1.0")}
+
+    def test_package_override_replaces_declared_dependencies(
+        self, tmp_path: Path
+    ) -> None:
+        """``[tool.nab.packages.<name>] dependencies`` reaches the resolve.
+
+        The listing declares no dependencies, so bar is pinned only
+        because the override supplies it.
+        """
+        assert self._pins(tmp_path) == {"foo": Version("2.0")}
+
+        override = '[tool.nab.packages.foo]\ndependencies = ["bar"]\n'
+        assert self._pins(tmp_path, override) == {
+            "foo": Version("2.0"),
+            "bar": Version("1.0"),
+        }
+
+    def test_index_override_cutoff_excludes_the_newer_release(
+        self, tmp_path: Path
+    ) -> None:
+        """``[tool.nab.index.<name>] uploaded-prior-to`` reaches the resolve."""
+        assert self._pins(tmp_path) == {"foo": Version("2.0")}
+
+        override = '[tool.nab.index.pypi]\nuploaded-prior-to = "2024-03-01T00:00:00Z"\n'
+        assert self._pins(tmp_path, override) == {"foo": Version("1.0")}
 
 
 class TestRunPassSerial:
