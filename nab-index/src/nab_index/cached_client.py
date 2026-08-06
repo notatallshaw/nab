@@ -254,7 +254,7 @@ class CachedAsyncSimpleClient:
         """
         try:
             return json.loads(body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except ValueError:
             logger.warning(
                 "Corrupt cached Simple-API body for %r from %s: not valid JSON; "
                 "treating as a miss and re-fetching",
@@ -268,13 +268,13 @@ class CachedAsyncSimpleClient:
 
         A body that is not valid JSON raises the same
         :class:`MalformedSimpleResponseError` as a valid-JSON body of the
-        wrong shape, not a raw decode error. ``json.loads`` on non-UTF-8
-        bytes raises :class:`UnicodeDecodeError`, not
-        :class:`json.JSONDecodeError`, so both are caught.
+        wrong shape, not a raw decode error. ``json.loads`` raises a
+        :class:`ValueError` for every body it rejects, including non-UTF-8
+        bytes and an integer literal past CPython's conversion limit.
         """
         try:
             data = json.loads(body)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        except ValueError as exc:
             msg = (
                 f"{self._index_url} served a malformed Simple-API response for "
                 f"{package!r}: body is not valid JSON"

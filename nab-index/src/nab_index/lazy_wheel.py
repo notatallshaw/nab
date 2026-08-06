@@ -281,7 +281,12 @@ def _parse_content_range(value: str | None) -> tuple[int, int, int] | None:
     match = _CONTENT_RANGE_RE.match(value.strip())
     if match is None:
         return None
-    return (int(match[1]), int(match[2]), int(match[3]))
+
+    try:
+        return (int(match[1]), int(match[2]), int(match[3]))
+    except ValueError:
+        # \d+ still matches a run past CPython's int-from-string limit.
+        return None
 
 
 async def _range_get(
