@@ -135,6 +135,35 @@ def test_dev0_literal_mints_no_below_neighbour() -> None:
     assert not ms('python_full_version == "3.14.0.dev0"').is_empty()
 
 
+def test_local_literal_admits_its_public_release() -> None:
+    # CPython 3.10.0 satisfies both markers: the swapped == builds the public
+    # specifier ==3.10.0, which ignores the literal's local label.
+    swapped_eq = ms('"3.10+abc" == python_full_version')
+    swapped_ge = ms('"3.10.1rc2" >= python_full_version')
+    both = swapped_eq & swapped_ge
+    shared = {"python_full_version": "3.10.0", "python_version": "3.10"}
+    assert both.evaluate(shared)
+    assert not swapped_eq.is_disjoint(swapped_ge)
+    assert not both.is_empty()
+
+    env = both.witness()
+    assert env is not None
+    assert Marker(
+        '"3.10+abc" == python_full_version and "3.10.1rc2" >= python_full_version'
+    ).evaluate(env)
+
+
+def test_local_literal_padded_twin_refutes_subset() -> None:
+    # ==3.10+abc admits the padded 3.10.0+abc, where the invalid-specifier
+    # <= clause degrades to string equality and fails.
+    eq = ms('implementation_version == "3.10+abc"')
+    le = ms('implementation_version <= "3.10+abc"')
+    padded = {"implementation_version": "3.10.0+abc"}
+    assert eq.evaluate(padded)
+    assert not le.evaluate(padded)
+    assert not eq.is_subset(le)
+
+
 def test_m1_string_ordering_non_negation() -> None:
     less = ms('sys_platform < "linux"')
     greater_equal = ms('sys_platform >= "linux"')
