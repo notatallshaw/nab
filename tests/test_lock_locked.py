@@ -193,6 +193,39 @@ def test_added_declared_default_group_fires_without_resolving(
     mock.assert_not_called()
 
 
+def test_constraint_not_splitting_the_minor_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No boundary inside the minor, so the target's floor decides the marker.
+    pyproject = _write_pyproject(
+        tmp_path,
+        "[project]\n"
+        "dependencies = ['foo']\n"
+        "[tool.nab]\n"
+        "constraints = ['foo<1.0 ; python_full_version >= \"3.9\"']\n"
+        "[tool.nab.environment]\n"
+        'python = "3.11"\n',
+    )
+    out = tmp_path / "pylock.toml"
+    out.write_text(
+        'lock-version = "1.0"\n'
+        'created-by = "nab"\n\n'
+        + _foo_package("1.5", 'python_full_version >= \\"3.11\\"'),
+        encoding="utf-8",
+    )
+
+    mock = _locked_mock(_result({"foo": "1.5"}))
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert (
+        "the constraint foo<1.0 is violated by the pinned foo 1.5"
+        in capsys.readouterr().err
+    )
+    mock.assert_not_called()
+
+
 def test_changed_requires_python_fires_without_resolving(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -485,6 +518,37 @@ def test_conflict_fork_duplicate_pins_fall_through(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "the lock pins foo" not in err
+    mock.assert_called_once()
+
+
+def test_micro_gated_constraint_falls_through(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A bare-minor target resolves once per micro slice, so a constraint gated
+    # below the boundary says nothing about the pin the slice above produced.
+    pyproject = _write_pyproject(
+        tmp_path,
+        "[project]\n"
+        "dependencies = ['foo ; python_full_version >= \"3.11.4\"']\n"
+        "[tool.nab]\n"
+        "constraints = ['foo<1.0 ; python_full_version < \"3.11.4\"']\n"
+        "[tool.nab.environment]\n"
+        'python = "3.11"\n',
+    )
+    out = tmp_path / "pylock.toml"
+    out.write_text(
+        'lock-version = "1.0"\n'
+        'created-by = "nab"\n\n'
+        + _foo_package("1.5", 'python_full_version >= \\"3.11.4.dev0\\"'),
+        encoding="utf-8",
+    )
+
+    mock = _locked_mock(_result({"foo": "1.5"}))
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert "the constraint foo<1.0" not in capsys.readouterr().err
     mock.assert_called_once()
 
 

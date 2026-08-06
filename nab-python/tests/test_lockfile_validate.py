@@ -18,6 +18,8 @@ from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
 from nab_python.lockfile import LockDisqualification, RootRequirement
+from nab_python.tags import PlatformSpec
+from nab_python.target import ResolveTarget
 
 
 def make_pylock(
@@ -224,6 +226,13 @@ def test_lock_disqualification_is_frozen() -> None:
 
 LINUX_ENV = {"sys_platform": "linux"}
 
+# A target standing for the whole 3.11 minor, so its python_full_version is
+# the synthesized 3.11.0 floor.
+MINOR_TARGET = ResolveTarget.for_declared(
+    python_version="3.11", spec=PlatformSpec("linux_x86_64")
+)
+MINOR_ENV = MINOR_TARGET.marker_env
+
 
 def index_pin(name: str, version: str) -> Package:
     return Package(name=canonicalize_name(name), version=Version(version))
@@ -429,6 +438,49 @@ def test_direct_no_requirements_returns_none() -> None:
     assert check_direct_requirements(pylock_of(), [], marker_env=LINUX_ENV) is None
 
 
+def test_direct_marker_splitting_the_minor_skipped() -> None:
+    """A requirement gated at a micro boundary is undecided at the floor.
+
+    It holds in some of the minor's slices and not others. The skip covers
+    the presence check too, which is coarser than the proof needs: the lower
+    slice alone would settle a name the lock never pins.
+    """
+    committed = pylock_of()
+    assert (
+        check_direct_requirements(
+            committed,
+            [root('bar>=1; python_full_version < "3.11.4"')],
+            marker_env=MINOR_ENV,
+            resolve_target=MINOR_TARGET,
+        )
+        is None
+    )
+
+
+def test_direct_marker_not_splitting_the_minor_still_fires() -> None:
+    """A micro-axis marker that does not split the minor is decided at the floor."""
+    committed = pylock_of()
+    result = check_direct_requirements(
+        committed,
+        [root('bar>=1; python_full_version >= "3.9"')],
+        marker_env=MINOR_ENV,
+        resolve_target=MINOR_TARGET,
+    )
+    assert result is not None
+    assert result.reason.startswith("[project].dependencies requires bar")
+
+
+def test_direct_marker_on_a_micro_boundary_at_a_point_fires() -> None:
+    committed = pylock_of()
+    result = check_direct_requirements(
+        committed,
+        [root('bar>=1; python_full_version < "3.11.4"')],
+        marker_env=MINOR_ENV,
+    )
+    assert result is not None
+    assert result.reason.startswith("[project].dependencies requires bar")
+
+
 def test_constraint_satisfied_returns_none() -> None:
     committed = pylock_of(index_pin("baz", "2.0"))
     assert (
@@ -498,6 +550,61 @@ def test_constraint_versionless_pin_skipped() -> None:
         check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
         is None
     )
+
+
+def test_constraint_marker_splitting_the_minor_skipped() -> None:
+    """A constraint gated below a micro boundary cannot judge a pin from above it."""
+    committed = pylock_of(marked_pin("baz", "3.1", 'python_full_version >= "3.11.4"'))
+    assert (
+        check_constraints(
+            committed,
+            [Requirement('baz<3; python_full_version < "3.11.4"')],
+            marker_env=MINOR_ENV,
+            resolve_target=MINOR_TARGET,
+        )
+        is None
+    )
+
+
+def test_constraint_marker_the_split_cannot_tile_skipped() -> None:
+    """A micro-axis clause the split cannot tile is undecided here too.
+
+    It holds at the floor, so without the skip the check would fire on it.
+    """
+    committed = pylock_of(index_pin("baz", "3.1"))
+    assert (
+        check_constraints(
+            committed,
+            [Requirement('baz<3; python_full_version not in "3.11.4"')],
+            marker_env=MINOR_ENV,
+            resolve_target=MINOR_TARGET,
+        )
+        is None
+    )
+
+
+def test_constraint_marker_on_a_micro_boundary_at_a_point_fires() -> None:
+    committed = pylock_of(index_pin("baz", "3.1"))
+    result = check_constraints(
+        committed,
+        [Requirement('baz<3; python_full_version < "3.11.4"')],
+        marker_env=MINOR_ENV,
+    )
+    assert result is not None
+    assert result.reason == "the constraint baz<3 is violated by the pinned baz 3.1"
+
+
+def test_constraint_marker_not_splitting_the_minor_still_fires() -> None:
+    """Only a marker the minor's slices answer differently is indeterminate."""
+    committed = pylock_of(index_pin("baz", "3.1"))
+    result = check_constraints(
+        committed,
+        [Requirement('baz<3; python_full_version >= "3.9"')],
+        marker_env=MINOR_ENV,
+        resolve_target=MINOR_TARGET,
+    )
+    assert result is not None
+    assert result.reason == "the constraint baz<3 is violated by the pinned baz 3.1"
 
 
 def test_constraint_duplicate_versioned_pins_skipped() -> None:

@@ -19,6 +19,12 @@ picks from the intersection of every requirement on a name, so a fresh
 resolve can land on a pre-release the requirement checked here does not opt
 into on its own.
 
+The validity checks read one marker environment. A target standing for a
+whole Python minor synthesizes ``{minor}.0`` as its ``python_full_version``
+while the resolve answers one micro slice at a time, so a marker cutting a
+boundary inside the minor is indeterminate here rather than decided at that
+floor.
+
 :func:`check_locked` is the entry point the CLI calls: it reads the committed
 lock and runs both stages, so a caller never handles a parsed lock itself.
 """
@@ -37,6 +43,7 @@ from .._vendor.packaging.requirements import Requirement
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 from ..metadata import validate_specifier_versions
+from ..target import NonIntervalMarkerError, micro_boundary_points
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -45,6 +52,7 @@ if TYPE_CHECKING:
     from .._vendor.packaging.markers import Marker
     from .._vendor.packaging.pylock import Package
     from .._vendor.packaging.version import Version
+    from ..target import ResolveTarget
 
 
 class LockfileSyntaxError(Exception):
@@ -147,6 +155,7 @@ def check_direct_requirements(
     requirements: Iterable[RootRequirement],
     *,
     marker_env: Mapping[str, str],
+    resolve_target: ResolveTarget | None = None,
 ) -> LockDisqualification | None:
     """Check every active direct requirement against the committed lock.
 
@@ -158,12 +167,16 @@ def check_direct_requirements(
     marker, a URL requirement, a version-less or direct (URL, VCS, directory)
     pin, and a name carrying more than one versioned pin. Returns the first
     violation, or ``None``.
+
+    ``resolve_target`` is the target ``marker_env`` came from: a marker its
+    micro slices answer differently is indeterminate rather than read off the
+    environment.
     """
     package_names = {package.name for package in committed.packages}
     versioned = _versioned_pins(committed)
     for root in requirements:
         req = root.requirement
-        if _marker_skips(req.marker, marker_env):
+        if _marker_skips(req.marker, marker_env, resolve_target):
             continue
         name = canonicalize_name(req.name)
         if name not in package_names:
@@ -193,6 +206,7 @@ def check_constraints(
     constraints: Iterable[Requirement],
     *,
     marker_env: Mapping[str, str],
+    resolve_target: ResolveTarget | None = None,
 ) -> LockDisqualification | None:
     """Check every active constraint against the committed lock.
 
@@ -201,10 +215,14 @@ def check_constraints(
     inactive or indeterminate marker, and a name with no single versioned pin
     (absent, version-less, or multiple under a conflict fork), are skipped.
     Returns the first violation, or ``None``.
+
+    ``resolve_target`` is the target ``marker_env`` came from: a marker its
+    micro slices answer differently is indeterminate rather than read off the
+    environment.
     """
     versioned = _versioned_pins(committed)
     for constraint in constraints:
-        if _marker_skips(constraint.marker, marker_env):
+        if _marker_skips(constraint.marker, marker_env, resolve_target):
             continue
         version = versioned.get(canonicalize_name(constraint.name))
         if version is None:
@@ -248,19 +266,40 @@ def _is_direct_pin(package: Package) -> bool:
     )
 
 
-def _marker_skips(marker: Marker | None, marker_env: Mapping[str, str]) -> bool:
+def _marker_skips(
+    marker: Marker | None,
+    marker_env: Mapping[str, str],
+    target: ResolveTarget | None,
+) -> bool:
     """Return whether an item is inactive or indeterminate for ``marker_env``.
 
     A missing marker is active. A false marker is inactive. A marker that
-    cannot be evaluated is indeterminate. Both inactive and indeterminate skip.
+    cannot be evaluated, or that ``target``'s micro slices answer differently,
+    is indeterminate. Both inactive and indeterminate skip.
     """
     if marker is None:
         return False
+    if target is not None and _splits_micro_line(marker, target):
+        return True
     try:
         active = dependency_marker_holds(marker, marker_env)
     except (UnevaluableMarkerError, UndefinedEnvironmentName):
         return True
     return not active
+
+
+def _splits_micro_line(marker: Marker, target: ResolveTarget) -> bool:
+    """Whether ``marker`` reads differently across ``target``'s micro slices.
+
+    A minor target's ``marker_env`` answers the micro axis at the synthesized
+    ``{minor}.0`` floor, so a marker cutting a boundary inside the minor is
+    decided per slice by the resolve rather than here. A marker the split
+    cannot tile is undecided here too, and the full resolve reports it.
+    """
+    try:
+        return bool(micro_boundary_points(target, [marker]))
+    except NonIntervalMarkerError:
+        return True
 
 
 def _render_specifier(spec: SpecifierSet | None) -> str:
@@ -306,17 +345,17 @@ def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs
     default_groups: tuple[str, ...],
     roots: Iterable[RootRequirement] | None = None,
     constraints: Iterable[str] = (),
-    marker_env: Mapping[str, str] | None = None,
+    resolve_target: ResolveTarget | None = None,
     exclude: frozenset[str] = frozenset(),
 ) -> LockDisqualification | None:
     """Disqualify the committed lock at ``lockfile``, or return ``None``.
 
     Runs the envelope checks, then the validity checks over the active
-    direct requirements and constraints. ``roots`` of ``None`` runs the
-    envelope checks alone. ``exclude`` holds canonical names to skip, for
-    the workspace members ``--no-emit-workspace`` drops from both sides.
-    Constraints arrive as text; the config loader has already rejected any
-    that do not parse.
+    direct requirements and constraints, reading ``resolve_target``'s marker
+    environment. ``roots`` or ``resolve_target`` of ``None`` runs the envelope
+    checks alone. ``exclude`` holds canonical names to skip, for the workspace
+    members ``--no-emit-workspace`` drops from both sides. Constraints arrive
+    as text; the config loader has already rejected any that do not parse.
 
     Raises the errors :func:`read_committed_pylock` raises.
     """
@@ -328,15 +367,25 @@ def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs
         dependency_groups=dependency_groups,
         default_groups=default_groups,
     )
-    if disqualification is not None or roots is None or marker_env is None:
+    if disqualification is not None or roots is None or resolve_target is None:
         return disqualification
     active = [
         root
         for root in roots
         if canonicalize_name(root.requirement.name) not in exclude
     ]
-    direct = check_direct_requirements(committed, active, marker_env=marker_env)
+    direct = check_direct_requirements(
+        committed,
+        active,
+        marker_env=resolve_target.marker_env,
+        resolve_target=resolve_target,
+    )
     if direct is not None:
         return direct
     parsed = [Requirement(text) for text in constraints]
-    return check_constraints(committed, parsed, marker_env=marker_env)
+    return check_constraints(
+        committed,
+        parsed,
+        marker_env=resolve_target.marker_env,
+        resolve_target=resolve_target,
+    )

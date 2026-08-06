@@ -353,7 +353,7 @@ def _fast_fail_locked(
     ):
         return
 
-    marker_env = _locked_marker_env(config, python=python)
+    resolve_target = _locked_resolve_target(config, python=python)
 
     try:
         disqualification = check_locked(
@@ -364,7 +364,7 @@ def _fast_fail_locked(
             default_groups=config.default_groups,
             roots=roots,
             constraints=config.constraints,
-            marker_env=marker_env,
+            resolve_target=resolve_target,
             exclude=workspace_to_drop,
         )
     except OSError as e:
@@ -391,16 +391,18 @@ def _fast_fail_locked(
     sys.exit(1)
 
 
-def _locked_marker_env(
+def _locked_resolve_target(
     config: NabProjectConfig, *, python: str | None
-) -> Mapping[str, str] | None:
-    """Return the environment the validity checks evaluate markers against.
+) -> ResolveTarget | None:
+    """Return the target the validity checks evaluate markers against.
 
     ``None`` when the declaration excludes this run's target, which leaves
     the validity checks to the full resolve.  The envelope checks still run.
+    The checks read the target's marker environment; the target itself says
+    which markers its micro slices decide instead.
     """
     try:
-        return plan_targets(with_python_override(config, python))[0].marker_env
+        return plan_targets(with_python_override(config, python))[0]
     except ConfigError:
         return None
 
