@@ -2443,6 +2443,8 @@ def _parse_vcs(value: object) -> VcsConfig:
     allowed_repos = _parse_string_list(
         "vcs.allowed-repos", value.get("allowed-repos", [])
     )
+    for repo in allowed_repos:
+        _validate_allowed_repo(repo)
     require_pin_raw = value.get("require-pin", True)
     if not isinstance(require_pin_raw, bool):
         msg = f"vcs.require-pin must be a boolean, got {type(require_pin_raw).__name__}"
@@ -2453,6 +2455,19 @@ def _parse_vcs(value: object) -> VcsConfig:
         allowed_repos=tuple(allowed_repos),
         require_pin=require_pin_raw,
     )
+
+
+def _validate_allowed_repo(repo: str) -> None:
+    """Reject an ``allowed-repos`` entry whose authority does not parse.
+
+    :func:`urlsplit` raises ValueError on an authority it cannot parse,
+    such as an unterminated IPv6 bracket.
+    """
+    try:
+        urlsplit(repo)
+    except ValueError as exc:
+        msg = f"vcs.allowed-repos entry {repo!r} does not parse: {exc}"
+        raise ConfigError(msg) from exc
 
 
 _LOCAL_SOURCE_KEYS = frozenset({"name", "path", "editable", "subdirectory"})
