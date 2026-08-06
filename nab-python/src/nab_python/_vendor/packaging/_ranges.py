@@ -187,6 +187,11 @@ class LowerBound:
     __slots__ = ("_above", "inclusive", "version")
 
     def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
+        # -inf is not a version, so "inclusive of -inf" has no content;
+        # canonicalizing it keeps the bound order total.
+        if version is None:
+            inclusive = False
+
         self.version = version
         self.inclusive = inclusive
         # Pre-bind a predicate "is parsed at or above this lower
@@ -224,6 +229,30 @@ class LowerBound:
         # [v < (v: inclusive starts earlier.
         return self.inclusive and not other.inclusive
 
+    # Written out rather than left to functools.total_ordering, whose shims
+    # reach the same answer through ``__lt__`` and ``__eq__``.
+    def __gt__(self, other: LowerBound) -> bool:
+        if not isinstance(other, LowerBound):
+            return NotImplemented
+        if self.version is None:
+            return False
+        if other.version is None:
+            return True
+        if self.version != other.version:
+            return not self.version < other.version
+        return other.inclusive and not self.inclusive
+
+    def __le__(self, other: LowerBound) -> bool:
+        if not isinstance(other, LowerBound):
+            return NotImplemented
+        if self.version is None:
+            return True
+        if other.version is None:
+            return False
+        if self.version != other.version:
+            return self.version < other.version
+        return self.inclusive or not other.inclusive
+
     def __hash__(self) -> int:
         return hash((self.version, self.inclusive))
 
@@ -244,6 +273,10 @@ class UpperBound:
     __slots__ = ("_below", "inclusive", "version")
 
     def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
+        # See LowerBound: +inf carries no inclusivity either.
+        if version is None:
+            inclusive = False
+
         self.version = version
         self.inclusive = inclusive
         # Pre-bind a predicate "is parsed at or below this upper
@@ -282,6 +315,18 @@ class UpperBound:
             return self.version < other.version
         # v) < v]: exclusive ends earlier.
         return not self.inclusive and other.inclusive
+
+    # Written out for the same reason as on ``LowerBound``.
+    def __gt__(self, other: UpperBound) -> bool:
+        if not isinstance(other, UpperBound):
+            return NotImplemented
+        if self.version is None:
+            return other.version is not None
+        if other.version is None:
+            return False
+        if self.version != other.version:
+            return not self.version < other.version
+        return self.inclusive and not other.inclusive
 
     def __hash__(self) -> int:
         return hash((self.version, self.inclusive))

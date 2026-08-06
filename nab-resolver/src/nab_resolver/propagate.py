@@ -17,10 +17,10 @@ from .types import IncompatibilityState, SetRelation, Term
 
 if TYPE_CHECKING:
     from .resolver import Resolver
-    from .types import Incompatibility, RangeProtocol
+    from .types import Incompatibility
 
 __all__ = [
-    "classify_intersection",
+    "classify_relation",
     "evaluate_incompatibility",
     "term_relation",
     "unit_propagation",
@@ -127,8 +127,8 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
     key = (positive, assignment, term.constraint)
     result = cache.get(key)
     if result is None:
-        intersection = assignment & term.constraint
-        result = classify_intersection(term, assignment, intersection)
+        subset, disjoint = assignment.relation(term.constraint)
+        result = classify_relation(term, subset=subset, disjoint=disjoint)
         if len(cache) >= RELATION_CACHE_MAX:
             cache.clear()
         cache[key] = result
@@ -142,24 +142,26 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
     return result
 
 
-def classify_intersection(
+def classify_relation(
     term: Term[Any, Any],
-    assignment: RangeProtocol[Any],
-    intersection: RangeProtocol[Any],
+    *,
+    subset: bool,
+    disjoint: bool,
 ) -> SetRelation:
-    """Classify a term against its precomputed assignment intersection.
+    """Classify a term from the assignment's relation to its constraint.
+
+    ``subset`` and ``disjoint`` describe the assignment against
+    ``term.constraint``, as returned by ``RangeProtocol.relation``.
 
     Positive term: satisfied when the assignment is a subset of the
-    constraint; contradicted when the intersection is empty.
-    Negative term: satisfied when the intersection is empty; contradicted
-    when the assignment falls entirely inside the forbidden range.
+    constraint; contradicted when the two are disjoint.
+    Negative term: the two swap, since a negative term forbids the
+    constraint's versions.
     """
     if term.is_positive():
-        satisfied = assignment.is_subset(term.constraint)
-        contradicted = intersection.is_empty
+        satisfied, contradicted = subset, disjoint
     else:
-        satisfied = intersection.is_empty
-        contradicted = assignment.is_subset(term.constraint)
+        satisfied, contradicted = disjoint, subset
 
     if satisfied:
         return SetRelation.SATISFIED
