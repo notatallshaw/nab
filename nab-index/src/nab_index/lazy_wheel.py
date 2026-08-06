@@ -331,17 +331,16 @@ async def _absolute_attempt(
     A probe that is refused, or that reports no usable total, steps down to
     the plain GET: neither answer says the file is unserveable, so only the
     plain GET is authoritative for whether the wheel can be served at all.
+    Any other 4xx/5xx raises through, whatever its Content-Encoding.
     """
     probe = await _range_get(transport, url, "bytes=0-0")
     if probe.status_code in _RANGE_REJECT_STATUSES:
         return await _fallback_full_body(
             transport, url, latch=probe.status_code != _HTTP_RANGE_NOT_SATISFIABLE
         )
-    if _non_identity(probe):
-        return _UNSUPPORTED_NONE
-    if probe.status_code == _HTTP_OK:
+    if probe.status_code == _HTTP_OK and not _non_identity(probe):
         return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, probe.content)
-    if probe.status_code != _HTTP_PARTIAL:
+    if probe.status_code != _HTTP_PARTIAL or _non_identity(probe):
         probe.raise_for_status()
         return _UNSUPPORTED_NONE
     parsed = _parse_content_range(probe.headers.get("content-range"))
@@ -360,6 +359,7 @@ async def _absolute_tail(
 
     A tail refused after an honoured probe still steps down to the plain GET,
     since a shrunk file or a flaky proxy can 416 a range the probe implied.
+    Any other 4xx/5xx raises through, whatever its Content-Encoding.
     """
     low = max(0, total - tail_size)
     tail = await _range_get(transport, url, f"bytes={low}-{total - 1}")
@@ -367,11 +367,9 @@ async def _absolute_tail(
         return await _fallback_full_body(
             transport, url, latch=tail.status_code != _HTTP_RANGE_NOT_SATISFIABLE
         )
-    if _non_identity(tail):
-        return _UNSUPPORTED_NONE
-    if tail.status_code == _HTTP_OK:
+    if tail.status_code == _HTTP_OK and not _non_identity(tail):
         return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, tail.content)
-    if tail.status_code != _HTTP_PARTIAL:
+    if tail.status_code != _HTTP_PARTIAL or _non_identity(tail):
         tail.raise_for_status()
         return _UNSUPPORTED_NONE
     sparse = _SparseFile(total)
