@@ -24,7 +24,11 @@ from nab_python._vendor.packaging._ranges import (
     LowerBound,
     UpperBound,
 )
-from nab_python._vendor.packaging.ranges import _relate_bounds, _subset_bounds
+from nab_python._vendor.packaging.ranges import (
+    RangeRelation,
+    _relate_bounds,
+    _subset_bounds,
+)
 from nab_python._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
@@ -191,8 +195,8 @@ class TestBoundOrdering:
             (LowerBound(None, inclusive=True), UpperBound(V("2.0"), inclusive=False))
         ]
         right = [(NEG_INF, POS_INF)]
-        assert _relate_bounds(left, right) == (True, False)
-        assert _relate_bounds(right, left) == (False, False)
+        assert _relate_bounds(left, right) is RangeRelation.SUBSET
+        assert _relate_bounds(right, left) is RangeRelation.OVERLAPPING
         assert _subset_bounds(left, right)
 
     @pytest.mark.parametrize("operator", ["__lt__", "__gt__", "__ge__", "__le__"])

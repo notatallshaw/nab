@@ -16,7 +16,14 @@ from typing import Any, Generic, TypeAlias
 
 from typing_extensions import override
 
-from .types import VersionType
+from .types import RangeRelation, VersionType
+
+# Bound once so the hot return paths load a module global instead of a class
+# attribute.
+_EMPTY_REL = RangeRelation.EMPTY
+_SUBSET_REL = RangeRelation.SUBSET
+_DISJOINT_REL = RangeRelation.DISJOINT
+_OVERLAPPING_REL = RangeRelation.OVERLAPPING
 
 __all__ = [
     "NEGATIVE_INFINITY",
@@ -347,12 +354,18 @@ class Range(Generic[VersionType]):
         """Return whether self and other share no version."""
         return (self & other).is_empty
 
-    def relation(self, other: Range[VersionType]) -> tuple[bool, bool]:
-        """Return ``(is_subset, is_disjoint)`` against other.
+    def relation(self, other: Range[VersionType]) -> RangeRelation:
+        """Return how self's members sit against other's.
 
         Asked separately here; an implementation may answer both in one walk.
         """
-        return self.is_subset(other), self.is_disjoint(other)
+        if self.is_subset(other):
+            if self.is_disjoint(other):
+                return _EMPTY_REL
+            return _SUBSET_REL
+        if self.is_disjoint(other):
+            return _DISJOINT_REL
+        return _OVERLAPPING_REL
 
     @override
     def __eq__(self, other: object) -> bool:

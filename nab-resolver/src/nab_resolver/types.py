@@ -22,6 +22,8 @@ __all__ = [
     "IncompatibilityState",
     "PackageType",
     "RangeProtocol",
+    "RangeRelation",
+    "RelationProtocol",
     "SetRelation",
     "Term",
     "VersionType",
@@ -96,10 +98,10 @@ class RangeProtocol(Protocol[VersionType_contra]):
         """Return whether self and other share no version."""
         ...
 
-    def relation(self, other: Self) -> tuple[bool, bool]:
-        """Return ``(is_subset, is_disjoint)`` against other.
+    def relation(self, other: Self) -> RelationProtocol:
+        """Return how self's members sit against other's.
 
-        Both answers hold at once only for an empty self.
+        Both flags hold at once only for an empty self.
         """
         ...
 
@@ -191,6 +193,47 @@ class Term(Generic[PackageType, VersionType]):
         """Return a debug representation of the term."""
         sign = "" if self._positive else "not "
         return f"Term({sign}{self.package!r}, {self.constraint})"
+
+
+class RangeRelation(enum.Enum):
+    """How one range's members sit against another's.
+
+    The four members partition the ``(is_subset, is_disjoint)`` space: both
+    hold together only for an empty range, which is a subset of everything
+    and shares a member with nothing. A provider's range type may return its
+    own structurally equivalent relation type; cross-package consumers read
+    the two flags through :class:`RelationProtocol` rather than comparing
+    members.
+    """
+
+    EMPTY = (True, True)
+    SUBSET = (True, False)
+    DISJOINT = (False, True)
+    OVERLAPPING = (False, False)
+
+    def __init__(self, is_subset: bool, is_disjoint: bool) -> None:  # noqa: FBT001 - enum passes the member value positionally
+        """Stamp the member's two flags as attributes."""
+        self.is_subset = is_subset
+        self.is_disjoint = is_disjoint
+
+    @override
+    def __repr__(self) -> str:
+        """Return the member's qualified name."""
+        return f"RangeRelation.{self.name}"
+
+
+class RelationProtocol(Protocol):
+    """How one range's members sit against another's, read as two flags."""
+
+    @property
+    def is_subset(self) -> bool:
+        """Whether every version of the left range is in the right."""
+        ...
+
+    @property
+    def is_disjoint(self) -> bool:
+        """Whether the two ranges share no version."""
+        ...
 
 
 class SetRelation(enum.Enum):

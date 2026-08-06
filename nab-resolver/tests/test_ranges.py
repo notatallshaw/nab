@@ -7,6 +7,7 @@ We use int as the version type for simplicity.
 from __future__ import annotations
 
 from nab_resolver.ranges import Range
+from nab_resolver.types import RangeRelation
 
 
 class TestRangeConstruction:
@@ -385,6 +386,23 @@ class TestRangeSetRelations:
 
     def test_is_disjoint_false(self) -> None:
         assert not Range.between(1, 4).is_disjoint(Range.between(2, 5))
+
+    def test_relation_subset(self) -> None:
+        assert Range.between(2, 4).relation(Range.between(1, 5)) is RangeRelation.SUBSET
+
+    def test_relation_disjoint(self) -> None:
+        assert (
+            Range.between(1, 3).relation(Range.between(3, 5)) is RangeRelation.DISJOINT
+        )
+
+    def test_relation_overlapping(self) -> None:
+        assert (
+            Range.between(1, 4).relation(Range.between(2, 5))
+            is RangeRelation.OVERLAPPING
+        )
+
+    def test_relation_empty(self) -> None:
+        assert Range.empty().relation(Range.between(1, 5)) is RangeRelation.EMPTY
 
 
 class TestRangeStr:

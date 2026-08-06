@@ -53,12 +53,41 @@ if TYPE_CHECKING:
     from .specifiers import SpecifierSet
 
 
-__all__ = ["SortedOrder", "VersionRange"]
+__all__ = ["RangeRelation", "SortedOrder", "VersionRange"]
 
 T = TypeVar("T")
 UnparsedVersion = Union[Version, str]
 UnparsedVersionVar = TypeVar("UnparsedVersionVar", bound=UnparsedVersion)
 SortedOrder = Literal["ascending", "descending"]
+
+
+class RangeRelation(enum.Enum):
+    """How one range's members sit against another's.
+
+    The four members partition the ``(is_subset, is_disjoint)`` space: both
+    hold together only for an empty range, which is a subset of everything
+    and shares a member with nothing.
+    """
+
+    EMPTY = (True, True)
+    SUBSET = (True, False)
+    DISJOINT = (False, True)
+    OVERLAPPING = (False, False)
+
+    def __init__(self, is_subset: bool, is_disjoint: bool) -> None:
+        self.is_subset = is_subset
+        self.is_disjoint = is_disjoint
+
+    def __repr__(self) -> str:
+        return f"RangeRelation.{self.name}"
+
+
+# Bound once so the hot return paths load a module global instead of a class
+# attribute.
+_EMPTY_REL = RangeRelation.EMPTY
+_SUBSET_REL = RangeRelation.SUBSET
+_DISJOINT_REL = RangeRelation.DISJOINT
+_OVERLAPPING_REL = RangeRelation.OVERLAPPING
 
 
 class _SetOp(enum.Enum):
@@ -136,8 +165,8 @@ def _union_ranges(
 def _relate_bounds(
     left: Sequence[Interval],
     right: Sequence[Interval],
-) -> tuple[bool, bool]:
-    """Return ``(is_subset, is_disjoint)`` for two sorted interval lists.
+) -> RangeRelation:
+    """Return the :class:`RangeRelation` for two sorted interval lists.
 
     One two-pointer merge answers both without building the intersection or the
     complement. The lists are canonical (sorted, non-overlapping, and
@@ -163,7 +192,7 @@ def _relate_bounds(
             if lower is left_lower and upper is left_upper:
                 matched += 1
             else:
-                return False, False
+                return _OVERLAPPING_REL
             disjoint = False
 
         # Advance whichever side has the smaller upper bound.
@@ -172,7 +201,9 @@ def _relate_bounds(
         else:
             right_index += 1
 
-    return matched == len(left), disjoint
+    if matched == len(left):
+        return _EMPTY_REL if disjoint else _SUBSET_REL
+    return _DISJOINT_REL if disjoint else _OVERLAPPING_REL
 
 
 def _subset_bounds(left: Sequence[Interval], right: Sequence[Interval]) -> bool:
@@ -1200,11 +1231,13 @@ class VersionRange:
         # ``===`` literals against both operands, so it stays correct for them.
         return self.difference(other).is_empty
 
-    def relation(self, other: VersionRange) -> tuple[bool, bool]:
-        """Return ``(is_subset, is_disjoint)`` against ``other``.
+    def relation(self, other: VersionRange) -> RangeRelation:
+        """Return the :class:`RangeRelation` of ``self`` against ``other``.
 
-        Subset-only is containment, disjoint-only is separation, and neither is
-        overlap. Both hold together only when self is empty, which is a subset
+        :attr:`~RangeRelation.SUBSET` is containment,
+        :attr:`~RangeRelation.DISJOINT` is separation,
+        :attr:`~RangeRelation.OVERLAPPING` is neither, and
+        :attr:`~RangeRelation.EMPTY` is an empty ``self``, which is a subset
         of everything and shares a member with nothing.
 
         Both operands must share the same configured pre-release policy;
@@ -1213,17 +1246,15 @@ class VersionRange:
         >>> inner = SpecifierSet(">=1.5,<1.8").to_range()
         >>> outer = SpecifierSet(">=1.0,<2.0").to_range()
         >>> inner.relation(outer)
-        (True, False)
+        RangeRelation.SUBSET
         >>> outer.relation(SpecifierSet(">=5.0").to_range())
-        (False, True)
+        RangeRelation.DISJOINT
         >>> VersionRange.empty().relation(outer)
-        (True, True)
+        RangeRelation.EMPTY
         """
         # Identity settles both answers and the policy check with it.
         if self is other:
-            if self.is_empty:
-                return True, True
-            return True, False
+            return _EMPTY_REL if self.is_empty else _SUBSET_REL
 
         self._check_policy_compat(other)
 
@@ -1231,14 +1262,14 @@ class VersionRange:
             # On plain ranges the bounds decide membership, so equal bounds
             # settle both answers without a walk.
             if self._bounds == other._bounds:
-                if self._bounds:
-                    return True, False
-                return True, True
+                return _SUBSET_REL if self._bounds else _EMPTY_REL
             return _relate_bounds(self._bounds, other._bounds)
 
         # Literals, a live arbitrary admission, or a pre-release-excluding
         # policy all put members outside the bounds, so defer to the algebra.
-        return self.is_subset(other), self.is_disjoint(other)
+        if self.is_subset(other):
+            return _EMPTY_REL if self.is_disjoint(other) else _SUBSET_REL
+        return _DISJOINT_REL if self.is_disjoint(other) else _OVERLAPPING_REL
 
     def is_superset(self, other: VersionRange) -> bool:
         """Return whether every member of other is also a member of self.
