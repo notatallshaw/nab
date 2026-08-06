@@ -74,6 +74,24 @@ DOCS_CONFIGURATION = (
     Path(__file__).resolve().parents[2] / "docs" / "reference" / "configuration.md"
 )
 
+DOCS_CONFLICTS = (
+    Path(__file__).resolve().parents[2] / "docs" / "explanation" / "conflicts.md"
+)
+
+
+def conflicts_doc_examples() -> list[str]:
+    """Return every ``[tool.nab]`` fenced TOML block in the conflicts page."""
+    text = DOCS_CONFLICTS.read_text(encoding="utf-8")
+    blocks = [
+        block
+        for block in re.findall(r"```toml\n(.*?)```", text, re.DOTALL)
+        if block.lstrip().startswith("[tool.nab]")
+    ]
+
+    if not blocks:
+        raise AssertionError("no [tool.nab] example block in conflicts.md")
+    return blocks
+
 
 def first_tool_nab_example() -> str:
     """Return the first ``[tool.nab]`` fenced TOML block in the config reference."""
@@ -570,6 +588,10 @@ class TestConflicts:
         with pytest.raises(ConfigError, match="more than one set"):
             read_pyproject_config(path)
 
+    def test_doc_states_member_uniqueness_rule(self) -> None:
+        page = " ".join(DOCS_CONFLICTS.read_text(encoding="utf-8").lower().split())
+        assert "one conflict set" in page
+
     def test_same_name_extra_and_group_in_two_sets_allowed(
         self, tmp_path: Path
     ) -> None:
@@ -640,6 +662,34 @@ class TestConflicts:
         )
         config = read_pyproject_config(path, discover_workspace=False)
         assert config.default_groups == ("a", "b")
+
+
+class TestConflictsDocExamples:
+    """The conflicts page teaches the syntax, so nab must accept its examples."""
+
+    def _parse_examples(
+        self, tmp_path: Path
+    ) -> list[tuple[str, tuple[ConflictSet, ...]]]:
+        parsed: list[tuple[str, tuple[ConflictSet, ...]]] = []
+        for i, block in enumerate(conflicts_doc_examples()):
+            project = tmp_path / f"example{i}"
+            project.mkdir()
+            path = write(project, block)
+            config = read_pyproject_config(path, discover_workspace=False)
+            parsed.append((block, config.conflicts))
+        return parsed
+
+    def test_every_example_declares_a_conflict(self, tmp_path: Path) -> None:
+        for block, conflicts in self._parse_examples(tmp_path):
+            assert conflicts, block
+
+    def test_examples_show_every_policy(self, tmp_path: Path) -> None:
+        policies = {
+            conflict_set.policy
+            for _, conflicts in self._parse_examples(tmp_path)
+            for conflict_set in conflicts
+        }
+        assert policies == set(ConflictPolicy)
 
 
 def _extras_set(policy: ConflictPolicy, *names: str) -> ConflictSet:

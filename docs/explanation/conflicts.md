@@ -41,14 +41,19 @@ Gentoo's `REQUIRED_USE` operators:
 ```toml
 [tool.nab]
 conflicts = [
-    { members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "at-most-one" },   # ?? (default)
-    { members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "exactly-one" },   # ^^
-    { members = [{ group = "a" }, { group = "b" }], policy = "at-least-one" },      # ||
+    { members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "at-most-one" },        # ?? (default)
+    { members = [{ extra = "cuda11" }, { extra = "cuda12" }], policy = "exactly-one" },  # ^^
+    { members = [{ group = "a" }, { group = "b" }], policy = "at-least-one" },           # ||
 ]
 ```
 
 A table without a `policy` key defaults to `at-most-one`, the same as
 the bare-list form.
+
+A member may appear in only one conflict set. Naming the same extra or
+group in two sets is refused when the config is read, whether both sets
+sit in one file or one comes from `pyproject.toml` and the other from a
+project-directory `nab.toml`.
 
 Extra and group names are normalised (PEP 685 / PEP 735), so the
 spelling here does not have to match the table key exactly.
