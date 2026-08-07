@@ -13,14 +13,16 @@ plus at most one checked-in patch, and nothing else.
   pristine; the rebuild reapplies it after refreshing. With no patch file the
   tree is byte-identical to upstream at the pin. The patch carries:
   - `ranges.py`: `VersionRange.from_bounds`, `snap_bounds`,
-    `release_intervals`, and `relation`; an `assume_sorted` keyword on `filter`
-    and the `VersionRange._filter_sorted` it dispatches to; `is_subset` and
+    `release_intervals`, and `relation` with its `RangeRelation` result type
+    and the member aliases the return paths bind;
+    an `assume_sorted` keyword on `filter` and the
+    `VersionRange._filter_sorted` it dispatches to; `is_subset` and
     `is_disjoint` answered by a direct walk over the interval lists instead of
     an intermediate range; the module-level helpers they need (`_relate_bounds`,
     `_subset_bounds`, `_disjoint_bounds`, `_bisect_predicate`,
     `_partition_indexes`, `_make_project`, `_check_order`, `_lattice_release`,
-    `_release_boundary_point`); the `SortedOrder` alias and its `__all__`
-    entry; and the class-docstring lines naming them.
+    `_release_boundary_point`); the `RangeRelation` and `SortedOrder` `__all__`
+    entries; and the class-docstring lines naming them.
   - `_ranges.py`: an unbounded end canonicalizes its inclusivity, and
     `LowerBound.__gt__`, `LowerBound.__le__`, and `UpperBound.__gt__` are
     written out beside `functools.total_ordering`, which still derives the

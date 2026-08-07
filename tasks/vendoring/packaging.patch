@@ -2164,7 +2164,7 @@ index 0000000..74930e7
 +    def __repr__(self) -> str:
 +        return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"
 diff --git a/nab-python/src/nab_python/_vendor/packaging/ranges.py b/nab-python/src/nab_python/_vendor/packaging/ranges.py
-index 8dd5e66..89ec33a 100644
+index 8dd5e66..f8f379e 100644
 --- a/nab-python/src/nab_python/_vendor/packaging/ranges.py
 +++ b/nab-python/src/nab_python/_vendor/packaging/ranges.py
 @@ -22,6 +22,7 @@ import typing
@@ -2175,29 +2175,58 @@ index 8dd5e66..89ec33a 100644
      TypeVar,
      Union,
  )
-@@ -52,11 +53,12 @@ if TYPE_CHECKING:
+@@ -52,11 +53,41 @@ if TYPE_CHECKING:
      from .specifiers import SpecifierSet
  
  
 -__all__ = ["VersionRange"]
-+__all__ = ["SortedOrder", "VersionRange"]
++__all__ = ["RangeRelation", "SortedOrder", "VersionRange"]
  
  T = TypeVar("T")
  UnparsedVersion = Union[Version, str]
  UnparsedVersionVar = TypeVar("UnparsedVersionVar", bound=UnparsedVersion)
 +SortedOrder = Literal["ascending", "descending"]
++
++
++class RangeRelation(enum.Enum):
++    """How one range's members sit against another's.
++
++    The four members partition the ``(is_subset, is_disjoint)`` space: both
++    hold together only for an empty range, which is a subset of everything
++    and shares a member with nothing.
++    """
++
++    EMPTY = (True, True)
++    SUBSET = (True, False)
++    DISJOINT = (False, True)
++    OVERLAPPING = (False, False)
++
++    def __init__(self, is_subset: bool, is_disjoint: bool) -> None:
++        self.is_subset = is_subset
++        self.is_disjoint = is_disjoint
++
++    def __repr__(self) -> str:
++        return f"RangeRelation.{self.name}"
++
++
++# Bound once so the hot return paths load a module global instead of a class
++# attribute.
++_EMPTY_REL = RangeRelation.EMPTY
++_SUBSET_REL = RangeRelation.SUBSET
++_DISJOINT_REL = RangeRelation.DISJOINT
++_OVERLAPPING_REL = RangeRelation.OVERLAPPING
  
  
  class _SetOp(enum.Enum):
-@@ -131,6 +133,95 @@ def _union_ranges(
+@@ -131,6 +162,97 @@ def _union_ranges(
      return merged
  
  
 +def _relate_bounds(
 +    left: Sequence[Interval],
 +    right: Sequence[Interval],
-+) -> tuple[bool, bool]:
-+    """Return ``(is_subset, is_disjoint)`` for two sorted interval lists.
++) -> RangeRelation:
++    """Return the :class:`RangeRelation` for two sorted interval lists.
 +
 +    One two-pointer merge answers both without building the intersection or the
 +    complement. The lists are canonical (sorted, non-overlapping, and
@@ -2223,7 +2252,7 @@ index 8dd5e66..89ec33a 100644
 +            if lower is left_lower and upper is left_upper:
 +                matched += 1
 +            else:
-+                return False, False
++                return _OVERLAPPING_REL
 +            disjoint = False
 +
 +        # Advance whichever side has the smaller upper bound.
@@ -2232,7 +2261,9 @@ index 8dd5e66..89ec33a 100644
 +        else:
 +            right_index += 1
 +
-+    return matched == len(left), disjoint
++    if matched == len(left):
++        return _EMPTY_REL if disjoint else _SUBSET_REL
++    return _DISJOINT_REL if disjoint else _OVERLAPPING_REL
 +
 +
 +def _subset_bounds(left: Sequence[Interval], right: Sequence[Interval]) -> bool:
@@ -2285,7 +2316,7 @@ index 8dd5e66..89ec33a 100644
  def _complement_ranges(ranges: Sequence[Interval]) -> list[Interval]:
      """Complement a sorted, non-overlapping interval list.
  
-@@ -280,6 +371,142 @@ def _struct_admits(
+@@ -280,6 +402,142 @@ def _struct_admits(
      return matches_bounds_only(bounds, parsed)
  
  
@@ -2428,7 +2459,7 @@ index 8dd5e66..89ec33a 100644
  # Repr helpers:
  
  
-@@ -316,7 +543,8 @@ class VersionRange:
+@@ -316,7 +574,8 @@ class VersionRange:
      :class:`~packaging.specifiers.SpecifierSet`.
  
      Construct via :meth:`~packaging.specifiers.SpecifierSet.to_range`, or with
@@ -2438,7 +2469,7 @@ index 8dd5e66..89ec33a 100644
      Compose with :meth:`intersection`, :meth:`union`, :meth:`complement`, and
      :meth:`difference` (or the ``&`` / ``|`` / ``~`` / ``-`` operators). Test
      membership with ``in`` or :meth:`contains`, filter an iterable with
-@@ -330,9 +558,9 @@ class VersionRange:
+@@ -330,9 +589,9 @@ class VersionRange:
      that opt-in scoped to those versions, so unrelated pre-releases are not
      admitted wholesale.
  
@@ -2451,7 +2482,7 @@ index 8dd5e66..89ec33a 100644
  
      >>> r = SpecifierSet(">=1.0,<2.0").to_range()
      >>> "1.5" in r
-@@ -407,7 +635,8 @@ class VersionRange:
+@@ -407,7 +666,8 @@ class VersionRange:
          raise TypeError(
              "cannot create 'VersionRange' instances directly; use "
              "SpecifierSet.to_range(), VersionRange.full(), "
@@ -2461,7 +2492,7 @@ index 8dd5e66..89ec33a 100644
          )
  
      @classmethod
-@@ -599,6 +828,73 @@ class VersionRange:
+@@ -599,6 +859,73 @@ class VersionRange:
              prereleases_configured=prereleases,
          )
  
@@ -2535,7 +2566,7 @@ index 8dd5e66..89ec33a 100644
      def intersection(self, other: VersionRange) -> VersionRange:
          """Range containing exactly the versions in both self and other.
  
-@@ -879,6 +1175,15 @@ class VersionRange:
+@@ -879,6 +1206,15 @@ class VersionRange:
          False
          >>> VersionRange.empty().is_subset(outer)
          True
@@ -2551,7 +2582,7 @@ index 8dd5e66..89ec33a 100644
          """
          self._check_policy_compat(other)
  
-@@ -889,12 +1194,52 @@ class VersionRange:
+@@ -889,12 +1225,52 @@ class VersionRange:
  
          # Plain ranges: subset reduces to bounds containment, no algebra needed.
          if self._is_plain() and other._is_plain():
@@ -2562,11 +2593,13 @@ index 8dd5e66..89ec33a 100644
          # ``===`` literals against both operands, so it stays correct for them.
          return self.difference(other).is_empty
  
-+    def relation(self, other: VersionRange) -> tuple[bool, bool]:
-+        """Return ``(is_subset, is_disjoint)`` against ``other``.
++    def relation(self, other: VersionRange) -> RangeRelation:
++        """Return the :class:`RangeRelation` of ``self`` against ``other``.
 +
-+        Subset-only is containment, disjoint-only is separation, and neither is
-+        overlap. Both hold together only when self is empty, which is a subset
++        :attr:`~RangeRelation.SUBSET` is containment,
++        :attr:`~RangeRelation.DISJOINT` is separation,
++        :attr:`~RangeRelation.OVERLAPPING` is neither, and
++        :attr:`~RangeRelation.EMPTY` is an empty ``self``, which is a subset
 +        of everything and shares a member with nothing.
 +
 +        Both operands must share the same configured pre-release policy;
@@ -2575,17 +2608,15 @@ index 8dd5e66..89ec33a 100644
 +        >>> inner = SpecifierSet(">=1.5,<1.8").to_range()
 +        >>> outer = SpecifierSet(">=1.0,<2.0").to_range()
 +        >>> inner.relation(outer)
-+        (True, False)
++        RangeRelation.SUBSET
 +        >>> outer.relation(SpecifierSet(">=5.0").to_range())
-+        (False, True)
++        RangeRelation.DISJOINT
 +        >>> VersionRange.empty().relation(outer)
-+        (True, True)
++        RangeRelation.EMPTY
 +        """
 +        # Identity settles both answers and the policy check with it.
 +        if self is other:
-+            if self.is_empty:
-+                return True, True
-+            return True, False
++            return _EMPTY_REL if self.is_empty else _SUBSET_REL
 +
 +        self._check_policy_compat(other)
 +
@@ -2593,19 +2624,19 @@ index 8dd5e66..89ec33a 100644
 +            # On plain ranges the bounds decide membership, so equal bounds
 +            # settle both answers without a walk.
 +            if self._bounds == other._bounds:
-+                if self._bounds:
-+                    return True, False
-+                return True, True
++                return _SUBSET_REL if self._bounds else _EMPTY_REL
 +            return _relate_bounds(self._bounds, other._bounds)
 +
 +        # Literals, a live arbitrary admission, or a pre-release-excluding
 +        # policy all put members outside the bounds, so defer to the algebra.
-+        return self.is_subset(other), self.is_disjoint(other)
++        if self.is_subset(other):
++            return _EMPTY_REL if self.is_disjoint(other) else _SUBSET_REL
++        return _DISJOINT_REL if self.is_disjoint(other) else _OVERLAPPING_REL
 +
      def is_superset(self, other: VersionRange) -> bool:
          """Return whether every member of other is also a member of self.
  
-@@ -925,12 +1270,19 @@ class VersionRange:
+@@ -925,12 +1301,19 @@ class VersionRange:
          True
          >>> a.is_disjoint(SpecifierSet(">=1.5,<2.5").to_range())
          False
@@ -2626,7 +2657,7 @@ index 8dd5e66..89ec33a 100644
          return self.intersection(other).is_empty
  
      @typing.overload
-@@ -939,6 +1291,8 @@ class VersionRange:
+@@ -939,6 +1322,8 @@ class VersionRange:
          iterable: Iterable[UnparsedVersionVar],
          prereleases: bool | None = None,
          key: None = ...,
@@ -2635,7 +2666,7 @@ index 8dd5e66..89ec33a 100644
      ) -> Iterator[UnparsedVersionVar]: ...
  
      @typing.overload
-@@ -947,6 +1301,28 @@ class VersionRange:
+@@ -947,6 +1332,28 @@ class VersionRange:
          iterable: Iterable[T],
          prereleases: bool | None = None,
          key: Callable[[T], UnparsedVersion] = ...,
@@ -2664,7 +2695,7 @@ index 8dd5e66..89ec33a 100644
      ) -> Iterator[T]: ...
  
      def filter(
-@@ -954,6 +1330,8 @@ class VersionRange:
+@@ -954,6 +1361,8 @@ class VersionRange:
          iterable: Iterable[Any],
          prereleases: bool | None = None,
          key: Callable[[Any], Version | str] | None = None,
@@ -2673,7 +2704,7 @@ index 8dd5e66..89ec33a 100644
      ) -> Iterator[Any]:
          """Yield items from iterable whose version falls inside the range.
  
-@@ -964,13 +1342,56 @@ class VersionRange:
+@@ -964,13 +1373,56 @@ class VersionRange:
          ``prereleases=True`` would yield it). A flushed buffer comes after
          every in-place yield, so the output is not version-sorted.
  
@@ -2731,7 +2762,7 @@ index 8dd5e66..89ec33a 100644
          region: tuple[Interval, ...] = ()
          if prereleases is None:
              # The region applies only under the autodetect default; a configured
-@@ -978,19 +1399,93 @@ class VersionRange:
+@@ -978,19 +1430,93 @@ class VersionRange:
              prereleases = self._prereleases_configured
              region = self._pre_region
  
@@ -2830,7 +2861,7 @@ index 8dd5e66..89ec33a 100644
      def _filter_with_admission(
          self,
          iterable: Iterable[Any],
-@@ -1078,6 +1573,123 @@ class VersionRange:
+@@ -1078,6 +1604,123 @@ class VersionRange:
          if not found_final:
              yield from all_nonfinal
  

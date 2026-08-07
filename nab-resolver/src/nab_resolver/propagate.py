@@ -127,8 +127,10 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
     key = (positive, assignment, term.constraint)
     result = cache.get(key)
     if result is None:
-        subset, disjoint = assignment.relation(term.constraint)
-        result = classify_relation(term, subset=subset, disjoint=disjoint)
+        relation = assignment.relation(term.constraint)
+        result = classify_relation(
+            term, subset=relation.is_subset, disjoint=relation.is_disjoint
+        )
         if len(cache) >= RELATION_CACHE_MAX:
             cache.clear()
         cache[key] = result
