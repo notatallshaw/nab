@@ -13,18 +13,22 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import platform
 import signal
 import statistics
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -49,6 +53,7 @@ from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
     Provider,
+    ResolutionStrategy,
     VcsConfig,
     VcsPolicy,
     split_extra,
@@ -92,6 +97,8 @@ CANARY_SCENARIOS = [
 
 WALL_TIMEOUT_S = 60
 MAX_ITERATIONS = 50_000
+# Version 2 separates strategy-aware results from the old all-highest series.
+CANARY_CONTRACT_VERSION = 2
 
 
 class _ScenarioTimeoutError(BaseException):
@@ -102,9 +109,129 @@ class _ScenarioTimeoutError(BaseException):
     """
 
 
+def scenario_input_hash(scenario_name: str, scenario: dict) -> str:
+    """Hash the selected source and its complete executable TOML definition."""
+    encoded = json.dumps(
+        {"scenario": scenario_name, "definition": scenario},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def scenario_execution_hash(
+    input_hash: str,
+    effective_settings: dict | None,
+) -> str:
+    """Hash the source input together with the effective host-dependent policy."""
+    encoded = json.dumps(
+        {"input_hash": input_hash, "effective_settings": effective_settings},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def get_git_source_state() -> dict[str, str | bool | None]:
+    """Describe the checked-out source without treating a label as identity."""
+    try:
+        commit = get_git_commit()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {"commit": None, "dirty": True, "diff_hash": None}
+    try:
+        root = Path(
+            subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                check=True,
+                text=True,
+                cwd=BENCHMARKS_DIR,
+            ).stdout.strip()
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            capture_output=True,
+            check=True,
+            cwd=root,
+        ).stdout
+        diff = subprocess.run(
+            ["git", "diff", "--binary", "HEAD", "--"],
+            capture_output=True,
+            check=True,
+            cwd=root,
+        ).stdout
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            capture_output=True,
+            check=True,
+            cwd=root,
+        ).stdout
+        untracked_hashes = bytearray()
+        for raw_path in untracked.split(b"\0"):
+            if not raw_path:
+                continue
+            object_hash = subprocess.run(  # noqa: S603 - path is one arg after --
+                ["git", "hash-object", "--", os.fsdecode(raw_path)],
+                capture_output=True,
+                check=True,
+                cwd=root,
+            ).stdout
+            untracked_hashes.extend(raw_path + b"\0" + object_hash)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {"commit": commit, "dirty": True, "diff_hash": None}
+    dirty = bool(status)
+    diff_hash = (
+        hashlib.sha256(status + b"\0" + diff + b"\0" + untracked_hashes).hexdigest()
+        if dirty
+        else None
+    )
+    return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
+
+
+def _target_manifest(target: ResolveTarget) -> dict[str, object]:
+    tags = [str(tag) for tag in target.tags.ordered]
+    return {
+        "label": target.label,
+        "platform_id": target.platform_id,
+        "host_faithful": target.host_faithful,
+        "tags_faithful": target.tags_faithful,
+        "marker_environment": dict(sorted(target.marker_env.items())),
+        "wheel_tags_count": len(tags),
+        "wheel_tags_hash": hashlib.sha256("\n".join(tags).encode()).hexdigest(),
+    }
+
+
+def _runtime_manifest() -> dict[str, str]:
+    return {
+        "python": sys.version,
+        "implementation": sys.implementation.name,
+        "system": platform.system(),
+        "release": platform.release(),
+        "machine": platform.machine(),
+    }
+
+
 def _alarm_handler(_signum: int, _frame: object) -> None:
     msg = f"scenario exceeded {WALL_TIMEOUT_S}s wall-clock budget"
     raise _ScenarioTimeoutError(msg)
+
+
+@contextmanager
+def _scenario_wall_timeout() -> Iterator[None]:
+    """Install the POSIX wall timer when the platform provides one."""
+    sigalrm = getattr(signal, "SIGALRM", None)
+    alarm = getattr(signal, "alarm", None)
+    if sigalrm is None or alarm is None:
+        yield
+        return
+
+    previous_handler = signal.signal(sigalrm, _alarm_handler)
+    alarm(WALL_TIMEOUT_S)
+    try:
+        yield
+    finally:
+        alarm(0)
+        signal.signal(sigalrm, previous_handler)
 
 
 def expand_project_extras(
@@ -212,10 +339,11 @@ def parse_datetime(value: str) -> datetime:
 
 def get_git_commit() -> str:
     result = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
+        ["git", "rev-parse", "HEAD"],
         capture_output=True,
         text=True,
         check=True,
+        cwd=BENCHMARKS_DIR,
     )
     return result.stdout.strip()
 
@@ -225,13 +353,18 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
     python_version: str,
     uploaded_prior_to: datetime | None,
     constraints: dict[str, VersionRange] | None,
+    *,
     marker_environment: dict[str, str] | None = None,
     indexes: list[IndexConfig] | None = None,
     index_routes: list[IndexRoute] | None = None,
     build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
-    *,
+    resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
     trust_unverified_sdist_deps: bool = False,
 ) -> dict:
+    direct_packages = frozenset(
+        name for name in requirements if split_extra(name)[1] is None
+    )
+    effective_indexes = list(indexes) if indexes is not None else list(DEFAULT_INDEXES)
     package_overrides = tuple(
         PackageOverride(
             requirement=Requirement(name),
@@ -241,21 +374,24 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
         )
         for name, policy in (build_policy_overrides or {}).items()
     )
+    target = _resolve_target(python_version, marker_environment)
     with FetchCoordinator(
         HttpxAsyncTransport(),
-        indexes=indexes,
+        indexes=effective_indexes,
         cache_dir=CACHE_DIR,
         index_routes=index_routes,
     ) as coordinator:
         provider = Provider(
             coordinator,
-            target=_resolve_target(python_version, marker_environment),
+            target=target,
             root_requirements=requirements,
             uploaded_prior_to=uploaded_prior_to,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.NEVER,
             package_overrides=package_overrides,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+            resolution_strategy=resolution_strategy,
+            direct_packages=direct_packages,
         )
         resolver = Resolver(
             provider,
@@ -264,11 +400,10 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
             max_iterations=MAX_ITERATIONS,
         )
 
-        previous_handler = signal.signal(signal.SIGALRM, _alarm_handler)
-        signal.alarm(WALL_TIMEOUT_S)
         start = time.monotonic()
         try:
-            raw = resolver.resolve(requirements, constraints=constraints)
+            with _scenario_wall_timeout():
+                raw = resolver.resolve(requirements, constraints=constraints)
             elapsed = time.monotonic() - start
             result = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
             success = True
@@ -279,13 +414,33 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
             success = False
             error = f"{type(exc).__name__}: {exc}"
             packages = 0
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, previous_handler)
 
         rs = resolver.stats
         ps = provider.stats
         return {
+            "settings": {
+                "resolution": resolution_strategy.value,
+                "dist_policy": DistPolicy.WHEEL_OR_SDIST.value,
+                "build_policy": BuildPolicy.NEVER.value,
+                "trust_unverified_sdist_deps": trust_unverified_sdist_deps,
+                "max_iterations": MAX_ITERATIONS,
+                "wall_timeout_seconds": WALL_TIMEOUT_S,
+                "runtime": _runtime_manifest(),
+                "direct_packages": sorted(direct_packages),
+                "target": _target_manifest(target),
+                "indexes": [
+                    {"name": index.name, "url": index.url}
+                    for index in effective_indexes
+                ],
+                "index_routes": [
+                    {"name": route.name, "index": route.index}
+                    for route in (index_routes or [])
+                ],
+                "build_policy_overrides": {
+                    name: policy.value
+                    for name, policy in sorted((build_policy_overrides or {}).items())
+                },
+            },
             "success": success,
             "error": error,
             "decisions": rs.decisions,
@@ -336,7 +491,12 @@ def find_scenario(spec: str) -> dict | None:
     return matches[0][1]
 
 
-def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
+def median_run(
+    scenario: dict,
+    runs: int,
+    *,
+    scenario_name: str = "canary",
+) -> tuple[list[dict], dict]:
     if "unsupported_reason" in scenario:
         return [], {"skipped": scenario["unsupported_reason"]}
 
@@ -417,6 +577,16 @@ def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
         else None
     )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
+    resolution_raw = scenario.get("resolution", ResolutionStrategy.HIGHEST.value)
+    try:
+        resolution_strategy = ResolutionStrategy(resolution_raw)
+    except ValueError as exc:
+        valid = sorted(strategy.value for strategy in ResolutionStrategy)
+        msg = (
+            f"{scenario_name}: resolution must be one of {valid!r},"
+            f" got {resolution_raw!r}"
+        )
+        raise ValueError(msg) from exc
     # See scenarios.py: trust pre-2.2 sdist PKG-INFO deps by default so the
     # benchmark measures search, not strict PEP 643 sdist rejection.
     trust_unverified_sdist_deps = bool(
@@ -433,6 +603,7 @@ def median_run(scenario: dict, runs: int) -> tuple[list[dict], dict]:
             indexes=indexes,
             index_routes=index_routes or None,
             build_policy_overrides=build_policy_overrides or None,
+            resolution_strategy=resolution_strategy,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
         )
         for _ in range(runs)
@@ -468,7 +639,8 @@ def main() -> None:
     parser.add_argument("--scenarios-list", help="File with one scenario per line")
     args = parser.parse_args()
 
-    commit = args.commit or get_git_commit()
+    source = get_git_source_state()
+    commit = args.commit or str(source["commit"] or "no-git")
 
     scenarios_to_run: list[str]
     if args.scenarios_list:
@@ -478,6 +650,14 @@ def main() -> None:
         scenarios_to_run = args.scenario
     else:
         scenarios_to_run = list(CANARY_SCENARIOS)
+
+    labels = [name.split(":", 1)[-1] for name in scenarios_to_run]
+    duplicate_labels = sorted({label for label in labels if labels.count(label) > 1})
+    if duplicate_labels:
+        parser.error(
+            "scenario names must be unique across selected files; duplicate(s): "
+            + ", ".join(duplicate_labels)
+        )
 
     out_dir = RESULTS_DIR / commit
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -495,14 +675,32 @@ def main() -> None:
     print("-" * 110)
 
     summary_all: dict[str, dict] = {}
-    for name in scenarios_to_run:
+    for name, label in zip(scenarios_to_run, labels, strict=True):
         scenario = find_scenario(name)
-        label = name.split(":", 1)[-1]
         if scenario is None:
             print(f"{label:<45} NOT FOUND")
             continue
-        runs_data, summary = median_run(scenario, args.runs)
-        summary_all[label] = {"runs": runs_data, "summary": summary}
+        runs_data, summary = median_run(
+            scenario,
+            args.runs,
+            scenario_name=label,
+        )
+        input_hash = scenario_input_hash(name, scenario)
+        effective_settings = runs_data[0]["settings"] if runs_data else None
+        summary_all[label] = {
+            "contract_version": CANARY_CONTRACT_VERSION,
+            "scenario": name,
+            "source": source,
+            "input_hash": input_hash,
+            "execution_hash": scenario_execution_hash(
+                input_hash,
+                effective_settings,
+            ),
+            "input": scenario,
+            "effective_settings": effective_settings,
+            "runs": runs_data,
+            "summary": summary,
+        }
 
         if "skipped" in summary:
             print(f"{label:<45} SKIPPED: {summary['skipped']}")
