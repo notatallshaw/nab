@@ -7,6 +7,7 @@ whether the tier fired: a disqualifier never calls it, a fall-through does.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -483,6 +484,35 @@ def test_non_pep751_precondition(
 
     assert exc.value.code == 1
     assert "not a valid PEP 751 lockfile" in capsys.readouterr().err
+    mock.assert_not_called()
+
+
+def test_oversized_requires_python_precondition(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # PEP 440 puts no cap on release digits; int() refuses them only at compare time.
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = ">=3.10"\n',
+    )
+    out = tmp_path / "pylock.toml"
+    oversized = "9" * (sys.get_int_max_str_digits() + 1)
+    out.write_text(
+        'lock-version = "1.0"\n'
+        f'requires-python = ">={oversized}"\n'
+        'created-by = "nab"\n'
+        "packages = []\n",
+        encoding="utf-8",
+    )
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "not a valid PEP 751 lockfile" in err
+    assert "requires-python" in err
     mock.assert_not_called()
 
 

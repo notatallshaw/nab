@@ -39,6 +39,7 @@ from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.requirements import Requirement
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
+from ..metadata import validate_specifier_versions
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -278,16 +279,25 @@ def read_committed_pylock(path: Path) -> Pylock:
 
     Raises :class:`OSError` when the file cannot be read,
     :class:`LockfileSyntaxError` when it is not TOML, and
-    :class:`InvalidLockfileError` when it is TOML but not a PEP 751 lock.
+    :class:`InvalidLockfileError` when it is TOML but not a usable
+    PEP 751 lock.
     """
     try:
         data = tomli.loads(path.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
         raise LockfileSyntaxError(str(e)) from e
     try:
-        return Pylock.from_dict(data)
+        pylock = Pylock.from_dict(data)
     except PylockValidationError as e:
         raise InvalidLockfileError(str(e)) from e
+
+    if pylock.requires_python is not None:
+        try:
+            validate_specifier_versions(pylock.requires_python)
+        except ValueError as e:
+            msg = f"{e} in 'requires-python'"
+            raise InvalidLockfileError(msg) from e
+    return pylock
 
 
 def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs are each a separate check

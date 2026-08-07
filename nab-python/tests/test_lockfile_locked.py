@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -93,8 +94,23 @@ def _write_foreign_lock(path: Path, packages: str) -> Path:
     return path
 
 
+_AT_LIMIT = "9" * sys.get_int_max_str_digits()
+_OVERSIZED = _AT_LIMIT + "9"
+
+
+def _write_requires_python_lock(path: Path, requires_python: str) -> Path:
+    path.write_text(
+        "lock-version = '1.0'\n"
+        "created-by = 'other-tool'\n"
+        f"requires-python = '{requires_python}'\n"
+        "packages = []\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 class TestReadErrors:
-    """A committed lock that cannot be parsed raises a typed error."""
+    """A committed lock that cannot be parsed or used raises a typed error."""
 
     def test_not_toml_raises_syntax_error(self, tmp_path: Path) -> None:
         target = tmp_path / "pylock.toml"
@@ -130,6 +146,32 @@ class TestReadErrors:
                 dependency_groups=(),
                 default_groups=(),
             )
+
+    def test_oversized_requires_python_raises_invalid(self, tmp_path: Path) -> None:
+        """A digit run past int()'s limit parses as a specifier but never converts."""
+        target = _write_requires_python_lock(
+            tmp_path / "pylock.toml", f">={_OVERSIZED}"
+        )
+        with pytest.raises(InvalidLockfileError, match="requires-python"):
+            check_locked(
+                target,
+                requires_python=">=3.10",
+                extras=(),
+                dependency_groups=(),
+                default_groups=(),
+            )
+
+    def test_at_limit_requires_python_is_compared(self, tmp_path: Path) -> None:
+        target = _write_requires_python_lock(tmp_path / "pylock.toml", f">={_AT_LIMIT}")
+        result = check_locked(
+            target,
+            requires_python=">=3.10",
+            extras=(),
+            dependency_groups=(),
+            default_groups=(),
+        )
+        assert result is not None
+        assert "requires-python" in result.reason
 
 
 class TestArtifactUrlFilenames:
