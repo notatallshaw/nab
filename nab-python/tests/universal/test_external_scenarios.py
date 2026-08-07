@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
-from nab_python.config import NabProjectConfig
+from nab_python.config import NabProjectConfig, enforce_build_policy_for_targets
 from nab_python.lockfile import build_pylock
+from nab_python.provider import BuildPolicy
 from nab_python.resolve import build_lock_input, resolve_with_coordinator
 from nab_python.tags import PlatformSpec
 from nab_python.target import Matrix
+
+_PLATFORM_WHEEL_SHA256 = (
+    "170f4c280ebc110a306ff320681729df2ce8545154e5c829c1e8b182cf2fff79"
+)
 
 
 def _wheel(
@@ -274,3 +281,109 @@ def test_conditional_dependency_stays_in_its_package_fork() -> None:
             if package.marker is None or package.marker.evaluate(target.marker_env)
         )
         assert matching_packages == expected_packages[target.platform_id]
+
+
+def test_platform_marked_root_keeps_its_compatible_wheel() -> None:
+    wheel = WheelFile(
+        filename="win_only-1.0.0-cp312-abi3-win_amd64.whl",
+        url=("https://example.invalid/win_only-1.0.0-cp312-abi3-win_amd64.whl"),
+        version="1.0.0",
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+        hashes=(("sha256", _PLATFORM_WHEEL_SHA256),),
+    )
+    coordinator = make_coordinator(
+        listings={"win-only": [wheel]},
+        auto_metadata=True,
+    )
+    project_python = ">=3.12"
+    targets = Matrix(
+        python=">=3.12,<3.13",
+        platforms=(
+            PlatformSpec("linux_x86_64"),
+            PlatformSpec("windows_amd64"),
+        ),
+    ).expand()
+    root = Requirement("win-only ; sys_platform == 'win32'")
+    config = NabProjectConfig(requires_python=project_python)
+    build_policy = enforce_build_policy_for_targets(
+        targets=targets,
+        build_policy=config.build_policy,
+        build_policy_set=False,
+        package_overrides=config.package_overrides,
+        index_overrides=config.index_overrides,
+    )
+    assert build_policy is BuildPolicy.NEVER
+    config = replace(config, build_policy=build_policy)
+
+    result = resolve_with_coordinator(
+        coordinator,
+        targets,
+        [root],
+        config=config,
+    )
+
+    assert result.success
+    assert {
+        target_result.target.label: target_result.pins
+        for target_result in result.target_results
+    } == {
+        "py312-linux_x86_64": {},
+        "py312-windows_amd64": {"win-only": Version("1.0.0")},
+    }
+    assert root.marker is not None
+    assert {
+        target_result.target.label: (
+            [("win-only", str(target_result.pins["win-only"]))]
+            if root.marker.evaluate(target_result.target.marker_env)
+            else []
+        )
+        for target_result in result.target_results
+    } == {
+        "py312-linux_x86_64": [],
+        "py312-windows_amd64": [("win-only", "1.0.0")],
+    }
+    assert all(
+        target_result.lock is not None and not target_result.lock.dependencies
+        for target_result in result.target_results
+    )
+
+    pylock = build_pylock(build_lock_input(result, config=config))
+    pylock.validate()
+    assert pylock.requires_python is not None
+    assert str(pylock.requires_python) == project_python
+    assert len(pylock.environments) == len(targets) == 2
+    marker_witnesses = [
+        frozenset(
+            target.label for target in targets if marker.evaluate(target.marker_env)
+        )
+        for marker in pylock.environments
+    ]
+    assert set(marker_witnesses) == {
+        frozenset({"py312-linux_x86_64"}),
+        frozenset({"py312-windows_amd64"}),
+    }
+
+    assert [
+        (str(package.name), str(package.version)) for package in pylock.packages
+    ] == [("win-only", "1.0.0")]
+    (package,) = pylock.packages
+    assert package.marker is not None
+    assert {
+        target.label: package.marker.evaluate(target.marker_env) for target in targets
+    } == {
+        "py312-linux_x86_64": False,
+        "py312-windows_amd64": True,
+    }
+    assert list(package.dependencies or ()) == []
+    assert package.sdist is None
+    assert [
+        (locked_wheel.filename, dict(locked_wheel.hashes))
+        for locked_wheel in package.wheels or ()
+    ] == [
+        (
+            "win_only-1.0.0-cp312-abi3-win_amd64.whl",
+            {"sha256": _PLATFORM_WHEEL_SHA256},
+        )
+    ]
