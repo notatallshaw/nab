@@ -4267,6 +4267,154 @@ class TestMatrix:
             read_pyproject_config(path)
 
 
+# Longer than CPython's default 4300-digit limit on int-from-string conversion.
+_PAST_INT_LIMIT = "9" * 5000
+
+
+class TestDigitRunPastIntLimit:
+    """A version digit run past CPython's int limit is a config error.
+
+    ``Version()`` raises a bare ``ValueError`` for one (not
+    ``InvalidVersion``), and a specifier defers the conversion to its first
+    comparison, so each validator forces it and reports the key.
+    """
+
+    def test_environment_python(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, f'[tool.nab.environment]\npython = "3.{_PAST_INT_LIMIT}"\n'
+        )
+        with pytest.raises(
+            ConfigError, match="environment.python must be a version like"
+        ):
+            read_pyproject_config(path)
+
+    def test_environment_platform_runs_on_macos(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.environment]\nplatform ="
+            f' {{ id = "macos_arm64", runs-on-macos = "{_PAST_INT_LIMIT}.0" }}\n',
+        )
+        with pytest.raises(
+            ConfigError, match="runs-on-macos must be a 'major.minor' version"
+        ):
+            read_pyproject_config(path)
+
+    def test_marker_environment_version_variable(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.marker-environment]\n"
+            f'python_full_version = "3.{_PAST_INT_LIMIT}"\n',
+        )
+        with pytest.raises(
+            ConfigError, match="python_full_version must be a PEP 440 version"
+        ):
+            read_pyproject_config(path)
+
+    def test_python_override(self, tmp_path: Path) -> None:
+        config = read_pyproject_config(write(tmp_path, "[tool.nab]\n"))
+        with pytest.raises(ConfigError, match="--python must be a version like"):
+            with_python_override(config, f"3.{_PAST_INT_LIMIT}")
+
+    def test_matrix_python_clause(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            f'python = ">=3.{_PAST_INT_LIMIT}"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        with pytest.raises(ConfigError, match="is not a valid version"):
+            read_pyproject_config(path)
+
+    def test_matrix_python_patches(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11,<3.12"\n'
+            'platforms = ["linux_x86_64"]\n'
+            "[tool.nab.matrix.python-patches]\n"
+            f'"3.11" = "3.11.{_PAST_INT_LIMIT}"\n',
+        )
+        with pytest.raises(ConfigError, match="python-patches expects version"):
+            read_pyproject_config(path)
+
+    def test_matrix_platform_runs_on_libc(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11,<3.12"\n'
+            "platforms ="
+            f' [{{ id = "linux_x86_64", runs-on-libc = "2.{_PAST_INT_LIMIT}" }}]\n',
+        )
+        with pytest.raises(
+            ConfigError, match="runs-on-libc must be a 'major.minor' version"
+        ):
+            read_pyproject_config(path)
+
+    def test_requires_python(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, f'[tool.nab]\nrequires-python = ">=3.{_PAST_INT_LIMIT}"\n'
+        )
+        with pytest.raises(
+            ConfigError, match="requires-python must be a PEP 440 specifier"
+        ):
+            read_pyproject_config(path)
+
+    def test_constraints(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, f'[tool.nab]\nconstraints = ["widget >= {_PAST_INT_LIMIT}"]\n'
+        )
+        with pytest.raises(
+            ConfigError, match=r"constraints\[0\] is not a valid requirement"
+        ):
+            read_pyproject_config(path)
+
+    def test_packages_selector(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            f'[tool.nab.packages."widget >= {_PAST_INT_LIMIT}"]\n'
+            'dist-policy = "sdist-only"\n',
+        )
+        with pytest.raises(ConfigError, match="is not a valid PEP 508 requirement"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_package_rules_match(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.package-rules]]\n"
+            f'match = ["widget >= {_PAST_INT_LIMIT}"]\n'
+            'dist-policy = "sdist-only"\n',
+        )
+        with pytest.raises(ConfigError, match="is not a valid PEP 508 requirement"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_package_override_requires_python(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            f'[tool.nab.packages.widget]\nrequires-python = ">={_PAST_INT_LIMIT}"\n',
+        )
+        with pytest.raises(
+            ConfigError, match="requires-python must be a PEP 440 specifier"
+        ):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_package_override_dependencies(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[tool.nab.packages.widget]\n"
+            f'dependencies = ["gadget >= {_PAST_INT_LIMIT}"]\n',
+        )
+        with pytest.raises(
+            ConfigError, match=r"dependencies\[0\] is not a valid PEP 508 requirement"
+        ):
+            read_pyproject_config(path, discover_workspace=False)
+
+
 class TestWorkspace:
     """``[tool.nab.workspace]`` parses into a typed :class:`WorkspaceConfig`."""
 

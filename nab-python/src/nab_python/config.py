@@ -31,10 +31,10 @@ from ._conflict_kind import KIND_EXTRA, KIND_GROUP
 from ._iso8601 import parse_iso_datetime
 from ._toml import tool_nab_section
 from ._vcs_admission import known_vcs_schemes
-from ._vendor.packaging.requirements import InvalidRequirement, Requirement
+from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import InvalidName, canonicalize_name
-from ._vendor.packaging.version import InvalidVersion, Version
+from ._vendor.packaging.version import Version
 from .config_sources import (
     ConfigError,
     EffectiveValue,
@@ -1117,7 +1117,7 @@ def with_python_override(
 
     try:
         Version(python)
-    except InvalidVersion as exc:
+    except ValueError as exc:
         msg = f"--python must be a version like '3.12' or '3.12.4', got {python!r}"
         raise ConfigError(msg) from exc
 
@@ -1227,7 +1227,9 @@ def _require_constraint(key: str, item: str) -> None:
     """
     try:
         req = Requirement(item)
-    except InvalidRequirement as exc:
+        # a specifier defers parsing its versions; to_range() forces it
+        req.specifier.to_range()
+    except ValueError as exc:
         msg = f"{key} is not a valid requirement: {exc}"
         raise ConfigError(msg) from exc
 
@@ -1277,8 +1279,9 @@ def _parse_requires_python(value: object) -> str | None:
     """
     raw = _parse_string_value("requires-python", value)
     try:
-        SpecifierSet(raw)
-    except InvalidSpecifier as exc:
+        # a specifier defers parsing its versions; to_range() forces it
+        SpecifierSet(raw).to_range()
+    except ValueError as exc:
         msg = (
             f"requires-python must be a PEP 440 specifier, got {raw!r}."
             f"  Did you mean ==X.Y or >=X.Y,<X.{{Y+1}}?"
@@ -1470,7 +1473,7 @@ def _parse_marker_environment(value: object) -> dict[str, str]:
         if k in _VERSION_MARKER_VARIABLES:
             try:
                 Version(v)
-            except InvalidVersion as exc:
+            except ValueError as exc:
                 msg = f"marker-environment.{k} must be a PEP 440 version, got {v!r}"
                 raise ConfigError(msg) from exc
         out[k] = v
@@ -1536,7 +1539,7 @@ def _validate_environment_values(environment: Mapping[str, Any]) -> None:
     if python is not None:
         try:
             Version(python)
-        except InvalidVersion as exc:
+        except ValueError as exc:
             msg = (
                 "environment.python must be a version like '3.12' or"
                 f" '3.12.4', got {python!r}"
@@ -2039,7 +2042,9 @@ def _requirement_from_selector(raw: str, where: str) -> Requirement:
     """
     try:
         requirement = Requirement(raw)
-    except InvalidRequirement as exc:
+        # a specifier defers parsing its versions; to_range() forces it
+        requirement.specifier.to_range()
+    except ValueError as exc:
         msg = f"{where} entry {raw!r} is not a valid PEP 508 requirement"
         raise ConfigError(msg) from exc
     if requirement.extras or requirement.marker is not None or requirement.url:
@@ -2345,13 +2350,16 @@ def _parse_override_dependencies(
             )
             raise ConfigError(msg)
         try:
-            out.append(Requirement(item))
-        except InvalidRequirement as exc:
+            requirement = Requirement(item)
+            # a specifier defers parsing its versions; to_range() forces it
+            requirement.specifier.to_range()
+        except ValueError as exc:
             msg = (
                 f"{where}.dependencies[{i}] is not a valid PEP 508"
                 f" requirement: {item!r}"
             )
             raise ConfigError(msg) from exc
+        out.append(requirement)
     return tuple(out)
 
 
@@ -2709,7 +2717,7 @@ def _parse_python_patches(value: object) -> dict[str, str] | None:
         try:
             minor = Version(k)
             full = Version(v)
-        except InvalidVersion as exc:
+        except ValueError as exc:
             msg = f"matrix.python-patches expects version strings, got {k!r}: {v!r}"
             raise ConfigError(msg) from exc
 
@@ -2935,7 +2943,7 @@ def _validate_matrix_python(spec: str) -> None:
     for clause in specifier_set:
         try:
             version = Version(clause.version.removesuffix(".*"))
-        except InvalidVersion as exc:
+        except ValueError as exc:
             msg = f"matrix.python clause {clause} is not a valid version"
             raise ConfigError(msg) from exc
 
@@ -3089,7 +3097,7 @@ def _parse_major_minor(key: str, value: object) -> tuple[int, int] | None:
     text = _parse_string_value(key, value)
     try:
         version = Version(text)
-    except InvalidVersion as exc:
+    except ValueError as exc:
         msg = f"{key} must be a 'major.minor' version, got {text!r}"
         raise ConfigError(msg) from exc
     release = version.release

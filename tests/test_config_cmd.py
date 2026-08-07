@@ -446,6 +446,17 @@ class TestConfigErrors:
         assert "[tool.nab] must be a table" in err
         assert type_name in err
 
+    def test_version_digit_run_past_int_limit_exits(
+        self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The read-only inspector hits the same validators as the resolve, so
+        # a digit run past CPython's int limit exits with the one-line error.
+        _project(hermetic_roots, 'environment = { python = "3.' + "9" * 5000 + '" }\n')
+        with pytest.raises(SystemExit) as exc:
+            config_command("list", path=hermetic_roots / "pyproject.toml")
+        assert exc.value.code == 1
+        assert "environment.python must be a version like" in capsys.readouterr().err
+
     def test_cli_offline_override_layer(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
         buf = io.StringIO()
@@ -977,6 +988,16 @@ class TestProjectCliOverrides:
         # not a reusable absolute cutoff, so it pins no lock anchor.
         proj = _project(hermetic_roots)
         assert nab_cli.lock_anchor(proj, {"uploaded-prior-to": "P7D"}) is None
+
+    def test_lock_anchor_swallows_digit_run_past_int_limit(
+        self, hermetic_roots: Path
+    ) -> None:
+        # A digit run past CPython's int limit raises a bare ValueError;
+        # the best-effort anchor read swallows it like any config error.
+        proj = _project(
+            hermetic_roots, 'environment = { python = "3.' + "9" * 5000 + '" }\n'
+        )
+        assert nab_cli.lock_anchor(proj) is None
 
 
 class TestDownloadLadder:

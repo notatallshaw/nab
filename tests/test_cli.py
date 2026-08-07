@@ -1507,6 +1507,24 @@ class TestProjectFlagErrors:
         assert "[tool.nab]" not in err
         assert not out.exists()
 
+    def test_requires_python_digit_run_past_int_limit_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Version() raises a bare ValueError for a digit run past CPython's
+        # int limit, so the flag parse must reject it like any bad value.
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(pyproject, output=out, project_requires_python=">=3." + "9" * 5000)
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert (
+            "error: --project-requires-python: requires-python must be a"
+            " PEP 440 specifier" in err
+        )
+        assert "[tool.nab]" not in err
+        assert not out.exists()
+
     def test_download_requires_python_bad_value_names_the_flag(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
