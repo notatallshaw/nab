@@ -672,6 +672,8 @@ def _version_neighbors(text: str) -> list[str]:
     release_str = ".".join(str(part) for part in release)
     pre_part = f"{version.pre[0]}{version.pre[1]}" if version.pre is not None else ""
     out = [base]
+    if version.local is not None:
+        out.extend(_local_twins(version, release_str, pre_part))
 
     # Bumps stay in the literal's own epoch: the release bump of 1!3.9 is 1!3.10,
     # which outranks it, not 3.10, which sorts below and leaves the band above the
@@ -724,6 +726,21 @@ def _suffix_neighbors(version: Version, release_str: str, pre_part: str) -> list
         if version.dev > 0:
             out.append(str(Version(f"{stem}.dev{version.dev - 1}")))
     return out
+
+
+def _local_twins(version: Version, release_str: str, pre_part: str) -> list[str]:
+    """Mint the shared points of a local-tagged literal.
+
+    A specifier built from a public point ignores a candidate's local label
+    (PEP 440 version matching), so the local-stripped release realises truth
+    vectors the tagged point cannot. The zero-padded twin is equal to the
+    literal as a version but not as a string, so the invalid-specifier
+    string fall-through tells the two apart.
+    """
+    post_part = f".post{version.post}" if version.post is not None else ""
+    dev_part = f".dev{version.dev}" if version.dev is not None else ""
+    stem = f"{version.epoch}!{release_str}.0{pre_part}{post_part}{dev_part}"
+    return [version.public, str(Version(f"{stem}+{version.local}"))]
 
 
 def _between(vlow: Version, low: str, vhigh: Version) -> str | None:
