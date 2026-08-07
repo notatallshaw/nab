@@ -18,6 +18,13 @@ The runner records wall-clock, decision-count, and round-count
 metrics, and writes a JSON summary under
 `nab-python/benchmarks/results/<commit>/`.
 
+### Canary subset
+
+`canary.py` runs the small hard-case subset used by the local verification gate.
+It honors each selected scenario's `resolution` setting and records the complete TOML input, effective target and policy, source state, and content hashes.
+The local verifier compares success results only when their contract version and host-aware execution hashes match and both source trees are clean.
+Contract version 2 begins the strategy-aware series; older all-highest results are not its baseline.
+
 ## Universal-resolution scenarios
 
 `nab-python/benchmarks/universal_scenarios.py` runs
