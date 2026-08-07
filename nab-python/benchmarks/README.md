@@ -44,6 +44,20 @@ python nab-python/benchmarks/_profile_runner.py \
 
 Each run initializes `_standard_manifest.json` as incomplete before resolving anything. It becomes complete only after every selected supported execution has an exact, valid result; every selected unsupported scenario is declared; no result is missing or extra; and the source tree is clean. The manifest records the full source identity at both run boundaries, corpus hash, execution settings, strategies, selected files, and exact available, selected, completed, and unsupported logical and execution key sets. A missing, malformed, dirty, source-changing, or incomplete manifest does not describe a valid run. Reusing a result label resumes only when that manifest describes the same mode, strategy set, corpus, and selection. Use a new label or `--force` when any of those inputs changes. `--force` replaces the standard JSON results for the label while preserving universal results and top-level provenance.
 
+### Static Nab/uv parity plan
+
+`standard_parity_plan.py` compiles every canonical standard scenario and its three strategy mappings into deterministic JSON. The source corpus has 558 logical scenarios and 1,674 mapping identities: 536 scenarios are runnable across 1,608 strategy executions, while 22 are declared unsupported. Every identity remains in the plan. The compiler preserves a normalized Nab contract, omits the default `highest` resolution override, and emits a uv translation only when the input is statically representable. Incomplete target overlays and other semantic gaps remain in the plan with a typed `unsupported` reason and a null uv translation.
+
+Schema 1 admits no `exact` or `conditional` rows. The standard source format does not carry structured expected outcomes or frozen prerelease, Requires-Python, build-policy, and artifact evidence, so all current rows fail closed as `unsupported`. A later schema must add and validate that evidence before either status becomes available. The normalized Nab contract uses the product default `trust_unverified_sdist_deps = false` when a scenario omits that setting; it does not preserve the old benchmark runner's permissive fallback.
+
+```bash
+python nab-python/benchmarks/standard_parity_plan.py > standard-parity-plan.json
+```
+
+The compiler does not invoke either resolver or access the network. Each plan embeds its validated source definitions, binds their digest into the corpus digest, and requires that source digest from a separately trusted caller when validated. The plan is not a result, baseline, or claim of Nab/uv parity. A paired executor and its evidence contract require a separate review boundary.
+
+A paired executor must run one ordinary Nab command and one ordinary uv command for each mapping. It must measure each complete command and neither reject nor rescale a comparison because the tools perform different numbers of internal resolves.
+
 ### Canary subset
 
 `canary.py` runs the small hard-case subset used by the local verification gate.
