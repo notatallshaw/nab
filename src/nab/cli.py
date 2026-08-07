@@ -767,9 +767,7 @@ def main() -> None:
     _printer = Printer(
         verbosity=options.verbosity, color=options.color, progress=options.progress
     )
-    install_log_handler(
-        options.verbosity, stream=sys.stderr, color_enabled=_printer.color_enabled
-    )
+    install_log_handler(_printer)
 
     try:
         app.cli(prog="nab", args=_normalize_layered_bool_flags(rest))

@@ -31,9 +31,9 @@ from typing import TYPE_CHECKING
 from urllib.parse import unquote, urljoin, urlparse, urlsplit
 from urllib.request import url2pathname
 
+from packaging.utils import canonicalize_name as _canonical
 from packaging.utils import parse_sdist_filename
 
-from ._naming import canonical as _canonical
 from ._pep503 import hash_fragment, metadata_declaration, read_page
 from .client import (
     SdistFile,

@@ -7634,7 +7634,7 @@ class TestPrefetchWalkAhead:
     """``prefetch_walk_ahead`` covers the abort-skip walk after the scan.
 
     Fired from ``_scan_candidates_pipelined``; submits up to
-    ``DEEP_PREFETCH_COUNT`` wheel metadata requests for the front of
+    ``DEEP_PREFETCH_COUNT`` wheel metadata requests in scan order over
     ``versions_cache[normalized]``.  Fire-and-forget; correctness only
     depends on it being a superset of what the resolver later asks for.
     """
@@ -7658,6 +7658,30 @@ class TestPrefetchWalkAhead:
         # fetch_versions already prefetched the newest version; it fills a
         # window slot but is skipped as already-held.
         assert len(items) == provider.DEEP_PREFETCH_COUNT - 1
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [ResolutionStrategy.LOWEST, ResolutionStrategy.LOWEST_DIRECT],
+    )
+    def test_walk_ahead_is_oldest_first_under_lowest(
+        self, strategy: ResolutionStrategy
+    ) -> None:
+        """Under a lowest strategy the batch follows the scan: oldest first."""
+        wheels = [make_wheel(f"{i}.0") for i in range(100, 0, -1)]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(
+            coordinator,
+            resolution_strategy=strategy,
+            direct_packages=frozenset({"foo"}),
+        )
+        provider.fetch_versions("foo")
+        coordinator.reset_mock()
+        provider.prefetch_walk_ahead("foo")
+        items = coordinator.request_metadata_batch.call_args[0][0]
+        versions = [ver for _, ver, _, _ in items]
+        assert versions == [
+            f"{i}.0" for i in range(1, provider.DEEP_PREFETCH_COUNT + 1)
+        ]
 
     def test_skips_versions_with_cached_deps(self) -> None:
         """Versions already in ``deps_cache`` are excluded from the batch."""

@@ -299,10 +299,20 @@ def _emit_record(name: str, level: int, message: str) -> None:
     logging.getLogger(name).log(level, message)
 
 
-def test_log_handler_normal_prefixes_warning() -> None:
+def _handler_printer(
+    verbosity: Verbosity = Verbosity.NORMAL,
+    *,
+    color: ColorChoice = ColorChoice.NEVER,
+) -> tuple[Printer, io.StringIO]:
     stream = io.StringIO()
+    printer = Printer(verbosity=verbosity, color=color, stderr=stream, env={})
+    return printer, stream
+
+
+def test_log_handler_normal_prefixes_warning() -> None:
+    printer, stream = _handler_printer()
     try:
-        install_log_handler(Verbosity.NORMAL, stream=stream, color_enabled=False)
+        install_log_handler(printer)
         _emit_record("nab_python.demo", logging.WARNING, "dropped marker")
         _emit_record("nab_python.demo", logging.INFO, "hidden at normal")
     finally:
@@ -311,9 +321,9 @@ def test_log_handler_normal_prefixes_warning() -> None:
 
 
 def test_log_handler_colours_token() -> None:
-    stream = io.StringIO()
+    printer, stream = _handler_printer(color=ColorChoice.ALWAYS)
     try:
-        install_log_handler(Verbosity.NORMAL, stream=stream, color_enabled=True)
+        install_log_handler(printer)
         _emit_record("nab_index.demo", logging.ERROR, "boom")
     finally:
         reset_log_handlers()
@@ -321,9 +331,9 @@ def test_log_handler_colours_token() -> None:
 
 
 def test_log_handler_verbose_shows_info_with_source() -> None:
-    stream = io.StringIO()
+    printer, stream = _handler_printer(Verbosity.VERBOSE)
     try:
-        install_log_handler(Verbosity.VERBOSE, stream=stream, color_enabled=False)
+        install_log_handler(printer)
         _emit_record("nab_python.demo", logging.INFO, "fetching")
     finally:
         reset_log_handlers()
@@ -331,10 +341,10 @@ def test_log_handler_verbose_shows_info_with_source() -> None:
 
 
 def test_log_handler_reinstall_does_not_stack() -> None:
-    stream = io.StringIO()
+    printer, stream = _handler_printer()
     try:
-        install_log_handler(Verbosity.NORMAL, stream=stream, color_enabled=False)
-        install_log_handler(Verbosity.NORMAL, stream=stream, color_enabled=False)
+        install_log_handler(printer)
+        install_log_handler(printer)
         _emit_record("nab_resolver.demo", logging.WARNING, "once")
     finally:
         reset_log_handlers()
@@ -342,9 +352,9 @@ def test_log_handler_reinstall_does_not_stack() -> None:
 
 
 def test_log_handler_untokened_level_is_bare() -> None:
-    stream = io.StringIO()
+    printer, stream = _handler_printer()
     try:
-        install_log_handler(Verbosity.NORMAL, stream=stream, color_enabled=False)
+        install_log_handler(printer)
         _emit_record("nab_python.demo", logging.WARNING + 5, "custom level")
     finally:
         reset_log_handlers()
@@ -352,8 +362,8 @@ def test_log_handler_untokened_level_is_bare() -> None:
 
 
 def test_reset_log_handlers_detaches() -> None:
-    stream = io.StringIO()
-    install_log_handler(Verbosity.NORMAL, stream=stream, color_enabled=False)
+    printer, stream = _handler_printer()
+    install_log_handler(printer)
     reset_log_handlers()
     _emit_record("nab_python.demo", logging.WARNING, "after reset")
     assert stream.getvalue() == ""
@@ -426,6 +436,46 @@ def test_progress_clear_wipes_then_is_noop() -> None:
     err.seek(0)
     reporter.clear()
     assert err.getvalue() == ""
+
+
+def _live_progress_printer() -> tuple[Printer, _TTY]:
+    err = _TTY(tty=True)
+    printer = Printer(
+        stderr=err, verbosity=Verbosity.NORMAL, color=ColorChoice.NEVER, env={}
+    )
+    return printer, err
+
+
+def test_printer_message_wipes_live_progress_line() -> None:
+    printer, err = _live_progress_printer()
+    reporter = ProgressReporter(printer, clock=lambda: 0.0)
+    reporter.on_fetch()
+    printer.warning("metadata cannot be parsed")
+    assert "pinnedwarning:" not in err.getvalue()
+    assert err.getvalue().endswith("\r\033[Kwarning: metadata cannot be parsed\n")
+
+
+def test_log_record_wipes_live_progress_line() -> None:
+    printer, err = _live_progress_printer()
+    reporter = ProgressReporter(printer, clock=lambda: 0.0)
+    try:
+        install_log_handler(printer)
+        reporter.on_fetch()
+        _emit_record("nab_python.demo", logging.WARNING, "offline skip")
+    finally:
+        reset_log_handlers()
+    assert "pinnedwarning:" not in err.getvalue()
+    assert err.getvalue().endswith("\r\033[Kwarning: offline skip\n")
+
+
+def test_progress_repaints_after_diagnostic() -> None:
+    times = iter([0.0, 10.0])
+    printer, err = _live_progress_printer()
+    reporter = ProgressReporter(printer, clock=lambda: next(times), min_interval=1.0)
+    reporter.on_fetch()
+    printer.warning("careful")
+    reporter.on_pin(1)
+    assert err.getvalue().endswith("\r\033[K⠙ Resolving... 1 fetched, 1 pinned")
 
 
 _CLI_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
