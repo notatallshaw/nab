@@ -561,8 +561,17 @@ def _clause_boundary_points(
 
 
 def _in_minor(point: Version, minor_release: tuple[int, ...], floor: Version) -> bool:
-    """Whether ``point`` is an interior micro of the minor above its floor."""
-    return point.release[:_PYTHON_VERSION_PARTS] == minor_release and point > floor
+    """Whether ``point`` is an interior micro of the minor above its floor.
+
+    An epoch sorts above every version of a lower one, so a boundary with a
+    different epoch is outside the minor whatever its release says:
+    ``1!3.12.4`` is not in ``[3.12.0, 3.13.0)``.
+    """
+    return (
+        point.epoch == floor.epoch
+        and point.release[:_PYTHON_VERSION_PARTS] == minor_release
+        and point > floor
+    )
 
 
 def _clause_interval_literal(
