@@ -1264,6 +1264,38 @@ class TestMicroBoundarySplitting:
         ]
         assert micro_boundary_points(self._target(), markers) == []
 
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            'python_full_version < "1!3.12.4"',
+            'python_full_version >= "1!3.12.4"',
+            'python_full_version <= "1!3.12.4"',
+            'python_full_version > "1!3.12.4"',
+            'python_full_version == "1!3.12.4"',
+            'python_full_version != "1!3.12.4"',
+            'python_full_version ~= "1!3.12.4"',
+            'python_full_version == "1!3.12.*"',
+            'python_full_version < "1!3.12.4rc1"',
+            '"1!3.12.4" > python_full_version',
+            'implementation_version >= "1!3.12.4"',
+        ],
+    )
+    def test_an_epoch_tagged_literal_does_not_split(self, marker: str) -> None:
+        """An epoch-tagged literal is outside ``[3.12.0, 3.13.0)`` whatever
+        its release says, and no interpreter reports an epoch, so the clause
+        is uniform across the real minor and splits nothing.
+        """
+        assert micro_boundary_points(self._target(), [Marker(marker)]) == []
+
+    def test_an_epoch_tagged_literal_reads_the_same_on_every_micro(self) -> None:
+        """The clause a split would have cut at reads the same on the slice
+        representative as on every real micro of the minor.
+        """
+        marker = Marker('python_full_version >= "1!3.12.4"')
+        assert not marker.evaluate(self._probe("3.12.0"))
+        assert not marker.evaluate(self._probe("3.12.4"))
+        assert not marker.evaluate(self._probe("3.12.19"))
+
     def test_a_prerelease_literal_below_the_floor_does_not_split(self) -> None:
         """``>= "3.12.0a1"`` names a prerelease of the floor, so it is uniform
         across the real minor under the rides-with-X convention and crashes

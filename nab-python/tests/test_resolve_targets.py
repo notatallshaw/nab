@@ -2510,6 +2510,55 @@ class TestMicroBoundaryNarrowing:
         }
         assert any(row.evaluate(real_3119) for row in rows)
 
+    def test_an_epoch_tagged_marker_leaves_the_minor_whole(self) -> None:
+        """``>= "1!3.10.4"`` is False on every interpreter, since none reports
+        an epoch. Cutting the minor there would resolve a slice at
+        ``1!3.10.4`` and gate ``mid`` behind a row nothing matches.
+        """
+        coordinator = self._coordinator(
+            {
+                "1.0": self._meta(
+                    "foo", "1.0", 'mid ; python_full_version >= "1!3.10.4"'
+                ),
+                "2.0": self._meta("mid", "2.0"),
+            }
+        )
+        targets = Matrix(
+            python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+
+        result = resolve_with_coordinator(
+            coordinator, targets, _reqs("foo"), config=_no_build()
+        )
+
+        assert result.success
+        assert self._pins_by_label(result) == {"py310-linux_x86_64": {"foo"}}
+        rows = build_lock_input(result, config=_no_build()).environments
+        assert len(rows) == 1
+
+    def test_an_epoch_tagged_marker_does_not_fail_the_resolve(self) -> None:
+        """A dep the index does not serve, gated on an epoch, is inactive on
+        every real 3.10, so the resolve succeeds rather than failing on a
+        slice no interpreter reaches.
+        """
+        coordinator = self._coordinator(
+            {
+                "1.0": self._meta(
+                    "foo", "1.0", 'absent ; python_full_version >= "1!3.10.4"'
+                )
+            }
+        )
+        targets = Matrix(
+            python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+
+        result = resolve_with_coordinator(
+            coordinator, targets, _reqs("foo"), config=_no_build()
+        )
+
+        assert result.success
+        assert self._pins_by_label(result) == {"py310-linux_x86_64": {"foo"}}
+
     def _fixpoint_coordinator(self) -> MagicMock:
         return self._coordinator(
             {
