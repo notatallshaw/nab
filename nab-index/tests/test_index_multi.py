@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, TypeVar
 
-from nab_index._naming import canonical
+from packaging.utils import canonicalize_name as canonical
+
 from nab_index.client import WheelFile
 from nab_index.multi_index import MultiIndexClient
 

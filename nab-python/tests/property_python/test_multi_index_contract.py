@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING, TypeVar
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from packaging.utils import canonicalize_name as canonical
 
-from nab_index._naming import canonical
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import MultiIndexClient
 
