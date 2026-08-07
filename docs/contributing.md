@@ -28,7 +28,16 @@ under `nab_resolver`, `nab_python`, `nab_index`, and `nab`:
 
 ```bash
 .venv/bin/python -m pytest                # default selection (no markers)
-.venv/bin/python -m pytest --cov          # with branch coverage
+```
+
+Branch coverage runs through the `coverage` CLI. Each process writes its
+own data file, so combine before reporting:
+
+```bash
+.venv/bin/python -m coverage erase
+.venv/bin/python -m coverage run -m pytest
+.venv/bin/python -m coverage combine
+.venv/bin/python -m coverage report       # fails below 100 percent
 ```
 
 CI gates each workspace's coverage on its own tests through nox (see
@@ -79,11 +88,11 @@ the floor.
 The `pyproject.toml` `[tool.coverage.report] fail_under = 100`
 setting requires 100 percent branch coverage on every workspace
 package: `nab_resolver`, `nab_python`, `nab_index`, and `nab`. The
-full local suite (`pytest --cov`) checks all four together; nox splits
-them per workspace in CI so each workspace's tests cover only its own
-package, with `nab_index` gated alongside `nab_python`, whose tests
-exercise it. When code is genuinely unreachable from the default
-suite, prefer:
+full local suite under `coverage run -m pytest` checks all four
+together; nox splits them per workspace in CI so each workspace's
+tests cover only its own package, with `nab_index` gated alongside
+`nab_python`, whose tests exercise it. When code is genuinely
+unreachable from the default suite, prefer:
 
 * `# pragma: no cover` for a platform-specific or defensively
   unreachable line.
