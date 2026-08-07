@@ -456,6 +456,115 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
         }
 
 
+_PORTABLE_COMPONENT_START = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+)
+_PORTABLE_COMPONENT_CHARS = _PORTABLE_COMPONENT_START | frozenset(".-")
+_MAX_PORTABLE_COMPONENT_LENGTH = 128
+_WINDOWS_RESERVED_COMPONENTS = frozenset(
+    {
+        "aux",
+        "con",
+        "nul",
+        "prn",
+        *(f"com{number}" for number in range(1, 10)),
+        *(f"lpt{number}" for number in range(1, 10)),
+    }
+)
+
+
+class _SelectionError(ValueError):
+    """Raised when benchmark inputs select an unsafe or missing path."""
+
+
+def _is_portable_path_component(value: str) -> bool:
+    """Return whether *value* fits the portable ASCII filename grammar."""
+    if (
+        not value
+        or len(value) > _MAX_PORTABLE_COMPONENT_LENGTH
+        or value[0] not in _PORTABLE_COMPONENT_START
+        or value.endswith(".")
+        or any(char not in _PORTABLE_COMPONENT_CHARS for char in value)
+    ):
+        return False
+    windows_basename = value.partition(".")[0].casefold()
+    return windows_basename not in _WINDOWS_RESERVED_COMPONENTS
+
+
+def _result_directory_label(value: str) -> str:
+    """Validate a user-provided results-directory label."""
+    if not _is_portable_path_component(value):
+        msg = f"commit label must use a portable ASCII filename, got {value!r}"
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
+def _result_directory(label: str) -> Path:
+    """Return a direct, non-symlinked child of the configured results directory."""
+    results_dir = RESULTS_DIR.resolve()
+    candidate = RESULTS_DIR / label
+    if candidate.is_symlink() or candidate.resolve().parent != results_dir:
+        msg = f"results directory for {label!r} must be a direct child of RESULTS_DIR"
+        raise _SelectionError(msg)
+    return candidate
+
+
+def _scenario_file(toml_stem: str) -> Path:
+    """Return a top-level TOML path contained by the scenarios directory."""
+    if not _is_portable_path_component(toml_stem):
+        msg = (
+            f"scenario file stem must use a portable ASCII filename, got {toml_stem!r}"
+        )
+        raise _SelectionError(msg)
+    scenarios_dir = SCENARIOS_DIR.resolve()
+    toml_path = (scenarios_dir / f"{toml_stem}.toml").resolve()
+    if not toml_path.is_relative_to(scenarios_dir):
+        msg = f"scenario file {toml_stem!r} resolves outside SCENARIOS_DIR"
+        raise _SelectionError(msg)
+    return toml_path
+
+
+def select_scenarios(specs: list[str]) -> list[str]:
+    """Validate every selection before a benchmark run or result write."""
+    if not specs:
+        msg = "at least one scenario must be selected"
+        raise _SelectionError(msg)
+    missing = [spec for spec in specs if find_scenario(spec) is None]
+    if missing:
+        label = "scenario" if len(missing) == 1 else "scenarios"
+        msg = f"{label} not found: {', '.join(repr(spec) for spec in missing)}"
+        raise _SelectionError(msg)
+    return specs
+
+
+def _parse_scenario_selection(
+    parser: argparse.ArgumentParser,
+    specs: list[str],
+) -> list[str]:
+    try:
+        return select_scenarios(specs)
+    except _SelectionError as exc:
+        parser.error(str(exc))
+
+
+def _check_result_directory(
+    parser: argparse.ArgumentParser,
+    label: str,
+) -> None:
+    try:
+        _result_directory(label)
+    except _SelectionError as exc:
+        parser.error(str(exc))
+
+
+def _summary_path(parser: argparse.ArgumentParser, label: str) -> Path:
+    try:
+        out_dir = _result_directory(label)
+    except _SelectionError as exc:
+        parser.error(str(exc))
+    return out_dir / f"canary_{int(time.time())}.json"
+
+
 def find_scenario(spec: str) -> dict | None:
     """Locate a scenario by name, or by ``stem:name`` to pin a specific TOML file.
 
@@ -466,15 +575,24 @@ def find_scenario(spec: str) -> dict | None:
     can pin the variant with ``stem:name``.
     """
     if ":" in spec:
+        if (
+            len(spec) >= 3
+            and spec[0].isalpha()
+            and spec[1] == ":"
+            and spec[2] in {"/", "\\"}
+        ):
+            msg = f"scenario file stem must use a portable ASCII filename, got {spec!r}"
+            raise _SelectionError(msg)
         toml_stem, name = spec.split(":", 1)
-        toml_path = SCENARIOS_DIR / f"{toml_stem}.toml"
+        toml_path = _scenario_file(toml_stem)
         if not toml_path.is_file():
             return None
         with toml_path.open("rb") as f:
             return tomllib.load(f).get(name)
 
     matches: list[tuple[str, dict]] = []
-    for toml_file in sorted(SCENARIOS_DIR.glob("*.toml")):
+    for entry in sorted(SCENARIOS_DIR.glob("*.toml")):
+        toml_file = _scenario_file(entry.stem)
         with toml_file.open("rb") as f:
             data = tomllib.load(f)
         if spec in data:
@@ -633,7 +751,7 @@ def median_run(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run canary benchmark")
-    parser.add_argument("--commit", default=None)
+    parser.add_argument("--commit", type=_result_directory_label, default=None)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--scenario", action="append", help="Run only named scenarios")
     parser.add_argument("--scenarios-list", help="File with one scenario per line")
@@ -645,11 +763,14 @@ def main() -> None:
     scenarios_to_run: list[str]
     if args.scenarios_list:
         with Path(args.scenarios_list).open(encoding="utf-8") as f:
-            scenarios_to_run = [line.strip() for line in f if line.strip()]
+            scenarios_to_run = _parse_scenario_selection(
+                parser,
+                [line.strip() for line in f if line.strip()],
+            )
     elif args.scenario:
-        scenarios_to_run = args.scenario
+        scenarios_to_run = _parse_scenario_selection(parser, args.scenario)
     else:
-        scenarios_to_run = list(CANARY_SCENARIOS)
+        scenarios_to_run = _parse_scenario_selection(parser, list(CANARY_SCENARIOS))
 
     labels = [name.split(":", 1)[-1] for name in scenarios_to_run]
     duplicate_labels = sorted({label for label in labels if labels.count(label) > 1})
@@ -673,6 +794,7 @@ def main() -> None:
         f"{'max_dec':>8}"
     )
     print("-" * 110)
+    _check_result_directory(parser, commit)
 
     summary_all: dict[str, dict] = {}
     for name, label in zip(scenarios_to_run, labels, strict=True):
@@ -716,8 +838,9 @@ def main() -> None:
             f"{summary['max_decisions']:>8}"
         )
 
-    out_file = out_dir / f"canary_{int(time.time())}.json"
-    out_file.write_text(json.dumps(summary_all, indent=2) + "\n")
+    out_file = _summary_path(parser, commit)
+    with out_file.open("x", encoding="utf-8") as f:
+        f.write(json.dumps(summary_all, indent=2) + "\n")
     print(f"\nResults: {out_file}")
 
 
