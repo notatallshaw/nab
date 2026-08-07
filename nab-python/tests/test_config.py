@@ -2221,6 +2221,31 @@ class TestVcs:
         ):
             read_pyproject_config(path)
 
+    def test_unparseable_allowed_repo_rejected(self, tmp_path: Path) -> None:
+        """A malformed entry fails the read even behind a well-formed one."""
+        path = write(
+            tmp_path,
+            "[tool.nab.vcs]\n"
+            'policy = "allow"\n'
+            'allowed-schemes = ["git+https"]\n'
+            'allowed-repos = ["https://github.com/org/repo",'
+            ' "https://[2001:db8::1:7999/org/repo"]\n',
+        )
+        with pytest.raises(
+            ConfigError,
+            match=r"vcs\.allowed-repos entry"
+            r" 'https://\[2001:db8::1:7999/org/repo' does not parse",
+        ):
+            read_pyproject_config(path)
+
+    def test_bracketed_ipv6_allowed_repo_accepted(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.vcs]\nallowed-repos = ["https://[2001:db8::1]:7999/org/repo"]\n',
+        )
+        vcs = read_pyproject_config(path).vcs
+        assert vcs.allowed_repos == ("https://[2001:db8::1]:7999/org/repo",)
+
 
 class TestLocalSources:
     def test_relative_path_resolved_against_pyproject(self, tmp_path: Path) -> None:

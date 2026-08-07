@@ -24,8 +24,8 @@ from typing import TYPE_CHECKING, TypeVar, cast
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from packaging.utils import canonicalize_name as _normalise_name
 
-from nab_index._naming import canonical as _normalise_name
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import MultiIndexClient
 

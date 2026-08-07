@@ -26,7 +26,8 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from ._naming import canonical as _normalise_name
+from packaging.utils import canonicalize_name as _normalise_name
+
 from .cache import OfflineError
 from .serialization import SimpleSerialization
 

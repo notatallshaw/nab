@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, TypeVar
 import pytest
 from packaging.utils import canonicalize_name
 
-from nab_index._naming import canonical as _normalise_name
 from nab_index.cache import OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import SdistFile, WheelFile
@@ -57,7 +56,7 @@ class FakeClient:
 
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
         self.get_files_calls.append(package)
-        return list(self.listing.get(_normalise_name(package), []))
+        return list(self.listing.get(canonicalize_name(package), []))
 
     def served_unreadable_only(self, package: str) -> bool:
         return package in self.unreadable
@@ -133,10 +132,10 @@ class TestIndexConfig:
 
 class TestNormaliseName:
     def test_canonical_dashes(self) -> None:
-        assert _normalise_name("Foo_Bar.Baz") == "foo-bar-baz"
+        assert canonicalize_name("Foo_Bar.Baz") == "foo-bar-baz"
 
     def test_collapses_consecutive_separators(self) -> None:
-        assert _normalise_name("foo___bar") == "foo-bar"
+        assert canonicalize_name("foo___bar") == "foo-bar"
 
 
 class TestPresenceBased:

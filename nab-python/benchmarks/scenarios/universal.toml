@@ -2,10 +2,10 @@
 #
 # Each entry exercises the matrix-based universal resolver in
 # ``examples/universal/``.  Scenarios are sourced from real-world
-# reports of slow / problematic universal locks in uv, poetry, pex,
-# and pip-tools.
+# reports of slow or problematic universal locks in uv, Poetry, and PEX,
+# plus a few explicitly labeled real-world stress cases.
 #
-# Schema (all optional except python and platforms):
+# Schema (all optional except python, platforms, and requirements):
 #
 #   python = ">=3.11, <3.13"             # PEP 440 specifier set
 #   platforms = ["linux_x86_64", ...]    # known platform ids
@@ -13,11 +13,8 @@
 #   requirements = ["pkg>=1.0", ...]
 #   constraints = ["pkg<2.0", ...]       # optional
 #   datetime = "2025-06-01 14:00:00"     # exclude-newer-style cap
-#   align_across_tuples = true           # fork-strategy=fewest semantics
-#   resolution_strategy = "highest"      # uv --resolution
-#   parallel = false                     # ThreadPoolExecutor over tuples
-#   second_pass = false                  # cross-tuple max-version preference promotion
-#   second_pass_as_constraints = false   # promote unified preferences to == constraints
+#   align_across_tuples = false          # disable cross-target alignment
+#   resolution_strategy = "lowest"       # uv --resolution
 #   reason = "uv issue #1560"            # reference for the case
 #   skip_on_fail = false                 # if true, treat resolution failure as expected
 
@@ -32,7 +29,6 @@ python = ">=3.10, <3.13"
 platforms = ["linux_x86_64"]
 requirements = ["apache-airflow"]
 datetime = "2024-08-08 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Sourced from uv issue #8157 (numba / numpy / llvmlite):
@@ -45,7 +41,6 @@ python = ">=3.11, <3.13"
 platforms = ["linux_x86_64", "macos_arm64"]
 requirements = ["numpy>=2.1,<2.2", "numba<=0.60,>0.1"]
 datetime = "2025-06-01 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Sourced from uv issue #8157 (sentry/python-rapidjson/sentry-kafka-schemas):
@@ -60,7 +55,6 @@ requirements = [
     "sentry-kafka-schemas<=0.1.113,>=0.1.50",
 ]
 datetime = "2025-01-01 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Sourced from uv issue #1398:
@@ -80,7 +74,6 @@ requirements = [
     "selenium",
 ]
 datetime = "2023-10-01 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Sourced from uv issue #8157 (starlette/fastapi):
@@ -96,7 +89,6 @@ requirements = [
     "fastapi<=0.115.2",
 ]
 datetime = "2024-12-01 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Sourced from uv issue #1560:
@@ -112,7 +104,6 @@ requirements = [
     "apache-beam<=2.49.0",
 ]
 datetime = "2024-08-08 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Sourced from poetry #4924, mirosval.sk blog post on poetry slowness:
@@ -131,7 +122,6 @@ requirements = [
     "isort",
 ]
 datetime = "2024-01-01 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Real-world scenario: PyTorch CPU-only + transformers across 3 Pythons.
@@ -149,7 +139,6 @@ requirements = [
     "datasets",
 ]
 datetime = "2025-06-01 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Real-world scenario: scientific Python stack across 4 Pythons.
@@ -167,16 +156,14 @@ requirements = [
     "scikit-learn",
 ]
 datetime = "2025-06-01 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
-# Sourced from PEX #2036 (top-88 PyPI packages):
-# 88-dep set used to demonstrate sequential pip download slowness in
-# pex.  Different bottleneck for nab (we share metadata fetches), but
-# good stress test for parallel/serial trade-off.
+# Legacy local 36-root workload historically attributed to PEX #2036.
+# It differs from that issue's pinned 88-item requirements file, so this is
+# a wide-fanout stress case rather than an issue reproduction.
 # ---------------------------------------------------------------------------
-[top88-pypi-stress]
-reason = "PEX #2036: top-88 PyPI packages stress test"
+[legacy-36-root-stress]
+reason = "legacy local 36-root workload historically attributed to PEX #2036"
 python = ">=3.11, <3.12"
 platforms = ["linux_x86_64", "macos_arm64", "windows_amd64"]
 requirements = [
@@ -218,7 +205,6 @@ requirements = [
     "wheel",
 ]
 datetime = "2024-09-01 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Marker-heavy scenario: lots of platform-conditional deps that exercise
@@ -238,7 +224,6 @@ requirements = [
     'lxml',
 ]
 datetime = "2025-06-01 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Maximalist case: 5 Pythons * 5 platforms = 25 tuples on a non-trivial
@@ -256,7 +241,6 @@ platforms = [
 ]
 requirements = ["dask"]
 datetime = "2025-06-01 00:00:00"
-align_across_tuples = true
 
 # ---------------------------------------------------------------------------
 # Comparison: same airflow scenario without cross-tuple alignment.
@@ -272,12 +256,11 @@ datetime = "2024-08-08 00:00:00"
 align_across_tuples = false
 
 # ---------------------------------------------------------------------------
-# Comparison: top88 with parallel=true to see if threads help on a
-# medium graph.  Threads are not expected to help materially per the
-# section 12.3 finding; this records the empirical gap.
+# Comparison: the legacy local 36-root workload without cross-tuple
+# alignment, with every other input unchanged.
 # ---------------------------------------------------------------------------
-[top88-parallel]
-reason = "top88 with parallel=true to measure thread impact"
+[legacy-36-root-noalign]
+reason = "legacy local 36-root workload without cross-tuple alignment"
 python = ">=3.11, <3.12"
 platforms = ["linux_x86_64", "macos_arm64", "windows_amd64"]
 requirements = [
@@ -292,21 +275,6 @@ requirements = [
 ]
 datetime = "2024-09-01 00:00:00"
 align_across_tuples = false
-parallel = true
-
-# ---------------------------------------------------------------------------
-# Comparison: airflow with second_pass + constraint mode to see if
-# the more aggressive alignment changes wall time.
-# ---------------------------------------------------------------------------
-[apache-airflow-second-pass]
-reason = "airflow with second-pass constraint promotion"
-python = ">=3.10, <3.13"
-platforms = ["linux_x86_64"]
-requirements = ["apache-airflow"]
-datetime = "2024-08-08 00:00:00"
-align_across_tuples = false
-second_pass = true
-second_pass_as_constraints = true
 
 # ---------------------------------------------------------------------------
 # Sourced from poetry's history: --resolution=lowest tests work
@@ -320,7 +288,6 @@ platforms = ["linux_x86_64"]
 requirements = ["numpy>=1.24", "scipy>=1.10", "pandas>=2"]
 datetime = "2025-01-01 00:00:00"
 resolution_strategy = "lowest"
-align_across_tuples = false
 
 # ---------------------------------------------------------------------------
 # Sourced from poetry #5962 (numpy + airflow-providers-amazon):
@@ -332,7 +299,6 @@ python = ">=3.11, <3.12"
 platforms = ["linux_x86_64"]
 requirements = ["apache-airflow-providers-amazon", "numpy"]
 datetime = "2024-09-01 00:00:00"
-align_across_tuples = true
 
 [numpy-wide-python-diverge]
 reason = "py-minor version-floor divergence; tests matrix divergence path"
@@ -348,4 +314,3 @@ python = ">=3.9, <3.14"
 platforms = ["linux_x86_64"]
 requirements = ["numpy", "scipy", "pandas"]
 datetime = "2025-06-01 00:00:00"
-align_across_tuples = true
