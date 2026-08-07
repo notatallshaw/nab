@@ -55,6 +55,7 @@ only-include = ["src/nab", "tests", "conftest.py"]
 exclude = [
     "tests/test_build_dists.py",
     "tests/test_classifiers.py",
+    "tests/test_contributing_docs.py",
     "tests/test_release.py",
 ]
 
