@@ -205,6 +205,15 @@ class TestLayeredCacheDir:
         assert exc.value.code == 1
         assert "config error" in capsys.readouterr().err
 
+    def test_nul_layer_value_exits_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write_toml(tmp_path / _PROJECT_TOML, 'cache-dir = "/c/\\u0000x"\n')
+        with pytest.raises(SystemExit) as exc:
+            _run_cache(["verify"])
+        assert exc.value.code == 1
+        assert "is not a usable filesystem path" in capsys.readouterr().err
+
     def test_discovery_anchored_at_working_dir(
         self, config_anchors: list[Path], capsys: pytest.CaptureFixture[str]
     ) -> None:

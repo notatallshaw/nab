@@ -43,7 +43,7 @@ from nab_index.serialization import SimpleSerialization
 
 from ._toml import tool_nab_section
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
-from .paths import PathState, path_state
+from .paths import PathState, is_usable_path_name, path_state
 from .provider import (
     ArchiveSource,
     BuildPolicy,
@@ -329,6 +329,9 @@ def _parse_path(value: Any, where: str) -> Path:
         # An empty NAB_CACHE_DIR would resolve Path("") to the cwd; reject
         # it instead.
         msg = f"{where} must be a non-empty path"
+        raise SourceConfigError(msg)
+    if not is_usable_path_name(value):
+        msg = f"{where} {value!r} is not a usable filesystem path"
         raise SourceConfigError(msg)
     return Path(value)
 
