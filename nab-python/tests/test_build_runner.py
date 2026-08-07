@@ -47,6 +47,7 @@ from nab_python._build.env import (
 from nab_python._build.runner import (
     BuildBackendError,
     _build_wheel_and_extract,
+    _validate_backend_path,
     run_build_backend,
 )
 from nab_python._provider.metadata_resolver import pick_dist
@@ -493,6 +494,52 @@ class TestRunBuildBackend:
         )
         with pytest.raises(BuildBackendError, match="must be a table"):
             run_build_backend(tmp_path, config=config)
+
+    def test_backend_path_outside_source_tree_rejected(
+        self, tmp_path: Path, config: NabProjectConfig
+    ) -> None:
+        """A backend-path that leaves the source tree fails the build."""
+        source = tmp_path / "member"
+        source.mkdir()
+        (source / "pyproject.toml").write_text(
+            "[build-system]\n"
+            "requires = []\n"
+            'build-backend = "shared_backend"\n'
+            'backend-path = ["../shared"]\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="outside the source tree"):
+            run_build_backend(source, config=config)
+
+    def test_absolute_backend_path_rejected(
+        self, tmp_path: Path, config: NabProjectConfig
+    ) -> None:
+        """backend-path entries are relative to the project root."""
+        source = tmp_path / "member"
+        source.mkdir()
+        (source / "pyproject.toml").write_text(
+            "[build-system]\n"
+            "requires = []\n"
+            'build-backend = "shared_backend"\n'
+            f'backend-path = ["{tmp_path.as_posix()}"]\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="must be relative"):
+            run_build_backend(source, config=config)
+
+    def test_backend_path_to_sibling_sharing_a_prefix_accepted(
+        self, tmp_path: Path
+    ) -> None:
+        """A sibling whose name starts with the source directory's is allowed.
+
+        pyproject_hooks compares the two paths as strings and accepts
+        this entry, so rejecting it here would refuse a tree other
+        frontends build.
+        """
+        (tmp_path / "member-shared").mkdir()
+        source = tmp_path / "member"
+        source.mkdir()
+        _validate_backend_path(source, ("../member-shared",))
 
     def test_venv_creation_oserror_wrapped(
         self,

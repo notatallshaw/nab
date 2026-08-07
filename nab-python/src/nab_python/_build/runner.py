@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import lzma
+import os
 import tempfile
 import zipfile
 import zlib
@@ -74,9 +75,9 @@ def run_build_backend(
     Returns a :class:`~nab_python.metadata.WheelMetadata` parsed from
     the ``METADATA`` file the backend produces.  Raises
     :class:`BuildBackendError` on any failure: backend import
-    error, hook crash, malformed METADATA, an unreadable built
-    wheel, sdist-only build deps, or build requirements ``offline``
-    bars from being fetched.
+    error, a rejected ``backend-path``, hook crash, malformed
+    METADATA, an unreadable built wheel, sdist-only build deps, or
+    build requirements ``offline`` bars from being fetched.
 
     The build runs in an isolated venv driven by
     :class:`NabBuildEnv`; nothing in the user's main environment is
@@ -105,7 +106,8 @@ def run_build_backend(
         msg = f"no pyproject.toml or setup.py at {source_dir}"
         raise BuildBackendError(msg)
 
-    backend, requires, _backend_path = _read_build_system(data)
+    backend, requires, backend_path = _read_build_system(data)
+    _validate_backend_path(source_dir, backend_path)
 
     skip_prepare = _should_skip_prepare(backend, data)
 
@@ -188,6 +190,36 @@ def _read_build_system(
     if isinstance(raw_path, list) and all(isinstance(p, str) for p in raw_path):
         backend_path = tuple(raw_path)
     return backend, requires, backend_path
+
+
+def _validate_backend_path(
+    source_dir: Path, backend_path: tuple[str, ...] | None
+) -> None:
+    """Reject a ``backend-path`` a PEP 517 frontend would refuse.
+
+    pyproject_hooks raises a bare ``ValueError`` for an absolute entry
+    or one that leaves the source tree.
+    """
+    root = os.path.abspath(source_dir)
+    norm_root = os.path.normcase(root)
+
+    for entry in backend_path or ():
+        if os.path.isabs(entry):
+            msg = (
+                f"backend-path entry {entry!r} in pyproject.toml must be"
+                " relative to the project root"
+            )
+            raise BuildBackendError(msg)
+
+        # pyproject_hooks compares the two paths as strings, so match that
+        # rather than a stricter containment check.
+        resolved = os.path.normcase(os.path.normpath(os.path.join(root, entry)))
+        if not resolved.startswith(norm_root):
+            msg = (
+                f"backend-path entry {entry!r} in pyproject.toml is outside"
+                " the source tree"
+            )
+            raise BuildBackendError(msg)
 
 
 def _should_skip_prepare(backend: str, data: dict) -> bool:
