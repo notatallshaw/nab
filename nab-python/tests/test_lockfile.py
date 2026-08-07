@@ -2766,8 +2766,8 @@ class _FakeProvider:
         archive_sources: dict[str, ArchiveSource] | None = None,
         vcs_pins: dict[str, str] | None = None,
         listing_indexes: dict[str, str] | None = None,
-        dist_policy_by_package_index: dict[tuple[str, str], DistPolicy] | None = None,
-        requires_python_overrides: dict[str, str] | None = None,
+        dist_policies: dict[tuple[str, str, Version], DistPolicy] | None = None,
+        requires_python_overrides: dict[tuple[str, Version], str] | None = None,
         deps_cache: dict[tuple[str, Version], dict[str, object]] | None = None,
         extra_deps_map: (
             dict[tuple[str, Version], dict[str, dict[str, object]]] | None
@@ -2779,7 +2779,7 @@ class _FakeProvider:
         self._vcs = vcs_sources or {}
         self._archive = archive_sources or {}
         self._vcs_pins = vcs_pins or {}
-        self._dist_policy_by_package_index = dist_policy_by_package_index or {}
+        self._dist_policies = dist_policies or {}
         self._requires_python_overrides = requires_python_overrides or {}
         self.coordinator = _FakeCoordinator(listing_indexes)
         self.deps_cache = deps_cache or {}
@@ -2808,12 +2808,12 @@ class _FakeProvider:
     ) -> DistPolicy:
         if index_name is None:
             return DistPolicy.WHEEL_OR_SDIST
-        return self._dist_policy_by_package_index.get(
-            (canonical, index_name), DistPolicy.WHEEL_OR_SDIST
+        return self._dist_policies.get(
+            (canonical, index_name, version), DistPolicy.WHEEL_OR_SDIST
         )
 
     def effective_requires_python(self, canonical: str, version: Version) -> str | None:
-        return self._requires_python_overrides.get(canonical)
+        return self._requires_python_overrides.get((canonical, version))
 
     def tag_excluded_wheel_count(self, canonical: str, version: Version) -> int:
         return self._tag_excluded_counts.get((canonical, version), 0)
@@ -2853,6 +2853,32 @@ def _sdist_file(name: str = "foo", version: str = "1.0") -> SdistFile:
     )
 
 
+def _range_override_provider(**body: object) -> Provider:
+    """Provider over ``foo`` 1.0 and 3.0 with ``body`` overriding ``foo <= 2``.
+
+    Both versions publish a wheel and an sdist declaring ``>=3.10``, so the
+    pins differ only where the override reaches.
+    """
+    coordinator = make_coordinator(
+        listings={
+            "foo": [
+                _wheel_file(version="1.0"),
+                _sdist_file(version="1.0"),
+                _wheel_file(version="3.0"),
+                _sdist_file(version="3.0"),
+            ]
+        }
+    )
+
+    provider = Provider(
+        coordinator,
+        target=_HOST,
+        package_overrides=(pkg_override("foo <= 2", **body),),
+    )
+    provider.fetch_versions("foo")
+    return provider
+
+
 class TestBuildTargetLock:
     def test_index_pin_from_listing(self) -> None:
         provider = _FakeProvider(
@@ -2875,27 +2901,51 @@ class TestBuildTargetLock:
         assert pin.wheels[0].hashes == (("sha256", "a" * 64),)
         assert lock.target is _HOST
 
-    def test_index_pin_prefers_requires_python_override(self) -> None:
-        """A widened requires-python override is what the pin records.
+    def test_index_pin_requires_python_override_scoped_to_selected_versions(
+        self,
+    ) -> None:
+        """A widened requires-python override reaches only the versions it selects.
 
-        The Simple-API files say ``>=3.10``; the user widened the package
-        to ``>=3.9``.  The pin must carry the overridden specifier so a
+        The Simple-API files say ``>=3.10``; the user widened ``foo <= 2`` to
+        ``>=3.9``.  The 1.0 pin must carry the overridden specifier so a
         conforming PEP 751 installer does not reject a pin the resolver
-        admitted against the wider floor.
+        admitted against the wider floor.  3.0 keeps the floor its own
+        artefacts declare.
         """
-        provider = _FakeProvider(
-            listings={
-                "foo": [
-                    (Version("1.0"), _wheel_file(requires_python=">=3.10")),
-                    (Version("1.0"), _sdist_file()),
-                ]
-            },
-            requires_python_overrides={"foo": ">=3.9"},
-        )
-        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
-        pin = lock.pins["foo"]
-        assert isinstance(pin, IndexPin)
-        assert pin.requires_python == ">=3.9"
+        provider = _range_override_provider(requires_python=">=3.9")
+
+        selected = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        unselected = build_target_lock(provider, _HOST, {"foo": Version("3.0")})
+
+        selected_pin = selected.pins["foo"]
+        unselected_pin = unselected.pins["foo"]
+        assert isinstance(selected_pin, IndexPin)
+        assert isinstance(unselected_pin, IndexPin)
+
+        assert selected_pin.requires_python == ">=3.9"
+        assert unselected_pin.requires_python == ">=3.10"
+
+    def test_index_pin_dist_policy_override_scoped_to_selected_versions(self) -> None:
+        """An sdist-install override strips wheels only from the versions it selects.
+
+        Both versions ship a wheel and an sdist.  ``foo <= 2`` is pinned to its
+        sdist so an installer builds that archive; 3.0 keeps its wheel.
+        """
+        provider = _range_override_provider(dist_policy=DistPolicy.SDIST_INSTALL)
+
+        selected = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        unselected = build_target_lock(provider, _HOST, {"foo": Version("3.0")})
+
+        selected_pin = selected.pins["foo"]
+        unselected_pin = unselected.pins["foo"]
+        assert isinstance(selected_pin, IndexPin)
+        assert isinstance(unselected_pin, IndexPin)
+
+        assert selected_pin.wheels == ()
+        assert selected_pin.sdist is not None
+        assert [w.filename for w in unselected_pin.wheels] == [
+            "foo-3.0-py3-none-any.whl"
+        ]
 
     def test_unconstrained_wheel_drops_requires_python(self) -> None:
         """A version that mixes a Requires-Python wheel with an
@@ -2930,23 +2980,24 @@ class TestBuildTargetLock:
         """An empty-string override records verbatim and drops the lock key.
 
         The files declare ``>=3.10``; the override clears the specifier to
-        ``""``.  The pin carries the empty string, and the writer's
-        truthiness check leaves ``requires-python`` out of the rendered lock.
+        ``""`` for ``foo <= 2``.  The 1.0 pin carries the empty string and the
+        writer's truthiness check leaves ``requires-python`` out of the
+        rendered lock.  3.0 still renders the floor it declares.
         """
-        provider = _FakeProvider(
-            listings={
-                "foo": [
-                    (Version("1.0"), _wheel_file(requires_python=">=3.10")),
-                    (Version("1.0"), _sdist_file()),
-                ]
-            },
-            requires_python_overrides={"foo": ""},
-        )
-        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
-        pin = lock.pins["foo"]
-        assert isinstance(pin, IndexPin)
-        assert pin.requires_python == ""
-        assert "requires-python" not in write_lock(_lock_from(lock))
+        provider = _range_override_provider(requires_python="")
+
+        selected = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        unselected = build_target_lock(provider, _HOST, {"foo": Version("3.0")})
+
+        selected_pin = selected.pins["foo"]
+        assert isinstance(selected_pin, IndexPin)
+        assert selected_pin.requires_python == ""
+        assert "requires-python" not in write_lock(_lock_from(selected))
+
+        unselected_pin = unselected.pins["foo"]
+        assert isinstance(unselected_pin, IndexPin)
+        assert unselected_pin.requires_python == ">=3.10"
+        assert 'requires-python = ">=3.10"' in write_lock(_lock_from(unselected))
 
     def test_malformed_requires_python_dropped_and_emittable(self) -> None:
         """A malformed listing Requires-Python is dropped, so the lock still emits.
@@ -3105,8 +3156,8 @@ class TestBuildTargetLock:
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file())]},
             listing_indexes={"foo": "internal"},
-            dist_policy_by_package_index={
-                ("foo", "internal"): DistPolicy.SDIST_INSTALL
+            dist_policies={
+                ("foo", "internal", Version("1.0")): DistPolicy.SDIST_INSTALL
             },
         )
         with pytest.raises(MissingSdistError, match="foo==1.0 has no sdist"):
