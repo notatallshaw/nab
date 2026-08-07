@@ -57,12 +57,18 @@ def _wheel(package: str, version: str) -> WheelFile:
     )
 
 
-def _graph_coordinator(graph: dict[str, dict[str, list[str]]]) -> MagicMock:
+def _graph_coordinator(
+    graph: dict[str, dict[str, list[str]]],
+    unreadable: set[tuple[str, str]] | None = None,
+) -> MagicMock:
     """Coordinator for ``{package: {version: [Requires-Dist lines]}}``.
 
     Metadata is pre-stored per ``(package, version)`` so packages may
-    share version strings.
+    share version strings.  ``unreadable`` names the pairs whose stored
+    metadata carries an unparsable version, so look-ahead rejects them as
+    metadata errors.
     """
+    unreadable = unreadable or set()
     listings = {
         package: [_wheel(package, version) for version in versions]
         for package, versions in graph.items()
@@ -70,7 +76,8 @@ def _graph_coordinator(graph: dict[str, dict[str, list[str]]]) -> MagicMock:
     coordinator = make_coordinator(listings=listings)
     for package, versions in graph.items():
         for version, requires in versions.items():
-            text = _METADATA.format(name=package, version=version)
+            stored = "not-a-version" if (package, version) in unreadable else version
+            text = _METADATA.format(name=package, version=stored)
             for requirement in requires:
                 text += f"Requires-Dist: {requirement}\n"
             coordinator.index.store_metadata(package, version, text + "\n")
@@ -564,7 +571,43 @@ class TestNarrowForDisplay:
         assert provider.narrow_for_display("empty", constraint) == constraint
 
     def test_availability_line_keeps_its_range(self) -> None:
-        """``a`` is rejected only against pinned ``c``, so the line keeps its range."""
+        """``a`` is rejected only against pinned ``c``, so the line keeps its range.
+
+        The two rejected versions ban their gaps and ``10.0`` sits outside the
+        requested range, so display narrowing would understate the ban.
+        """
+        coordinator = _graph_coordinator(
+            {
+                "a": {"10.0": [], "2.0": ["c==1.0"], "1.0": ["c==1.0"]},
+                "c": {"5.0": [], "1.0": []},
+            }
+        )
+        root_reqs = {
+            "a": SpecifierSet(">=1,<9").to_range(),
+            "c": SpecifierSet("==5.0").to_range(),
+        }
+        provider = Provider(
+            coordinator,
+            target=ResolveTarget.for_host_python("3.12.0"),
+            root_requirements=root_reqs,
+        )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(dict(root_reqs))
+
+        low = provider.widen_decision_gap("a", V("1.0"))
+        high = provider.widen_decision_gap("a", V("2.0"))
+        assert low is not None
+        assert high is not None
+        banned = low | high
+
+        assert provider.narrow_for_display("a", banned) != banned
+
+        expected = f"because no versions of a {banned} are available"
+        assert expected in str(exc_info.value).splitlines()
+
+    def test_whole_listing_rejected_drops_the_range(self) -> None:
+        """With every version of ``a`` rejected the line names no range."""
         coordinator = _graph_coordinator(
             {
                 "a": {"2.0": ["c==1.0"], "1.0": ["c==1.0"]},
@@ -584,8 +627,11 @@ class TestNarrowForDisplay:
         with pytest.raises(ResolutionError) as exc_info:
             resolver.resolve(dict(root_reqs))
 
-        expected = f"because no versions of a {root_reqs['a']} are available"
-        assert expected in str(exc_info.value).splitlines()
+        assert str(exc_info.value).splitlines() == [
+            "because no versions of a are available",
+            f"because your project depends on a {root_reqs['a']}",
+            "so <root> <VersionRange '[0, 0]'>",
+        ]
 
     def test_promoted_parent_reads_as_all_versions(self) -> None:
         """A promoted depending side takes the plural prose and verb."""
@@ -642,8 +688,9 @@ class TestWideningRegressionGraphs:
     def _resolve(
         graph: dict[str, dict[str, list[str]]],
         root_reqs: dict[str, VersionRange],
+        unreadable: set[tuple[str, str]] | None = None,
     ) -> dict[str, Version]:
-        coordinator = _graph_coordinator(graph)
+        coordinator = _graph_coordinator(graph, unreadable)
         provider = Provider(
             coordinator,
             target=ResolveTarget.for_host_python("3.12.0"),
@@ -686,6 +733,45 @@ class TestWideningRegressionGraphs:
         )
         assert pins["a"] == V("1.0")
         assert pins["c"] == V("1.5a1")
+
+    def test_root_blocked_final_leaves_the_prerelease_reachable(self) -> None:
+        """A final rejected against a root requirement must not ban its whole
+        range: the pre-release the PEP 440 buffer held back stays selectable."""
+        pins = self._resolve(
+            {
+                "a": {"2.0a1": ["b==1.*", "c==1.*"]},
+                "b": {"1.0.post1": ["c==1.0a1"], "1.1": ["d==1.0.*"]},
+                "c": {"1.0.post1": ["d==2.*"], "1.0a1": []},
+                "d": {"1.0a1": []},
+            },
+            {
+                "d": SpecifierSet("<1.0rc1").to_range(),
+                "a": SpecifierSet("==2.0a1").to_range(),
+            },
+        )
+        assert pins["a"] == V("2.0a1")
+        assert pins["c"] == V("1.0a1")
+        assert pins["d"] == V("1.0a1")
+
+    def test_unreadable_final_leaves_the_prerelease_reachable(self) -> None:
+        """The same graph with the final rejected for unreadable metadata
+        instead: an unusable version bans itself, not the range around it."""
+        pins = self._resolve(
+            {
+                "a": {"2.0a1": ["b==1.*", "c==1.*"]},
+                "b": {"1.0.post1": ["c==1.0a1"], "1.1": ["d==1.0.*"]},
+                "c": {"1.0.post1": [], "1.0a1": []},
+                "d": {"1.0a1": []},
+            },
+            {
+                "d": SpecifierSet("<1.0rc1").to_range(),
+                "a": SpecifierSet("==2.0a1").to_range(),
+            },
+            {("c", "1.0.post1")},
+        )
+        assert pins["a"] == V("2.0a1")
+        assert pins["c"] == V("1.0a1")
+        assert pins["d"] == V("1.0a1")
 
     def test_capped_prerelease_clip_does_not_leak(self) -> None:
         """The capped-prerelease clip graph: a failed parent's capped opt-in
