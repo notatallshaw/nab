@@ -33,6 +33,13 @@ python nab-python/benchmarks/universal_summary.py
 `universal_summary.py` walks the latest results directory and
 prints a markdown table.
 
+Benchmark outputs are local run artifacts rather than repository baselines.
+Generate both sides of a comparison on the same machine, with the same initial
+cache state and toolchain. The current outputs are not self-describing, so any
+retained CI or release artifact must be accompanied by the command, source and
+scenario revisions, tool versions, Python and platform, index context, cache
+provenance, timeouts, and iteration limits needed to interpret it.
+
 ## Scenario shape
 
 Each scenario is a top-level TOML table keyed by name, with at least
