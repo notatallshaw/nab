@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 __all__ = [
     "PathState",
     "is_absent_error",
+    "is_usable_path_name",
     "path_state",
     "resolve_path",
 ]
@@ -77,14 +78,22 @@ def path_state(path: Path) -> PathState:
     return PathState.OTHER
 
 
+def is_usable_path_name(entry: str) -> bool:
+    """Whether the filesystem can carry ``entry`` as a name.
+
+    An embedded NUL has to be tested for rather than caught: building a
+    ``Path`` never raises on one, and a non-strict resolve keeps it in
+    the path on Windows.
+    """
+    return "\x00" not in entry
+
+
 def resolve_path(base: Path, entry: str) -> Path | None:
     """Resolve ``entry`` against ``base``, or ``None`` for an unusable name.
 
-    An embedded NUL is checked up front because Windows keeps it in the
-    resolved path instead of raising; other unencodable names raise from
-    the resolve itself.
+    Unencodable names other than a NUL raise from the resolve itself.
     """
-    if "\x00" in entry:
+    if not is_usable_path_name(entry):
         return None
     try:
         return (base / entry).resolve()

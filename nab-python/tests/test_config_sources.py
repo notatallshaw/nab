@@ -318,6 +318,15 @@ class TestCacheDirLadder:
                 environ={"NAB_CACHE_DIR": ""},
             )
 
+    def test_cache_dir_with_nul_errors(self, tmp_path: Path) -> None:
+        # An embedded NUL is valid TOML, so the parser hands it through.
+        _project(tmp_path)
+        user = _write(
+            tmp_path / "usr" / "nab" / "nab.toml", 'cache-dir = "/c/\\u0000x"\n'
+        )
+        with pytest.raises(SourceConfigError, match="is not a usable filesystem path"):
+            _resolve(SourceRoots(user_toml=user, project_dir=tmp_path))
+
 
 class TestHttpBackendLadder:
     def test_default(self, tmp_path: Path) -> None:
