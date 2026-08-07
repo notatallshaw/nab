@@ -1,0 +1,203 @@
+[suite]
+schema = 1
+
+[[scenario]]
+id = "basic-highest"
+provenance = "synthetic:nab-smoke/basic-v1"
+purpose = "Straightforward graph, candidate ordering, metadata, and lock plumbing"
+lane = "semantic"
+outcome = "satisfiable"
+mode = "specific"
+requirements = ["nab-smoke-basic"]
+python = "==3.11"
+platforms = ["linux_x86_64"]
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = { nab-smoke-basic = "1.0.0", nab-smoke-basic-leaf = "2.0.0" }
+
+[[scenario]]
+id = "pip-deep-backtracking"
+provenance = "https://github.com/pypa/pip/blob/6576b7596c97bb95ce02098303d25bf82dd44943/tests/functional/test_new_resolver.py#L1198-L1244"
+purpose = "Twenty-four tempting releases force twenty-three conflicts before the only valid solve"
+lane = "performance"
+outcome = "satisfiable"
+warmups = 2
+batch-size = 8
+mode = "specific"
+requirements = ["nab-smoke-pip-a"]
+python = "==3.11"
+platforms = ["linux_x86_64"]
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = { nab-smoke-pip-a = "1.0.0", nab-smoke-pip-b = "1.0.0", nab-smoke-pip-c = "1.0.0" }
+
+[[scenario]]
+id = "pip-deep-backtracking-unsatisfiable"
+provenance = "synthetic:nab-smoke/pip-deep-backtracking-terminal-conflict-v1"
+purpose = "Every one of twenty-four candidates reaches a conflict, including the terminal candidate"
+lane = "performance"
+outcome = "unsatisfiable"
+warmups = 2
+batch-size = 8
+mode = "specific"
+requirements = ["nab-smoke-pip-unsat-a"]
+python = "==3.11"
+platforms = ["linux_x86_64"]
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = {}
+
+[[scenario]]
+id = "deep-backjump"
+provenance = "synthetic:nab-smoke/non-chronological-backjump-v1"
+purpose = "A conflict six decision levels below its culprit, with competing packages at every level"
+lane = "performance"
+outcome = "satisfiable"
+warmups = 2
+batch-size = 8
+mode = "specific"
+requirements = ["nab-smoke-backjump-pivot", "nab-smoke-backjump-link-1"]
+python = "==3.11"
+platforms = ["linux_x86_64"]
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = { nab-smoke-backjump-pivot = "1.0.0", nab-smoke-backjump-zgate = "1.0.0", nab-smoke-backjump-link-1 = "4.0.0", nab-smoke-backjump-link-2 = "4.0.0", nab-smoke-backjump-link-3 = "4.0.0", nab-smoke-backjump-link-4 = "4.0.0", nab-smoke-backjump-link-5 = "4.0.0", nab-smoke-backjump-link-6 = "4.0.0", nab-smoke-backjump-alt-1 = "5.0.0", nab-smoke-backjump-alt-2 = "5.0.0", nab-smoke-backjump-alt-3 = "5.0.0", nab-smoke-backjump-alt-4 = "5.0.0", nab-smoke-backjump-alt-5 = "5.0.0", nab-smoke-backjump-alt-6 = "5.0.0" }
+
+[[scenario]]
+id = "constraint-ceiling"
+provenance = "synthetic:nab-smoke/constraint-v1"
+purpose = "A constraint narrows an otherwise higher direct candidate"
+lane = "semantic"
+outcome = "satisfiable"
+mode = "specific"
+requirements = ["nab-smoke-constrained>=1.0.0"]
+constraints = ["nab-smoke-constrained<3.0.0"]
+python = "==3.11"
+platforms = ["linux_x86_64"]
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = { nab-smoke-constrained = "2.0.0" }
+
+[[scenario]]
+id = "extra-and-python-marker"
+provenance = "synthetic:nab-smoke/extra-marker-v1"
+purpose = "Requested extra activation and a transitive Python marker"
+lane = "semantic"
+outcome = "satisfiable"
+mode = "specific"
+requirements = ["nab-smoke-extra-app[speed]"]
+python = "==3.11"
+platforms = ["linux_x86_64"]
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = { nab-smoke-extra-app = "1.0.0", nab-smoke-extra-base = "1.0.0", nab-smoke-extra-speed = "1.0.0", nab-smoke-marker-leaf = "1.0.0" }
+
+[[scenario]]
+id = "strategy-highest"
+provenance = "synthetic:nab-smoke/strategy-v1"
+purpose = "Default highest policy selects newest direct and transitive candidates"
+lane = "semantic"
+outcome = "satisfiable"
+mode = "specific"
+requirements = ["nab-smoke-strategy-app==1.0.0", "nab-smoke-strategy-direct>=1.0.0"]
+python = "==3.11"
+platforms = ["linux_x86_64"]
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = { nab-smoke-strategy-app = "1.0.0", nab-smoke-strategy-direct = "2.0.0", nab-smoke-strategy-transitive = "2.0.0" }
+
+[[scenario]]
+id = "strategy-lowest"
+provenance = "synthetic:nab-smoke/strategy-v1"
+purpose = "Lowest policy selects oldest direct and transitive candidates"
+lane = "semantic"
+outcome = "satisfiable"
+mode = "specific"
+requirements = ["nab-smoke-strategy-app==1.0.0", "nab-smoke-strategy-direct>=1.0.0"]
+python = "==3.11"
+platforms = ["linux_x86_64"]
+resolution = "lowest"
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = { nab-smoke-strategy-app = "1.0.0", nab-smoke-strategy-direct = "1.0.0", nab-smoke-strategy-transitive = "1.0.0" }
+
+[[scenario]]
+id = "strategy-lowest-direct"
+provenance = "synthetic:nab-smoke/strategy-v1"
+purpose = "Lowest-direct policy keeps transitives on their newest candidate"
+lane = "semantic"
+outcome = "satisfiable"
+mode = "specific"
+requirements = ["nab-smoke-strategy-app==1.0.0", "nab-smoke-strategy-direct>=1.0.0"]
+python = "==3.11"
+platforms = ["linux_x86_64"]
+resolution = "lowest-direct"
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = { nab-smoke-strategy-app = "1.0.0", nab-smoke-strategy-direct = "1.0.0", nab-smoke-strategy-transitive = "2.0.0" }
+
+[[scenario]]
+id = "universal-aligned"
+provenance = "synthetic:nab-smoke/universal-marker-alignment-v1"
+purpose = "One lock covers platform divergence, a Python split, and cross-target alignment"
+lane = "performance"
+outcome = "satisfiable"
+warmups = 2
+batch-size = 192
+mode = "universal"
+requirements = ["nab-smoke-universal==1.0.0"]
+python = ">=3.11,<3.13"
+platforms = ["linux_x86_64", "windows_amd64"]
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = { nab-smoke-universal = "1.0.0", nab-smoke-aligned = "2.0.0", nab-smoke-platform = "1.0.0", nab-smoke-python = "1.0.0" }
+
+[[scenario.expected]]
+target = "py311-windows_amd64"
+pins = { nab-smoke-universal = "1.0.0", nab-smoke-aligned = "2.0.0", nab-smoke-platform = "2.0.0", nab-smoke-python = "1.0.0" }
+
+[[scenario.expected]]
+target = "py312-linux_x86_64"
+pins = { nab-smoke-universal = "1.0.0", nab-smoke-aligned = "2.0.0", nab-smoke-platform = "1.0.0", nab-smoke-python = "2.0.0" }
+
+[[scenario.expected]]
+target = "py312-windows_amd64"
+pins = { nab-smoke-universal = "1.0.0", nab-smoke-aligned = "2.0.0", nab-smoke-platform = "2.0.0", nab-smoke-python = "2.0.0" }
+
+[[scenario]]
+id = "universal-independent"
+provenance = "synthetic:nab-smoke/universal-marker-alignment-v1"
+purpose = "The control run permits a compatible package to diverge across Python targets"
+lane = "semantic"
+outcome = "satisfiable"
+mode = "universal"
+requirements = ["nab-smoke-universal==1.0.0"]
+python = ">=3.11,<3.13"
+platforms = ["linux_x86_64", "windows_amd64"]
+align-across-targets = false
+
+[[scenario.expected]]
+target = "py311-linux_x86_64"
+pins = { nab-smoke-universal = "1.0.0", nab-smoke-aligned = "2.0.0", nab-smoke-platform = "1.0.0", nab-smoke-python = "1.0.0" }
+
+[[scenario.expected]]
+target = "py311-windows_amd64"
+pins = { nab-smoke-universal = "1.0.0", nab-smoke-aligned = "2.0.0", nab-smoke-platform = "2.0.0", nab-smoke-python = "1.0.0" }
+
+[[scenario.expected]]
+target = "py312-linux_x86_64"
+pins = { nab-smoke-universal = "1.0.0", nab-smoke-aligned = "3.0.0", nab-smoke-platform = "1.0.0", nab-smoke-python = "2.0.0" }
+
+[[scenario.expected]]
+target = "py312-windows_amd64"
+pins = { nab-smoke-universal = "1.0.0", nab-smoke-aligned = "3.0.0", nab-smoke-platform = "2.0.0", nab-smoke-python = "2.0.0" }
