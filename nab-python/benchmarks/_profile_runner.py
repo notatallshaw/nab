@@ -9,7 +9,7 @@ Usage:
     python nab-python/benchmarks/_profile_runner.py <scenario> --cprofile
 
 <scenario> is a bare name (first TOML match wins) or ``toml_stem:name``,
-e.g. ``pip-lowest:cburroughs-v3``.
+e.g. ``pip:cburroughs-v3 --resolution lowest``.
 """
 
 from __future__ import annotations
@@ -33,6 +33,16 @@ import scenarios as sc
 def find_scenario(spec: str) -> tuple[str, dict]:
     if ":" in spec:
         toml_stem, name = spec.split(":", 1)
+        for suffix, resolution in (
+            ("-lowest-direct", "lowest-direct"),
+            ("-lowest", "lowest"),
+        ):
+            if toml_stem.endswith(suffix):
+                canonical = toml_stem.removesuffix(suffix)
+                sys.exit(
+                    f"strategy-clone selector {spec!r} was retired; use "
+                    f"{canonical}:{name} --resolution {resolution}"
+                )
         toml_path = sc.SCENARIOS_DIR / f"{toml_stem}.toml"
         try:
             with toml_path.open("rb") as f:
@@ -42,7 +52,11 @@ def find_scenario(spec: str) -> tuple[str, dict]:
         if name not in data:
             sys.exit(f"scenario {name!r} not found in {toml_stem}.toml")
         return name, data[name]
-    for path in sorted(sc.SCENARIOS_DIR.glob("*.toml")):
+    try:
+        paths = sc.standard_scenario_files()
+    except ValueError as exc:
+        sys.exit(str(exc))
+    for path in paths:
         with path.open("rb") as f:
             data = tomllib.load(f)
         if spec in data:
@@ -50,7 +64,11 @@ def find_scenario(spec: str) -> tuple[str, dict]:
     sys.exit(f"scenario {spec!r} not found")
 
 
-def build_inputs(name: str, scenario: dict) -> dict:
+def build_inputs(
+    name: str,
+    scenario: dict,
+    resolution_override: sc.ResolutionStrategy | None = None,
+) -> dict:
     python_version = scenario["python_version"]
     requirement_strings = list(scenario["requirements"])
     constraint_strings = scenario.get("constraints", [])
@@ -61,7 +79,10 @@ def build_inputs(name: str, scenario: dict) -> dict:
     if marker_environment and build_policy_overrides:
         build_policy_overrides = {}
 
-    resolution_strategy = sc.ResolutionStrategy(scenario.get("resolution", "highest"))
+    declared_resolution = sc.ResolutionStrategy(
+        scenario.get("resolution", sc.ResolutionStrategy.HIGHEST.value)
+    )
+    resolution_strategy = resolution_override or declared_resolution
     vcs_config = sc.VcsConfig(
         policy=sc.VcsPolicy(scenario.get("vcs_policy", "block")),
         allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
@@ -120,10 +141,19 @@ def main() -> None:
         help="profile in-process and print the top functions by self time",
     )
     parser.add_argument("--limit", type=int, default=30)
+    parser.add_argument(
+        "--resolution",
+        choices=[strategy.value for strategy in sc.ResolutionStrategy],
+        default=None,
+        help="Explicit resolution strategy (default: scenario setting or highest)",
+    )
     args = parser.parse_args()
 
     name, scenario = find_scenario(args.scenario)
-    inputs = build_inputs(name, scenario)
+    resolution_override = (
+        sc.ResolutionStrategy(args.resolution) if args.resolution is not None else None
+    )
+    inputs = build_inputs(name, scenario, resolution_override)
 
     if not args.cprofile:
         report(name, sc.resolve_scenario(**inputs))

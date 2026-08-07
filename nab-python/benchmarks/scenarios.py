@@ -11,14 +11,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
+import os
 import signal
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -57,9 +60,538 @@ from nab_resolver.resolver import Resolver
 BENCHMARKS_DIR = Path(__file__).parent
 SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
 RESULTS_DIR = BENCHMARKS_DIR / "results"
+_LEGACY_STRATEGY_SUFFIXES = ("-lowest", "-lowest-direct")
+STANDARD_MANIFEST_FILENAME = "_standard_manifest.json"
+STANDARD_MANIFEST_SCHEMA = 1
+_STANDARD_METADATA_FILENAMES = frozenset(
+    {STANDARD_MANIFEST_FILENAME, "_provenance.json"}
+)
 DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
     IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
 )
+STANDARD_STRATEGIES = (
+    ResolutionStrategy.HIGHEST,
+    ResolutionStrategy.LOWEST,
+    ResolutionStrategy.LOWEST_DIRECT,
+)
+_LOWER_HEX = frozenset("0123456789abcdef")
+_PORTABLE_COMPONENT_START = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+)
+_PORTABLE_COMPONENT_CHARS = _PORTABLE_COMPONENT_START | frozenset(".-")
+_MAX_PORTABLE_COMPONENT_LENGTH = 128
+_MAX_STORAGE_COMPONENT_LENGTH = 255
+_WINDOWS_RESERVED_COMPONENTS = frozenset(
+    {
+        "aux",
+        "con",
+        "nul",
+        "prn",
+        *(f"com{number}" for number in range(1, 10)),
+        *(f"lpt{number}" for number in range(1, 10)),
+    }
+)
+_RESERVED_RESULT_DIRECTORIES = frozenset({"universal", "universal-selected"})
+_STANDARD_MANIFEST_FIELDS = frozenset(
+    {
+        "benchmark_schema",
+        "commit",
+        "source_start",
+        "source_end",
+        "mode",
+        "strategies",
+        "settings",
+        "corpus_hash",
+        "corpus_files",
+        "selected_files",
+        "available_logical_keys",
+        "selected_logical_keys",
+        "completed_logical_keys",
+        "unsupported_logical_keys",
+        "available_execution_keys",
+        "selected_execution_keys",
+        "completed_execution_keys",
+        "unsupported_execution_keys",
+        "file_execution_keys",
+        "complete",
+    }
+)
+
+
+def _is_portable_path_component(
+    value: str,
+    *,
+    max_length: int = _MAX_PORTABLE_COMPONENT_LENGTH,
+) -> bool:
+    """Return whether *value* is a portable single filename component."""
+    if (
+        not value
+        or len(value) > max_length
+        or value[0] not in _PORTABLE_COMPONENT_START
+        or value.endswith(".")
+        or any(char not in _PORTABLE_COMPONENT_CHARS for char in value)
+    ):
+        return False
+    windows_basename = value.partition(".")[0].casefold()
+    return windows_basename not in _WINDOWS_RESERVED_COMPONENTS
+
+
+def _result_directory_label(value: str) -> str:
+    """Validate a user-provided results-directory label."""
+    if not _is_portable_path_component(value):
+        msg = f"commit label must use a portable ASCII filename, got {value!r}"
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
+def _is_standard_result_directory_component(value: str) -> bool:
+    """Return whether *value* can name a standard result directory."""
+    return bool(
+        _is_portable_path_component(value)
+        and not value.casefold().endswith(".json")
+        and value.casefold() not in _RESERVED_RESULT_DIRECTORIES
+    )
+
+
+def _is_standard_result_scenario_name(value: str) -> bool:
+    """Return whether *value* can produce a standard JSON result filename."""
+    filename = f"{value}.json"
+    return bool(
+        _is_portable_path_component(value)
+        and _is_portable_path_component(
+            filename,
+            max_length=_MAX_STORAGE_COMPONENT_LENGTH,
+        )
+        and filename.casefold() not in _STANDARD_METADATA_FILENAMES
+    )
+
+
+def _casefold_collisions(values: list[str]) -> list[str]:
+    """Return normalized names that collide on case-insensitive filesystems."""
+    seen: set[str] = set()
+    collisions: set[str] = set()
+    for value in values:
+        folded = value.casefold()
+        if folded in seen:
+            collisions.add(folded)
+        seen.add(folded)
+    return sorted(collisions)
+
+
+def _result_directory(label: str) -> Path:
+    """Return a direct, non-symlinked child of the results directory."""
+    if RESULTS_DIR.is_symlink() or (RESULTS_DIR.exists() and not RESULTS_DIR.is_dir()):
+        msg = f"RESULTS_DIR must be a real directory: {RESULTS_DIR}"
+        raise ValueError(msg)
+    results_dir = RESULTS_DIR.resolve()
+    candidate = RESULTS_DIR / label
+    if (
+        candidate.is_symlink()
+        or (candidate.exists() and not candidate.is_dir())
+        or candidate.resolve().parent != results_dir
+    ):
+        msg = f"results directory for {label!r} must be a direct, real directory"
+        raise ValueError(msg)
+    return candidate
+
+
+def _safe_tree_members(root: Path) -> tuple[list[Path], list[Path]]:
+    """Return regular standard members below *root*, rejecting special members."""
+    if not root.exists():
+        return [], []
+    if root.is_symlink() or not root.is_dir():
+        msg = f"result namespace must be a real directory: {root}"
+        raise ValueError(msg)
+    files: list[Path] = []
+    directories: list[Path] = []
+    pending = [(root, True)]
+    while pending:
+        directory, top_level = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                path = Path(entry.path)
+                if entry.is_symlink():
+                    msg = f"result namespace contains a symlink: {path}"
+                    raise ValueError(msg)
+                windows_name = entry.name.rstrip(" .").casefold()
+                if (
+                    top_level
+                    and (
+                        windows_name in _RESERVED_RESULT_DIRECTORIES
+                        or windows_name == "_provenance.json"
+                    )
+                    and entry.name != windows_name
+                ):
+                    msg = f"reserved result name has non-portable casing: {path}"
+                    raise ValueError(msg)
+                if top_level and entry.name in _RESERVED_RESULT_DIRECTORIES:
+                    if not entry.is_dir(follow_symlinks=False):
+                        msg = f"reserved result namespace must be a directory: {path}"
+                        raise ValueError(msg)
+                    continue
+                if not _is_portable_path_component(
+                    entry.name,
+                    max_length=_MAX_STORAGE_COMPONENT_LENGTH,
+                ):
+                    msg = f"result namespace contains a non-portable member: {path}"
+                    raise ValueError(msg)
+                if entry.is_dir(follow_symlinks=False):
+                    if path.suffix.casefold() == ".json":
+                        msg = f"JSON result path must be a regular file: {path}"
+                        raise ValueError(msg)
+                    directories.append(path)
+                    pending.append((path, False))
+                elif entry.is_file(follow_symlinks=False):
+                    files.append(path)
+                else:
+                    msg = f"result namespace contains a non-regular member: {path}"
+                    raise ValueError(msg)
+    return files, directories
+
+
+def _is_standard_json_path(path: Path, output_dir: Path) -> bool:
+    relative = path.relative_to(output_dir)
+    return bool(
+        path.suffix.casefold() == ".json"
+        and relative.as_posix() != "_provenance.json"
+        and relative.parts[0] not in _RESERVED_RESULT_DIRECTORIES
+    )
+
+
+def _standard_json_paths(output_dir: Path) -> tuple[list[Path], list[Path]]:
+    files, directories = _safe_tree_members(output_dir)
+    return (
+        sorted(path for path in files if _is_standard_json_path(path, output_dir)),
+        directories,
+    )
+
+
+def _preflight_standard_result_parents(
+    output_dir: Path,
+    expected_result_keys: list[str],
+    files: list[Path],
+    directories: list[Path],
+) -> None:
+    """Validate every directory needed by the planned standard results."""
+    expected_parents: dict[str, str] = {}
+    expected_keys: dict[str, str] = {}
+    for key in expected_result_keys:
+        relative = Path(key)
+        canonical = relative.as_posix()
+        parts = relative.parts
+        scenario_name = (
+            parts[1].removesuffix(".json")
+            if len(parts) == 2 and parts[1].endswith(".json")
+            else ""
+        )
+        if (
+            relative.is_absolute()
+            or canonical != key
+            or len(parts) != 2
+            or not _is_standard_result_directory_component(parts[0])
+            or not scenario_name
+            or not _is_standard_result_scenario_name(scenario_name)
+        ):
+            msg = f"unsafe expected standard result key: {key!r}"
+            raise ValueError(msg)
+        folded_key = canonical.casefold()
+        if folded_key in expected_keys:
+            previous_key = expected_keys[folded_key]
+            msg = (
+                "expected standard result keys collide on case-insensitive "
+                "filesystems: "
+                f"{previous_key!r}, {canonical!r}"
+            )
+            raise ValueError(msg)
+        expected_keys[folded_key] = canonical
+
+        parent = parts[0]
+        folded = parent.casefold()
+        previous = expected_parents.setdefault(folded, parent)
+        if previous != parent:
+            msg = (
+                "expected standard result directories collide on "
+                f"case-insensitive filesystems: {previous!r}, {parent!r}"
+            )
+            raise ValueError(msg)
+
+    directory_paths = set(directories)
+    top_level: dict[str, bool] = {}
+    for path in [*files, *directories]:
+        relative = path.relative_to(output_dir)
+        if len(relative.parts) == 1:
+            top_level[relative.parts[0]] = path in directory_paths
+
+    for folded, expected in expected_parents.items():
+        aliases = sorted(name for name in top_level if name.casefold() == folded)
+        if len(aliases) > 1:
+            msg = (
+                "result namespace contains case-insensitive path collisions: "
+                + ", ".join(aliases)
+            )
+            raise ValueError(msg)
+        if not aliases:
+            continue
+        actual = aliases[0]
+        if actual != expected:
+            msg = (
+                f"expected standard result directory {expected!r} has "
+                f"non-portable casing: {actual!r}"
+            )
+            raise ValueError(msg)
+        if not top_level[actual]:
+            parent = output_dir / actual
+            msg = f"expected standard result parent must be a directory: {parent}"
+            raise ValueError(msg)
+
+
+def _strict_json_equal(  # noqa: PLR0911 - recursive fail-closed JSON comparator
+    left: object,
+    right: object,
+) -> bool:
+    """Compare JSON values without Python's bool/int or int/float coercions."""
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        assert isinstance(left, dict)
+        assert isinstance(right, dict)
+        if (
+            any(type(key) is not str for key in left)
+            or any(type(key) is not str for key in right)
+            or set(left) != set(right)
+        ):
+            return False
+        return all(_strict_json_equal(left[key], right[key]) for key in left)
+    if type(left) is list:
+        assert isinstance(left, list)
+        assert isinstance(right, list)
+        return len(left) == len(right) and all(
+            _strict_json_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    if type(left) is float:
+        assert isinstance(left, float)
+        assert isinstance(right, float)
+        return math.isfinite(left) and math.isfinite(right) and left == right
+    if left is None or type(left) in {str, int, bool}:
+        return left == right
+    return False
+
+
+def standard_scenario_files() -> list[Path]:
+    """Return canonical single-environment scenarios and reject strategy clones."""
+    all_files = sorted(SCENARIOS_DIR.glob("*.toml"))
+    standard_files = [
+        path for path in all_files if not path.stem.casefold().startswith("universal")
+    ]
+    invalid = [
+        path.name
+        for path in standard_files
+        if path.is_symlink()
+        or not path.is_file()
+        or path.resolve().parent != SCENARIOS_DIR.resolve()
+        or not _is_standard_result_directory_component(path.stem)
+    ]
+    if invalid:
+        msg = "scenario files must be real top-level portable paths: " + ", ".join(
+            invalid
+        )
+        raise ValueError(msg)
+    clones = [
+        path.name
+        for path in standard_files
+        if path.stem.casefold().endswith(_LEGACY_STRATEGY_SUFFIXES)
+    ]
+    if clones:
+        msg = "legacy strategy-clone scenario files are not supported: " + ", ".join(
+            clones
+        )
+        raise ValueError(msg)
+    collisions = _casefold_collisions([path.stem for path in standard_files])
+    if collisions:
+        msg = (
+            "scenario file stems collide on case-insensitive filesystems: "
+            + ", ".join(collisions)
+        )
+        raise ValueError(msg)
+    return standard_files
+
+
+class StandardScenario(NamedTuple):
+    """One canonical single-environment scenario definition."""
+
+    toml_stem: str
+    name: str
+    definition: dict
+
+    @property
+    def logical_key(self) -> str:
+        """Return the stable corpus key independent of execution strategy."""
+        return f"{self.toml_stem}:{self.name}"
+
+
+class StandardExecution(NamedTuple):
+    """One scenario and resolution strategy selected for execution."""
+
+    scenario: StandardScenario
+    strategy: ResolutionStrategy
+
+    @property
+    def result_stem(self) -> str:
+        """Return the strategy-specific result-directory stem."""
+        if self.strategy is ResolutionStrategy.HIGHEST:
+            return self.scenario.toml_stem
+        return f"{self.scenario.toml_stem}-{self.strategy.value}"
+
+    @property
+    def result_key(self) -> str:
+        """Return the result path relative to a labeled run directory."""
+        return f"{self.result_stem}/{self.scenario.name}.json"
+
+
+def _standard_result_path(
+    output_dir: Path,
+    execution: StandardExecution,
+) -> Path:
+    """Return one safe regular result path inside *output_dir*."""
+    if not _is_standard_result_directory_component(
+        execution.result_stem
+    ) or not _is_standard_result_scenario_name(execution.scenario.name):
+        msg = f"unsafe standard result key: {execution.result_key!r}"
+        raise ValueError(msg)
+    if output_dir.is_symlink() or (output_dir.exists() and not output_dir.is_dir()):
+        msg = f"result namespace must be a real directory: {output_dir}"
+        raise ValueError(msg)
+    resolved_output_dir = output_dir.resolve()
+    result_dir = output_dir / execution.result_stem
+    if (
+        result_dir.is_symlink()
+        or (result_dir.exists() and not result_dir.is_dir())
+        or result_dir.resolve().parent != resolved_output_dir
+    ):
+        msg = f"result directory must be a direct, real child: {result_dir}"
+        raise ValueError(msg)
+    output_path = result_dir / f"{execution.scenario.name}.json"
+    if (
+        output_path.is_symlink()
+        or (output_path.exists() and not output_path.is_file())
+        or output_path.resolve().parent != result_dir.resolve()
+    ):
+        msg = (
+            "result path must be a regular file inside its scenario directory: "
+            f"{output_path}"
+        )
+        raise ValueError(msg)
+    return output_path
+
+
+class PreparedStandardExecution(NamedTuple):
+    """Validated inputs shared by cache validation and actual resolution."""
+
+    python_version: str
+    requirement_strings: list[str]
+    constraint_strings: list[str]
+    marker_environment: dict[str, str]
+    indexes: list[IndexConfig]
+    index_routes: list[IndexRoute]
+    build_policy_overrides: dict[str, BuildPolicy]
+    uploaded_prior_to: datetime | None
+    vcs_config: VcsConfig
+    trust_unverified_sdist_deps: bool
+    expected_input: dict[str, object]
+    dropped_build_packages: int
+
+
+def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
+    """Load canonical scenarios from *files* in stable declaration order."""
+    stem_collisions = _casefold_collisions([path.stem for path in files])
+    if stem_collisions:
+        msg = (
+            "scenario file stems collide on case-insensitive filesystems: "
+            + ", ".join(stem_collisions)
+        )
+        raise ValueError(msg)
+    rows: list[StandardScenario] = []
+    for path in files:
+        generated_stems = [
+            path.stem,
+            f"{path.stem}-{ResolutionStrategy.LOWEST.value}",
+            f"{path.stem}-{ResolutionStrategy.LOWEST_DIRECT.value}",
+        ]
+        if any(
+            not _is_standard_result_directory_component(stem)
+            for stem in generated_stems
+        ):
+            msg = f"scenario file stem must be a portable ASCII filename: {path.stem!r}"
+            raise ValueError(msg)
+        with path.open("rb") as f:
+            scenarios = tomllib.load(f)
+        invalid_names = sorted(
+            name
+            for name in scenarios
+            if not isinstance(name, str) or not _is_standard_result_scenario_name(name)
+        )
+        if invalid_names:
+            msg = f"{path.name} has non-portable scenario name(s): " + ", ".join(
+                repr(name) for name in invalid_names
+            )
+            raise ValueError(msg)
+        name_collisions = _casefold_collisions(list(scenarios))
+        if name_collisions:
+            msg = (
+                f"{path.name} has case-insensitive scenario-name collisions: "
+                + ", ".join(name_collisions)
+            )
+            raise ValueError(msg)
+        declared = sorted(
+            name for name, definition in scenarios.items() if "resolution" in definition
+        )
+        if declared:
+            msg = (
+                f"{path.name} declares resolution policy for canonical scenario(s): "
+                + ", ".join(declared)
+            )
+            raise ValueError(msg)
+        rows.extend(
+            StandardScenario(path.stem, name, definition)
+            for name, definition in scenarios.items()
+        )
+    return rows
+
+
+def standard_corpus_hash(rows: list[StandardScenario]) -> str:
+    """Hash every parsed canonical definition and its stable logical key."""
+    encoded = json.dumps(
+        {row.logical_key: row.definition for row in rows},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def standard_execution_plan(
+    rows: list[StandardScenario],
+    strategies: tuple[ResolutionStrategy, ...],
+) -> list[StandardExecution]:
+    """Expand supported canonical rows over the selected strategies."""
+    return [
+        StandardExecution(row, strategy)
+        for strategy in strategies
+        for row in rows
+        if "unsupported_reason" not in row.definition
+    ]
+
+
+def standard_execution_keys(
+    rows: list[StandardScenario],
+    strategies: tuple[ResolutionStrategy, ...],
+) -> list[str]:
+    """Return every logical execution key, including declared unsupported rows."""
+    return sorted(
+        StandardExecution(row, strategy).result_key
+        for strategy in strategies
+        for row in rows
+    )
 
 
 def get_git_commit() -> str:
@@ -71,6 +603,68 @@ def get_git_commit() -> str:
         check=True,
     )
     return result.stdout.strip()
+
+
+def get_git_source_state() -> dict[str, str | bool | None]:
+    """Return the full Git source identity for a standard benchmark run."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=BENCHMARKS_DIR,
+        ).stdout.strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {"commit": None, "dirty": True, "diff_hash": None}
+    try:
+        root = Path(
+            subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                check=True,
+                text=True,
+                cwd=BENCHMARKS_DIR,
+            ).stdout.strip()
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            capture_output=True,
+            check=True,
+            cwd=root,
+        ).stdout
+        diff = subprocess.run(
+            ["git", "diff", "--binary", "HEAD", "--"],
+            capture_output=True,
+            check=True,
+            cwd=root,
+        ).stdout
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            capture_output=True,
+            check=True,
+            cwd=root,
+        ).stdout
+        untracked_hashes = bytearray()
+        for raw_path in untracked.split(b"\0"):
+            if not raw_path:
+                continue
+            object_hash = subprocess.run(  # noqa: S603 - path follows --
+                ["git", "hash-object", "--", os.fsdecode(raw_path)],
+                capture_output=True,
+                check=True,
+                cwd=root,
+            ).stdout
+            untracked_hashes.extend(raw_path + b"\0" + object_hash)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return {"commit": commit, "dirty": True, "diff_hash": None}
+    dirty = bool(status)
+    diff_hash = (
+        hashlib.sha256(status + b"\0" + diff + b"\0" + untracked_hashes).hexdigest()
+        if dirty
+        else None
+    )
+    return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
 
 
 def expand_project_extras(
@@ -203,6 +797,7 @@ def parse_datetime(value: str) -> datetime:
 
 
 SCENARIO_WALL_TIMEOUT_SECONDS = 120
+MAX_ITERATIONS = 50_000
 
 
 class _ScenarioTimeoutError(BaseException):
@@ -219,6 +814,368 @@ def _alarm_handler(_signum: int, _frame: object) -> None:
 
 
 CACHE_DIR = BENCHMARKS_DIR / "cache"
+
+_STANDARD_COUNTER_FIELDS = frozenset(
+    {
+        "rounds",
+        "decisions",
+        "conflicts",
+        "derivations",
+        "backjumps",
+        "restarts",
+        "incompatibilities_learned",
+        "listings_fetched",
+        "metadata_fetched",
+        "sdist_pkg_info_fetched",
+        "distributions_seen",
+        "wheels_seen",
+        "sdists_seen",
+        "excluded_by_python",
+        "excluded_by_time",
+        "excluded_by_dist_policy",
+        "excluded_by_build_policy",
+        "sdist_pyproject_fallbacks",
+        "get_dependencies_calls",
+        "choose_version_calls",
+        "prioritize_calls",
+        "look_ahead_rejections",
+        "packages_resolved",
+    }
+)
+
+
+def standard_benchmark_settings() -> dict[str, object]:
+    """Return the global settings shared by every standard result."""
+    return {
+        "dist_policy": DistPolicy.WHEEL_OR_SDIST.value,
+        "build_policy": BuildPolicy.NEVER.value,
+        "trust_unverified_sdist_deps_default": True,
+        "max_iterations": MAX_ITERATIONS,
+        "wall_timeout_seconds": SCENARIO_WALL_TIMEOUT_SECONDS,
+    }
+
+
+def _clean_source_identity(source: object) -> bool:
+    if not isinstance(source, dict) or set(source) != {
+        "commit",
+        "dirty",
+        "diff_hash",
+    }:
+        return False
+    commit = source.get("commit")
+    return (
+        isinstance(commit, str)
+        and len(commit) in {40, 64}
+        and all(character in _LOWER_HEX for character in commit)
+        and source.get("dirty") is False
+        and source.get("diff_hash") is None
+    )
+
+
+def _standard_result_data_valid(  # noqa: PLR0911 - fail-closed schema validator
+    data: object,
+    expected_input: dict,
+) -> bool:
+    if not isinstance(data, dict) or set(data) != {"input", "result", "stats"}:
+        return False
+    if not _strict_json_equal(data.get("input"), expected_input):
+        return False
+    result = data.get("result")
+    if not isinstance(result, dict) or set(result) != {"success", "error"}:
+        return False
+    success = result.get("success")
+    error = result.get("error")
+    if type(success) is not bool or (success and error is not None):
+        return False
+    if not success and (not isinstance(error, str) or not error):
+        return False
+    stats = data.get("stats")
+    if not isinstance(stats, dict) or set(stats) != _STANDARD_COUNTER_FIELDS | {
+        "wall_time_seconds"
+    }:
+        return False
+    if any(type(stats.get(field)) is not int for field in _STANDARD_COUNTER_FIELDS):
+        return False
+    if any(stats[field] < 0 for field in _STANDARD_COUNTER_FIELDS):
+        return False
+    wall_time = stats.get("wall_time_seconds")
+    return (
+        isinstance(wall_time, (int, float))
+        and not isinstance(wall_time, bool)
+        and math.isfinite(wall_time)
+        and wall_time >= 0
+    )
+
+
+def _result_input(
+    execution: StandardExecution,
+    *,
+    commit: str,
+    source: dict[str, str | bool | None],
+    corpus_hash: str,
+) -> dict[str, object]:
+    return {
+        "benchmark_schema": STANDARD_MANIFEST_SCHEMA,
+        "commit": commit,
+        "source": source,
+        "corpus_hash": corpus_hash,
+        "logical_key": execution.scenario.logical_key,
+        "execution_key": execution.result_key,
+    }
+
+
+def _standard_result_files(output_dir: Path) -> list[str]:
+    if not output_dir.is_dir():
+        return []
+    paths, _directories = _standard_json_paths(output_dir)
+    files: list[str] = []
+    for path in paths:
+        key = path.relative_to(output_dir).as_posix()
+        if key == STANDARD_MANIFEST_FILENAME:
+            continue
+        files.append(key)
+    return sorted(files)
+
+
+def _completed_standard_executions(
+    output_dir: Path,
+    executions: list[StandardExecution],
+    *,
+    commit: str,
+    source: dict[str, str | bool | None],
+    corpus_hash: str,
+) -> list[str]:
+    completed: list[str] = []
+    for execution in executions:
+        path = output_dir / execution.result_key
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        prepared = prepare_standard_execution(
+            execution,
+            commit=commit,
+            source=source,
+            corpus_hash=corpus_hash,
+        )
+        if _standard_result_data_valid(data, prepared.expected_input):
+            completed.append(execution.result_key)
+    return sorted(completed)
+
+
+def standard_manifest_contract(
+    *,
+    commit: str,
+    mode: str,
+    all_rows: list[StandardScenario],
+    selected_rows: list[StandardScenario],
+    corpus_files: list[str],
+    selected_files: list[str],
+    strategies: tuple[ResolutionStrategy, ...],
+    corpus_hash: str,
+) -> dict[str, object]:
+    """Return the immutable identity of one standard benchmark run."""
+    unsupported_rows = [
+        row for row in selected_rows if "unsupported_reason" in row.definition
+    ]
+    return {
+        "benchmark_schema": STANDARD_MANIFEST_SCHEMA,
+        "commit": commit,
+        "mode": mode,
+        "strategies": [strategy.value for strategy in strategies],
+        "settings": standard_benchmark_settings(),
+        "corpus_hash": corpus_hash,
+        "corpus_files": sorted(corpus_files),
+        "selected_files": sorted(selected_files),
+        "available_logical_keys": sorted(row.logical_key for row in all_rows),
+        "selected_logical_keys": sorted(row.logical_key for row in selected_rows),
+        "unsupported_logical_keys": sorted(row.logical_key for row in unsupported_rows),
+        "available_execution_keys": standard_execution_keys(all_rows, strategies),
+        "selected_execution_keys": standard_execution_keys(selected_rows, strategies),
+        "unsupported_execution_keys": sorted(
+            StandardExecution(row, strategy).result_key
+            for row in unsupported_rows
+            for strategy in strategies
+        ),
+    }
+
+
+def _standard_manifest_matches_contract(
+    data: object,
+    contract: dict[str, object],
+) -> bool:
+    """Return whether an existing manifest owns this exact run namespace."""
+    return bool(
+        isinstance(data, dict)
+        and set(data) == _STANDARD_MANIFEST_FIELDS
+        and all(
+            key in data and _strict_json_equal(data[key], value)
+            for key, value in contract.items()
+        )
+    )
+
+
+def _clear_standard_result_namespace(
+    paths: list[Path],
+    directories: list[Path],
+) -> None:
+    """Remove standard JSON results and now-empty standard directories."""
+    for path in paths:
+        path.unlink()
+    for directory in sorted(
+        directories,
+        key=lambda path: len(path.parts),
+        reverse=True,
+    ):
+        if any(directory.iterdir()):
+            continue
+        directory.rmdir()
+
+
+def prepare_standard_result_namespace(
+    output_dir: Path,
+    contract: dict[str, object],
+    expected_result_keys: list[str],
+    *,
+    force: bool,
+) -> None:
+    """Validate or safely clear the standard result namespace for one run."""
+    files, directories = _safe_tree_members(output_dir)
+    paths = sorted(path for path in files if _is_standard_json_path(path, output_dir))
+    _preflight_standard_result_parents(
+        output_dir,
+        expected_result_keys,
+        files,
+        directories,
+    )
+    if force:
+        _clear_standard_result_namespace(paths, directories)
+        return
+    if not paths:
+        return
+
+    manifest_path = output_dir / STANDARD_MANIFEST_FILENAME
+    if manifest_path not in paths:
+        msg = (
+            f"existing standard results in {output_dir} have no owning manifest; "
+            "use --force or a new --commit label"
+        )
+        raise ValueError(msg)
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, ValueError) as exc:
+        msg = (
+            f"existing standard manifest is unreadable: {manifest_path}; "
+            "use --force or a new --commit label"
+        )
+        raise ValueError(msg) from exc
+    if not _standard_manifest_matches_contract(manifest, contract):
+        msg = (
+            f"existing standard manifest does not match this run: {manifest_path}; "
+            "use --force or a new --commit label"
+        )
+        raise ValueError(msg)
+
+    expected = set(expected_result_keys)
+    unexpected = sorted(
+        path.relative_to(output_dir).as_posix()
+        for path in paths
+        if path != manifest_path
+        and path.relative_to(output_dir).as_posix() not in expected
+    )
+    if unexpected:
+        msg = (
+            f"existing standard result namespace contains stale files: "
+            f"{', '.join(unexpected)}; use --force or a new --commit label"
+        )
+        raise ValueError(msg)
+
+
+def write_standard_manifest(  # noqa: PLR0913 - explicit contract fields
+    path: Path,
+    *,
+    commit: str,
+    source_start: dict[str, str | bool | None],
+    source_end: dict[str, str | bool | None] | None,
+    mode: str,
+    all_rows: list[StandardScenario],
+    selected_rows: list[StandardScenario],
+    corpus_files: list[str],
+    selected_files: list[str],
+    strategies: tuple[ResolutionStrategy, ...],
+    corpus_hash: str,
+    finalize: bool,
+) -> bool:
+    """Write the strict standard-suite contract and return its completeness."""
+    output_dir = path.parent
+    contract = standard_manifest_contract(
+        commit=commit,
+        mode=mode,
+        all_rows=all_rows,
+        selected_rows=selected_rows,
+        corpus_files=corpus_files,
+        selected_files=selected_files,
+        strategies=strategies,
+        corpus_hash=corpus_hash,
+    )
+    selected_plan = standard_execution_plan(selected_rows, strategies)
+    expected_result_keys = sorted(item.result_key for item in selected_plan)
+    completed_execution_keys = _completed_standard_executions(
+        output_dir,
+        selected_plan,
+        commit=commit,
+        source=source_start,
+        corpus_hash=corpus_hash,
+    )
+    completed_set = set(completed_execution_keys)
+    supported_selected = [
+        row for row in selected_rows if "unsupported_reason" not in row.definition
+    ]
+    completed_logical_keys = sorted(
+        row.logical_key
+        for row in supported_selected
+        if all(
+            StandardExecution(row, strategy).result_key in completed_set
+            for strategy in strategies
+        )
+    )
+    unsupported_rows = [
+        row for row in selected_rows if "unsupported_reason" in row.definition
+    ]
+    unsupported_logical_keys = sorted(row.logical_key for row in unsupported_rows)
+    unsupported_execution_keys = sorted(
+        StandardExecution(row, strategy).result_key
+        for row in unsupported_rows
+        for strategy in strategies
+    )
+    selected_logical_keys = sorted(row.logical_key for row in selected_rows)
+    selected_execution_keys = standard_execution_keys(selected_rows, strategies)
+    file_execution_keys = _standard_result_files(output_dir)
+    complete = bool(
+        finalize
+        and _clean_source_identity(source_start)
+        and _clean_source_identity(source_end)
+        and source_end == source_start
+        and not (set(completed_logical_keys) & set(unsupported_logical_keys))
+        and sorted(completed_logical_keys + unsupported_logical_keys)
+        == selected_logical_keys
+        and not (set(completed_execution_keys) & set(unsupported_execution_keys))
+        and sorted(completed_execution_keys + unsupported_execution_keys)
+        == selected_execution_keys
+        and completed_execution_keys == expected_result_keys
+        and file_execution_keys == expected_result_keys
+    )
+    data = {
+        **contract,
+        "source_start": source_start,
+        "source_end": source_end,
+        "completed_logical_keys": completed_logical_keys,
+        "completed_execution_keys": completed_execution_keys,
+        "file_execution_keys": file_execution_keys,
+        "complete": complete,
+    }
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    return complete
 
 
 def resolve_scenario(  # noqa: PLR0913, PLR0917 - one wrapper per scenario knob
@@ -269,7 +1226,7 @@ def resolve_scenario(  # noqa: PLR0913, PLR0917 - one wrapper per scenario knob
             provider,
             range_type=VersionRange,
             root_version="0",
-            max_iterations=50_000,
+            max_iterations=MAX_ITERATIONS,
         )
 
         previous_handler = signal.signal(signal.SIGALRM, _alarm_handler)
@@ -510,62 +1467,37 @@ def parse_build_packages(
     return overrides
 
 
-def process_scenario(
-    scenario_name: str,
-    scenario: dict,
-    commit: str,
-    toml_stem: str,
+def prepare_standard_execution(
+    execution: StandardExecution,
     *,
-    force: bool,
-) -> None:
-    """Resolve one scenario and save results."""
-    if "unsupported_reason" in scenario:
-        # The scenario lives in scenarios/ for documentation but
-        # depends on a feature nab does not implement yet. Skip it.
-        return
-
+    commit: str,
+    source: dict[str, str | bool | None],
+    corpus_hash: str,
+) -> PreparedStandardExecution:
+    """Prepare and identify one execution without performing network work."""
+    scenario_name = execution.scenario.name
+    scenario = execution.scenario.definition
     python_version: str = scenario["python_version"]
-    requirement_strings: list[str] = scenario["requirements"]
+    requirement_strings: list[str] = list(scenario["requirements"])
     constraint_strings: list[str] = scenario.get("constraints", [])
     marker_environment = parse_marker_environment(scenario_name, scenario)
     indexes = parse_indexes(scenario_name, scenario)
     index_routes = parse_index_routes(scenario_name, scenario)
-    build_policy_overrides = parse_build_packages(scenario_name, scenario)
+    build_policy_overrides = dict(parse_build_packages(scenario_name, scenario))
+    dropped_build_packages = 0
     if marker_environment and build_policy_overrides:
-        # BUILD_REMOTE + marker_environment is rejected at provider construction.
-        print(
-            f"\n  [audit] {scenario_name}: dropping {len(build_policy_overrides)}"
-            " build_packages override(s) because the scenario uses a"
-            " marker_environment overlay (host-built metadata cannot"
-            " reflect the impersonated target). Resolution may now skip"
-            " versions previously accepted via silent passthrough.",
-            flush=True,
-        )
+        dropped_build_packages = len(build_policy_overrides)
         build_policy_overrides = {}
     datetime_str: str | None = scenario.get("datetime")
     project_name: str | None = scenario.get("project_name")
     project_extras: list[str] = scenario.get("project_extras", [])
-    resolution_raw: str = scenario.get("resolution", "highest")
-    try:
-        resolution_strategy = ResolutionStrategy(resolution_raw)
-    except ValueError as exc:
-        valid = sorted(s.value for s in ResolutionStrategy)
-        msg = (
-            f"{scenario_name}: resolution must be one of {valid!r},"
-            f" got {resolution_raw!r}"
-        )
-        raise ValueError(msg) from exc
-    # Trust a pre-2.2 sdist's PKG-INFO deps by default. The benchmark measures
-    # resolver search, and under BuildPolicy.NEVER the strict PEP 643 product
-    # default rejects every sdist-only pre-2.2 pin (UnsupportedSdistError),
-    # dropping in-window versions uv resolves by building. A scenario sets this
-    # false to exercise strict behavior.
-    trust_unverified_sdist_deps: bool = scenario.get(
-        "trust_unverified_sdist_deps", True
-    )
     optional_dependencies: dict[str, list[str]] = scenario.get(
         "optional_dependencies", {}
     )
+    if project_name:
+        requirement_strings.extend(
+            expand_project_extras(project_name, project_extras, optional_dependencies)
+        )
     vcs_policy_str: str = scenario.get("vcs_policy", "block")
     vcs_config = VcsConfig(
         policy=VcsPolicy(vcs_policy_str),
@@ -573,71 +1505,123 @@ def process_scenario(
         allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
         require_pin=scenario.get("vcs_require_pin", True),
     )
-
-    if project_name:
-        requirement_strings = [
-            *requirement_strings,
-            *expand_project_extras(project_name, project_extras, optional_dependencies),
-        ]
-
-    uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
-
-    output_dir = RESULTS_DIR / commit / toml_stem
-    output_path = output_dir / f"{scenario_name}.json"
-
-    expected_input = _expected_input(
-        commit,
-        python_version,
-        requirement_strings,
-        constraint_strings,
-        datetime_str,
-        project_name,
-        project_extras,
-        vcs_config,
-        vcs_policy_str,
-        marker_environment,
-        indexes,
-        index_routes,
-        build_packages=sorted(build_policy_overrides),
-        resolution_strategy=resolution_strategy,
+    # Search benchmarks accept pre-2.2 PKG-INFO dependency metadata by default;
+    # individual strict-policy scenarios opt out explicitly.
+    trust_unverified_sdist_deps: bool = scenario.get(
+        "trust_unverified_sdist_deps", True
+    )
+    expected_input = {
+        **_expected_input(
+            commit,
+            python_version,
+            requirement_strings,
+            constraint_strings,
+            datetime_str,
+            project_name,
+            project_extras,
+            vcs_config,
+            vcs_policy_str,
+            marker_environment,
+            indexes,
+            index_routes,
+            build_packages=sorted(build_policy_overrides),
+            resolution_strategy=execution.strategy,
+            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        ),
+        **_result_input(
+            execution,
+            commit=commit,
+            source=source,
+            corpus_hash=corpus_hash,
+        ),
+    }
+    return PreparedStandardExecution(
+        python_version=python_version,
+        requirement_strings=requirement_strings,
+        constraint_strings=constraint_strings,
+        marker_environment=marker_environment,
+        indexes=indexes,
+        index_routes=index_routes,
+        build_policy_overrides=build_policy_overrides,
+        uploaded_prior_to=parse_datetime(datetime_str) if datetime_str else None,
+        vcs_config=vcs_config,
         trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        expected_input=expected_input,
+        dropped_build_packages=dropped_build_packages,
     )
 
+
+def process_scenario(
+    execution: StandardExecution,
+    commit: str,
+    *,
+    force: bool,
+    source: dict[str, str | bool | None],
+    corpus_hash: str,
+) -> bool:
+    """Resolve one scenario and save results."""
+    scenario_name = execution.scenario.name
+    scenario = execution.scenario.definition
+    if "unsupported_reason" in scenario:
+        return False
+    prepared = prepare_standard_execution(
+        execution,
+        commit=commit,
+        source=source,
+        corpus_hash=corpus_hash,
+    )
+    if prepared.dropped_build_packages:
+        print(
+            f"\n  [audit] {scenario_name}: dropping {prepared.dropped_build_packages}"
+            " build_packages override(s) because host-built metadata cannot"
+            " reflect a marker_environment overlay.",
+            flush=True,
+        )
+
+    run_dir = _result_directory(commit)
+    output_path = _standard_result_path(run_dir, execution)
+    output_dir = output_path.parent
+
     if output_path.exists() and not force:
-        existing = json.loads(output_path.read_text())
-        if existing.get("input") == expected_input:
-            return
+        try:
+            existing = json.loads(output_path.read_text())
+        except (OSError, ValueError):
+            existing = None
+        if _standard_result_data_valid(existing, prepared.expected_input):
+            return True
 
     print(f"  {scenario_name} ", end="", flush=True)
 
-    requirement_marker_env = scenario_marker_env(python_version, marker_environment)
+    requirement_marker_env = scenario_marker_env(
+        prepared.python_version, prepared.marker_environment
+    )
     requirements = parse_requirements(
-        requirement_strings,
-        vcs_config=vcs_config,
+        prepared.requirement_strings,
+        vcs_config=prepared.vcs_config,
         marker_environment=requirement_marker_env,
     )
     constraints = (
         parse_requirements(
-            constraint_strings,
-            vcs_config=vcs_config,
+            prepared.constraint_strings,
+            vcs_config=prepared.vcs_config,
             marker_environment=requirement_marker_env,
         )
-        if constraint_strings
+        if prepared.constraint_strings
         else None
     )
     data = resolve_scenario(
         requirements,
-        python_version,
-        uploaded_prior_to,
+        prepared.python_version,
+        prepared.uploaded_prior_to,
         constraints,
-        marker_environment=marker_environment or None,
-        indexes=indexes,
-        index_routes=index_routes or None,
-        build_policy_overrides=build_policy_overrides or None,
-        resolution_strategy=resolution_strategy,
-        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        marker_environment=prepared.marker_environment or None,
+        indexes=prepared.indexes,
+        index_routes=prepared.index_routes or None,
+        build_policy_overrides=prepared.build_policy_overrides or None,
+        resolution_strategy=execution.strategy,
+        trust_unverified_sdist_deps=prepared.trust_unverified_sdist_deps,
     )
-    data["input"] = expected_input
+    data["input"] = prepared.expected_input
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(data, indent=2) + "\n")
@@ -652,50 +1636,152 @@ def process_scenario(
         )
     else:
         print(f"FAILED: {data['result']['error']}")
+    return True
 
 
-def process_toml_file(toml_file: Path, commit: str, *, force: bool) -> None:
-    """Process all scenarios in a TOML file."""
-    with toml_file.open("rb") as f:
-        scenarios = tomllib.load(f)
-
-    print(f"\n--- {toml_file.stem} ---")
-    for scenario_name, scenario in scenarios.items():
-        process_scenario(scenario_name, scenario, commit, toml_file.stem, force=force)
-
-
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run nab resolution scenarios")
     parser.add_argument(
         "--commit",
+        type=_result_directory_label,
         default=None,
         help="Label for this run (default: git short hash of HEAD)",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite existing results",
+        help="Clear and replace existing standard results for this label",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--strategy-matrix",
+        action="store_true",
+        help="Run every selected scenario under highest, lowest, and lowest-direct",
+    )
+    parser.add_argument(
+        "--toml",
+        action="append",
+        help="Restrict the canonical corpus to a TOML stem; may be repeated",
+    )
+    args = parser.parse_args(argv)
 
-    commit = args.commit or get_git_commit()
+    commit = args.commit
+    if commit is None:
+        try:
+            commit = _result_directory_label(get_git_commit())
+        except argparse.ArgumentTypeError as exc:
+            parser.error(str(exc))
+    source_start = get_git_source_state()
 
     if not SCENARIOS_DIR.is_dir():
         print(f"Error: {SCENARIOS_DIR} does not exist")
         sys.exit(1)
 
-    toml_files = sorted(
-        f for f in SCENARIOS_DIR.glob("*.toml") if not f.stem.startswith("universal")
-    )
-    if not toml_files:
+    try:
+        all_files = standard_scenario_files()
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
+    if not all_files:
         print(f"No scenario files found in {SCENARIOS_DIR}")
         sys.exit(1)
 
-    print(f"Running scenarios for commit: {commit}")
-    for toml_file in toml_files:
-        process_toml_file(toml_file, commit, force=args.force)
+    if args.toml:
+        duplicates = sorted({stem for stem in args.toml if args.toml.count(stem) > 1})
+        if duplicates:
+            parser.error("duplicate TOML stem(s): " + ", ".join(duplicates))
+        for stem in args.toml:
+            for suffix in ("-lowest-direct", "-lowest"):
+                if stem.endswith(suffix):
+                    canonical = stem.removesuffix(suffix)
+                    parser.error(
+                        f"strategy-clone stem {stem!r} was retired; use --toml "
+                        f"{canonical} --strategy-matrix"
+                    )
+        by_stem = {path.stem: path for path in all_files}
+        missing = sorted(set(args.toml) - by_stem.keys())
+        if missing:
+            parser.error("unknown TOML stem(s): " + ", ".join(missing))
+        selected_files = [by_stem[stem] for stem in args.toml]
+    else:
+        selected_files = all_files
 
-    print(f"\nResults saved to {RESULTS_DIR / commit}/")
+    try:
+        all_rows = load_standard_corpus(all_files)
+    except ValueError as exc:
+        parser.error(str(exc))
+    selected_stems = {path.stem for path in selected_files}
+    selected_rows = [row for row in all_rows if row.toml_stem in selected_stems]
+    strategies = (
+        STANDARD_STRATEGIES if args.strategy_matrix else (ResolutionStrategy.HIGHEST,)
+    )
+    mode = "strategy-matrix" if args.strategy_matrix else "default"
+    corpus_hash = standard_corpus_hash(all_rows)
+    execution_plan = standard_execution_plan(selected_rows, strategies)
+    contract = standard_manifest_contract(
+        commit=commit,
+        mode=mode,
+        all_rows=all_rows,
+        selected_rows=selected_rows,
+        corpus_files=[path.stem for path in all_files],
+        selected_files=[path.stem for path in selected_files],
+        strategies=strategies,
+        corpus_hash=corpus_hash,
+    )
+    try:
+        output_dir = _result_directory(commit)
+        prepare_standard_result_namespace(
+            output_dir,
+            contract,
+            sorted(execution.result_key for execution in execution_plan),
+            force=args.force,
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
+    manifest_path = output_dir / STANDARD_MANIFEST_FILENAME
+    manifest_kwargs = {
+        "commit": commit,
+        "source_start": source_start,
+        "mode": mode,
+        "all_rows": all_rows,
+        "selected_rows": selected_rows,
+        "corpus_files": [path.stem for path in all_files],
+        "selected_files": [path.stem for path in selected_files],
+        "strategies": strategies,
+        "corpus_hash": corpus_hash,
+    }
+    write_standard_manifest(
+        manifest_path,
+        **manifest_kwargs,
+        source_end=None,
+        finalize=False,
+    )
+
+    print(f"Running scenarios for commit: {commit} ({mode})")
+    previous_stem: str | None = None
+    for execution in execution_plan:
+        if execution.result_stem != previous_stem:
+            print(f"\n--- {execution.result_stem} ---")
+            previous_stem = execution.result_stem
+        process_scenario(
+            execution,
+            commit,
+            force=args.force,
+            source=source_start,
+            corpus_hash=corpus_hash,
+        )
+
+    complete = write_standard_manifest(
+        manifest_path,
+        **manifest_kwargs,
+        source_end=get_git_source_state(),
+        finalize=True,
+    )
+    if not complete:
+        print(f"Error: standard benchmark manifest is incomplete: {manifest_path}")
+        raise SystemExit(1)
+
+    print(f"\nResults saved to {output_dir}/")
 
 
 if __name__ == "__main__":

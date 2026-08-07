@@ -7,7 +7,7 @@ be re-run after each algorithm change.
 
 Usage:
     python nab-python/benchmarks/canary.py [--commit LABEL] [--runs N]
-                                           [--scenario NAME] [--scenarios FILE]
+        [--scenario STEM:NAME[@STRATEGY]] [--scenarios-list FILE]
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -65,39 +65,31 @@ BENCHMARKS_DIR = Path(__file__).parent
 SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
 RESULTS_DIR = BENCHMARKS_DIR / "canary_results"
 CACHE_DIR = BENCHMARKS_DIR / "cache"
+CANARY_MANIFEST = BENCHMARKS_DIR / "canary.toml"
+CANARY_MANIFEST_SCHEMA = 1
+_LEGACY_STRATEGY_SUFFIXES = ("-lowest", "-lowest-direct")
 DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
     IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
 )
 
-# Each entry pins its TOML variant as ``stem:name``. Most of these names also
-# live in -lowest / -lowest-direct siblings with different counts; the pins
-# record the variant the suite already ran so the numbers are reproducible
-# instead of depending on directory scan order.
-CANARY_SCENARIOS = [
-    "uv-lowest:boto3-urllib3-transient",
-    "pip-lowest:trustllm",
-    "pip-lowest:copick",
-    "pip-lowest:promptflow-vectordb",
-    "pip-lowest:ultralytics-export",
-    "pip-lowest:datacontract-cli",
-    "pip-lowest:pandas-aws-boto3-dandi-frenzy",
-    "ai-stack:vllm-transformers-floor",
-    "pip-lowest:google-bigquery-soda",
-    "pip-lowest:langchain-ml-course",
-    "airflow-lowest-direct:airflow-3-0-2-awswrangler",
-    "airflow-lowest-direct:airflow-3-0-3-pandas-sqlalchemy",
-    "airflow-lowest-direct:airflow-portalocker-qdrant",
-    "airflow-lowest-direct:airflow-fastapi-121",
-    "forums-lowest-direct:so-dbt-core-snowflake-79744735",
-    "uv-lowest:uv-issue-16601-xinference",
-    "uv-lowest:uv-issue-16601-xinference-fixed",
-    "ai-stack:rag-chroma-langchain",
-    "ai-stack:streamlit-langchain",
-]
+
+class CanaryCase(NamedTuple):
+    """One canonical scenario plus an optional execution-policy override."""
+
+    scenario: str
+    resolution: ResolutionStrategy | None
+
+
+class CanaryV2Identity(NamedTuple):
+    """The selector and definition stored under canary contract v2."""
+
+    scenario: str
+    definition: dict
+
 
 WALL_TIMEOUT_S = 60
 MAX_ITERATIONS = 50_000
-# Version 2 separates strategy-aware results from the old all-highest series.
+# Preserve contract v2 for comparisons with existing canary results.
 CANARY_CONTRACT_VERSION = 2
 
 
@@ -477,6 +469,101 @@ class _SelectionError(ValueError):
     """Raised when benchmark inputs select an unsafe or missing path."""
 
 
+def load_canary_manifest(path: Path | None = None) -> list[CanaryCase]:
+    """Load the strict, ordered default-canary execution manifest."""
+    manifest_path = path or CANARY_MANIFEST
+    try:
+        with manifest_path.open("rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        msg = f"cannot read canary manifest {manifest_path}: {exc}"
+        raise _SelectionError(msg) from exc
+
+    if set(data) != {"schema", "case"}:
+        msg = "canary manifest must contain exactly 'schema' and 'case'"
+        raise _SelectionError(msg)
+    if type(data["schema"]) is not int or data["schema"] != CANARY_MANIFEST_SCHEMA:
+        msg = (
+            "canary manifest schema must be "
+            f"{CANARY_MANIFEST_SCHEMA}, got {data['schema']!r}"
+        )
+        raise _SelectionError(msg)
+    raw_cases = data["case"]
+    if not isinstance(raw_cases, list) or not raw_cases:
+        msg = "canary manifest 'case' must be a nonempty array of tables"
+        raise _SelectionError(msg)
+
+    cases: list[CanaryCase] = []
+    seen_scenarios: set[str] = set()
+    duplicate_scenarios: set[str] = set()
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, dict) or set(raw_case) != {
+            "scenario",
+            "resolution",
+        }:
+            msg = (
+                f"canary manifest case {index} must contain exactly"
+                " 'scenario' and 'resolution'"
+            )
+            raise _SelectionError(msg)
+        scenario = raw_case["scenario"]
+        resolution_raw = raw_case["resolution"]
+        if not isinstance(scenario, str) or not scenario:
+            msg = f"canary manifest case {index} has an invalid scenario"
+            raise _SelectionError(msg)
+        try:
+            resolution = ResolutionStrategy(resolution_raw)
+        except (TypeError, ValueError) as exc:
+            valid = sorted(strategy.value for strategy in ResolutionStrategy)
+            msg = (
+                f"canary manifest case {index} resolution must be one of"
+                f" {valid!r}, got {resolution_raw!r}"
+            )
+            raise _SelectionError(msg) from exc
+        cases.append(CanaryCase(scenario, resolution))
+        if scenario in seen_scenarios:
+            duplicate_scenarios.add(scenario)
+        seen_scenarios.add(scenario)
+    if duplicate_scenarios:
+        msg = "canary manifest contains duplicate scenarios: " + ", ".join(
+            sorted(duplicate_scenarios)
+        )
+        raise _SelectionError(msg)
+    return cases
+
+
+def parse_canary_case(spec: str) -> CanaryCase:
+    """Parse ``stem:name`` with an optional explicit ``@strategy`` suffix."""
+    scenario, separator, resolution_raw = spec.rpartition("@")
+    if not separator:
+        return CanaryCase(spec, None)
+    if not scenario or not resolution_raw:
+        msg = f"invalid canary scenario selection {spec!r}"
+        raise _SelectionError(msg)
+    try:
+        resolution = ResolutionStrategy(resolution_raw)
+    except ValueError as exc:
+        valid = sorted(strategy.value for strategy in ResolutionStrategy)
+        msg = f"canary resolution must be one of {valid!r}, got {resolution_raw!r}"
+        raise _SelectionError(msg) from exc
+    return CanaryCase(scenario, resolution)
+
+
+def _retired_selector_replacement(spec: str) -> str | None:
+    """Translate a deleted clone selector into the explicit modern spelling."""
+    if ":" not in spec:
+        return None
+    stem, name = spec.split(":", 1)
+    for suffix, resolution in (
+        ("-lowest-direct", ResolutionStrategy.LOWEST_DIRECT),
+        ("-lowest", ResolutionStrategy.LOWEST),
+    ):
+        if stem.endswith(suffix):
+            canonical_stem = stem.removesuffix(suffix)
+            return f"{canonical_stem}:{name}@{resolution.value}"
+    return None
+
+
 def _is_portable_path_component(value: str) -> bool:
     """Return whether *value* fits the portable ASCII filename grammar."""
     if (
@@ -524,25 +611,34 @@ def _scenario_file(toml_stem: str) -> Path:
     return toml_path
 
 
-def select_scenarios(specs: list[str]) -> list[str]:
+def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
     """Validate every selection before a benchmark run or result write."""
-    if not specs:
+    if not cases:
         msg = "at least one scenario must be selected"
         raise _SelectionError(msg)
-    missing = [spec for spec in specs if find_scenario(spec) is None]
+    missing = [case.scenario for case in cases if find_scenario(case.scenario) is None]
     if missing:
         label = "scenario" if len(missing) == 1 else "scenarios"
         msg = f"{label} not found: {', '.join(repr(spec) for spec in missing)}"
         raise _SelectionError(msg)
-    return specs
+    return cases
 
 
 def _parse_scenario_selection(
     parser: argparse.ArgumentParser,
     specs: list[str],
-) -> list[str]:
+) -> list[CanaryCase]:
     try:
-        return select_scenarios(specs)
+        return select_scenarios([parse_canary_case(spec) for spec in specs])
+    except _SelectionError as exc:
+        parser.error(str(exc))
+
+
+def _parse_default_selection(
+    parser: argparse.ArgumentParser,
+) -> list[CanaryCase]:
+    try:
+        return select_scenarios(load_canary_manifest())
     except _SelectionError as exc:
         parser.error(str(exc))
 
@@ -566,14 +662,11 @@ def _summary_path(parser: argparse.ArgumentParser, label: str) -> Path:
 
 
 def find_scenario(spec: str) -> dict | None:
-    """Locate a scenario by name, or by ``stem:name`` to pin a specific TOML file.
-
-    Many names live in several variant TOMLs (a ``highest`` file plus
-    ``-lowest`` / ``-lowest-direct`` siblings) with different decision counts.
-    A bare name scans the files in sorted order so the match is reproducible
-    across machines, and warns when the name is ambiguous so an exact-count run
-    can pin the variant with ``stem:name``.
-    """
+    """Locate a canonical scenario by name or qualified ``stem:name``."""
+    replacement = _retired_selector_replacement(spec)
+    if replacement is not None:
+        msg = f"retired strategy-clone selector {spec!r}; use {replacement!r}"
+        raise _SelectionError(msg)
     if ":" in spec:
         if (
             len(spec) >= 3
@@ -591,7 +684,20 @@ def find_scenario(spec: str) -> dict | None:
             return tomllib.load(f).get(name)
 
     matches: list[tuple[str, dict]] = []
-    for entry in sorted(SCENARIOS_DIR.glob("*.toml")):
+    entries = sorted(SCENARIOS_DIR.glob("*.toml"))
+    clones = [
+        entry.name
+        for entry in entries
+        if entry.stem.endswith(_LEGACY_STRATEGY_SUFFIXES)
+    ]
+    if clones:
+        msg = "legacy strategy-clone scenario files are not supported: " + ", ".join(
+            clones
+        )
+        raise _SelectionError(msg)
+    for entry in entries:
+        if entry.stem.startswith("universal"):
+            continue
         toml_file = _scenario_file(entry.stem)
         with toml_file.open("rb") as f:
             data = tomllib.load(f)
@@ -609,11 +715,54 @@ def find_scenario(spec: str) -> dict | None:
     return matches[0][1]
 
 
+def scenario_resolution(
+    scenario: dict,
+    *,
+    scenario_name: str,
+    override: ResolutionStrategy | None = None,
+) -> ResolutionStrategy:
+    """Return a validated scenario strategy, optionally overridden explicitly."""
+    resolution_raw = scenario.get("resolution", ResolutionStrategy.HIGHEST.value)
+    try:
+        declared = ResolutionStrategy(resolution_raw)
+    except (TypeError, ValueError) as exc:
+        valid = sorted(strategy.value for strategy in ResolutionStrategy)
+        msg = (
+            f"{scenario_name}: resolution must be one of {valid!r},"
+            f" got {resolution_raw!r}"
+        )
+        raise ValueError(msg) from exc
+    return override or declared
+
+
+def canary_v2_identity(
+    case: CanaryCase,
+    scenario: dict,
+    resolution: ResolutionStrategy,
+) -> CanaryV2Identity:
+    """Build the contract-v2 identity for a canonical scenario."""
+    if case.resolution is None:
+        return CanaryV2Identity(case.scenario, scenario)
+
+    if resolution is ResolutionStrategy.HIGHEST:
+        definition = dict(scenario)
+        definition.pop("resolution", None)
+        return CanaryV2Identity(case.scenario, definition)
+
+    # Preserve the clone TOMLs' field order in the serialized v2 input.
+    definition = {"resolution": resolution.value, **scenario}
+    if ":" not in case.scenario:
+        return CanaryV2Identity(case.scenario, definition)
+    stem, name = case.scenario.split(":", 1)
+    return CanaryV2Identity(f"{stem}-{resolution.value}:{name}", definition)
+
+
 def median_run(
     scenario: dict,
     runs: int,
     *,
     scenario_name: str = "canary",
+    resolution_override: ResolutionStrategy | None = None,
 ) -> tuple[list[dict], dict]:
     if "unsupported_reason" in scenario:
         return [], {"skipped": scenario["unsupported_reason"]}
@@ -695,16 +844,11 @@ def median_run(
         else None
     )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
-    resolution_raw = scenario.get("resolution", ResolutionStrategy.HIGHEST.value)
-    try:
-        resolution_strategy = ResolutionStrategy(resolution_raw)
-    except ValueError as exc:
-        valid = sorted(strategy.value for strategy in ResolutionStrategy)
-        msg = (
-            f"{scenario_name}: resolution must be one of {valid!r},"
-            f" got {resolution_raw!r}"
-        )
-        raise ValueError(msg) from exc
+    resolution_strategy = scenario_resolution(
+        scenario,
+        scenario_name=scenario_name,
+        override=resolution_override,
+    )
     # See scenarios.py: trust pre-2.2 sdist PKG-INFO deps by default so the
     # benchmark measures search, not strict PEP 643 sdist rejection.
     trust_unverified_sdist_deps = bool(
@@ -753,26 +897,30 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run canary benchmark")
     parser.add_argument("--commit", type=_result_directory_label, default=None)
     parser.add_argument("--runs", type=int, default=3)
-    parser.add_argument("--scenario", action="append", help="Run only named scenarios")
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        help="Run only STEM:NAME, optionally with an explicit @STRATEGY",
+    )
     parser.add_argument("--scenarios-list", help="File with one scenario per line")
     args = parser.parse_args()
 
     source = get_git_source_state()
     commit = args.commit or str(source["commit"] or "no-git")
 
-    scenarios_to_run: list[str]
+    cases_to_run: list[CanaryCase]
     if args.scenarios_list:
         with Path(args.scenarios_list).open(encoding="utf-8") as f:
-            scenarios_to_run = _parse_scenario_selection(
+            cases_to_run = _parse_scenario_selection(
                 parser,
                 [line.strip() for line in f if line.strip()],
             )
     elif args.scenario:
-        scenarios_to_run = _parse_scenario_selection(parser, args.scenario)
+        cases_to_run = _parse_scenario_selection(parser, args.scenario)
     else:
-        scenarios_to_run = _parse_scenario_selection(parser, list(CANARY_SCENARIOS))
+        cases_to_run = _parse_default_selection(parser)
 
-    labels = [name.split(":", 1)[-1] for name in scenarios_to_run]
+    labels = [case.scenario.split(":", 1)[-1] for case in cases_to_run]
     duplicate_labels = sorted({label for label in labels if labels.count(label) > 1})
     if duplicate_labels:
         parser.error(
@@ -797,28 +945,35 @@ def main() -> None:
     _check_result_directory(parser, commit)
 
     summary_all: dict[str, dict] = {}
-    for name, label in zip(scenarios_to_run, labels, strict=True):
-        scenario = find_scenario(name)
+    for case, label in zip(cases_to_run, labels, strict=True):
+        scenario = find_scenario(case.scenario)
         if scenario is None:
             print(f"{label:<45} NOT FOUND")
             continue
+        resolution = scenario_resolution(
+            scenario,
+            scenario_name=label,
+            override=case.resolution,
+        )
         runs_data, summary = median_run(
             scenario,
             args.runs,
             scenario_name=label,
+            resolution_override=resolution,
         )
-        input_hash = scenario_input_hash(name, scenario)
+        identity = canary_v2_identity(case, scenario, resolution)
+        input_hash = scenario_input_hash(identity.scenario, identity.definition)
         effective_settings = runs_data[0]["settings"] if runs_data else None
         summary_all[label] = {
             "contract_version": CANARY_CONTRACT_VERSION,
-            "scenario": name,
+            "scenario": identity.scenario,
             "source": source,
             "input_hash": input_hash,
             "execution_hash": scenario_execution_hash(
                 input_hash,
                 effective_settings,
             ),
-            "input": scenario,
+            "input": identity.definition,
             "effective_settings": effective_settings,
             "runs": runs_data,
             "summary": summary,

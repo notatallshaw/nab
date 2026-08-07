@@ -1,0 +1,77 @@
+schema = 1
+
+[[case]]
+scenario = "uv:boto3-urllib3-transient"
+resolution = "lowest"
+
+[[case]]
+scenario = "pip:trustllm"
+resolution = "lowest"
+
+[[case]]
+scenario = "pip:copick"
+resolution = "lowest"
+
+[[case]]
+scenario = "pip:promptflow-vectordb"
+resolution = "lowest"
+
+[[case]]
+scenario = "pip:ultralytics-export"
+resolution = "lowest"
+
+[[case]]
+scenario = "pip:datacontract-cli"
+resolution = "lowest"
+
+[[case]]
+scenario = "pip:pandas-aws-boto3-dandi-frenzy"
+resolution = "lowest"
+
+[[case]]
+scenario = "ai-stack:vllm-transformers-floor"
+resolution = "highest"
+
+[[case]]
+scenario = "pip:google-bigquery-soda"
+resolution = "lowest"
+
+[[case]]
+scenario = "pip:langchain-ml-course"
+resolution = "lowest"
+
+[[case]]
+scenario = "airflow:airflow-3-0-2-awswrangler"
+resolution = "lowest-direct"
+
+[[case]]
+scenario = "airflow:airflow-3-0-3-pandas-sqlalchemy"
+resolution = "lowest-direct"
+
+[[case]]
+scenario = "airflow:airflow-portalocker-qdrant"
+resolution = "lowest-direct"
+
+[[case]]
+scenario = "airflow:airflow-fastapi-121"
+resolution = "lowest-direct"
+
+[[case]]
+scenario = "forums:so-dbt-core-snowflake-79744735"
+resolution = "lowest-direct"
+
+[[case]]
+scenario = "uv:uv-issue-16601-xinference"
+resolution = "lowest"
+
+[[case]]
+scenario = "uv:uv-issue-16601-xinference-fixed"
+resolution = "lowest"
+
+[[case]]
+scenario = "ai-stack:rag-chroma-langchain"
+resolution = "highest"
+
+[[case]]
+scenario = "ai-stack:streamlit-langchain"
+resolution = "highest"
