@@ -11,6 +11,8 @@ user-facing CLI in [`nab`](https://pypi.org/project/nab/).
 Use `nab-resolver` when you are building some kind of package
 resolver, Python or otherwise.
 
-The public API is the `Resolver` class plus the
-`ResolverProvider` protocol, the `Range` and `Term` types, and the
-`ResolutionError` exception.  Everything else is internal.
+The public API is what the `nab_resolver` package exports: the
+`Resolver` class, the `ResolverProvider` and `RangeProtocol`
+protocols, the `Range`, `Term` and `Incompatibility` types, the
+`ResolutionError` exception, and the `ROOT` sentinel.  Import them
+from `nab_resolver` itself; its submodules are internal.
