@@ -28,7 +28,7 @@ from collections import defaultdict
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_resolver.resolver import (
@@ -37,6 +37,7 @@ from nab_resolver.resolver import (
     ResolutionError,
     Resolver,
     ResolverObserver,
+    RootRequirement,
 )
 
 from ._conflict_kind import dependency_marker_holds, membership_set_in_marker
@@ -838,19 +839,19 @@ def _resolve_one_target(
     config = settings.config
     environment = target.marker_env
     try:
-        resolver_requirements, root_extras = _build_resolver_inputs(
+        root_requirements, resolver_requirements, root_extras = _build_resolver_inputs(
             requirements,
             config,
             environment=environment,
             warned=settings.warned_root_markers,
         )
-        resolver_constraints, _ = _build_resolver_inputs(
+        resolver_constraints = _build_resolver_inputs(
             constraints,
             config,
             environment=environment,
             kind="constraint",
             warned=settings.warned_root_markers,
-        )
+        ).ranges
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
 
@@ -893,7 +894,7 @@ def _resolve_one_target(
     _logger.debug("resolving %s", target.label)
     start = time.monotonic()
     try:
-        raw = resolver.resolve(resolver_requirements, constraints=resolver_constraints)
+        raw = resolver.resolve(root_requirements, constraints=resolver_constraints)
         pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
         _raise_for_source_python(provider, target, pins)
     except ResolutionError as exc:
@@ -1546,6 +1547,14 @@ def _warn_dropped_root_marker(req: Requirement, warned: set[str]) -> None:
     )
 
 
+class _ResolverInputs(NamedTuple):
+    """What one set of root requirements gives the resolver and the provider."""
+
+    roots: list[RootRequirement[str, VersionRange]]
+    ranges: dict[str, VersionRange]
+    extras: set[tuple[str, str]]
+
+
 def _build_resolver_inputs(
     requirements: Sequence[Requirement],
     config: NabProjectConfig,
@@ -1553,26 +1562,31 @@ def _build_resolver_inputs(
     environment: Mapping[str, str],
     kind: str = "requirement",
     warned: set[str] | None = None,
-) -> tuple[dict[str, VersionRange], set[tuple[str, str]]]:
+) -> _ResolverInputs:
     """Convert PEP 508 requirements to the resolver's input shape.
 
     Requirements whose PEP 508 marker evaluates to ``False`` under
     ``environment`` are skipped, matching pip/uv's root-requirement
-    handling.  Repeated package names are intersected into one range;
-    an empty intersection raises :class:`ResolutionError`.  A direct-URL
-    or VCS requirement is refused by :func:`admit_vcs_url`; resolving one
-    is not implemented.
+    handling.  A direct-URL or VCS requirement is refused by
+    :func:`admit_vcs_url`; resolving one is not implemented.
 
-    ``kind`` is ``"requirement"`` or ``"constraint"``.  A constraint may
-    not carry extras, and shapes the error wording; the returned extras
-    set is empty for one.
+    Each surviving requirement becomes its own
+    :class:`~nab_resolver.types.RootRequirement`, tagged with the string the
+    user wrote, so a failure names the requirements rather than their
+    intersection.  ``ranges`` folds the same requirements per package for the
+    provider, which asks about one package at a time.
+
+    ``kind`` is ``"requirement"`` or ``"constraint"``.  A constraint may not
+    carry extras, and the returned extras set is empty for one.  Constraints
+    do not become root clauses, so an empty constraint intersection is still
+    caught here by :func:`raise_for_unsatisfiable` rather than by the solver.
 
     ``warned`` is the run's set of already-reported extra/group root
     markers (see :func:`_warn_dropped_root_marker`); a caller that does
     not share one gets a fresh set, so it warns per call.
     """
+    roots: list[RootRequirement[str, VersionRange]] = []
     resolver_requirements: dict[str, VersionRange] = {}
-    sources: defaultdict[str, list[str]] = defaultdict(list)
     root_extras: set[tuple[str, str]] = set()
     already_warned = set() if warned is None else warned
     for req in requirements:
@@ -1599,15 +1613,24 @@ def _build_resolver_inputs(
             else VersionRange.full(admit_arbitrary=False)
         )
         resolver_requirements[name] = previous & term
-        sources[name].append(str(req))
+        roots.append(RootRequirement(name, term, str(req)))
         for extra in sorted(req.extras):
             extra_key = join_extra(name, extra)
-            resolver_requirements[extra_key] = VersionRange.full(admit_arbitrary=False)
+            # A proxy key carries no version, so a second mention of the same
+            # extra would only repeat a line in the failure report.
+            if extra_key not in resolver_requirements:
+                proxy = VersionRange.full(admit_arbitrary=False)
+                resolver_requirements[extra_key] = proxy
+                roots.append(RootRequirement(extra_key, proxy, str(req)))
             _, normalized_extra = split_extra(extra_key)
             assert normalized_extra is not None  # join_extra always sets one
             root_extras.add((name, normalized_extra))
-    raise_for_unsatisfiable(resolver_requirements, sources, kind=kind)
-    return resolver_requirements, root_extras
+    if kind == "constraint":
+        sources: defaultdict[str, list[str]] = defaultdict(list)
+        for root in roots:
+            sources[root.package].append(root.origin)
+        raise_for_unsatisfiable(resolver_requirements, sources, kind=kind)
+    return _ResolverInputs(roots, resolver_requirements, root_extras)
 
 
 def _extend_constraints_to_proxies(

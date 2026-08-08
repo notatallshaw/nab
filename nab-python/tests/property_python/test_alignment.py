@@ -87,11 +87,11 @@ class TestQuoteCanonicalDirectNames:
         self, names: list[str]
     ) -> None:
         """Variations of the same name canonicalise to a single canonical form."""
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             [Requirement(name) for name in names],
             NabProjectConfig(),
             environment=_fake_target().marker_env,
-        )
+        ).ranges
         assert all(n == n.lower() for n in out)
         if names:
             assert set(out) == {"my-pkg"}
@@ -147,11 +147,11 @@ class TestMarkerFiltering:
         excluded = seen - applies
 
         try:
-            out, _ = _build_resolver_inputs(
+            out = _build_resolver_inputs(
                 parsed,
                 NabProjectConfig(),
                 environment=linux_env,
-            )
+            ).ranges
         except ResolutionError:
             # Self-contradictory draws (e.g. ``pkg<0.0``) are rejected
             # by the function; this property tests marker filtering only.

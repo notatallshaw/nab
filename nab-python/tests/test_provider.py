@@ -7044,7 +7044,7 @@ class TestExtrasPrereleaseAdmission:
         return make_coordinator(listings=listings, metadata_by_version=metadata)
 
     def _resolve(self, requirements: list[str]) -> dict[str, Version]:
-        root_reqs, root_extras = _build_resolver_inputs(
+        _, root_reqs, root_extras = _build_resolver_inputs(
             [Requirement(r) for r in requirements],
             NabProjectConfig(),
             environment={},
