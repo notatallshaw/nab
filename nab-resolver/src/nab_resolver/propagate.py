@@ -16,12 +16,15 @@ from typing import TYPE_CHECKING, Any
 from .types import IncompatibilityState, SetRelation, Term
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .resolver import Resolver
-    from .types import Incompatibility
+    from .types import Incompatibility, RangeProtocol, RelationProtocol
 
 __all__ = [
     "classify_relation",
     "evaluate_incompatibility",
+    "relation_flags",
     "term_relation",
     "unit_propagation",
 ]
@@ -127,10 +130,8 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
     key = (positive, assignment, term.constraint)
     result = cache.get(key)
     if result is None:
-        relation = assignment.relation(term.constraint)
-        result = classify_relation(
-            term, subset=relation.is_subset, disjoint=relation.is_disjoint
-        )
+        subset, disjoint = relation_flags(assignment, term.constraint)
+        result = classify_relation(term, subset=subset, disjoint=disjoint)
         if len(cache) >= RELATION_CACHE_MAX:
             cache.clear()
         cache[key] = result
@@ -144,6 +145,25 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
     return result
 
 
+def relation_flags(
+    assignment: RangeProtocol[Any], constraint: RangeProtocol[Any]
+) -> tuple[bool, bool]:
+    """Return ``(is_subset, is_disjoint)`` for assignment against constraint.
+
+    ``relation`` is optional on :class:`~nab_resolver.types.RangeProtocol`. A
+    range type that answers both in one walk offers it; released
+    :class:`packaging.ranges.VersionRange` does not, and is asked twice.
+    """
+    relate: Callable[[Any], RelationProtocol] | None = getattr(
+        assignment, "relation", None
+    )
+    if relate is None:
+        return assignment.is_subset(constraint), assignment.is_disjoint(constraint)
+
+    relation = relate(constraint)
+    return relation.is_subset, relation.is_disjoint
+
+
 def classify_relation(
     term: Term[Any, Any],
     *,
@@ -153,7 +173,7 @@ def classify_relation(
     """Classify a term from the assignment's relation to its constraint.
 
     ``subset`` and ``disjoint`` describe the assignment against
-    ``term.constraint``, as returned by ``RangeProtocol.relation``.
+    ``term.constraint``, as :func:`relation_flags` returns them.
 
     Positive term: satisfied when the assignment is a subset of the
     constraint; contradicted when the two are disjoint.

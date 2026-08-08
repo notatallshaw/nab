@@ -2727,3 +2727,113 @@ class TestRelationCache:
 
         key = (True, resolver.solution.get("foo"), term.constraint)
         assert resolver.relation_cache == {key: result}
+
+
+class PlainRange:
+    """A range type that answers subset and disjoint separately.
+
+    ``packaging.ranges.VersionRange`` carries every member ``RangeProtocol``
+    requires; ``relation`` is added by nab's vendoring patch and is not in the
+    released module. Delegating to ``Range`` keeps the semantics while leaving
+    that member off.
+    """
+
+    __slots__ = ("_inner",)
+
+    def __init__(self, inner: Range[int]) -> None:
+        self._inner = inner
+
+    @classmethod
+    def empty(cls) -> PlainRange:
+        return cls(Range.empty())
+
+    @classmethod
+    def full(cls) -> PlainRange:
+        return cls(Range.full())
+
+    @classmethod
+    def singleton(cls, version: int) -> PlainRange:
+        return cls(Range.singleton(version))
+
+    @property
+    def is_empty(self) -> bool:
+        return self._inner.is_empty
+
+    def _peer(self, other: object) -> Range[int]:
+        assert isinstance(other, PlainRange)
+        return other._inner
+
+    def __contains__(self, version: object) -> bool:
+        """Test version membership."""
+        return version in self._inner
+
+    def __and__(self, other: object) -> PlainRange:
+        """Intersect two ranges."""
+        return PlainRange(self._inner & self._peer(other))
+
+    def __or__(self, other: object) -> PlainRange:
+        """Union two ranges."""
+        return PlainRange(self._inner | self._peer(other))
+
+    def __invert__(self) -> PlainRange:
+        """Complement the range."""
+        return PlainRange(~self._inner)
+
+    def __sub__(self, other: object) -> PlainRange:
+        """Take the versions in self but not in other."""
+        return PlainRange(self._inner - self._peer(other))
+
+    def is_subset(self, other: PlainRange) -> bool:
+        return self._inner.is_subset(other._inner)
+
+    def is_superset(self, other: PlainRange) -> bool:
+        return self._inner.is_superset(other._inner)
+
+    def is_disjoint(self, other: PlainRange) -> bool:
+        return self._inner.is_disjoint(other._inner)
+
+    def __eq__(self, other: object) -> bool:
+        """Compare the wrapped ranges."""
+        if not isinstance(other, PlainRange):
+            return NotImplemented
+        return self._inner == other._inner
+
+    def __hash__(self) -> int:
+        """Hash the wrapped range."""
+        return hash(self._inner)
+
+    def __repr__(self) -> str:
+        """Show the wrapped range."""
+        return repr(self._inner)
+
+
+def backtracking_packages(range_type: type[Any]) -> dict[str, Any]:
+    """root wants any foo; foo@2 wants a bar other than 1, and only bar@1 ships."""
+    return {
+        "root": {1: {"foo": range_type.full()}},
+        "foo": {2: {"bar": ~range_type.singleton(1)}, 1: {}},
+        "bar": {1: {}},
+    }
+
+
+class TestRangeTypeWithoutRelation:
+    def test_resolves_without_the_fused_relation(self) -> None:
+        assert not hasattr(PlainRange, "relation")
+
+        resolver: Resolver[str, int] = Resolver(
+            DictProvider(backtracking_packages(PlainRange)), range_type=PlainRange
+        )
+        result = resolver.resolve({"root": PlainRange.singleton(1)})
+
+        assert result == {"root": 1, "foo": 1}
+        assert resolver.relation_cache
+
+    def test_matches_the_fused_range_type(self) -> None:
+        plain: Resolver[str, int] = Resolver(
+            DictProvider(backtracking_packages(PlainRange)), range_type=PlainRange
+        )
+        fused: Resolver[str, int] = Resolver(DictProvider(backtracking_packages(Range)))
+
+        assert plain.resolve({"root": PlainRange.singleton(1)}) == fused.resolve(
+            {"root": Range.singleton(1)}
+        )

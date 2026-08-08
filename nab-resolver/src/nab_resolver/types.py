@@ -46,9 +46,12 @@ VersionType_contra = TypeVar("VersionType_contra", contravariant=True)
 class RangeProtocol(Protocol[VersionType_contra]):
     """Contract for version range types used by the resolver.
 
-    Both :class:`nab_resolver.ranges.Range` and
-    :class:`packaging.ranges.VersionRange` satisfy this protocol.  Mixing
-    range types within a single resolution is unsupported.
+    :class:`nab_resolver.ranges.Range` satisfies it, and so does
+    :class:`packaging.ranges.VersionRange` from packaging 26.3, the first
+    release carrying that module.  A range type may also offer
+    ``relation(other)``, returning a :class:`RelationProtocol` with both flags
+    from one walk; unit propagation uses it when it is there.  Mixing range
+    types within a single resolution is unsupported.
     """
 
     @classmethod
@@ -101,13 +104,6 @@ class RangeProtocol(Protocol[VersionType_contra]):
 
     def is_disjoint(self, other: Self) -> bool:
         """Return whether self and other share no version."""
-        ...
-
-    def relation(self, other: Self) -> RelationProtocol:
-        """Return how self's members sit against other's.
-
-        Both flags hold at once only for an empty self.
-        """
         ...
 
     # __eq__ and __hash__ come from object; redeclaring them in the
