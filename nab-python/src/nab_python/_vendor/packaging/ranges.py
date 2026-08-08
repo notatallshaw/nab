@@ -219,53 +219,6 @@ def _relate_bounds(
     return _DISJOINT_REL if disjoint else _OVERLAPPING_REL
 
 
-def _subset_bounds(left: Sequence[Interval], right: Sequence[Interval]) -> bool:
-    """Return whether every version in ``left`` is also in ``right``.
-
-    The canonical lists let one two-pointer walk decide containment: skip the
-    right intervals that end too early, then check that the surviving one starts
-    early enough.
-    """
-    right_index = 0
-    right_len = len(right)
-    for left_lower, left_upper in left:
-        # A right interval ending below this one cannot cover it, and the left
-        # list ascends, so it cannot cover any later one either.
-        while right_index < right_len and right[right_index][1] < left_upper:
-            right_index += 1
-        if right_index == right_len:
-            return False
-        if right[right_index][0] > left_lower:
-            return False
-    return True
-
-
-def _disjoint_bounds(left: Sequence[Interval], right: Sequence[Interval]) -> bool:
-    """Return whether no version lies in both ``left`` and ``right``.
-
-    A two-pointer merge that stops at the first overlap.
-    """
-    left_index = right_index = 0
-    left_len = len(left)
-    right_len = len(right)
-    while left_index < left_len and right_index < right_len:
-        left_lower, left_upper = left[left_index]
-        right_lower, right_upper = right[right_index]
-
-        lower = max(left_lower, right_lower)
-        upper = min(left_upper, right_upper)
-        if not range_is_empty(lower, upper):
-            return False
-
-        # Advance whichever side has the smaller upper bound.
-        if left_upper < right_upper:
-            left_index += 1
-        else:
-            right_index += 1
-
-    return True
-
-
 def _complement_ranges(ranges: Sequence[Interval]) -> list[Interval]:
     """Complement a sorted, non-overlapping interval list.
 
@@ -1797,15 +1750,6 @@ class VersionRange:
         False
         >>> VersionRange.empty().is_subset(outer)
         True
-
-        A range with an exclusion is a subset of its span, but the span is not a
-        subset of it:
-
-        >>> punctured = SpecifierSet(">=1.0,<2.0,!=1.5").to_range()
-        >>> punctured.is_subset(outer)
-        True
-        >>> outer.is_subset(punctured)
-        False
         """
         self._check_policy_compat(other)
 
@@ -1816,7 +1760,7 @@ class VersionRange:
 
         # Plain ranges: subset reduces to bounds containment, no algebra needed.
         if self._is_plain() and other._is_plain():
-            return _subset_bounds(self._bounds, other._bounds)
+            return not intersect_ranges(self._bounds, _complement_ranges(other._bounds))
 
         # difference (unlike intersection with the one-way complement) resolves
         # ``===`` literals against both operands, so it stays correct for them.
@@ -1892,19 +1836,12 @@ class VersionRange:
         True
         >>> a.is_disjoint(SpecifierSet(">=1.5,<2.5").to_range())
         False
-
-        A range pinned to a version the other excludes is disjoint from it:
-
-        >>> SpecifierSet("==1.5").to_range().is_disjoint(
-        ...     SpecifierSet(">=1.0,<2.0,!=1.5").to_range()
-        ... )
-        True
         """
         self._check_policy_compat(other)
 
         # Plain ranges: disjointness is an empty bounds intersection.
         if self._is_plain() and other._is_plain():
-            return _disjoint_bounds(self._bounds, other._bounds)
+            return not intersect_ranges(self._bounds, other._bounds)
         return self.intersection(other).is_empty
 
     def _same_releases(self, other: VersionRange) -> bool:

@@ -16,11 +16,9 @@ plus at most one checked-in patch, and nothing else.
     `release_intervals`, and `relation` with its `RangeRelation` result type
     and the member aliases the return paths bind;
     an `assume_sorted` keyword on `filter` and the
-    `VersionRange._filter_sorted` it dispatches to; `is_subset` and
-    `is_disjoint` answered by a direct walk over the interval lists instead of
-    an intermediate range; the module-level helpers they need (`_relate_bounds`,
-    `_subset_bounds`, `_disjoint_bounds`, `_bisect_predicate`,
-    `_partition_indexes`, `_make_project`, `_check_order`, `_lattice_release`,
+    `VersionRange._filter_sorted` it dispatches to; the module-level helpers
+    they need (`_relate_bounds`, `_bisect_predicate`, `_partition_indexes`,
+    `_make_project`, `_check_order`, `_lattice_release`,
     `_release_boundary_point`); the `RangeRelation` and `SortedOrder` `__all__`
     entries; and the class-docstring lines naming them.
   - `_ranges.py`: an unbounded end canonicalizes its inclusivity, and
@@ -31,11 +29,10 @@ plus at most one checked-in patch, and nothing else.
     private engine behind it, both new files, plus the `Marker.to_set`
     accessor they need on `markers.py`.
 
-  Upstream PRs are planned for the bound ordering, the direct subset and
-  disjoint walks, `filter`'s `assume_sorted` fast path, and
-  `from_bounds`/`snap_bounds`/`release_intervals`.
-  `relation` is deliberately not proposed yet: most of its win is available
-  from the direct walks alone, and what is left depends on the interval shapes.
+  Upstream PRs are planned for the bound ordering, `filter`'s `assume_sorted`
+  fast path, and `from_bounds`/`snap_bounds`/`release_intervals`.
+  `relation` is deliberately not proposed yet: what it wins over asking the two
+  predicates separately depends on the interval shapes, and that is unmeasured.
 - `tasks/vendor-packaging.sh` fetches `pypa/packaging` at the pin, replaces this
   package with the pristine `src/packaging/` tree plus the repo-root license
   texts, and reapplies the patch. `--check` rebuilds into a temp location and

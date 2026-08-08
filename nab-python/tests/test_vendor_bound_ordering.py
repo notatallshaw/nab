@@ -23,12 +23,9 @@ from nab_python._vendor.packaging._ranges import (
     BoundaryVersion,
     LowerBound,
     UpperBound,
+    intersect_ranges,
 )
-from nab_python._vendor.packaging.ranges import (
-    RangeRelation,
-    _relate_bounds,
-    _subset_bounds,
-)
+from nab_python._vendor.packaging.ranges import RangeRelation, _relate_bounds
 from nab_python._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
@@ -188,16 +185,16 @@ class TestBoundOrdering:
                 assert pick(right, left) is right
 
     def test_the_interval_walks_see_one_unbounded_point(self) -> None:
-        # _relate_bounds reads coverage off the identity max() and min() hand
-        # back, and _subset_bounds compares the lower bounds outright, so an
-        # unbounded end spelled either way has to be the same point to both.
+        # _relate_bounds and intersect_ranges both read coverage off the identity
+        # max() and min() hand back, so an unbounded end spelled either way has
+        # to be the same point to both.
         left = [
             (LowerBound(None, inclusive=True), UpperBound(V("2.0"), inclusive=False))
         ]
         right = [(NEG_INF, POS_INF)]
         assert _relate_bounds(left, right) is RangeRelation.SUBSET
         assert _relate_bounds(right, left) is RangeRelation.OVERLAPPING
-        assert _subset_bounds(left, right)
+        assert intersect_ranges(left, right) == left
 
     @pytest.mark.parametrize("operator", ["__lt__", "__gt__", "__ge__", "__le__"])
     @pytest.mark.parametrize("cls", [LowerBound, UpperBound])
