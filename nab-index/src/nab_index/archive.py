@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .client import _ACCEPTED_HASH_ALGORITHMS
+from .client import ACCEPTED_HASH_ALGORITHMS
 from .subdir import subdirectory_escapes
 
 __all__ = [
@@ -54,7 +54,7 @@ class ArchiveRequest:
         """Split ``raw_url`` into its URL, hashes, and subdirectory.
 
         The fragment holds ``&``-separated ``key=value`` parts: a
-        recognised hash algorithm (see :data:`_ACCEPTED_HASH_ALGORITHMS`)
+        recognised hash algorithm (see :data:`ACCEPTED_HASH_ALGORITHMS`)
         or ``subdirectory``.  Any other key raises
         :class:`ArchiveRequestError`; requiring a hash is left to the
         config layer so the error names the offending source.
@@ -72,12 +72,12 @@ class ArchiveRequest:
                 raise ArchiveRequestError(msg)
             if key == "subdirectory":
                 subdirectory = value
-            elif key in _ACCEPTED_HASH_ALGORITHMS:
+            elif key in ACCEPTED_HASH_ALGORITHMS:
                 hashes.append((key, value.lower()))
             else:
                 msg = (
                     f"unknown archive URL fragment key {key!r} in {raw_url!r};"
-                    f" expected one of {', '.join(_ACCEPTED_HASH_ALGORITHMS)}"
+                    f" expected one of {', '.join(ACCEPTED_HASH_ALGORITHMS)}"
                     " or subdirectory"
                 )
                 raise ArchiveRequestError(msg)
