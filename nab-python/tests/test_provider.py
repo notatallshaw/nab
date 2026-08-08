@@ -3523,6 +3523,61 @@ class TestLookAhead:
         spec = SpecifierSet("")
         assert provider.choose_version("foo", spec.to_range()) is None
 
+    def test_root_rejection_queues_its_own_clause(self) -> None:
+        """A root-requirement rejection bans just the versions it rejected.
+
+        Look-ahead rejects the candidate before it is decided, so the
+        dependency clause that would explain the rejection is never added.
+        """
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("1.0")],
+            metadata_by_version={
+                "2.0": (
+                    "Metadata-Version: 2.1\nName: foo\nVersion: 2.0\n"
+                    "Requires-Dist: bar>=5.0\n"
+                ),
+                "1.0": "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n",
+            },
+            package="foo",
+        )
+        root_range = SpecifierSet("<2.0").to_range()
+        provider = Provider(
+            coordinator, target=_PY312, root_requirements={"bar": root_range}
+        )
+        assert provider.choose_version("foo", SpecifierSet("").to_range()) == V("1.0")
+
+        (clause,) = provider.consume_pending_clauses()
+        assert clause.cause is IncompatibilityCause.NO_VERSIONS
+        (term,) = clause.terms
+        assert term.package == "foo"
+        assert term.is_positive()
+        assert V("2.0") in term.constraint
+        assert V("1.0") not in term.constraint
+
+    def test_metadata_rejection_queues_its_own_clause(self) -> None:
+        """A version whose metadata will not read is banned the same way."""
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("1.0")],
+            metadata_by_version={
+                "2.0": "Metadata-Version: 2.1\nName: foo\nVersion: nope\n",
+                "1.0": "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n",
+            },
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
+        )
+        assert provider.choose_version("foo", SpecifierSet("").to_range()) == V("1.0")
+
+        (clause,) = provider.consume_pending_clauses()
+        assert clause.cause is IncompatibilityCause.NO_VERSIONS
+        (term,) = clause.terms
+        assert term.package == "foo"
+        assert V("2.0") in term.constraint
+        assert V("1.0") not in term.constraint
+
     def test_cached_deps_used_for_look_ahead(self) -> None:
         """Look-ahead uses cached deps without re-fetching."""
         coordinator = make_coordinator(

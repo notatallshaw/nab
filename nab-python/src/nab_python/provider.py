@@ -792,16 +792,15 @@ class Provider:
             tuple[str, str, RangeProtocol[Version]], _lookahead.DepRangeUnion
         ] = defaultdict(_lookahead.DepRangeUnion.zero)
 
-        # Diagnostic-only: root_requirements feed PubGrub directly, so these
-        # blockers never need flushing as incompatibilities; they exist purely
-        # so the failure message can name the excluding root requirement.
+        # Root-requirement rejections, keyed by (candidate, blocker, the
+        # candidate's dependency range, the blocker's root range).
         self.pending_root_blocks: defaultdict[
             tuple[str, str, RangeProtocol[Version], RangeProtocol[Version]],
             list[Version],
         ] = defaultdict(list)
 
-        # Diagnostic-only: metadata-error rejections so the failure message
-        # can name the real cause (sdist build needed, malformed PKG-INFO, etc).
+        # Metadata-error rejections, carrying the message so the failure can
+        # name the real cause (sdist build needed, malformed PKG-INFO, etc).
         # Keyed by version so a re-checked candidate is counted once.
         self.pending_metadata_blocks: defaultdict[str, dict[Version, str]] = (
             defaultdict(dict)

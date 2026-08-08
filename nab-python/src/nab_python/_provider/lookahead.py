@@ -1,17 +1,19 @@
 """Decision-aware look-ahead for :class:`nab_python.provider.Provider`.
 
-Owns ``_look_ahead_ok`` and the pending-block tables that record
-"this candidate is incompatible with this decision/positive range"
-rejections.  Each rejection becomes a grouped binary
-incompatibility (``{candidate range, blocker range}``) when
-``flush_pending_blocks`` runs at the end of ``choose_version``.
-Version-derived terms are widened onto the listing's gaps, which
-leaves the selectable versions they name unchanged.  The blocker term
-widens further when every rejection in the group recorded a dependency
-range: each fired because the blocker sat outside that range, so every
-blocker version outside their union repeats the same rejections.
-Groups queued without ranges, such as the extras block path, keep the
-narrower term.
+Owns ``_look_ahead_ok`` and the pending-block tables that record why a
+candidate was rejected.  ``flush_pending_blocks`` turns those into
+incompatibilities at the end of ``choose_version``.  A decision or
+positive-range rejection becomes a grouped binary incompatibility
+(``{candidate range, blocker range}``).  Version-derived terms are
+widened onto the listing's gaps, which leaves the selectable versions
+they name unchanged.  The blocker term widens further when every
+rejection in the group recorded a dependency range: each fired because
+the blocker sat outside that range, so every blocker version outside
+their union repeats the same rejections.  Groups queued without ranges,
+such as the extras block path, keep the narrower term.
+
+A root-requirement or metadata rejection has no blocker to name: nothing
+later in the resolve undoes it, so its versions are banned outright.
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from .._vendor.packaging.version import Version
     from ..provider import Provider
 
@@ -91,8 +95,6 @@ def look_ahead_ok(
     for dep_name, dep_range in deps.items():
         dep_normalized = canonicalize_name(dep_name)
 
-        # Root-requirement disagreement: diagnostic-only (the resolver
-        # already has the clause via its root_requirements input).
         if dep_normalized in provider.root_requirements:
             root_range = provider.root_requirements[dep_normalized]
             if dep_range.is_disjoint(root_range):
@@ -144,6 +146,16 @@ def _widen_or_singleton(
     return VersionRange.singleton(version) if widened is None else widened
 
 
+def _candidate_union(
+    provider: Provider, package: str, versions: Iterable[Version]
+) -> VersionRange:
+    """Return the widened union of one group's rejected candidate versions."""
+    union = VersionRange.empty()
+    for version in versions:
+        union = union | _widen_or_singleton(provider, package, version)
+    return union
+
+
 def _membership_widened(
     accumulated: DepRangeUnion, rejections: int
 ) -> VersionRange | None:
@@ -165,7 +177,7 @@ def _membership_widened(
 
 
 def flush_pending_blocks(provider: Provider) -> None:
-    """Convert queued rejections into grouped binary incompatibilities.
+    """Convert queued rejections into incompatibilities.
 
     For each ``(candidate_pkg, blocker_pkg, blocker_key)`` group we add
     ``{candidate_pkg in {v1,v2,...}, blocker_pkg in R}``, with each candidate
@@ -175,9 +187,15 @@ def flush_pending_blocks(provider: Provider) -> None:
     when the group recorded a range for every rejection and that widening still
     covers the blocker, otherwise the decided version's gap for decision-keyed
     groups and the captured positive range for range-keyed ones.  Sound across
-    backjumps
-    because the blocker term goes UNDETERMINED when the supporting decision is
-    reverted, so the candidate range can be reconsidered.
+    backjumps because the blocker term goes UNDETERMINED when the supporting
+    decision is reverted, so the candidate range can be reconsidered.
+
+    Root-requirement and metadata rejections have no such blocker: neither a
+    root requirement nor unreadable metadata changes over the resolve, so each
+    package's rejected versions go out as one single-term ``NO_VERSIONS``
+    clause naming just those versions.  The resolver's own fallback bans the
+    whole asked range, including the pre-releases the PEP 440 buffer kept out
+    of the scan.
     """
     # Decision-keyed rejections: the blocker term covers the decided version.
     for (
@@ -185,9 +203,7 @@ def flush_pending_blocks(provider: Provider) -> None:
         blocker_pkg,
         blocker_version,
     ), versions in provider.pending_blocks.items():
-        range_union = VersionRange.empty()
-        for v in versions:
-            range_union = range_union | _widen_or_singleton(provider, candidate_pkg, v)
+        range_union = _candidate_union(provider, candidate_pkg, versions)
         # The decided version lies outside every recorded dependency range, so
         # the widening contains it; the check fences a group whose ranges
         # disagree with its blocker.  Asked as a subset test rather than ``in``
@@ -223,9 +239,7 @@ def flush_pending_blocks(provider: Provider) -> None:
         blocker_pkg,
         blocker_range,
     ), versions in provider.pending_range_blocks.items():
-        range_union = VersionRange.empty()
-        for v in versions:
-            range_union = range_union | _widen_or_singleton(provider, candidate_pkg, v)
+        range_union = _candidate_union(provider, candidate_pkg, versions)
         # Every recorded dependency range was disjoint from the positive range,
         # so the widening covers it; the check fences a group whose ranges
         # disagree with its blocker.
@@ -252,7 +266,23 @@ def flush_pending_blocks(provider: Provider) -> None:
     provider.pending_range_blocks = defaultdict(list)
     provider.pending_range_dep_ranges = defaultdict(DepRangeUnion.zero)
 
-    # Root- and metadata-blocks are diagnostic-only; drop them without
-    # emitting clauses.
+    # Permanent rejections: a root requirement is fixed for the whole resolve,
+    # and a version whose metadata will not read is unusable in every state.
+    unusable: defaultdict[str, VersionRange] = defaultdict(VersionRange.empty)
+
+    for (candidate_pkg, *_), versions in provider.pending_root_blocks.items():
+        unusable[candidate_pkg] |= _candidate_union(provider, candidate_pkg, versions)
+
+    for candidate_pkg, versions in provider.pending_metadata_blocks.items():
+        unusable[candidate_pkg] |= _candidate_union(provider, candidate_pkg, versions)
+
+    for candidate_pkg, rejected in unusable.items():
+        provider.pending_clauses.append(
+            Incompatibility(
+                [Term(candidate_pkg, rejected, positive=True)],
+                cause=IncompatibilityCause.NO_VERSIONS,
+            )
+        )
+
     provider.pending_root_blocks = defaultdict(list)
     provider.pending_metadata_blocks = defaultdict(dict)
