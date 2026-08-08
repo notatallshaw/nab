@@ -13,6 +13,8 @@ import json
 import logging
 import re
 import time
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
 
 from .cache import CacheBackend, CachePolicy, OfflineError
@@ -76,12 +78,13 @@ def _parse_seconds(digits: str) -> int:
     return min(int(trimmed or "0"), _SECONDS_CEILING)
 
 
-def _parse_max_age(cache_control: str | None) -> int:
+def _max_age_directive(cache_control: str | None) -> int | None:
+    """Return the ``max-age`` a Cache-Control field carries, or ``None``."""
     if cache_control is None:
-        return _DEFAULT_MAX_AGE
+        return None
     match = _MAX_AGE_RE.search(cache_control)
     if match is None:
-        return _DEFAULT_MAX_AGE
+        return None
     return _parse_seconds(match.group(1))
 
 
@@ -107,6 +110,70 @@ def _freshness_start(response: HttpResponse) -> int:
     from the Date header is not.
     """
     return int(time.time()) - _parse_age(_header(response, "age"))
+
+
+def _http_date_seconds(value: str | None) -> int | None:
+    """Return an HTTP-date as Unix seconds, or ``None`` if it is not a date.
+
+    RFC 9110 5.6.7 writes every HTTP-date in GMT, so the zone-less obsolete
+    asctime form reads as GMT rather than as local time. A year, day, hour or
+    zone offset too large for a C int raises :class:`OverflowError` rather than
+    :class:`ValueError`; neither is a date.
+    """
+    if value is None:
+        return None
+
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (ValueError, OverflowError):
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp())
+
+
+def _expires_lifetime(expires: str, date: str | None) -> int:
+    """Return the freshness lifetime an Expires field grants.
+
+    RFC 9111 5.3: an Expires that is not an HTTP-date, ``0`` included, means
+    already expired. Date is the point the expiry is measured from; a response
+    that omits it is measured from its arrival.
+    """
+    expires_at = _http_date_seconds(expires)
+    if expires_at is None:
+        return 0
+
+    generated_at = _http_date_seconds(date)
+    if generated_at is None:
+        generated_at = int(time.time())
+
+    return min(max(expires_at - generated_at, 0), _SECONDS_CEILING)
+
+
+def _states_freshness(response: HttpResponse) -> bool:
+    """Whether ``response`` carries a freshness field of its own."""
+    return (
+        _header(response, "cache-control") is not None
+        or _header(response, "expires") is not None
+    )
+
+
+def _freshness_lifetime(response: HttpResponse) -> int:
+    """Return how long ``response`` may be served without revalidation.
+
+    RFC 9111 4.2.1 for a private cache: an explicit ``max-age``, else Expires
+    measured from Date, else the heuristic default. 4.2.2 reserves that default
+    for a response stating no expiry at all.
+    """
+    max_age = _max_age_directive(_header(response, "cache-control"))
+    if max_age is not None:
+        return max_age
+
+    expires = _header(response, "expires")
+    if expires is None:
+        return _DEFAULT_MAX_AGE
+    return _expires_lifetime(expires, _header(response, "date"))
 
 
 class CachedAsyncSimpleClient:
@@ -226,7 +293,7 @@ class CachedAsyncSimpleClient:
             return False
         logger.debug(
             "assume-fresh-seconds=%d: %s for %r from %s kept fresh at age %ds "
-            "(server max-age %ds); skipping revalidation",
+            "(server freshness %ds); skipping revalidation",
             self._min_fresh_seconds,
             kind,
             package,
@@ -238,9 +305,7 @@ class CachedAsyncSimpleClient:
 
     def _negative_policy(self, response: HttpResponse) -> CachePolicy:
         """Freshness policy for a name-level 404, clamped to the 600s cap."""
-        max_age = min(
-            _parse_max_age(_header(response, "cache-control")), _DEFAULT_MAX_AGE
-        )
+        max_age = min(_freshness_lifetime(response), _DEFAULT_MAX_AGE)
         return CachePolicy(
             fetched_at=_freshness_start(response), max_age=max_age, etag=None
         )
@@ -302,13 +367,12 @@ class CachedAsyncSimpleClient:
             headers["If-None-Match"] = policy.etag
         response = await self._transport.get(url, headers=headers)
         if response.status_code == _HTTP_NOT_MODIFIED:
-            # A 304 without cache-control keeps the stored max-age.
-            cache_control = _header(response, "cache-control")
+            # A 304 stating no freshness of its own keeps the stored max-age.
             new_policy = CachePolicy(
                 fetched_at=_freshness_start(response),
                 max_age=(
-                    _parse_max_age(cache_control)
-                    if cache_control is not None
+                    _freshness_lifetime(response)
+                    if _states_freshness(response)
                     else policy.max_age
                 ),
                 etag=_header(response, "etag") or policy.etag,
@@ -329,7 +393,7 @@ class CachedAsyncSimpleClient:
 
         new_policy = CachePolicy(
             fetched_at=_freshness_start(response),
-            max_age=_parse_max_age(_header(response, "cache-control")),
+            max_age=_freshness_lifetime(response),
             etag=_header(response, "etag"),
         )
         self._cache.put_simple(package, new_body, new_policy)
@@ -350,7 +414,7 @@ class CachedAsyncSimpleClient:
 
         policy = CachePolicy(
             fetched_at=_freshness_start(response),
-            max_age=_parse_max_age(_header(response, "cache-control")),
+            max_age=_freshness_lifetime(response),
             etag=_header(response, "etag"),
         )
         self._cache.put_simple(package, body, policy)
