@@ -906,6 +906,28 @@ class TestLockCommandSpecific:
         assert "does not provide extra 'nonexistent'" in err
         assert "Traceback" not in err
 
+    def test_unevaluable_root_marker_exits_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``~= "3"`` is a valid marker no comparison decides.
+
+        PEP 440 gives the compatible-release operator no meaning over a
+        single-component release, so PEP 508 accepts the clause and nothing
+        evaluates it. It needs no matrix and no ``--python``.
+        """
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "probe"\nversion = "0.1.0"\n'
+            "dependencies = [\"somepkg; python_full_version ~= '3'\"]\n",
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=Path("-"), offline=True)
+
+        err = capsys.readouterr().err
+        assert 'cannot lock: marker python_full_version ~= "3"' in err
+        assert "cannot be evaluated" in err
+        assert "Traceback" not in err
+
     def test_sibling_metadata_divergence_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -3542,6 +3564,35 @@ class TestLockedFlag:
                 ],
                 prog="nab",
             )
+
+    def test_unevaluable_root_marker_leaves_the_error_to_the_resolve(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The pre-resolve validity check reads the root requirements too.
+
+        A self-referencing extra gated on a marker no comparison decides is a
+        project nab cannot read, not a stale lock, so the checks are skipped
+        and the resolve reports it.
+        """
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "probe"\nversion = "0.1.0"\ndependencies = []\n'
+            "[project.optional-dependencies]\n"
+            'fast = ["somepkg"]\n'
+            "all = [\"probe[fast]; python_full_version ~= '3'\"]\n",
+        )
+        out = tmp_path / "pylock.toml"
+        out.write_text(
+            'lock-version = "1.0"\ncreated-by = "nab"\n'
+            'extras = ["all"]\npackages = []\n'
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=out, locked=True, offline=True, extras=("all",))
+
+        err = capsys.readouterr().err
+        assert 'cannot lock: marker python_full_version ~= "3"' in err
+        assert "--locked" not in err
+        assert "Traceback" not in err
 
     def test_up_to_date_exits_zero_without_writing(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

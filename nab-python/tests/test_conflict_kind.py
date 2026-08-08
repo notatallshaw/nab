@@ -11,7 +11,10 @@ from collections.abc import Set as AbstractSet
 
 import pytest
 
-from nab_python._conflict_kind import dependency_marker_holds
+from nab_python._conflict_kind import (
+    UnevaluableMarkerError,
+    dependency_marker_holds,
+)
 from nab_python._vendor.packaging.markers import Marker
 
 _ENV: dict[str, str] = {
@@ -95,4 +98,37 @@ class TestDependencyMarkerHoldsScalarExtra:
         self, marker_text: str, want: bool
     ) -> None:
         """A marker naming no extra evaluates against the environment alone."""
+        assert dependency_marker_holds(Marker(marker_text), _ENV) is want
+
+
+class TestDependencyMarkerHoldsUnevaluableClause:
+    """A clause PEP 508 parses and no comparison decides."""
+
+    @pytest.mark.parametrize(
+        "marker_text",
+        [
+            'python_full_version ~= "3"',
+            'python_version ~= "3"',
+            'sys_platform ~= "linux"',
+            'platform_release ~= "5"',
+        ],
+    )
+    def test_unevaluable_clause_names_the_marker(self, marker_text: str) -> None:
+        """The error quotes the whole marker, not just the failing operand."""
+        with pytest.raises(UnevaluableMarkerError) as excinfo:
+            dependency_marker_holds(Marker(marker_text), _ENV)
+        assert marker_text in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        ("marker_text", "want"),
+        [
+            ('python_full_version ~= "3.11"', True),
+            ('python_full_version ~= "3.12"', False),
+            ('python_version ~= "3.11"', True),
+        ],
+    )
+    def test_two_component_compatible_release_still_evaluates(
+        self, marker_text: str, want: bool
+    ) -> None:
+        """``~=`` stays supported wherever PEP 440 gives it a meaning."""
         assert dependency_marker_holds(Marker(marker_text), _ENV) is want

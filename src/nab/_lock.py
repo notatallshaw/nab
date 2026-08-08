@@ -62,6 +62,7 @@ from nab_python.requirements_file import (
     read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
 )
+from nab_python.target import UnevaluableMarkerError
 
 from . import cli as _cli
 from .cli import (
@@ -370,8 +371,8 @@ def _locked_check_inputs(
     """Collect the validity-check inputs, or ``(None, None)`` to skip them.
 
     A target the declaration excludes and a project whose requirements cannot
-    be read both skip the validity checks, left for the full resolve.  The
-    envelope checks still run.
+    be read or evaluated both skip the validity checks, left for the full
+    resolve.  The envelope checks still run.
     """
     try:
         target = plan_targets(with_python_override(config, python))[0]
@@ -384,6 +385,7 @@ def _locked_check_inputs(
         InvalidProjectTableError,
         InvalidProjectRequirementError,
         LookupError,
+        UnevaluableMarkerError,
     ):
         return None, None
     return roots, target.marker_env

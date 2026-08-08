@@ -24,7 +24,11 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from ._conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
+from ._conflict_kind import (
+    EMPTY_MEMBERSHIP_SETS,
+    MARKER_VARIABLE_FOR_KIND,
+    UnevaluableMarkerError,
+)
 from ._vendor.packaging import tags as ptags
 from ._vendor.packaging.markers import Marker, default_environment
 from ._vendor.packaging.markersets import variable_names
@@ -52,6 +56,7 @@ __all__ = [
     "Matrix",
     "NonIntervalMarkerError",
     "ResolveTarget",
+    "UnevaluableMarkerError",
     "apply_python_axis_overlay",
     "check_free_threaded",
     "declared_environment",

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from nab_python._conflict_kind import UnevaluableMarkerError
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.utils import InvalidName
@@ -561,6 +562,18 @@ class TestExpandSelfExtras:
         }
         env = {"python_version": "3.11", "python_full_version": "3.11.0"}
         assert expand_self_extras(opt, "mypkg", ["gpu"], env) == ["gpu", "fast"]
+
+
+class TestSelfReferenceUnevaluableMarker:
+    def test_self_reference_gate_no_comparison_decides(self) -> None:
+        """A self-ref gate is reduced against the walked extra, which is the
+        second place a marker with no meaning is read."""
+        opt = {
+            "all": ["mypkg[fast]; python_full_version ~= '3'"],
+            "fast": ["some-dep"],
+        }
+        with pytest.raises(UnevaluableMarkerError, match='python_full_version ~= "3"'):
+            expand_extra_requirements(opt, "mypkg", ["all"])
 
 
 class TestSelfExtraMarkers:
