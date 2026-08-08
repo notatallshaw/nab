@@ -34,6 +34,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import tomli_w
 from installer import install as installer_install
 from installer.destinations import SchemeDictionaryDestination
 from installer.sources import WheelFile
@@ -568,32 +569,12 @@ def _render_synthetic_pyproject(requires: list[str]) -> str:
     version make the inner resolver happy without depending on the
     outer project's name/version.
     """
-    deps_block = ",\n    ".join(_toml_str(s) for s in requires)
-    if deps_block:
-        deps_block = f"\n    {deps_block},\n"
-    return (
-        "[project]\n"
-        'name = "_nab_build_env"\n'
-        'version = "0.0.0"\n'
-        f"dependencies = [{deps_block}]\n"
+    return tomli_w.dumps(
+        {
+            "project": {
+                "name": "_nab_build_env",
+                "version": "0.0.0",
+                "dependencies": requires,
+            }
+        }
     )
-
-
-def _toml_str(value: str) -> str:
-    """Escape a string as a single-line TOML basic-string literal.
-
-    Backslash, double-quote, and the control characters TOML forbids bare in a
-    basic string (below U+0020, plus U+007F) are escaped, so a requirement
-    carrying a newline stays valid TOML instead of splitting across a line.
-    """
-    out: list[str] = []
-    for ch in value:
-        if ch == "\\":
-            out.append("\\\\")
-        elif ch == '"':
-            out.append('\\"')
-        elif ch < "\x20" or ch == "\x7f":
-            out.append(f"\\u{ord(ch):04x}")
-        else:
-            out.append(ch)
-    return '"' + "".join(out) + '"'
