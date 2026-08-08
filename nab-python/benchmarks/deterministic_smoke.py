@@ -1375,7 +1375,29 @@ def prepare_scenario(scenario: Scenario, index_root: Path) -> PreparedScenario:
     )
 
 
-def _resolve_once(prepared: PreparedScenario) -> tuple[ResolveResult, int]:
+def _fixture_listing_packages(distributions: Sequence[Distribution]) -> tuple[str, ...]:
+    """Every canonical name in the fixture, in a stable order."""
+    return tuple(sorted({canonicalize_name(dist.name) for dist in distributions}))
+
+
+def _await_listings(coordinator: FetchCoordinator, packages: Sequence[str]) -> None:
+    """Land every fixture listing before the caller starts timing.
+
+    The priority scan sorts a package whose listing is still in flight behind
+    the ready ones, so a resolve racing its own fetches can decide in a
+    different order run to run and reach the same pins by a different path.
+    Requesting the whole fixture up front and waiting takes that race out of
+    the measurement; it does not change what the resolver does with a listing
+    once it holds one.  Every request goes out before the first wait so they
+    still overlap.
+    """
+    for event in [coordinator.request_listing(package) for package in packages]:
+        event.wait()
+
+
+def _resolve_once(
+    prepared: PreparedScenario, listing_packages: Sequence[str]
+) -> tuple[ResolveResult, int]:
     """Run one fresh-coordinator resolve and time only the resolver call."""
     with FetchCoordinator(
         Urllib3AsyncTransport(),
@@ -1387,6 +1409,7 @@ def _resolve_once(prepared: PreparedScenario) -> tuple[ResolveResult, int]:
             prepared.targets,
             prepared.requirements,
         )
+        _await_listings(coordinator, listing_packages)
         start = time.perf_counter_ns()
 
         # Omitting the argument entirely is the only way to measure the shipped
@@ -1488,9 +1511,10 @@ def _observe_scenario(
     prepared: PreparedScenario,
     distributions: Sequence[Distribution],
     index_root: Path,
+    listing_packages: Sequence[str],
 ) -> _ScenarioObservation:
     """Run and fully validate one resolve."""
-    result, elapsed = _resolve_once(prepared)
+    result, elapsed = _resolve_once(prepared, listing_packages)
     pins, lock_projection, failures = _validate_observation(
         prepared, result, distributions, index_root
     )
@@ -1652,6 +1676,7 @@ def run_scenario(scenario: Scenario, index_root: Path, runs: int) -> dict[str, A
     # index_root happens to hold; the digest check is what ties the two together.
     prepared = prepare_scenario(scenario, index_root)
     distributions, _fixture_manifest_digest = load_fixture()
+    listing_packages = _fixture_listing_packages(distributions)
 
     # A semantic case is validated once and never timed, so it collapses to a
     # single unmeasured batch of one.
@@ -1670,14 +1695,16 @@ def run_scenario(scenario: Scenario, index_root: Path, runs: int) -> dict[str, A
 
     for _ in range(scenario.warmups):
         observations.extend(
-            _observe_scenario(prepared, distributions, index_root)
+            _observe_scenario(prepared, distributions, index_root, listing_packages)
             for _ in range(batch_size)
         )
 
     for _ in range(measurement_batches):
         sample: list[int] = []
         for _ in range(batch_size):
-            observation = _observe_scenario(prepared, distributions, index_root)
+            observation = _observe_scenario(
+                prepared, distributions, index_root, listing_packages
+            )
             observations.append(observation)
             sample.append(observation.elapsed_ns)
             for label, seen, fetched in observation.fetch:
