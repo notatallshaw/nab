@@ -6,7 +6,7 @@ import importlib.util
 import json
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +16,7 @@ from typing import Literal
 import pytest
 
 from nab_python._vendor.packaging.tags import Tag
+from nab_python._vendor.packaging.version import Version
 from nab_python.target import ResolveTarget
 
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
@@ -52,6 +53,7 @@ _MATCHING_HOST_MARKERS = {
     },
 }
 _CLEAN_SOURCE = {"commit": "a" * 40, "dirty": False, "diff_hash": None}
+_DIGIT_LIMIT_VERSION = "1." + "0" * 5_000
 _MANIFEST_FIELDS = {
     "benchmark_schema",
     "commit",
@@ -87,6 +89,7 @@ def _host(
     os_name: str,
     platform_tag: str,
     implementation: str = "cpython",
+    wall_timeout_seconds: int | None = 120,
 ) -> object:
     platform_implementation = "CPython" if implementation == "cpython" else "PyPy"
     interpreter = "cp312" if implementation == "cpython" else "pp312"
@@ -110,7 +113,7 @@ def _host(
             (Tag(interpreter, abi, platform_tag), Tag("py3", "none", "any"))
         ),
     )
-    return module.BenchmarkHost(target, "test-runtime", 120)
+    return module.BenchmarkHost(target, "test-runtime", wall_timeout_seconds)
 
 
 def _empty_provider_stats() -> SimpleNamespace:
@@ -301,7 +304,7 @@ def _result_payload(
     stats["wall_time_seconds"] = 0.01
     return {
         "input": input_data,
-        "result": {"success": True, "error": None},
+        "result": {"success": True, "error": None, "pins": {"demo": "1.0"}},
         "stats": stats,
     }
 
@@ -369,7 +372,7 @@ def _run_fake(
         stats["wall_time_seconds"] = 0.01
         payload = {
             "input": json.loads(json.dumps(prepared.expected_input)),
-            "result": {"success": True, "error": None},
+            "result": {"success": True, "error": None, "pins": {"demo": "1.0"}},
             "stats": stats,
         }
         if result_kind == "malformed":
@@ -933,9 +936,14 @@ def test_process_scenario_uses_the_planned_target(
         seen["requirements"] = requirements
         seen.update(kwargs)
         stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
+        stats["packages_resolved"] = 1
         stats["wall_time_seconds"] = 0.01
         return {
-            "result": {"success": True, "error": None},
+            "result": {
+                "success": True,
+                "error": None,
+                "pins": {"selected": "1.0"},
+            },
             "stats": stats,
         }
 
@@ -954,6 +962,9 @@ def test_process_scenario_uses_the_planned_target(
     assert set(requirements) == {"selected"}
     assert seen["target"] is target
     assert seen["host"] is host
+
+    payload = json.loads((tmp_path / "run" / "quick" / "markers.json").read_text())
+    assert payload["result"]["pins"] == {"selected": "1.0"}
 
 
 def test_resolve_scenario_uses_the_supplied_target_and_host(
@@ -988,7 +999,11 @@ def test_resolve_scenario_uses_the_supplied_target_and_host(
             self.stats = _empty_resolver_stats()
 
         def resolve(self, *_args: object, **_kwargs: object) -> dict:
-            return {"demo": "1.0"}
+            return {
+                "z_pkg": Version("2.0.0"),
+                "Demo_Pkg": Version("1.0.0"),
+                "demo_pkg[feature]": Version("1.0.0"),
+            }
 
     @contextmanager
     def wall_timeout(actual_host: object) -> Iterator[None]:
@@ -1008,7 +1023,15 @@ def test_resolve_scenario_uses_the_supplied_target_and_host(
         host=host,
     )
 
-    assert result["result"] == {"success": True, "error": None}
+    expected_result = {
+        "success": True,
+        "error": None,
+        "pins": {"demo-pkg": "1.0.0", "z-pkg": "2.0.0"},
+    }
+
+    assert json.loads(json.dumps(result))["result"] == expected_result
+    assert result["result"] == expected_result
+    assert result["stats"]["packages_resolved"] == 2
     assert seen == {
         "target": target,
         "resolver_kwargs": {
@@ -1017,6 +1040,56 @@ def test_resolve_scenario_uses_the_supplied_target_and_host(
         },
         "timeout": host,
     }
+
+
+def test_resolve_scenario_records_no_pins_after_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness("scenarios")
+    host = _host(
+        module,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+        wall_timeout_seconds=None,
+    )
+    admission = host.target_for("3.11", {}, requires_matching_host=False)
+    assert admission.target is not None
+
+    @contextmanager
+    def fake_coordinator(*_args: object, **_kwargs: object) -> Iterator[object]:
+        yield object()
+
+    class FakeProvider:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.stats = _empty_provider_stats()
+
+    class FakeResolver:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.stats = _empty_resolver_stats()
+
+        def resolve(self, *_args: object, **_kwargs: object) -> dict:
+            raise RuntimeError("fixture failure")
+
+    monkeypatch.setattr(module, "FetchCoordinator", fake_coordinator)
+    monkeypatch.setattr(module, "HttpxAsyncTransport", object)
+    monkeypatch.setattr(module, "Provider", FakeProvider)
+    monkeypatch.setattr(module, "Resolver", FakeResolver)
+
+    result = module.resolve_scenario(
+        module.parse_requirements(["demo"]),
+        target=admission.target,
+        host=host,
+    )
+
+    assert result["result"] == {
+        "success": False,
+        "error": "RuntimeError: fixture failure",
+        "pins": {},
+    }
+    assert result["stats"]["packages_resolved"] == 0
 
 
 def test_marker_build_scenarios_are_explicitly_unsupported() -> None:
@@ -1612,6 +1685,104 @@ def test_result_validation_rejects_json_type_coercions(
     )
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(
+            lambda payload: payload["result"].pop("pins"),
+            id="missing-pins",
+        ),
+        pytest.param(
+            lambda payload: payload["result"].update(pins=[]),
+            id="pins-not-a-mapping",
+        ),
+        pytest.param(
+            lambda payload: payload["result"].update(pins={"Demo": "1.0"}),
+            id="non-normalized-name",
+        ),
+        pytest.param(
+            lambda payload: payload["result"].update(pins={"demo": True}),
+            id="version-not-a-string",
+        ),
+        pytest.param(
+            lambda payload: payload["result"].update(pins={"demo": "1.0-1"}),
+            id="non-normalized-version",
+        ),
+        pytest.param(
+            lambda payload: payload["result"].update(
+                pins={"demo": _DIGIT_LIMIT_VERSION}
+            ),
+            id="integer-digit-limit",
+        ),
+        pytest.param(
+            lambda payload: payload["result"].update(
+                success=False,
+                error="failed",
+            ),
+            id="failure-with-pins",
+        ),
+        pytest.param(
+            lambda payload: payload["stats"].update(packages_resolved=2),
+            id="pin-count-mismatch",
+        ),
+    ],
+)
+def test_result_validation_rejects_invalid_pins(
+    mutate: Callable[[dict], object],
+) -> None:
+    module = _harness("scenarios")
+    execution = module.StandardExecution(
+        module.StandardScenario(
+            "quick",
+            "example",
+            {"python_version": "3.11", "requirements": ["demo"]},
+        ),
+        module.ResolutionStrategy.HIGHEST,
+    )
+    payload = _result_payload(
+        module,
+        execution,
+        "run",
+        dict(_CLEAN_SOURCE),
+        "f" * 64,
+    )
+    expected_input = json.loads(json.dumps(payload["input"]))
+    assert isinstance(expected_input, dict)
+
+    mutate(payload)
+
+    assert not module._standard_result_data_valid(payload, expected_input)
+
+
+def test_result_validation_accepts_a_failure_without_pins() -> None:
+    module = _harness("scenarios")
+    execution = module.StandardExecution(
+        module.StandardScenario(
+            "quick",
+            "example",
+            {"python_version": "3.11", "requirements": ["demo"]},
+        ),
+        module.ResolutionStrategy.HIGHEST,
+    )
+    payload = _result_payload(
+        module,
+        execution,
+        "run",
+        dict(_CLEAN_SOURCE),
+        "f" * 64,
+    )
+    expected_input = json.loads(json.dumps(payload["input"]))
+    assert isinstance(expected_input, dict)
+    payload["result"] = {
+        "success": False,
+        "error": "ResolutionError: no solution",
+        "pins": {},
+    }
+    payload["stats"]["packages_resolved"] = 0
+
+    assert module._standard_result_data_valid(payload, expected_input)
+
+
 def test_result_cache_identity_includes_the_host_settings_hash() -> None:
     module = _harness("scenarios")
     row = module.StandardScenario(
@@ -1647,7 +1818,7 @@ def test_result_cache_identity_includes_the_host_settings_hash() -> None:
     stats["wall_time_seconds"] = 0.01
     payload = {
         "input": first.expected_input,
-        "result": {"success": True, "error": None},
+        "result": {"success": True, "error": None, "pins": {}},
         "stats": stats,
     }
 
@@ -1792,6 +1963,21 @@ def test_reusing_a_label_rejects_default_after_strategy_matrix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _run_fake(tmp_path, monkeypatch, matrix=True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run_fake(tmp_path, monkeypatch, matrix=False)
+
+    assert exc_info.value.code == 2
+
+
+def test_reusing_a_label_rejects_a_schema_three_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, manifest_path = _run_fake(tmp_path, monkeypatch, matrix=False)
+    manifest = json.loads(manifest_path.read_text())
+    manifest["benchmark_schema"] = 3
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc_info:
         _run_fake(tmp_path, monkeypatch, matrix=False)

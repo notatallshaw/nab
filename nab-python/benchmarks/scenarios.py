@@ -48,7 +48,8 @@ from nab_python._vcs_admission import admit_vcs_url
 from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.utils import canonicalize_name
+from nab_python._vendor.packaging.utils import canonicalize_name, is_normalized_name
+from nab_python._vendor.packaging.version import Version
 from nab_python.config import PackageOverride
 from nab_python.fetch import (
     DEFAULT_INDEX_NAME,
@@ -72,7 +73,7 @@ SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
 RESULTS_DIR = BENCHMARKS_DIR / "results"
 _LEGACY_STRATEGY_SUFFIXES = ("-lowest", "-lowest-direct")
 STANDARD_MANIFEST_FILENAME = "_standard_manifest.json"
-STANDARD_MANIFEST_SCHEMA = 3
+STANDARD_MANIFEST_SCHEMA = 4
 _INAPPLICABLE_KEY_PREVIEW = 8
 _STANDARD_METADATA_FILENAMES = frozenset(
     {STANDARD_MANIFEST_FILENAME, "_provenance.json"}
@@ -899,6 +900,22 @@ def _clean_source_identity(source: object) -> bool:
     )
 
 
+def _valid_standard_pins(value: object) -> bool:
+    """Return whether *value* is a normalized name-to-version mapping."""
+    if not isinstance(value, dict):
+        return False
+    try:
+        return all(
+            type(name) is str
+            and is_normalized_name(name)
+            and type(version) is str
+            and str(Version(version)) == version
+            for name, version in value.items()
+        )
+    except ValueError:
+        return False
+
+
 def _standard_result_data_valid(  # noqa: PLR0911 - fail-closed schema validator
     data: object,
     expected_input: dict,
@@ -908,13 +925,16 @@ def _standard_result_data_valid(  # noqa: PLR0911 - fail-closed schema validator
     if not _strict_json_equal(data.get("input"), expected_input):
         return False
     result = data.get("result")
-    if not isinstance(result, dict) or set(result) != {"success", "error"}:
+    if not isinstance(result, dict) or set(result) != {"success", "error", "pins"}:
         return False
     success = result.get("success")
     error = result.get("error")
+    pins = result.get("pins")
     if type(success) is not bool or (success and error is not None):
         return False
     if not success and (not isinstance(error, str) or not error):
+        return False
+    if not _valid_standard_pins(pins) or (not success and pins):
         return False
     stats = data.get("stats")
     if not isinstance(stats, dict) or set(stats) != _STANDARD_COUNTER_FIELDS | {
@@ -924,6 +944,8 @@ def _standard_result_data_valid(  # noqa: PLR0911 - fail-closed schema validator
     if any(type(stats.get(field)) is not int for field in _STANDARD_COUNTER_FIELDS):
         return False
     if any(stats[field] < 0 for field in _STANDARD_COUNTER_FIELDS):
+        return False
+    if stats["packages_resolved"] != len(pins):
         return False
     wall_time = stats.get("wall_time_seconds")
     return (
@@ -1341,15 +1363,22 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
             root_version="0",
         )
 
+        pins: dict[str, str] = {}
         start = time.monotonic()
         try:
             with host.wall_timeout():
                 raw = resolver.resolve(requirements, constraints=constraints)
             elapsed = time.monotonic() - start
-            result = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
+            pins = dict(
+                sorted(
+                    (canonicalize_name(name), str(version))
+                    for name, version in raw.items()
+                    if split_extra(name)[1] is None
+                )
+            )
             success = True
             error = None
-            packages_resolved = len(result)
+            packages_resolved = len(pins)
         except (BenchmarkTimeout, Exception) as exc:
             elapsed = time.monotonic() - start
             success = False
@@ -1362,6 +1391,7 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
             "result": {
                 "success": success,
                 "error": error,
+                "pins": pins,
             },
             "stats": {
                 "rounds": rstats.rounds,

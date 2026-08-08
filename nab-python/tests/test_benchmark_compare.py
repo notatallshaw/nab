@@ -15,6 +15,7 @@ _STRATEGIES = ("highest", "lowest", "lowest-direct")
 _COMPLETED_LOGICAL = ("cases:done",)
 _UNSUPPORTED_LOGICAL = ("cases:nope",)
 _INAPPLICABLE_LOGICAL = ("cases:host",)
+_DIGIT_LIMIT_VERSION = "1." + "0" * 5_000
 _REQUIRES_MATCHING_HOST_LOGICAL = ("cases:host",)
 
 
@@ -134,10 +135,11 @@ def _result_payload(
 
     stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
     stats["rounds"] = rounds
+    stats["packages_resolved"] = 1
     stats["wall_time_seconds"] = 0.01
     return {
         "input": input_data,
-        "result": {"success": True, "error": None},
+        "result": {"success": True, "error": None, "pins": {"demo": "1.0"}},
         "stats": stats,
     }
 
@@ -206,6 +208,44 @@ def test_comparison_uses_the_manifest_and_keeps_scenario_inputs(
     assert "Rounds: 1 -> 2 (+100.0%)" in capsys.readouterr().out
 
 
+def test_comparison_reports_changed_pins(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _harness()
+    first = module.load_run(
+        _write_run(module, tmp_path, "first", source_commit="a" * 40)
+    )
+    second_dir = _write_run(module, tmp_path, "second", source_commit="b" * 40)
+    _rewrite_json(
+        second_dir / "cases" / "done.json",
+        lambda data: data["result"].update(pins={"demo": "2.0"}),
+    )
+    second = module.load_run(second_dir)
+
+    module.require_comparable(first, second)
+    module.compare_scenario(
+        first.results["cases/done.json"],
+        second.results["cases/done.json"],
+        "cases/done.json",
+    )
+
+    assert "Pin changed: demo 1.0 -> 2.0" in capsys.readouterr().out
+
+
+def test_pin_changes_reports_each_changed_package() -> None:
+    module = _harness()
+
+    assert module._pin_changes(
+        {"changed": "1.0", "removed": "2.0", "same": "3.0"},
+        {"added": "4.0", "changed": "1.1", "same": "3.0"},
+    ) == [
+        "Pin added: added==4.0",
+        "Pin changed: changed 1.0 -> 1.1",
+        "Pin removed: removed==2.0",
+    ]
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -242,6 +282,18 @@ def test_load_run_rejects_an_invalid_manifest(
     _rewrite_json(manifest_path, mutate)
 
     with pytest.raises(module.ComparisonError):
+        module.load_run(run_dir)
+
+
+def test_load_run_rejects_a_schema_three_manifest(tmp_path: Path) -> None:
+    module = _harness()
+    run_dir = _write_run(module, tmp_path, "run", source_commit="a" * 40)
+    _rewrite_json(
+        run_dir / module.MANIFEST_FILENAME,
+        lambda data: data.update(benchmark_schema=3),
+    )
+
+    with pytest.raises(module.ComparisonError, match="run is not complete"):
         module.load_run(run_dir)
 
 
@@ -318,6 +370,34 @@ def test_percent_change_is_relative_to_the_baseline(
     [
         pytest.param(lambda data: data.update(result={}), id="result-shape"),
         pytest.param(
+            lambda data: data["result"].pop("pins"),
+            id="missing-pins",
+        ),
+        pytest.param(
+            lambda data: data["result"].update(pins=[]),
+            id="pins-not-a-mapping",
+        ),
+        pytest.param(
+            lambda data: data["result"].update(pins={"Demo": "1.0"}),
+            id="non-normalized-name",
+        ),
+        pytest.param(
+            lambda data: data["result"].update(pins={"demo": True}),
+            id="version-not-a-string",
+        ),
+        pytest.param(
+            lambda data: data["result"].update(pins={"demo": "1.0-1"}),
+            id="non-normalized-version",
+        ),
+        pytest.param(
+            lambda data: data["result"].update(pins={"demo": _DIGIT_LIMIT_VERSION}),
+            id="integer-digit-limit",
+        ),
+        pytest.param(
+            lambda data: data["result"].update(success=False, error="failed"),
+            id="failure-with-pins",
+        ),
+        pytest.param(
             lambda data: data["stats"].pop("rounds"),
             id="stats-shape",
         ),
@@ -328,6 +408,10 @@ def test_percent_change_is_relative_to_the_baseline(
         pytest.param(
             lambda data: data["stats"].update(wall_time_seconds="slow"),
             id="wall-time-type",
+        ),
+        pytest.param(
+            lambda data: data["stats"].update(packages_resolved=2),
+            id="pin-count-mismatch",
         ),
     ],
 )
