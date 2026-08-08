@@ -1086,9 +1086,12 @@ class FetchCoordinator:
     def _run_loop(self) -> None:
         try:
             asyncio.run(self._async_fetcher())
-        except Exception as exc:
+        except BaseException as exc:
             self._record_crash(exc)
             logger.exception("Fetcher thread crashed")
+            # A KeyboardInterrupt or a SystemExit still ends the thread.
+            if not isinstance(exc, Exception):
+                raise
 
     def _build_client(
         self,
