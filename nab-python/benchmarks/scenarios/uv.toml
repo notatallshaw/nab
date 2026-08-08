@@ -1518,15 +1518,17 @@ requirements = ["llvmlite==0.44.0"]
 
 [uv-tensorflow-macos]
 # https://github.com/astral-sh/uv/issues/13568
-# Cross-platform resolution where tensorflow has different markers
-# on macOS vs Linux. Now resolvable via Phase A impersonation.
-python_version = "3.11"
-datetime = "2025-06-09 14:00:00"
-requirements = ["tensorflow"]
+# Exercises compatible-wheel selection for these roots on macOS arm64.
+python_version = "3.10.17"
+datetime = "2025-05-21 09:12:43"
+requirements = ["protobuf", "retina-face"]
 [uv-tensorflow-macos.marker_environment]
 platform_system = "Darwin"
 sys_platform = "darwin"
 platform_machine = "arm64"
+os_name = "posix"
+implementation_name = "cpython"
+platform_python_implementation = "CPython"
 
 [uv-issue-8601-jax-py-marker]
 # https://github.com/astral-sh/uv/issues/8601
@@ -1540,20 +1542,20 @@ requirements = [
     'jax>=0.4.33;python_version>="3.10"',
 ]
 
-[uv-issue-11664-pywin32-environments]
-# https://github.com/astral-sh/uv/issues/11664
-# pywin32 marker sys_platform == 'win32' is now exercised via Phase A
-# impersonation (a single-tuple Windows resolve from any host).
+[pywin32-windows-amd64-real-index]
+# Real-index diagnostic for an active Windows-only root marker.
 python_version = "3.12"
 datetime = "2025-02-20 12:19:21"
 requirements = [
     "pywin32; sys_platform == 'win32'",
 ]
-[uv-issue-11664-pywin32-environments.marker_environment]
+[pywin32-windows-amd64-real-index.marker_environment]
 platform_system = "Windows"
 sys_platform = "win32"
 os_name = "nt"
 platform_machine = "AMD64"
+implementation_name = "cpython"
+platform_python_implementation = "CPython"
 
 [uv-add-torch-pytorch-index]
 # https://github.com/astral-sh/uv/issues/12797
