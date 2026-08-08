@@ -12,9 +12,9 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#definition
 from __future__ import annotations
 
 import enum
-from typing import Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 
-from typing_extensions import Self, override
+from typing_extensions import NamedTuple, Self, override
 
 __all__ = [
     "Incompatibility",
@@ -24,6 +24,7 @@ __all__ = [
     "RangeProtocol",
     "RangeRelation",
     "RelationProtocol",
+    "RootRequirement",
     "SetRelation",
     "Term",
     "VersionType",
@@ -236,6 +237,25 @@ class RelationProtocol(Protocol):
         ...
 
 
+class RootRequirement(NamedTuple, Generic[PackageType, VersionType]):
+    """One requirement as the caller wrote it, kept as its own clause.
+
+    A caller that passes a mapping has to intersect its requirements on a
+    package first, and the resolver then proves the failure against the
+    intersection, naming a range nobody wrote.  Passing a sequence of these
+    keeps each requirement separate all the way into the report.
+
+    ``origin`` is opaque to the resolver and travels onto the ROOT
+    incompatibility, so a caller's own error reporter can identify the
+    requirement behind a clause.  Two requirements on one package can share a
+    range, so the range alone cannot tell them apart.
+    """
+
+    package: PackageType
+    constraint: RangeProtocol[VersionType]
+    origin: Any = None
+
+
 class SetRelation(enum.Enum):
     """How the partial solution relates to a term.
 
@@ -294,10 +314,20 @@ class Incompatibility(Generic[PackageType, VersionType]):
     clause. The clause's term carries the requirement range that backtracking
     needs, so the user's constraint is kept here for the message.
 
+    ``origin`` holds the caller's :class:`RootRequirement` origin for a
+    ``ROOT`` clause, opaque to the resolver and never read by it.
+
     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#incompatibility
     """
 
-    __slots__ = ("cause", "cause_left", "cause_right", "constraint_range", "terms")
+    __slots__ = (
+        "cause",
+        "cause_left",
+        "cause_right",
+        "constraint_range",
+        "origin",
+        "terms",
+    )
 
     def __init__(
         self,
@@ -306,6 +336,7 @@ class Incompatibility(Generic[PackageType, VersionType]):
         cause_left: Incompatibility[PackageType, VersionType] | None = None,
         cause_right: Incompatibility[PackageType, VersionType] | None = None,
         constraint_range: RangeProtocol[VersionType] | None = None,
+        origin: Any = None,
     ) -> None:
         """Create an incompatibility with terms and a cause."""
         self.terms = terms
@@ -313,6 +344,7 @@ class Incompatibility(Generic[PackageType, VersionType]):
         self.cause_left = cause_left
         self.cause_right = cause_right
         self.constraint_range = constraint_range
+        self.origin = origin
 
     @override
     def __repr__(self) -> str:
