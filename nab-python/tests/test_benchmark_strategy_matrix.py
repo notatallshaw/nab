@@ -20,10 +20,10 @@ from nab_python.target import ResolveTarget
 
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 _STANDARD_FILES = 14
-_STANDARD_SCENARIOS = 558
-_RUNNABLE_SCENARIOS = 536
+_STANDARD_SCENARIOS = 557
+_RUNNABLE_SCENARIOS = 535
 _UNSUPPORTED_SCENARIOS = 22
-_TOTAL_EXECUTION_IDENTITIES = 1_674
+_TOTAL_EXECUTION_IDENTITIES = 1_671
 _MARKER_BUILD_SCENARIOS = {
     "ai-stack:llama-index-experimental-gpt5",
     "ai-stack:open-r1",
@@ -415,6 +415,32 @@ def test_standard_corpus_is_one_canonical_definition_per_scenario() -> None:
     assert runnable == _RUNNABLE_SCENARIOS
     assert len(rows) - runnable == _UNSUPPORTED_SCENARIOS
     assert all("resolution" not in row.definition for row in rows)
+
+
+def _scenario_input_key(definition: dict[str, object]) -> str:
+    """Return the scenario input without its admission-only field."""
+    scenario_input = dict(definition)
+    scenario_input.pop("unsupported_reason", None)
+    return json.dumps(scenario_input, sort_keys=True)
+
+
+def test_runnable_scenarios_do_not_duplicate_unsupported_inputs() -> None:
+    module = _harness("scenarios")
+    rows = module.load_standard_corpus(module.standard_scenario_files())
+    unsupported_inputs = {
+        _scenario_input_key(row.definition)
+        for row in rows
+        if "unsupported_reason" in row.definition
+    }
+
+    duplicates = [
+        row.logical_key
+        for row in rows
+        if "unsupported_reason" not in row.definition
+        and _scenario_input_key(row.definition) in unsupported_inputs
+    ]
+
+    assert duplicates == []
 
 
 def test_standard_execution_census() -> None:
