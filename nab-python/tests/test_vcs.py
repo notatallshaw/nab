@@ -1091,7 +1091,7 @@ class TestProviderVcsIntegration:
             vcs_cache_dir=tmp_path / "cache",
             build_policy=BuildPolicy.BUILD_LOCAL,
         )
-        with pytest.raises(UnsupportedSdistError, match="BUILD_REMOTE"):
+        with pytest.raises(UnsupportedSdistError, match="build-policy 'build-remote'"):
             provider.fetch_versions("foo")
 
     def test_duplicate_source_across_local_vcs_raises(self, tmp_path: Path) -> None:

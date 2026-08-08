@@ -1064,8 +1064,12 @@ class TestArchiveBuildPolicyLevels:
             '[project]\nname = "pkg"\nversion = "1.0.0"\ndynamic = ["dependencies"]\n',
             encoding="utf-8",
         )
-        with pytest.raises(UnsupportedSdistError, match="BuildPolicy.BUILD_REMOTE"):
+        with pytest.raises(UnsupportedSdistError) as excinfo:
             self._extract(policy, tmp_path)
+        msg = str(excinfo.value)
+        assert "building requires build-policy 'build-remote'" in msg
+        assert f"effective policy is '{policy.value}'" in msg
+        assert "BuildPolicy." not in msg
 
     def test_dynamic_archive_builds_at_build_remote(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

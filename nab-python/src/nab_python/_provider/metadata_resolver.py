@@ -368,8 +368,9 @@ def resolve_dynamic_sdist(
     provider.stats.excluded_by_build_policy += 1
     msg = (
         f"{package}=={version} sdist has dynamic dependencies and no static"
-        f" pyproject.toml fallback; building requires BuildPolicy.BUILD_REMOTE"
-        f" but the effective policy is {effective.value}"
+        f" pyproject.toml fallback; building requires build-policy"
+        f" '{BuildPolicy.BUILD_REMOTE.value}' but the effective policy is"
+        f" '{effective.value}'"
     )
     raise UnsupportedSdistError(msg)
 

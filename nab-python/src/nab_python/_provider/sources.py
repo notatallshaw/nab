@@ -123,8 +123,8 @@ def extract_source_metadata(
         provider.stats.excluded_by_build_policy += 1
         msg = (
             f"{descriptor} at {path} has dynamic metadata; building requires"
-            f" BuildPolicy.{minimum.name} but the effective policy is"
-            f" {effective.value}"
+            f" build-policy '{minimum.value}' but the effective policy is"
+            f" '{effective.value}'"
         )
         raise UnsupportedSdistError(msg)
     try:
