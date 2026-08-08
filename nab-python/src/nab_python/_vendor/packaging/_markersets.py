@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import sys
 import threading
+from collections import OrderedDict
 from itertools import pairwise, product
 from typing import TYPE_CHECKING, NamedTuple, cast
 
@@ -165,10 +166,10 @@ def _oversized_numeric(text: str) -> bool:
 # ---------------------------------------------------------------------------- atoms
 
 
-# A value atom's denotation is memoised per atom, so the cache lives and dies
-# with the atom's tree. The bound stops a long-lived atom evaluated against
-# ever-new points from accumulating them. The oversized-value guards run
-# uncached before any ``holds`` call, so a warm cache never bypasses them.
+# A value atom's denotation is memoised per atom. The bound stops a long-lived
+# atom evaluated against ever-new points from accumulating them. The
+# oversized-value guards run uncached before any ``holds`` call, so a warm cache
+# never bypasses them.
 _HOLDS_CACHE_LIMIT = 1024
 
 
@@ -1000,10 +1001,14 @@ def _partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[
     return partition_boolean_axis(atoms, max_cells)
 
 
-# One simplify re-partitions the same axes with the same atoms over and over.
-# The cache lives only for that span and is thread-local, so a concurrent
-# simplify never shares a store.
+# A partition is a pure function of its key, so one store serves every decision.
+# Thread-local, so a concurrent decision never shares a store and the entry
+# ordering needs no lock.
 _partition_cache = threading.local()
+
+# The store outlives the decision that filled it, so the bound stops a
+# long-lived process accumulating axes it will not partition again.
+_PARTITION_CACHE_LIMIT = 4096
 
 # ``max_cells`` bounds one decision, and the greedy fixpoint issues one per
 # clause and per atom per universe row, so the meter is what bounds the run:
@@ -1024,16 +1029,33 @@ def charge_work(units: int) -> None:
         raise IntractableMarkerSet(msg)
 
 
+def _partition_store() -> OrderedDict[tuple, list[Cell]]:
+    """Return this thread's partition store, created on first use."""
+    store: OrderedDict[tuple, list[Cell]] | None = getattr(
+        _partition_cache, "store", None
+    )
+    if store is None:
+        store = _partition_cache.store = OrderedDict()
+    return store
+
+
 def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
     """Partition one axis's domain into cells on which every atom is constant."""
-    store: dict | None = getattr(_partition_cache, "store", None)
-    if store is None:
-        return _partition_axis(axis, atoms, max_cells)
-    key = (axis, tuple(atoms), max_cells)
+    store = _partition_store()
+
+    # The digit limit gates ``reject_oversized_version_literals`` inside the
+    # partition, so an entry built under a different limit would skip it.
+    key = (axis, tuple(atoms), max_cells, sys.get_int_max_str_digits())
+
     cached = store.get(key)
-    if cached is None:
-        cached = _partition_axis(axis, atoms, max_cells)
-        store[key] = cached
+    if cached is not None:
+        store.move_to_end(key)
+        return cached
+
+    cached = _partition_axis(axis, atoms, max_cells)
+    store[key] = cached
+    if len(store) > _PARTITION_CACHE_LIMIT:
+        store.popitem(last=False)
     return cached
 
 
@@ -1682,9 +1704,7 @@ def simplify_within(
     original = _disjunction(clauses)
     rows = _decompose_rows(universe)
     original_by_row = [restrict_tree(original, row.pins) for row in rows]
-    previous_store = getattr(_partition_cache, "store", None)
     previous_work = getattr(_work_meter, "remaining", None)
-    _partition_cache.store = {}
     _work_meter.remaining = max_work
     try:
         while True:
@@ -1694,7 +1714,6 @@ def simplify_within(
             if _canonical(clauses) == before:
                 break
     finally:
-        _partition_cache.store = previous_store
         _work_meter.remaining = previous_work
     if not clauses:
         return FALSE

@@ -9,9 +9,11 @@ an independent brute-force oracle.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from collections import defaultdict
 from functools import reduce
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from packaging.markers import Marker
@@ -22,6 +24,11 @@ from nab_python._vendor.packaging.markersets import (
     IntractableMarkerSet,
     MarkerSet,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator, Sequence
+
+    from nab_python._vendor.packaging._markersets import Atom, Cell
 
 _spec = importlib.util.spec_from_file_location(
     "simplify_corpus_fixtures",
@@ -490,4 +497,150 @@ def test_work_meter_is_unset_outside_a_simplify() -> None:
     within = _narrow_universe()
     ms(_narrow_linux_span()).simplify(within=within)
     assert getattr(engine._work_meter, "remaining", None) is None
-    assert getattr(engine._partition_cache, "store", None) is None
+
+
+@pytest.fixture
+def no_partition_store() -> Iterator[None]:
+    """Run a test with no partition store at all, and leave none behind it.
+
+    Removing the attribute rather than emptying the store is what lets a test
+    tell a store built on demand from one that was already there.
+    """
+
+    def discard() -> None:
+        if hasattr(engine._partition_cache, "store"):
+            del engine._partition_cache.store
+
+    discard()
+    yield
+    discard()
+
+
+def _count_rebuilds(monkeypatch: pytest.MonkeyPatch) -> Callable[[], int]:
+    """Start counting axis partitions, and return a reader for the count.
+
+    Counts calls that reach :func:`_partition_axis`, so a decision served from
+    the store adds nothing.
+    """
+    calls = 0
+    real = engine._partition_axis
+
+    def counting(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
+        nonlocal calls
+        calls += 1
+        return real(axis, atoms, max_cells)
+
+    monkeypatch.setattr(engine, "_partition_axis", counting)
+    return lambda: calls
+
+
+def _two_axis_pair() -> tuple[MarkerSet, MarkerSet]:
+    """Return two sets whose disjointness spans a python and a platform axis."""
+    return (
+        ms('python_version < "3.11" and sys_platform == "linux"'),
+        ms('python_version >= "3.12" and sys_platform == "linux"'),
+    )
+
+
+def test_partition_store_serves_a_later_decision(
+    no_partition_store: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An identical later decision partitions no axis again.
+
+    Nothing installs a store here, so this pins that an ordinary decision both
+    builds one on demand and is served from it. The repeat parses its markers
+    afresh, so a future memo on :class:`MarkerSet` itself could not satisfy it.
+    """
+    narrow, wide = _two_axis_pair()
+    assert narrow.is_disjoint(wide)
+
+    rebuilds = _count_rebuilds(monkeypatch)
+    again_narrow, again_wide = _two_axis_pair()
+
+    assert again_narrow.is_disjoint(again_wide)
+    assert rebuilds() == 0
+
+
+def test_partition_store_outlives_a_simplify(
+    no_partition_store: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repeated simplify reuses the partitions the first one built.
+
+    ``simplify_within`` no longer installs a store of its own, so what it learns
+    is still there for the next caller. Nothing memoises simplify itself, so the
+    repeat really does decide again.
+    """
+    within = _narrow_universe()
+    ms(_narrow_linux_span()).simplify(within=within)
+
+    rebuilds = _count_rebuilds(monkeypatch)
+
+    assert ms(_narrow_linux_span()).simplify(within=within).to_marker_string() == (
+        'platform_machine == "x86_64" and sys_platform == "linux"'
+    )
+    assert rebuilds() == 0
+
+
+def test_partition_store_is_keyed_on_the_int_digit_limit(
+    no_partition_store: None,
+) -> None:
+    """Lowering the interpreter's digit limit invalidates a warm partition.
+
+    The limit gates ``reject_oversized_version_literals`` inside the partition,
+    so serving an entry built under a wider limit would skip the guard and decide
+    a literal the interpreter can no longer parse. Deciding twice under the lower
+    limit also pins that the raising partition cached nothing.
+
+    The literal's digit run has to exceed the lowered limit and sit under the
+    default one, and the interpreter refuses any limit below
+    ``sys.int_info.str_digits_check_threshold``.
+    """
+    limit = sys.int_info.str_digits_check_threshold + 1
+    marker = ms('python_full_version >= "1.' + "9" * (limit + 359) + '"')
+    original = sys.get_int_max_str_digits()
+
+    assert marker.is_empty() is False
+
+    sys.set_int_max_str_digits(limit)
+    try:
+        for _ in range(2):
+            with pytest.raises(
+                IntractableMarkerSet, match=f"exceeds the {limit}-digit parse limit"
+            ):
+                marker.is_empty()
+    finally:
+        sys.set_int_max_str_digits(original)
+
+
+def test_partition_store_is_keyed_on_atom_order(no_partition_store: None) -> None:
+    """Two decisions over one axis's atoms in different order do not share a cell list.
+
+    ``Cell.vector`` is positionally aligned with the atom list its partition was
+    built for, so keying on an unordered atom set would read one decision's truth
+    values off the other's cells. The store reaching past a single simplify is
+    what makes that worth pinning here.
+    """
+    narrow, narrower = ms('python_version < "3.11"'), ms('python_version < "3.10"')
+
+    assert (narrow & ~narrower).is_empty() is False
+    assert (narrower & ~narrow).is_empty() is True
+
+
+def test_partition_store_evicts_the_least_recently_used(
+    no_partition_store: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Past the bound the store drops the coldest axis, not the one just used."""
+    monkeypatch.setattr(engine, "_PARTITION_CACHE_LIMIT", 4)
+
+    for release in range(4):
+        assert ms(f'platform_release == "{release}"').is_empty() is False
+    store = engine._partition_cache.store
+    coldest, next_coldest = list(store)[:2]
+
+    # Touching the coldest entry should move the eviction onto its neighbour.
+    assert ms('platform_release == "0"').is_empty() is False
+    assert ms('platform_release == "4"').is_empty() is False
+
+    assert len(store) == 4
+    assert coldest in store
+    assert next_coldest not in store
