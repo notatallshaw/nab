@@ -1,13 +1,14 @@
 """Entry point for the nab command.
 
-Holds the tyro :class:`SubcommandApp` registration plus the helpers
-shared between :mod:`nab._lock` and :mod:`nab._download`: HTTP
-transport selection, cache-directory defaults, config loading, and
-the resolver-error-to-exit-code translation.
+Holds the tyro :class:`SubcommandApp` registration plus the helpers the
+command modules share: config loading and cache-directory defaults,
+plus the HTTP transport selection and resolver-error-to-exit-code
+translation that only :mod:`nab._lock` and :mod:`nab._download` use.
 
-The two subcommands live in :mod:`nab._lock` and :mod:`nab._download`;
-this module imports them so their ``@app.command`` decorators run
-before :func:`main` calls ``app.cli()``.
+The subcommands live in :mod:`nab._lock`, :mod:`nab._download`,
+:mod:`nab._config_cmd`, and :mod:`nab._cache_cmd`; this module imports
+them so their ``@app.command`` decorators run before :func:`main` calls
+``app.cli()``.
 """
 
 from __future__ import annotations
@@ -739,8 +740,8 @@ def _normalize_layered_bool_flags(argv: list[str]) -> list[str]:
 
 
 # Side-effect imports: each module's @app.command decorators register the
-# subcommand.  Placed at the bottom so helpers above bind before
-# nab._lock / nab._download import back from this module.
+# subcommand.  Placed at the bottom so the helpers above bind before the
+# command modules import them back.
 from . import _cache_cmd as _cache_module  # noqa: E402, F401 - side-effect
 from . import _config_cmd as _config_module  # noqa: E402, F401 - side-effect
 from . import _download as _download_module  # noqa: E402, F401 - side-effect

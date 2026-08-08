@@ -3182,6 +3182,28 @@ class TestCliReferenceFlagCoverage:
             assert _names_flag(scope, flag), f"{heading} omits {flag}"
 
 
+class TestCliDocstringCommandModules:
+    """``nab.cli``'s docstring names every module that registers a subcommand."""
+
+    def test_docstring_names_every_command_module(self) -> None:
+        # A command module only registers if cli.py imports it for the side
+        # effect, so cli's own module bindings are the registration set.
+        imported = {
+            module.__name__
+            for _, module in inspect.getmembers(cli, inspect.ismodule)
+            if module.__name__.startswith("nab._")
+        }
+        docstring = cli.__doc__
+        assert docstring is not None
+
+        named = set(re.findall(r"nab\._\w+", docstring))
+
+        assert named == imported, (
+            f"docstring misses {imported - named}, "
+            f"names unregistered {named - imported}"
+        )
+
+
 class TestDetermineLockAnchor:
     """``_determine_lock_anchor`` chooses between fresh and reused anchors."""
 
