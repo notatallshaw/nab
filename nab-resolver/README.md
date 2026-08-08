@@ -13,6 +13,20 @@ It has no runtime dependencies: the standard library is all it needs.
 Use `nab-resolver` when you are building some kind of package
 resolver, Python or otherwise.
 
-The public API is the `Resolver` class plus the
-`ResolverProvider` protocol, the `Range` and `Term` types, and the
-`ResolutionError` exception.  Everything else is internal.
+## The public API
+
+The supported API is the module paths below.  They will not move
+without a major version bump.  Everything else in the package is
+internal and may be renamed or relocated in any release.
+
+```text
+nab_resolver.errors     ResolutionError
+nab_resolver.ranges     Range
+nab_resolver.resolver   BaseProvider, Resolver, ResolverObserver, ResolverProvider
+nab_resolver.root       ROOT
+nab_resolver.types      Incompatibility, IncompatibilityCause,
+                        RangeProtocol, RootRequirement, Term
+```
+
+The package root binds no names, so importing `nab_resolver` pulls in
+no submodules and a caller loads only what it imports.
