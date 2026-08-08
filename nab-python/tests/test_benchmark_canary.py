@@ -133,6 +133,44 @@ def test_canary_rejects_unknown_resolution() -> None:
         )
 
 
+def test_canary_explicit_resolution_overrides_declared_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    seen: list[object] = []
+
+    def fake_run_one(*_args: object, **kwargs: object) -> dict:
+        seen.append(kwargs["resolution_strategy"])
+        return {
+            "success": True,
+            "error": None,
+            "decisions": 1,
+            "conflicts": 0,
+            "backjumps": 0,
+            "restarts": 0,
+            "incompatibilities_learned": 0,
+            "metadata_fetched": 0,
+            "distributions_seen": 0,
+            "look_ahead_rejections": 0,
+            "packages": 0,
+            "wall_time_seconds": 0.0,
+        }
+
+    monkeypatch.setattr(module, "run_one", fake_run_one)
+    module.median_run(
+        {
+            "python_version": "3.11",
+            "requirements": [],
+            "resolution": "highest",
+        },
+        1,
+        scenario_name="example",
+        resolution_override=module.ResolutionStrategy.LOWEST,
+    )
+
+    assert seen == [module.ResolutionStrategy.LOWEST]
+
+
 def test_canary_configures_lowest_direct_roots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -241,6 +279,92 @@ def test_canary_main_records_v2_contract(
     }
 
 
+def test_canary_main_preserves_v2_lowest_identity_and_effective_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
+    source = {"commit": "source-sha", "dirty": False, "diff_hash": None}
+    monkeypatch.setattr(module, "get_git_source_state", lambda: source)
+    scenario = {"python_version": "3.11", "requirements": ["demo"]}
+    settings = {"resolution": "lowest", "target": "test-host"}
+    run = {
+        "success": True,
+        "error": None,
+        "decisions": 1,
+        "conflicts": 0,
+        "backjumps": 0,
+        "restarts": 0,
+        "incompatibilities_learned": 0,
+        "metadata_fetched": 0,
+        "distributions_seen": 0,
+        "look_ahead_rejections": 0,
+        "packages": 1,
+        "wall_time_seconds": 0.01,
+        "settings": settings,
+    }
+    summary = {
+        "success_runs": "1/1",
+        "median_decisions": 1,
+        "median_distributions_seen": 0,
+        "median_metadata_fetched": 0,
+        "median_packages": 1,
+        "median_conflicts": 0,
+        "median_backjumps": 0,
+        "median_wall": 0.01,
+        "min_decisions": 1,
+        "max_decisions": 1,
+        "min_wall": 0.01,
+        "max_wall": 0.01,
+    }
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+
+    def median_run(
+        _scenario: dict,
+        _runs: int,
+        *,
+        scenario_name: str,
+        resolution_override: object,
+    ) -> tuple[list[dict], dict]:
+        assert scenario_name == "example"
+        assert resolution_override is module.ResolutionStrategy.LOWEST
+        return [run], summary
+
+    monkeypatch.setattr(module, "median_run", median_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "canary.py",
+            "--commit",
+            "test",
+            "--runs",
+            "1",
+            "--scenario",
+            "quick:example@lowest",
+        ],
+    )
+
+    module.main()
+
+    record = json.loads(next((tmp_path / "test").glob("canary_*.json")).read_text())[
+        "example"
+    ]
+    expected_input = {**scenario, "resolution": "lowest"}
+    expected_input_hash = module.scenario_input_hash(
+        "quick-lowest:example", expected_input
+    )
+    assert record["contract_version"] == 2
+    assert record["scenario"] == "quick-lowest:example"
+    assert record["input"] == expected_input
+    assert record["input_hash"] == expected_input_hash
+    assert record["effective_settings"] == settings
+    assert record["execution_hash"] == module.scenario_execution_hash(
+        expected_input_hash, settings
+    )
+
+
 def test_canary_input_hash_captures_executable_definition() -> None:
     module = _harness()
     scenario = {
@@ -266,6 +390,42 @@ def test_canary_input_hash_captures_executable_definition() -> None:
     assert module.scenario_execution_hash(digest, {"target": "linux"}) != (
         module.scenario_execution_hash(digest, {"target": "windows"})
     )
+
+
+@pytest.mark.parametrize(
+    ("resolution", "expected_scenario", "expected_definition"),
+    [
+        ("highest", "quick:example", {"requirements": ["demo"]}),
+        (
+            "lowest",
+            "quick-lowest:example",
+            {"requirements": ["demo"], "resolution": "lowest"},
+        ),
+        (
+            "lowest-direct",
+            "quick-lowest-direct:example",
+            {"requirements": ["demo"], "resolution": "lowest-direct"},
+        ),
+    ],
+)
+def test_canary_v2_identity_reconstructs_historical_clone_input(
+    resolution: str,
+    expected_scenario: str,
+    expected_definition: dict[str, object],
+) -> None:
+    module = _harness()
+    strategy = module.ResolutionStrategy(resolution)
+
+    identity = module.canary_v2_identity(
+        module.CanaryCase("quick:example", strategy),
+        {"requirements": ["demo"]},
+        strategy,
+    )
+
+    assert identity.scenario == expected_scenario
+    assert identity.definition == expected_definition
+    if strategy is not module.ResolutionStrategy.HIGHEST:
+        assert next(iter(identity.definition)) == "resolution"
 
 
 @pytest.mark.parametrize(
@@ -398,7 +558,7 @@ def test_canary_main_rejects_duplicate_output_labels(
             "--scenario",
             "quick:requests",
             "--scenario",
-            "quick-lowest:requests",
+            "quick:requests",
         ],
     )
 
