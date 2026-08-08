@@ -334,9 +334,19 @@ upstream re-uploads".
 
 When `uploaded-prior-to` is an absolute timestamp, that timestamp
 also becomes the lockfile's `created-at`, so two locks from
-identical inputs are byte-for-byte identical. A relative `P<n>D`
-cutoff is anchored to the wall clock, so `created-at` stays the
-run time; `--upgrade` always re-anchors to now.
+identical inputs are byte-for-byte identical. `--upgrade` is the
+exception: it stamps the run time instead.
+
+A relative `P<n>D` cutoff is measured back from `created-at`
+rather than from the clock, and a re-lock reuses the `created-at`
+recorded in the pylock file it will write. A re-lock therefore
+resolves against the window the first lock used, and `--upgrade`
+is what moves that window forward. An absolute cutoff bounds the
+resolve the same way either run.
+
+A first lock, a pylock with no `created-at`, output to stdout,
+and the requirements formats have no recorded timestamp to reuse,
+so they anchor to the run time.
 
 ## Checking the lock in CI
 
