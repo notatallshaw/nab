@@ -7,15 +7,23 @@ reach one whose metadata is a hard integrity error (a failed PEP 658 sidecar
 hash, or a bare wheel whose full body fails its published hash).  The probe only
 labels a ``NO_VERSIONS`` clause, so that error must not escape and abort the
 resolve, and the snapshot the probe restores must survive the failure path.
+
+What the probe contains is bounded by what the error says.  A fault of the one
+version is contained; a transient transport failure, which names the moment and
+not the version, still escapes and aborts.
 """
 
 from __future__ import annotations
 
+import pytest
+
 from nab_index.client import (
+    MalformedSimpleResponseError,
     MetadataHashMismatchError,
     WheelFile,
     WheelHashMismatchError,
 )
+from nab_index.transport import HttpError, UnserveableUrlError
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.specifiers import SpecifierSet
@@ -137,6 +145,58 @@ class TestConstraintProbeContainsHardError:
         found = provider.has_satisfying_version("foo", VersionRange.full())
 
         assert found is False
+        assert provider._lookahead_aborted == sentinel
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            UnserveableUrlError("HTTP 404 for https://example.com/foo-3.0.metadata"),
+            MalformedSimpleResponseError("sidecar body is not valid UTF-8"),
+        ],
+    )
+    def test_unserveable_sidecar_probe_returns_false(self, error: HttpError) -> None:
+        """An advertised sidecar the index will not serve is absorbed.
+
+        A sidecar the listing advertised and the index then answered a 404 for,
+        or handed back a non-UTF-8 body for, is a fault of that one version.
+        Over the un-narrowed probe range this is a version the constraint
+        clipped away, so ``has_satisfying_version`` must return ``False`` rather
+        than abort the resolve, and the snapshot must survive.
+        """
+        listings = {"foo": [_wheel("foo", "3.0")]}
+        coordinator = make_coordinator(listings=listings)
+        coordinator.index.store_metadata_error("foo", "3.0", error)
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        sentinel = {"sentinel-blocker": ("x", V("1.0"))}
+        provider._lookahead_aborted = dict(sentinel)
+
+        found = provider.has_satisfying_version("foo", VersionRange.full())
+
+        assert found is False
+        assert provider._lookahead_aborted == sentinel
+
+    def test_transient_transport_failure_propagates_out_of_probe(self) -> None:
+        """A 5xx that outlived the retry budget aborts, it is not absorbed.
+
+        A bare ``HttpError`` names the moment, not the version.  Reading it as
+        "this version has no satisfying candidate" would let the resolve carry
+        on and pin a different-but-valid answer, so it must escape the probe.
+        The snapshot is still restored on the way out.
+        """
+        listings = {"foo": [_wheel("foo", "3.0")]}
+        coordinator = make_coordinator(listings=listings)
+        coordinator.index.store_metadata_error(
+            "foo", "3.0", HttpError("HTTP 503 for https://example.com/foo-3.0.metadata")
+        )
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        sentinel = {"sentinel-blocker": ("x", V("1.0"))}
+        provider._lookahead_aborted = dict(sentinel)
+
+        with pytest.raises(HttpError, match="HTTP 503"):
+            provider.has_satisfying_version("foo", VersionRange.full())
+
         assert provider._lookahead_aborted == sentinel
 
     def test_tie_divergence_on_probed_version_returns_false(self) -> None:
