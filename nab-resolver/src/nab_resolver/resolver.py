@@ -46,6 +46,7 @@ from .types import (
 )
 
 __all__ = [
+    "BaseProvider",
     "Incompatibility",
     "IncompatibilityCause",
     "IncompatibilityState",
@@ -203,6 +204,60 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         holding no version, so dropping one that exists states a falsehood.
         """
         ...
+
+
+class BaseProvider(Generic[PackageType, VersionType]):
+    """Defaults for the six provider methods a synchronous provider does not need.
+
+    Supplies ``begin_decision_scan``, ``is_ready``,
+    ``receive_partial_solution_hint``, ``consume_pending_clauses``,
+    ``consume_force_backtrack_targets`` and ``narrow_for_display``, the six
+    :class:`ResolverProvider` methods with nothing to do when there is no async
+    layer, no queued clauses and no widening.  A subclass still owes
+    ``choose_version``, ``has_satisfying_version``, ``get_dependencies``,
+    ``prioritize`` and ``widen_decision``.
+
+    Subclassing is optional; the resolver accepts anything that satisfies the
+    protocol.  Nothing re-exports this, so import it as
+    ``from nab_resolver.resolver import BaseProvider``.
+    """
+
+    def begin_decision_scan(self) -> None:
+        """Freeze nothing: no state moves between scans."""
+
+    def is_ready(self, package: PackageType) -> bool:
+        """Report every package ready, since answers do not wait on a fetch."""
+        del package
+        return True
+
+    def receive_partial_solution_hint(
+        self,
+        positive_ranges: Mapping[PackageType, RangeProtocol[VersionType]],
+        decisions: Mapping[PackageType, VersionType],
+    ) -> None:
+        """Drop the snapshot: nothing here forward-checks against it."""
+        del positive_ranges, decisions
+
+    def consume_pending_clauses(
+        self,
+    ) -> list[Incompatibility[PackageType, VersionType]]:
+        """Return no clauses: ``choose_version`` queues none."""
+        return []
+
+    def consume_force_backtrack_targets(self) -> list[PackageType]:
+        """Return no targets: there is no force-backtrack signal to give."""
+        return []
+
+    def narrow_for_display(
+        self, package: PackageType, constraint: RangeProtocol[VersionType]
+    ) -> RangeProtocol[VersionType]:
+        """Return the constraint unchanged, as a provider that never widens does.
+
+        A subclass whose ``widen_decision`` widens overrides this as well, or
+        its error text carries widened ranges instead of known versions.
+        """
+        del package
+        return constraint
 
 
 @dataclass
