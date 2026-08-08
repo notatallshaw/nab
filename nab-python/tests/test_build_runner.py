@@ -70,7 +70,7 @@ from nab_python.provider import BuildPolicy, DistPolicy, MissingExtraError
 from nab_python.resolve import ResolveResult, TargetResult
 from nab_python.tags import PlatformSpec, TagSet
 from nab_python.target import ResolveTarget
-from nab_resolver.resolver import ResolutionError
+from nab_resolver.errors import ResolutionError
 
 
 def _unpack_fixture_sdist(data: bytes, target_dir: Path) -> Path:

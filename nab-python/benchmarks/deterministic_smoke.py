@@ -52,7 +52,7 @@ from nab_python.provider import ResolutionStrategy
 from nab_python.resolve import ResolveResult, build_lock_input, resolve_with_coordinator
 from nab_python.tags import PlatformSpec
 from nab_python.target import Matrix, ResolveTarget, environment_declaration
-from nab_resolver.resolver import ResolutionError
+from nab_resolver.errors import ResolutionError
 
 BENCHMARKS_DIR = Path(__file__).parent
 SMOKE_DIR = BENCHMARKS_DIR / "smoke"

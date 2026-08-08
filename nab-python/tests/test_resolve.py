@@ -62,13 +62,9 @@ from nab_python.resolve import (
 )
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
+from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import (
-    Incompatibility,
-    IncompatibilityCause,
-    ResolutionError,
-    Term,
-)
+from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 V = Version
 

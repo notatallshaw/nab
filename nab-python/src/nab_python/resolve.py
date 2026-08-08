@@ -31,12 +31,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
-from nab_resolver.resolver import (
+from nab_resolver.errors import ResolutionError
+from nab_resolver.resolver import Resolver, ResolverObserver
+from nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
-    ResolutionError,
-    Resolver,
-    ResolverObserver,
     RootRequirement,
 )
 

@@ -39,7 +39,7 @@ import pyproject_hooks
 import tomli
 
 from nab_index.local_index import UnsupportedWheelError, wheel_metadata_member
-from nab_resolver.resolver import ResolutionError
+from nab_resolver.errors import ResolutionError
 
 from .._vendor.packaging.requirements import Requirement
 from .._vendor.packaging.specifiers import SpecifierSet
