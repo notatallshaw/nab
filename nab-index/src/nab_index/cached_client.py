@@ -318,7 +318,7 @@ class CachedAsyncSimpleClient:
         :func:`_parse_files` raises on it, the same as on the wire path.
         """
         try:
-            return json.loads(body)
+            decoded: object = json.loads(body)
         except ValueError:
             logger.warning(
                 "Corrupt cached Simple-API body for %r from %s: not valid JSON; "
@@ -327,6 +327,7 @@ class CachedAsyncSimpleClient:
                 self._index_url,
             )
             return None
+        return decoded
 
     def _parse_listing(self, body: bytes, package: str) -> list[WheelFile | SdistFile]:
         """Parse a Simple-API listing body.

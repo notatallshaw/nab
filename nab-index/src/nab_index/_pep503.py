@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import unquote, urljoin, urlsplit
 
+from typing_extensions import override
+
 __all__ = [
     "Anchor",
     "hash_fragment",
@@ -98,6 +100,7 @@ class _ProjectPageParser(HTMLParser):
         self.base_href: str | None = None
         self.declares_repository_version = False
 
+    @override
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "meta":
             for name, value in attrs:

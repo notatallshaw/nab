@@ -3,10 +3,10 @@
 ``tests`` runs one workspace's suite and gates each package it owns at 100
 percent. ``fail_under`` and the ``[tool.coverage.paths]`` remaps live in
 ``pyproject.toml``; the per-package ``--include`` globs are built here.
-``types`` runs one type-checker over ``nab-resolver/src``. ``dists`` builds
-every distribution and installs each sdist and wheel to catch packaging
-regressions that building alone misses. All take their pinned dependencies
-from ``.github/requirements``.
+``types`` runs one type-checker over the source trees in ``TYPED_TREES``.
+``dists`` builds every distribution and installs each sdist and wheel to
+catch packaging regressions that building alone misses. All take their
+pinned dependencies from ``.github/requirements``.
 
 The Python version comes from whoever launches nox, so CI drives the matrix
 through ``actions/setup-python`` and stays off the per-OS versioned-binary
@@ -50,14 +50,18 @@ WORKSPACES = {
     ),
 }
 
+# nab-python is left out: it carries the vendored packaging tree, which is
+# rebuilt from upstream and cannot be edited to satisfy a checker.
+TYPED_TREES = ["nab-resolver/src", "nab-index/src", "src"]
+
 # checker -> command; pyright reads its targets from [tool.pyright] in
-# pyproject.toml, the rest take nab-resolver/src on the command line.
+# pyproject.toml, the rest take the trees on the command line.
 TYPE_CHECKERS = {
-    "mypy": ["mypy", "nab-resolver/src"],
+    "mypy": ["mypy", *TYPED_TREES],
     "pyright": ["pyright"],
-    "ty": ["ty", "check", "nab-resolver/src"],
-    "pyrefly": ["pyrefly", "check", "nab-resolver/src"],
-    "zuban": ["zuban", "check", "nab-resolver/src"],
+    "ty": ["ty", "check", *TYPED_TREES],
+    "pyrefly": ["pyrefly", "check", *TYPED_TREES],
+    "zuban": ["zuban", "check", *TYPED_TREES],
 }
 
 
@@ -89,10 +93,10 @@ def tests(session: nox.Session, workspace: str) -> None:
 @nox.session
 @nox.parametrize("checker", list(TYPE_CHECKERS))
 def types(session: nox.Session, checker: str) -> None:
-    """Type-check nab-resolver/src with one checker."""
-    # Only nab-resolver is checked; the checkers reach sibling packages through
-    # their source-path config, not installs.
-    _install(session, TYPES_LOCK, ["nab-resolver"])
+    """Type-check the trees in ``TYPED_TREES`` with one checker."""
+    # Installing the whole workspace resolves every import; TYPED_TREES alone
+    # decides what is reported, which is how nab-python's own errors stay out.
+    _install(session, TYPES_LOCK, ["nab-resolver", "nab-index", "nab-python", "."])
     session.run(*TYPE_CHECKERS[checker])
 
 

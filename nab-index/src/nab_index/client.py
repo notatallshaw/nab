@@ -15,9 +15,10 @@ import re
 import sys
 import tarfile
 import zlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from packaging.utils import canonicalize_name, parse_sdist_filename
@@ -50,6 +51,10 @@ __all__ = [
     "is_readable_filename",
     "verify_sdist_hash",
 ]
+
+# One decoded PEP 691 ``files`` entry.  Neither its keys nor its values
+# have been checked, so every field is narrowed where it is read.
+_FileEntry = Mapping[Any, object]
 
 # Verification order; sha256 is pip's hash-checking baseline.
 ACCEPTED_HASH_ALGORITHMS: tuple[str, ...] = ("sha256", "sha384", "sha512")
@@ -505,7 +510,7 @@ def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
 
 
 def _parse_file_entry(
-    file_info: dict,
+    file_info: _FileEntry,
     filename: str,
     raw_url: str,
     base_url: str,
@@ -612,7 +617,7 @@ def _parse_size(value: object) -> int | None:
 _LEGACY_METADATA_KEY = "dist-info-metadata"
 
 
-def _metadata_value(file_info: dict) -> object:
+def _metadata_value(file_info: _FileEntry) -> object:
     """Return the metadata field, applying PEP 714 key precedence.
 
     When ``core-metadata`` is present it wins and the legacy
@@ -626,7 +631,7 @@ def _metadata_value(file_info: dict) -> object:
     return file_info.get(_LEGACY_METADATA_KEY)
 
 
-def _has_metadata(file_info: dict) -> bool:
+def _has_metadata(file_info: _FileEntry) -> bool:
     """Return True when the file entry advertises a PEP 658/714 sidecar.
 
     PEP 691 allows either a ``true`` boolean (sidecar exists but no
@@ -637,7 +642,7 @@ def _has_metadata(file_info: dict) -> bool:
     return value is True or isinstance(value, dict)
 
 
-def _metadata_hash(file_info: dict) -> tuple[str, str] | None:
+def _metadata_hash(file_info: _FileEntry) -> tuple[str, str] | None:
     """Return the sidecar's published ``(algo, hex)`` to verify, or None.
 
     A bare ``true`` (sidecar exists, no hash), an empty digest, or a table with

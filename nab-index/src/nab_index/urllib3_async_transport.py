@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import truststore
 import urllib3
+from typing_extensions import override
 
 from .retry import GET_RETRY, MAX_RETRIES, next_delay
 from .transport import (
@@ -55,6 +56,7 @@ class _SSLContext(truststore.SSLContext):
     urllib3-future restores the guard.
     """
 
+    @override
     def cert_store_stats(self) -> dict[str, int]:
         return {"x509_ca": 1, "x509": 1, "crl": 0}
 

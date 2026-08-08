@@ -1504,7 +1504,7 @@ class TestPythonFlag:
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch(
-                "nab.cli.download_lock",
+                "nab._download.download_lock",
                 return_value=MagicMock(written=(out / "x.whl",), skipped=()),
             ),
         ):
@@ -1940,7 +1940,7 @@ class TestLockCommandUniversal:
                 "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
-            patch("nab.cli.write_lock", side_effect=MissingHashError("no hash")),
+            patch("nab._lock.write_lock", side_effect=MissingHashError("no hash")),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
@@ -1965,7 +1965,7 @@ class TestLockCommandUniversal:
                 "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
-            patch("nab.cli.write_lock", side_effect=DisjointnessError(hint)),
+            patch("nab._lock.write_lock", side_effect=DisjointnessError(hint)),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
@@ -1989,7 +1989,7 @@ class TestLockCommandUniversal:
                 return_value=_universal_result(success=True),
             ),
             patch(
-                "nab.cli.write_lock",
+                "nab._lock.write_lock",
                 side_effect=DivergentBaseDependencyError(message),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -2108,11 +2108,11 @@ class TestLockCommandUniversal:
                 return_value=_universal_result(success=True),
             ),
             patch(
-                "nab.cli.build_lock_input",
+                "nab._lock.build_lock_input",
                 return_value=MagicMock(name="LockInput"),
             ),
             patch(
-                "nab.cli.write_requirements_without_hashes",
+                "nab._lock.write_requirements_without_hashes",
                 return_value="# py311-linux_x86_64\nfoo==1.0\n",
             ),
         ):
@@ -2294,7 +2294,7 @@ class TestLockCommandUniversal:
                 return_value=_universal_result(success=True),
             ),
             patch(
-                "nab.cli.write_requirements_with_hashes",
+                "nab._lock.write_requirements_with_hashes",
                 side_effect=MissingHashError("no hash"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -2683,7 +2683,7 @@ class TestLockCommandUniversal:
                 return_value=_universal_result(success=True),
             ),
             patch(
-                "nab.cli.write_requirements_with_hashes",
+                "nab._lock.write_requirements_with_hashes",
                 side_effect=MissingHashError("no hash"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -3800,7 +3800,7 @@ class TestLockedFlag:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={"foo": V("1.0")}),
             ),
-            patch("nab.cli.render_lock", side_effect=MissingHashError("no hash")),
+            patch("nab._lock.render_lock", side_effect=MissingHashError("no hash")),
             pytest.raises(SystemExit) as exc,
         ):
             app.cli(
@@ -3847,7 +3847,7 @@ class TestLockedFlag:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={"foo": V("1.0")}),
             ),
-            patch("nab.cli.render_lock", side_effect=DisjointnessError(hint)),
+            patch("nab._lock.render_lock", side_effect=DisjointnessError(hint)),
             pytest.raises(SystemExit) as exc,
         ):
             app.cli(
@@ -4307,7 +4307,7 @@ class TestCacheFlags:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab.cli.write_lock"),
+            patch("nab._lock.write_lock"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
         kwargs = mock_resolve.call_args.kwargs
@@ -4323,7 +4323,7 @@ class TestCacheFlags:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab.cli.write_lock"),
+            patch("nab._lock.write_lock"),
         ):
             lock(pyproject, cache_dir=cache, output=tmp_path / "pylock.toml")
         assert mock_resolve.call_args.kwargs["cache_dir"] == cache
@@ -4336,7 +4336,7 @@ class TestCacheFlags:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab.cli.write_lock"),
+            patch("nab._lock.write_lock"),
         ):
             lock(pyproject, cache=False, output=tmp_path / "pylock.toml")
         assert mock_resolve.call_args.kwargs["cache_dir"] is None
@@ -4349,7 +4349,7 @@ class TestCacheFlags:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab.cli.write_lock"),
+            patch("nab._lock.write_lock"),
         ):
             lock(pyproject, offline=True, output=tmp_path / "pylock.toml")
         assert mock_resolve.call_args.kwargs["offline"] is True
@@ -4424,7 +4424,7 @@ class TestOfflineFlagContract:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab.cli.write_lock"),
+            patch("nab._lock.write_lock"),
         ):
             app.cli(
                 args=[
@@ -4507,7 +4507,7 @@ class TestMainNormalizesOfflineFlag:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab.cli.write_lock"),
+            patch("nab._lock.write_lock"),
         ):
             main()
         return mock_resolve.call_args.kwargs["offline"]
@@ -4570,7 +4570,7 @@ class TestLayeredRunKnobFlagContract:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ),
-            patch("nab.cli.write_lock"),
+            patch("nab._lock.write_lock"),
             patch("nab.cli._make_transport") as mock_transport,
         ):
             app.cli(
@@ -4733,7 +4733,7 @@ class TestMainWiresOutputOptions:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ),
-            patch("nab.cli.write_lock"),
+            patch("nab._lock.write_lock"),
         ):
             main()
 
@@ -4898,7 +4898,9 @@ class TestDownloadCommand:
         download_result = MagicMock(written=(out / "x.whl",), skipped=())
         with (
             patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
-            patch("nab.cli.download_lock", return_value=download_result) as mock_dl,
+            patch(
+                "nab._download.download_lock", return_value=download_result
+            ) as mock_dl,
         ):
             download(pyproject, output=out)
         mock_dl.assert_called_once()
@@ -4913,7 +4915,9 @@ class TestDownloadCommand:
         download_result = MagicMock(written=(), skipped=())
         with (
             patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
-            patch("nab.cli.download_lock", return_value=download_result) as mock_dl,
+            patch(
+                "nab._download.download_lock", return_value=download_result
+            ) as mock_dl,
         ):
             download(pyproject, output=out, offline=offline)
         assert mock_dl.call_args.kwargs["offline"] is offline
@@ -4934,7 +4938,7 @@ class TestDownloadCommand:
         )
         with (
             patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
-            patch("nab.cli.download_lock", return_value=download_result),
+            patch("nab._download.download_lock", return_value=download_result),
         ):
             download(pyproject, output=out, project_resolution="lowest")
         err = capsys.readouterr().err
@@ -4966,7 +4970,9 @@ class TestDownloadCommand:
                 "nab.cli.resolve_for_targets",
                 return_value=_multi_tuple_universal_result(),
             ),
-            patch("nab.cli.download_lock", return_value=download_result) as mock_dl,
+            patch(
+                "nab._download.download_lock", return_value=download_result
+            ) as mock_dl,
         ):
             download(pyproject, output=out)
         lock_input = mock_dl.call_args.args[0]
@@ -5065,7 +5071,9 @@ class TestDownloadCommand:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
-            patch("nab.cli.download_lock", side_effect=DownloadError("sha mismatch")),
+            patch(
+                "nab._download.download_lock", side_effect=DownloadError("sha mismatch")
+            ),
             pytest.raises(SystemExit, match="1"),
         ):
             download(pyproject)
@@ -5149,7 +5157,7 @@ class TestDownloadCommand:
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
-            patch("nab.cli.download_lock", return_value=download_result),
+            patch("nab._download.download_lock", return_value=download_result),
         ):
             download(pyproject, extras=("cpu",))
         assert mock_resolve.call_args.kwargs["extras"] == ("cpu",)
@@ -5165,7 +5173,7 @@ class TestDownloadCommand:
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
-            patch("nab.cli.download_lock", return_value=download_result),
+            patch("nab._download.download_lock", return_value=download_result),
         ):
             download(pyproject, groups=("dev",))
         assert mock_resolve.call_args.kwargs["groups"] == ("dev",)
@@ -5181,7 +5189,7 @@ class TestDownloadCommand:
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
-            patch("nab.cli.download_lock", return_value=download_result),
+            patch("nab._download.download_lock", return_value=download_result),
         ):
             download(pyproject, all_extras=True)
         assert set(mock_resolve.call_args.kwargs["extras"]) == {"cpu", "gpu"}
@@ -5197,7 +5205,7 @@ class TestDownloadCommand:
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
-            patch("nab.cli.download_lock", return_value=download_result),
+            patch("nab._download.download_lock", return_value=download_result),
         ):
             download(pyproject, all_groups=True)
         assert set(mock_resolve.call_args.kwargs["groups"]) == {"dev", "test"}
@@ -5210,7 +5218,7 @@ class TestDownloadCommand:
                 "nab.cli.resolve_for_targets",
                 return_value=_multi_tuple_universal_result(),
             ) as mock_resolve,
-            patch("nab.cli.download_lock", return_value=download_result),
+            patch("nab._download.download_lock", return_value=download_result),
         ):
             download(pyproject, extras=("docs",))
         assert mock_resolve.call_args.kwargs["extras"] == ("docs",)

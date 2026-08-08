@@ -4,10 +4,9 @@ Wires :func:`resolve_for_targets` to the writers in
 :mod:`nab_python.lockfile`, plus the per-target emission shapes a matrix
 needs (a templated file per tuple, multi-block stdout).
 
-External callers (the resolver entry point, the lockfile writers) are
-accessed through :mod:`nab.cli` so the test suite's
-``patch("nab.cli.resolve_for_targets")`` style of monkey patches keeps
-working after the per-command split.
+The helpers this shares with :mod:`nab._download` (config loading, the
+printer, transport selection, the resolve step) live in :mod:`nab.cli`;
+everything else is imported from the module that defines it.
 """
 
 from __future__ import annotations
@@ -37,9 +36,12 @@ from nab_python.config import (
     with_python_override,
 )
 from nab_python.lockfile import (
+    DisjointnessError,
+    DivergentBaseDependencyError,
     InvalidLockfileError,
     LockfileSyntaxError,
     LockInput,
+    MissingHashError,
     Provenance,
     RootRequirement,
     TargetLock,
@@ -49,7 +51,11 @@ from nab_python.lockfile import (
     package_metadata_override_records,
     read_lockfile_anchor,
     read_lockfile_packages,
+    render_lock,
     summarize_lock,
+    write_lock,
+    write_requirements_with_hashes,
+    write_requirements_without_hashes,
 )
 from nab_python.paths import PathState, path_state
 from nab_python.requirements_file import (
@@ -62,6 +68,7 @@ from nab_python.requirements_file import (
     read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
 )
+from nab_python.resolve import build_lock_input
 from nab_python.target import UnevaluableMarkerError
 
 from . import cli as _cli
@@ -252,7 +259,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     )
 
     lock_input = drop_workspace_pins(
-        _cli.build_lock_input(
+        build_lock_input(
             result,
             config=config,
             extras=selected_extras,
@@ -436,9 +443,7 @@ def _check_locked(lock_input: LockInput, *, output: Path | None) -> None:
     lock is never read back into the resolve.
     """
     target = _locked_target_path(output)
-    new_text = _render_or_exit(
-        lambda: _cli.render_lock(lock_input, lock_dir=target.parent)
-    )
+    new_text = _render_or_exit(lambda: render_lock(lock_input, lock_dir=target.parent))
     committed = _packages_only(target.read_text(encoding="utf-8"))
     if _packages_only(new_text) == committed:
         _cli.printer().done(f"Lockfile {target} is up to date.")
@@ -466,17 +471,17 @@ def _emit_pylock(lock_input: LockInput, *, output: Path | None) -> None:
 
 def _write_lock_or_exit(lock_input: LockInput, *, target: Path | None) -> str:
     """Write the lock, mapping every render-time refusal to a clean exit."""
-    return _render_or_exit(lambda: _cli.write_lock(lock_input, output_path=target))
+    return _render_or_exit(lambda: write_lock(lock_input, output_path=target))
 
 
 def _render_or_exit(render: Callable[[], str]) -> str:
     """Run a lock render, mapping every refusal it raises to a clean exit."""
     try:
         return render()
-    except _cli.MissingHashError as e:
+    except MissingHashError as e:
         _cli.printer().error(f"cannot lock: {e}")
         sys.exit(1)
-    except (_cli.DisjointnessError, _cli.DivergentBaseDependencyError) as e:
+    except (DisjointnessError, DivergentBaseDependencyError) as e:
         _cli.printer().error(str(e))
         sys.exit(1)
 
@@ -805,14 +810,12 @@ def _render_requirements_or_exit(
     """
     try:
         if with_hashes:
-            text = _cli.write_requirements_with_hashes(
-                lock_input, output_path=output_path
-            )
+            text = write_requirements_with_hashes(lock_input, output_path=output_path)
         else:
-            text = _cli.write_requirements_without_hashes(
+            text = write_requirements_without_hashes(
                 lock_input, output_path=output_path
             )
-    except _cli.MissingHashError as e:
+    except MissingHashError as e:
         _cli.printer().error(f"cannot lock: {e}")
         sys.exit(1)
     return text, sum(len(lock.pins) for lock in lock_input.targets.values())
