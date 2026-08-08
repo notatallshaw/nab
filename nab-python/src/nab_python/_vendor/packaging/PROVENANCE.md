@@ -47,13 +47,34 @@ plus at most one checked-in patch, and nothing else.
 ## Refreshing
 
 1. Bump `tasks/vendoring/packaging.pin` to the new upstream commit.
-2. If the patch no longer applies, regenerate it from the committed vendored
-   tree rather than from any fork branch: the patch is the accumulated
-   divergence and no single branch carries all of it. Copy the committed
-   `_vendor/packaging/` over pristine-at-pin in a local `packaging` clone,
-   diff, and rewrite the paths back to this directory. Drop from the diff
-   whatever the new pin has absorbed.
-3. Run `tasks/vendor-packaging.sh`, then the test suite.
+2. Merge the two histories per file, three-way: the committed vendored file is
+   "ours", pristine at the old pin is the base, pristine at the new pin is
+   "theirs". `git merge-file` over the three is enough, since only the files
+   the new pin touches need merging.
+3. Regenerate the patch from that merged tree, and from the merged tree only.
+   Copy it over pristine-at-the-new-pin in a throwaway git repo laid out at
+   this directory's repo-relative path, then `git diff` and keep the result
+   verbatim. Never hand-edit the patch and never resolve a conflict inside it;
+   it is generated output.
+4. Run `tasks/vendor-packaging.sh`, then the test suite.
+
+Two traps this order exists to avoid.
+
+Skipping the merge and diffing the old committed tree straight against the new
+pin looks like it works and is wrong: the diff then carries deletions for
+everything the new pin added, so the patch silently reverts the upstream change
+the bump was for. `--check` still passes, because it only proves the committed
+tree equals pristine plus the patch, and a reverting patch satisfies that.
+Bumping `6f52c6b` to `58c6cd7` this way produced a patch that deleted
+`VersionRange.to_specifier_set` and every helper behind it.
+
+The merge auto-resolving is not evidence that it resolved correctly. Check it
+by diffing pristine against the merged tree at both pins and comparing the two
+diffs: nab's divergence should come out line for line identical, with only the
+surrounding context lines moved.
+
+The patch is the accumulated divergence and no single fork branch carries all
+of it, so never rebuild it from a branch.
 
 ## License
 
@@ -64,10 +85,12 @@ License. The LICENSE files here are the upstream texts; nothing is relicensed.
 
 `packaging` now ships a public `VersionRange` class with set algebra
 (intersection, union, complement, difference), the `is_subset` / `is_superset`
-/ `is_disjoint` predicates, `is_empty`, `filter`, and a `SpecifierSet.to_range()`
-factory that nab's PubGrub solver depends on. The class landed in `main` via
-https://github.com/pypa/packaging/pull/1267 and the difference operator plus the
-relation predicates via https://github.com/pypa/packaging/pull/1298. None of
+/ `is_disjoint` predicates, `is_empty`, `filter`, a `SpecifierSet.to_range()`
+factory that nab's PubGrub solver depends on, and the `to_specifier_set()`
+inverse that renders a range back as a specifier set. The class landed in
+`main` via https://github.com/pypa/packaging/pull/1267, the difference operator
+plus the relation predicates via https://github.com/pypa/packaging/pull/1298,
+and `to_specifier_set` via https://github.com/pypa/packaging/pull/1270. None of
 this has appeared in a PyPI release yet, so there is no version to pin in
 `pyproject.toml`. Vendoring is a temporary measure.
 

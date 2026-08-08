@@ -2181,10 +2181,10 @@ index 0000000..74930e7
 +    def __repr__(self) -> str:
 +        return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"
 diff --git a/nab-python/src/nab_python/_vendor/packaging/ranges.py b/nab-python/src/nab_python/_vendor/packaging/ranges.py
-index 8dd5e66..f8f379e 100644
+index 8144a65..b94c447 100644
 --- a/nab-python/src/nab_python/_vendor/packaging/ranges.py
 +++ b/nab-python/src/nab_python/_vendor/packaging/ranges.py
-@@ -22,6 +22,7 @@ import typing
+@@ -24,6 +24,7 @@ import typing
  from typing import (
      TYPE_CHECKING,
      Any,
@@ -2192,7 +2192,7 @@ index 8dd5e66..f8f379e 100644
      TypeVar,
      Union,
  )
-@@ -52,11 +53,41 @@ if TYPE_CHECKING:
+@@ -55,11 +56,41 @@ if TYPE_CHECKING:
      from .specifiers import SpecifierSet
  
  
@@ -2233,9 +2233,9 @@ index 8dd5e66..f8f379e 100644
 +_DISJOINT_REL = RangeRelation.DISJOINT
 +_OVERLAPPING_REL = RangeRelation.OVERLAPPING
  
- 
- class _SetOp(enum.Enum):
-@@ -131,6 +162,97 @@ def _union_ranges(
+ #: The most ``!=`` exclusion fragments (``!=V`` points or ``!=P.*`` prefixes)
+ #: that :meth:`VersionRange.to_specifier_set` will materialize to spell a
+@@ -144,6 +175,97 @@ def _union_ranges(
      return merged
  
  
@@ -2333,7 +2333,7 @@ index 8dd5e66..f8f379e 100644
  def _complement_ranges(ranges: Sequence[Interval]) -> list[Interval]:
      """Complement a sorted, non-overlapping interval list.
  
-@@ -280,6 +402,142 @@ def _struct_admits(
+@@ -293,6 +415,142 @@ def _struct_admits(
      return matches_bounds_only(bounds, parsed)
  
  
@@ -2476,7 +2476,7 @@ index 8dd5e66..f8f379e 100644
  # Repr helpers:
  
  
-@@ -316,7 +574,8 @@ class VersionRange:
+@@ -905,7 +1163,8 @@ class VersionRange:
      :class:`~packaging.specifiers.SpecifierSet`.
  
      Construct via :meth:`~packaging.specifiers.SpecifierSet.to_range`, or with
@@ -2486,7 +2486,7 @@ index 8dd5e66..f8f379e 100644
      Compose with :meth:`intersection`, :meth:`union`, :meth:`complement`, and
      :meth:`difference` (or the ``&`` / ``|`` / ``~`` / ``-`` operators). Test
      membership with ``in`` or :meth:`contains`, filter an iterable with
-@@ -330,9 +589,9 @@ class VersionRange:
+@@ -920,9 +1179,9 @@ class VersionRange:
      that opt-in scoped to those versions, so unrelated pre-releases are not
      admitted wholesale.
  
@@ -2499,7 +2499,7 @@ index 8dd5e66..f8f379e 100644
  
      >>> r = SpecifierSet(">=1.0,<2.0").to_range()
      >>> "1.5" in r
-@@ -407,7 +666,8 @@ class VersionRange:
+@@ -998,7 +1257,8 @@ class VersionRange:
          raise TypeError(
              "cannot create 'VersionRange' instances directly; use "
              "SpecifierSet.to_range(), VersionRange.full(), "
@@ -2509,7 +2509,7 @@ index 8dd5e66..f8f379e 100644
          )
  
      @classmethod
-@@ -599,6 +859,73 @@ class VersionRange:
+@@ -1190,6 +1450,73 @@ class VersionRange:
              prereleases_configured=prereleases,
          )
  
@@ -2583,7 +2583,7 @@ index 8dd5e66..f8f379e 100644
      def intersection(self, other: VersionRange) -> VersionRange:
          """Range containing exactly the versions in both self and other.
  
-@@ -879,6 +1206,15 @@ class VersionRange:
+@@ -1470,6 +1797,15 @@ class VersionRange:
          False
          >>> VersionRange.empty().is_subset(outer)
          True
@@ -2599,7 +2599,7 @@ index 8dd5e66..f8f379e 100644
          """
          self._check_policy_compat(other)
  
-@@ -889,12 +1225,52 @@ class VersionRange:
+@@ -1480,12 +1816,52 @@ class VersionRange:
  
          # Plain ranges: subset reduces to bounds containment, no algebra needed.
          if self._is_plain() and other._is_plain():
@@ -2653,7 +2653,7 @@ index 8dd5e66..f8f379e 100644
      def is_superset(self, other: VersionRange) -> bool:
          """Return whether every member of other is also a member of self.
  
-@@ -925,12 +1301,19 @@ class VersionRange:
+@@ -1516,12 +1892,19 @@ class VersionRange:
          True
          >>> a.is_disjoint(SpecifierSet(">=1.5,<2.5").to_range())
          False
@@ -2673,8 +2673,8 @@ index 8dd5e66..f8f379e 100644
 +            return _disjoint_bounds(self._bounds, other._bounds)
          return self.intersection(other).is_empty
  
-     @typing.overload
-@@ -939,6 +1322,8 @@ class VersionRange:
+     def _same_releases(self, other: VersionRange) -> bool:
+@@ -1540,6 +1923,8 @@ class VersionRange:
          iterable: Iterable[UnparsedVersionVar],
          prereleases: bool | None = None,
          key: None = ...,
@@ -2683,7 +2683,7 @@ index 8dd5e66..f8f379e 100644
      ) -> Iterator[UnparsedVersionVar]: ...
  
      @typing.overload
-@@ -947,6 +1332,28 @@ class VersionRange:
+@@ -1548,6 +1933,28 @@ class VersionRange:
          iterable: Iterable[T],
          prereleases: bool | None = None,
          key: Callable[[T], UnparsedVersion] = ...,
@@ -2712,7 +2712,7 @@ index 8dd5e66..f8f379e 100644
      ) -> Iterator[T]: ...
  
      def filter(
-@@ -954,6 +1361,8 @@ class VersionRange:
+@@ -1555,6 +1962,8 @@ class VersionRange:
          iterable: Iterable[Any],
          prereleases: bool | None = None,
          key: Callable[[Any], Version | str] | None = None,
@@ -2721,7 +2721,7 @@ index 8dd5e66..f8f379e 100644
      ) -> Iterator[Any]:
          """Yield items from iterable whose version falls inside the range.
  
-@@ -964,13 +1373,56 @@ class VersionRange:
+@@ -1565,13 +1974,56 @@ class VersionRange:
          ``prereleases=True`` would yield it). A flushed buffer comes after
          every in-place yield, so the output is not version-sorted.
  
@@ -2779,7 +2779,7 @@ index 8dd5e66..f8f379e 100644
          region: tuple[Interval, ...] = ()
          if prereleases is None:
              # The region applies only under the autodetect default; a configured
-@@ -978,19 +1430,93 @@ class VersionRange:
+@@ -1579,19 +2031,93 @@ class VersionRange:
              prereleases = self._prereleases_configured
              region = self._pre_region
  
@@ -2878,7 +2878,7 @@ index 8dd5e66..f8f379e 100644
      def _filter_with_admission(
          self,
          iterable: Iterable[Any],
-@@ -1078,6 +1604,123 @@ class VersionRange:
+@@ -1679,6 +2205,123 @@ class VersionRange:
          if not found_final:
              yield from all_nonfinal
  
