@@ -731,6 +731,7 @@ requirements = [
 python_version = "3.8"
 platform_system = "Linux"
 datetime = "2021-07-20 14:00:00"
+unsupported_reason = "build policy cannot represent a marker-only target"
 # Pure-Python sdists with no wheel under the exclude-newer date.
 build_packages = ["future", "pymeeus"]
 requirements = [

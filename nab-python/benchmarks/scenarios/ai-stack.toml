@@ -11,10 +11,8 @@
 python_version = "3.11"
 platform_system = "Linux"
 datetime = "2025-05-29 08:33:51"
-# deepspeed at this version is sdist-only; uv builds it.  nab needs
-# a native CUDA toolchain to build it locally and benchmarks may
-# fail at build time on a stripped-down CI host -- the override
-# documents the requirement.
+unsupported_reason = "build policy cannot represent a marker-only target"
+# deepspeed at this version is sdist-only and needs a native CUDA toolchain.
 build_packages = ["deepspeed"]
 requirements = [
     "accelerate==1.4.0",
@@ -468,6 +466,7 @@ requirements = [
 python_version = "3.11"
 platform_system = "Linux"
 datetime = "2025-08-09 08:17:20"
+unsupported_reason = "build policy cannot represent a marker-only target"
 # Pure-Python sdists (newspaper3k transitive chain) with no wheel
 # under the exclude-newer date.
 build_packages = [

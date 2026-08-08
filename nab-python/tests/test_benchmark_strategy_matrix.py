@@ -17,7 +17,19 @@ import pytest
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 _STANDARD_FILES = 14
 _STANDARD_SCENARIOS = 558
-_RUNNABLE_SCENARIOS = 543
+_RUNNABLE_SCENARIOS = 536
+_UNSUPPORTED_SCENARIOS = 22
+_TOTAL_EXECUTION_IDENTITIES = 1_674
+_RUNNABLE_STRATEGY_EXECUTIONS = 1_608
+_MARKER_BUILD_SCENARIOS = {
+    "ai-stack:llama-index-experimental-gpt5",
+    "ai-stack:open-r1",
+    "forums:so-gluonts-mxnet-pin-68451898",
+    "pip:pip-11760-torchgeo-min",
+    "pip:pip-11760-torchgeo-nbconvert-pin",
+    "pip:pip-9572-textract-pypdf2",
+    "uv:uv-issue-13321-axolotl-stack",
+}
 _CLEAN_SOURCE = {"commit": "a" * 40, "dirty": False, "diff_hash": None}
 _MANIFEST_FIELDS = {
     "benchmark_schema",
@@ -256,10 +268,62 @@ def test_standard_corpus_is_one_canonical_definition_per_scenario() -> None:
     assert len(files) == _STANDARD_FILES
     assert len(rows) == _STANDARD_SCENARIOS
     assert len({row.logical_key for row in rows}) == _STANDARD_SCENARIOS
-    assert sum("unsupported_reason" not in row.definition for row in rows) == (
-        _RUNNABLE_SCENARIOS
-    )
+    runnable = sum("unsupported_reason" not in row.definition for row in rows)
+    assert runnable == _RUNNABLE_SCENARIOS
+    assert len(rows) - runnable == _UNSUPPORTED_SCENARIOS
     assert all("resolution" not in row.definition for row in rows)
+
+
+def test_standard_execution_census() -> None:
+    module = _harness("scenarios")
+    rows = module.load_standard_corpus(module.standard_scenario_files())
+    executions = module.standard_execution_plan(rows, module.STANDARD_STRATEGIES)
+    execution_keys = module.standard_execution_keys(rows, module.STANDARD_STRATEGIES)
+
+    assert len(executions) == _RUNNABLE_STRATEGY_EXECUTIONS
+    assert len(execution_keys) == _TOTAL_EXECUTION_IDENTITIES
+
+
+def test_marker_build_scenarios_are_explicitly_unsupported() -> None:
+    module = _harness("scenarios")
+    rows = module.load_standard_corpus(module.standard_scenario_files())
+    marker_build_rows = {
+        row.logical_key: row
+        for row in rows
+        if module.parse_marker_environment(row.name, row.definition)
+        and module.parse_build_packages(row.name, row.definition)
+    }
+
+    assert set(marker_build_rows) == _MARKER_BUILD_SCENARIOS
+    assert all(
+        row.definition.get("unsupported_reason") for row in marker_build_rows.values()
+    )
+
+
+def test_standard_corpus_rejects_supported_marker_build_policy(
+    tmp_path: Path,
+) -> None:
+    module = _harness("scenarios")
+    path = tmp_path / "quick.toml"
+    path.write_text(
+        """
+[example]
+python_version = "3.11"
+platform_system = "Linux"
+build_packages = ["demo"]
+requirements = ["demo"]
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "example: build_packages cannot be combined "
+            "with a marker environment overlay"
+        ),
+    ):
+        module.load_standard_corpus([path])
 
 
 def test_standard_corpus_rejects_a_strategy_clone(
@@ -1042,3 +1106,22 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
 
     assert default["resolution_strategy"] is module.sc.ResolutionStrategy.HIGHEST
     assert lowest["resolution_strategy"] is module.sc.ResolutionStrategy.LOWEST
+
+
+def test_profile_runner_rejects_supported_marker_build_policy() -> None:
+    module = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": ["demo"],
+        "platform_system": "Linux",
+        "build_packages": ["demo"],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "example: build_packages cannot be combined "
+            "with a marker environment overlay"
+        ),
+    ):
+        module.build_inputs("example", scenario)

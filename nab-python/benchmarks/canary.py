@@ -818,16 +818,11 @@ def median_run(
         str(name): BuildPolicy.BUILD_REMOTE for name in raw_build_packages
     }
     if marker_environment and build_policy_overrides:
-        # See ``scenarios.py``: marker_environment + BUILD_REMOTE override
-        # is rejected to preserve metadata soundness.  Drop the overrides;
-        # a resolution that now fails was relying on the previous silent
-        # passthrough and needs an audit.
-        print(
-            f"  [audit] dropping {len(build_policy_overrides)} build_packages"
-            " override(s) because of marker_environment overlay.",
-            flush=True,
+        msg = (
+            f"{scenario_name}: build_packages cannot be combined "
+            "with a marker environment overlay"
         )
-        build_policy_overrides = {}
+        raise ValueError(msg)
     requirement_marker_env = _scenario_marker_env(python_version, marker_environment)
     requirements = parse_requirements(
         requirement_strings,
