@@ -1522,6 +1522,7 @@ requirements = ["llvmlite==0.44.0"]
 python_version = "3.10.17"
 datetime = "2025-05-21 09:12:43"
 requirements = ["protobuf", "retina-face"]
+requires_matching_host = true
 [uv-tensorflow-macos.marker_environment]
 platform_system = "Darwin"
 sys_platform = "darwin"
@@ -1549,6 +1550,7 @@ datetime = "2025-02-20 12:19:21"
 requirements = [
     "pywin32; sys_platform == 'win32'",
 ]
+requires_matching_host = true
 [pywin32-windows-amd64-real-index.marker_environment]
 platform_system = "Windows"
 sys_platform = "win32"

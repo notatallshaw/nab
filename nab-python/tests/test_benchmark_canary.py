@@ -14,6 +14,8 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from typing_extensions import Self
 
+from nab_python.target import ResolveTarget
+
 _CANARY = Path(__file__).resolve().parents[1] / "benchmarks" / "canary.py"
 
 
@@ -194,7 +196,40 @@ def test_canary_rejects_supported_marker_build_policy(
         module.median_run(scenario, 1, scenario_name="example", host=host)
 
 
-def test_canary_skips_a_platform_overlay_with_unfaithful_host_tags(
+@pytest.mark.parametrize("nested", [False, True])
+def test_canary_runs_a_platform_overlay_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    nested: bool,
+) -> None:
+    module = _harness()
+    host = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
+    current_system = host.target.marker_env["platform_system"]
+    required_system = "Windows" if current_system != "Windows" else "Linux"
+
+    targets: list[ResolveTarget] = []
+
+    def fake_run_one(*_args: object, **kwargs: object) -> dict[str, object]:
+        target = kwargs["target"]
+        assert isinstance(target, ResolveTarget)
+        targets.append(target)
+        return _run_result()
+
+    monkeypatch.setattr(module, "run_one", fake_run_one)
+    scenario: dict[str, object] = {"python_version": "3.11", "requirements": []}
+    if nested:
+        scenario["marker_environment"] = {"platform_system": required_system}
+    else:
+        scenario["platform_system"] = required_system
+    runs, _summary = module.median_run(scenario, 1, host=host)
+
+    assert runs == [_run_result()]
+    assert len(targets) == 1
+    target = targets[0]
+    assert target.marker_env["platform_system"] == required_system
+    assert target.tags_faithful is False
+
+
+def test_canary_skips_an_explicit_host_requirement_with_unfaithful_tags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _harness()
@@ -202,15 +237,16 @@ def test_canary_skips_a_platform_overlay_with_unfaithful_host_tags(
     current_system = host.target.marker_env["platform_system"]
     required_system = "Windows" if current_system != "Windows" else "Linux"
 
-    def unexpected_run(*_args: object, **_kwargs: object) -> dict:
-        pytest.fail("inapplicable scenario reached the resolver")
+    def unexpected_run(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("host admission must happen before resolution")
 
     monkeypatch.setattr(module, "run_one", unexpected_run)
     runs, summary = module.median_run(
         {
             "python_version": "3.11",
             "requirements": [],
-            "platform_system": required_system,
+            "marker_environment": {"platform_system": required_system},
+            "requires_matching_host": True,
         },
         1,
         host=host,
@@ -222,7 +258,7 @@ def test_canary_skips_a_platform_overlay_with_unfaithful_host_tags(
     }
 
 
-def test_canary_rejects_an_invalid_host_restriction(
+def test_canary_rejects_an_invalid_target_marker_declaration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _harness()
@@ -440,7 +476,7 @@ def test_canary_configures_lowest_direct_roots(
     requirements = module.parse_requirements(["Root[feature]", "Other==1"])
     captured = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
     host = module.BenchmarkHost(captured.target, captured.python_runtime, None)
-    admission = host.target_for("3.11", {})
+    admission = host.target_for("3.11", {}, requires_matching_host=False)
     assert admission.target is not None
     result = module.run_one(
         requirements,

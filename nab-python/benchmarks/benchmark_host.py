@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 HOST_TAG_MISMATCH_REASON = (
     "marker environment requires wheel tags from a different host"
 )
+_HOST_MATCH_MARKERS = frozenset(
+    key
+    for candidates in (PLATFORM_MARKERS, IMPLEMENTATION_MARKERS)
+    for candidate in candidates.values()
+    for key in candidate
+)
 
 
 class BenchmarkTimeout(BaseException):
@@ -43,7 +49,7 @@ def validate_target_marker_environment(
     scenario_name: str,
     marker_environment: Mapping[str, str],
 ) -> None:
-    """Reject host restrictions that cannot describe a supported target."""
+    """Reject marker values that cannot describe a supported target."""
     if not _marker_family_matches(marker_environment, PLATFORM_MARKERS):
         msg = f"{scenario_name}: marker_environment describes no supported platform"
         raise ValueError(msg)
@@ -56,7 +62,7 @@ def parse_target_marker_environment(
     scenario_name: str,
     scenario: Mapping[str, object],
 ) -> dict[str, str]:
-    """Read and validate one scenario's physical-target marker overrides."""
+    """Read and validate one scenario's target marker overrides."""
     raw = scenario.get("marker_environment", {})
     if not isinstance(raw, dict) or any(
         type(key) is not str or type(value) is not str for key, value in raw.items()
@@ -80,9 +86,30 @@ def parse_target_marker_environment(
     return marker_environment
 
 
+def parse_requires_matching_host(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+    marker_environment: Mapping[str, str],
+) -> bool:
+    """Read whether a scenario requires physical-host wheel tags."""
+    requires_matching_host = scenario.get("requires_matching_host", False)
+    if type(requires_matching_host) is not bool:
+        msg = f"{scenario_name}: requires_matching_host must be a boolean"
+        raise TypeError(msg)
+    if requires_matching_host and not _HOST_MATCH_MARKERS.intersection(
+        marker_environment
+    ):
+        msg = (
+            f"{scenario_name}: requires_matching_host needs a platform "
+            "or interpreter marker"
+        )
+        raise ValueError(msg)
+    return requires_matching_host
+
+
 @dataclass(frozen=True, slots=True)
 class TargetAdmission:
-    """A faithful resolve target, or the reason this host cannot provide one."""
+    """A resolve target, or why its required matching host is unavailable."""
 
     target: ResolveTarget | None
     inapplicable_reason: str | None
@@ -113,8 +140,10 @@ class BenchmarkHost:
         self,
         python_version: str,
         marker_environment: Mapping[str, str],
+        *,
+        requires_matching_host: bool,
     ) -> TargetAdmission:
-        """Build a scenario target when this host can supply faithful tags."""
+        """Build a target, enforcing faithful tags when the host must match."""
         host_markers = self.target.marker_env
         host_tags = self.target.tags.ordered
         target = ResolveTarget.for_host_python(
@@ -123,7 +152,7 @@ class BenchmarkHost:
             tags_source=lambda: iter(host_tags),
         ).with_marker_overrides(marker_environment)
 
-        if not target.tags_faithful:
+        if requires_matching_host and not target.tags_faithful:
             return TargetAdmission(None, HOST_TAG_MISMATCH_REASON)
         if any(
             target.marker_env.get(key) != value

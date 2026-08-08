@@ -33,7 +33,7 @@ _MARKER_BUILD_SCENARIOS = {
     "pip:pip-9572-textract-pypdf2",
     "uv:uv-issue-13321-axolotl-stack",
 }
-_EXACT_HOST_MARKERS = {
+_MATCHING_HOST_MARKERS = {
     "uv:uv-tensorflow-macos": {
         "implementation_name": "cpython",
         "os_name": "posix",
@@ -67,6 +67,7 @@ _MANIFEST_FIELDS = {
     "selected_logical_keys",
     "completed_logical_keys",
     "unsupported_logical_keys",
+    "requires_matching_host_logical_keys",
     "inapplicable_logical_keys",
     "available_execution_keys",
     "selected_execution_keys",
@@ -225,10 +226,12 @@ def _harness(name: str) -> ModuleType:
     return module
 
 
-def _exact_host_rows(module: ModuleType) -> dict[str, object]:
+def _matching_host_rows(module: ModuleType) -> dict[str, object]:
     rows = module.load_standard_corpus(module.standard_scenario_files())
     return {
-        row.logical_key: row for row in rows if "marker_environment" in row.definition
+        row.logical_key: row
+        for row in rows
+        if row.definition.get("requires_matching_host") is True
     }
 
 
@@ -254,6 +257,7 @@ unsupported_reason = "requires a native system dependency"
 python_version = "3.11"
 requirements = []
 platform_system = "Windows"
+requires_matching_host = true
 """.lstrip(),
         encoding="utf-8",
     )
@@ -432,7 +436,7 @@ def test_standard_execution_census() -> None:
                 "os_name": "posix",
                 "platform_tag": "manylinux_2_17_x86_64",
             },
-            {"linux", "neutral"},
+            {"linux", "windows", "neutral", "simulated-windows"},
         ),
         (
             {
@@ -442,7 +446,7 @@ def test_standard_execution_census() -> None:
                 "os_name": "nt",
                 "platform_tag": "win_amd64",
             },
-            {"windows", "windows-amd64", "neutral"},
+            {"linux", "windows", "windows-amd64", "neutral", "simulated-windows"},
         ),
         (
             {
@@ -452,7 +456,7 @@ def test_standard_execution_census() -> None:
                 "os_name": "nt",
                 "platform_tag": "win_arm64",
             },
-            {"windows", "neutral"},
+            {"linux", "windows", "neutral", "simulated-windows"},
         ),
         (
             {
@@ -462,7 +466,7 @@ def test_standard_execution_census() -> None:
                 "os_name": "posix",
                 "platform_tag": "macosx_14_0_arm64",
             },
-            {"mac-arm", "neutral"},
+            {"linux", "windows", "mac-arm", "neutral", "simulated-windows"},
         ),
         (
             {
@@ -472,7 +476,7 @@ def test_standard_execution_census() -> None:
                 "os_name": "posix",
                 "platform_tag": "macosx_14_0_x86_64",
             },
-            {"neutral"},
+            {"linux", "windows", "neutral", "simulated-windows"},
         ),
         (
             {
@@ -483,11 +487,11 @@ def test_standard_execution_census() -> None:
                 "platform_tag": "macosx_14_0_arm64",
                 "implementation": "pypy",
             },
-            {"neutral"},
+            {"linux", "windows", "neutral", "simulated-windows"},
         ),
     ],
 )
-def test_standard_plan_admits_only_targets_with_host_wheel_tags(
+def test_standard_plan_applies_explicit_host_requirements(
     host_kwargs: dict[str, str],
     expected: set[str],
 ) -> None:
@@ -496,12 +500,18 @@ def test_standard_plan_admits_only_targets_with_host_wheel_tags(
         module.StandardScenario(
             "test",
             "linux",
-            {"python_version": "3.11", "platform_system": "Linux"},
+            {
+                "python_version": "3.11",
+                "platform_system": "Linux",
+            },
         ),
         module.StandardScenario(
             "test",
             "windows",
-            {"python_version": "3.11", "platform_system": "Windows"},
+            {
+                "python_version": "3.11",
+                "platform_system": "Windows",
+            },
         ),
         module.StandardScenario(
             "test",
@@ -516,6 +526,7 @@ def test_standard_plan_admits_only_targets_with_host_wheel_tags(
                     "platform_system": "Windows",
                     "sys_platform": "win32",
                 },
+                "requires_matching_host": True,
             },
         ),
         module.StandardScenario(
@@ -531,6 +542,15 @@ def test_standard_plan_admits_only_targets_with_host_wheel_tags(
                     "platform_system": "Darwin",
                     "sys_platform": "darwin",
                 },
+                "requires_matching_host": True,
+            },
+        ),
+        module.StandardScenario(
+            "test",
+            "simulated-windows",
+            {
+                "python_version": "3.11",
+                "marker_environment": {"platform_system": "Windows"},
             },
         ),
         module.StandardScenario("test", "neutral", {"python_version": "3.11"}),
@@ -543,8 +563,120 @@ def test_standard_plan_admits_only_targets_with_host_wheel_tags(
     )
 
     assert {execution.scenario.name for execution in plan.executions} == expected
-    assert all(target.tags_faithful for target in plan.targets_by_logical_key.values())
+    assert all(
+        plan.targets_by_logical_key[execution.scenario.logical_key].tags_faithful
+        for execution in plan.executions
+        if execution.scenario.definition.get("requires_matching_host")
+    )
+    simulated_target = plan.targets_by_logical_key["test:simulated-windows"]
+    assert simulated_target.tags_faithful is (host_kwargs["system"] == "Windows")
     assert len(plan.inapplicable_logical_keys) == len(rows) - len(expected)
+
+
+def test_manifest_matching_host_census_is_explicit() -> None:
+    module = _harness("scenarios")
+    rows = [
+        module.StandardScenario(
+            "test",
+            "shorthand",
+            {"python_version": "3.11", "platform_system": "Windows"},
+        ),
+        module.StandardScenario(
+            "test",
+            "nested",
+            {
+                "python_version": "3.11",
+                "marker_environment": {"platform_system": "Windows"},
+            },
+        ),
+        module.StandardScenario(
+            "test",
+            "explicit-false",
+            {
+                "python_version": "3.11",
+                "platform_system": "Windows",
+                "requires_matching_host": False,
+            },
+        ),
+        module.StandardScenario(
+            "test",
+            "explicit-true",
+            {
+                "python_version": "3.11",
+                "platform_system": "Windows",
+                "requires_matching_host": True,
+            },
+        ),
+    ]
+    host = _host(
+        module,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+    )
+    strategies = (module.ResolutionStrategy.HIGHEST,)
+    plan = module.standard_run_plan(rows, strategies, host)
+    manifest = module.standard_manifest_contract(
+        commit="run",
+        mode="default",
+        all_rows=rows,
+        selected_rows=rows,
+        corpus_files=["test.toml"],
+        selected_files=["test.toml"],
+        strategies=strategies,
+        corpus_hash="a" * 64,
+        plan=plan,
+        settings=module.standard_benchmark_settings(host),
+    )
+
+    assert manifest["requires_matching_host_logical_keys"] == ["test:explicit-true"]
+    assert manifest["inapplicable_logical_keys"] == ["test:explicit-true"]
+
+
+@pytest.mark.parametrize(
+    ("implementation", "runs"),
+    [("cpython", False), ("pypy", True)],
+)
+def test_matching_host_requirement_accepts_an_interpreter_only_selector(
+    implementation: str,
+    runs: bool,
+) -> None:
+    module = _harness("scenarios")
+    row = module.StandardScenario(
+        "test",
+        "pypy",
+        {
+            "python_version": "3.11",
+            "marker_environment": {"implementation_name": "pypy"},
+            "requires_matching_host": True,
+        },
+    )
+    host = _host(
+        module,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+        implementation=implementation,
+    )
+
+    plan = module.standard_run_plan(
+        [row],
+        (module.ResolutionStrategy.HIGHEST,),
+        host,
+    )
+
+    if runs:
+        assert len(plan.executions) == 1
+        assert plan.inapplicable_logical_keys == []
+        assert plan.targets_by_logical_key[row.logical_key].tags_faithful
+    else:
+        assert plan.executions == []
+        assert plan.targets_by_logical_key == {}
+        assert plan.inapplicable_logical_keys == [row.logical_key]
 
 
 @pytest.mark.parametrize(
@@ -578,7 +710,7 @@ def test_standard_plan_admits_only_targets_with_host_wheel_tags(
         ),
     ],
 )
-def test_invalid_host_restrictions_are_rejected(
+def test_invalid_target_marker_declarations_are_rejected(
     definition: dict[str, object],
     message: str,
 ) -> None:
@@ -595,13 +727,75 @@ def test_invalid_host_restrictions_are_rejected(
         {"marker_environment": {"platform_system": 1}},
     ],
 )
-def test_host_restrictions_require_string_values(
+def test_target_marker_declarations_require_string_values(
     definition: dict[str, object],
 ) -> None:
     module = _harness("scenarios")
 
     with pytest.raises(TypeError, match="must be .*string"):
         module.parse_marker_environment("invalid", definition)
+
+
+@pytest.mark.parametrize(
+    ("definition", "expected"),
+    [
+        ({}, False),
+        ({"platform_system": "Linux"}, False),
+        ({"marker_environment": {"platform_system": "Linux"}}, False),
+        (
+            {
+                "marker_environment": {"platform_system": "Linux"},
+                "requires_matching_host": True,
+            },
+            True,
+        ),
+        (
+            {
+                "marker_environment": {"platform_system": "Linux"},
+                "requires_matching_host": False,
+            },
+            False,
+        ),
+        (
+            {
+                "platform_system": "Linux",
+                "requires_matching_host": False,
+            },
+            False,
+        ),
+    ],
+)
+def test_matching_host_requirement_is_explicit(
+    definition: dict[str, object],
+    expected: bool,
+) -> None:
+    module = _harness("scenarios")
+    markers = module.parse_marker_environment("example", definition)
+
+    assert (
+        module.parse_requires_matching_host("example", definition, markers) is expected
+    )
+
+
+@pytest.mark.parametrize("value", [1, "true", [], {}])
+def test_matching_host_requirement_must_be_boolean(value: object) -> None:
+    module = _harness("scenarios")
+    definition = {
+        "marker_environment": {"platform_system": "Linux"},
+        "requires_matching_host": value,
+    }
+    markers = module.parse_marker_environment("invalid", definition)
+
+    with pytest.raises(TypeError, match="requires_matching_host must be a boolean"):
+        module.parse_requires_matching_host("invalid", definition, markers)
+
+
+def test_matching_host_requirement_needs_target_identity() -> None:
+    module = _harness("scenarios")
+    definition = {"requires_matching_host": True}
+
+    with pytest.raises(ValueError, match="needs a platform or interpreter marker"):
+        module.parse_requires_matching_host("invalid", definition, {})
 
 
 def test_standard_plan_reuses_one_admitted_target_across_strategies() -> None:
@@ -748,7 +942,7 @@ def test_resolve_scenario_uses_the_supplied_target_and_host(
         os_name="posix",
         platform_tag="manylinux_2_17_x86_64",
     )
-    admission = host.target_for("3.11", {})
+    admission = host.target_for("3.11", {}, requires_matching_host=False)
     assert admission.target is not None
     target = admission.target
     seen: dict[str, object] = {}
@@ -807,18 +1001,18 @@ def test_marker_build_scenarios_are_explicitly_unsupported() -> None:
     )
 
 
-def test_exact_host_scenarios_define_complete_marker_environments() -> None:
+def test_matching_host_scenario_census_has_complete_marker_environments() -> None:
     module = _harness("scenarios")
-    rows = _exact_host_rows(module)
+    rows = _matching_host_rows(module)
 
     assert {
         key: row.definition["marker_environment"] for key, row in rows.items()
-    } == _EXACT_HOST_MARKERS
+    } == _MATCHING_HOST_MARKERS
 
 
-def test_exact_host_scenarios_retain_their_reviewed_inputs() -> None:
+def test_matching_host_scenarios_retain_their_reviewed_inputs() -> None:
     module = _harness("scenarios")
-    rows = _exact_host_rows(module)
+    rows = _matching_host_rows(module)
 
     tensorflow = rows["uv:uv-tensorflow-macos"].definition
     assert tensorflow["python_version"] == "3.10.17"
@@ -855,12 +1049,12 @@ def test_exact_host_scenarios_retain_their_reviewed_inputs() -> None:
         ),
     ],
 )
-def test_exact_host_scenarios_run_on_matching_hosts(
+def test_matching_host_scenarios_run_on_matching_hosts(
     logical_key: str,
     host_kwargs: dict[str, str],
 ) -> None:
     module = _harness("scenarios")
-    row = _exact_host_rows(module)[logical_key]
+    row = _matching_host_rows(module)[logical_key]
     host = _host(module, **host_kwargs)
 
     plan = module.standard_run_plan(
@@ -870,6 +1064,7 @@ def test_exact_host_scenarios_run_on_matching_hosts(
     )
 
     assert len(plan.executions) == 1
+    assert plan.inapplicable_logical_keys == []
     assert plan.targets_by_logical_key[logical_key].tags_faithful
 
 
@@ -896,6 +1091,26 @@ requirements = ["demo"]
             "with a marker environment overlay"
         ),
     ):
+        module.load_standard_corpus([path])
+
+
+def test_standard_corpus_validates_host_requirement_on_unsupported_rows(
+    tmp_path: Path,
+) -> None:
+    module = _harness("scenarios")
+    path = tmp_path / "quick.toml"
+    path.write_text(
+        """
+[unsupported]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
+requires_matching_host = "yes"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match="requires_matching_host must be a boolean"):
         module.load_standard_corpus([path])
 
 
@@ -1458,6 +1673,7 @@ def test_main_writes_exact_complete_default_and_matrix_manifests(
 
     assert manifest["completed_logical_keys"] == ["quick:example"]
     assert manifest["unsupported_logical_keys"] == ["quick:unsupported"]
+    assert manifest["requires_matching_host_logical_keys"] == ["quick:foreign-host"]
     assert manifest["inapplicable_logical_keys"] == ["quick:foreign-host"]
 
     assert manifest["completed_execution_keys"] == expected_completed
@@ -1805,7 +2021,11 @@ def test_profile_runner_uses_the_admitted_target_for_roots_and_resolution() -> N
         os_name="posix",
         platform_tag="manylinux_2_17_x86_64",
     )
-    admission = physical_host.target_for("3.11", {})
+    admission = physical_host.target_for(
+        "3.11",
+        {},
+        requires_matching_host=False,
+    )
     assert admission.target is not None
 
     class PlannedHost:
@@ -1815,9 +2035,12 @@ def test_profile_runner_uses_the_admitted_target_for_roots_and_resolution() -> N
             self,
             python_version: str,
             marker_environment: dict[str, str],
+            *,
+            requires_matching_host: bool,
         ) -> object:
             assert python_version == "3.11"
             assert marker_environment == {}
+            assert requires_matching_host is False
             return admission
 
     host = PlannedHost()
@@ -1862,7 +2085,8 @@ def test_profile_runner_rejects_an_inapplicable_host_before_resolution() -> None
     scenario = {
         "python_version": "3.11",
         "requirements": [],
-        "platform_system": "Windows",
+        "marker_environment": {"platform_system": "Windows"},
+        "requires_matching_host": True,
     }
     host = _host(
         module.sc,
@@ -1875,3 +2099,28 @@ def test_profile_runner_rejects_an_inapplicable_host_before_resolution() -> None
 
     with pytest.raises(SystemExit, match="benchmark is inapplicable"):
         module.build_inputs("example", scenario, host=host)
+
+
+def test_profile_runner_allows_target_only_foreign_overlay() -> None:
+    module = _harness("_profile_runner")
+    host = _host(
+        module.sc,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+    )
+    inputs = module.build_inputs(
+        "example",
+        {
+            "python_version": "3.11",
+            "requirements": [],
+            "marker_environment": {"platform_system": "Windows"},
+        },
+        host=host,
+    )
+
+    target = inputs["target"]
+    assert target.marker_env["platform_system"] == "Windows"
+    assert target.tags_faithful is False

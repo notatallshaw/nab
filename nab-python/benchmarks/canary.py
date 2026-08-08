@@ -37,6 +37,7 @@ else:
 from benchmark_host import (
     BenchmarkHost,
     BenchmarkTimeout,
+    parse_requires_matching_host,
     parse_target_marker_environment,
 )
 
@@ -780,7 +781,16 @@ def _prepare_canary_execution(
     indexes = _canary_indexes(scenario)
     index_routes = _canary_index_routes(scenario)
 
-    admission = host.target_for(python_version, marker_environment)
+    requires_matching_host = parse_requires_matching_host(
+        scenario_name,
+        scenario,
+        marker_environment,
+    )
+    admission = host.target_for(
+        python_version,
+        marker_environment,
+        requires_matching_host=requires_matching_host,
+    )
     if admission.target is None:
         return CanaryPreparation(None, admission.inapplicable_reason)
     target = admission.target

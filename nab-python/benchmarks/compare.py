@@ -16,7 +16,7 @@ from typing import NamedTuple, NoReturn
 
 RESULTS_DIR = Path(__file__).parent / "results"
 MANIFEST_FILENAME = "_standard_manifest.json"
-MANIFEST_SCHEMA = 2
+MANIFEST_SCHEMA = 3
 _RESERVED_DIRECTORIES = frozenset({"universal", "universal-selected"})
 _MANIFEST_FIELDS = frozenset(
     {
@@ -34,6 +34,7 @@ _MANIFEST_FIELDS = frozenset(
         "selected_logical_keys",
         "completed_logical_keys",
         "unsupported_logical_keys",
+        "requires_matching_host_logical_keys",
         "inapplicable_logical_keys",
         "available_execution_keys",
         "selected_execution_keys",
@@ -285,11 +286,15 @@ def _validate_manifest_partitions(
     selected = lists["selected_logical_keys"]
     completed = lists["completed_logical_keys"]
     unsupported = lists["unsupported_logical_keys"]
+    requires_matching_host = lists["requires_matching_host_logical_keys"]
     inapplicable = lists["inapplicable_logical_keys"]
     available_keys = lists["available_execution_keys"]
     selected_keys = lists["selected_execution_keys"]
-    if not set(selected) <= set(available) or not _exact_partition(
-        selected, completed, unsupported, inapplicable
+    if (
+        not set(selected) <= set(available)
+        or not set(requires_matching_host) <= set(selected)
+        or not set(inapplicable) <= set(requires_matching_host)
+        or not _exact_partition(selected, completed, unsupported, inapplicable)
     ):
         _fail(f"invalid logical benchmark partition: {run_dir}")
     available_map = _execution_map(available, strategies)

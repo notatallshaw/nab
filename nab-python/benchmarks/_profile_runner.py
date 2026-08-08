@@ -80,8 +80,17 @@ def build_inputs(
         marker_environment,
         build_policy_overrides,
     )
+    requires_matching_host = sc.parse_requires_matching_host(
+        name,
+        scenario,
+        marker_environment,
+    )
     effective_host = host or sc.BenchmarkHost.current(sc.SCENARIO_WALL_TIMEOUT_SECONDS)
-    admission = effective_host.target_for(python_version, marker_environment)
+    admission = effective_host.target_for(
+        python_version,
+        marker_environment,
+        requires_matching_host=requires_matching_host,
+    )
     if admission.target is None:
         msg = f"{name}: benchmark is inapplicable: {admission.inapplicable_reason}"
         raise SystemExit(msg)
