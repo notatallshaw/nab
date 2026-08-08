@@ -893,6 +893,7 @@ class TestParserFoldHelpers:
                 "uploaded-prior-to",
                 "dist-policy",
                 "build-policy",
+                "build-requires-depth",
                 "environment",
                 "marker-environment",
                 "vcs",

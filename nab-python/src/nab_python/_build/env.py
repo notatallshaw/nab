@@ -32,31 +32,39 @@ import venv
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import tomli_w
 from installer import install as installer_install
 from installer.destinations import SchemeDictionaryDestination
 from installer.sources import WheelFile
+
+from nab_index.client import extract_sdist_archive
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 
 from .._vcs_admission import UnsupportedVcsError
+from .._vendor.packaging.utils import canonicalize_name
 from ..config import NabProjectConfig
 from ..download import DownloadError, download_lock
 from ..lockfile import IndexPin
-from ..provider import MissingExtraError
+from ..provider import BuildPolicy, DistPolicy, MissingExtraError
 from ..requirements_file import InvalidProjectRequirementError
+from .errors import BuildBackendError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
-    from typing_extensions import Self
 
     from installer.records import RecordEntry
     from installer.utils import Scheme
+    from typing_extensions import Self
+
     from nab_index.transport import AsyncHttpTransport
 
-    from ..lockfile import LockInput, PinShape
+    from ..config import IndexOverride, PackageOverride
+    from ..lockfile import LockInput, PinShape, SdistArtifact, TargetLock
     from ..tags import TagSet
+
+    _OverrideT = TypeVar("_OverrideT", PackageOverride, IndexOverride)
 
 __all__ = [
     "NabBuildEnv",
@@ -132,6 +140,30 @@ class BuildEnvError(Exception):
     """
 
 
+BuildChain = tuple[str, ...]
+"""The builds already in progress beneath the first one, outermost first.
+
+Each entry is a ``chain_label`` for a build requirement nab is building so
+that some other build can run.  The chain is empty for the build a resolve
+asks for directly, and gains an entry every time a build requirement has to
+be built to populate an env.  Its length is how deep the recursion has gone,
+and a repeated entry is a cycle.
+"""
+
+
+def chain_label(name: str, version: str) -> str:
+    """Return the chain entry for one build, canonical so two spellings match."""
+    return f"{canonicalize_name(name)} {version}"
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingBuild:
+    """A build requirement this env has to build before it can install it."""
+
+    label: str
+    sdist: SdistArtifact
+
+
 class NabBuildEnv:
     """An isolated PEP 518 build environment driven by nab.
 
@@ -152,6 +184,12 @@ class NabBuildEnv:
     requirement would have to come off the network.  An empty
     ``requires`` needs nothing fetched and is still served.
 
+    ``chain`` is the :data:`BuildChain` of builds this env is already
+    nested inside.  It is empty for the build a resolve asked for, and
+    every build requirement this env has to build itself passes on a
+    longer one, which is what bounds the recursion against
+    ``[tool.nab].build-requires-depth`` and detects a cycle.
+
     The venv is created from the host interpreter and the PEP 517
     hooks run in it, so the build requirements resolve for the host
     and not for any ``--python`` retarget: a wheel for another
@@ -168,12 +206,14 @@ class NabBuildEnv:
         config: NabProjectConfig,
         offline: bool = False,
         transport_factory: Callable[[], AsyncHttpTransport] = Urllib3AsyncTransport,
+        chain: BuildChain = (),
     ) -> None:
         """Capture inputs; the venv and inner resolve happen in __enter__."""
         self._requires = list(requires)
         self._config = config
         self._offline = offline
         self._transport_factory = transport_factory
+        self._chain = tuple(chain)
 
         self._tmpdir: tempfile.TemporaryDirectory[str] | None = None
         self._venv_path: Path | None = None
@@ -329,6 +369,18 @@ class NabBuildEnv:
         :func:`nab_python.download.download_lock` end-to-end.  No
         local sources / workspace / marker overlay; build deps
         come from the configured indexes only.
+
+        It admits wheels and sdists, like any resolve, so the version
+        it settles on is the one the requirement asked for rather than
+        the newest that happens to publish a wheel.  Whether a version
+        without an installable wheel can be used is
+        :meth:`_plan_install`'s decision, taken once the resolve has
+        named it.
+
+        It reads metadata statically: its build policy is ``never`` and
+        no inherited override may raise it.  A backend invocation to
+        learn a build requirement's dependencies would be a second
+        recursion, one the depth budget does not count.
         """
         # Late import: avoids a cycle through ``resolve.py`` which
         # itself imports ``pypi.py`` which imports ``build_backend``
@@ -351,9 +403,17 @@ class NabBuildEnv:
 
         inner_config = NabProjectConfig(
             indexes=self._config.indexes,
-            package_overrides=self._config.package_overrides,
-            index_overrides=self._config.index_overrides,
+            package_overrides=tuple(
+                _without_build_permission(override)
+                for override in self._config.package_overrides
+            ),
+            index_overrides={
+                name: _without_build_permission(override)
+                for name, override in self._config.index_overrides.items()
+            },
             uploaded_prior_to=self._config.uploaded_prior_to,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.NEVER,
         )
         # download_lock closes its transport, and ``install`` may call
         # this again for ``get_requires_for_build_wheel`` follow-ups;
@@ -381,28 +441,9 @@ class NabBuildEnv:
             msg = f"build env resolve failed: {exc}"
             raise BuildEnvError(msg) from exc
 
-        lock_input = _one_wheel_per_pin(build_lock_input(result, config=inner_config))
-
-        # Reject sdist-only pins early: build deps that ship only an
-        # sdist trigger a recursive backend invocation that this
-        # builder does not handle.  Most build tools (hatchling,
-        # setuptools, flit, pdm-backend) publish wheels.
-        pins = {
-            name: pin
-            for lock in lock_input.targets.values()
-            for name, pin in lock.pins.items()
-        }
-        sdist_only: list[str] = []
-        for canonical, pin in pins.items():
-            if isinstance(pin, IndexPin) and not pin.wheels:
-                sdist_only.append(f"{canonical}=={pin.version}")
-        if sdist_only:
-            msg = (
-                "build env requires sdist-only packages which nab cannot"
-                " install without recursing through the build path: "
-                + ", ".join(sdist_only)
-            )
-            raise BuildEnvError(msg)
+        lock_input, to_build = self._plan_install(
+            build_lock_input(result, config=inner_config)
+        )
 
         try:
             download_result = download_lock(lock_input, transport, wheel_dir)
@@ -413,59 +454,152 @@ class NabBuildEnv:
             msg = f"build env download failed: {exc}"
             raise BuildEnvError(msg) from exc
 
-        # Both wheels and sdists are downloaded; only wheels feed
-        # ``installer.install``.  The sdists are inert clutter under
-        # the temp dir, cleaned up with the env.
         all_paths = list(download_result.written) + list(download_result.skipped)
-        return [p for p in all_paths if p.suffix == ".whl"]
-
-
-def _one_wheel_per_pin(lock_input: LockInput) -> LockInput:
-    """Narrow every index pin to the one wheel its target installs.
-
-    A lock records every wheel of the pinned version the target
-    accepts, so a pin can carry several: the tiered manylinux
-    aliases, or a ``py3-none-any`` beside a platform wheel.  The
-    inner resolve plans the host alone, so the target's tags are
-    those of the interpreter the backend runs under.
-
-    Narrowing is for the download and the install; a written lock
-    keeps every wheel, so one lock stays portable across targets.
-    """
-    targets = {
-        label: replace(
-            lock,
-            pins={
-                name: _picked_wheel_pin(pin, lock.target.tags)
-                for name, pin in lock.pins.items()
-            },
+        wheels = [p for p in all_paths if p.suffix == ".whl"]
+        wheels.extend(
+            self._build_requirement(pending, wheel_dir) for pending in to_build
         )
-        for label, lock in lock_input.targets.items()
-    }
+        return wheels
 
-    return replace(lock_input, targets=targets)
+    @property
+    def _build_budget(self) -> int:
+        """How many more build envs may be opened beneath this one."""
+        return self._config.build_requires_depth - len(self._chain)
+
+    def _plan_install(
+        self, lock_input: LockInput
+    ) -> tuple[LockInput, list[_PendingBuild]]:
+        """Decide how each pin reaches the env, and narrow it to that artifact.
+
+        A pin with a wheel the host accepts is narrowed to that one
+        wheel: a lock records every wheel of the pinned version the
+        target admits, which can be several (the tiered manylinux
+        aliases, or a ``py3-none-any`` beside a platform wheel), and
+        the env installs one.  Narrowing is for the download and the
+        install; a written lock keeps every wheel, so one lock stays
+        portable across targets.
+
+        A pin with no such wheel has to be built, and comes back in the
+        second element with its wheels dropped so only its sdist is
+        fetched.  Refusing that build is this method's other job: it
+        raises rather than leaving a requirement quietly uninstalled,
+        because the backend would then fail on an import error that
+        names nothing useful.
+        """
+        planned: dict[str, TargetLock] = {}
+        to_build: list[_PendingBuild] = []
+        for label, lock in lock_input.targets.items():
+            pins: dict[str, PinShape] = {}
+            for name, pin in lock.pins.items():
+                pins[name] = self._planned_pin(pin, lock.target.tags, to_build)
+            planned[label] = replace(lock, pins=pins)
+
+        return replace(lock_input, targets=planned), to_build
+
+    def _planned_pin(
+        self, pin: PinShape, tags: TagSet, to_build: list[_PendingBuild]
+    ) -> PinShape:
+        """Return ``pin`` narrowed to the artifact the env will install.
+
+        Appends to ``to_build`` when the answer is the sdist, so the
+        caller knows which pins still owe it a build.
+
+        The wheel is chosen by the target's tags rather than by the
+        provider's ``pick_dist``.  That one answers whose METADATA the
+        pin has to satisfy, so between wheels the tags rank equally it
+        takes the one carrying a :pep:`658` sidecar, and it may answer
+        with an sdist or with a wheel this host cannot install.  An
+        install has none of those outs: it must be the wheel
+        :pep:`425` ranks highest.
+        """
+        if not isinstance(pin, IndexPin):
+            return pin
+
+        preferred = tags.pick(pin.wheels) if pin.wheels else None
+        if preferred is not None:
+            # The sdist goes with the wheels the narrowing drops: nothing
+            # installs it, and a bad one would fail the download and take
+            # the build with it.
+            return replace(pin, wheels=(preferred,), sdist=None)
+
+        label = chain_label(pin.name, pin.version)
+        chain = self._chain
+        if pin.sdist is None:
+            msg = (
+                f"{label} publishes no wheel this build host can install,"
+                f" and no sdist to build{_chain_suffix(chain)}"
+            )
+            raise BuildEnvError(msg)
+        # A cycle before a depth: raising the depth to walk into a loop is
+        # the one piece of advice that cannot help.
+        if label in chain:
+            msg = f"cyclic build requirement: {' -> '.join([*chain, label])}"
+            raise BuildEnvError(msg)
+        if self._build_budget <= 0:
+            msg = (
+                f"{label} publishes no wheel this build host can install, so"
+                " satisfying it means building it; [tool.nab].build-requires-depth"
+                f" is {self._config.build_requires_depth}{_chain_suffix(chain)}"
+            )
+            raise BuildEnvError(msg)
+
+        to_build.append(_PendingBuild(label=label, sdist=pin.sdist))
+        return replace(pin, wheels=())
+
+    def _build_requirement(self, pending: _PendingBuild, wheel_dir: Path) -> Path:
+        """Build the downloaded sdist of ``pending`` and return the wheel's path.
+
+        The wheel lands beside the downloaded artifacts, which live as
+        long as the env does.
+        """
+        # Late import: ``runner`` imports this module at module load.
+        from .runner import build_wheel_for_install
+
+        label = pending.label
+        archive = wheel_dir / pending.sdist.filename
+        logger.info("building %s to populate a build env", label)
+
+        try:
+            data = archive.read_bytes()
+        except OSError as exc:
+            msg = f"build requirement {label} could not be read at {archive}: {exc}"
+            raise BuildEnvError(msg) from exc
+
+        with tempfile.TemporaryDirectory(prefix="nab-build-req-") as td:
+            try:
+                source_dir = extract_sdist_archive(data, Path(td))
+            except ValueError as exc:
+                msg = f"build requirement {label} could not be extracted: {exc}"
+                raise BuildEnvError(msg) from exc
+            try:
+                return build_wheel_for_install(
+                    source_dir,
+                    output_dir=wheel_dir,
+                    config=self._config,
+                    offline=self._offline,
+                    chain=(*self._chain, label),
+                )
+            except BuildBackendError as exc:
+                msg = f"build requirement {label} could not be built: {exc}"
+                raise BuildEnvError(msg) from exc
 
 
-def _picked_wheel_pin(pin: PinShape, tags: TagSet) -> PinShape:
-    """Return ``pin`` narrowed to the one wheel ``tags`` prefers.
+def _chain_suffix(chain: BuildChain) -> str:
+    """Render ``chain`` for an error message, or nothing when it is empty."""
+    return f" (chain: {' -> '.join(chain)})" if chain else ""
 
-    Deliberately not the provider's ``pick_dist``.  That one answers
-    whose METADATA the pin has to satisfy, so between wheels the tags
-    rank equally it takes the one carrying a :pep:`658` sidecar, and
-    it may answer with an sdist or with a wheel this host cannot
-    install.  An install has none of those outs: it must be a wheel,
-    it must be the wheel :pep:`425` ranks highest, and nothing
-    compatible is an error.
+
+def _without_build_permission(override: _OverrideT) -> _OverrideT:
+    """Return ``override`` with any build permission it grants removed.
+
+    An override reaches the build env's own resolve, where the build
+    policy is ``never``.  Letting one raise it there would start a
+    backend invocation nothing counts against the depth budget, so a
+    permission is dropped and only a refusal survives.
     """
-    if not isinstance(pin, IndexPin) or not pin.wheels:
-        return pin
-
-    preferred = tags.pick(pin.wheels)
-    if preferred is None:
-        msg = f"no wheel of {pin.name}=={pin.version} matches the build host's tags"
-        raise BuildEnvError(msg)
-
-    return replace(pin, wheels=(preferred,))
+    if override.build_policy in (None, BuildPolicy.NEVER):
+        return override
+    return replace(override, build_policy=None)
 
 
 def _remove_files(entries: list[tuple[Path, Path]]) -> None:

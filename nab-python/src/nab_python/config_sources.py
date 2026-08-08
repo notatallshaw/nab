@@ -413,6 +413,17 @@ def _parse_dist_policy(value: Any, where: str) -> tuple[DistPolicy, bool]:
     return _delegate(lambda: _impl(value))
 
 
+def _parse_build_requires_depth(value: Any, where: str) -> int:
+    # bool is an int subclass, so reject it rather than read True as 1.
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        msg = (
+            f"{where} must be a non-negative integer number of nested build"
+            f" environments, got {value!r}"
+        )
+        raise SourceConfigError(msg)
+    return value
+
+
 def _parse_build_policy(value: Any, where: str) -> BuildPolicy:
     # The plain scalar last-wins value only.  The host-build gate that forces
     # never for a declared target is a post-merge transform applied over the
@@ -884,6 +895,17 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param="project_build_policy",
         parse=_parse_build_policy,
         render=lambda v: v.value,
+    ),
+    OptionSpec(
+        key="build-requires-depth",
+        scope=Scope.PROJECT,
+        type_label="int",
+        default=0,
+        env_var=None,
+        cli_flag=None,
+        cli_param=None,
+        parse=_parse_build_requires_depth,
+        render=str,
     ),
     OptionSpec(
         key="environment",

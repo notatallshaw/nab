@@ -119,6 +119,49 @@ know the package's dependencies, a `dependencies` metadata override
 (see the [configuration reference](configuration.md)) resolves it under
 `never` without building at all.
 
+## Building a build requirement
+
+A backend runs in a venv holding its project's `[build-system].requires`,
+and a venv takes wheels.  When the version a requirement resolves to
+publishes none this host can install, satisfying it means building that
+first.  `build-requires-depth` counts the build environments nab may
+open beneath the first one:
+
+```toml
+[tool.nab]
+build-requires-depth = 0   # the default
+```
+
+`0` refuses, naming the requirement and the chain of builds that
+reached it.  `1` builds it from its sdist, and its own build
+requirements must then be wheels.  `n` allows `n` levels.
+
+The resolve is never narrowed to wheels; that would settle on an older
+backend than `[build-system].requires` asked for without saying so.  The
+requirement resolves as written and the refusal names the version it
+landed on.
+
+A build already in the chain cannot be re-entered:
+
+```text
+cyclic build requirement: a 1.0 -> b 2.0 -> a 1.0
+```
+
+Two versions of one package in a chain are not a cycle; that terminates.
+
+A build environment reads its build requirements' metadata statically,
+so a per-package or per-index `build-policy` override may forbid a
+build there but never permit one.  To keep a build requirement from
+being built, pin it to wheels:
+
+```toml
+[tool.nab.packages.meson]
+dist-policy = "wheel-only"
+```
+
+The setting is inert where builds cannot run: under
+`build-policy = "never"`, and for any target that declares a platform.
+
 ## Overrides
 
 A per-package override replaces the global build policy for its selected

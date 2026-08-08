@@ -1368,6 +1368,17 @@ class TestPolicies:
         with pytest.raises(ConfigError, match="dist-policy must be a string"):
             read_pyproject_config(path)
 
+    @pytest.mark.parametrize("value", ["-1", "true", '"1"'])
+    def test_invalid_build_requires_depth(self, tmp_path: Path, value: str) -> None:
+        """A count of nested builds: not negative, not a bool, not a string."""
+        path = write(tmp_path, f"[tool.nab]\nbuild-requires-depth = {value}\n")
+        with pytest.raises(ConfigError, match="must be a non-negative integer"):
+            read_pyproject_config(path)
+
+    def test_build_requires_depth_reaches_the_config(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\nbuild-requires-depth = 2\n")
+        assert read_pyproject_config(path).build_requires_depth == 2
+
 
 _UNIVERSAL_MATRIX = (
     '[tool.nab.matrix]\npython = ">=3.11,<3.12"\nplatforms = ["linux_x86_64"]\n'

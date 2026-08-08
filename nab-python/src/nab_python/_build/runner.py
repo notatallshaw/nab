@@ -29,6 +29,7 @@ import os
 import tempfile
 import zipfile
 import zlib
+from contextlib import contextmanager
 from email import message_from_string
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -46,14 +47,17 @@ from .._vendor.packaging.utils import canonicalize_name, parse_wheel_filename
 from .._vendor.packaging.version import Version
 from ..metadata import WheelMetadata, validate_specifier_versions
 from ..paths import PathState, path_state
-from .env import BuildEnvError, NabBuildEnv
+from .env import BuildChain, BuildEnvError, NabBuildEnv
 from .errors import BuildBackendError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from ..config import NabProjectConfig
 
 __all__ = [
     "BuildBackendError",
+    "build_wheel_for_install",
     "run_build_backend",
 ]
 
@@ -69,6 +73,7 @@ def run_build_backend(
     *,
     config: NabProjectConfig,
     offline: bool = False,
+    chain: BuildChain = (),
 ) -> WheelMetadata:
     """Extract wheel metadata for ``source_dir`` via the build backend.
 
@@ -76,75 +81,100 @@ def run_build_backend(
     the ``METADATA`` file the backend produces.  Raises
     :class:`BuildBackendError` on any failure: backend import
     error, a rejected ``backend-path``, hook crash, malformed
-    METADATA, an unreadable built wheel, sdist-only build deps, or
-    build requirements ``offline`` bars from being fetched.
+    METADATA, an unreadable built wheel, a build requirement that
+    cannot be installed or built, or build requirements ``offline``
+    bars from being fetched.
 
     The build runs in an isolated venv driven by
     :class:`NabBuildEnv`; nothing in the user's main environment is
     perturbed.  The build env owns its own HTTP transport (see
     :class:`NabBuildEnv` for why) so callers do not pass one in.
+
+    ``chain`` names the builds this one is nested inside; see
+    :data:`~nab_python._build.env.BuildChain`.
     """
-    pyproject = source_dir / "pyproject.toml"
-    state = path_state(pyproject)
+    data = _read_pyproject(source_dir)
 
-    if state.should_read:
+    with (
+        _prepared_project(
+            source_dir, data, config=config, offline=offline, chain=chain
+        ) as (project, backend),
+        tempfile.TemporaryDirectory(prefix="nab-build-meta-") as out_str,
+    ):
+        metadata_dir = _extract_metadata_dir(
+            project,
+            Path(out_str),
+            backend=backend,
+            skip_prepare=_should_skip_prepare(backend, data),
+        )
+        return _parse_metadata(metadata_dir / "METADATA")
+
+
+def build_wheel_for_install(
+    source_dir: Path,
+    *,
+    output_dir: Path,
+    config: NabProjectConfig,
+    offline: bool = False,
+    chain: BuildChain = (),
+) -> Path:
+    """Build ``source_dir`` into a wheel under ``output_dir`` and return its path.
+
+    The metadata path only ever needs a backend's answer, so it can
+    stop at ``prepare_metadata_for_build_wheel``.  This one is for a
+    build requirement that has to be installed, which takes a real
+    wheel and therefore the full ``build_wheel`` hook.
+
+    Raises :class:`BuildBackendError` on any failure, like
+    :func:`run_build_backend`.
+    """
+    data = _read_pyproject(source_dir)
+
+    with _prepared_project(
+        source_dir, data, config=config, offline=offline, chain=chain
+    ) as (project, backend):
         try:
-            data = tomli.loads(pyproject.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
-            msg = f"could not read pyproject.toml at {source_dir}: {exc}"
+            return Path(project.build("wheel", str(output_dir)))
+        # PEP 517's path-returning hooks must return a basename string, so a
+        # non-string reaches os.path.join as-is.
+        except TypeError as exc:
+            msg = (
+                f"build backend {backend!r} returned a non-string path"
+                f" from build_wheel: {exc}"
+            )
             raise BuildBackendError(msg) from exc
-    elif state is not PathState.ABSENT:
-        # The file is there, so the tree is not the legacy setup.py case.
-        msg = f"{pyproject} exists but is not a regular file"
-        raise BuildBackendError(msg)
-    elif path_state(source_dir / "setup.py").should_read:
-        # PEP 517 fallback for legacy setup.py projects: treat the
-        # missing ``[build-system]`` as the documented default
-        # (setuptools.build_meta:__legacy__).
-        data = {}
-    else:
-        msg = f"no pyproject.toml or setup.py at {source_dir}"
-        raise BuildBackendError(msg)
 
+
+@contextmanager
+def _prepared_project(
+    source_dir: Path,
+    data: dict,
+    *,
+    config: NabProjectConfig,
+    offline: bool,
+    chain: BuildChain,
+) -> Iterator[tuple[build.ProjectBuilder, str]]:
+    """Yield a builder for ``source_dir`` in an env holding its build requirements.
+
+    Yields the backend name beside the builder because every failure
+    message names it.  Failures from setting the env up and from the
+    caller's own block both come out as :class:`BuildBackendError`,
+    which is the contract both entry points advertise.
+    """
     backend, requires, backend_path = _read_build_system(data)
     _validate_backend_path(source_dir, backend_path)
 
-    skip_prepare = _should_skip_prepare(backend, data)
-
     try:
         with NabBuildEnv(
-            requires=list(requires), config=config, offline=offline
+            requires=list(requires), config=config, offline=offline, chain=chain
         ) as env:
             project = build.ProjectBuilder.from_isolated_env(
                 env,
                 source_dir=str(source_dir),
                 runner=pyproject_hooks.quiet_subprocess_runner,
             )
-
-            # build returns the hook's result as a set, so sort for a stable
-            # order. key=str keeps a non-string item from raising here.
-            extra = sorted(project.get_requires_for_build("wheel"), key=str)
-            if extra:
-                # PEP 517 requires the hook to return a list of strings.
-                non_str = [item for item in extra if not isinstance(item, str)]
-                if non_str:
-                    msg = (
-                        f"build backend {backend!r} returned a non-string build"
-                        f" requirement from get_requires_for_build_wheel: {non_str!r}"
-                    )
-                    raise BuildBackendError(msg)
-
-                logger.debug("build backend asked for extras: %s", extra)
-                env.install(extra)
-
-            with tempfile.TemporaryDirectory(prefix="nab-build-meta-") as out_str:
-                metadata_dir = _extract_metadata_dir(
-                    project,
-                    Path(out_str),
-                    backend=backend,
-                    skip_prepare=skip_prepare,
-                )
-                return _parse_metadata(metadata_dir / "METADATA")
+            _install_extra_requires(project, env, backend=backend)
+            yield project, backend
     except (
         build.BuildException,
         build.BuildBackendException,
@@ -155,6 +185,54 @@ def run_build_backend(
     except (BuildEnvError, ResolutionError) as exc:
         msg = f"build env setup for {backend!r} failed: {exc}"
         raise BuildBackendError(msg) from exc
+
+
+def _install_extra_requires(
+    project: build.ProjectBuilder, env: NabBuildEnv, *, backend: str
+) -> None:
+    """Install whatever ``get_requires_for_build_wheel`` asks for on top."""
+    # build returns the hook's result as a set, so sort for a stable
+    # order. key=str keeps a non-string item from raising here.
+    extra = sorted(project.get_requires_for_build("wheel"), key=str)
+    if not extra:
+        return
+
+    # PEP 517 requires the hook to return a list of strings.
+    non_str = [item for item in extra if not isinstance(item, str)]
+    if non_str:
+        msg = (
+            f"build backend {backend!r} returned a non-string build"
+            f" requirement from get_requires_for_build_wheel: {non_str!r}"
+        )
+        raise BuildBackendError(msg)
+
+    logger.debug("build backend asked for extras: %s", extra)
+    env.install(extra)
+
+
+def _read_pyproject(source_dir: Path) -> dict:
+    """Return the parsed ``pyproject.toml``, or ``{}`` for a legacy setup.py tree."""
+    pyproject = source_dir / "pyproject.toml"
+    state = path_state(pyproject)
+
+    if state.should_read:
+        try:
+            return tomli.loads(pyproject.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
+            msg = f"could not read pyproject.toml at {source_dir}: {exc}"
+            raise BuildBackendError(msg) from exc
+    if state is not PathState.ABSENT:
+        # The file is there, so the tree is not the legacy setup.py case.
+        msg = f"{pyproject} exists but is not a regular file"
+        raise BuildBackendError(msg)
+    if path_state(source_dir / "setup.py").should_read:
+        # PEP 517 fallback for legacy setup.py projects: treat the
+        # missing ``[build-system]`` as the documented default
+        # (setuptools.build_meta:__legacy__).
+        return {}
+
+    msg = f"no pyproject.toml or setup.py at {source_dir}"
+    raise BuildBackendError(msg)
 
 
 def _read_build_system(
