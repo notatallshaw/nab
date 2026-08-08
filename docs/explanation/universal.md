@@ -247,12 +247,86 @@ resolve. The lockfile does not carry that synthetic value: a non-CPython
 `environments` entry leaves `implementation_version` open, so a real PyPy
 still accepts the lock (a dep gated on the axis may be missed at install).
 
-## Trade-offs versus marker-fork PubGrub
+## Resolution axes
 
-| Property | Matrix (nab) | Marker-fork (uv) |
+The `[tool.nab.matrix]` keys above drive two decisions per tuple: how
+each PEP 508 marker evaluates, and which wheels the tuple can install.
+
+### Marker variables
+
+Every PEP 508 environment variable gets a value in every tuple, so no
+marker ever evaluates against a missing key. Each takes its value from
+the axis or fixed default shown:
+
+| Marker variable | Set by | Default |
 | --- | --- | --- |
-| Resolver core | Untouched. A matrix is a longer target list, not extra solver state. | Forks pervade the resolver state. |
-| Universe | Exactly what the user declared. | All of PEP 508, narrowed by `tool.uv.environments`. |
-| Errors | "no wheel for python 3.11 on macos arm64" - actionable. | "no wheel for some marker environment the resolver cared about" - less actionable. |
-| Wasted work | High: solver state is rebuilt per target. Only the fetcher and its metadata cache are shared. | Low: shared whenever markers don't fork. |
-| Implementation cost | Small. One engine over a target list. | Large. Conflict explanations and lockfile shape are research-grade work. |
+| `python_version` | `python` | one value per minor in range |
+| `python_full_version` | `python`, `python-patches` | `<minor>.0` |
+| `implementation_version` | `python`, `python-patches` | same as `python_full_version` |
+| `implementation_name` | `implementations` | `cpython` |
+| `platform_python_implementation` | `implementations` | `CPython` |
+| `sys_platform` | `platforms` | per id (`linux`, `darwin`, `win32`) |
+| `platform_system` | `platforms` | per id (`Linux`, `Darwin`, `Windows`) |
+| `platform_machine` | `platforms` | per id (`x86_64`, `aarch64`, `i686`, `armv7l`, `arm64`, `AMD64`, `ARM64`) |
+| `os_name` | `platforms` | per id (`posix`, `nt`) |
+| `platform_release` | `platforms` (`platform-release`) | `""` |
+| `platform_version` | `platforms` (`platform-version`) | `""` |
+
+`extra`, `extras` and `dependency_groups` are not axes. `extra` is bound
+one name at a time as a version's dependencies are sorted into the base
+package and its extras, so `extra == "cpu"` names the dependencies of
+`pkg[cpu]` and a requirement read with no extra active sees none. The
+other two are empty during resolution, so a dependency gated on
+`'x' in extras` is always dropped; nab emits that clause only onto a
+package's lockfile marker, where it fires for the installer consuming
+the lock.
+
+### How the axes couple
+
+One axis usually sets several variables at once, so an impossible
+combination cannot be declared:
+
+* `platforms` sets `sys_platform`, `platform_system`,
+  `platform_machine`, and `os_name` together per id. You pick
+  `linux_x86_64`, not the four separately, so a Linux `sys_platform`
+  can never pair with a macOS `platform_machine`.
+* `implementations` sets `implementation_name` and
+  `platform_python_implementation` together.
+* `python` sets `python_version`, `python_full_version`, and
+  `implementation_version` together.
+
+### Wheel selection
+
+The matrix also decides which wheels a tuple can install, computed from
+the python version, platform, and implementation without a live
+interpreter. A version whose only wheels are tag-incompatible with a
+tuple is dropped for that tuple; a version that also ships an sdist
+stays, subject to the build policy. Each tuple accepts three wheel-tag
+dimensions:
+
+* interpreter: `cpXY` for CPython, `ppXY` for PyPy, plus the
+  interpreter-agnostic `py3` tags.
+* abi: `cpXY` and `abi3` for CPython, `cpXYt` and `abi3t` on a
+  free-threaded target, `pypyXY_pp73` for PyPy, and `none`.
+* platform: manylinux or musllinux for the declared libc family, macosx,
+  and win.
+
+The tag knobs live on the platform, written as a table in `platforms`
+rather than a bare id. The "Platform tag knobs" table in
+[Configuration](../reference/configuration.md) lists each with its
+default and the rules it carries.
+
+### What the axes do not cover
+
+The `[tool.nab.matrix]` keys and the platform tag knobs are the whole of
+it. The platform ids and the implementations are fixed enumerations, and
+an unknown name is a config error rather than a silently skipped tuple.
+The Python minors are an enumeration too, but `python` is a specifier
+intersected with it: a range reaching past the newest minor nab knows
+expands to the ones it knows, and only a range matching none of them is
+an error.
+
+`platform_release` and `platform_version` name one machine's kernel
+build. Both default to the empty string, so a marker gated on the kernel
+(`platform_release >= "5.10"`) evaluates False and its dependency is
+dropped: a target that does run that kernel has to declare it.
