@@ -36,6 +36,7 @@ from benchmark_host import (
     HOST_TAG_MISMATCH_REASON,
     BenchmarkHost,
     BenchmarkTimeout,
+    parse_requires_matching_host,
     parse_target_marker_environment,
     settings_hash,
 )
@@ -70,7 +71,7 @@ SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
 RESULTS_DIR = BENCHMARKS_DIR / "results"
 _LEGACY_STRATEGY_SUFFIXES = ("-lowest", "-lowest-direct")
 STANDARD_MANIFEST_FILENAME = "_standard_manifest.json"
-STANDARD_MANIFEST_SCHEMA = 2
+STANDARD_MANIFEST_SCHEMA = 3
 _INAPPLICABLE_KEY_PREVIEW = 8
 _STANDARD_METADATA_FILENAMES = frozenset(
     {STANDARD_MANIFEST_FILENAME, "_provenance.json"}
@@ -117,6 +118,7 @@ _STANDARD_MANIFEST_FIELDS = frozenset(
         "selected_logical_keys",
         "completed_logical_keys",
         "unsupported_logical_keys",
+        "requires_matching_host_logical_keys",
         "inapplicable_logical_keys",
         "available_execution_keys",
         "selected_execution_keys",
@@ -574,6 +576,7 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
         )
     for row in rows:
         marker_environment = parse_marker_environment(row.name, row.definition)
+        parse_requires_matching_host(row.name, row.definition, marker_environment)
         build_policy_overrides = parse_build_packages(row.name, row.definition)
         if "unsupported_reason" in row.definition:
             continue
@@ -600,16 +603,22 @@ def standard_run_plan(
     strategies: tuple[ResolutionStrategy, ...],
     host: BenchmarkHost,
 ) -> StandardRunPlan:
-    """Admit each scenario once, then expand faithful targets by strategy."""
+    """Plan each scenario once, then expand admitted targets by strategy."""
     targets: dict[str, ResolveTarget] = {}
     inapplicable: list[str] = []
     for row in rows:
         if "unsupported_reason" in row.definition:
             continue
         marker_environment = parse_marker_environment(row.name, row.definition)
+        requires_matching_host = parse_requires_matching_host(
+            row.name,
+            row.definition,
+            marker_environment,
+        )
         admission = host.target_for(
             row.definition["python_version"],
             marker_environment,
+            requires_matching_host=requires_matching_host,
         )
         if admission.target is None:
             inapplicable.append(row.logical_key)
@@ -650,6 +659,20 @@ def standard_execution_keys(
         for strategy in strategies
         for row in rows
     )
+
+
+def _requires_matching_host_logical_keys(rows: list[StandardScenario]) -> list[str]:
+    """Return scenarios whose target must match the physical host."""
+    required: list[str] = []
+    for row in rows:
+        marker_environment = parse_marker_environment(row.name, row.definition)
+        if parse_requires_matching_host(
+            row.name,
+            row.definition,
+            marker_environment,
+        ):
+            required.append(row.logical_key)
+    return sorted(required)
 
 
 def get_git_commit() -> str:
@@ -998,6 +1021,9 @@ def standard_manifest_contract(  # noqa: PLR0913 - explicit contract fields
         "available_logical_keys": sorted(row.logical_key for row in all_rows),
         "selected_logical_keys": sorted(row.logical_key for row in selected_rows),
         "unsupported_logical_keys": sorted(row.logical_key for row in unsupported_rows),
+        "requires_matching_host_logical_keys": (
+            _requires_matching_host_logical_keys(selected_rows)
+        ),
         "inapplicable_logical_keys": plan.inapplicable_logical_keys,
         "available_execution_keys": standard_execution_keys(all_rows, strategies),
         "selected_execution_keys": standard_execution_keys(selected_rows, strategies),

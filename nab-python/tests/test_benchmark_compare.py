@@ -15,6 +15,7 @@ _STRATEGIES = ("highest", "lowest", "lowest-direct")
 _COMPLETED_LOGICAL = ("cases:done",)
 _UNSUPPORTED_LOGICAL = ("cases:nope",)
 _INAPPLICABLE_LOGICAL = ("cases:host",)
+_REQUIRES_MATCHING_HOST_LOGICAL = ("cases:host",)
 
 
 def _harness() -> ModuleType:
@@ -90,6 +91,7 @@ def _manifest(
         "selected_logical_keys": list(available_logical),
         "completed_logical_keys": list(_COMPLETED_LOGICAL),
         "unsupported_logical_keys": list(_UNSUPPORTED_LOGICAL),
+        "requires_matching_host_logical_keys": list(_REQUIRES_MATCHING_HOST_LOGICAL),
         "inapplicable_logical_keys": list(_INAPPLICABLE_LOGICAL),
         "available_execution_keys": _execution_keys(available_logical),
         "selected_execution_keys": _execution_keys(available_logical),
@@ -217,6 +219,16 @@ def test_comparison_uses_the_manifest_and_keeps_scenario_inputs(
         pytest.param(
             lambda data: data["completed_logical_keys"].append("cases:host"),
             id="overlapping-partition",
+        ),
+        pytest.param(
+            lambda data: data["requires_matching_host_logical_keys"].clear(),
+            id="inapplicable-without-host-requirement",
+        ),
+        pytest.param(
+            lambda data: data["requires_matching_host_logical_keys"].append(
+                "cases:other"
+            ),
+            id="unselected-host-requirement",
         ),
     ],
 )
@@ -388,12 +400,34 @@ def test_comparison_rejects_manifest_identity_differences(tmp_path: Path) -> Non
         module.require_comparable(first, changed_identity)
 
 
+def test_comparison_rejects_different_host_requirements(tmp_path: Path) -> None:
+    module = _harness()
+    first = module.load_run(
+        _write_run(module, tmp_path, "first", source_commit="a" * 40)
+    )
+    second_dir = _write_run(module, tmp_path, "second", source_commit="b" * 40)
+    _rewrite_json(
+        second_dir / module.MANIFEST_FILENAME,
+        lambda data: data.update(
+            requires_matching_host_logical_keys=["cases:done", "cases:host"]
+        ),
+    )
+    second = module.load_run(second_dir)
+
+    with pytest.raises(module.ComparisonError, match="different identities"):
+        module.require_comparable(first, second)
+
+
 def test_comparison_rejects_runs_without_completed_executions(tmp_path: Path) -> None:
     module = _harness()
 
     def make_all_inapplicable(run_dir: Path) -> None:
         def rewrite_manifest(data: dict) -> None:
             data["completed_logical_keys"] = []
+            data["requires_matching_host_logical_keys"] = [
+                "cases:done",
+                "cases:host",
+            ]
             data["inapplicable_logical_keys"] = ["cases:done", "cases:host"]
             data["completed_execution_keys"] = []
             data["file_execution_keys"] = []
