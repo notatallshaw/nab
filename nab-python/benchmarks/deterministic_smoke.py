@@ -104,6 +104,8 @@ _SCENARIO_KEYS = frozenset(
         "platforms",
         "resolution",
         "align-across-targets",
+        "uv-mapping",
+        "uv-fork-strategy",
         "expected",
     }
 )
@@ -233,6 +235,8 @@ class Scenario:
     platforms: tuple[str, ...]
     resolution: ResolutionStrategy | None
     align_across_targets: bool | None
+    uv_mapping: str | None
+    uv_fork_strategy: str | None
     expected: tuple[ExpectedTarget, ...]
 
 
@@ -538,6 +542,32 @@ def _parse_expected_targets(
     return tuple(expected)
 
 
+def _parse_uv_mapping(
+    raw: Mapping[str, object], label: str, mode: str
+) -> tuple[str | None, str | None]:
+    mapping = raw.get("uv-mapping")
+    if mapping is not None and not isinstance(mapping, str):
+        _fail(f"{label}.uv-mapping must be a string")
+    if mapping not in {None, "pip-compile", "lock"}:
+        _fail(f"{label}.uv-mapping is invalid")
+
+    fork_strategy = raw.get("uv-fork-strategy")
+    if fork_strategy is not None and not isinstance(fork_strategy, str):
+        _fail(f"{label}.uv-fork-strategy must be a string")
+    if mapping == "lock" and fork_strategy not in {"fewest", "requires-python"}:
+        _fail(
+            f"{label}.uv-fork-strategy must be fewest or requires-python"
+            " for a lock mapping"
+        )
+    if mapping != "lock" and fork_strategy is not None:
+        _fail(f"{label}.uv-fork-strategy is only valid for a lock mapping")
+    if mapping == "pip-compile" and mode != "specific":
+        _fail(f"{label}.pip-compile mapping requires specific mode")
+    if mapping == "lock" and mode != "universal":
+        _fail(f"{label}.lock mapping requires universal mode")
+    return mapping, fork_strategy
+
+
 def _parse_scenario(raw: Mapping[str, object], index: int) -> Scenario:
     """Parse one `[[scenario]]` table into its declared resolver inputs."""
     label = f"scenario[{index}]"
@@ -559,6 +589,8 @@ def _parse_scenario(raw: Mapping[str, object], index: int) -> Scenario:
     mode = str(raw["mode"])
     if mode not in {"specific", "universal"}:
         _fail(f"{label}.mode must be specific or universal")
+    uv_mapping, uv_fork_strategy = _parse_uv_mapping(raw, label, mode)
+
     # Absent means "leave the product default alone", which prepare_scenario and
     # _resolve_once each honour by not passing the argument at all.
     alignment = raw.get("align-across-targets")
@@ -595,6 +627,8 @@ def _parse_scenario(raw: Mapping[str, object], index: int) -> Scenario:
         platforms=platforms,
         resolution=resolution,
         align_across_targets=alignment,
+        uv_mapping=uv_mapping,
+        uv_fork_strategy=uv_fork_strategy,
         expected=expected,
     )
 

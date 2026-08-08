@@ -17,6 +17,22 @@ The scenarios use Nab's default highest resolution strategy and default cross-ta
 
 Each resolve gets a fresh coordinator against the same prebuilt offline fixture. Warmups happen before measurement, and each recorded inner interval covers only the resolver call; fixture generation, coordinator lifecycle, semantic validation, and lock emission stay outside it. Timing samples are local diagnostics, not a reusable baseline or comparative result, and should be collected sequentially under controlled conditions.
 
+## uv semantic oracle
+
+`deterministic_smoke_uv.py` accepts an explicitly supplied uv binary and resolves all eleven frozen scenarios against the same local wheel corpus. Nine single-target mappings use `uv pip compile --format pylock.toml`; the two universal mappings use a temporary copy of the checked-in uv project so `uv.lock` never enters the worktree.
+
+```bash
+python nab-python/benchmarks/deterministic_smoke_uv.py --uv /path/to/uv
+```
+
+Both universal cases run as one user-facing `uv lock` operation. Default resolution arguments stay omitted. `universal-independent` uses uv's default `requires-python` fork strategy without an override, while `universal-aligned` explicitly requests the non-default `fewest` strategy for the complete four-target project.
+
+The adapter disables configuration discovery, downloads, caching, and builds. Every uv subprocess has a fixed timeout, explicit UTF-8 decoding, an isolated working directory, and a declared environment allowlist which excludes ambient `UV_*` policy.
+
+It checks exact target projections, fixture-local wheel paths and SHA-256 hashes, and the universal lock's target domain, package sources, and dependency edges. Relative artifact and registry values are resolved from the directory containing the emitted pylock or `uv.lock`, independent of the caller's working directory. The semantic report records each command's exit classification and the identities of its executable, source inputs, fixture, and subprocess policy. Those identities are checked again after the run. The report contains no wall time or reusable timing baseline.
+
+uv remains an external oracle and is not added to Nab's development or release dependencies.
+
 ## Single-environment scenarios
 
 `nab-python/benchmarks/scenarios.py` runs scenarios drawn from

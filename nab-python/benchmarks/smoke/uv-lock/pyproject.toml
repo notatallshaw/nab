@@ -1,0 +1,15 @@
+[project]
+name = "nab-smoke-uv-lock"
+version = "0.0.0"
+requires-python = ">=3.11,<3.13"
+dependencies = ["nab-smoke-universal==1.0.0"]
+
+[tool.uv]
+environments = [
+    "python_version >= '3.11' and python_version < '3.13' and implementation_name == 'cpython' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "python_version >= '3.11' and python_version < '3.13' and implementation_name == 'cpython' and sys_platform == 'win32' and platform_machine == 'AMD64'",
+]
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+]
