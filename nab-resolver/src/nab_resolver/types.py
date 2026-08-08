@@ -12,9 +12,13 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#definition
 from __future__ import annotations
 
 import enum
-from typing import Any, Generic, Protocol, TypeVar
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
-from typing_extensions import NamedTuple, Self, override
+from ._compat import override
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 __all__ = [
     "Incompatibility",
@@ -237,7 +241,11 @@ class RelationProtocol(Protocol):
         ...
 
 
-class RootRequirement(NamedTuple, Generic[PackageType, VersionType]):
+# No ``slots=True``: on 3.10 a frozen slotted dataclass raises TypeError when
+# ``typing._GenericAlias.__call__`` sets ``__orig_class__``, which the
+# subscripted construction in ``resolver._as_root_requirements`` triggers.
+@dataclass(frozen=True)
+class RootRequirement(Generic[PackageType, VersionType]):
     """One requirement as the caller wrote it, kept as its own clause.
 
     A caller that passes a mapping has to intersect its requirements on a

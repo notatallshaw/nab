@@ -23,9 +23,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Generic, Protocol
-
-from typing_extensions import TypeIs
+from typing import TYPE_CHECKING, Any, Generic, Protocol
 
 from . import conflict, decide, incompat_index, propagate
 from .errors import ResolutionError
@@ -44,6 +42,9 @@ from .types import (
     Term,
     VersionType,
 )
+
+if TYPE_CHECKING:
+    from typing_extensions import TypeIs
 
 __all__ = [
     "Incompatibility",
@@ -278,17 +279,20 @@ class ResolverObserver(Generic[PackageType, VersionType]):
         """Handle one iteration of the conflict resolution loop."""
 
 
-def _is_range_mapping(
+def _is_root_sequence(
     requirements: Mapping[PackageType, RangeProtocol[VersionType]]
     | Sequence[RootRequirement[PackageType, VersionType]],
-) -> TypeIs[Mapping[PackageType, RangeProtocol[VersionType]]]:
-    """Return whether the caller passed the one-range-per-package form.
+) -> TypeIs[Sequence[RootRequirement[PackageType, VersionType]]]:
+    """Return whether the caller passed the one-clause-per-requirement form.
 
     A ``TypeIs`` rather than a bare ``isinstance``: one type can satisfy both
     members of the union, so plain narrowing can leave an intersection that
-    has lost the mapping's value type.
+    has lost the mapping's value type.  ty needs the sequence rather than the
+    mapping as the narrowed side to keep those parameters, while the test
+    itself stays on ``Mapping`` so every non-mapping iterable is still taken
+    as the sequence form.
     """
-    return isinstance(requirements, Mapping)
+    return not isinstance(requirements, Mapping)
 
 
 def _as_root_requirements(
@@ -296,7 +300,7 @@ def _as_root_requirements(
     | Sequence[RootRequirement[PackageType, VersionType]],
 ) -> Sequence[RootRequirement[PackageType, VersionType]]:
     """Accept either shape ``Resolver.resolve`` takes and return the sequence."""
-    if not _is_range_mapping(requirements):
+    if _is_root_sequence(requirements):
         return requirements
     # The parameters are spelled out because ``constraint`` is a contravariant
     # protocol, which gives the version parameter no inference site.

@@ -82,6 +82,7 @@ types = [
     "pyright>=1.1.400",
     "ty>=0.0.20",
     "pyrefly>=0.50",
+    "typing_extensions>=4.10",
     "zuban>=0.6",
 ]
 pre-commit = [
