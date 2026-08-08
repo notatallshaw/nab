@@ -125,6 +125,21 @@ def _run_config(args: list[str]) -> str:
     return buf.getvalue()
 
 
+_CLI_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
+
+
+def _config_reference_section() -> str:
+    """Return the ``nab config`` section of the CLI reference."""
+    text = _CLI_REFERENCE.read_text(encoding="utf-8")
+    return text.partition("\n## `nab config`\n")[2].partition("\n## ")[0]
+
+
+def _lock_reference_section() -> str:
+    """Return the ``nab lock`` section of the CLI reference."""
+    text = _CLI_REFERENCE.read_text(encoding="utf-8")
+    return text.partition("\n## `nab lock`\n")[2].partition("\n## ")[0]
+
+
 def test_config_search_roots_uses_symlink_dir_not_target(tmp_path: Path) -> None:
     # A symlinked pyproject keeps the symlink's own directory as the
     # local-sources base, matching the resolve path (not the target's dir).
@@ -361,6 +376,54 @@ class TestConfigExplain:
         with pytest.raises(SystemExit):
             config_command("explain", "bogus", path=hermetic_roots / "pyproject.toml")
         assert "unknown config key" in capsys.readouterr().err
+
+
+class TestConfigExplainReferenceDocs:
+    """The CLI reference names every status ``explain`` prints."""
+
+    def test_reference_names_every_status(
+        self, hermetic_roots: Path, tmp_path: Path
+    ) -> None:
+        # One source per status: the user file is rejected (project-scope
+        # key), the pyproject binding is shadowed, and the CLI wins.
+        _write(
+            hermetic_roots / "pyproject.toml",
+            '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+            '[tool.nab]\nresolution = "lowest"\n',
+        )
+        _write(tmp_path / "usr" / "nab.toml", 'resolution = "highest"\n')
+
+        printed = _run_config(
+            [
+                "explain",
+                "resolution",
+                "--project-resolution",
+                "highest",
+                "--include-rejected",
+                "--path",
+                str(hermetic_roots / "pyproject.toml"),
+            ]
+        )
+
+        section = _config_reference_section()
+        for status in ("winner", "shadowed", "rejected"):
+            assert status in printed, status
+            assert f"`{status}`" in section, status
+
+
+class TestLockReferenceDocumentsProjectOverrides:
+    """The CLI reference lists every ``--project-*`` flag and how it combines."""
+
+    def test_every_project_flag_is_documented_as_replacing(self) -> None:
+        prefix = "--project-"
+        prose = "\n\n".join(
+            para for para in _lock_reference_section().split("\n\n") if prefix in para
+        )
+        for spec in OPTIONS:
+            if spec.cli_flag is not None and spec.cli_flag.startswith(prefix):
+                assert f"`{spec.cli_flag}`" in prose, spec.cli_flag
+        assert "replaces the file value" in prose
+        assert "append" not in prose
 
 
 class TestConfigErrors:
@@ -892,16 +955,18 @@ class TestProjectCliOverrides:
         assert config.dist_policy is DistPolicy.SDIST_ONLY
         assert config.trust_unverified_sdist_deps is False
 
-    def test_project_constraint_appends_across_repeats(
+    def test_project_constraint_repeats_replace_the_file_list(
         self, hermetic_roots: Path
     ) -> None:
+        # Repeats accumulate into the flag's own value, which then replaces
+        # the declared list rather than extending it.
         proj = _project(hermetic_roots, 'constraints = ["a<1"]\n')
         config, _ = self._lock_config(
             proj,
             hermetic_roots / "pylock.toml",
             ["--project-constraint", "b<2", "--project-constraint", "c<3"],
         )
-        assert config.constraints == ("a<1", "b<2", "c<3")
+        assert config.constraints == ("b<2", "c<3")
 
     def test_append_flag_does_not_swallow_positional_path(
         self, hermetic_roots: Path
@@ -1061,14 +1126,7 @@ class TestDownloadLadder:
         assert "config error" in capsys.readouterr().err
 
 
-_CLI_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
-
 _FLAG = "--include-rejected"
-
-
-def _config_reference_section() -> str:
-    text = _CLI_REFERENCE.read_text(encoding="utf-8")
-    return text.partition("\n## `nab config`\n")[2].partition("\n## ")[0]
 
 
 def _prose_chunks(section: str) -> list[str]:

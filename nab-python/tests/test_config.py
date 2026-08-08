@@ -160,12 +160,12 @@ class TestCliOverridesFold:
         )
         assert plain == explicit_none
 
-    def test_cli_array_appends_after_files(self, tmp_path: Path) -> None:
+    def test_cli_list_replaces_the_file_list(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nconstraints = ["a<1"]\n')
         config = read_pyproject_config(
             path, discover_workspace=False, cli_overrides={"constraints": ["b<2"]}
         )
-        assert config.constraints == ("a<1", "b<2")
+        assert config.constraints == ("b<2",)
 
     def test_cli_mode_universal_requires_matrix(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
@@ -4889,19 +4889,6 @@ class TestProjectNabTomlConfiguresResolve:
         assert config.constraints == ("foo<2",)
         assert _inspect(path, "constraints") == "foo<2"
 
-    def test_list_constraints_concat_across_files(self, tmp_path: Path) -> None:
-        # Array concat: a pyproject list and a project-nab.toml list merge
-        # additively, they do not conflict.
-        path = self._write(
-            tmp_path,
-            '[project]\nname = "x"\nversion = "0"\n'
-            '[tool.nab]\nconstraints = ["foo<2"]\n',
-            'constraints = ["bar<3"]\n',
-        )
-        config = read_pyproject_config(path, discover_workspace=False)
-        assert config.constraints == ("foo<2", "bar<3")
-        assert _inspect(path, "constraints") == "foo<2, bar<3"
-
     def test_array_of_tables_indexes(self, tmp_path: Path) -> None:
         path = self._write(
             tmp_path,
@@ -5021,19 +5008,27 @@ class TestProjectNabTomlGateAndConflict:
         with pytest.raises(SourceConfigError, match="conflicting values"):
             read_pyproject_config(path, discover_workspace=False)
 
-    def test_override_overlap_across_project_files_rejected(
-        self, tmp_path: Path
-    ) -> None:
-        # The per-package same-field overlap composes with the cross-file
-        # rule: an override in pyproject and an overlapping one in the project
-        # nab.toml is the hard overlap error, not a silent last-win.
+    def test_list_conflict_across_project_files_rejected(self, tmp_path: Path) -> None:
+        # A list is compared whole like a scalar, so two project files
+        # declaring different constraints is the same hard error.
         path = tmp_path / "pyproject.toml"
         path.write_text(
             '[project]\nname = "x"\nversion = "0"\n'
-            '[tool.nab.packages.numpy]\nbuild-policy = "never"\n'
+            '[tool.nab]\nconstraints = ["foo<2"]\n'
         )
-        (tmp_path / "nab.toml").write_text(
-            '[packages.numpy]\nbuild-policy = "build-local"\n'
+        (tmp_path / "nab.toml").write_text('constraints = ["bar<3"]\n')
+        with pytest.raises(SourceConfigError, match="conflicting values"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_table_conflict_across_project_files_rejected(self, tmp_path: Path) -> None:
+        # A table is compared whole too, so disjoint sub-keys across the two
+        # files conflict rather than folding into an environment neither
+        # file declares.
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            '[project]\nname = "x"\nversion = "0"\n'
+            '[tool.nab.environment]\npython = "3.12"\n'
         )
-        with pytest.raises(SourceConfigError, match="overlapping versions"):
+        (tmp_path / "nab.toml").write_text('[environment]\nplatform = "linux_x86_64"\n')
+        with pytest.raises(SourceConfigError, match="conflicting values"):
             read_pyproject_config(path, discover_workspace=False)

@@ -1824,12 +1824,7 @@ def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
 
 
 def _check_index_name_uniqueness(indexes: Sequence[IndexConfig]) -> None:
-    """Reject two indexes declared with the same name.
-
-    Shared by the single-file parse and the registry's across-file merge
-    re-validation (config_sources): a name may appear at most once, whether
-    the duplicate is in one file or split across the two project files.
-    """
+    """Reject two indexes declared with the same name."""
     seen: set[str] = set()
     for index in indexes:
         if index.name in seen:
@@ -2805,13 +2800,7 @@ def _parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
 
 
 def _check_conflict_member_uniqueness(sets: Sequence[ConflictSet]) -> None:
-    """Reject a member declared in more than one conflict set.
-
-    Shared by the single-file parse and the registry's across-file merge
-    re-validation (config_sources): a member may belong to at most one
-    conflict set, whether the duplicate is in one file or split across the
-    two project files.
-    """
+    """Reject a member declared in more than one conflict set."""
     seen: set[ConflictMember] = set()
     for conflict_set in sets:
         for member in conflict_set.members:
