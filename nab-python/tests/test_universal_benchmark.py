@@ -390,10 +390,32 @@ def test_result_contract_validates_optional_input_fields() -> None:
             "lock_consistent": True,
         }
     )
-    data["input"].update({"constraints": ["foo<2"], "datetime": "2025-06-01 00:00:00"})
-    assert module.result_is_well_formed(data) is True
+    data["input"]["constraints"] = ["foo<2"]
+    for datetime_value in (
+        "2025-06-01",
+        "2025-06-01 00:00:00",
+        "2025-06-01T00:00:00.123456789Z",
+        "2025-06-01T00:00:00.1+05:30",
+        "2025-06-01T00:00:00.1-05:30",
+        "2025-06-01T00:00:00.1+0000",
+        "2025-06-01T00:00:00.1+00",
+        "2025-06-01T23:59:59.9+23:59",
+    ):
+        data["input"]["datetime"] = datetime_value
+        assert module.result_is_well_formed(data) is True
 
-    for field, value in (("constraints", []), ("datetime", "not-a-date")):
+    for field, value in (
+        ("constraints", []),
+        ("datetime", "not-a-date"),
+        ("datetime", "2025-W22-7T00:00:00Z"),
+        ("datetime", "20250601T000000Z"),
+        ("datetime", "2025-06-01T00:00:00,1Z"),
+        ("datetime", "2025-06-01T24:00:00Z"),
+        ("datetime", "2025-06-01T23:60:00Z"),
+        ("datetime", "2025-06-01T23:59:60Z"),
+        ("datetime", "2025-06-01T23:59:59+24"),
+        ("datetime", "2025-06-01T23:59:59+12:60"),
+    ):
         invalid = json.loads(json.dumps(data))
         invalid["input"][field] = value
         assert module.result_is_well_formed(invalid) is False

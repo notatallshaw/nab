@@ -20,12 +20,12 @@ import statistics
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from datetime import datetime
 
     from nab_python.target import ResolveTarget
 
@@ -34,6 +34,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from benchmark_datetime import parse_datetime
 from benchmark_host import (
     BenchmarkHost,
     BenchmarkTimeout,
@@ -292,13 +293,6 @@ def _full_marker_environment(
     if overlay:
         env.update(overlay)
     return env
-
-
-def parse_datetime(value: str) -> datetime:
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
 
 
 def get_git_commit() -> str:
