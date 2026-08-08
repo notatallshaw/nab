@@ -38,6 +38,7 @@ from nab_python.provider import (
     UnsupportedVcsError,
 )
 from nab_python.requirements_file import (
+    InvalidProjectRequirementError,
     read_pyproject_groups,
     read_pyproject_name,
     read_pyproject_optional_dependencies,
@@ -136,6 +137,24 @@ def _build_constraints(
     return ranges
 
 
+def _malformed_group_pyproject(tmp_path: Path) -> Path:
+    """A project with conflicting ``cpu`` and ``gpu`` extras, plus a
+    ``docs`` group whose value is an integer instead of a list."""
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[project]\nname = "x"\nversion = "0"\n'
+        "dependencies = []\n"
+        "[project.optional-dependencies]\n"
+        'cpu = ["foo==1.0"]\n'
+        'gpu = ["foo==2.0"]\n'
+        "[dependency-groups]\n"
+        "docs = 5\n"
+        "[tool.nab]\n"
+        'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+    )
+    return pyproject
+
+
 class TestSpecificModeConflictValidation:
     """Conflict handling in specific mode: direct co-selection forks, an
     umbrella that reaches two members without selecting either fails fast."""
@@ -202,6 +221,40 @@ class TestSpecificModeConflictValidation:
         assert V("1.0") in root_reqs["foo"]
         assert V("2.0") not in root_reqs["foo"]
         assert _pins(result) == {"foo": V("1.0")}
+
+    def test_unselected_malformed_group_still_resolves(self, tmp_path: Path) -> None:
+        """Conflict planning closes the group table over ``include-group``,
+        so it walks groups the resolve never selects."""
+        pyproject = _malformed_group_pyproject(tmp_path)
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_target_lock"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("1.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            result = _resolved(
+                pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
+            )
+        assert _pins(result) == {"foo": V("1.0")}
+
+    def test_selected_malformed_group_reports_loader_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Selecting the malformed group still fails, with the group
+        loader's message rather than a crash in the include walk."""
+        pyproject = _malformed_group_pyproject(tmp_path)
+        with pytest.raises(InvalidProjectRequirementError, match="not a sequence type"):
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                groups=("docs",),
+                python_version="3.12.0",
+            )
 
     def test_direct_co_selection_forks_and_locks(self, tmp_path: Path) -> None:
         """A real specific-mode co-selection resolves to two forks, each

@@ -1140,6 +1140,11 @@ class TestExpandGroupIncludes:
         groups = {"a": [{"include-group": 123}]}
         assert expand_group_includes(groups, ["a"]) == ["a"]
 
+    def test_non_sequence_group_value_tolerated(self) -> None:
+        """A group whose value is not a list is skipped, not crashed on."""
+        groups = {"a": [{"include-group": "b"}], "docs": 5}
+        assert expand_group_includes(groups, ["a", "docs"]) == ["a", "docs", "b"]
+
     def test_cycle_terminates(self) -> None:
         groups = {
             "a": [{"include-group": "b"}],

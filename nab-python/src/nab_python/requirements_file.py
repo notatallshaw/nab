@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import tomli
@@ -19,7 +19,7 @@ from ._vendor.packaging.utils import canonicalize_name
 from .metadata import validate_specifier_versions
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator
     from pathlib import Path
 
     from ._vendor.packaging.ranges import VersionRange
@@ -442,10 +442,15 @@ def expand_group_includes(
 
     Unknown or cyclic includes are tolerated here;
     :func:`resolve_groups_to_requirements` raises on them when the
-    requirements themselves are loaded.
+    requirements themselves are loaded.  A group whose value is not a
+    list is skipped, and the loader reports it when that group is
+    selected.
     """
     canonical_groups: dict[str, list[str | Mapping[str, str]]] = {}
     for name, entries in groups.items():
+        # str is a Sequence, so a bare string would expand into characters.
+        if isinstance(entries, str) or not isinstance(entries, Sequence):
+            continue
         canonical_groups.setdefault(canonicalize_name(name), []).extend(entries)
 
     out: list[str] = []
