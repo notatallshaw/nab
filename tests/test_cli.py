@@ -81,7 +81,7 @@ from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import ResolveResult, TargetResult, env_signature
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget, host_environment
-from nab_resolver.resolver import ResolutionError
+from nab_resolver.errors import ResolutionError
 
 V = Version
 

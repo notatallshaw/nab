@@ -33,7 +33,8 @@ from nab_python.provider import (
     VcsSource,
 )
 from nab_python.target import ResolveTarget
-from nab_resolver.resolver import ResolutionError, Resolver
+from nab_resolver.errors import ResolutionError
+from nab_resolver.resolver import Resolver
 from nab_resolver.root import ROOT
 
 if TYPE_CHECKING:

@@ -86,7 +86,7 @@ from nab_python.resolve import (
 )
 from nab_python.target import NonIntervalMarkerError, UnevaluableMarkerError
 from nab_python.workspace import WorkspaceDiscoveryError
-from nab_resolver.resolver import ResolutionError
+from nab_resolver.errors import ResolutionError
 
 from .output import (
     OUTPUT_ENV_VARS,

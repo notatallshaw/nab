@@ -1,6 +1,6 @@
 """Check the workspace import boundaries the four nab packages are built on.
 
-Two rules, both over shipped source only:
+Four rules, all over shipped source only:
 
 ``declared``
     A package may import a sibling only when it depends on it. The allowed
@@ -11,6 +11,13 @@ Two rules, both over shipped source only:
     A package may not import an underscore-prefixed name from a sibling.
     Reaching past the underscore couples a caller to something the owning
     package can rename without notice.
+
+``supported``
+    Where a sibling publishes a supported-path table in its package
+    docstring, a name in that table must be imported from the path the
+    table gives it. Another module may happen to re-export the same name,
+    but only the table's path is held still across releases, so an import
+    that goes the other way works today and breaks on a reshuffle.
 
 ``vendored``
     ``_vendor`` is stricter still: it is off limits to every other package
@@ -30,6 +37,7 @@ Run directly::
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -42,6 +50,11 @@ REMEDY = (
     "drop the underscore, add it to that module's __all__, and update its "
     "existing callers."
 )
+
+# Packages whose docstring publishes a supported-path table. Listed here so a
+# table that stops parsing fails the run rather than quietly dropping the
+# ``supported`` rule for the package it covers.
+PUBLISHES_SUPPORTED_PATHS = ("nab_resolver",)
 
 
 class Package:
@@ -57,6 +70,11 @@ class Package:
         self.requires: frozenset[str] = frozenset(
             _requirement_module(text) for text in project.get("dependencies", [])
         )
+        self.supported: dict[str, str] = (
+            _supported_paths(self.source, self.module)
+            if self.module in PUBLISHES_SUPPORTED_PATHS
+            else {}
+        )
 
 
 def _requirement_module(text: str) -> str:
@@ -64,6 +82,36 @@ def _requirement_module(text: str) -> str:
     for separator in ("[", "=", ">", "<", "!", "~", ";", " "):
         text = text.split(separator, 1)[0]
     return text.strip().replace("-", "_")
+
+
+def _supported_paths(source: Path, module: str) -> dict[str, str]:
+    """Map each name in ``module``'s supported-path table to its module path.
+
+    The table sits in the package docstring as indented ``<module path>  <names>``
+    rows. A row whose name list ends in a comma continues on the next indented
+    line, which is how a long row wraps.
+    """
+    init = source / "__init__.py"
+    docstring = ast.get_docstring(ast.parse(init.read_text("utf-8"), str(init))) or ""
+    row = re.compile(rf"^\s+({re.escape(module)}\.\w+)\s+(\S.*)$")
+
+    supported: dict[str, str] = {}
+    module_path = ""
+    wrapped = False
+    for line in docstring.splitlines():
+        match = row.match(line)
+        if match:
+            module_path, names = match.group(1), match.group(2).rstrip()
+        elif wrapped and line.startswith(" ") and line.strip():
+            names = line.strip()
+        else:
+            wrapped = False
+            continue
+        supported.update(
+            (name.strip(), module_path) for name in names.split(",") if name.strip()
+        )
+        wrapped = names.endswith(",")
+    return supported
 
 
 def packages() -> list[Package]:
@@ -122,12 +170,32 @@ def violations(package: Package, modules: dict[str, Package]) -> list[str]:
             )
             if private is not None:
                 found.append(f"{location}:{lineno}: {dotted} is private ({private})")
+
+            module_path, _, name = dotted.rpartition(".")
+            promised = modules[head].supported.get(name)
+            if promised is not None and promised != module_path:
+                found.append(
+                    f"{location}:{lineno}: {modules[head].dist_name} supports "
+                    f"{name} at {promised}, not through {module_path}"
+                )
     return found
 
 
 def main() -> int:
     """Report every violation and return the process exit status."""
     known = {package.module: package for package in packages()}
+    unread = [
+        module
+        for module in PUBLISHES_SUPPORTED_PATHS
+        if module not in known or not known[module].supported
+    ]
+    if unread:
+        print(
+            f"Could not read a supported-path table from: {', '.join(unread)}",
+            file=sys.stderr,
+        )
+        return 1
+
     found = [
         message for package in known.values() for message in violations(package, known)
     ]

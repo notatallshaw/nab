@@ -94,7 +94,8 @@ from nab_python.resolve import (
 )
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
-from nab_resolver.resolver import ResolutionError, Resolver
+from nab_resolver.errors import ResolutionError
+from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 V = Version

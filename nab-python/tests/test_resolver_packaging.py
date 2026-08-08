@@ -13,8 +13,9 @@ from nab_python._packaging_provider import PackagingProvider
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
+from nab_resolver.errors import ResolutionError
 from nab_resolver.report import union_terms
-from nab_resolver.resolver import ResolutionError, Resolver
+from nab_resolver.resolver import Resolver
 from nab_resolver.types import Term
 
 V = Version
